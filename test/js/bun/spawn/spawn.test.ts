@@ -41,16 +41,17 @@ for (let [gcTick, label] of [
       const hugeString = "hello".repeat(50000).slice();
 
       it("as an array", () => {
-        const { stdout } = spawnSync(["node", "-e", "console.log('hi')"]);
+        const { stdout, exitCode } = spawnSync(["node", "-e", "console.log('hi')"]);
         gcTick();
         // stdout is a Buffer
         const text = stdout!.toString();
         expect(text).toBe("hi\n");
+        expect(exitCode).toBe(0);
         gcTick();
       });
 
       it("Uint8Array works as stdin", async () => {
-        const { stdout, stderr } = spawnSync({
+        const { stdout, stderr, exitCode } = spawnSync({
           cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
           stdin: new TextEncoder().encode(hugeString),
         });
@@ -61,6 +62,7 @@ for (let [gcTick, label] of [
           expect(text).toBe(hugeString);
         }
         expect(stderr!.byteLength).toBe(0);
+        expect(exitCode).toBe(0);
         gcTick();
       });
 
@@ -91,10 +93,10 @@ for (let [gcTick, label] of [
     describe("spawn", () => {
       const hugeString = createHugeString();
 
-      it("as an array", async () => {
+      it.concurrent("as an array", async () => {
         gcTick();
         await (async () => {
-          const { stdout } = spawn(["node", "-e", "console.log('hello')"], {
+          const { stdout, exited } = spawn(["node", "-e", "console.log('hello')"], {
             stdout: "pipe",
             stderr: "ignore",
             stdin: "ignore",
@@ -102,13 +104,14 @@ for (let [gcTick, label] of [
           gcTick();
           const text = await stdout.text();
           expect(text).toBe("hello\n");
+          expect(await exited).toBe(0);
         })();
         gcTick();
       });
 
-      it("as an array with options object", async () => {
+      it.concurrent("as an array with options object", async () => {
         gcTick();
-        const { stdout } = spawn({
+        const { stdout, exited } = spawn({
           cmd: [bunExe(), "-e", "console.log(process.env.FOO)"],
           cwd: tmp,
           env: {
@@ -122,10 +125,11 @@ for (let [gcTick, label] of [
         gcTick();
         const text = await stdout.text();
         expect(text).toBe("bar\n");
+        expect(await exited).toBe(0);
         gcTick();
       });
 
-      it("Uint8Array works as stdin", async () => {
+      it.concurrent("Uint8Array works as stdin", async () => {
         const stdinPath = join(tmpdirSync(), "stdin.txt");
         gcTick();
         const { exited } = spawn({
@@ -134,12 +138,13 @@ for (let [gcTick, label] of [
           stdout: Bun.file(stdinPath),
         });
         gcTick();
-        await exited;
+        const exitCode = await exited;
         expect(readFileSync(stdinPath, "utf8")).toBe(hugeString);
+        expect(exitCode).toBe(0);
         gcTick();
       });
 
-      it("check exit code", async () => {
+      it.concurrent("check exit code", async () => {
         const exitCode1 = await spawn({
           cmd: [bunExe(), "-e", "process.exit(0)"],
         }).exited;
@@ -153,7 +158,7 @@ for (let [gcTick, label] of [
         gcTick();
       });
 
-      it("nothing to stdout and sleeping doesn't keep process open 4ever", async () => {
+      it.concurrent("nothing to stdout and sleeping doesn't keep process open 4ever", async () => {
         const proc = spawn({
           cmd: [shellExe(), "-c", "sleep 0.1"],
         });
@@ -162,6 +167,7 @@ for (let [gcTick, label] of [
           throw new Error("should not happen");
         }
         gcTick();
+        expect(await proc.exited).toBe(0);
       });
 
       it("check exit code from onExit", async () => {
@@ -169,6 +175,12 @@ for (let [gcTick, label] of [
         // Bounded concurrency: 25 pairs (50 children) at a time keeps this from
         // being 1000 strictly-serial spawn pairs without overwhelming CI runners.
         const batchSize = 25;
+        // What is under load here is the parent's reaping and onExit delivery;
+        // the children only need to exit with a known code. A shell does that in
+        // about a millisecond, whereas a bun child costs 100ms+ under ASAN/LSAN,
+        // which made this one test most of the file's CI time.
+        const exitWith = (code: number) =>
+          isWindows ? [bunExe(), "-e", `process.exit(${code})`] : ["sh", "-c", `exit ${code}`];
 
         const runPair = () =>
           new Promise<[number | null, number | null]>(resolve => {
@@ -176,7 +188,7 @@ for (let [gcTick, label] of [
             let exitCode2: number | null = null;
             let counter = 0;
             spawn({
-              cmd: [bunExe(), "-e", "process.exit(0)"],
+              cmd: exitWith(0),
               stdin: "ignore",
               stdout: "ignore",
               stderr: "ignore",
@@ -190,7 +202,7 @@ for (let [gcTick, label] of [
             });
 
             spawn({
-              cmd: [bunExe(), "-e", "process.exit(1)"],
+              cmd: exitWith(1),
               stdin: "ignore",
               stdout: "ignore",
               stderr: "ignore",
@@ -213,7 +225,7 @@ for (let [gcTick, label] of [
             expect(exitCode2).toBe(1);
           }
         }
-      }, 60_000_0);
+      }, 60_000);
 
       // FIXME: fix the assertion failure
       it.skip("Uint8Array works as stdout", () => {
@@ -280,7 +292,7 @@ for (let [gcTick, label] of [
         gcTick();
       });
 
-      it("Blob works as stdin", async () => {
+      it.concurrent("Blob works as stdin", async () => {
         const stdinPath = join(tmpdirSync(), "stdin.txt");
         gcTick();
         const { exited } = spawn({
@@ -289,37 +301,41 @@ for (let [gcTick, label] of [
           stdout: Bun.file(stdinPath),
         });
 
-        await exited;
+        const exitCode = await exited;
         expect(readFileSync(stdinPath, "utf8")).toBe(hugeString);
+        expect(exitCode).toBe(0);
       });
 
-      it("Bun.file() works as stdout", async () => {
-        rmSync(tmp + "out.123.txt", { force: true });
+      it.concurrent("Bun.file() works as stdout", async () => {
+        const outPath = join(tmp, "out.123.txt");
+        rmSync(outPath, { force: true });
         gcTick();
         const { exited } = spawn({
           cmd: ["node", "-e", "console.log('hello')"],
-          stdout: Bun.file(tmp + "out.123.txt"),
+          stdout: Bun.file(outPath),
         });
 
-        await exited;
+        const exitCode = await exited;
         gcTick();
-        expect(await Bun.file(tmp + "out.123.txt").text()).toBe("hello\n");
+        expect(await Bun.file(outPath).text()).toBe("hello\n");
+        expect(exitCode).toBe(0);
       });
 
-      it("Bun.file() works as stdin", async () => {
+      it.concurrent("Bun.file() works as stdin", async () => {
         const stdinPath = join(tmpdirSync(), "stdin.txt");
         writeFileSync(stdinPath, "hello there!");
         gcTick();
-        const { stdout } = spawn({
+        const { stdout, exited } = spawn({
           cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
           stdout: "pipe",
           stdin: Bun.file(stdinPath),
         });
         gcTick();
         expect(await readableStreamToText(stdout!)).toBe("hello there!");
+        expect(await exited).toBe(0);
       });
 
-      it("Bun.file() works as stdin and stdout", async () => {
+      it.concurrent("Bun.file() works as stdin and stdout", async () => {
         const stdinPath = join(tmpdirSync(), "stdout.txt");
         writeFileSync(stdinPath, "hello!");
         gcTick();
@@ -333,12 +349,15 @@ for (let [gcTick, label] of [
           stdin: Bun.file(stdinPath),
         });
         gcTick();
-        await exited;
+        const exitCode = await exited;
         expect(await Bun.file(stdinPath).text()).toBe("hello!");
         gcTick();
         expect(await Bun.file(stdoutPath).text()).toBe("hello!");
+        expect(exitCode).toBe(0);
       });
 
+      // Already spawns 10 children at once; overlapping it with other tests only
+      // pushes everything in the group towards the per-test timeout in debug builds.
       it("stdout can be read", async () => {
         const filePath = join(tmpdirSync(), "out.txt");
         await Bun.write(filePath, hugeString);
@@ -376,7 +395,7 @@ for (let [gcTick, label] of [
         });
       });
 
-      it("kill(SIGKILL) works", async () => {
+      it.concurrent("kill(SIGKILL) works", async () => {
         const process = spawn({
           cmd: [shellExe(), "-c", "sleep 1000"],
           stdout: "pipe",
@@ -385,9 +404,13 @@ for (let [gcTick, label] of [
         const prom = process.exited;
         process.kill("SIGKILL");
         await prom;
+        expect({ exitCode: process.exitCode, signalCode: process.signalCode }).toEqual({
+          exitCode: null,
+          signalCode: "SIGKILL",
+        });
       });
 
-      it("kill() works", async () => {
+      it.concurrent("kill() works", async () => {
         const process = spawn({
           cmd: [shellExe(), "-c", "sleep 1000"],
           stdout: "pipe",
@@ -396,9 +419,13 @@ for (let [gcTick, label] of [
         const prom = process.exited;
         process.kill();
         await prom;
+        expect({ exitCode: process.exitCode, signalCode: process.signalCode }).toEqual({
+          exitCode: null,
+          signalCode: "SIGTERM",
+        });
       });
 
-      it("kill() rejects String objects", async () => {
+      it.concurrent("kill() rejects String objects", async () => {
         const process = spawn({
           cmd: [shellExe(), "-c", "sleep 1000"],
           stdout: "pipe",
@@ -410,9 +437,11 @@ for (let [gcTick, label] of [
           process.kill();
           await process.exited;
         }
+        // Had either rejected call actually signaled the child, it would have died of SIGKILL.
+        expect(process.signalCode).toBe("SIGTERM");
       });
 
-      it("stdin can be read and stdout can be written", async () => {
+      it.concurrent("stdin can be read and stdout can be written", async () => {
         const proc = spawn({
           cmd: ["node", "-e", "process.stdin.setRawMode?.(true); process.stdin.pipe(process.stdout)"],
           stdout: "pipe",
@@ -444,10 +473,10 @@ for (let [gcTick, label] of [
 
         expect(text.trim()).toBe("hey");
         gcTick();
-        await proc.exited;
+        expect(await proc.exited).toBe(0);
       });
 
-      it("stdin.end() rejects with EPIPE when the child exits before consuming the write", async () => {
+      it.concurrent("stdin.end() rejects with EPIPE when the child exits before consuming the write", async () => {
         // Child reads a single byte and exits; the parent queues 16MB on stdin
         // (comfortably larger than kern.ipc.maxsockbuf on macOS and the 64KB
         // named-pipe buffer on Windows) so end() is still draining when the
@@ -469,7 +498,7 @@ for (let [gcTick, label] of [
           caught = e;
         }
         expect(caught?.code).toBe("EPIPE");
-        await proc.exited;
+        expect(await proc.exited).toBe(0);
       });
 
       describe("pipe", () => {
@@ -498,17 +527,18 @@ for (let [gcTick, label] of [
         for (const [callback, fixture] of fixtures) {
           describe(fixture.slice(0, 12), () => {
             describe("should allow reading stdout", () => {
-              it("before exit", async () => {
+              it.concurrent("before exit", async () => {
                 const process = callback();
                 const output = await process.stdout.text();
-                await process.exited;
+                const exitCode = await process.exited;
                 const expected = fixture + "\n";
 
                 expect(output.length).toBe(expected.length);
                 expect(output).toBe(expected);
+                expect(exitCode).toBe(0);
               });
 
-              it("before exit (chunked)", async () => {
+              it.concurrent("before exit (chunked)", async () => {
                 const process = callback();
                 var sink = new ArrayBufferSink();
                 var any = false;
@@ -539,17 +569,18 @@ for (let [gcTick, label] of [
 
                 const output = await new Response(sink.end()).text();
                 expect(output.length).toBe(expected.length);
-                await process.exited;
                 expect(output).toBe(expected);
+                expect(await process.exited).toBe(0);
               });
 
-              it.todoIf(isWindows && isBroken)("after exit", async () => {
+              it.concurrent.todoIf(isWindows && isBroken)("after exit", async () => {
                 const process = callback();
-                await process.exited;
+                const exitCode = await process.exited;
                 const output = await process.stdout.text();
                 const expected = fixture + "\n";
                 expect(output.length).toBe(expected.length);
                 expect(output).toBe(expected);
+                expect(exitCode).toBe(0);
               });
             });
           });
@@ -580,7 +611,7 @@ for (let [gcTick, label] of [
           expect(alive).toBeLessThan(5);
         });
 
-        it("should allow reading stdout after a few milliseconds", async () => {
+        it.concurrent("should allow reading stdout after a few milliseconds", async () => {
           for (let i = 0; i < 50; i++) {
             const proc = Bun.spawn({
               cmd: ["git", "--version"],
@@ -590,14 +621,15 @@ for (let [gcTick, label] of [
             });
             await Bun.sleep(1);
             const out = await proc.stdout.text();
-            expect(out).not.toBe("");
+            expect(out).toStartWith("git version");
+            expect(await proc.exited).toBe(0);
           }
         });
       });
 
       it("throws errors for invalid arguments", async () => {
         expect(() => {
-          spawnSync({
+          spawn({
             cmd: ["node", "-e", "console.log('hi')"],
             cwd: "./this-should-not-exist",
           });
@@ -612,7 +644,10 @@ it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || !isPosix 
   "with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD",
   async () => {
     const result = spawnSync({
-      cmd: [bunExe(), "test", path.resolve(import.meta.path)],
+      // The CI runner gives the outer run a generous per-test timeout; give the
+      // re-run one too instead of the 5s default, since the concurrent groups in
+      // this file run many debug children at once.
+      cmd: [bunExe(), "test", "--timeout=60000", path.resolve(import.meta.path)],
       env: {
         ...bunEnv,
         // Both flags are necessary to force this condition
@@ -631,7 +666,7 @@ it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || !isPosix 
 describe("spawn unref and kill should not hang", () => {
   const cmd = [shellExe(), "-c", "sleep 0.001"];
 
-  it("kill and await exited", async () => {
+  it.concurrent("kill and await exited", async () => {
     const promises = new Array(10);
     for (let i = 0; i < promises.length; i++) {
       const proc = spawn({
@@ -644,11 +679,11 @@ describe("spawn unref and kill should not hang", () => {
       promises[i] = proc.exited;
     }
 
-    await Promise.all(promises);
-
-    expect().pass();
+    for (const exitCode of await Promise.all(promises)) {
+      expect(exitCode).toBeNumber();
+    }
   });
-  it("unref", async () => {
+  it.concurrent("unref", async () => {
     for (let i = 0; i < 10; i++) {
       const proc = spawn({
         cmd,
@@ -657,12 +692,10 @@ describe("spawn unref and kill should not hang", () => {
         stdin: "ignore",
       });
       proc.unref();
-      await proc.exited;
+      expect(await proc.exited).toBe(0);
     }
-
-    expect().pass();
   });
-  it("kill and unref", async () => {
+  it.concurrent("kill and unref", async () => {
     for (let i = 0; i < (isWindows ? 10 : 100); i++) {
       const proc = spawn({
         cmd,
@@ -674,13 +707,10 @@ describe("spawn unref and kill should not hang", () => {
       proc.kill();
       proc.unref();
 
-      await proc.exited;
-      console.count("Finished");
+      expect(await proc.exited).toBeNumber();
     }
-
-    expect().pass();
   });
-  it("unref and kill", async () => {
+  it.concurrent("unref and kill", async () => {
     for (let i = 0; i < (isWindows ? 10 : 100); i++) {
       const proc = spawn({
         cmd,
@@ -690,19 +720,29 @@ describe("spawn unref and kill should not hang", () => {
       });
       proc.unref();
       proc.kill();
-      await proc.exited;
+      expect(await proc.exited).toBeNumber();
     }
-
-    expect().pass();
   });
 
-  it("should not hang after unref", async () => {
-    const proc = spawn({
+  it.concurrent("should not hang after unref", async () => {
+    await using proc = spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "does-not-hang.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
     });
 
-    await proc.exited;
-    expect().pass();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The fixture prints the pid of the child it left running; it is ours to clean up.
+    const orphan = Number(stdout.trim());
+    expect(orphan).toBeGreaterThan(0);
+    try {
+      process.kill(orphan);
+    } catch {
+      // Already gone, e.g. when BUN_FEATURE_FLAG_NO_ORPHANS is set (the ASAN lane).
+    }
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -816,7 +856,7 @@ describe("unref() + .exited with nothing else ref'd (Windows)", () => {
        const p = Bun.spawn({ ...opts, onExit: resolve }); p.unref(); await promise;`,
     ],
   ] as const) {
-    it(name, async () => {
+    it.concurrent(name, async () => {
       await using child = Bun.spawn({
         cmd: [
           bunExe(),
@@ -840,19 +880,19 @@ describe("unref() + .exited with nothing else ref'd (Windows)", () => {
   }
 });
 
-it("#3480", async () => {
+it.concurrent("#3480", async () => {
   {
     using server = Bun.serve({
       port: 0,
       fetch: (req, res) => {
-        Bun.spawnSync(["node", "-e", "console.log('1')"], {});
-        return new Response("Hello world!");
+        const { stdout, exitCode } = Bun.spawnSync(["node", "-e", "console.log('1')"], {});
+        return new Response(`Hello world! ${JSON.stringify(stdout.toString())} ${exitCode}`);
       },
     });
 
     const response = await fetch("http://" + server.hostname + ":" + server.port);
-    expect(await response.text()).toBe("Hello world!");
-    expect(response.ok);
+    expect(await response.text()).toBe('Hello world! "1\\n" 0');
+    expect(response.ok).toBe(true);
   }
 });
 
@@ -863,7 +903,8 @@ describe("close handling", () => {
     for (let stdout of [1, "ignore", Bun.stdout, undefined as any] as const) {
       for (let stderr of [2, "ignore", Bun.stderr, undefined as any] as const) {
         const thisTest = testNumber++;
-        it(`#${thisTest} [ ${typeof stdin_ === "function" ? "fd" : stdin_}, ${stdout}, ${stderr} ]`, async () => {
+        const name = `#${thisTest} [ ${typeof stdin_ === "function" ? "fd" : stdin_}, ${stdout}, ${stderr} ]`;
+        it.concurrent(name, async () => {
           const stdin = stdinFn();
 
           function getExitPromise() {
@@ -900,7 +941,7 @@ describe("close handling", () => {
               expect(() => fstatSync(stderr)).not.toThrow();
             }
 
-            await exitPromise;
+            expect(await exitPromise).toEqual([0, 0]);
           })();
 
           Bun.gc(false);
@@ -926,6 +967,7 @@ describe("close handling", () => {
     }
   }
 
+  // Spawns 8 children at once, so it stays serial (see "stdout can be read").
   it.skipIf(isWindows)("does not close caller-owned fds passed as extra stdio", async () => {
     const fd = openSync(import.meta.path, "r");
     try {
@@ -940,7 +982,7 @@ describe("close handling", () => {
         // The caller-supplied fd should be exposed on stdio[N] (not null) while
         // still not being closed by the subprocess.
         expect(procs[0].stdio).toEqual([null, null, null, fd]);
-        await Promise.all(procs.map(p => p.exited));
+        expect(await Promise.all(procs.map(p => p.exited))).toEqual(procs.map(() => 0));
       })();
 
       Bun.gc(true);
@@ -962,7 +1004,7 @@ describe("close handling", () => {
     }
   });
 
-  it.skipIf(isWindows)("stdio[N] for non-fd extra slots is null", async () => {
+  it.concurrent.skipIf(isWindows)("stdio[N] for non-fd extra slots is null", async () => {
     const fd = openSync(import.meta.path, "r");
     try {
       await using proc = spawn({
@@ -971,7 +1013,7 @@ describe("close handling", () => {
         stdio: ["ignore", "ignore", "ignore", "ignore", fd],
       });
       expect(proc.stdio).toEqual([null, null, null, null, fd]);
-      await proc.exited;
+      expect(await proc.exited).toBe(0);
     } finally {
       try {
         closeSync(fd);
@@ -984,7 +1026,7 @@ describe("close handling", () => {
     // eslint-disable-next-line no-sparse-arrays
     ["a hole", () => ["ignore", "pipe", "inherit", , "ignore"]],
   ] as const) {
-    it(`stdio[N>=3] = ${label} is treated as ignore`, async () => {
+    it.concurrent(`stdio[N>=3] = ${label} is treated as ignore`, async () => {
       await using proc = spawn({
         cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
         env: bunEnv,
@@ -1010,7 +1052,7 @@ describe("close handling", () => {
   describe("stdio[N>=3] blob-like inputs", () => {
     const readFd3 = `const fs = require("fs"); const b = Buffer.alloc(64); const n = fs.readSync(3, b); process.stdout.write(b.subarray(0, n));`;
 
-    it.skipIf(isWindows)("Bun.file(path) at index >= 3 is readable in the child", async () => {
+    it.concurrent.skipIf(isWindows)("Bun.file(path) at index >= 3 is readable in the child", async () => {
       const file = join(tmp, "stdio-extra-bunfile.txt");
       writeFileSync(file, "from-bun-file");
       await using proc = spawn({
@@ -1022,7 +1064,7 @@ describe("close handling", () => {
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: "from-bun-file", stderr: "", exitCode: 0 });
     });
 
-    it.skipIf(isWindows)("Bun.file(fd) at index >= 3 is readable in the child", async () => {
+    it.concurrent.skipIf(isWindows)("Bun.file(fd) at index >= 3 is readable in the child", async () => {
       const file = join(tmp, "stdio-extra-bunfile-fd.txt");
       writeFileSync(file, "from-bun-file-fd");
       const fd = openSync(file, "r");
@@ -1039,7 +1081,7 @@ describe("close handling", () => {
       }
     });
 
-    it.skipIf(isWindows)("empty Blob at index >= 3 is treated as ignore", async () => {
+    it.concurrent.skipIf(isWindows)("empty Blob at index >= 3 is treated as ignore", async () => {
       await using proc = spawn({
         cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
         env: bunEnv,
@@ -1173,32 +1215,32 @@ describe("close handling", () => {
   });
 });
 
-it("dispose keyword works", async () => {
+it.concurrent("dispose keyword works", async () => {
   let captured;
   {
     await using proc = spawn({
       cmd: [bunExe(), "-e", "await Bun.sleep(100000)"],
     });
     captured = proc;
-    await Bun.sleep(100);
   }
-  await Bun.sleep(0);
-  expect(captured.killed).toBe(true);
-  expect(captured.exitCode).toBe(null);
-  expect(captured.signalCode).toBe("SIGTERM");
+  // Leaving the block awaited the kill, so the exit is already observable.
+  expect({ killed: captured.killed, exitCode: captured.exitCode, signalCode: captured.signalCode }).toEqual({
+    killed: true,
+    exitCode: null,
+    signalCode: "SIGTERM",
+  });
 });
 
-it("error does not UAF", async () => {
-  let emsg = "";
-  try {
-    Bun.spawnSync({ cmd: ["command-is-not-found-uh-oh"] });
-  } catch (e) {
-    emsg = (e as Error).message;
-  }
-  expect(emsg).toInclude(" ");
+it("error does not UAF", () => {
+  expect(() => spawnSync({ cmd: ["command-is-not-found-uh-oh"] })).toThrow(
+    expect.objectContaining({
+      message: 'Executable not found in $PATH: "command-is-not-found-uh-oh"',
+      code: "ENOENT",
+    }),
+  );
 });
 
-it("throws when an ArrayBufferView is used for stdout or stderr", async () => {
+it.concurrent("throws when an ArrayBufferView is used for stdout or stderr", async () => {
   const fixture = `
     const results = [];
     for (const key of ["stdout", "stderr"]) {
@@ -1226,10 +1268,11 @@ it("throws when an ArrayBufferView is used for stdout or stderr", async () => {
     `spawn:stderr:${message}`,
     `spawnSync:stderr:${message}`,
   ]);
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
-it.skipIf(isWindows)("leaves a caller-supplied stdout fd open when stdin stream setup fails", async () => {
+it.concurrent.skipIf(isWindows)("leaves a caller-supplied stdout fd open when stdin stream setup fails", async () => {
   const file = join(tmp, "stdin-setup-failure.txt");
   const fixture = `
     const { openSync, fstatSync, writeSync, closeSync } = require("node:fs");
@@ -1269,7 +1312,7 @@ it.skipIf(isWindows)("leaves a caller-supplied stdout fd open when stdin stream 
   expect(exitCode).toBe(0);
 });
 
-it.skipIf(isWindows)("leaves a Bun.file(fd) stdout open when stdin stream setup fails", async () => {
+it.concurrent.skipIf(isWindows)("leaves a Bun.file(fd) stdout open when stdin stream setup fails", async () => {
   // Bun.file(fd) as stdout is an fd-backed Blob; extract_blob lowers it to
   // Stdio::Fd before spawn, so the error-path cleanup must recognise it as
   // caller-owned via the Fd variant and leave it open.
@@ -1332,6 +1375,10 @@ it.if(isWindows)("throws a spawn error for a cwd longer than the maximum path le
 });
 
 describe("onDisconnect", () => {
+  // Not concurrent: on the waiter-thread path (the FORCE_WAITER_THREAD re-run of
+  // this file) a message the child sends right before exiting is dropped when the
+  // parent handles the exit before it reads the socket, and a concurrent sibling
+  // blocking the event loop (spawnSync) makes that happen every time.
   it.todoIf(isWindows)("ipc delivers message", async () => {
     const msg = Promise.withResolvers<void>();
 
@@ -1359,7 +1406,7 @@ describe("onDisconnect", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  it.todoIf(isWindows)("onDisconnect callback is called when IPC disconnects", async () => {
+  it.concurrent.todoIf(isWindows)("onDisconnect callback is called when IPC disconnects", async () => {
     const disc = Promise.withResolvers<void>();
 
     let disconnectCalled = false;
@@ -1390,22 +1437,26 @@ describe("onDisconnect", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  it("onDisconnect is not called when IPC is not used", async () => {
+  it.concurrent("onDisconnect is not called when IPC is not used", async () => {
+    let disconnectCalled = false;
     await using proc = spawn({
       cmd: [bunExe(), "-e", "console.log('hello')"],
       onDisconnect: () => {
-        expect().fail("onDisconnect was called()");
+        disconnectCalled = true;
       },
       stdout: "pipe",
       stderr: "ignore",
       stdin: "ignore",
     });
-    expect(await proc.exited).toBe(0);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("hello\n");
+    expect(disconnectCalled).toBe(false);
+    expect(exitCode).toBe(0);
   });
 });
 
 describe("argv0", () => {
-  it("argv0 option changes process.argv0 but not executable", async () => {
+  it.concurrent("argv0 option changes process.argv0 but not executable", async () => {
     await using proc = spawn({
       cmd: [bunExe(), "-e", "console.log(process.argv0); console.log(process.execPath)"],
       argv0: "custom-argv0",
@@ -1419,7 +1470,7 @@ describe("argv0", () => {
     const lines = output.trim().split(/\r?\n/);
     expect(lines[0]).toBe("custom-argv0");
     expect(path.normalize(lines[1])).toBe(path.normalize(bunExe()));
-    await proc.exited;
+    expect(await proc.exited).toBe(0);
   });
 
   it("argv0 option works with spawnSync", () => {
@@ -1436,9 +1487,10 @@ describe("argv0", () => {
 
     const output = JSON.parse(proc.stdout.toString().trim());
     expect(output).toEqual({ argv0, execPath: path.normalize(bunExe()) });
+    expect(proc.exitCode).toBe(0);
   });
 
-  it("argv0 defaults to cmd[0] when not specified", async () => {
+  it.concurrent("argv0 defaults to cmd[0] when not specified", async () => {
     await using proc = spawn({
       cmd: [bunExe(), "-e", "console.log(process.argv0)"],
       stdout: "pipe",
@@ -1449,12 +1501,12 @@ describe("argv0", () => {
 
     const output = await proc.stdout.text();
     expect(output.trim()).toBe(bunExe());
-    await proc.exited;
+    expect(await proc.exited).toBe(0);
   });
 });
 
 describe("option combinations", () => {
-  it("detached + argv0 works together", async () => {
+  it.concurrent("detached + argv0 works together", async () => {
     await using proc = spawn({
       cmd: [bunExe(), "-e", "console.log(process.argv0)"],
       detached: true,
@@ -1467,11 +1519,12 @@ describe("option combinations", () => {
 
     const output = await proc.stdout.text();
     expect(output.trim()).toBe("custom-name");
-    await proc.exited;
+    expect(await proc.exited).toBe(0);
   });
 
+  // Not concurrent for the same reason as "ipc delivers message" above.
   it.todoIf(isWindows)("onDisconnect + ipc + serialization works together", async () => {
-    let messageReceived = false;
+    let received: unknown;
     let disconnectCalled = false;
 
     const msg = Promise.withResolvers<void>();
@@ -1490,8 +1543,7 @@ describe("option combinations", () => {
         `,
       ],
       ipc: message => {
-        expect(message).toEqual({ type: "hello", data: "world" });
-        messageReceived = true;
+        received = message;
         msg.resolve();
       },
       onDisconnect: () => {
@@ -1504,7 +1556,7 @@ describe("option combinations", () => {
     });
 
     await Promise.all([msg.promise, disc.promise]);
-    expect(messageReceived).toBe(true);
+    expect(received).toEqual({ type: "hello", data: "world" });
     expect(disconnectCalled).toBe(true);
     expect(await proc.exited).toBe(0);
   });

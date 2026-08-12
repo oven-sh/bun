@@ -199,19 +199,19 @@ impl FetchRequestBodySink {
         ))
     }
 
-    /// JS entry (`end_from_js` / the JSSink forwarder). Only JS-pump sinks have
-    /// a JS object, so this only ever reaches the non-releasing branch.
+    /// JS entry: only a JS-pump sink has a JS object, and its release belongs
+    /// to the pump promise, so there is never a ref to release here.
     pub fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        Self::end_from_stream(self, err.map(StreamError::Error));
+        let release = self.end_and_take_task(err.map(StreamError::Error));
+        debug_assert!(release.is_none());
         bun_sys::Result::Ok(())
     }
 
     /// Native-path terminator called from `SinkHandle::end`. Carries the full
     /// `StreamError` so a JS-valued upstream error (e.g. fetch reset) reaches
     /// `write_end_request(Some(js))` instead of being silently dropped to EOF.
-    ///
-    /// Takes the raw pointer, like `NetworkSink::end_from_stream`: the release
-    /// at the end may free the tasklet and, through `clear_sink`, this sink.
+    /// Raw pointer like `NetworkSink::end_from_stream`: the release may free
+    /// the tasklet and, through `clear_sink`, this sink.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn end_from_stream(this: *mut Self, err: Option<StreamError>) {
         // SAFETY: `this` is the live sink behind the handle; the borrow is
@@ -222,10 +222,8 @@ impl FetchRequestBodySink {
         FetchTasklet::write_end_request(task.as_ptr(), err_js);
     }
 
-    /// Marks the sink ended. For a native source, returns the tasklet ref to
-    /// release (the one `start_request_stream` took) and the error to end it
-    /// with; the JS pump path closes the source instead and its pump promise
-    /// does the releasing.
+    /// Marks the sink ended; for a native source, hands back the tasklet ref
+    /// `start_request_stream` took and the error to end the request with.
     fn end_and_take_task(
         &mut self,
         err: Option<StreamError>,

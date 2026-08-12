@@ -610,10 +610,9 @@ impl FetchTasklet {
         self.get_current_response().map(|r| unsafe { &mut *r })
     }
 
-    /// `this` is the allocation pointer the hop was dispatched with; it is what
-    /// gets stashed past this frame (the sink's back-pointer and the promise
-    /// ctx), so the releases made through those later carry the allocation's
-    /// provenance rather than that of a borrow that has long ended.
+    /// `this` is the allocation pointer; it is what gets stashed past this frame
+    /// (the sink's back-pointer, the promise ctx), so the later releases through
+    /// those carry the allocation's provenance, not a dead borrow's.
     fn start_request_stream(&mut self, this: *mut FetchTasklet) {
         self.is_waiting_request_stream_start = false;
         debug_assert!(matches!(

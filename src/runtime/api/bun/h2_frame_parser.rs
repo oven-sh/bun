@@ -7718,11 +7718,17 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-        let stream = unsafe { &mut *stream };
-
-        stream.wait_for_trailers = false;
-        let _ = this.send_data(stream, b"", true, JSValue::UNDEFINED, false, false);
+        this.send_no_trailers(unsafe { &mut *stream });
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// Ends our side of a `waitForTrailers` stream with an empty END_STREAM DATA frame. Used when
+    /// there are no trailers, and by `send_trailers` when the block encodes to zero fields (only
+    /// empty-array values). node's `Http2Stream::SubmitTrailers` sends this frame in both cases,
+    /// so the peer gets no 'trailers' event rather than one with an empty header list.
+    fn send_no_trailers(&self, stream: &mut Stream) {
+        stream.wait_for_trailers = false;
+        let _ = self.send_data(stream, b"", true, JSValue::UNDEFINED, false, false);
     }
 
     /// node's strictSingleValueFields option (default true): when disabled, duplicate
@@ -8093,6 +8099,10 @@ impl H2FrameParser {
                     return Ok(ret);
                 }
             }
+        }
+        if encoded_headers.is_empty() {
+            this.send_no_trailers(&mut stream);
+            return Ok(JSValue::UNDEFINED);
         }
         let encoded_data = encoded_headers.as_slice();
         let encoded_size = encoded_data.len();

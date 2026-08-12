@@ -226,8 +226,7 @@ fn write_log_data(data: &bun_ast::Data, w: &mut Writer) {
             return;
         }
         _ = w.write_int_le::<i32>(loc.line);
-        // One-based; 0 means the message has a line but no column (native plugins
-        // can log such a location), which the client renders without an underline.
+        // One-based; 0 means "no column" and the client then draws no underline.
         _ = w.write_int_le::<u32>(loc.column.max(0) as u32);
         _ = w.write_int_le::<u32>(u32::try_from(loc.length).expect("int cast"));
 

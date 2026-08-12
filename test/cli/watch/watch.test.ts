@@ -244,38 +244,44 @@ test("--hot: process.exit() exits the process (no keepalive)", async () => {
   expect(exitCode).toBe(3);
 });
 
-// Ctrl+C must still stop the watcher: process.exit() from a user's signal
-// handler is a real exit, not a keepalive unwind.
-it.skipIf(isWindows)("--watch: process.exit() in a SIGINT handler exits the watcher", async () => {
-  using dir = tempDir("watch-sigint-exit", {
-    "index.ts": `process.on("SIGINT", () => { process.exit(7); });\nconsole.log("READY");\nsetInterval(() => {}, 1000);\n`,
+// Ctrl+C must still stop the watcher: once a kill signal is delivered,
+// process.exit() is a real exit, not a keepalive unwind, even when the
+// handler defers the exit past the synchronous emit.
+for (const [variant, handler] of [
+  ["direct", `process.exit(7);`],
+  ["deferred", `setTimeout(() => process.exit(7), 10);`],
+] as const) {
+  it.skipIf(isWindows)(`--watch: process.exit() in a SIGINT handler exits the watcher (${variant})`, async () => {
+    using dir = tempDir("watch-sigint-exit", {
+      "index.ts": `process.on("SIGINT", () => { ${handler} });\nconsole.log("READY");\nsetInterval(() => {}, 1000);\n`,
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "index.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const stderrText = proc.stderr.text();
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let out = "";
+    while (!out.includes("READY")) {
+      const { done, value } = await reader.read();
+      if (done) throw new Error(`watcher exited before READY. stdout so far: ${JSON.stringify(out)}`);
+      out += decoder.decode(value, { stream: true });
+    }
+
+    proc.kill("SIGINT");
+    // The handler's exit code is honored and the watcher is gone.
+    expect(await proc.exited).toBe(7);
+    await reader.cancel();
+    expect(await stderrText).toBe("");
   });
-
-  await using proc = spawn({
-    cmd: [bunExe(), "--watch", "--no-clear-screen", "index.ts"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
-  });
-
-  const stderrText = proc.stderr.text();
-  const reader = proc.stdout.getReader();
-  const decoder = new TextDecoder();
-  let out = "";
-  while (!out.includes("READY")) {
-    const { done, value } = await reader.read();
-    if (done) throw new Error(`watcher exited before READY. stdout so far: ${JSON.stringify(out)}`);
-    out += decoder.decode(value, { stream: true });
-  }
-
-  proc.kill("SIGINT");
-  // The handler's exit code is honored and the watcher is gone.
-  expect(await proc.exited).toBe(7);
-  await reader.cancel();
-  expect(await stderrText).toBe("");
-});
+}
 
 // Watcher::start() must propagate a failed thread spawn as an Err through its
 // Result return instead of aborting inside start() with `.expect()`. An

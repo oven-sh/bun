@@ -1278,6 +1278,7 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
     // uv_signal_t callbacks fire on the uv_run thread (JS thread), but defer to avoid
     // re-entering JS from inside the libuv poll loop
     context->postTaskConcurrently([signalNumber](ScriptExecutionContext& context) {
+        Bun__noteUserSignalDelivered(signalNumber);
         Bun__onSignalForJS(signalNumber, uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject()));
     });
 #else

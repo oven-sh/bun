@@ -398,6 +398,7 @@ extern "C" bool Bun__resolveAndFetchBuiltinModule(
     ErrorableResolvedSource* result);
 extern "C" bool Bun__VM__useIsolationSourceProviderCache(void* bunVM);
 extern "C" bool Bun__VM__isWatchExitRequested(void* bunVM);
+extern "C" void Bun__noteUserSignalDelivered(int signalNumber);
 
 // Used in process.version
 extern "C" const char* Bun__version;

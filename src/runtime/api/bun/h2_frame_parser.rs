@@ -1332,8 +1332,7 @@ pub struct H2FrameParser {
     strict_single_value_fields: Cell<bool>,
     /// Highest stream id registered in either direction; a GOAWAY carries `last_peer_stream_id`.
     last_stream_id: Cell<u32>,
-    /// Copy of `Connection::last_peer_stream_id` (fed by on_last_peer_stream_id): what every
-    /// GOAWAY written on this side carries, and node's state.lastProcStreamID.
+    /// Copy of `Connection::last_peer_stream_id` (GOAWAY last-stream-id, state.lastProcStreamID).
     last_peer_stream_id: Cell<u32>,
     // Stream id whose header block is awaiting CONTINUATION frames
     // (RFC 9113 §4.3); 0 when none.

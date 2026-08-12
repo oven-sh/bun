@@ -170,8 +170,7 @@ pub trait Sink {
     /// counter moves, while the connection is mutably borrowed — the embedder must only
     /// store the values.
     fn on_frame_counters(&self, _received: u64, _sent: u64) {}
-    /// `last_peer_stream_id` advanced. Same store-only contract as on_frame_counters; the
-    /// embedder's GOAWAYs can be written from JS dispatched inside receive(), so it needs a copy.
+    /// `last_peer_stream_id` advanced. Store-only, like on_frame_counters.
     fn on_last_peer_stream_id(&self, _stream_id: u32) {}
     /// Transition shim while the outbound path still flows through the embedder's legacy encoder:
     /// returns true if `stream_id` was initiated locally (HEADERS already sent by the embedder), so
@@ -285,11 +284,9 @@ pub struct Connection {
     evict_buf: Vec<u32>,
 
     preface_received: usize,
-    /// Highest stream id seen in either direction (§5.1 "has this id existed" checks). Counts
-    /// locally-initiated streams too, so a GOAWAY must carry `last_peer_stream_id` instead.
+    /// Highest stream id in either direction, for the §5.1 idle checks; never sent in a GOAWAY.
     pub last_stream_id: u32,
-    /// Highest peer-initiated stream id (request ids on a server, refused included; promised ids
-    /// on a client): nghttp2's last_proc_stream_id, the only value a GOAWAY may carry (§6.8).
+    /// Highest peer-initiated id (nghttp2's last_proc_stream_id): what a GOAWAY carries (§6.8).
     pub last_peer_stream_id: u32,
     pub going_away: bool,
 }
@@ -391,8 +388,7 @@ impl Connection {
         sink.on_error(lib_code, last, debug);
     }
 
-    /// Call before surfacing the stream to the embedder, so a GOAWAY written from inside its
-    /// callbacks already covers it.
+    /// Must run before the stream is surfaced to the embedder.
     fn note_peer_stream(&mut self, sink: &impl Sink, stream_id: u32) {
         if stream_id > self.last_stream_id {
             self.last_stream_id = stream_id;

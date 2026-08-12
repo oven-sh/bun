@@ -360,7 +360,7 @@ impl JSMySQLConnection {
         )))
     }
 
-    pub(crate) fn enqueue_request(&self, item: *mut JSMySQLQuery) {
+    pub(crate) fn enqueue_request(&self, item: bun_ptr::OwnedRef<JSMySQLQuery>) {
         bun_core::scoped_log!(MySQLConnection, "enqueueRequest");
         self.connection_mut().enqueue_request(item);
         self.reset_connection_timeout();

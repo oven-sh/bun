@@ -5206,9 +5206,7 @@ impl DevServer {
 
         let _g = self.graph_safety_lock.guard();
 
-        // `server.reload()` creates a new `HTMLBundleRoute` for an html file that
-        // may already have a route bundle. The graph has one slot per file
-        // (`File::html_route_bundle_index`), so the new route adopts that bundle.
+        // `server.reload()` re-registers known html files; reuse their bundles.
         if let route_bundle::UnresolvedIndex::Html(html) = route {
             // SAFETY: caller guarantees `html` is a live IntrusiveRc-managed
             // allocation; single-threaded (uws JS-thread callback).

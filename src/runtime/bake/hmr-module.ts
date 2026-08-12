@@ -944,12 +944,6 @@ function isReactRefreshBoundary(esmExports): boolean {
 
 function implicitAcceptFunction() {}
 
-declare global {
-  interface Error {
-    asyncId?: string;
-  }
-}
-
 // bun:bake/server, bun:bake/client, and bun:wrap are
 // provided by this file instead of the bundler
 registerSynthetic("bun:wrap", {

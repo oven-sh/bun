@@ -42,8 +42,9 @@ test.skipIf(isWindows || !cargo || !workspaceResolvable).each([
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("undefined symbol");
-    // The test whose tape allocations keep the arena arm live must have run here, natively.
-    expect(stdout).toContain("test e::json_tape_tests::tape_rooted_at_a_mutable_borrow_still_accepts_writes ... ok");
+    // The tape tests are what make the arena arm live; they must have run here, natively.
+    expect(stdout).toMatch(/^test e::json_tape_tests::\w+ \.\.\. ok$/m);
+    expect(stdout).toContain("test result: ok.");
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
   },
   // Cold target dir: compiles bun_core and ~30 other crates first, and the

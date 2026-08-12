@@ -1383,6 +1383,42 @@ describe("event loop work dispatched from inside a blocked frame", () => {
     });
   });
 
+  test("a block inside dispatched work restores each frame's own store", () => {
+    const als = new AsyncLocalStorage<string>();
+    const seen: Record<string, string> = {};
+    const observe = (key: string) => {
+      seen[key] = als.getStore() ?? "none";
+    };
+    // Reaction registered with no store; it runs during the inner block below.
+    let release!: () => void;
+    const innerWork = new Promise<void>(resolve => (release = resolve)).then(() => observe("innerWork"));
+    const timer = als.run(
+      "timer",
+      () =>
+        new Promise<void>(resolve =>
+          setTimeout(() => {
+            observe("timerBefore");
+            release();
+            expect(innerWork).resolves.toBeUndefined();
+            observe("timerAfter");
+            resolve();
+          }, 1),
+        ),
+    );
+    als.run("caller", () => {
+      expect(timer).resolves.toBeUndefined();
+      observe("callerAfterwards");
+    });
+    observe("outside");
+    expect(seen).toEqual({
+      timerBefore: "timer",
+      innerWork: "none",
+      timerAfter: "timer",
+      callerAfterwards: "caller",
+      outside: "none",
+    });
+  });
+
   test("enterWith() inside dispatched work does not replace the blocked caller's store", () => {
     const als = new AsyncLocalStorage<string>();
     const entered = new Promise<void>(resolve =>

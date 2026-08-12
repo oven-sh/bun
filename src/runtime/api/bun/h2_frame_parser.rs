@@ -3382,10 +3382,8 @@ impl H2FrameParser {
         handler.close(bun_uws::CloseCode::Normal);
     }
 
-    /// The latched send was delivered by a later flush after all, and frames corked since
-    /// then are waiting on this same auto-flush registration (cork() does not add a second
-    /// one): clears the latch so on_auto_flush flushes them instead of releasing the
-    /// registration, which would leave them in the still-owned cork slot for good.
+    /// Frames corked after the failing send share its registration (cork() never adds a
+    /// second one), so releasing it would strand them in the cork slot.
     fn fatal_send_recovered_with_corked_frames(&self) -> bool {
         if self.has_backpressure() || CORKED_H2.with(|c| c.get()) != Some(self.as_ctx_ptr()) {
             return false;
@@ -3737,10 +3735,8 @@ impl Payload {
 }
 
 /// Trait to abstract over TLSSocket / TCPSocket for `generic_flush`/`generic_write`.
-///
-/// A still-connecting socket (the client session attaches before its connect completes)
-/// answers -1 like a detached one: send() on a connecting fd is ENOTCONN on macOS and
-/// Windows, which the socket layer reports as a fatal peer-gone write.
+/// A socket that is still connecting answers -1 like a detached one: send() on a
+/// connecting fd is ENOTCONN on macOS and Windows, which the socket layer reports as fatal.
 pub(crate) trait NativeSocketWrite {
     fn write_maybe_corked(&mut self, buf: &[u8]) -> i32;
 }

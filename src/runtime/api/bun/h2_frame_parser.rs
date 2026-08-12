@@ -8852,7 +8852,9 @@ impl H2FrameParser {
                     }
 
                     let name_str = name_js.to_js_string(global_object)?;
-                    let name_slice = name_str.to_slice(global_object);
+                    // Owned copy: the name is still used after the value's toString() has run,
+                    // which may drop the list's only reference to the name string.
+                    let name_slice = name_str.to_slice_clone(global_object)?;
                     let name = name_slice.slice();
                     if name.is_empty() {
                         continue;

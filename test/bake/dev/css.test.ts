@@ -749,24 +749,42 @@ devTest("framework route styles follow the css imports of the route and its layo
     expect((await routeStyles(dev, "/")).toSorted()).toEqual(["three.css", "two.css"]);
     expect(await routeStyles(dev, "/other")).toEqual(["three.css"]);
 
-    // Now with a hot update subscriber looking at "/", first while an
-    // unrelated route has a bundling error and then after it is fixed.
-    using _hmr = await viewRouteOverHmr(dev, "/");
+    // Now with a hot update subscriber looking at "/". Every rebuild publishes
+    // one hot update to it.
+    using hmr = await viewRouteOverHmr(dev, "/");
     await dev.write("routes/other.ts", `export default function (`);
-    expect((await dev.fetch("/other")).status).toBe(500);
+    await hmr.nextHotUpdate();
     await dev.write("routes/index.ts", routeRespondingWithStyles("four.css"));
+    // While another route has a bundling error, viewers are not told to reload
+    // or restyle anything (they are shown the error instead). The styles the
+    // server renders with are refreshed all the same.
+    expect(await hmr.nextHotUpdate()).toEqual({ reloadedRoutes: [], routeCss: {} });
     expect((await routeStyles(dev, "/")).toSorted()).toEqual(["four.css", "three.css"]);
 
     await dev.write("routes/other.ts", routeRespondingWithStyles("one.css"));
+    await hmr.nextHotUpdate();
     expect((await routeStyles(dev, "/other")).toSorted()).toEqual(["one.css", "three.css"]);
+
+    // With the error gone, the viewer of "/" is told to reload it and which
+    // stylesheets it has now, and those are the ones the server renders with.
     await dev.write("routes/index.ts", routeRespondingWithStyles());
-    expect(await routeStyles(dev, "/")).toEqual(["three.css"]);
+    const update = await hmr.nextHotUpdate();
+    const hrefs: string[] = await dev.fetch("/").json();
+    expect(await stylesheetFileNames(dev, hrefs)).toEqual(["three.css"]);
+    expect(update).toEqual({
+      reloadedRoutes: [hmr.routeBundleIndex],
+      routeCss: { [hmr.routeBundleIndex]: hrefs.map(href => href.match(/^\/_bun\/asset\/([0-9a-f]{16})\.css$/)![1]) },
+    });
   },
 });
 
-/** Fetches a route written with `routeRespondingWithStyles` and resolves each stylesheet url to its file name. */
+/** Fetches a route written with `routeRespondingWithStyles` and resolves the stylesheets to file names. */
 async function routeStyles(dev: Dev, route: string): Promise<string[]> {
-  const hrefs: string[] = await dev.fetch(route).json();
+  return stylesheetFileNames(dev, await dev.fetch(route).json());
+}
+
+/** Resolves served stylesheet urls to the file name in the comment each chunk starts with. */
+function stylesheetFileNames(dev: Dev, hrefs: string[]): Promise<string[]> {
   return Promise.all(
     hrefs.map(async href => {
       const css = await dev.fetch(href).text();
@@ -777,28 +795,90 @@ async function routeStyles(dev: Dev, route: string): Promise<string[]> {
   );
 }
 
+/** The route lists at the start of a hot update payload (see "List 1" and "List 2" in DevServer.rs's finalize_bundle). */
+interface HotUpdateRouteLists {
+  /** Route bundles whose server-side code changed; viewers re-request them. */
+  reloadedRoutes: number[];
+  /** For each viewed route bundle that changed, its stylesheet ids, or `null` if no import was added or removed. */
+  routeCss: Record<number, string[] | null>;
+}
+
+function decodeRouteLists(payload: ArrayBuffer): HotUpdateRouteLists {
+  const view = new DataView(payload);
+  let offset = 1; // MessageId.hot_update
+  const i32 = () => {
+    const value = view.getInt32(offset, true);
+    offset += 4;
+    return value;
+  };
+  const reloadedRoutes: number[] = [];
+  for (let route = i32(); route !== -1; route = i32()) {
+    reloadedRoutes.push(route);
+  }
+  const routeCss: Record<number, string[] | null> = {};
+  for (let route = i32(); route !== -1; route = i32()) {
+    const count = i32();
+    if (count === -1) {
+      routeCss[route] = null;
+      continue;
+    }
+    const ids: string[] = [];
+    for (let i = 0; i < count; i++) {
+      ids.push(Buffer.from(payload, offset, 16).toString());
+      offset += 16;
+    }
+    routeCss[route] = ids;
+  }
+  return { reloadedRoutes, routeCss };
+}
+
 /**
  * Performs the handshake the HMR runtime performs in a browser: subscribes to
  * hot updates and errors, then tells the dev server which route is being
  * viewed. Resolves once the server has acknowledged the route.
  */
-async function viewRouteOverHmr(dev: Dev, route: string): Promise<Disposable> {
+async function viewRouteOverHmr(dev: Dev, route: string) {
   const ws = new WebSocket(dev.baseUrl + "/_bun/hmr");
   ws.binaryType = "arraybuffer";
-  const viewing = Promise.withResolvers<void>();
-  ws.onerror = () => viewing.reject(new Error("hmr websocket errored"));
-  ws.onclose = () => viewing.reject(new Error("hmr websocket closed"));
+  const viewing = Promise.withResolvers<number>();
+  const unreadHotUpdates: ArrayBuffer[] = [];
+  let reader: PromiseWithResolvers<ArrayBuffer> | null = null;
+  const fail = (reason: string) => {
+    viewing.reject(new Error(reason));
+    reader?.reject(new Error(reason));
+  };
+  ws.onerror = () => fail("hmr websocket errored");
+  ws.onclose = () => fail("hmr websocket closed");
   ws.onmessage = event => {
-    const data = new Uint8Array(event.data as ArrayBuffer);
-    if (data[0] === "V".charCodeAt(0)) {
-      ws.send("she");
-      ws.send("n" + route);
-    } else if (data[0] === "n".charCodeAt(0)) {
-      viewing.resolve();
+    const payload = event.data as ArrayBuffer;
+    switch (new Uint8Array(payload)[0]) {
+      case "V".charCodeAt(0): // version
+        ws.send("she"); // subscribe to hot updates and errors
+        ws.send("n" + route); // set_url
+        break;
+      case "n".charCodeAt(0): // set_url_response
+        viewing.resolve(new DataView(payload).getUint32(1, true));
+        break;
+      case "u".charCodeAt(0): // hot_update
+        if (reader) {
+          reader.resolve(payload);
+          reader = null;
+        } else {
+          unreadHotUpdates.push(payload);
+        }
+        break;
     }
   };
-  await viewing.promise;
   return {
+    routeBundleIndex: await viewing.promise,
+    async nextHotUpdate(): Promise<HotUpdateRouteLists> {
+      let payload = unreadHotUpdates.shift();
+      if (!payload) {
+        reader = Promise.withResolvers<ArrayBuffer>();
+        payload = await reader.promise;
+      }
+      return decodeRouteLists(payload);
+    },
     [Symbol.dispose]() {
       ws.onclose = null;
       ws.close();

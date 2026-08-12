@@ -149,5 +149,41 @@ describe("bundler", () => {
         },
       });
     }
+
+    // Same re-exports in a file that two chunks share. Its code is hoisted into
+    // a shared chunk, which hands the bindings on through the cross-chunk
+    // `export { readFileSync, fsns }` suffix instead of an entry point tail, so
+    // the record has to pair those exports with the imports printed in the
+    // chunk body. Without the imports the binary segfaulted on startup.
+    for (const minify of [false, true]) {
+      itBundled(`compile/splitting/ReExportExternalFromSharedChunk${minify ? "+minify" : ""}`, {
+        compile: true,
+        splitting: true,
+        bytecode: true,
+        format: "esm",
+        ...(minify ? { minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true } : {}),
+        files: {
+          "/entry.ts": /* js */ `
+            import { rfs, fsns } from "./shared.ts";
+            console.log("entry:", typeof rfs, typeof fsns.readFileSync);
+            const lazy = await import("./lazy.ts");
+            lazy.report();
+          `,
+          "/lazy.ts": /* js */ `
+            import { rfs, fsns } from "./shared.ts";
+            export function report() {
+              console.log("lazy:", typeof rfs, typeof fsns.readFileSync);
+            }
+          `,
+          "/shared.ts": /* js */ `
+            export { readFileSync as rfs } from "node:fs";
+            export * as fsns from "node:fs";
+          `,
+        },
+        run: {
+          stdout: "entry: function function\nlazy: function function",
+        },
+      });
+    }
   });
 });

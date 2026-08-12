@@ -1426,3 +1426,71 @@ describe("throwing 'secureConnect' listener", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("servernames containing NUL bytes", () => {
+  // The SNI servername becomes the C string handed to
+  // SSL_set_tlsext_host_name, so "good.example\0evil" would silently send
+  // "good.example" on the wire while JS-level checks see the full string.
+  it.each(["localhost\0.example.invalid", "localhost\0"])("tls.connect rejects servername %j", async servername => {
+    // A real local TLS server: without the check, the handshake COMPLETES
+    // with the truncated SNI, which the sentinel below turns into a failure.
+    const server = tls.createServer(COMMON_CERT_);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    let err: any;
+    let socket: ReturnType<typeof tls.connect> | undefined;
+    try {
+      socket = tls.connect({
+        host: "127.0.0.1",
+        port: (server.address() as AddressInfo).port,
+        servername,
+        rejectUnauthorized: false,
+      });
+      const client = socket;
+      err = await new Promise((resolve, reject) => {
+        client.on("error", resolve);
+        client.on("secureConnect", () => reject(new Error("handshake completed with a truncated SNI")));
+      });
+    } catch (e) {
+      err = e;
+    } finally {
+      socket?.destroy();
+      server.close();
+    }
+    expect(err?.message).toContain("must not contain null bytes");
+  });
+
+  it("socket.setServername rejects a servername containing a NUL byte", async () => {
+    // A plain server that never responds keeps the handshake pending, so the
+    // native setServername path is reachable without racing secureConnect.
+    const server = net.createServer(s => s.on("error", () => {}));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const socket = tls.connect({
+      host: "127.0.0.1",
+      port: (server.address() as AddressInfo).port,
+      servername: "initial.example.invalid",
+      rejectUnauthorized: false,
+    });
+    socket.on("error", () => {});
+    try {
+      await once(socket, "connect");
+      for (const servername of ["localhost\0.example.invalid", "localhost\0"]) {
+        expect(() => socket.setServername(servername)).toThrow('"serverName" must not contain null bytes');
+      }
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  });
+
+  it("server.addContext rejects a hostname pattern containing a NUL byte", async () => {
+    // The SNI tree registers the C string, so "a.example\0evil" would
+    // register a certificate under "a.example".
+    const server = tls.createServer(COMMON_CERT_);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      expect(() => server.addContext("a.example.invalid\0evil", COMMON_CERT_)).toThrow("must not contain null bytes");
+    } finally {
+      server.close();
+    }
+  });
+});

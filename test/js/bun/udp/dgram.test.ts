@@ -926,3 +926,31 @@ test("a worker exiting from its first 'message' of a batch does not crash", asyn
     worker.terminate();
   }
 });
+
+describe("custom lookup results containing NUL bytes", () => {
+  // dgram's default lookup (dns.lookup) already rejects NUL hostnames, but a
+  // custom lookup can hand connect() an arbitrary string, which flows straight
+  // to the native connect. The native guard must reject it rather than let the
+  // C string truncate at the NUL.
+  test.concurrent.each(["127.0.0.1\0.example.invalid", "127.0.0.1\0"])(
+    "connect() rejects a lookup result of %j",
+    async address => {
+      const socket = createSocket({
+        type: "udp4",
+        // The implicit bind resolves through this lookup too; give it a clean
+        // address so the connect path's native guard is the one exercised.
+        lookup: (hostname, _options, callback) =>
+          (callback as any)(null, hostname === "placeholder.example.invalid" ? address : "127.0.0.1", 4),
+      });
+      const err: any = await new Promise(resolve => {
+        try {
+          socket.connect(53, "placeholder.example.invalid", (e?: Error) => resolve(e));
+        } catch (e) {
+          resolve(e);
+        }
+      });
+      socket.close();
+      expect(err?.message).toContain("must not contain null bytes");
+    },
+  );
+});

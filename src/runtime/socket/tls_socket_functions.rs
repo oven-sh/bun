@@ -331,6 +331,9 @@ pub(super) fn set_servername(
         .get_zig_string(global)?
         .to_owned_slice()
         .into_boxed_slice();
+    if strings::contains_char(&slice, 0) {
+        return Err(global.throw(format_args!("\"serverName\" must not contain null bytes")));
+    }
     // Drop replaces the old value.
     this.server_name.set(Some(slice));
 

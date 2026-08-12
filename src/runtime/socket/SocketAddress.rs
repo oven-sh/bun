@@ -385,12 +385,29 @@ impl SocketAddress {
     }
 
     pub(crate) fn init_js(global: &JSGlobalObject, options: Options) -> JsResult<SocketAddress> {
-        let mut presentation: BunString = BunString::empty();
+        // OwnedString releases the from_js +1 on error paths; into_inner() transfers it.
+        let mut owned_address = options.address.map(OwnedString::new);
+
+        // Checked pre-slice_z: that conversion absorbs one trailing NUL.
+        if let Some(address_str) = &owned_address {
+            if strings::contains_char(address_str.to_utf8_without_ref().slice(), 0) {
+                use bun_jsc::js_global_object::SysErrOptions;
+                return Err(global.throw_sys_error(
+                    &SysErrOptions {
+                        code: bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
+                        errno: None,
+                        name: None,
+                    },
+                    format_args!("Invalid socket address"),
+                ));
+            }
+        }
 
         // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
         // copy the string.
         // PERF: could use a small stack buffer with heap fallback.
 
+        let mut presentation: BunString = BunString::empty();
         let addr: sockaddr = match options.family {
             AF::INET => {
                 let mut sin: inet::sockaddr_in = inet::sockaddr_in {
@@ -399,9 +416,8 @@ impl SocketAddress {
                     addr: 0, // undefined → overwritten below
                     ..inet::sockaddr_in::ZEROED
                 };
-                if let Some(address_str) = options.address {
-                    presentation = address_str;
-                    let slice = presentation.to_owned_slice_z();
+                if let Some(address_str) = owned_address.take() {
+                    let slice = address_str.get().to_owned_slice_z();
                     // Box<ZStr> drops at scope exit
                     pton(
                         global,
@@ -409,6 +425,7 @@ impl SocketAddress {
                         &slice,
                         (&raw mut sin.addr).cast::<c_void>(),
                     )?;
+                    presentation = address_str.into_inner();
                 } else {
                     sin.addr = sockaddr::LOOPBACK_V4.as_sin().unwrap().addr;
                 }
@@ -423,15 +440,15 @@ impl SocketAddress {
                     scope_id: 0,
                     ..inet::sockaddr_in6::ZEROED
                 };
-                if let Some(address_str) = options.address {
-                    presentation = address_str;
-                    let slice = presentation.to_owned_slice_z();
+                if let Some(address_str) = owned_address.take() {
+                    let slice = address_str.get().to_owned_slice_z();
                     pton(
                         global,
                         inet::AF_INET6,
                         &slice,
                         (&raw mut sin6.addr).cast::<c_void>(),
                     )?;
+                    presentation = address_str.into_inner();
                 } else {
                     sin6.addr = inet::IN6ADDR_ANY_INIT;
                 }

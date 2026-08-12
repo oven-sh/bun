@@ -71,6 +71,14 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
         arguments: &[JSValue],
     ) -> JsResult<Option<Self>> {
         let hostname_str = bun_core::OwnedString::new(arguments[0].to_bun_string(global_object)?);
+        {
+            let hostname_utf8 = hostname_str.to_utf8_without_ref();
+            if bun_core::strings::contains_char(hostname_utf8.slice(), 0) {
+                return Err(global_object.throw_invalid_arguments(format_args!(
+                    "hostname must not contain null bytes"
+                )));
+            }
+        }
         let port = arguments[1].coerce::<i32>(global_object)?;
         let username_str = bun_core::OwnedString::new(arguments[2].to_bun_string(global_object)?);
         let password_str = bun_core::OwnedString::new(arguments[3].to_bun_string(global_object)?);

@@ -163,6 +163,11 @@ impl SSLConfigFromJs for SSLConfig {
             any = true;
         }
         if let Some(server_name) = generated.server_name.get() {
+            if bun_core::strings::contains_char(server_name.to_utf8().slice(), 0) {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "\"serverName\" must not contain null bytes"
+                )));
+            }
             result.server_name = zbox_into_raw(&server_name.to_owned_slice_z());
             result.requires_custom_request_ctx = true;
         }

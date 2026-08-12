@@ -77,6 +77,7 @@ bun_dispatch::link_interface! {
         Shell,
         FilterRunHandle,
         MultiRunHandle,
+        CreateChain,
         TestParallelWorker,
         CronRegister,
         CronRemove,

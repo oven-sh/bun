@@ -1,14 +1,19 @@
 use bun_collections::VecExt;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::ffi::c_char;
 use std::cell::Cell;
+use std::collections::VecDeque;
 use std::io::Write as _;
 
+#[cfg(unix)]
+use crate::api::bun_process::SpawnResultExt as _;
 use crate::api::bun_process::sync as spawn_sync;
+use crate::api::bun_process::{self as spawn, Process, SpawnOptions, Status};
 use bun_clap as clap;
 use bun_core::Progress::{Node as ProgressNode, Progress};
 use bun_core::{Global, Output, pretty, pretty_error, pretty_errorln};
 use bun_core::{MutableString, strings};
 use bun_dotenv as DotEnv;
+use bun_event_loop::EventLoopHandle;
 use bun_http as HTTP;
 use bun_js_printer as JSPrinter;
 use bun_libarchive::{Archiver, archiver};
@@ -18,7 +23,6 @@ use bun_resolver::fs;
 use bun_sys::FdDirExt as _;
 #[cfg(not(windows))]
 use bun_sys::copy_file as CopyFile;
-use bun_threading::Futex;
 use bun_url::URL;
 use bun_which::which;
 use bun_zlib as Zlib;
@@ -33,8 +37,7 @@ use crate::cli::which_npm_client::NPMClient;
 pub mod SourceFileProjectGenerator;
 
 // PORTING.md §Global mutable state: single-thread CLI scratch buffer →
-// RacyCell. Touched on the main thread for `--open` *and* the spawned git
-// thread (sequenced — git thread writes after main is done with it).
+// RacyCell. Used for the `git` and then the `--open` lookup in `CreateCommand::exec`.
 static BUN_PATH_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 
 // bun.OSPathLiteral — `bun_paths` does not (yet) export an
@@ -56,77 +59,6 @@ const SKIP_FILES: &[&OSPathSlice] = &[
 ];
 
 const NEVER_CONFLICT: &[&[u8]] = &[b"README.md", b"gitignore", b".gitignore", b".git/"];
-
-const NPM_TASK_ARGS: &[&[u8]] = &[b"run"];
-
-fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClient>) {
-    let task = strings::trim(task_, b" \n\r\t");
-    if task.is_empty() {
-        return;
-    }
-
-    let mut count: usize = 0;
-    for _ in strings::split(task, b" ") {
-        count += 1;
-    }
-
-    let npm_args = 2 * usize::from(npm_client.is_some());
-    let total = count + npm_args;
-    // `set_len` + index-write into uninitialized `&[u8]` slots is UB (invalid
-    // references exist before assignment). Build with `push` instead — same
-    // allocation, no unsafe.
-    let mut argv: Vec<&[u8]> = Vec::with_capacity(total);
-
-    if let Some(ref client) = npm_client {
-        argv.push(client.bin);
-        argv.push(NPM_TASK_ARGS[0]);
-    }
-
-    for split in strings::split(task, b" ") {
-        argv.push(split);
-    }
-    debug_assert_eq!(argv.len(), total);
-
-    let mut argv: &[&[u8]] = &argv;
-    if npm_client.is_some() && strings::starts_with(task, b"bun ") {
-        argv = &argv[2..];
-    }
-
-    pretty!("\n<r><d>$<b>");
-    for (i, arg) in argv.iter().enumerate() {
-        if i > argv.len() - 1 {
-            Output::print(format_args!(" {} ", bstr::BStr::new(arg)));
-        } else {
-            Output::print(format_args!(" {}", bstr::BStr::new(arg)));
-        }
-    }
-    pretty!("<r>");
-    Output::print(format_args!("\n"));
-    Output::flush();
-
-    let _unbuffered = Output::disable_buffering_scope();
-
-    let _ = spawn_sync::spawn(&spawn_sync::Options {
-        argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
-        envp: None,
-        cwd: Box::from(cwd),
-        stderr: spawn_sync::SyncStdio::Inherit,
-        stdout: spawn_sync::SyncStdio::Inherit,
-        stdin: spawn_sync::SyncStdio::Inherit,
-        // `WindowsOptions::default()` zeroes `loop_` (UB — null `uv_loop` deref
-        // in `spawn_process_windows`), so populate it.
-        #[cfg(windows)]
-        windows: spawn_sync::WindowsOptions {
-            loop_: bun_event_loop::EventLoopHandle::init_mini(
-                bun_event_loop::MiniEventLoop::init_global(None, None),
-            ),
-            ..Default::default()
-        },
-        #[cfg(not(windows))]
-        windows: (),
-        ..Default::default()
-    });
-}
 
 // We don't want to allocate memory each time
 // But we cannot print over an existing buffer or weird stuff will happen
@@ -1072,8 +1004,6 @@ impl CreateCommand {
             bun_core::pretty_errorln!("Has dependencies? {}", has_dependencies as u8,);
         }
 
-        let mut npm_client_: Option<NPMClient> = None;
-
         // Remember whether the user explicitly opted out (`--no-install`)
         // before this is widened to also cover dependency-less templates:
         // the flag must skip template tasks, but a template with no
@@ -1081,94 +1011,108 @@ impl CreateCommand {
         let user_skipped_install = create_options.skip_install;
         create_options.skip_install = create_options.skip_install || !has_dependencies;
 
-        if !create_options.skip_git {
-            if !create_options.skip_install {
-                GitHandler::spawn(destination, path_env, create_options.verbose);
-            } else {
-                if create_options.verbose {
-                    create_options.skip_git =
-                        GitHandler::run::<true>(destination, path_env).unwrap_or(false);
-                } else {
-                    create_options.skip_git =
-                        GitHandler::run::<false>(destination, path_env).unwrap_or(false);
-                }
-            }
-        }
-
-        if !create_options.skip_install {
-            npm_client_ = Some(NPMClient {
+        let npm_client = if create_options.skip_install {
+            None
+        } else {
+            Some(NPMClient {
                 tag: crate::cli::which_npm_client::Tag::Bun,
                 bin: bun_core::self_exe_path()?,
-            });
-        }
+            })
+        };
 
-        if npm_client_.is_some() && !preinstall_tasks.is_empty() {
-            for task in &preinstall_tasks {
-                exec_task(task, destination, path_env, npm_client_);
+        let event_loop = bun_event_loop::MiniEventLoop::init_global(None, None);
+        let event_loop_handle = EventLoopHandle::init_mini(event_loop);
+
+        let mut git_chain = Chain::new(destination, event_loop_handle);
+        if !create_options.skip_git {
+            let git_start = bun_core::time::nano_timestamp();
+
+            // Not sure why...
+            // But using libgit for this operation is slower than the CLI!
+            // Used to have a feature flag to try it but was removed:
+            // https://github.com/oven-sh/bun/commit/deafd3d0d42fb8d7ddf2b06cde2d7c7ee8bc7144
+            //
+            // ~/Build/throw
+            // ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
+            // Benchmark #1: bun create react3 app --force --no-install
+            //   Time (mean ± σ):     974.6 ms ±   6.8 ms    [User: 170.5 ms, System: 798.3 ms]
+            //   Range (min … max):   960.8 ms … 984.6 ms    10 runs
+            //
+            // ❯ mv /usr/local/opt/libgit2/lib/libgit2.dylib /usr/local/opt/libgit2/lib/libgit2.dylib.1
+            //
+            // ~/Build/throw
+            // ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
+            // Benchmark #1: bun create react3 app --force --no-install
+            //   Time (mean ± σ):     306.7 ms ±   6.1 ms    [User: 31.7 ms, System: 269.8 ms]
+            //   Range (min … max):   299.5 ms … 318.8 ms    10 runs
+
+            // SAFETY: single-threaded CLI access to the module-level scratch buffer;
+            // the `--open` lookup below reuses it only after this block is done with it.
+            let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
+            match which(bun_path_buf, path_env, destination, b"git") {
+                Some(git) => {
+                    let git: &[u8] = git.as_bytes();
+                    if create_options.verbose {
+                        bun_core::pretty_errorln!("git backend: {}", bstr::BStr::new(git));
+                    }
+                    git_chain.push(StepKind::Git, &[git, b"init", b"--quiet"]);
+                    git_chain.push(
+                        StepKind::Git,
+                        &[git, b"add", destination, b"--ignore-errors"],
+                    );
+                    git_chain.push(
+                        StepKind::Git,
+                        &[
+                            git,
+                            b"commit",
+                            b"-am",
+                            b"Initial commit (via bun create)",
+                            b"--quiet",
+                        ],
+                    );
+                    git_chain.git_started_at = Some(git_start);
+                }
+                None => create_options.skip_git = true,
             }
         }
 
-        if let Some(ref npm_client) = npm_client_ {
-            let start_time = bun_core::time::nano_timestamp();
-            let install_args: &[&[u8]] = &[npm_client.bin, b"install"];
-            Output::flush();
-            bun_core::pretty!(
-                "\n<r><d>$ <b><cyan>{}<r><d> install",
-                npm_client.tag.as_str(),
-            );
-
-            if install_args.len() > 2 {
-                for arg in &install_args[2..] {
-                    bun_core::pretty!(" ");
-                    bun_core::pretty!("{}", bstr::BStr::new(arg));
+        let mut install_chain = Chain::new(destination, event_loop_handle);
+        if let Some(npm_client) = npm_client {
+            for task in &preinstall_tasks {
+                if let Some(argv) = task_argv(task, Some(npm_client)) {
+                    install_chain.push(StepKind::Task, &argv);
                 }
             }
-
-            bun_core::pretty!("<r>\n");
-            Output::flush();
-            scopeguard::defer! {
-                Output::print_errorln("");
-                Output::print_start_end(start_time, bun_core::time::nano_timestamp());
-                bun_core::pretty_error!(
-                    " <r><d>{} install<r>\n",
-                    npm_client.tag.as_str(),
-                );
-                Output::flush();
-
-                Output::print(format_args!("\n"));
-                Output::flush();
-            }
-
-            let process = spawn_sync::spawn(&spawn_sync::Options {
-                argv: install_args.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
-                envp: None,
-                cwd: Box::from(destination),
-                stderr: spawn_sync::SyncStdio::Inherit,
-                stdout: spawn_sync::SyncStdio::Inherit,
-                stdin: spawn_sync::SyncStdio::Inherit,
-                // Default would zero `loop_` → UB.
-                #[cfg(windows)]
-                windows: spawn_sync::WindowsOptions {
-                    loop_: bun_event_loop::EventLoopHandle::init_mini(
-                        bun_event_loop::MiniEventLoop::init_global(None, None),
-                    ),
-                    ..Default::default()
-                },
-                #[cfg(not(windows))]
-                windows: (),
-                ..Default::default()
-            })?;
-            let _ = process?;
+            install_chain.push(
+                StepKind::Install(npm_client.tag),
+                &[npm_client.bin, b"install"],
+            );
         }
-
-        if !user_skipped_install && !postinstall_tasks.is_empty() {
+        if !user_skipped_install {
             for task in &postinstall_tasks {
-                exec_task(task, destination, path_env, npm_client_);
+                if let Some(argv) = task_argv(task, npm_client) {
+                    install_chain.push(StepKind::Task, &argv);
+                }
             }
         }
 
-        if !create_options.skip_install && !create_options.skip_git {
-            create_options.skip_git = !GitHandler::wait();
+        {
+            let _unbuffered = Output::disable_buffering_scope();
+            git_chain.spawn_next();
+            install_chain.spawn_next();
+            while !(git_chain.is_done() && install_chain.is_done()) {
+                // SAFETY: `event_loop` points at this thread's thread-lifetime
+                // MiniEventLoop singleton. The only tasks on it are the children's
+                // exit notifications, which ignore the context argument.
+                unsafe { (*event_loop).tick_once(core::ptr::null_mut()) };
+            }
+        }
+
+        if git_chain.error.is_some() {
+            create_options.skip_git = true;
+        }
+        if let Some(err) = install_chain.error.take() {
+            return Err(err);
         }
 
         Output::print_error("\n");
@@ -1728,16 +1672,10 @@ impl ExampleTag {
     }
 }
 
-// PORTING.md §Global mutable state: single-threaded CLI scratch state →
-// RacyCell. `URL_` borrows into the `*_BUF` statics so they must remain
-// process-lifetime, not stack locals.
-static URL_: bun_core::RacyCell<Option<URL<'static>>> = bun_core::RacyCell::new(None);
+// PORTING.md §Global mutable state: single-threaded CLI scratch buffers → RacyCell.
 static APP_NAME_BUF: bun_core::RacyCell<[u8; 512]> = bun_core::RacyCell::new([0u8; 512]);
 static GITHUB_REPOSITORY_URL_BUF: bun_core::RacyCell<[u8; 1024]> =
     bun_core::RacyCell::new([0u8; 1024]);
-// Static so the borrowed slice satisfies `URL<'static>` for
-// `AsyncHTTP::init_sync` (single-threaded CLI; same pattern as
-// `GITHUB_REPOSITORY_URL_BUF`).
 static NPM_REGISTRY_URL_BUF: bun_core::RacyCell<[u8; 1024]> = bun_core::RacyCell::new([0u8; 1024]);
 
 impl Example {
@@ -2032,28 +1970,14 @@ impl Example {
             let written = cap - cursor.len();
             &url_buf[..written]
         });
-        // SAFETY: `api_url` borrows from the process-global `NPM_REGISTRY_URL_BUF`;
-        // erase the local reborrow lifetime for storage in `URL_` /
-        // `AsyncHTTP::init_sync` (single-threaded CLI; same as
-        // `fetch_from_github`).
-        unsafe {
-            *URL_.get() = Some(api_url.erase_lifetime());
-        }
 
-        // SAFETY: `http_proxy` borrows from `env_loader`, which outlives this
-        // fn. Erased to `'static` because `async_http` is `cli_arena()`-backed
-        // (so its type parameter is `'static`), but the proxy URL is only read
-        // during the `send_sync()` calls below while `env_loader` is live.
-        let mut http_proxy: Option<URL<'static>> = env_loader
-            .get_http_proxy_for(unsafe { (*URL_.get()).as_ref().unwrap() })
-            .map(|u| unsafe { u.erase_lifetime() });
+        let mut http_proxy = env_loader.get_http_proxy_for(&api_url);
 
         // ensure very stable memory address
         let async_http: &mut HTTP::AsyncHTTP =
             crate::cli::cli_arena().alloc(HTTP::AsyncHTTP::init_sync(
                 HTTP::Method::GET,
-                // SAFETY: single-threaded CLI access to static URL_ (set just above)
-                unsafe { (*URL_.get()).clone() }.unwrap(),
+                api_url,
                 Default::default(),
                 b"",
                 b"",
@@ -2139,10 +2063,7 @@ impl Example {
         // ensure very stable memory address
         let parsed_tarball_url = URL::parse(tarball_url);
 
-        // SAFETY: see note on `http_proxy` above.
-        http_proxy = env_loader
-            .get_http_proxy_for(&parsed_tarball_url)
-            .map(|u| unsafe { u.erase_lifetime() });
+        http_proxy = env_loader.get_http_proxy_for(&parsed_tarball_url);
 
         *async_http = HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
@@ -2372,137 +2293,233 @@ impl CreateListExamplesCommand {
     }
 }
 
-struct GitHandler;
-
-static SUCCESS: AtomicU32 = AtomicU32::new(0);
-// bun_threading has no top-level Thread wrapper yet,
-// so use std::thread::JoinHandle directly (CLI-only, no JSC interaction).
-// PORTING.md §Global mutable state: written in `spawn`, taken in `wait`, both
-// on the main CLI thread → RacyCell.
-static THREAD: bun_core::RacyCell<Option<std::thread::JoinHandle<()>>> =
-    bun_core::RacyCell::new(None);
-
-impl GitHandler {
-    fn spawn(destination: &[u8], path: &[u8], verbose: bool) {
-        SUCCESS.store(0, Ordering::Relaxed);
-
-        // Own copies so the spawned closure is `'static` without any lifetime
-        // extension.
-        let destination: Box<[u8]> = Box::from(destination);
-        let path: Box<[u8]> = Box::from(path);
-        let thread = match std::thread::Builder::new()
-            .spawn(move || Self::spawn_thread(&destination, &path, verbose))
-        {
-            Ok(t) => t,
-            Err(err) => {
-                bun_core::pretty_errorln!("<r><red>{}<r>", err);
-                Global::exit(1);
-            }
-        };
-        // SAFETY: single-threaded CLI; written once before wait()
-        unsafe { *THREAD.get() = Some(thread) };
+/// The argv a template task runs with: `bun run <task>` through the npm client,
+/// or the task's own words when there is no client or the task already starts
+/// with `bun `. `None` for a blank task.
+fn task_argv(task: &[u8], npm_client: Option<NPMClient>) -> Option<Vec<&[u8]>> {
+    let task = strings::trim(task, b" \n\r\t");
+    if task.is_empty() {
+        return None;
     }
 
-    fn spawn_thread(destination: &[u8], path: &[u8], verbose: bool) {
-        Output::Source::configure_named_thread(bun_core::zstr!("git"));
-        let outcome = if verbose {
-            Self::run::<true>(destination, path).unwrap_or(false)
-        } else {
-            Self::run::<false>(destination, path).unwrap_or(false)
-        };
-
-        SUCCESS.store(if outcome { 1 } else { 2 }, Ordering::Release);
-        Futex::wake(&SUCCESS, 1);
-        Output::flush();
-    }
-
-    fn wait() -> bool {
-        while SUCCESS.load(Ordering::Acquire) == 0 {
-            Futex::wait_forever(&SUCCESS, 0);
+    let mut argv: Vec<&[u8]> = Vec::new();
+    if let Some(client) = npm_client {
+        if !strings::starts_with(task, b"bun ") {
+            argv.push(client.bin);
+            argv.push(b"run");
         }
-
-        let outcome = SUCCESS.load(Ordering::Acquire) == 1;
-        // SAFETY: THREAD set in spawn() on this same thread before wait() called
-        let _ = unsafe { (*THREAD.get()).take() }.unwrap().join();
-        outcome
     }
+    argv.extend(strings::split(task, b" "));
+    Some(argv)
+}
 
-    fn run<const VERBOSE: bool>(destination: &[u8], path: &[u8]) -> crate::Result<bool> {
-        let git_start = bun_core::time::nano_timestamp();
+/// What a [`Chain`] prints around one of its children and what it means when
+/// that child cannot be spawned. Exit codes are ignored for all of them.
+#[derive(Clone, Copy)]
+enum StepKind {
+    /// A template `preinstall` / `postinstall` task, echoed as a `$ ...` line.
+    /// A task that fails to spawn is skipped.
+    Task,
+    /// `bun install`, between its header and its timing footer. Failing to
+    /// spawn it is the error `bun create` fails with.
+    Install(crate::cli::which_npm_client::Tag),
+    /// One git command. Failing to spawn it marks git as skipped.
+    Git,
+}
 
-        // Not sure why...
-        // But using libgit for this operation is slower than the CLI!
-        // Used to have a feature flag to try it but was removed:
-        // https://github.com/oven-sh/bun/commit/deafd3d0d42fb8d7ddf2b06cde2d7c7ee8bc7144
-        //
-        // ~/Build/throw
-        // ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
-        // Benchmark #1: bun create react3 app --force --no-install
-        //   Time (mean ± σ):     974.6 ms ±   6.8 ms    [User: 170.5 ms, System: 798.3 ms]
-        //   Range (min … max):   960.8 ms … 984.6 ms    10 runs
-        //
-        // ❯ mv /usr/local/opt/libgit2/lib/libgit2.dylib /usr/local/opt/libgit2/lib/libgit2.dylib.1
-        //
-        // ~/Build/throw
-        // ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
-        // Benchmark #1: bun create react3 app --force --no-install
-        //   Time (mean ± σ):     306.7 ms ±   6.1 ms    [User: 31.7 ms, System: 269.8 ms]
-        //   Range (min … max):   299.5 ms … 318.8 ms    10 runs
+struct Step {
+    kind: StepKind,
+    argv: Vec<bun_core::ZBox>,
+}
 
-        // SAFETY: single-threaded CLI access to module-level static path buffer (note: this fn
-        // may run on the git thread; BUN_PATH_BUF is also touched on main thread for `--open`.
-        // The two uses are sequenced — git runs before `--open` block.)
-        let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
-        // `bun.spawnSync` on Windows drives `uv_spawn` and needs a uv loop. This fn
-        // runs on the dedicated git thread (see `GitHandler::spawn`), so use the
-        // *thread-local* `MiniEventLoop` singleton — `init_global` is `thread_local!`-backed,
-        // so the main thread's loop is not touched (driving it cross-thread would be libuv UB).
-        #[cfg(windows)]
-        let win_loop = bun_event_loop::EventLoopHandle::init_mini(
-            bun_event_loop::MiniEventLoop::init_global(None, None),
-        );
-        if let Some(git) = which(bun_path_buf, path, destination, b"git") {
-            let git: &[u8] = git.as_bytes();
-            let git_commands: [&[&[u8]]; 3] = [
-                &[git, b"init", b"--quiet"],
-                &[git, b"add", destination, b"--ignore-errors"],
-                &[
-                    git,
-                    b"commit",
-                    b"-am",
-                    b"Initial commit (via bun create)",
-                    b"--quiet",
-                ],
-            ];
-
-            if VERBOSE {
-                bun_core::pretty_errorln!("git backend: {}", bstr::BStr::new(git));
+impl Step {
+    fn print_header(&self) {
+        match self.kind {
+            StepKind::Task => {
+                pretty!("\n<r><d>$<b>");
+                for arg in &self.argv {
+                    Output::print(format_args!(" {}", bstr::BStr::new(arg.as_bytes())));
+                }
+                pretty!("<r>");
+                Output::print(format_args!("\n"));
             }
+            StepKind::Install(tag) => {
+                pretty!("\n<r><d>$ <b><cyan>{}<r><d> install<r>\n", tag.as_str());
+            }
+            StepKind::Git => {}
+        }
+    }
+}
 
-            for command in git_commands {
-                let _ = spawn_sync::spawn(&spawn_sync::Options {
-                    argv: command.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
-                    cwd: Box::from(destination),
-                    stdin: spawn_sync::SyncStdio::Inherit,
-                    stdout: spawn_sync::SyncStdio::Inherit,
-                    stderr: spawn_sync::SyncStdio::Inherit,
-                    #[cfg(windows)]
-                    windows: spawn_sync::WindowsOptions {
-                        loop_: win_loop,
-                        ..Default::default()
-                    },
-                    #[cfg(not(windows))]
-                    windows: (),
+fn print_install_footer(tag: crate::cli::which_npm_client::Tag, started_at: i128) {
+    Output::print_errorln("");
+    Output::print_start_end(started_at, bun_core::time::nano_timestamp());
+    pretty_error!(" <r><d>{} install<r>\n", tag.as_str());
+    Output::flush();
+
+    Output::print(format_args!("\n"));
+    Output::flush();
+}
+
+/// Children `bun create` runs one after another on this thread's
+/// `MiniEventLoop`, each with inherited stdio in the destination directory.
+/// A child's exit (the `CreateChain` handler below) spawns the next step.
+/// `CreateCommand::exec` keeps both chains in locals until the loop has
+/// stopped ticking, which is what the exit handler's owner pointer relies on.
+struct Chain {
+    options: SpawnOptions,
+    event_loop: EventLoopHandle,
+    steps: VecDeque<Step>,
+    /// The step whose child is running, and when it was spawned.
+    running: Option<(StepKind, i128)>,
+    /// The ref `to_process` returned for every child spawned so far. They are
+    /// all released in `Drop`: a child may be reaped inside its own
+    /// `watch_or_reap`, so no `Process` can be freed from the exit handler.
+    processes: Vec<*mut Process>,
+    /// Set on the git chain; the `[..ms] git` line is printed from it once
+    /// every command has run.
+    git_started_at: Option<i128>,
+    /// The first `Install` or `Git` step that failed to spawn; no later step runs.
+    error: Option<crate::Error>,
+    done: bool,
+}
+
+impl Chain {
+    fn new(destination: &[u8], event_loop: EventLoopHandle) -> Chain {
+        Chain {
+            options: SpawnOptions {
+                stdin: spawn::Stdio::Inherit,
+                stdout: spawn::Stdio::Inherit,
+                stderr: spawn::Stdio::Inherit,
+                cwd: Box::from(destination),
+                #[cfg(windows)]
+                windows: spawn::WindowsOptions {
+                    loop_: event_loop,
                     ..Default::default()
-                })?;
-            }
+                },
+                ..Default::default()
+            },
+            event_loop,
+            steps: VecDeque::new(),
+            running: None,
+            processes: Vec::new(),
+            git_started_at: None,
+            error: None,
+            done: false,
+        }
+    }
 
-            bun_core::pretty_error!("\n");
-            Output::print_start_end(git_start, bun_core::time::nano_timestamp());
-            bun_core::pretty_error!(" <d>git<r>\n");
-            return Ok(true);
+    fn push(&mut self, kind: StepKind, argv: &[&[u8]]) {
+        debug_assert!(!argv.is_empty());
+        self.steps.push_back(Step {
+            kind,
+            argv: argv.iter().map(bun_core::ZBox::from_bytes).collect(),
+        });
+    }
+
+    /// Spawns the next step that can be spawned, or finishes the chain.
+    fn spawn_next(&mut self) {
+        while let Some(step) = self.steps.pop_front() {
+            let started_at = bun_core::time::nano_timestamp();
+            step.print_header();
+            Output::flush();
+            match self.spawn(&step.argv) {
+                Ok(process) => {
+                    self.running = Some((step.kind, started_at));
+                    self.processes.push(process);
+                    self.watch(process);
+                    return;
+                }
+                Err(err) => match step.kind {
+                    StepKind::Task => {}
+                    StepKind::Install(tag) => {
+                        print_install_footer(tag, started_at);
+                        self.error = Some(err);
+                        break;
+                    }
+                    StepKind::Git => {
+                        self.error = Some(err);
+                        break;
+                    }
+                },
+            }
         }
 
-        Ok(false)
+        self.done = true;
+        if self.error.is_none() {
+            if let Some(git_started_at) = self.git_started_at {
+                pretty_error!("\n");
+                Output::print_start_end(git_started_at, bun_core::time::nano_timestamp());
+                pretty_error!(" <d>git<r>\n");
+            }
+        }
+    }
+
+    fn spawn(&self, argv: &[bun_core::ZBox]) -> crate::Result<*mut Process> {
+        let mut argv_ptrs: Vec<*const c_char> = argv.iter().map(bun_core::ZBox::as_ptr).collect();
+        argv_ptrs.push(core::ptr::null());
+        // SAFETY: `argv_ptrs` is a NULL-terminated array of `argv`'s NUL-terminated
+        // strings, non-empty by `push`, and both outlive the call; `environ_ptr`
+        // is the live NULL-terminated environment, as `spawn_sync` passes too.
+        let spawned = unsafe {
+            spawn::spawn_process(&self.options, argv_ptrs.as_ptr(), bun_sys::environ_ptr())
+        }??;
+        #[cfg(windows)]
+        let mut spawned = spawned;
+        Ok(spawned.to_process(self.event_loop))
+    }
+
+    fn watch(&mut self, process: *mut Process) {
+        // SAFETY: `process` was just returned by `to_process` and is kept alive by
+        // the ref stored in `self.processes` until `Drop`.
+        let process = unsafe { &mut *process };
+        // SAFETY: the chain is a local of `CreateCommand::exec` that outlives the
+        // tick loop delivering this exit, and `Drop` detaches every child before
+        // the chain goes away, so the handler never runs against a dead chain.
+        process.set_exit_handler(unsafe {
+            bun_spawn::ProcessExit::new(
+                bun_spawn::ProcessExitKind::CreateChain,
+                std::ptr::from_mut::<Chain>(self),
+            )
+        });
+        // A child that has already exited is reaped right here, which re-enters
+        // `spawn_next` through the handler; nothing below touches `self` after that.
+        if let Err(err) = process.watch_or_reap() {
+            if !process.has_exited() {
+                process.on_exit(Status::Err(err), &spawn::rusage_zeroed());
+            }
+        }
+    }
+
+    fn on_child_exit(&mut self) {
+        if let Some((StepKind::Install(tag), started_at)) = self.running.take() {
+            print_install_footer(tag, started_at);
+        }
+        self.spawn_next();
+    }
+
+    /// Flips inside `tick_once`, when the last child's exit handler runs.
+    fn is_done(&self) -> bool {
+        self.done
+    }
+}
+
+impl Drop for Chain {
+    fn drop(&mut self) {
+        for &process in &self.processes {
+            // SAFETY: `process` is the ref `spawn_next` stored here and nothing else
+            // releases it. Detaching first clears the handler pointing at `self`, in
+            // case a child is still running when the chain is dropped early.
+            unsafe {
+                (*process).detach();
+                Process::deref(process);
+            }
+        }
+    }
+}
+
+bun_spawn::link_impl_ProcessExit! {
+    CreateChain for Chain => |this| {
+        on_process_exit(_process, _status, _rusage) => (*this).on_child_exit(),
     }
 }

@@ -282,10 +282,11 @@ it("reports an error and exits when the template's package.json entry body is tr
   expect(exitCode).toBe(1);
 });
 
-// GitHandler::wait() used Futex::wait(.., Some(1000)) (1us timeout) in a loop,
-// issuing ~18k futex syscalls/sec while the git thread ran. POSIX-only: stub
-// `git` is a shell script and ru_nvcsw is always 0 on Windows.
-it.skipIf(!isPosix)("does not busy-wait on the futex while git runs", async () => {
+// Waiting for git once spun on a 1us futex timeout (~18k syscalls/sec while git
+// ran); now the children run on the event loop, which sleeps until one of them
+// exits. POSIX-only: the stub `git` is a shell script and ru_nvcsw is always 0
+// on Windows.
+it.skipIf(!isPosix)("does not busy-wait while git runs alongside the install", async () => {
   using dir = tempDir("create-git-futex", {
     "bin/git": "#!/bin/sh\nsleep 0.5\nexit 0\n",
     "bun-create/tmpl/index.js": "// hi\n",
@@ -316,6 +317,83 @@ it.skipIf(!isPosix)("does not busy-wait on the futex while git runs", async () =
   expect(proc.exitCode).toBe(0);
   // Before the fix this was ~27,000 over the ~1.5s git wait; after, a few dozen.
   expect(proc.resourceUsage!.contextSwitches.voluntary).toBeLessThan(2000);
+});
+
+const gitEnv = {
+  GIT_AUTHOR_NAME: "bun create test",
+  GIT_AUTHOR_EMAIL: "create@example.com",
+  GIT_COMMITTER_NAME: "bun create test",
+  GIT_COMMITTER_EMAIL: "create@example.com",
+};
+
+describe.skipIf(!Bun.which("git"))("git repository and install", () => {
+  it("initialises a repository with one commit and installs the dependencies", async () => {
+    using dir = tempDir("create-git-and-install", {
+      "bun-create/tmpl/index.js": "// hi\n",
+      "bun-create/tmpl/package.json": JSON.stringify({
+        name: "tmpl",
+        version: "1.0.0",
+        dependencies: { localdep: "file:./localdep" },
+      }),
+      "bun-create/tmpl/localdep/package.json": JSON.stringify({ name: "localdep", version: "1.0.0" }),
+    });
+    const dest = join(String(dir), "dest");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "create", "tmpl", dest],
+      cwd: String(dir),
+      env: { ...env, ...gitEnv, BUN_CREATE_DIR: join(String(dir), "bun-create") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error:");
+    // Both chains ran to the end: each prints its timing line.
+    expect(stderr).toContain("] git");
+    expect(stderr).toContain("] bun install");
+    expect(stdout).toContain("A local git repository was created for you and dependencies were installed automatically.");
+    expect(await exists(join(dest, "node_modules", "localdep", "package.json"))).toBe(true);
+
+    // init, add and commit ran in order, in the destination.
+    const log = spawnSync({
+      cmd: ["git", "log", "--format=%s", "--name-only"],
+      cwd: dest,
+      env: { ...env, ...gitEnv },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const lines = log.stdout.toString().split(/\r?\n/).filter(Boolean);
+    expect(lines[0]).toBe("Initial commit (via bun create)");
+    expect(lines).toContain("index.js");
+    expect(lines).toContain("package.json");
+    expect(log.exitCode).toBe(0);
+    expect(exitCode).toBe(0);
+  });
+
+  it("reports the repository it created when there is nothing to install", async () => {
+    using dir = tempDir("create-git-no-install", {
+      "bun-create/tmpl/index.js": "// hi\n",
+      "bun-create/tmpl/package.json": JSON.stringify({ name: "tmpl", version: "1.0.0" }),
+    });
+    const dest = join(String(dir), "dest");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "create", "tmpl", dest],
+      cwd: String(dir),
+      env: { ...env, ...gitEnv, BUN_CREATE_DIR: join(String(dir), "bun-create") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain("] git");
+    expect(await exists(join(dest, ".git"))).toBe(true);
+    // The git-without-install path used to record the outcome inverted and stay silent here.
+    expect(stdout).toContain("A local git repository was created for you.");
+    expect(exitCode).toBe(0);
+  });
 });
 
 it("should create template from local folder", async () => {

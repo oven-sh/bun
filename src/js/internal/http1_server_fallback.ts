@@ -251,9 +251,7 @@ function connectionListenerHTTP1(server, socket, options) {
   const kOnMessageComplete = HTTPParser.kOnMessageComplete | 0;
 
   // Mirror Node's connectionListenerInternal: carry maxHeaderSize / leniency / maxHeadersCount
-  // into the parser and register it with the server's ConnectionsList, which tracks whether the
-  // connection is idle for closeIdleHttp1Connections.
-  // https://github.com/nodejs/node/blob/main/lib/_http_server.js
+  // into the parser. https://github.com/nodejs/node/blob/main/lib/_http_server.js
   const lenientFlags = calculateLenientFlags(server.httpValidation, server.insecureHTTPParser);
   const connections = (server[kHttp1Connections] ??= new ConnectionsList());
   const parser = new HTTPParser();
@@ -431,8 +429,7 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.end();
     }
   }
-  // Node's freeParser. remove() has to come before close(): a closed parser can no longer take
-  // itself out of the ConnectionsList.
+  // Node's freeParser; a closed parser can no longer remove() itself from the list.
   function freeHttp1Parser() {
     parser.remove();
     parser.close();
@@ -444,12 +441,9 @@ function connectionListenerHTTP1(server, socket, options) {
   socket.once("close", freeHttp1Parser);
 }
 
-// Node's Server#closeIdleConnections. The parser is busy from initialize() until the first
-// request completes and again from each later request's first byte until it completes, so
-// ConnectionsList#idle() only lists connections sitting between requests; a connection that has
-// not sent a request yet, or is still sending one, is not idle. Of those, one whose response is
-// still being written is kept as well.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js (closeIdleConnections)
+// Node's Server#closeIdleConnections. idle() is the parsers between messages (a parser is busy
+// from initialize() and from each message's first byte until kOnMessageComplete).
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js
 function closeIdleHttp1Connections(server) {
   const connections = server[kHttp1Connections];
   if (!connections) return;

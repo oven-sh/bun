@@ -1332,16 +1332,11 @@ pub struct H2FrameParser {
     strict_single_value_fields: Cell<bool>,
     /// Highest stream id registered in either direction (see highest_started_stream_id).
     last_stream_id: Cell<u32>,
-    /// Id the next locally initiated stream gets (a request on a client, a push on a server).
-    /// Mirrors nghttp2's `nghttp2_session.next_stream_id`, which it keeps apart from its
-    /// last sent/received/processed marks:
-    /// https://github.com/nghttp2/nghttp2/blob/master/lib/nghttp2_session.h (next_stream_id).
-    /// Starts at 1 or 2 (nghttp2_session_client_new3 / nghttp2_session_server_new3 in
-    /// lib/nghttp2_session.c), advances by 2 only when this side takes an id
-    /// (submit_headers_shared and nghttp2_submit_push_promise in lib/nghttp2_submit.c) or via
-    /// nghttp2_session_set_next_stream_id, and is what node reports as state.nextStreamID
-    /// (nghttp2_session_get_next_stream_id). The peer's streams advance `last_stream_id`, never
-    /// this.
+    /// Id of the next stream this side initiates (a request on a client, a push on a server):
+    /// https://github.com/nghttp2/nghttp2/blob/master/lib/nghttp2_session.h (next_stream_id),
+    /// which only submit_headers_shared / nghttp2_submit_push_promise (lib/nghttp2_submit.c,
+    /// `+= 2`) and nghttp2_session_set_next_stream_id move, and which node reports as
+    /// state.nextStreamID. The peer's streams advance `last_stream_id`, never this.
     next_stream_id: Cell<u32>,
     /// Highest PEER-initiated stream id processed (odd ids for a server, even for a
     /// client). This — not `last_stream_id` — is what an auto-filled GOAWAY must carry:
@@ -8308,15 +8303,16 @@ impl H2FrameParser {
         let stream_id_arg = args_list[0];
         debug_assert!(stream_id_arg.is_number());
         let requested = stream_id_arg.to_u32();
-        // An id of the peer's parity rounds up to the next one of ours; 0 (the JS layer lets a
-        // fraction below 1 through) lands on the first id, as on a fresh session.
+        // 0 is a fractional id below 1 that passed the JS range check; nghttp2 rejects it too.
+        if requested == 0 {
+            return Ok(JSValue::UNDEFINED);
+        }
         let next_stream_id = if this.has_local_parity(requested) {
             requested
         } else {
             requested.saturating_add(1)
         };
-        this.next_stream_id
-            .set(next_stream_id.max(this.first_local_stream_id()));
+        this.next_stream_id.set(next_stream_id);
         Ok(JSValue::UNDEFINED)
     }
 

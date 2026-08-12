@@ -180,24 +180,19 @@ impl AtomicSync {
     }
 }
 
-/// The owner's handle to a pool. The state the workers share lives in
-/// [`ThreadPoolInner`], behind an `Arc` that every worker holds as well, so
-/// no other thread ever touches the handle itself: it can sit by value in a
-/// struct whose `&mut self` methods run while the pool is busy
-/// (`PackageManager`, the bundler's `Box<ThreadPool>`), and its `Drop` can
-/// shut the workers down and wait for them. With the shared state inline
-/// instead, every such `&mut` would cover memory the workers write into
-/// (`sync`, `wait_group`, `join_event`), which both Stacked and Tree Borrows
-/// reject; see test/internal/source-lints/thread-pool-drop-holds-only-pointers.test.ts.
+/// The owner's handle. Everything the workers write to lives in
+/// [`ThreadPoolInner`], behind an `Arc` every worker holds too, so a `&mut`
+/// over this struct (its `Drop`, a `&mut self` method of a struct embedding
+/// it by value) is fine while the workers run; with that state inline, both
+/// aliasing models reject it. Enforced by
+/// test/internal/source-lints/thread-pool-drop-holds-only-pointers.test.ts.
 pub struct ThreadPool {
     inner: Arc<ThreadPoolInner>,
 }
 
-/// Everything the workers reach through their `Arc`. Written from every
-/// worker thread for as long as the pool runs, so it is only ever accessed
-/// through `&ThreadPoolInner`; a worker's `Arc` keeps it alive through the
-/// worker's last access in [`ThreadPoolInner::unspawn`], including the notify
-/// that releases [`ThreadPoolInner::join`].
+/// Only ever reached through `&ThreadPoolInner`. A worker's own `Arc` keeps it
+/// alive through the worker's last access in [`ThreadPoolInner::unspawn`],
+/// including the notify that lets [`ThreadPoolInner::join`] return.
 struct ThreadPoolInner {
     /// When `true` (default), each worker calls
     /// [`Output::Source::configure_named_thread`] on startup, which initializes
@@ -238,8 +233,7 @@ impl Default for Config {
 }
 
 impl ThreadPool {
-    /// Initialize the thread pool using the configuration. No thread is
-    /// started until `warm()` or the first `schedule()`.
+    /// Initialize the thread pool using the configuration.
     pub fn init(config: Config) -> ThreadPool {
         ThreadPool {
             inner: Arc::new(ThreadPoolInner {
@@ -306,9 +300,7 @@ impl Default for ThreadPool {
     }
 }
 
-/// Shut down the thread pool and stop the worker threads. `&mut self` here
-/// covers only the `Arc` pointer; the workers exiting underneath write into
-/// `*self.inner`, which they reach through their own `Arc`s.
+/// Shut down the thread pool and stop the worker threads.
 impl Drop for ThreadPool {
     fn drop(&mut self) {
         self.inner.shutdown();
@@ -612,8 +604,7 @@ impl ThreadPool {
     }
 }
 
-// The methods that may end up spawning a worker (`schedule_impl` → `notify` →
-// `notify_slow`, and `warm`) take `&Arc<Self>`: the worker gets its own clone.
+// `&Arc<Self>` receivers: these may spawn a worker, which gets its own clone.
 impl ThreadPoolInner {
     fn schedule_impl(self: &Arc<Self>, batch: &Batch, try_current: bool) {
         let Batch { len, head, tail } = *batch;
@@ -771,8 +762,7 @@ impl ThreadPoolInner {
     }
 
     /// Starts the worker for the `spawned` slot the caller just CAS'd into
-    /// `sync`. Returns `false` if the OS refused the thread, in which case the
-    /// slot has been given back.
+    /// `sync`; on `false` the OS refused the thread and the slot is given back.
     fn spawn_worker(self: &Arc<Self>) -> bool {
         let pool = Arc::clone(self);
         match std::thread::Builder::new()
@@ -962,10 +952,8 @@ impl ThreadPoolInner {
     }
 
     /// Un-spawn one thread, either because spawning it failed or because it is
-    /// exiting. The caller reaches `self` through an `Arc` it still holds, so
-    /// `self` stays alive for the whole call even though the
-    /// `join_event.notify()` below lets `join()`, and with it the owner's
-    /// `ThreadPool`, return at any point after it.
+    /// exiting. The notify below may let the owner drop its `ThreadPool`;
+    /// `self` outlives that through the caller's `Arc`.
     fn unspawn(&self) {
         let one_spawned = {
             let mut s = Sync::zero();
@@ -1052,8 +1040,7 @@ pub struct Thread {
     run_queue: node::Queue,
     idle_queue: node::Queue,
     run_buffer: node::Buffer,
-    /// Into the worker's own `Arc<ThreadPoolInner>`, which `Thread::run` (the
-    /// fn this `Thread` is a local of) borrows for its whole duration.
+    /// `Thread::run` borrows the worker's `Arc<ThreadPoolInner>` for as long as this value exists.
     thread_pool: bun_ptr::BackRef<ThreadPoolInner>,
 }
 
@@ -1064,9 +1051,6 @@ thread_local! {
 /// RAII scope for a worker thread's active lifetime: publishes `thread` as
 /// `CURRENT` and registers it with `pool` on construction; on drop, unregisters
 /// from the pool and clears `CURRENT`.
-///
-/// `pool` borrows from the worker's own `Arc<ThreadPoolInner>` (see `Thread::run`),
-/// which outlives this guard.
 struct ThreadRegistration<'a> {
     pool: &'a ThreadPoolInner,
     thread: *mut Thread,
@@ -1138,11 +1122,8 @@ impl Thread {
         self.idle_queue.push(&list);
     }
 
-    /// Thread entry point which runs a worker for the ThreadPool.
-    ///
-    /// `thread_pool` is the worker's own reference to the shared state, owned
-    /// by the thread's closure (`spawn_worker`) and so released only once this
-    /// returns, after `_registration` has unregistered the worker.
+    /// Thread entry point which runs a worker for the ThreadPool. `thread_pool`
+    /// is the worker's own `Arc`, owned by the thread's closure in `spawn_worker`.
     fn run(thread_pool: &Arc<ThreadPoolInner>) {
         // No args, no preconditions; marks this OS thread as a mimalloc
         // threadpool worker so deferred frees are processed eagerly. `safe fn`
@@ -1189,8 +1170,7 @@ impl Thread {
             }
         }
 
-        // Hoist a single shared ref for the hot loop; only `notify` below needs
-        // the `Arc` itself.
+        // Only `notify` below needs the `Arc` itself.
         let pool: &ThreadPoolInner = thread_pool;
         let mut self_ = Thread {
             next: ptr::null_mut(),

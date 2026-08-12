@@ -567,9 +567,8 @@ class ListenSubscription {
   }
 }
 
-// One registration per listen() call, so a callback may appear more than once.
-// The entry is deleted with its last registration; code resuming after an await
-// compares its entry against the map to learn whether it is still the live one.
+// One registration per listen() call (a callback may appear twice); the entry is deleted with its last one, so
+// code resuming after an await compares its entry against the map to learn whether it is still the live one.
 class Channel {
   // A lone listener is stored bare; arrays are replaced, never mutated, so a dispatch in progress is unaffected.
   listeners: Listener | readonly Listener[];

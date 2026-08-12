@@ -285,6 +285,11 @@ pub struct ReadFile {
     pub(crate) io_request: io::Request,
     #[cfg(not(windows))]
     pub(crate) could_block: bool,
+    /// A FIFO vnode as opposed to a `pipe(2)` pipe. kqueue never reports EOF
+    /// for these, so their waits happen in `block_until_readable` instead of
+    /// going through the io thread; see `bun_sys::block_until_readable`.
+    #[cfg(target_os = "macos")]
+    pub(crate) is_named_pipe: bool,
     pub(crate) close_after_io: bool,
     pub(crate) state: AtomicU8, // ClosingState
 }
@@ -380,6 +385,8 @@ impl ReadFile {
                 scheduled: false,
             },
             could_block: false,
+            #[cfg(target_os = "macos")]
+            is_named_pipe: false,
             close_after_io: false,
             state: AtomicU8::new(ClosingState::Running as u8),
         };
@@ -462,6 +469,22 @@ impl ReadFile {
             .store_callback_seq_cst(Self::on_request_readable);
         if !self.io_request.scheduled {
             io::IoRequestLoop::schedule(&mut self.io_request);
+        }
+    }
+
+    /// The named-pipe counterpart of `wait_for_readable`: waits right here on
+    /// the pool thread, like `fs.readFile` does for every FIFO. Returns `false`
+    /// when the wait itself failed, with the error recorded for `then()`.
+    #[cfg(target_os = "macos")]
+    fn block_until_readable(&mut self) -> bool {
+        bloblog!("ReadFile.blockUntilReadable");
+        match bun_sys::block_until_readable(self.opened_fd) {
+            Ok(()) => true,
+            Err(err) => {
+                self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                self.system_error = Some(err.to_system_error().into());
+                false
+            }
         }
     }
 
@@ -682,6 +705,13 @@ impl ReadFile {
         }
 
         self.could_block = !bun_sys::is_regular_file(stat.st_mode as _);
+        #[cfg(target_os = "macos")]
+        {
+            // `pipe(2)` pipes are S_IFIFO too; XNU's pipe_stat leaves their
+            // st_dev 0, whereas a FIFO on a filesystem carries its volume's
+            // device number.
+            self.is_named_pipe = bun_sys::S::ISFIFO(stat.st_mode as _) && stat.st_dev != 0;
+        }
         self.total_size =
             SizeType::try_from((stat.st_size as i64).max(0).min(MAX_SIZE as i64)).unwrap();
 
@@ -754,6 +784,18 @@ impl ReadFile {
         // If we immediately call read(), it will block until stdin is
         // readable.
         if self.could_block {
+            #[cfg(target_os = "macos")]
+            if self.is_named_pipe {
+                // Waiting before the first read is also what keeps a FIFO
+                // whose writer has not connected yet from reading as empty.
+                if self.block_until_readable() {
+                    self.do_read_loop();
+                } else {
+                    self.on_finish();
+                }
+                return;
+            }
+
             if bun_core::is_readable(fd) == bun_core::Pollable::NotReady {
                 self.wait_for_readable();
                 return;
@@ -864,6 +906,13 @@ impl ReadFile {
                                 bun_core::Pollable::NotReady => {}
                                 bun_core::Pollable::Ready | bun_core::Pollable::Hup => continue,
                             }
+                        }
+                        #[cfg(target_os = "macos")]
+                        if self.is_named_pipe {
+                            if self.block_until_readable() {
+                                continue;
+                            }
+                            break;
                         }
                         self.read_eof = false;
                         self.buffer = buffer;

@@ -1411,6 +1411,8 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const setrlimit: Tag = Tag(106);
     pub const clone3: Tag = Tag(107);
+    #[cfg(target_os = "macos")]
+    pub(crate) const select: Tag = Tag(108);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1418,7 +1420,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 108] = [
+        const NAMES: [&str; 109] = [
             "TODO",
             "dup",
             "access",
@@ -1528,6 +1530,7 @@ impl Tag {
             "getrlimit",
             "setrlimit",
             "clone3",
+            "select",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -1708,6 +1711,19 @@ mod nocancel {
         ) -> isize;
         #[link_name = "poll$NOCANCEL"]
         pub(crate) fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int;
+        // The `_DARWIN_UNLIMITED_SELECT` variant of select(2) (same
+        // `$DARWIN_EXTSN` scheme as `realpath` in `posix_impl`). libsyscall
+        // maps it straight onto the syscall, so there is no FD_SETSIZE check
+        // and each set is a bitmap of ceil(nfds / 32) 32-bit words rather
+        // than a `libc::fd_set`; hence the word pointers.
+        #[link_name = "select$DARWIN_EXTSN$NOCANCEL"]
+        pub(crate) fn select(
+            nfds: c_int,
+            readfds: *mut u32,
+            writefds: *mut u32,
+            errorfds: *mut u32,
+            timeout: *mut libc::timeval,
+        ) -> c_int;
         // Remaining `$NOCANCEL` variants Bun links against.
         // safe: by-value `c_int` fd; bad fd → -1/EBADF, no UB.
         #[link_name = "close$NOCANCEL"]
@@ -7603,6 +7619,50 @@ pub fn kevent(
             E::SUCCESS => return Ok(rc as usize),
             E::EINTR => continue,
             e => return Err(Error::from_code(e, Tag::kevent).with_fd(fd)),
+        }
+    }
+}
+
+/// Blocks the calling thread in `select(2)` until `fd` is readable, where
+/// readable includes EOF. Retries on EINTR.
+///
+/// This is how a named pipe (a FIFO opened by path, or one inherited as
+/// stdin) has to be waited on under macOS. XNU attaches kqueue `EVFILT_READ`
+/// filters for a FIFO to its vnode, and that filter only fires while bytes are
+/// buffered (`vnode_readable_data_count`); the last writer closing posts
+/// nothing to the vnode, so a kqueue registration never wakes a reader up for
+/// EOF, and neither does `poll(2)`, which XNU implements on top of kqueue.
+/// `select(2)` instead goes through `fifo_select` to the FIFO's underlying
+/// socket, whose readability includes the `SS_CANTRCVMORE` state that the last
+/// writer's close sets (and that a writer which has not connected yet leaves
+/// clear, so a FIFO that is still waiting for its first writer blocks here
+/// rather than reading as empty). `pipe(2)` pipes are not affected: their own
+/// kqueue filter reports `EV_EOF`.
+#[cfg(target_os = "macos")]
+pub fn block_until_readable(fd: Fd) -> Maybe<()> {
+    debug_assert!(fd.is_valid());
+    let index = fd.native() as usize;
+    let word = index / 32;
+    let mut read_set = vec![0u32; word + 1];
+    loop {
+        read_set.fill(0);
+        read_set[word] = 1 << (index % 32);
+        // SAFETY: `read_set` holds the ceil(nfds / 32) words the kernel reads
+        // and writes back for `nfds = fd + 1`; the write and error sets and the
+        // timeout (wait indefinitely) may be null.
+        let rc = unsafe {
+            nocancel::select(
+                fd.native() + 1,
+                read_set.as_mut_ptr(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+            )
+        };
+        match get_errno(rc) {
+            E::SUCCESS => return Ok(()),
+            E::EINTR => continue,
+            e => return Err(Error::from_code(e, Tag::select).with_fd(fd)),
         }
     }
 }

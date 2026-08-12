@@ -1555,6 +1555,19 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             );
         }
 
+        // Nothing will `receive_chunk` this node again to clear a failure from
+        // its last bundle, so retract it here; `index_failures` publishes the
+        // removal at the end of this bundle.
+        if self.bundled_files.values()[index.get() as usize].failed {
+            self.bundled_files.values_mut()[index.get() as usize].failed = false;
+            let owner = serialized_failure::OwnerPacked::new(SIDE, index.get());
+            let kv = self.dev_bundling_failures().fetch_swap_remove(&owner);
+            let kv = kv.unwrap_or_else(|| {
+                bun_core::Output::panic(format_args!("Missing failure in IncrementalGraph"))
+            });
+            self.dev_incremental_result().failures_removed.push(kv.1);
+        }
+
         // Bust the resolution cache of the dir containing this file.
         let dirname = bun_paths::dirname(abs_path).unwrap_or(abs_path);
         let _ = bv2.transpiler.resolver.bust_dir_cache(dirname);

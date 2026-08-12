@@ -274,6 +274,101 @@ devTest("deleting imported file shows error then recovers", {
     });
   },
 });
+// Deleting a file whose last bundle failed used to leave that failure in
+// dev.bundling_failures: the overlay kept showing it next to the importer's new
+// resolution error and every later "Build Failed" page listed it again.
+devTest("deleting a file that failed to bundle retracts its failure", {
+  skip: [
+    "win32", // unlinkSync is having weird behavior
+  ],
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { value } from "./other";
+      console.log(value);
+    `,
+    "other.ts": `
+      export const value = 123;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(123);
+    await dev.write("other.ts", `export const value = ;`, {
+      errors: ["other.ts:1:22: error: Unexpected ;"],
+    });
+    // The errors packet for this rebuild has to retract other.ts's failure
+    // along with adding index.ts's resolution failure.
+    await dev.delete("other.ts", {
+      errors: ['index.ts:1:23: error: Could not resolve: "./other"'],
+    });
+    // A fresh page load lists every failure the dev server still tracks.
+    await c.hardReload({
+      errors: ['index.ts:1:23: error: Could not resolve: "./other"'],
+    });
+    // Dropping the import fixes the last remaining failure, so the error page
+    // reloads into the working page. A stale other.ts entry would keep it
+    // stuck on the error page.
+    await c.expectReload(async () => {
+      await dev.write("index.ts", `console.log("without other");`);
+    });
+    await c.expectMessage("without other");
+    // Recreating the file reuses its node in the incremental graph, which no
+    // longer owns a failure.
+    await dev.write(
+      "index.ts",
+      `
+        import { value } from "./other";
+        console.log(value);
+      `,
+      { errors: ['index.ts:1:23: error: Could not resolve: "./other"'] },
+    );
+    await c.expectReload(async () => {
+      await dev.write("other.ts", `export const value = 456;`);
+    });
+    await c.expectMessage(456);
+  },
+});
+// Same as above for a file that only the server graph knows about.
+devTest("deleting a server file that failed to bundle retracts its failure", {
+  skip: [
+    "win32", // unlinkSync is having weird behavior
+  ],
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import { value } from '../db';
+      export default function (req, meta) {
+        return new Response('value: ' + value);
+      }
+    `,
+    "db.ts": `export const value = 123;`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("value: 123");
+    await dev.write("db.ts", `export const value = ;`, { errors: null });
+    {
+      // This client sits on the "Build Failed" page, which only listens for
+      // failures being added and removed.
+      await using c = await dev.client("/", {
+        errors: ["db.ts:1:22: error: Unexpected ;"],
+      });
+      await dev.delete("db.ts", {
+        errors: [`routes/index.ts:1:23: error: Could not resolve: "../db"`],
+      });
+      await using fresh = await dev.client("/", {
+        errors: [`routes/index.ts:1:23: error: Could not resolve: "../db"`],
+      });
+    }
+    // Recreating the file reuses its node in the incremental graph, which no
+    // longer owns a failure.
+    await dev.write("db.ts", `export const value = 456;`);
+    await dev.fetch("/").equals("value: 456");
+  },
+});
 // Regression test: DirectoryWatchStore.Dep.source_file_path borrows the key
 // string from IncrementalGraph.bundled_files. When a client-component boundary
 // is demoted (its "use client" directive is removed) the server graph calls

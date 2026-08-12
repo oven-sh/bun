@@ -4463,15 +4463,37 @@ pub mod bv2_impl {
 
                     // When it's not a file, this is a build error and we should report it.
                     // we have no way of loading non-files.
-                    let _ = log.add_error_fmt(
-                        Some(source),
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Module not found {} in namespace {}",
-                            bun_core::fmt::quote(source.path.pretty),
-                            bun_core::fmt::quote(source.path.namespace),
-                        ),
-                    );
+                    fn add_module_not_found(log: &mut bun_ast::Log, source: &bun_ast::Source) {
+                        log.add_error_fmt(
+                            Some(source),
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Module not found {} in namespace {}",
+                                bun_core::fmt::quote(source.path.pretty),
+                                bun_core::fmt::quote(source.path.namespace),
+                            ),
+                        );
+                    }
+                    match this.dev_server {
+                        Some(dev) => {
+                            // Attribute the error to this module, as the `Err` arm
+                            // below does, so the routes importing it fail; the
+                            // bundle-wide log is only printed. Not
+                            // `Error::ModuleNotFound`: `handle_parse_task_failure`
+                            // treats that as the file having been deleted.
+                            let mut temp_log = bun_ast::Log::init();
+                            add_module_not_found(&mut temp_log, source);
+                            dev.handle_parse_task_failure(
+                                crate::Error::Plugin,
+                                load.bake_graph(),
+                                source.path.key_for_incremental_graph(),
+                                &raw const temp_log,
+                                this,
+                            )
+                            .expect("oom");
+                        }
+                        None => add_module_not_found(log, source),
+                    }
 
                     // An error occurred, prevent spinning the event loop forever
                     this.decrement_scan_counter();

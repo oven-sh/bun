@@ -243,25 +243,34 @@ impl WalkTaskErr {
     }
 }
 
+impl WalkTask {
+    /// Pool thread: runs the walk, recording a failure in `err`.
+    fn run(&mut self) {
+        let result = match self.walker.walk() {
+            Ok(r) => r,
+            Err(err) => {
+                self.err = Some(WalkTaskErr::Unknown(err.into()));
+                return;
+            }
+        };
+        if let bun_sys::Result::Err(err) = result {
+            self.err = Some(WalkTaskErr::Syscall(err));
+        }
+    }
+}
+
 impl JobContext for WalkTask {
     type OffThread = Self;
     type Js = WalkJs;
 
-    fn run(
-        this: &mut Self,
+    unsafe fn run(
+        this: *mut Self,
         _vm: &bun_jsc::vm_handle::Borrow,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
-        let result = match this.walker.walk() {
-            Ok(r) => r,
-            Err(err) => {
-                this.err = Some(WalkTaskErr::Unknown(err.into()));
-                return Some(done);
-            }
-        };
-        if let bun_sys::Result::Err(err) = result {
-            this.err = Some(WalkTaskErr::Syscall(err));
-        }
+        // SAFETY: fn contract; the job is not handed on, so the reborrow is
+        // exclusive for the call.
+        unsafe { (*this).run() };
         Some(done)
     }
 

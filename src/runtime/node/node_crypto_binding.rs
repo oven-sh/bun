@@ -125,16 +125,17 @@ macro_rules! extern_crypto_job {
                 type OffThread = Self;
                 type Js = Strong;
 
-                fn run(
-                    this: &mut Self,
+                unsafe fn run(
+                    this: *mut Self,
                     vm: &Borrow,
                     done: bun_jsc::Completion<Self>,
                 ) -> Option<bun_jsc::Completion<Self>> {
-                    // SAFETY: the creating global, alive under the borrow; C++
-                    // only threads it through to error reporting state.
-                    ctx_run_task(Ctx::opaque_ref(this.ctx.0), unsafe {
-                        this.global.under_borrow(vm)
-                    });
+                    // SAFETY: fn contract; both fields are copied out of the live
+                    // job. The global is the creating one, alive under the
+                    // borrow; C++ only threads it through to error reporting
+                    // state.
+                    let (ctx, global) = unsafe { ((*this).ctx.0, (*this).global.under_borrow(vm)) };
+                    ctx_run_task(Ctx::opaque_ref(ctx), global);
                     Some(done)
                 }
 
@@ -231,16 +232,10 @@ pub mod random {
     };
     const MAX_RANGE: i64 = 0xffff_ffff_ffff;
 
-    impl JobContext for RandomFillJob {
-        type OffThread = Self;
-        type Js = RandomFillJs;
-
-        fn run(
-            this: &mut Self,
-            vm: &Borrow,
-            done: bun_jsc::Completion<Self>,
-        ) -> Option<bun_jsc::Completion<Self>> {
-            match this {
+    impl RandomFillJob {
+        /// Pool thread: fills the scratch buffer, or the ArrayBuffer itself.
+        fn fill(&mut self, vm: &Borrow) {
+            match self {
                 RandomFillJob::Scratch { scratch, .. } => boringssl::rand_bytes(scratch),
                 RandomFillJob::InPlace { bytes, length } => {
                     // SAFETY: `bytes` points into the ArrayBuffer `value` keeps alive;
@@ -255,6 +250,21 @@ pub mod random {
                     boringssl::rand_bytes(slice);
                 }
             }
+        }
+    }
+
+    impl JobContext for RandomFillJob {
+        type OffThread = Self;
+        type Js = RandomFillJs;
+
+        unsafe fn run(
+            this: *mut Self,
+            vm: &Borrow,
+            done: bun_jsc::Completion<Self>,
+        ) -> Option<bun_jsc::Completion<Self>> {
+            // SAFETY: fn contract; the job is not handed on, so the reborrow is
+            // exclusive for the call.
+            unsafe { (*this).fill(vm) };
             Some(done)
         }
 
@@ -1062,14 +1072,18 @@ mod _impl {
         type OffThread = Self;
         type Js = ScryptJs;
 
-        fn run(
-            this: &mut Self,
+        unsafe fn run(
+            this: *mut Self,
             vm: &Borrow,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
-            // SAFETY: `result` is `buf`'s backing store (kept by the Js side); VM alive under the borrow.
-            let key = unsafe { this.result.under_borrow(vm) };
-            this.err = this.params.run_task_impl(key);
+            // SAFETY: fn contract; the job is not handed on, so the reborrows are
+            // exclusive for their statements. `result` is `buf`'s backing store
+            // (kept by the Js side); VM alive under the borrow.
+            unsafe {
+                let key = (*this).result.under_borrow(vm);
+                (*this).err = (*this).params.run_task_impl(key);
+            }
             Some(done)
         }
 

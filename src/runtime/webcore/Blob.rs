@@ -6846,6 +6846,20 @@ bun_jsc::jsc_host_abi! {
 // FileOpener<T> / FileCloser<T>
 // ──────────────────────────────────────────────────────────────────────────
 
+/// What [`FileOpener::get_fd`] continues with once the task's fd is known: the
+/// fd, or `Fd::INVALID` with `errno` / `system_error` set when the open failed.
+/// It takes the task over: the implementations end by handing it on
+/// (`ReadFile`, `WriteFile`; the JS thread then reads and frees the job through
+/// the job's own pointer) or by freeing it right there (`ReadFileUV`). Neither
+/// is allowed while a `&mut Self` argument is still protected, i.e. until the
+/// continuation has returned (see [`bun_jsc::JobContext::run`]); hence the
+/// pointer, here and in the `get_fd` frames that invoke it.
+///
+/// # Safety
+/// `this` is the live task `get_fd` was given, and the caller does not touch it
+/// afterwards.
+pub type OpenCallback<T> = unsafe fn(this: *mut T, fd: Fd);
+
 // TODO: move to bun_sys?
 /// Generic file-open helper used by ReadFile/WriteFile/CopyFile state machines,
 /// modeled as a trait the target implements.
@@ -6880,11 +6894,15 @@ pub trait FileOpener: Sized {
     /// Rust can't const-generic over fn
     /// pointers, so the implementor stores it on `self` (e.g. next to `req`).
     #[cfg(windows)]
-    fn set_open_callback(&mut self, cb: fn(&mut Self, Fd));
+    fn set_open_callback(&mut self, cb: OpenCallback<Self>);
     #[cfg(windows)]
-    fn open_callback(&self) -> fn(&mut Self, Fd);
+    fn open_callback(&self) -> OpenCallback<Self>;
 
-    fn get_fd_by_opening(&mut self, callback: fn(&mut Self, Fd)) {
+    /// Opens the path in `pathlike()` and records the outcome: the fd in
+    /// `opened_fd`, or `Fd::INVALID` plus `errno` / `system_error`. Returns
+    /// what it recorded.
+    #[cfg(not(windows))]
+    fn open_pathlike(&mut self) -> Fd {
         let mut buf = bun_paths::PathBuffer::uninit();
         let path_string = match self.pathlike() {
             PathOrFileDescriptor::Path(p) => p.clone(),
@@ -6892,61 +6910,101 @@ pub trait FileOpener: Sized {
         };
         let path = path_string.slice_z(&mut buf);
 
+        loop {
+            match bun_sys::open(
+                path,
+                Self::OPEN_FLAGS | Self::OPENER_FLAGS,
+                crate::node::fs::DEFAULT_PERMISSION,
+            ) {
+                bun_sys::Result::Ok(fd) => {
+                    self.set_opened_fd(fd);
+                    return fd;
+                }
+                bun_sys::Result::Err(err) => {
+                    if err.get_errno() == bun_sys::E::ENOENT {
+                        match self.try_mkdirp(err.clone(), path, path_string.slice()) {
+                            Retry::Continue => continue,
+                            Retry::Fail => {
+                                // `mkdir_if_not_exists` already populated
+                                // `errno`/`system_error` on the impl.
+                                self.set_opened_fd(Fd::INVALID);
+                                return Fd::INVALID;
+                            }
+                            Retry::No => {}
+                        }
+                    }
+                    self.set_errno(bun_errno::from_errno(err.errno as i32).into());
+                    self.set_system_error(jsc::SysErrorJsc::to_system_error(
+                        &err.with_path(path_string.slice()),
+                    ));
+                    self.set_opened_fd(Fd::INVALID);
+                    return Fd::INVALID;
+                }
+            }
+        }
+    }
+
+    /// [`get_fd`](Self::get_fd) for a task whose `pathlike()` is a path.
+    ///
+    /// # Safety
+    /// As [`get_fd`](Self::get_fd).
+    unsafe fn get_fd_by_opening(this: *mut Self, callback: OpenCallback<Self>) {
         #[cfg(windows)]
         {
             use bun_sys::ReturnCodeExt as _;
-            // Monomorphic libuv completion thunk — recovers `*mut Self` from
-            // `req.data`.
+            // Monomorphic libuv completion thunk; `req.data` carries the task.
             extern "C" fn wrapped_callback<S: FileOpener>(req: *mut bun_libuv_sys::uv_fs_t) {
                 use bun_sys::ReturnCodeExt as _;
-                // SAFETY: `req.data` was set to `self as *mut Self` below before
-                // `uv_fs_open` was queued; libuv guarantees `req` is valid here.
-                let self_: &mut S = unsafe { bun_ptr::callback_ctx::<S>((*req).data) };
-                {
-                    // SAFETY: req points into self_.req(); cleanup before reuse.
-                    scopeguard::defer! { unsafe { bun_libuv_sys::uv_fs_req_cleanup(req); } }
-                    // SAFETY: req is the live uv_fs_t from the open request.
-                    let result = unsafe { (*req).result };
+                // SAFETY: `req` is the live request queued below, whose `data`
+                // is the task's pointer; the task was left alone until this
+                // completion. The request is done with before the task is
+                // touched, each reborrow of the task ends with its accessor
+                // call, and `cb` (which takes the task over) is the last access.
+                unsafe {
+                    let this = (*req).data.cast::<S>();
+                    let result = (*req).result;
+                    bun_libuv_sys::uv_fs_req_cleanup(req);
                     if let Some(err_enum) = result.err_enum_e() {
-                        let path_string_2 = match self_.pathlike() {
+                        let path_string = match (*this).pathlike() {
                             PathOrFileDescriptor::Path(p) => p.clone(),
                             PathOrFileDescriptor::Fd(_) => unreachable!(),
                         };
-                        self_.set_errno(bun_errno::from_errno(err_enum as i32).into());
-                        self_.set_system_error(
+                        (*this).set_errno(bun_errno::from_errno(err_enum as i32).into());
+                        (*this).set_system_error(
                             bun_sys::Error::from_code(err_enum, bun_sys::Tag::open)
-                                .with_path(path_string_2.slice())
+                                .with_path(path_string.slice())
                                 .to_system_error()
                                 .into(),
                         );
-                        self_.set_opened_fd(bun_sys::Fd::INVALID);
+                        (*this).set_opened_fd(bun_sys::Fd::INVALID);
                     } else {
-                        self_.set_opened_fd(Fd::from_uv(result.to_fd()));
+                        (*this).set_opened_fd(Fd::from_uv(result.to_fd()));
                     }
+                    let cb = (*this).open_callback();
+                    let fd = (*this).opened_fd();
+                    cb(this, fd);
                 }
-                let cb = self_.open_callback();
-                cb(self_, self_.opened_fd());
             }
 
-            self.set_open_callback(callback);
-            let loop_ = self.loop_();
-            let self_ptr: *mut Self = core::ptr::from_mut(self);
-            // Derive `req` THROUGH `self_ptr` rather than via a fresh `self.req()`
-            // reborrow. Under Stacked Borrows, a direct `self.req()` here would
-            // create a sibling `&mut` that pops `self_ptr`'s tag, making the
-            // later deref in `wrapped_callback` (via `req.data`) UB. Going
-            // through the raw pointer keeps the reborrow as a child of
-            // `self_ptr`, so its provenance survives until the callback fires.
-            // SAFETY: `self_ptr` was just derived from a live `&mut self`.
-            let req = unsafe { (*self_ptr).req() };
-            // Stash `self` on the request BEFORE dispatch. libuv never touches
-            // `req.data`, so pre-setting is safe; doing it after `uv_fs_open`
-            // is a UAF when the call fails synchronously and `callback` frees
-            // `self` (ReadFileUV::on_finish → finalize → heap::take).
-            req.data = self_ptr.cast();
-            // SAFETY: loop_/req are live for the duration of the async open;
-            // req.data is consumed by `wrapped_callback::<Self>` above.
+            let mut buf = bun_paths::PathBuffer::uninit();
+            // SAFETY: fn contract; the reborrow ends with the call.
+            let path_string = match unsafe { (*this).pathlike() } {
+                PathOrFileDescriptor::Path(p) => p.clone(),
+                PathOrFileDescriptor::Fd(_) => unreachable!(),
+            };
+            let path = path_string.slice_z(&mut buf);
+
+            // SAFETY: fn contract; each reborrow ends with its accessor call.
+            // `req` is the task's own request, so it is live for as long as
+            // the open is in flight, and nothing touches it from here until
+            // `wrapped_callback` runs. `req.data` is set before the open is
+            // queued because a synchronous failure runs `callback` (which may
+            // free the task) right below.
             let rc = unsafe {
+                (*this).set_open_callback(callback);
+                let loop_ = (*this).loop_();
+                let req: *mut bun_libuv_sys::uv_fs_t = (*this).req();
+                (*req).data = this.cast();
                 bun_libuv_sys::uv_fs_open(
                     loop_,
                     req,
@@ -6957,75 +7015,57 @@ pub trait FileOpener: Sized {
                 )
             };
             if let Some(errno) = rc.err_enum_e() {
-                self.set_errno(bun_errno::from_errno(errno as i32).into());
-                self.set_system_error(
-                    bun_sys::Error::from_code(errno, bun_sys::Tag::open)
-                        .with_path(path_string.slice())
-                        .to_system_error()
-                        .into(),
-                );
-                self.set_opened_fd(bun_sys::Fd::INVALID);
-                // `callback` may free `self` (see comment above) — must be the
-                // last thing we touch on this path.
-                callback(self, bun_sys::Fd::INVALID);
-                return;
+                // SAFETY: fn contract; libuv did not keep the request. The
+                // reborrows end with their accessor calls, and `callback` is the
+                // last access to `*this`.
+                unsafe {
+                    (*this).set_errno(bun_errno::from_errno(errno as i32).into());
+                    (*this).set_system_error(
+                        bun_sys::Error::from_code(errno, bun_sys::Tag::open)
+                            .with_path(path_string.slice())
+                            .to_system_error()
+                            .into(),
+                    );
+                    (*this).set_opened_fd(bun_sys::Fd::INVALID);
+                    callback(this, bun_sys::Fd::INVALID);
+                }
             }
-            return;
         }
 
         #[cfg(not(windows))]
         {
-            loop {
-                match bun_sys::open(
-                    path,
-                    Self::OPEN_FLAGS | Self::OPENER_FLAGS,
-                    crate::node::fs::DEFAULT_PERMISSION,
-                ) {
-                    bun_sys::Result::Ok(fd) => {
-                        self.set_opened_fd(fd);
-                        break;
-                    }
-                    bun_sys::Result::Err(err) => {
-                        if err.get_errno() == bun_sys::E::ENOENT {
-                            match self.try_mkdirp(err.clone(), path, path_string.slice()) {
-                                Retry::Continue => continue,
-                                Retry::Fail => {
-                                    // `mkdir_if_not_exists` already populated
-                                    // `errno`/`system_error` on the impl.
-                                    self.set_opened_fd(Fd::INVALID);
-                                    break;
-                                }
-                                Retry::No => {}
-                            }
-                        }
-                        self.set_errno(bun_errno::from_errno(err.errno as i32).into());
-                        self.set_system_error(jsc::SysErrorJsc::to_system_error(
-                            &err.with_path(path_string.slice()),
-                        ));
-                        self.set_opened_fd(Fd::INVALID);
-                        break;
-                    }
-                }
-            }
-
-            callback(self, self.opened_fd());
+            // SAFETY: fn contract; the reborrow ends with the call.
+            let fd = unsafe { (*this).open_pathlike() };
+            // SAFETY: fn contract, passed through; nothing here touches `*this`
+            // afterwards.
+            unsafe { callback(this, fd) }
         }
     }
 
-    fn get_fd(&mut self, callback: fn(&mut Self, Fd)) {
-        if self.opened_fd() != Fd::INVALID {
-            callback(self, self.opened_fd());
-            return;
-        }
+    /// Finds the task's fd (`opened_fd` if it is already set, the descriptor
+    /// of an fd-backed `pathlike()`, or else by opening the path) and continues
+    /// with `callback`, which takes the task over.
+    ///
+    /// # Safety
+    /// `this` is the live task and nothing else is using it; the caller does
+    /// not touch it afterwards, since `callback` hands it on or frees it (see
+    /// [`OpenCallback`]).
+    unsafe fn get_fd(this: *mut Self, callback: OpenCallback<Self>) {
+        // SAFETY: fn contract; each reborrow ends with its accessor call, and
+        // `callback` is the last access to `*this` on the paths that run it.
+        unsafe {
+            let fd = (*this).opened_fd();
+            if fd != Fd::INVALID {
+                return callback(this, fd);
+            }
 
-        if let PathOrFileDescriptor::Fd(fd) = self.pathlike() {
-            let fd = *fd;
-            self.set_opened_fd(fd);
-            callback(self, fd);
-            return;
-        }
+            if let PathOrFileDescriptor::Fd(fd) = *(*this).pathlike() {
+                (*this).set_opened_fd(fd);
+                return callback(this, fd);
+            }
 
-        self.get_fd_by_opening(callback);
+            Self::get_fd_by_opening(this, callback)
+        }
     }
 }
 

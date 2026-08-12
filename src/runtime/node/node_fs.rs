@@ -1252,13 +1252,18 @@ mod _async_tasks {
         type OffThread = Self;
         type Js = AsyncFSJs;
 
-        fn run(
-            this: &mut Self,
+        unsafe fn run(
+            this: *mut Self,
             _vm: &bun_jsc::vm_handle::Borrow,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
             let mut node_fs = NodeFS::default();
-            this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
+            // SAFETY: fn contract; the job is not handed on, so the reborrows are
+            // exclusive for the statement.
+            unsafe {
+                (*this).result =
+                    NodeFS::dispatch::<R, A, F>(&mut node_fs, &(*this).args, Flavor::Async);
+            }
             // `sys::Error::path` is `Box<[u8]>` boxed at the `errno_sys_p`
             // construction site, so no clone is needed — `node_fs` may drop.
             Some(done)
@@ -2183,23 +2188,25 @@ mod _async_tasks {
         type OffThread = Self;
         type Js = AsyncFSJs;
 
-        fn run(
-            this: &mut Self,
+        unsafe fn run(
+            this: *mut Self,
             _vm: &bun_jsc::vm_handle::Borrow,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
-            this.done = Some(done);
             let mut buf = PathBuffer::uninit();
-            let root_path_z = {
-                let bytes: &'static [u8] =
-                    // SAFETY: `root_path` is a NUL-terminated `Box<[u8]>` fixed for the
-                    // task's lifetime; `perform_work` mutates other fields only.
-                    unsafe { bun_ptr::detach_lifetime(&this.root_path[..]) };
+            // SAFETY: fn contract. `root_path` is a NUL-terminated `Box<[u8]>`
+            // fixed for the task's lifetime; `perform_work` mutates other fields
+            // only.
+            let root_path_z = unsafe {
+                (*this).done = Some(done);
+                let root_path: &[u8] = &(*this).root_path;
+                let bytes: &'static [u8] = bun_ptr::detach_lifetime(root_path);
                 ZStr::from_buf(bytes, bytes.len() - 1)
             };
             // May finish synchronously (no subdirectories) or fan out; the last
-            // subtask finishes the token.
-            this.perform_work(root_path_z, &mut buf, true);
+            // subtask finishes the token, so this is the hand-over.
+            // SAFETY: fn contract; nothing touches `*this` here afterwards.
+            unsafe { (*this).perform_work(root_path_z, &mut buf, true) };
             None
         }
 

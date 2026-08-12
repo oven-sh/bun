@@ -677,12 +677,14 @@ pub(crate) struct TransformJs {
 impl jsc::JobContext for TransformTask {
     type OffThread = Self;
     type Js = TransformJs;
-    fn run(
-        this: &mut Self,
+    unsafe fn run(
+        this: *mut Self,
         vm: &jsc::vm_handle::Borrow,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
-        TransformTask::run(this, vm);
+        // SAFETY: fn contract; the job is not handed on, so the reborrow is
+        // exclusive for the call.
+        unsafe { (*this).run(vm) };
         Some(done)
     }
     fn then(mut this: Self, mut js: TransformJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {

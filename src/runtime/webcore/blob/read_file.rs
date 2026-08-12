@@ -10,6 +10,8 @@ use crate::Error;
 use crate::webcore::Lifetime;
 #[cfg(not(windows))]
 use crate::webcore::blob::ClosingState;
+#[cfg(windows)]
+use crate::webcore::blob::OpenCallback;
 use crate::webcore::blob::store::{Bytes as ByteStore, Data, File as FileStore};
 use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, StoreRef};
 use crate::webcore::node_types::PathOrFileDescriptor;
@@ -223,13 +225,15 @@ impl bun_jsc::JobContext for ReadFile {
     /// Where the bytes go: completed by `then`, or cancelled when the VM releases the JS sides of
     /// its live jobs at teardown (a refused or unrun read then frees only this off-thread part).
     type Js = ReadFileCompletionFns;
-    fn run(
-        this: &mut Self,
+    unsafe fn run(
+        this: *mut Self,
         _vm: &bun_jsc::vm_handle::Borrow,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
-        // Starts the read; finishes from the io loop via the token.
-        this.run(done);
+        // Starts the read, which hands `*this` on (to the io thread, or to the
+        // JS thread by finishing the token); nothing here touches it afterwards.
+        // SAFETY: fn contract, passed through.
+        unsafe { ReadFile::run_async(this, done) };
         None
     }
     fn then(
@@ -292,6 +296,16 @@ pub struct ReadFile {
 bun_threading::intrusive_work_task!(ReadFile, task);
 bun_io::intrusive_io_request!(ReadFile, io_request);
 
+/// What [`ReadFile::prepare_read`] decided the read continues with; performed
+/// by `run_async_with_fd` once that `&mut self` stage has returned.
+#[cfg(not(windows))]
+#[derive(Clone, Copy)]
+enum Next {
+    ReadLoop,
+    WaitForReadable,
+    Finish,
+}
+
 // The default methods on the FileOpener/FileCloser traits provide the bodies.
 impl FileOpener for ReadFile {
     fn opened_fd(&self) -> Fd {
@@ -318,11 +332,11 @@ impl FileOpener for ReadFile {
         unreachable!("ReadFile is POSIX-only; see ReadFileUV")
     }
     #[cfg(windows)]
-    fn set_open_callback(&mut self, _cb: fn(&mut Self, Fd)) {
+    fn set_open_callback(&mut self, _cb: OpenCallback<Self>) {
         unreachable!()
     }
     #[cfg(windows)]
-    fn open_callback(&self) -> fn(&mut Self, Fd) {
+    fn open_callback(&self) -> OpenCallback<Self> {
         unreachable!()
     }
 }
@@ -599,26 +613,33 @@ impl ReadFile {
         Ok(())
     }
 
-    pub(crate) fn run(&mut self, task: ReadFileTask) {
-        self.run_async(task);
-    }
-
-    fn run_async(&mut self, task: ReadFileTask) {
+    /// The job's first pool step: keeps the token and starts the read. From
+    /// `get_fd` on, `*this` belongs to whichever thread the read continues on.
+    ///
+    /// # Safety
+    /// [`bun_jsc::JobContext::run`]'s contract; the caller does not touch
+    /// `*this` afterwards.
+    unsafe fn run_async(this: *mut Self, task: ReadFileTask) {
         #[cfg(windows)]
         {
             // Windows reads go through ReadFileUV, never the pool.
+            let _ = this;
             let _ = task;
             unreachable!("ReadFile on the work pool (Windows uses ReadFileUV)");
         }
         #[cfg(not(windows))]
         {
-            self.io_task = Some(task);
+            // SAFETY: fn contract; no reference outlives the block.
+            unsafe {
+                (*this).io_task = Some(task);
 
-            if self.file_store.pathlike.is_fd() {
-                self.opened_fd = self.file_store.pathlike.fd();
+                if (*this).file_store.pathlike.is_fd() {
+                    (*this).opened_fd = (*this).file_store.pathlike.fd();
+                }
             }
 
-            self.get_fd(Self::run_async_with_fd);
+            // SAFETY: fn contract, passed through.
+            unsafe { Self::get_fd(this, Self::run_async_with_fd) }
         }
     }
 
@@ -700,16 +721,38 @@ impl ReadFile {
         }
     }
 
+    /// The read's [`OpenCallback`](crate::webcore::blob::OpenCallback): decides
+    /// the next step under a reborrow that ends before the step runs, because
+    /// the step hands `*this` on (to the io thread, or to the JS thread, which
+    /// frees it).
+    ///
+    /// # Safety
+    /// `OpenCallback`'s contract.
     #[cfg(not(windows))]
-    fn run_async_with_fd(&mut self, fd: Fd) {
+    unsafe fn run_async_with_fd(this: *mut Self, fd: Fd) {
+        // SAFETY: fn contract; the reborrow ends with the call.
+        let next = unsafe { (*this).prepare_read(fd) };
+        // SAFETY: fn contract; whichever step runs is the last access to
+        // `*this` on this thread.
+        unsafe {
+            match next {
+                Next::ReadLoop => (*this).do_read_loop(),
+                Next::WaitForReadable => (*this).wait_for_readable(),
+                Next::Finish => (*this).on_finish(),
+            }
+        }
+    }
+
+    /// Stat, buffer sizing and the initial readability check.
+    #[cfg(not(windows))]
+    fn prepare_read(&mut self, fd: Fd) -> Next {
         if self.errno.is_some() {
-            self.on_finish();
-            return;
+            return Next::Finish;
         }
 
         self.resolve_size_and_last_modified(fd);
         if self.errno.is_some() {
-            return self.on_finish();
+            return Next::Finish;
         }
 
         // Special files might report a size of > 0, and be wrong.
@@ -720,8 +763,7 @@ impl ReadFile {
             // default — `then()` reads `self.buffer` directly.
             self.byte_store = ByteStore::default();
 
-            self.on_finish();
-            return;
+            return Next::Finish;
         }
 
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
@@ -735,8 +777,7 @@ impl ReadFile {
                         .to_system_error()
                         .into(),
                 );
-                self.on_finish();
-                return;
+                return Next::Finish;
             }
             self.buffer = v;
         }
@@ -753,14 +794,11 @@ impl ReadFile {
         //
         // If we immediately call read(), it will block until stdin is
         // readable.
-        if self.could_block {
-            if bun_core::is_readable(fd) == bun_core::Pollable::NotReady {
-                self.wait_for_readable();
-                return;
-            }
+        if self.could_block && bun_core::is_readable(fd) == bun_core::Pollable::NotReady {
+            return Next::WaitForReadable;
         }
 
-        self.do_read_loop();
+        Next::ReadLoop
     }
 
     fn do_read_loop_task(task: *mut WorkPoolTask) {
@@ -924,7 +962,7 @@ pub struct ReadFileUV<'a> {
 
     pub(crate) req: libuv::fs_t,
     /// Stash for the open completion callback across the libuv async hop.
-    open_callback: fn(&mut Self, Fd),
+    open_callback: OpenCallback<Self>,
 }
 
 #[cfg(windows)]
@@ -950,10 +988,10 @@ impl<'a> FileOpener for ReadFileUV<'a> {
     fn req(&mut self) -> &mut bun_libuv_sys::uv_fs_t {
         &mut self.req
     }
-    fn set_open_callback(&mut self, cb: fn(&mut Self, Fd)) {
+    fn set_open_callback(&mut self, cb: OpenCallback<Self>) {
         self.open_callback = cb;
     }
-    fn open_callback(&self) -> fn(&mut Self, Fd) {
+    fn open_callback(&self) -> OpenCallback<Self> {
         self.open_callback
     }
 }
@@ -1062,10 +1100,9 @@ impl<'a> ReadFileUV<'a> {
         // Keep the event loop alive while the async operation is pending
         event_loop.ref_keep_alive();
         let this_ptr: *mut ReadFileUV = bun_core::heap::into_raw(this);
-        // SAFETY: this_ptr is freshly boxed and uniquely owned by the async op.
-        unsafe { (*this_ptr).get_fd(Self::on_file_open) };
-        // ownership now lives with the libuv request chain until finalize().
-        let _ = this_ptr;
+        // SAFETY: freshly boxed and nothing else holds it; from here it belongs
+        // to the libuv request chain, until `finalize` frees it.
+        unsafe { Self::get_fd(this_ptr, Self::on_file_open) };
     }
 
     pub fn finalize(this: *mut Self) {
@@ -1127,40 +1164,44 @@ impl<'a> ReadFileUV<'a> {
         Self::finalize(core::ptr::from_mut(self));
     }
 
-    pub(crate) fn on_file_open(&mut self, opened_fd: Fd) {
+    /// The read's [`OpenCallback`]: queues the fstat, or finishes (which frees
+    /// the task) if the open failed or the fstat cannot be queued.
+    ///
+    /// # Safety
+    /// `OpenCallback`'s contract.
+    unsafe fn on_file_open(this: *mut Self, opened_fd: Fd) {
         log!("ReadFileUV.onFileOpen");
-        if self.errno.is_some() {
-            self.on_finish();
-            return;
-        }
+        // SAFETY: fn contract. Field accesses are statement-scoped, the
+        // `on_finish` calls are the last access on their paths, and the FFI
+        // call gets the live VM uv loop, the task's own freshly deinit'd `fs_t`
+        // (whose `data` lets `on_file_initial_stat` recover the task), and the
+        // just-opened fd.
+        unsafe {
+            if (*this).errno.is_some() {
+                return (*this).on_finish();
+            }
 
-        self.req.deinit();
-        self.req.data = core::ptr::from_mut(self).cast::<c_void>();
+            (*this).req.deinit();
+            (*this).req.data = this.cast::<c_void>();
 
-        // SAFETY: FFI — `loop_` is the live VM uv loop, `self.req` is a freshly
-        // deinit'd `fs_t` owned by `self`, `opened_fd.uv()` is the just-opened fd,
-        // and `on_file_initial_stat` is a valid `uv_fs_cb` that recovers `self`
-        // from `req.data` (set above).
-        let rc = unsafe {
-            libuv::uv_fs_fstat(
-                self.loop_,
-                &mut self.req,
+            let rc = libuv::uv_fs_fstat(
+                (*this).loop_,
+                &raw mut (*this).req,
                 opened_fd.uv(),
                 Some(Self::on_file_initial_stat),
-            )
-        };
-        if let Some(errno) = rc.err_enum_e() {
-            self.errno = Some(bun_errno::from_errno(errno as i32).into());
-            self.system_error = Some(
-                bun_sys::Error::from_code(errno, bun_sys::Tag::fstat)
-                    .to_system_error()
-                    .into(),
             );
-            self.on_finish();
-            return;
-        }
+            if let Some(errno) = rc.err_enum_e() {
+                (*this).errno = Some(bun_errno::from_errno(errno as i32).into());
+                (*this).system_error = Some(
+                    bun_sys::Error::from_code(errno, bun_sys::Tag::fstat)
+                        .to_system_error()
+                        .into(),
+                );
+                return (*this).on_finish();
+            }
 
-        self.req.data = core::ptr::from_mut(self).cast::<c_void>();
+            (*this).req.data = this.cast::<c_void>();
+        }
     }
 
     extern "C" fn on_file_initial_stat(req: *mut libuv::fs_t) {

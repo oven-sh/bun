@@ -238,9 +238,26 @@ pub trait JobContext: Sized + 'static {
     /// Return `done` to complete now; keep it (e.g. across async I/O that
     /// finishes on another thread) and call [`Completion::finish`] later to
     /// complete then. Work that outlives this call runs under no borrow and
-    /// must touch only `off`.
-    fn run(
-        off: &mut Self::OffThread,
+    /// must touch only the off-thread part.
+    ///
+    /// `off` is a pointer rather than `&mut` because a body that keeps `done`
+    /// hands the job on before it returns (to an io loop, to sub-tasks, or, by
+    /// finishing `done`, to the JS thread), and whoever ends up finishing it
+    /// makes the JS thread read and free the allocation through the job's own
+    /// pointer (`Job::complete`), possibly before this thread has returned
+    /// from here. A reference argument is protected for the whole call, and an
+    /// access through another pointer to memory a protected reference covers
+    /// is UB under the aliasing model whether or not the reference is used
+    /// again; a raw pointer makes no such claim. A body that completes
+    /// synchronously just reborrows for the work and returns `done`; one that
+    /// hands the job on does its own work through reborrows that end before the
+    /// hand-over, and makes the hand-over its last access.
+    ///
+    /// # Safety
+    /// `off` is the live job's off-thread part, and nothing else touches it
+    /// until this returns `Some(done)` or the body hands the job on.
+    unsafe fn run(
+        off: *mut Self::OffThread,
         vm: &Borrow,
         done: Completion<Self>,
     ) -> Option<Completion<Self>>;
@@ -388,7 +405,10 @@ impl<C: JobContext> Job<C> {
             return done.finish();
         };
         // SAFETY: as above; the borrow keeps the VM (and any JsPtr target) alive.
-        if let Some(done) = C::run(unsafe { &mut (*this).off }, &vm, done) {
+        // On `None` the body handed the job on (it may already be freed), and
+        // nothing below touches `*this`: releasing `vm` goes through our own
+        // `handle` clone, not the job's.
+        if let Some(done) = unsafe { C::run(&raw mut (*this).off, &vm, done) } {
             drop(vm);
             done.finish();
         }
@@ -541,7 +561,7 @@ pub enum Never {}
 impl JobContext for Never {
     type OffThread = ();
     type Js = ();
-    fn run(_: &mut (), _: &Borrow, done: Completion<Self>) -> Option<Completion<Self>> {
+    unsafe fn run(_: *mut (), _: &Borrow, done: Completion<Self>) -> Option<Completion<Self>> {
         Some(done)
     }
     fn then(_: (), _: (), _: &JsThread<'_>) -> JsResult<()> {

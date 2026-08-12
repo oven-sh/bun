@@ -272,8 +272,9 @@ impl RuntimeTranspilerStore {
             return;
         }
         // we run just one job first to see if there are more
-        // SAFETY: `first` is a live job popped from the intrusive queue.
-        if let Err(err) = unsafe { (*first).run_from_js_thread() } {
+        // SAFETY: `first` is a live job popped from the intrusive queue; the
+        // batch iterator has already moved past it.
+        if let Err(err) = unsafe { TranspilerJob::run_from_js_thread(first) } {
             global.report_uncaught_exception_from_error(err);
         }
         loop {
@@ -288,8 +289,8 @@ impl RuntimeTranspilerStore {
             {
                 return;
             }
-            // SAFETY: `job` is a live job popped from the intrusive queue.
-            if let Err(err) = unsafe { (*job).run_from_js_thread() } {
+            // SAFETY: as for `first`.
+            if let Err(err) = unsafe { TranspilerJob::run_from_js_thread(job) } {
                 global.report_uncaught_exception_from_error(err);
             }
         }
@@ -448,6 +449,19 @@ impl Fetcher {
     }
 }
 
+/// A finished job's result, moved out of its slot (`TranspilerJob::take_completion`)
+/// so the slot can be returned to the store before `AsyncModule::fulfill` runs.
+/// `specifier` and `referrer` carry the +1 that `fulfill` releases.
+struct Completion {
+    promise: JSValue,
+    global_this: BackRef<JSGlobalObject>,
+    specifier: String,
+    referrer: String,
+    log: bun_ast::Log,
+    resolved_source: OwnedResolvedSource,
+    parse_error: Option<crate::CrateError>,
+}
+
 /// Per-worker output buffer. The printer is the **only** state
 /// retained across `run()` calls — its backing `Vec<u8>` is genuinely worth
 /// reusing (capped at 512 K / 2 M below). The parse arena and AST memory
@@ -485,8 +499,9 @@ fn tls_get_or_leak<T>(
 
 impl TranspilerJob {
     /// Kept as a private inherent fn (not `impl Drop`) because the
-    /// slot is recycled into the HiveArray via `store.put(this)`. Only caller is
-    /// `run_from_js_thread`.
+    /// slot is recycled into the HiveArray via `store.put(this)`. Called right
+    /// before that `put` by `take_completion` and
+    /// `release_queued_jobs_for_teardown`.
     ///
     /// Note: `HiveArrayFallback::put` runs `drop_in_place` on the slot (see
     /// hive_array.rs note), so the Drop-carrying fields — `OwnedString` ×2,
@@ -545,21 +560,56 @@ impl TranspilerJob {
         };
     }
 
-    fn run_from_js_thread(&mut self) -> JsResult<()> {
-        let vm = self.vm;
+    /// Completes the import. The slot goes back to the store first (a `Box`
+    /// free when it was heap-spilled; `fulfill` runs script, which may claim it
+    /// again), so this takes the pointer rather than a `&mut self` that would
+    /// still be protected while the slot is dropped or freed.
+    ///
+    /// # Safety
+    /// `this` is a live job popped from the store queue; the caller does not
+    /// touch it afterwards.
+    unsafe fn run_from_js_thread(this: *mut Self) -> JsResult<()> {
+        // SAFETY: fn contract; both accesses end at the `;`, before the put.
+        let (vm, completion) = unsafe { ((*this).vm, (*this).take_completion()) };
+        // SAFETY: `vm` outlives the job; `this` is the slot `transpile()` claimed
+        // from this store and nothing uses it past this point.
+        unsafe { (*vm).transpiler_store.store.put(this) };
+
+        let Completion {
+            promise,
+            global_this,
+            specifier,
+            referrer,
+            mut log,
+            resolved_source,
+            parse_error,
+        } = completion;
+        let mut resolved_source = resolved_source.into_ffi();
+        AsyncModule::fulfill(
+            &global_this,
+            promise,
+            &mut resolved_source,
+            parse_error,
+            specifier,
+            referrer,
+            &mut log,
+        )
+    }
+
+    /// Moves everything `AsyncModule::fulfill` needs out of the slot and
+    /// resets it, leaving only what `store.put()`'s drop glue releases.
+    fn take_completion(&mut self) -> Completion {
         let promise = self.promise.swap();
-        // Copy the BackRef out (it is `Copy`) so the borrow of `*self` ends
-        // before `reset_for_pool`/`put` need `&mut *self` below; deref at the
-        // `fulfill` call site instead.
         let global_this = self.global_this;
         // Note: the KeepAlive takes an `EventLoopCtx`
         // vtable; resolve it via the `get_vm_ctx` hook (registered by `bun_runtime::init`).
         self.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
 
         let referrer = core::mem::take(&mut self.non_threadsafe_referrer).into_inner();
-        let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
-        // Take RAII ownership out of the job; `into_ffi()` below transfers the
-        // +1 strings to `AsyncModule::fulfill` → C++ `Zig::ResolvedSource`.
+        let log = core::mem::replace(&mut self.log, bun_ast::Log::init());
+        // Take RAII ownership out of the job; `into_ffi()` in the caller
+        // transfers the +1 strings to `AsyncModule::fulfill` → C++
+        // `Zig::ResolvedSource`.
         let mut owned_resolved_source = core::mem::take(&mut self.resolved_source);
         let resolved_source = owned_resolved_source.as_mut();
         let specifier = 'brk: {
@@ -581,24 +631,15 @@ impl TranspilerJob {
         self.promise.deinit();
         self.reset_for_pool();
 
-        // SAFETY: vm outlives the job; transpiler_store.store.put recycles the slot.
-        unsafe {
-            (*vm)
-                .transpiler_store
-                .store
-                .put(std::ptr::from_mut::<TranspilerJob>(self))
-        };
-
-        let mut resolved_source = owned_resolved_source.into_ffi();
-        AsyncModule::fulfill(
-            &global_this,
+        Completion {
             promise,
-            &mut resolved_source,
-            parse_error,
+            global_this,
             specifier,
             referrer,
-            &mut log,
-        )
+            log,
+            resolved_source: owned_resolved_source,
+            parse_error,
+        }
     }
 
     fn schedule(&mut self) {

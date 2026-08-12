@@ -4,61 +4,69 @@ import { realpathSync } from "fs";
 import path from "path";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
 
-// A method must not push its own receiver onto a queue. Inside a `&mut self`
-// method, the receiver's address
+// A method must not push its own receiver onto a queue or put it back into its
+// pool. Inside a `&mut self` method, the receiver's address
 //
 //   queue.push(NonNull::from(&mut *self))
+//   store.put(ptr::from_mut(self))
 //   let job = NonNull::from(&mut *self); ... queue.push(job)
 //   let p: *mut Self = self;             ... queue.push(NonNull::new_unchecked(p))
 //
-// as the argument of a `.push(..)` is banned.
+// as the argument of a `.push(..)` or `.put(..)` is banned.
 //
-// The push is the hand-over: it is how a pool thread gives a finished job
-// back to the thread that owns it (`UnboundedQueue::push`, then a wakeup).
-// From the moment it lands the consumer writes to the object or frees it (the
-// runtime transpiler store `put()`s the slot back into its hive, a `Box` free
-// once the hive is full; the package manager reclaims the `Box` a patch task
-// lives in), and it does so while the `self` of the method that pushed is
-// still a live argument. A reference argument is protected for the duration
-// of its call, and writing to or deallocating protected memory is UB under
-// both aliasing models whether or not the method touches `self` again: Tree
-// Borrows (what `bun run rust:miri` uses) reports "deallocation through <tag>
-// is forbidden ... the strongly protected tag disallows deallocations" or a
-// data race on the protector's release, pointing at the receiver; Stacked
-// Borrows reports "deallocating while item [Unique] is strongly protected".
-// Codegen relies on the same guarantee: a `&mut self` argument is
-// `noalias dereferenceable` for the whole call, so the compiler is free to
-// re-read a field through it after the push instead of keeping the copy taken
-// before; a read after the push (spelled out in the source, there) is what
-// crashed the Zig version of the transpiler store (#29128).
+// Both calls give the receiver's storage away. A push is how a pool thread
+// hands a finished job back to the thread that owns it (`UnboundedQueue::push`,
+// then a wakeup); from the moment it lands the consumer writes to the object or
+// frees it (the package manager reclaims the `Box` a patch task lives in). A
+// `put` returns a slot to its hive (`HiveArrayFallback::put`), which drops it
+// in place, or frees it when it was a heap spill, before returning. Either way
+// the `self` of the method that made the call is still a live argument while
+// that happens. A reference argument is protected for the duration of its
+// call, and writing to or deallocating protected memory is UB under both
+// aliasing models whether or not the method touches `self` again: Tree Borrows
+// (what `bun run rust:miri` uses) reports "deallocation through <tag> is
+// forbidden ... the strongly protected tag disallows deallocations" or, for the
+// cross-thread writes, a data race on the protector's release, pointing at the
+// receiver; Stacked Borrows reports "deallocating while item [Unique] is
+// strongly protected". Codegen relies on the same guarantee: a `&mut self`
+// argument is `noalias dereferenceable` for the whole call, so the compiler is
+// free to re-read a field through it after the call instead of keeping the copy
+// taken before; a read after the push (spelled out in the source, there) is
+// what crashed the Zig version of the transpiler store (#29128).
 // `TranspilerJob::dispatch_to_main_thread(&mut self)` (reached from inside
-// `run(&mut self)` via a scope guard, so two protected frames deep) and
-// `PatchTask::run_from_thread_pool_impl(&mut self)` were the instances this
+// `run(&mut self)` via a scope guard, so two protected frames deep),
+// `TranspilerJob::run_from_js_thread(&mut self)` (the `put` of the same slot)
+// and `PatchTask::run_from_thread_pool_impl(&mut self)` were the instances this
 // was written for.
 //
 // The object was a raw pointer in the caller's hands before it became `self`
-// (the pool recovers it from the intrusive task field), so the fix is to keep
-// it one: run the body through a statement-scoped reborrow (`(*this).run();`),
-// read whatever the hand-over needs through `(*this).field` accesses that end
-// before the push, push `this`, and never touch it again. Templates:
-// `TranspilerJob::run_from_worker_thread` / `dispatch_to_main_thread` in
+// (the pool recovers it from the intrusive task field, the queue pops it), so
+// the fix is to keep it one: run the body through a statement-scoped reborrow
+// (`(*this).run();`, `(*this).take_completion()`), read whatever comes after
+// through `(*this).field` accesses that end before the call, push or put
+// `this`, and never touch it again. Templates: `TranspilerJob::
+// run_from_worker_thread` / `dispatch_to_main_thread` / `run_from_js_thread` in
 // src/jsc/RuntimeTranspilerStore.rs, `PatchTask::run_from_thread_pool` in
 // src/install/patch_install.rs, `NetworkTask::notify` in
 // src/install/NetworkTask.rs, `Task::callback` in src/install/PackageManagerTask.rs.
 //
 // Scope: the exclusive spellings below (`from_mut(self)`, `&mut *self`,
 // `&raw mut *self`, `self as *mut _`, ...), with `self` as the receiver and
-// `.push(` as the callee, inline or through a local of the same function.
-// Outside it: the shared spellings (`from_ref(self)`, `&*self`; what this tree
-// pushes from a `&self` method is a same-thread registry entry, quic's
-// `ENDPOINT_REGISTRY`, whose consumer neither writes nor frees), a pointer
-// produced by a helper (`self.as_ptr()`), something the receiver owns
-// (`NonNull::from(&mut self.task)`, `&raw mut self.task`), and reference
-// parameters other than `self` (`fn f(this: &mut Task)` pushing
+// `.push(` / `.put(` as the callee, inline or through a local of the same
+// function. Outside it: the shared spellings (`from_ref(self)`, `&*self`; what
+// this tree pushes from a `&self` method is a same-thread registry entry,
+// quic's `ENDPOINT_REGISTRY`, whose consumer neither writes nor frees), a bare
+// `self` argument (the `put(self, ..)` map inserts and `err.put(global, ..)`
+// property writes, where `self` is a key or a context, not storage being given
+// away), a pointer produced by a helper (`self.as_ptr()`), something the
+// receiver owns (`NonNull::from(&mut self.task)`, `&raw mut self.task`), and
+// reference parameters other than `self` (`fn f(this: &mut Task)` pushing
 // `NonNull::from(this)`; a local reference is not protected and the push moves
 // it, but a reference *parameter* pushed that way is the same bug, convert it
-// on sight). Siblings: self-receiver-reclaim.test.ts,
-// fn-long-mut-reborrow.test.ts, frozen-nonnull-reborrow.test.ts.
+// on sight). Other helpers that free their argument (`Self::destroy(..)`) are
+// the population self-receiver-reclaim.test.ts names as outside its scope.
+// Siblings: self-receiver-reclaim.test.ts, fn-long-mut-reborrow.test.ts,
+// frozen-nonnull-reborrow.test.ts.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
@@ -76,10 +84,10 @@ const tracked: Set<string> | null = (() => {
   return new Set(r.stdout.toString().split("\0").filter(Boolean));
 })();
 
-// The publish. Anchored on the argument below, so the `Vec::push` calls all
-// over the tree only count when what is pushed is the receiver's address.
-// `\s*` after the paren so a rustfmt-wrapped argument still matches.
-const PUSH = String.raw`\.\s*push\s*\(\s*`;
+// The hand-over. Anchored on the argument below, so the `Vec::push` and map
+// `put` calls all over the tree only count when the argument is the receiver's
+// address. `\s*` after the paren so a rustfmt-wrapped argument still matches.
+const HAND_OVER = String.raw`\.\s*(?:push|put)\s*\(\s*`;
 
 // Optional path in front of an item (`core::ptr::NonNull`, `std::ptr::from_mut`).
 const PATH = String.raw`(?:[\w:]+::)?`;
@@ -113,11 +121,11 @@ const SAME_ADDRESS = String.raw`(?:\s*\.\s*(?:cast(?:_mut|_const)?${TURBOFISH}\(
 // this shape, and neither is `.push(p.field)` for a binding `p` below.
 const ARG_END = String.raw`\s*[,)]`;
 
-const DIRECT = new RegExp(`${PUSH}${SELF_AS_POINTER}${SAME_ADDRESS}${ARG_END}`, "g");
+const DIRECT = new RegExp(`${HAND_OVER}${SELF_AS_POINTER}${SAME_ADDRESS}${ARG_END}`, "g");
 
-// A local bound to the receiver's address, then pushed further down the same
-// function (which ends at the next `fn` item; a closure inside it is the same
-// function for this purpose). `let p: *mut Self = self;` is the coercion
+// A local bound to the receiver's address, then handed over further down the
+// same function (which ends at the next `fn` item; a closure inside it is the
+// same function for this purpose). `let p: *mut Self = self;` is the coercion
 // spelling; without the annotation `let p = self;` is just another reference.
 const BINDING_HEAD = String.raw`\blet\s+(?:mut\s+)?(\w+)\s*`;
 const SELF_POINTER_BINDINGS = [
@@ -126,14 +134,14 @@ const SELF_POINTER_BINDINGS = [
 ];
 const FN_ITEM = /^[ \t]*(?:pub(?:\([^)]*\))?\s+)?(?:(?:const|async|unsafe|extern\s+"[^"]*")\s+)*fn\s+\w+/m;
 
-// The binding pushed as is, or wrapped into a `NonNull` at the push.
-function pushOfBinding(name: string): RegExp {
+// The binding passed as is, or wrapped into a `NonNull` at the call.
+function handOverOfBinding(name: string): RegExp {
   const wrapped = String.raw`${PATH}NonNull::(?:new_unchecked|new|from)${TURBOFISH}\(\s*${name}${SAME_ADDRESS}\s*\)`;
-  return new RegExp(`${PUSH}(?:${wrapped}|\\b${name})${SAME_ADDRESS}${ARG_END}`);
+  return new RegExp(`${HAND_OVER}(?:${wrapped}|\\b${name})${SAME_ADDRESS}${ARG_END}`);
 }
 
-/** Byte offsets (into `stripped`) of every banned push in one file. */
-function findPushes(stripped: string): number[] {
+/** Byte offsets (into `stripped`) of every banned hand-over in one file. */
+function findHandOvers(stripped: string): number[] {
   const hits: number[] = [];
   for (const m of stripped.matchAll(DIRECT)) hits.push(m.index);
   for (const pattern of SELF_POINTER_BINDINGS) {
@@ -142,8 +150,8 @@ function findPushes(stripped: string): number[] {
       const rest = stripped.slice(start);
       const fnEnd = rest.search(FN_ITEM);
       const body = fnEnd === -1 ? rest : rest.slice(0, fnEnd);
-      const push = body.search(pushOfBinding(binding[1]));
-      if (push !== -1) hits.push(start + push);
+      const call = body.search(handOverOfBinding(binding[1]));
+      if (call !== -1) hits.push(start + call);
     }
   }
   return hits.sort((a, b) => a - b);
@@ -153,6 +161,20 @@ function lineOf(text: string, offset: number): number {
   return text.slice(0, offset).split("\n").length;
 }
 
+// Documented, ratcheted exceptions: files allowed to keep exactly N of the
+// shape. Lower an entry when you convert one; do not add entries.
+const ALLOW: Record<string, number> = {
+  // `FilePoll::deinit_possibly_defer(&mut self, ..)` puts its own slot back
+  // (`Store::put`, which recycles it at once, freeing it if it was a heap
+  // spill, when the poll was never registered; otherwise it is queued and
+  // freed after the event loop turn). Every `FilePoll::deinit*` entry point is
+  // `&mut self` and reached from many owners, so the conversion is a change of
+  // its own; tracked separately.
+  "src/io/posix_event_loop.rs": 1,
+  "src/io/windows_event_loop.rs": 1,
+};
+
+const counts: Record<string, number> = {};
 const offenders: string[] = [];
 let scanned = 0;
 for (const abs of rustSources) {
@@ -167,8 +189,11 @@ for (const abs of rustSources) {
   // describing this hazard) don't count. `[ \t]*`, not `\s*`: `\s` crosses
   // newlines and would swallow blank lines, shifting the reported line numbers.
   const stripped = content.replace(/^[ \t]*\/\/.*$/gm, "");
-  for (const offset of findPushes(stripped)) {
-    offenders.push(`${source}:${lineOf(stripped, offset)}`);
+  for (const offset of findHandOvers(stripped)) {
+    counts[source] = (counts[source] ?? 0) + 1;
+    if (counts[source] > (ALLOW[source] ?? 0)) {
+      offenders.push(`${source}:${lineOf(stripped, offset)}`);
+    }
   }
 }
 
@@ -184,6 +209,13 @@ test("the patterns match the banned spellings and nothing else", () => {
     "let job = NonNull::from(&mut *self);\nunsafe { (*transpiler_store).queue.push(job) };",
     // `PatchTask::run_from_thread_pool_impl(&mut self)` as it was.
     "unsafe {\n    (*mgr)\n        .patch_task_queue\n        .push(core::ptr::NonNull::from(&mut *self));\n    PackageManager::wake_raw(mgr);\n}",
+    // `TranspilerJob::run_from_js_thread(&mut self)` as it was.
+    "unsafe {\n    (*vm)\n        .transpiler_store\n        .store\n        .put(std::ptr::from_mut::<TranspilerJob>(self))\n};",
+    "pool.put(self as *mut Self);",
+    "let slot = ptr::from_mut(self);\nunsafe { (*store).put(slot) };",
+    // The allowlisted `FilePoll::deinit_possibly_defer`, posix and windows spellings.
+    "let this = ptr::NonNull::from(self);\nvm.file_polls_mut().put(this, vm, was_ever_registered);",
+    "let this: ptr::NonNull<FilePoll> = ptr::NonNull::from(&mut *self);\nvm.file_polls_mut().put(this, vm, was_ever_registered);",
     // Other spellings of the same thing.
     "queue.push(NonNull::from(self));",
     "queue.push(core::ptr::NonNull::from(&mut  *self));",
@@ -204,8 +236,14 @@ test("the patterns match the banned spellings and nothing else", () => {
     // The raw-pointer shape the fix produces.
     "unsafe { (*transpiler_store).queue.push(NonNull::new_unchecked(this)) };",
     "(*mgr)\n    .patch_task_queue\n    .push(core::ptr::NonNull::new_unchecked(this));",
+    "unsafe { (*vm).transpiler_store.store.put(this) };",
+    "self.store.put(job);",
     // A local reference parameter, moved into the push.
     "installer.task_queue.push(core::ptr::NonNull::from(this));",
+    // `self` as a key or a context, not as storage.
+    "bun_core::handle_oom(handles.put(self, ()));",
+    'err.put(self, b"name", name_value);',
+    "unsafe { self.owner.put(self.slot.as_ptr()) };",
     // Something the receiver owns.
     "queue.push(NonNull::from(&mut *self.inner));",
     "queue.push(NonNull::from(&mut self.task));",
@@ -227,10 +265,17 @@ test("the patterns match the banned spellings and nothing else", () => {
     // The binding's function ends before the push.
     "let this = std::ptr::from_mut(self);\n    }\n\n    fn other(&mut self, this: NonNull<Job>) {\n        self.queue.push(this);",
   ];
-  expect(banned.filter(s => findPushes(s).length === 0)).toEqual([]);
-  expect(allowed.filter(s => findPushes(s).length !== 0)).toEqual([]);
+  expect(banned.filter(s => findHandOvers(s).length === 0)).toEqual([]);
+  expect(allowed.filter(s => findHandOvers(s).length !== 0)).toEqual([]);
 });
 
-test("no method pushes its own receiver onto a queue", () => {
+test("no method pushes or puts its own receiver", () => {
   expect(offenders).toEqual([]);
+});
+
+test("allowlisted files still carry exactly their documented count", () => {
+  // Ratchet: once an allowlisted instance is converted, delete its entry so
+  // a new one cannot take its place.
+  const actual = Object.fromEntries(Object.keys(ALLOW).map(f => [f, counts[f] ?? 0]));
+  expect(actual).toEqual(ALLOW);
 });

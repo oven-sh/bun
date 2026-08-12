@@ -860,19 +860,18 @@ impl PackageManager {
 
     /// Raw-pointer wake for concurrent task-thread callers (see
     /// `isolated_install::Installer::Task::callback`). Never materializes
-    /// `&mut PackageManager`, so two task threads finishing simultaneously do
-    /// not hold aliased exclusive borrows. `on_wake` is read-only; the handler
-    /// receives the raw `*mut`;
-    /// `event_loop.wakeup()` is the cross-thread signal and is
-    /// internally synchronized — we reach it via `addr_of_mut!` so the `&mut`
-    /// covers only the event-loop field, never the whole `PackageManager`.
+    /// `&mut PackageManager`, nor `&mut` to anything in it: the installing
+    /// thread is ticking `event_loop` while task threads (any number at once)
+    /// come through here, so `on_wake` is read through `addr_of!` and the wake
+    /// goes through `AnyEventLoop::wakeup(&self)`, the loop's cross-thread
+    /// entry point. The handler receives the raw `*mut`.
     ///
     /// # Safety
     /// `this` must point to a live `PackageManager` (BACKREF).
     pub(crate) unsafe fn wake_raw(this: *mut Self) {
         // SAFETY: caller guarantees `this` points to a live `PackageManager`; we
-        // only form field pointers via `addr_of!`/`addr_of_mut!` (no whole-struct
-        // borrow) and `wakeup()` is internally synchronized for cross-thread use.
+        // only form shared field borrows via `addr_of!` (no whole-struct borrow)
+        // and `wakeup()` is the loop's thread-safe `&self` entry point.
         unsafe {
             let on_wake = &*core::ptr::addr_of!((*this).on_wake);
             if let Some(ctx) = on_wake.context {
@@ -881,7 +880,7 @@ impl PackageManager {
                 // type); cast back to `*mut c_void` here.
                 (on_wake.get_handler())(ctx.as_ptr(), this.cast::<c_void>());
             }
-            (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
+            (*core::ptr::addr_of!((*this).event_loop)).wakeup();
         }
     }
 

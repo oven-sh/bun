@@ -1198,24 +1198,23 @@ pub mod waiter_thread_posix {
                                     }
                                 }
                             }
-                            EventLoopHandle::Mini(mut mini) => {
+                            EventLoopHandle::Mini(mini) => {
                                 let out = ResultTaskMini::<T>::new(ResultTaskMini {
                                     result,
                                     subprocess: process,
                                     task: AnyTaskWithExtraContext::default(),
                                 });
                                 // SAFETY: `out` just produced by heap::alloc — non-null.
-                                unsafe {
+                                let task = unsafe {
                                     (*out).task = AnyTaskNew::<ResultTaskMini<T>, ()>::init(
                                         out,
                                         ResultTaskMini::<T>::run_from_main_thread_mini,
                                     );
-                                    mini.get_mut().enqueue_task_concurrent(
-                                        core::ptr::NonNull::new_unchecked(core::ptr::addr_of_mut!(
-                                            (*out).task
-                                        )),
-                                    );
-                                }
+                                    core::ptr::NonNull::new_unchecked(core::ptr::addr_of_mut!(
+                                        (*out).task
+                                    ))
+                                };
+                                mini.enqueue_task_concurrent(task);
                                 // `out` is now owned by the mini queue;
                                 // freed in `run_from_main_thread_mini`.
                             }

@@ -226,7 +226,7 @@ impl YesTask {
                     // Same-thread bounce on the loop's own thread: always accepted.
                     let _ = owner.js_poster().post(ct);
                 }
-                EventLoopHandle::Mini(mut mini) => {
+                EventLoopHandle::Mini(mini) => {
                     (*mini.loop_).tick();
                     let at =
                         core::ptr::NonNull::new_unchecked(match &mut (*this).concurrent_task {
@@ -235,7 +235,7 @@ impl YesTask {
                             }
                             EventLoopTask::Js(_) => unreachable!(),
                         });
-                    mini.get_mut().enqueue_task_concurrent(at);
+                    mini.enqueue_task_concurrent(at);
                 }
             }
         }

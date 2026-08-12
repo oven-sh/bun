@@ -1405,20 +1405,32 @@ pub mod js_bundler {
         Load, LoadSuccess, LoadValue, MiniImportRecord, Resolve, ResolveSuccess, ResolveValue,
     };
 
-    /// `&mut BundleV2` for the live backref stored on `Resolve`/`Load`.
+    /// `&BundleV2` for the live backref stored on `Resolve`/`Load`.
     ///
-    /// Centralises the `*mut BundleV2 → &mut` deref so the C++-called thunks
-    /// (`JSBundlerPlugin__onResolveAsync`, `on_defer`, `…__onLoadAsync`,
-    /// `…__addError`, `on_notify_defer_raw`) stay safe at the call site. `bv2`
+    /// Centralises the deref for what the plugin host's thread does with the
+    /// bundle (`JSBundlerPlugin__onResolveAsync`, `…__onLoadAsync`,
+    /// `…__addError`, `on_defer`, [`bv2_plugin`]): it reads `plugins` and
+    /// posts answers to the bundle's own loop, nothing more. For `Bun.build`
+    /// the `BundleV2` belongs to the bundle thread, which is running it while
+    /// these thunks execute, so this thread only ever forms `&` to it. `bv2`
     /// is the back-reference set in `Resolve::init`/`Load::init`; the
     /// `BundleV2` heap allocation outlives every plugin callback (owner-
-    /// creates-child, single-JS-thread). The `BundleV2` storage is heap-
-    /// disjoint from `Resolve`/`Load`, so the returned `&mut` does not alias
-    /// the caller's `&mut Resolve`/`&mut Load`.
+    /// creates-child) and is disjoint from the `Resolve`/`Load` the callers
+    /// hold `&mut` to.
+    #[inline]
+    fn bv2_ref<'a>(bv2: *mut BundleV2<'static>) -> &'a BundleV2<'static> {
+        // SAFETY: see fn doc — live backref (owner-creates-child), shared
+        // access only, disjoint heap from the `Resolve`/`Load` callers borrow.
+        unsafe { &*bv2 }
+    }
+
+    /// `&mut BundleV2` for the same backref, for [`on_notify_defer_raw`] only:
+    /// that is a task running on the loop that owns the bundle, where it is
+    /// ours to mutate. The plugin host's own thunks use [`bv2_ref`].
     #[inline]
     fn bv2_mut<'a>(bv2: *mut BundleV2<'static>) -> &'a mut BundleV2<'static> {
-        // SAFETY: see fn doc — live backref (owner-creates-child), single
-        // JS-thread, disjoint heap from the `Resolve`/`Load` callers borrow.
+        // SAFETY: see fn doc — live backref (owner-creates-child), called on
+        // the bundle's owning loop between its tasks.
         unsafe { &mut *bv2 }
     }
 
@@ -1434,7 +1446,7 @@ pub mod js_bundler {
     #[inline]
     fn bv2_plugin<'a>(bv2: *mut BundleV2<'static>) -> &'a mut Plugin {
         // SAFETY: see fn doc — `plugins.is_some()`, disjoint heap.
-        unsafe { &mut *bv2_mut(bv2).plugins.unwrap().as_ptr() }
+        unsafe { &mut *bv2_ref(bv2).plugins.unwrap().as_ptr() }
     }
 
     /// # Safety
@@ -1475,7 +1487,7 @@ pub mod js_bundler {
             });
         }
 
-        bv2_mut(resolve.bv2).on_resolve_async(resolve);
+        bv2_ref(resolve.bv2).on_resolve_async(resolve);
     }
 
     bun_output::declare_scope!(BUNDLER_DEFERRED, hidden);
@@ -1505,36 +1517,37 @@ pub mod js_bundler {
 
             // Notify the *bundler thread* about the deferral. This will
             // decrement the pending item counter and increment the deferred
-            // counter. Must land on `parse_task.ctx.loop()` (the loop running
+            // counter. Must land on `BundleV2::any_loop()` (the loop running
             // BundleV2), which is distinct from `js_loop_for_plugins()` (the
             // plugin host's JS loop) when `Bun.build` runs the bundler on its
-            // own Mini event loop.
-            // SAFETY: parse_task.ctx and bv2 are valid backrefs; `r#loop()`
-            // points at a live `AnyEventLoop` owned by the bundle thread /
-            // runtime for the duration of the bundle.
-            unsafe {
-                let ctx = (*self.parse_task).ctx.expect("ParseTask.ctx unset");
-                // SAFETY: write provenance from `ParseTask::init`; bundle outlives plugin.
-                let any_loop = ctx
-                    .assume_mut()
-                    .r#loop()
-                    .expect("BundleV2.linker.loop must be set before plugins run");
-                match &mut *any_loop.as_ptr() {
-                    bun_event_loop::AnyEventLoop::Js { .. } => {
-                        let ct =
-                            ConcurrentTask::from_callback(ctx.as_mut_ptr(), on_notify_defer_raw);
-                        let poster = (*ctx.as_mut_ptr())
-                            .js_poster
-                            .as_ref()
-                            .expect("JS-owned bundle has a poster");
-                        if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                            // Owning JS VM torn down mid-bundle: the notify never runs.
-                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
-                        }
+            // own Mini event loop. In that case the bundle thread is ticking
+            // that loop right now, so like `on_load_async` this only takes
+            // shared borrows of the `BundleV2` and its loop (`ParentRef` deref).
+            let ctx = self.parse_task.ctx.expect("ParseTask.ctx unset");
+            // Read before posting: once the bundle thread has the `Load` it
+            // writes to it (`on_notify_defer_mini`), so `self` is not touched
+            // again below.
+            let bv2 = self.bv2;
+            match ctx.any_loop() {
+                bun_event_loop::AnyEventLoop::Js { .. } => {
+                    let ct = ConcurrentTask::from_callback(ctx.as_mut_ptr(), on_notify_defer_raw);
+                    let poster = ctx
+                        .js_poster
+                        .as_ref()
+                        .expect("JS-owned bundle has a poster");
+                    if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
+                        // Owning JS VM torn down mid-bundle: the notify never runs.
+                        // SAFETY: refused ⇒ we own the task.
+                        unsafe {
+                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct)
+                        };
                     }
-                    bun_event_loop::AnyEventLoop::Mini(mini) => {
-                        // `mini.enqueueTaskConcurrentWithExtraCtx(
-                        //    Load, BundleV2, this, BundleV2.onNotifyDeferMini, .task)`
+                }
+                bun_event_loop::AnyEventLoop::Mini(mini) => {
+                    // SAFETY: `self` is the intrusive `Load` (arena-owned by the
+                    // bundle pass, which outlives this request) and `task` is its
+                    // `AnyTaskWithExtraContext` field.
+                    unsafe {
                         mini.enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
                             std::ptr::from_mut::<Load>(self),
                             on_notify_defer_mini_wrap,
@@ -1542,9 +1555,9 @@ pub mod js_bundler {
                         );
                     }
                 }
-
-                Ok(bv2_plugin(self.bv2).append_defer_promise())
             }
+
+            Ok(bv2_plugin(bv2).append_defer_promise())
         }
     }
 
@@ -1622,7 +1635,7 @@ pub mod js_bundler {
             });
         }
 
-        bv2_mut(this.bv2).on_load_async(this);
+        bv2_ref(this.bv2).on_load_async(this);
     }
 
     /// Opaque FFI handle for the C++ `JSBundlerPlugin`. The opaque type and
@@ -1863,7 +1876,7 @@ pub mod js_bundler {
                 let resolve = unsafe { bun_ptr::callback_ctx::<Resolve>(ctx) };
                 let msg = plugin_msg_from_js(plugin, &resolve.import_record.source_file, exception);
                 resolve.value = ResolveValue::Err(msg);
-                bv2_mut(resolve.bv2).on_resolve_async(resolve);
+                bv2_ref(resolve.bv2).on_resolve_async(resolve);
             }
             1 => {
                 // SAFETY: C++ caller passes the live `*mut Load` it received from
@@ -1871,7 +1884,7 @@ pub mod js_bundler {
                 let load = unsafe { bun_ptr::callback_ctx::<Load>(ctx) };
                 let msg = plugin_msg_from_js(plugin, &load.path, exception);
                 load.value = LoadValue::Err(msg);
-                bv2_mut(load.bv2).on_load_async(load);
+                bv2_ref(load.bv2).on_load_async(load);
             }
             _ => panic!("invalid error type"),
         }

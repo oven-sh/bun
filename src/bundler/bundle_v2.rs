@@ -172,13 +172,29 @@ impl<'a> BundleV2<'a> {
     }
 
     /// `switch (this.loop().*)` — `linker.loop` is a non-owning backref to the
-    /// `AnyEventLoop` that owns this bundle pass and outlives it.
+    /// `AnyEventLoop` that owns this bundle pass and outlives it. Any thread;
+    /// see `LinkerContext::any_loop` for why posters only get `&`.
     #[inline]
-    pub(crate) fn any_loop_mut(&mut self) -> &mut bun_event_loop::AnyEventLoop {
-        // BACKREF deref centralised in `LinkerContext::any_loop_mut`.
+    pub fn any_loop(&self) -> &bun_event_loop::AnyEventLoop {
         self.linker
-            .any_loop_mut()
+            .any_loop()
             .expect("BundleV2.linker.loop must be set before plugins run")
+    }
+
+    /// Bundle thread only: exclusive access to the loop this pass runs on, for
+    /// the owner-side work `is_done` does between ticks (`run_ready`). Posters
+    /// on other threads go through [`Self::any_loop`].
+    #[inline]
+    pub(crate) fn own_loop_mut(&mut self) -> &mut bun_event_loop::AnyEventLoop {
+        let r#loop = self
+            .linker
+            .r#loop
+            .expect("BundleV2.linker.loop must be set before plugins run");
+        // SAFETY: BACKREF — the loop outlives the pass (`LinkerContext::any_loop`).
+        // This runs on the bundle thread from `tick_raw`'s `is_done` callback,
+        // where `tick_raw` holds no borrow of the loop; it is the same exclusive
+        // access `tick_raw` itself takes for `tick_once` between `is_done` calls.
+        unsafe { &mut *r#loop.as_ptr() }
     }
 
     #[inline]
@@ -1537,7 +1553,6 @@ pub mod bv2_impl {
             }
             // From bake where the loop running the bundle is also the loop running
             // the plugins.
-            // `any_loop_mut` centralises the BACKREF deref of `linker.r#loop`.
             let poster = self
                 .js_poster
                 .as_ref()
@@ -2058,7 +2073,7 @@ pub mod bv2_impl {
                 // bundle pass's stack frame; the tasks it runs re-enter
                 // `*this` exactly as `tick_once` would between `is_done` calls.
                 unsafe {
-                    if let bun_event_loop::AnyEventLoop::Mini(mini) = &mut *(*this).any_loop_mut() {
+                    if let bun_event_loop::AnyEventLoop::Mini(mini) = &mut *(*this).own_loop_mut() {
                         mini.run_ready(this.cast());
                     }
                 }
@@ -2084,8 +2099,8 @@ pub mod bv2_impl {
 
         /// Bundle thread: make the pass's own Mini loop return from its poll so
         /// `is_done` is evaluated again.
-        pub(crate) fn wake_own_loop(&mut self) {
-            if let bun_event_loop::AnyEventLoop::Mini(mini) = self.any_loop_mut() {
+        pub(crate) fn wake_own_loop(&self) {
+            if let bun_event_loop::AnyEventLoop::Mini(mini) = self.any_loop() {
                 mini.wakeup();
             }
         }
@@ -4316,12 +4331,14 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        pub fn on_load_async(&mut self, load: &mut jsc_api::JSBundler::Load) {
+        /// Plugin host's JS thread. Posts only, hence `&self`: for `Bun.build`
+        /// the bundle thread owns `self` and is ticking its loop right now.
+        pub fn on_load_async(&self, load: &mut jsc_api::JSBundler::Load) {
             // Dispatch to the loop that *owns* `BundleV2`.
             // For `Bun.build` this is a Mini loop running on the bundler thread, so
             // `on_load` must land there — not on the JS plugin loop — or it will
             // mutate `graph` / allocate from `graph.heap` off-thread.
-            match self.any_loop_mut() {
+            match self.any_loop() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
                     let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
                         std::ptr::from_mut(load),
@@ -4353,9 +4370,10 @@ pub mod bv2_impl {
             }
         }
 
-        pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
+        /// Plugin host's JS thread; see [`Self::on_load_async`].
+        pub fn on_resolve_async(&self, resolve: &mut jsc_api::JSBundler::Resolve) {
             // See `on_load_async` — must dispatch on the bundler's own loop.
-            match self.any_loop_mut() {
+            match self.any_loop() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
                     let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
                         std::ptr::from_mut(resolve),

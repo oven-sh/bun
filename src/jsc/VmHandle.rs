@@ -599,7 +599,9 @@ pub enum ConcurrentPoster {
     /// Erased handle of the JS loop's VM (obtained from the `EventLoopHandle`
     /// itself, so it is correct whichever thread constructs the poster).
     Js(bun_event_loop::JsPoster),
-    Mini(bun_ptr::BackRef<bun_event_loop::MiniEventLoop::MiniEventLoop, bun_ptr::Mut>),
+    /// Shared (not `Mut`): posting only needs `MiniEventLoop`'s `&self`
+    /// entry points, and the owning thread is ticking the loop while we post.
+    Mini(bun_ptr::BackRef<bun_event_loop::MiniEventLoop::MiniEventLoop>),
 }
 
 impl ConcurrentPoster {
@@ -610,7 +612,7 @@ impl ConcurrentPoster {
             bun_event_loop::EventLoopHandle::Js { owner } => {
                 ConcurrentPoster::Js(owner.js_poster())
             }
-            bun_event_loop::EventLoopHandle::Mini(mini) => ConcurrentPoster::Mini(*mini),
+            bun_event_loop::EventLoopHandle::Mini(mini) => ConcurrentPoster::Mini(mini.shared()),
         }
     }
 
@@ -643,19 +645,14 @@ impl ConcurrentPoster {
         }
     }
 
-    /// Post a mini-loop task (always accepted; the mini loop outlives its work).
+    /// Post a mini-loop task (always accepted; the mini loop outlives its work,
+    /// which is the `BackRef` invariant the deref below relies on).
     pub fn post_mini(
         &self,
         task: NonNull<bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext>,
     ) {
         match self {
-            ConcurrentPoster::Mini(mini) => {
-                let mut mini = *mini;
-                // SAFETY: per `EventLoopHandle::Mini` invariant — the mini loop is
-                // alive for as long as work it created runs; its concurrent queue
-                // push is thread-safe.
-                unsafe { mini.get_mut() }.enqueue_task_concurrent(task);
-            }
+            ConcurrentPoster::Mini(mini) => mini.enqueue_task_concurrent(task),
             ConcurrentPoster::Js(..) => debug_assert!(false, "post_mini on a Js poster"),
         }
     }

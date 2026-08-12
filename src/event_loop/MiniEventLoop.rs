@@ -383,23 +383,29 @@ impl MiniEventLoop {
         }
     }
 
-    /// `task` must outlive the queued work item; ownership of the intrusive
-    /// node stays with the caller until the callback runs.
-    pub fn enqueue_task_concurrent(&mut self, task: NonNull<AnyTaskWithExtraContext>) {
+    /// Any thread. `task` must outlive the queued work item; ownership of the
+    /// intrusive node stays with the caller until the callback runs.
+    ///
+    /// Takes `&self` like [`wakeup`](Self::wakeup): other threads post through
+    /// this while the owning thread is inside `tick*`, and the body needs only
+    /// the MPSC push and the thread-safe wakeup. Callers hold a shared borrow
+    /// (`BackRef` deref); none of them may form a `&mut MiniEventLoop` to post.
+    pub fn enqueue_task_concurrent(&self, task: NonNull<AnyTaskWithExtraContext>) {
         self.concurrent_tasks.push(task);
-        // SAFETY: see `loop_ptr()` invariant.
-        unsafe { (*self.loop_ptr()).wakeup() };
+        self.wakeup();
     }
 
-    /// The caller supplies `field_offset = core::mem::offset_of!(C, <field>)` of the
-    /// embedded `AnyTaskWithExtraContext`.
+    /// Any thread; see [`enqueue_task_concurrent`](Self::enqueue_task_concurrent)
+    /// for the receiver. The caller supplies
+    /// `field_offset = core::mem::offset_of!(C, <field>)` of the embedded
+    /// `AnyTaskWithExtraContext`.
     ///
     /// # Safety
     /// `field_offset == offset_of!(C, <field>)` where `<field>: AnyTaskWithExtraContext`,
     /// and `ctx` is non-null and outlives the queued task (intrusive node; ownership stays
     /// with caller).
     pub unsafe fn enqueue_task_concurrent_with_extra_ctx<C, P>(
-        &mut self,
+        &self,
         ctx: *mut C,
         callback: fn(*mut C, *mut P),
         field_offset: usize,
@@ -413,8 +419,7 @@ impl MiniEventLoop {
         self.concurrent_tasks
             .push(unsafe { NonNull::new_unchecked(task) });
 
-        // SAFETY: see `loop_ptr()` invariant.
-        unsafe { (*self.loop_ptr()).wakeup() };
+        self.wakeup();
     }
 }
 

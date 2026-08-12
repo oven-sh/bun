@@ -395,11 +395,12 @@ function connectionListenerHTTP1(server, socket, options) {
   parser[kOnMessageComplete] = function onHttp1MessageComplete() {
     // Collected after the header block, so these are trailers (_http_common's parserOnMessageComplete).
     const trailers = parser._headers;
-    if (trailers.length !== 0) parser._headers = [];
+    const trailersLength = trailers.length;
+    if (trailersLength !== 0) parser._headers = [];
     parser._url = "";
     if (req) {
       req.complete = true;
-      if (trailers.length !== 0) req._addHeaderLines(trailers, trailers.length);
+      if (trailersLength !== 0) req._addHeaderLines(trailers, trailersLength);
       req.push(null);
     }
   };

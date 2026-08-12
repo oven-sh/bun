@@ -42,6 +42,8 @@ const leakFixturePrelude = `
             return bytes;
           }
           const liveBeforeProbe = liveBytes();
+          // Not Buffer#toString(): that string does not register in the walk even where a source
+          // would. A single-character repeat is a flat WTF string and a memset, also in debug builds.
           let probe = "a".repeat(32 * MB);
           const walkSeesJSC = liveBytes() - liveBeforeProbe >= maxLiveGrowth;
           probe = undefined;

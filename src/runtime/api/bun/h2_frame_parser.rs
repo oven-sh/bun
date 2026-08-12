@@ -1332,11 +1332,9 @@ pub struct H2FrameParser {
     strict_single_value_fields: Cell<bool>,
     /// Highest stream id registered in either direction (see highest_started_stream_id).
     last_stream_id: Cell<u32>,
-    /// Id of the next stream this side initiates (a request on a client, a push on a server):
-    /// https://github.com/nghttp2/nghttp2/blob/master/lib/nghttp2_session.h (next_stream_id),
-    /// which only submit_headers_shared / nghttp2_submit_push_promise (lib/nghttp2_submit.c,
-    /// `+= 2`) and nghttp2_session_set_next_stream_id move, and which node reports as
-    /// state.nextStreamID. The peer's streams advance `last_stream_id`, never this.
+    /// Id of the next stream this side initiates (request on a client, push on a server); the
+    /// peer's streams never move it. Same contract as nghttp2_session.next_stream_id:
+    /// https://github.com/nghttp2/nghttp2/blob/master/lib/nghttp2_session.h
     next_stream_id: Cell<u32>,
     /// Highest PEER-initiated stream id processed (odd ids for a server, even for a
     /// client). This — not `last_stream_id` — is what an auto-filled GOAWAY must carry:

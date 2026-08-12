@@ -186,14 +186,15 @@ const testPlatforms = [
   // boxes tagged with that `release-tier` (see getTestAgent); one without a
   // tier runs on any box of its arch.
   //
-  // arm64 is listed both ways and runsByDefault() picks per branch: main runs
-  // the two pinned lanes, `latest` (current macOS, 26 today) and `previous`
-  // (anything older, currently 13/14/15), so the canary gate covers both; every
-  // other build runs the one unpinned lane. The `latest` pool is two boxes,
-  // `previous` eight: on 2026-08-12 `latest` ran flat out all day and 145 of
-  // the 220 PR builds that reached it still had the lane expire unrun (main's
-  // jobs, at a higher priority, waited ~5 min). Pin PRs again once `latest`
-  // has enough boxes to keep up with PR volume on its own.
+  // arm64 is listed both ways and runsByDefault() picks per branch: main and
+  // the merge queue run the two pinned lanes, `latest` (current macOS, 26
+  // today) and `previous` (anything older, currently 13/14/15), so what lands
+  // is checked on both; every other build runs the one unpinned lane. The
+  // `latest` pool is two boxes, `previous` eight: on 2026-08-12 `latest` ran
+  // flat out all day and 145 of the 220 PR builds that reached it still had the
+  // lane expire unrun, while main's jobs, which getPriority() puts ahead of
+  // every PR job, waited ~5 min. Pin PRs again once `latest` has enough boxes
+  // to keep up with PR volume on its own.
   //
   // x64 is never pinned: Intel Macs can't run latest macOS and the split
   // bottlenecked that pool too. Its `release` only labels the step.
@@ -215,9 +216,10 @@ const testPlatforms = [
 
 /**
  * Whether a test lane runs on this branch when nothing picked lanes
- * explicitly. Only darwin arm64 varies (see testPlatforms): pinned lanes on
- * main, the unpinned one everywhere else. A manual build that picks a pinned
- * lane in the options form gets it on any branch.
+ * explicitly. Only darwin arm64 varies (see testPlatforms): pinned lanes where
+ * a commit lands (main, the merge queue), the unpinned one everywhere else. A
+ * manual build that picks a pinned lane in the options form gets it on any
+ * branch.
  * @param {Platform} platform
  * @returns {boolean}
  */
@@ -226,7 +228,8 @@ function runsByDefault(platform) {
   if (os !== "darwin" || arch !== "aarch64") {
     return true;
   }
-  return isMainBranch() ? tier !== undefined : tier === undefined;
+  const pinned = isMainBranch() || isMergeQueue();
+  return pinned ? tier !== undefined : tier === undefined;
 }
 
 /**

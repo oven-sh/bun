@@ -551,8 +551,10 @@ type ListenHandle = $ZigGeneratedClasses.PostgresSQLConnection;
 // a fresh entry with its own round trip, and code resuming after an await can
 // tell whether its entry is still the live one.
 class Channel {
-  // A lone listener is stored bare; the second subscriber promotes to an array.
-  listeners: Listener | Listener[];
+  // A lone listener is stored bare; more are stored in an array that is
+  // replaced, never mutated, so a dispatch in progress is unaffected by
+  // listen()/unlisten() calls made from inside a callback.
+  listeners: Listener | readonly Listener[];
   onlisten: Array<[Listener, OnListen]> | null = null;
   // The LISTEN round trip on the current connection, shared by concurrent
   // listen() calls; null until issued and again after a disconnect.
@@ -567,7 +569,7 @@ class Channel {
     if (typeof current === "function") {
       if (current !== listener) this.listeners = [current, listener];
     } else if (!current.includes(listener)) {
-      current.push(listener);
+      this.listeners = [...current, listener];
     }
   }
 
@@ -575,9 +577,10 @@ class Channel {
   remove(listener: Listener): boolean {
     const current = this.listeners;
     if (typeof current === "function") return current === listener;
-    const index = current.indexOf(listener);
-    if (index !== -1) current.splice(index, 1);
-    if (current.length === 1) this.listeners = current[0];
+    if (current.includes(listener)) {
+      const remaining = current.filter(fn => fn !== listener);
+      this.listeners = remaining.length === 1 ? remaining[0] : remaining;
+    }
     if (this.onlisten !== null) {
       this.onlisten = this.onlisten.filter(pair => pair[0] !== listener);
       if (this.onlisten.length === 0) this.onlisten = null;

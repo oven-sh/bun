@@ -3825,6 +3825,119 @@ it("the over-limit 503 advertises Connection: close, not keep-alive", async () =
   }
 });
 
+// A server with maxRequestsPerSocket = 1 that records which event each request
+// reached, so the request sent after the limit is used up shows where it went.
+function createServerWithOneRequestPerSocket(events: string[]): Server {
+  const server = createServer((req, res) => {
+    events.push(`request ${req.url}`);
+    res.end("served");
+  });
+  server.maxRequestsPerSocket = 1;
+  server.on("dropRequest", req => events.push(`dropRequest ${req.url}`));
+  return server;
+}
+
+// Uses up the limit with a plain request, then sends `second` on the same
+// connection once the first response has fully arrived. Resolves with the two
+// status codes as soon as both are in: whether the connection is closed
+// afterwards differs per case (and Node keeps it open after a 503).
+function statusesOfFirstThen(port: number, second: string): Promise<string[]> {
+  const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+  const socket = connect(port, "127.0.0.1", () => socket.write("GET /first HTTP/1.1\r\nHost: x\r\n\r\n"));
+  let data = "";
+  let sentSecond = false;
+  socket.setEncoding("utf8");
+  socket.on("data", chunk => {
+    data += chunk;
+    if (!sentSecond) {
+      if (data.endsWith("served")) {
+        sentSecond = true;
+        socket.write(second);
+      }
+      return;
+    }
+    // Responses are back to back ("...servedHTTP/1.1 503 ..."), so no anchors.
+    const statuses = [...data.matchAll(/HTTP\/1\.1 (\d{3})/g)].map(m => m[1]);
+    if (statuses.length === 2) {
+      socket.destroy();
+      resolve(statuses);
+    }
+  });
+  socket.on("error", reject);
+  socket.on("close", () => reject(new Error(`connection closed after receiving: ${JSON.stringify(data)}`)));
+  return promise;
+}
+
+it.concurrent("an upgrade past maxRequestsPerSocket reaches 'upgrade' instead of being dropped", async () => {
+  // Node's parserOnIncoming hands an accepted upgrade off before it counts the
+  // request or checks the limit (Node v26.3.0 answers 200 then 101 here), so
+  // 'dropRequest' and the 503 never apply to it.
+  const events: string[] = [];
+  const server = createServerWithOneRequestPerSocket(events);
+  server.on("upgrade", (req, socket) => {
+    events.push(`upgrade ${req.url}`);
+    socket.end("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const statuses = await statusesOfFirstThen(
+      port,
+      "GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\n",
+    );
+
+    expect({ statuses, events }).toEqual({ statuses: ["200", "101"], events: ["request /first", "upgrade /ws"] });
+  } finally {
+    server.close();
+  }
+});
+
+it.concurrent("an Upgrade request nobody accepts still counts against maxRequestsPerSocket", async () => {
+  // With no 'upgrade' listener the request falls through to normal dispatch,
+  // which Node counts and drops like any other request (200 then 503).
+  const events: string[] = [];
+  const server = createServerWithOneRequestPerSocket(events);
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const statuses = await statusesOfFirstThen(
+      port,
+      "GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\n",
+    );
+
+    expect({ statuses, events }).toEqual({ statuses: ["200", "503"], events: ["request /first", "dropRequest /ws"] });
+  } finally {
+    server.close();
+  }
+});
+
+it.concurrent("a declined upgrade without Host past maxRequestsPerSocket gets the 400, not the 503", async () => {
+  // Node rejects a missing Host before counting the request, so the limit is
+  // never consulted and 'dropRequest' is not emitted (200 then 400). Only
+  // Upgrade-carrying requests can reach this point without a Host header: the
+  // native parser answers every other Host-less request itself.
+  const events: string[] = [];
+  const server = createServerWithOneRequestPerSocket(events);
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const statuses = await statusesOfFirstThen(
+      port,
+      "GET /nohost HTTP/1.1\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\n",
+    );
+
+    expect({ statuses, events }).toEqual({ statuses: ["200", "400"], events: ["request /first"] });
+  } finally {
+    server.close();
+  }
+});
+
 it("a non-200 CONNECT through a proxy that holds the connection open is destroyed client-side", async () => {
   // cleanupAndPropagate deliberately defers destroy to req.onSocket for
   // status-code tunnel failures; oncreate must forward the socket so

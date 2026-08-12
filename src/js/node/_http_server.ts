@@ -908,25 +908,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         let resolveFunction;
         let didFinish = false;
 
-        const isRequestsLimitSet = typeof server.maxRequestsPerSocket === "number" && server.maxRequestsPerSocket > 0;
-        let reachedRequestsLimit = false;
-        if (isRequestsLimitSet) {
-          const requestCount = (socket._requestCount || 0) + 1;
-          socket._requestCount = requestCount;
-          http_res._maxRequestsPerSocket = server.maxRequestsPerSocket;
-          // At (or beyond) the limit the response advertises Connection:
-          // close, like Node.js - including the over-limit 503 dropRequest
-          // answer, which would otherwise claim keep-alive right before the
-          // socket is destroyed. Closing the socket here instead would race
-          // already-pipelined requests, which still need to be dispatched so
-          // they can be answered with 503 via dropRequest.
-          http_res.maxRequestsOnConnectionReached = server.maxRequestsPerSocket <= requestCount;
-          if (server.maxRequestsPerSocket < requestCount) {
-            reachedRequestsLimit = true;
-          }
-        }
-
-        if (isSocketNew && !reachedRequestsLimit) {
+        if (isSocketNew) {
           server.emit("connection", socket);
         }
 
@@ -1016,6 +998,39 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_req._dumpAndCloseReadable();
         }
 
+        // An accepted upgrade is handed off and a missing Host is rejected
+        // before the request is counted against maxRequestsPerSocket, so
+        // neither is ever counted or answered with the 503 dropRequest:
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js (parserOnIncoming)
+        let rejectMissingHost = false;
+        let reachedRequestsLimit = false;
+        if (!is_upgrade) {
+          if (
+            server.requireHostHeader &&
+            (dispatchBits & DISPATCH_HAS_HOST) === 0 &&
+            http_req.httpVersionMajor === 1 &&
+            http_req.httpVersionMinor >= 1
+          ) {
+            // The native parser exempts Upgrade/CONNECT requests from its Host
+            // check so they can dispatch through the 'upgrade'/'connect' events;
+            // a request that fell through to normal dispatch instead must still
+            // honor requireHostHeader, like Node.js.
+            rejectMissingHost = true;
+          } else if (typeof server.maxRequestsPerSocket === "number" && server.maxRequestsPerSocket > 0) {
+            const requestCount = (socket._requestCount || 0) + 1;
+            socket._requestCount = requestCount;
+            http_res._maxRequestsPerSocket = server.maxRequestsPerSocket;
+            // At (or beyond) the limit the response advertises Connection:
+            // close, like Node.js - including the over-limit 503 dropRequest
+            // answer, which would otherwise claim keep-alive right before the
+            // socket is destroyed. Closing the socket here instead would race
+            // already-pipelined requests, which still need to be dispatched so
+            // they can be answered with 503 via dropRequest.
+            http_res.maxRequestsOnConnectionReached = server.maxRequestsPerSocket <= requestCount;
+            reachedRequestsLimit = server.maxRequestsPerSocket < requestCount;
+          }
+        }
+
         if (reachedRequestsLimit) {
           server.emit("dropRequest", http_req, socket);
           http_res.writeHead(503);
@@ -1068,16 +1083,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           const { promise: upgradePromise, resolve: resolveUpgrade } = $newPromiseCapability(Promise);
           socket.once("close", resolveUpgrade);
           return upgradePromise;
-        } else if (
-          server.requireHostHeader &&
-          (dispatchBits & DISPATCH_HAS_HOST) === 0 &&
-          http_req.httpVersionMajor === 1 &&
-          http_req.httpVersionMinor >= 1
-        ) {
-          // The native parser exempts Upgrade/CONNECT requests from its Host
-          // check so they can dispatch through the 'upgrade'/'connect' events;
-          // a request that fell through to normal dispatch instead must still
-          // honor requireHostHeader, like Node.js.
+        } else if (rejectMissingHost) {
           http_res.writeHead(400, { Connection: "close" });
           http_res.end();
         } else {

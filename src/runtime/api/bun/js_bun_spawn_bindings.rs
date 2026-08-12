@@ -1743,25 +1743,15 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // Start the readers before the Writable::Buffer stdin writer so that if
     // the writer's start() throws below, both PipeReaders have taken their
     // start() ref and on_process_exit's later drain is refcount-balanced.
-    // Both calls go through the reader's own pointer because either may end
-    // the reader's life before returning (a failed start, or EOF inside
-    // read_all), at which point on_close_io has already replaced the slot, so
-    // the slot is re-read in between instead of reusing `pipe`.
+    // Either call may free the reader (a failed start, EOF inside read_all),
+    // which also clears the slot, so the slot is re-read rather than `pipe` reused.
+    let lazy_reads = !IS_SYNC && lazy;
     if let Readable::Pipe(pipe) = subprocess.stdout.get() {
-        // SAFETY: the slot holds a ref on a live reader and no borrow of it is
-        // held here; `subprocess_nn` is the heap-pinned Subprocess.
-        unsafe {
-            PipeReader::start(
-                pipe.as_ptr(),
-                subprocess_nn,
-                event_loop_nn,
-                !IS_SYNC && lazy,
-            )
-        };
-        if IS_SYNC || !lazy {
+        // SAFETY: the slot holds a ref on the reader and nothing borrows it here.
+        unsafe { PipeReader::start(pipe.as_ptr(), subprocess_nn, event_loop_nn, lazy_reads) };
+        if !lazy_reads {
             if let Readable::Pipe(pipe) = subprocess.stdout.get() {
-                // SAFETY: as above; the slot still holding `Pipe` means start()
-                // succeeded and the reader is live.
+                // SAFETY: as above; the slot still reading `Pipe` means start() succeeded.
                 unsafe { PipeReader::read_all(pipe.as_ptr()) };
             }
         }
@@ -1769,15 +1759,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if let Readable::Pipe(pipe) = subprocess.stderr.get() {
         // SAFETY: see the stdout arm.
-        unsafe {
-            PipeReader::start(
-                pipe.as_ptr(),
-                subprocess_nn,
-                event_loop_nn,
-                !IS_SYNC && lazy,
-            )
-        };
-        if IS_SYNC || !lazy {
+        unsafe { PipeReader::start(pipe.as_ptr(), subprocess_nn, event_loop_nn, lazy_reads) };
+        if !lazy_reads {
             if let Readable::Pipe(pipe) = subprocess.stderr.get() {
                 // SAFETY: see the stdout arm.
                 unsafe { PipeReader::read_all(pipe.as_ptr()) };

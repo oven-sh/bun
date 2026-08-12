@@ -407,7 +407,10 @@ function processChunk(self, chunk, flushFlag, cb) {
   handle.inOff = 0;
   handle.flushFlag = flushFlag;
 
-  handle.write(
+  // A chunk whose storage the handle cannot hold in place (a view of a
+  // WebAssembly.Memory or a resizable ArrayBuffer) is written from a copy the
+  // handle returns; the rest of the chunk is then read from that copy.
+  const copy = handle.write(
     flushFlag, // flush
     chunk, // in
     0, // in_off
@@ -416,6 +419,7 @@ function processChunk(self, chunk, flushFlag, cb) {
     self._outOffset, // out_off
     handle.availOutBefore, // out_len
   );
+  if (copy) handle.buffer = copy;
 }
 
 function processCallback() {
@@ -471,29 +475,12 @@ function processCallback() {
     handle.availInBefore = availInAfter;
 
     if (!streamBufferIsFull) {
-      this.write(
-        handle.flushFlag, // flush
-        this.buffer, // in
-        handle.inOff, // in_off
-        handle.availInBefore, // in_len
-        self._outBuffer, // out
-        self._outOffset, // out_off
-        self._chunkSize, // out_len
-      );
+      continueProcessing(handle, self);
     } else {
       const oldRead = self._read;
       self._read = n => {
         self._read = oldRead;
-        this.write(
-          handle.flushFlag, // flush
-          this.buffer, // in
-          handle.inOff, // in_off
-          handle.availInBefore, // in_len
-          self._outBuffer, // out
-          self._outOffset, // out_off
-          self._chunkSize, // out_len
-        );
-        self._read(n);
+        if (continueProcessing(handle, self)) self._read(n);
       };
     }
     return;
@@ -513,6 +500,31 @@ function processCallback() {
   // Finished with the chunk.
   this.buffer = null;
   this.cb();
+}
+
+// Feed the rest of the current chunk to the handle. A write the handle refuses
+// fails the stream like any other write error instead of throwing here.
+function continueProcessing(handle, self) {
+  try {
+    const copy = handle.write(
+      handle.flushFlag, // flush
+      handle.buffer, // in
+      handle.inOff, // in_off
+      handle.availInBefore, // in_len
+      self._outBuffer, // out
+      self._outOffset, // out_off
+      self._chunkSize, // out_len
+    );
+    if (copy) {
+      handle.buffer = copy;
+      handle.inOff = 0;
+    }
+    return true;
+  } catch (err) {
+    handle.buffer = null;
+    handle.cb(err);
+    return false;
+  }
 }
 
 function _close(engine) {

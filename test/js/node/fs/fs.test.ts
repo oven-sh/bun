@@ -5051,6 +5051,141 @@ describe("fs.read", () => {
   });
 });
 
+describe.concurrent("async fs I/O on a view whose storage moves mid-operation", () => {
+  // The view lives in a WebAssembly.Memory that grows, or in a resizable
+  // ArrayBuffer that shrinks, while the operation is in flight. The child
+  // keeps the operation from finishing until its parent writes to stdin, which
+  // the parent only does once the child has moved the storage: reads wait for
+  // the bytes themselves, writes wait behind reads that hold both pool threads.
+  const fixture = /* js */ `
+    import fs from "node:fs";
+    import { join } from "node:path";
+    const [op, move, kind] = [process.argv[2], process.argv[3] === "move", process.argv[4]];
+    const call = (fn, ...args) =>
+      new Promise((resolve, reject) => fn(...args, (err, n) => (err ? reject(err) : resolve(n))));
+    const memory = kind === "wasm" ? new WebAssembly.Memory({ initial: 1, maximum: 4 }) : undefined;
+    const store = memory ? memory.buffer : new ArrayBuffer(4096, { maxByteLength: 65536 });
+    new Uint8Array(store).fill(0x61, 128, 160);
+    const views = [new Uint8Array(store, 128, 16), new Uint8Array(store, 144, 16)];
+    const pending = [];
+    let outPath;
+    if (op === "read") pending.push(call(fs.read, 0, views[0], 0, 16, null));
+    else if (op === "readv") pending.push(call(fs.readv, 0, views, null));
+    else {
+      const parked = Array.from({ length: 3 }, () => call(fs.read, 0, Buffer.alloc(16), 0, 16, null));
+      pending.push(...parked);
+      process.stdout.write("park\\n");
+      await Promise.race(parked);
+      outPath = join(process.cwd(), op + ".out");
+      const fd = fs.openSync(outPath, "w");
+      pending.push(op === "write" ? call(fs.write, fd, views[0], 0, 16, null) : call(fs.writev, fd, views, null));
+    }
+    if (move) memory ? memory.grow(1) : store.resize(0);
+    const others = memory ? Array.from({ length: 8 }, () => new WebAssembly.Memory({ initial: 1, maximum: 4 })) : [];
+    for (const m of others) new Uint8Array(m.buffer).fill(0x62);
+    process.stdout.write("ready\\n");
+    const results = await Promise.all(pending);
+    const current = memory ? memory.buffer : store;
+    console.log(
+      JSON.stringify({
+        result: results.at(-1),
+        detached: views[0].byteLength === 0,
+        memory: current.byteLength >= 160 ? Buffer.from(current, 128, 32).toString("latin1") : "",
+        othersUntouched: others.every(m => new Uint8Array(m.buffer).every(b => b === 0x62)),
+        written: outPath ? fs.readFileSync(outPath, "latin1") : undefined,
+      }),
+    );
+  `;
+
+  async function run(op: string, move: boolean, stdinBytes: number, kind: "wasm" | "resizable" = "wasm") {
+    using dir = tempDir("fs-moving-view", { "fixture.mjs": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs", op, move ? "move" : "stay", kind],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", UV_THREADPOOL_SIZE: "2" },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderrText = proc.stderr.text();
+    let stdout = "";
+    let parked = false;
+    let released = false;
+    const decoder = new TextDecoder();
+    for await (const chunk of proc.stdout) {
+      stdout += decoder.decode(chunk, { stream: true });
+      if (!parked && stdout.includes("park\n")) {
+        parked = true;
+        proc.stdin.write(Buffer.alloc(16, "c"));
+        await proc.stdin.flush();
+      }
+      if (!released && stdout.includes("ready\n")) {
+        released = true;
+        proc.stdin.write(Buffer.alloc(stdinBytes, "c"));
+        await proc.stdin.end();
+      }
+    }
+    const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
+    expect(stderr).toBe("");
+    const report = JSON.parse(stdout.slice(stdout.indexOf("ready\n") + "ready\n".length));
+    return { report, exitCode };
+  }
+
+  it("fs.read into a WebAssembly.Memory completes without touching any other memory", async () => {
+    const { report, exitCode } = await run("read", true, 16);
+    expect(report).toMatchObject({ result: 16, detached: true, othersUntouched: true });
+    expect(exitCode).toBe(0);
+  });
+
+  it("fs.readv into a WebAssembly.Memory completes without touching any other memory", async () => {
+    const { report, exitCode } = await run("readv", true, 32);
+    expect(report).toMatchObject({ result: 32, detached: true, othersUntouched: true });
+    expect(exitCode).toBe(0);
+  });
+
+  it("fs.write from a WebAssembly.Memory writes the bytes the view held", async () => {
+    const { report, exitCode } = await run("write", true, 32);
+    expect(report).toMatchObject({ result: 16, detached: true, written: "aaaaaaaaaaaaaaaa" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("fs.writev from a WebAssembly.Memory writes the bytes the views held", async () => {
+    const { report, exitCode } = await run("writev", true, 32);
+    expect(report).toMatchObject({ result: 32, detached: true, written: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("fs.read fills a WebAssembly.Memory view when the memory does not grow", async () => {
+    const { report, exitCode } = await run("read", false, 16);
+    expect(report).toMatchObject({ result: 16, detached: false, memory: "ccccccccccccccccaaaaaaaaaaaaaaaa" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("fs.readv fills WebAssembly.Memory views when the memory does not grow", async () => {
+    const { report, exitCode } = await run("readv", false, 32);
+    expect(report).toMatchObject({ result: 32, detached: false, memory: "cccccccccccccccccccccccccccccccc" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("fs.read into a resizable ArrayBuffer that shrinks completes", async () => {
+    const { report, exitCode } = await run("read", true, 16, "resizable");
+    expect(report).toMatchObject({ result: 16, detached: true });
+    expect(exitCode).toBe(0);
+  });
+
+  it("fs.writev from a resizable ArrayBuffer that shrinks writes the bytes the views held", async () => {
+    const { report, exitCode } = await run("writev", true, 32, "resizable");
+    expect(report).toMatchObject({ result: 32, detached: true, written: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("fs.readv fills resizable ArrayBuffer views when the buffer keeps its size", async () => {
+    const { report, exitCode } = await run("readv", false, 32, "resizable");
+    expect(report).toMatchObject({ result: 32, detached: false, memory: "cccccccccccccccccccccccccccccccc" });
+    expect(exitCode).toBe(0);
+  });
+});
+
 it("new Stats", () => {
   // @ts-expect-error
   const stats = new Stats(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14);

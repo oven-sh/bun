@@ -9,7 +9,7 @@
 use core::ffi::c_void;
 use core::marker::PhantomData;
 
-use crate::array_buffer::MarkedArrayBuffer_deallocator;
+use crate::array_buffer::{ArrayBufferPin, MarkedArrayBuffer_deallocator, PinnedArrayBuffer};
 use crate::{
     AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
     JSObject, JSPromise, JSString, JSType, JsClass, JsError, JsResult, ZigException,
@@ -925,11 +925,26 @@ impl JSValue {
     /// or `postMessage(v, [ab])` hands the destination a copy and leaves the
     /// source attached rather than throwing. See `JSC__JSValue__pinArrayBuffer`
     /// in bindings.cpp for why. Release the pin with `ArrayBuffer::unpin`.
-    pub fn as_pinned_arraybuffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
-        if !JSC__JSValue__pinArrayBuffer(self) {
+    ///
+    /// Some storage cannot be held in place by a pin (the buffer of a
+    /// non-shared `WebAssembly.Memory`); that comes back as
+    /// [`PinnedArrayBuffer::MustCopy`], unpinned, and the caller has to work
+    /// on its own copy of the bytes.
+    pub fn as_pinned_arraybuffer(self, global: &JSGlobalObject) -> Option<PinnedArrayBuffer> {
+        let pin = JSC__JSValue__pinArrayBuffer(self);
+        if pin == ArrayBufferPin::NotPinned {
             return None;
         }
-        self.as_array_buffer(global)
+        let Some(buffer) = self.as_array_buffer(global) else {
+            if pin == ArrayBufferPin::Pinned {
+                self.unpin_array_buffer();
+            }
+            return None;
+        };
+        Some(match pin {
+            ArrayBufferPin::MustCopy => PinnedArrayBuffer::MustCopy(buffer),
+            _ => PinnedArrayBuffer::Pinned(buffer),
+        })
     }
     /// Generic downcast. Dispatches via [`JsClass::from_js`].
     #[inline]
@@ -2089,7 +2104,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         out: &mut ArrayBuffer,
     ) -> bool;
-    safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> bool;
+    safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> ArrayBufferPin;
     safe fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;
     safe fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;
     safe fn Bun__attachAsyncStackFromPromise(

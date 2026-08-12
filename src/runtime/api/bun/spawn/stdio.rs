@@ -577,6 +577,7 @@ impl Stdio {
             *out_stdio = Stdio::ArrayBuffer(jsc::array_buffer::ArrayBufferStrong {
                 array_buffer: copied,
                 held: jsc::StrongOptional::create(copied.value, global),
+                pinned: false,
             });
             return Ok(());
         }

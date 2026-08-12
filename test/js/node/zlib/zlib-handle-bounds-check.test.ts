@@ -457,38 +457,37 @@ describe.concurrent("zlib native handle argument validation", () => {
     ).toEqual({ stdout: "threw ERR_INVALID_ARG_VALUE: Invalid flush value", exitCode: 0 });
   });
 
-  test.concurrent("write() rejects an output buffer backed by a resizable ArrayBuffer", async () => {
+  test.concurrent("write() fills an output buffer backed by a resizable ArrayBuffer", async () => {
     expect(
       await run(
-        `const h = zlib.createDeflateRaw()._handle;
+        `const d = zlib.createDeflateRaw(), h = d._handle;
+         const input = Buffer.alloc(16, "a");
          const out = new Uint8Array(new ArrayBuffer(64, { maxByteLength: 128 }));
-         try { h.write(zlib.constants.Z_NO_FLUSH, null, 0, 0, out, 0, 64); console.log("handled"); }
+         Object.assign(h, { buffer: input, availOutBefore: 64, availInBefore: 16, inOff: 0, flushFlag: zlib.constants.Z_FINISH });
+         h.cb = () => console.log(zlib.inflateRawSync(out.subarray(0, 64 - d._writeState[0])).toString());
+         try { h.write(zlib.constants.Z_FINISH, input, 0, 16, out, 0, 64); }
          catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
       ),
-    ).toEqual({
-      stdout: 'threw ERR_INVALID_ARG_VALUE: The "out" argument must not be backed by a resizable ArrayBuffer',
-      exitCode: 0,
-    });
+    ).toEqual({ stdout: "aaaaaaaaaaaaaaaa", exitCode: 0 });
   });
 
-  test.concurrent("write() rejects an input buffer backed by a resizable ArrayBuffer", async () => {
+  test.concurrent("write() reads an input buffer backed by a resizable ArrayBuffer", async () => {
     expect(
       await run(
-        `const h = zlib.createDeflateRaw()._handle;
-         const input = new Uint8Array(new ArrayBuffer(16, { maxByteLength: 64 }));
-         try { h.write(zlib.constants.Z_NO_FLUSH, input, 0, 16, new Uint8Array(1024), 0, 1024); console.log("handled"); }
+        `const d = zlib.createDeflateRaw(), h = d._handle;
+         const input = new Uint8Array(new ArrayBuffer(16, { maxByteLength: 64 })).fill(97);
+         const out = new Uint8Array(1024);
+         Object.assign(h, { buffer: input, availOutBefore: 1024, availInBefore: 16, inOff: 0, flushFlag: zlib.constants.Z_FINISH });
+         h.cb = () => console.log(zlib.inflateRawSync(out.subarray(0, 1024 - d._writeState[0])).toString());
+         try { h.write(zlib.constants.Z_FINISH, input, 0, 16, out, 0, 1024); }
          catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
       ),
-    ).toEqual({
-      stdout: 'threw ERR_INVALID_ARG_VALUE: The "in" argument must not be backed by a resizable ArrayBuffer',
-      exitCode: 0,
-    });
+    ).toEqual({ stdout: "aaaaaaaaaaaaaaaa", exitCode: 0 });
   });
 
   // A growable SharedArrayBuffer grows in place and never shrinks, so the
   // pointer/length captured for the threadpool write stays a valid prefix even
-  // across a concurrent grow(). The resizable-buffer rejection above must not
-  // apply to it.
+  // across a concurrent grow().
   test.concurrent("write() accepts an output buffer backed by a growable SharedArrayBuffer", async () => {
     expect(
       await run(

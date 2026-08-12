@@ -960,12 +960,17 @@ mod _async_tasks {
                         return promise.reject(global_object, Err(e));
                     }
                 },
-                Ok(res) => match FsReturn::fs_to_js(res, global_object) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return promise.reject(global_object, Err(e));
+                Ok(res) => {
+                    if let Some(len) = res.bytes_read() {
+                        self.args.write_back(global_object, len);
                     }
-                },
+                    match FsReturn::fs_to_js(res, global_object) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            return promise.reject(global_object, Err(e));
+                        }
+                    }
+                }
             };
             promise_value.ensure_still_alive();
 
@@ -1007,6 +1012,11 @@ mod _async_tasks {
         /// `node_fs_binding.rs` can call it without per-type macro arms.
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self>;
         fn to_thread_safe(&mut self);
+        /// JS thread, before the result is published: the operation produced
+        /// `len` bytes (see [`FsReturn::bytes_read`]) into caller-supplied JS
+        /// buffers; publish any that had to be worked on through a private copy.
+        #[inline]
+        fn write_back(&self, _global: &JSGlobalObject, _len: usize) {}
         /// Consume `self`, protect any JS-backed buffers, and return a guard that
         /// unprotects on drop —
         /// string/slice ownership is handled by each field's `Drop` (PathLike,
@@ -1031,6 +1041,14 @@ mod _async_tasks {
             #[inline] fn to_thread_safe(&mut self) { <$ty>::to_thread_safe(self) }
         } )+
     };
+    // Types the operation writes into — also forward `write_back`.
+    ( @write_back $( $ty:ty ),+ $(,)? ) => {
+        $( impl FsArgument for $ty {
+            #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
+            #[inline] fn to_thread_safe(&mut self) { <$ty>::to_thread_safe(self) }
+            #[inline] fn write_back(&self, global: &JSGlobalObject, len: usize) { <$ty>::write_back(self, global, len) }
+        } )+
+    };
     // Fd-only types — `to_thread_safe` is a no-op (these hold only `FD`/scalars).
     ( @fd $( $ty:ty ),+ $(,)? ) => {
         $( impl FsArgument for $ty {
@@ -1045,7 +1063,6 @@ mod _async_tasks {
     impl_fs_argument!(
         args::Rename,
         args::Truncate,
-        args::FdVectorIo,
         args::FTruncate,
         args::Chown,
         args::Lutimes,
@@ -1064,11 +1081,11 @@ mod _async_tasks {
         args::Readdir,
         args::Open,
         args::Write,
-        args::Read,
         args::Exists,
         args::Access,
         args::CopyFile,
     );
+    impl_fs_argument!(@write_back args::FdVectorIo, args::Read);
     impl_fs_argument!(@fd
         args::Fchown, args::FChmod, args::Fstat, args::Close, args::Futimes,
         args::FdataSync, args::Fsync,
@@ -1127,6 +1144,12 @@ mod _async_tasks {
     /// Each `ret::*` type implements this by forwarding to its inherent method.
     pub trait FsReturn {
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
+        /// For results that count bytes produced into caller-supplied buffers
+        /// (see [`FsArgument::write_back`]).
+        #[inline]
+        fn bytes_read(&self) -> Option<usize> {
+            None
+        }
     }
     impl FsReturn for JSValue {
         #[inline]
@@ -1180,6 +1203,10 @@ mod _async_tasks {
         #[inline]
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
             Ok(self.to_js(global))
+        }
+        #[inline]
+        fn bytes_read(&self) -> Option<usize> {
+            Some(usize::try_from(self.bytes_read).unwrap_or(usize::MAX))
         }
     }
     impl FsReturn for ret::Write {
@@ -1282,12 +1309,17 @@ mod _async_tasks {
                         return Ok(promise.reject(global_object, Err(e))?);
                     }
                 },
-                Ok(res) => match FsReturn::fs_to_js(res, global_object) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return Ok(promise.reject(global_object, Err(e))?);
+                Ok(res) => {
+                    if let Some(len) = res.bytes_read() {
+                        this.args.write_back(global_object, len);
                     }
-                },
+                    match FsReturn::fs_to_js(res, global_object) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            return Ok(promise.reject(global_object, Err(e))?);
+                        }
+                    }
+                }
             };
             promise_value.ensure_still_alive();
 
@@ -2728,6 +2760,9 @@ pub mod args {
             self.buffers.value.protect();
             self.buffers.buffers = self.buffers.buffers.as_slice().to_vec();
         }
+        pub(crate) fn write_back(&self, global: &JSGlobalObject, len: usize) {
+            self.buffers.write_back(global, len);
+        }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let fd = FD::from_js_required(ctx, arguments)?;
             let buffers = VectorArrayBuffer::from_js(
@@ -3791,13 +3826,16 @@ pub mod args {
                 }
             }
             if arguments.will_be_async && matches!(args.buffer, StringOrBuffer::Buffer(_)) {
-                if let Some(pinned) = bv.as_pinned_arraybuffer(ctx) {
-                    args.buffer = StringOrBuffer::Buffer(Buffer {
-                        buffer: pinned,
-                        owns_buffer: false,
-                        pinned: true,
-                    });
-                }
+                let (buffer, offset) = Buffer::from_js_pinned_range(
+                    ctx,
+                    bv,
+                    args.offset as usize,
+                    args.length.min(usize::MAX as u64) as usize,
+                    bun_jsc::BorrowedFor::Input,
+                )?
+                .ok_or_else(|| ctx.throw_out_of_memory())?;
+                args.buffer = StringOrBuffer::Buffer(buffer);
+                args.offset = offset as u64;
             }
             Ok(args)
         }
@@ -3809,21 +3847,22 @@ pub mod args {
         pub offset: u64,
         pub(crate) length: u64,
         pub(crate) position: Option<ReadPosition>,
-        /// True when `from_js` pinned `buffer` for the async path; balanced in
-        /// `unprotect()` (the JS-thread release hook).
-        pub(crate) pinned: bool,
+        /// Where `offset` falls in the JS object when `buffer` is a private
+        /// copy of just the window being read (see `Buffer::from_js_pinned_range`).
+        pub(crate) js_offset: u64,
     }
     impl Read {
         pub(crate) fn to_thread_safe(&self) {
             self.buffer.buffer.value.protect();
         }
+        pub(crate) fn write_back(&self, global: &JSGlobalObject, len: usize) {
+            self.buffer.write_back(global, self.js_offset as usize, len);
+        }
     }
     impl Unprotect for Read {
         #[inline]
         fn unprotect(&mut self) {
-            if self.pinned {
-                self.buffer.buffer.unpin();
-            }
+            self.buffer.unpin();
             self.buffer.buffer.value.unprotect();
         }
     }
@@ -3846,7 +3885,7 @@ pub mod args {
             // } else {
             //   validateInteger(offset, 'offset', 0);
             // }
-            let offset: u64 = if offset_value.is_undefined_or_null() {
+            let mut offset: u64 = if offset_value.is_undefined_or_null() {
                 0
             } else {
                 u64::try_from(validators::validate_integer(
@@ -3865,7 +3904,7 @@ pub mod args {
             } else {
                 0.0
             };
-            let buffer = Buffer::from_js(ctx, buffer_value).ok_or_else(|| {
+            let mut buffer = Buffer::from_js(ctx, buffer_value).ok_or_else(|| {
                 ctx.throw_invalid_argument_type_value(b"buffer", b"TypedArray", buffer_value)
             })?;
 
@@ -3881,7 +3920,7 @@ pub mod args {
                     length: 0,
                     offset: 0,
                     position: None,
-                    pinned: false,
+                    js_offset: 0,
                 });
             }
 
@@ -3993,21 +4032,18 @@ pub mod args {
                 None
             };
 
-            let (buffer, pinned) = if arguments.will_be_async {
-                match buffer_value.as_pinned_arraybuffer(ctx) {
-                    Some(pinned) => (
-                        Buffer {
-                            buffer: pinned,
-                            owns_buffer: false,
-                            pinned: true,
-                        },
-                        true,
-                    ),
-                    None => (buffer, false),
-                }
-            } else {
-                (buffer, false)
-            };
+            let js_offset = offset;
+            if arguments.will_be_async {
+                (buffer, offset) = Buffer::from_js_pinned_range(
+                    ctx,
+                    buffer_value,
+                    offset as usize,
+                    length as usize,
+                    bun_jsc::BorrowedFor::Output,
+                )?
+                .map(|(pinned, at)| (pinned, at as u64))
+                .ok_or_else(|| ctx.throw_out_of_memory())?;
+            }
 
             Ok(Read {
                 fd,
@@ -4015,7 +4051,7 @@ pub mod args {
                 offset,
                 length,
                 position,
-                pinned,
+                js_offset,
             })
         }
     }

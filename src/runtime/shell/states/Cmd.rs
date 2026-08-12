@@ -188,7 +188,7 @@ impl BufferedIoClosed {
             // SAFETY: `shell_buf` points into `ShellExecEnv::_buffered_*`,
             // which the owning Cmd's `base.shell` keeps live for the duration
             // of the command. Single-threaded.
-            unsafe { (*shell_buf).append_slice(the_slice) };
+            unsafe { (*shell_buf).append_slice(&the_slice) };
         }
         // SAFETY: `Arc<PipeReader>` interior mutability — the shell is
         // single-threaded and this is the same pattern `subproc::on_close_io`
@@ -710,11 +710,9 @@ impl Cmd {
 
                 if let Some(buf) = jsval.as_array_buffer(global) {
                     let mk_out = || {
-                        let pinned = jsval.as_pinned_arraybuffer(global);
-                        Stdio::ArrayBuffer(crate::jsc::array_buffer::ArrayBufferStrong {
-                            array_buffer: pinned.unwrap_or(buf),
-                            held: crate::jsc::StrongOptional::create(buf.value, global),
-                        })
+                        crate::jsc::array_buffer::ArrayBufferStrong::from_js_pinned(global, jsval)?
+                            .map(Stdio::ArrayBuffer)
+                            .ok_or_else(|| global.throw_out_of_memory())
                     };
                     if flags.stdin() {
                         let bytes = buf.byte_slice();
@@ -727,14 +725,14 @@ impl Cmd {
                         };
                     }
                     if flags.duplicate_out() {
-                        stdio[STDOUT_NO] = mk_out();
-                        stdio[STDERR_NO] = mk_out();
+                        stdio[STDOUT_NO] = mk_out()?;
+                        stdio[STDERR_NO] = mk_out()?;
                     } else {
                         if flags.stdout() {
-                            stdio[STDOUT_NO] = mk_out();
+                            stdio[STDOUT_NO] = mk_out()?;
                         }
                         if flags.stderr() {
-                            stdio[STDERR_NO] = mk_out();
+                            stdio[STDERR_NO] = mk_out()?;
                         }
                     }
                 } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {
@@ -1002,7 +1000,7 @@ impl Cmd {
             if let Some(captured) = unsafe { fd.captured_mut() } {
                 if !redirect.redirects_elsewhere(ast::IoKind::Stdout) {
                     if let Readable::Pipe(pipe) = &child.stdout {
-                        captured.append_slice(pipe.slice());
+                        captured.append_slice(&pipe.slice());
                     }
                 }
             }
@@ -1036,7 +1034,7 @@ impl Cmd {
             if let Some(captured) = unsafe { fd.captured_mut() } {
                 if !redirect.redirects_elsewhere(ast::IoKind::Stderr) {
                     if let Readable::Pipe(pipe) = &child.stderr {
-                        captured.append_slice(pipe.slice());
+                        captured.append_slice(&pipe.slice());
                     }
                 }
             }

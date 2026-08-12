@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -722,6 +722,221 @@ describe("async write buffer lifetime", () => {
     } finally {
       deflate.close();
     }
+  });
+});
+
+describe("async write into a resizable ArrayBuffer", () => {
+  it("still reports a truncated stream", async () => {
+    const inflate = zlib.createInflate();
+    try {
+      const handle = inflate._handle;
+      const input = zlib.deflateSync(Buffer.alloc(64, "a")).subarray(0, 5);
+      const out = new Uint8Array(new ArrayBuffer(1024, { maxByteLength: 2048 }), 0, 1024);
+      const outcome = new Promise(resolve => {
+        handle.cb = () => resolve("written");
+        handle.onerror = (message, errno, code) => resolve(code);
+      });
+      Object.assign(handle, {
+        buffer: input,
+        availOutBefore: out.byteLength,
+        availInBefore: input.byteLength,
+        inOff: 0,
+        flushFlag: zlib.constants.Z_FINISH,
+      });
+      handle.write(zlib.constants.Z_FINISH, input, 0, input.byteLength, out, 0, out.byteLength);
+      expect(await outcome).toBe("Z_BUF_ERROR");
+    } finally {
+      inflate.close();
+    }
+  });
+
+  it("fills the output view", async () => {
+    const deflate = zlib.createDeflate();
+    try {
+      const handle = deflate._handle;
+      const input = Buffer.alloc(64, "a");
+      const out = new Uint8Array(new ArrayBuffer(1024, { maxByteLength: 2048 }), 0, 1024);
+      const written = new Promise(resolve => (handle.cb = resolve));
+      Object.assign(handle, {
+        buffer: input,
+        availOutBefore: out.byteLength,
+        availInBefore: input.byteLength,
+        inOff: 0,
+        flushFlag: zlib.constants.Z_FINISH,
+      });
+      handle.write(zlib.constants.Z_FINISH, input, 0, input.byteLength, out, 0, out.byteLength);
+      await written;
+      const produced = out.byteLength - deflate._writeState[0];
+      expect(produced).toBeGreaterThan(0);
+      expect(zlib.inflateSync(out.subarray(0, produced)).toString()).toBe(input.toString());
+    } finally {
+      deflate.close();
+    }
+  });
+});
+
+describe.concurrent("async write on views of a WebAssembly.Memory that grows mid-write", () => {
+  // Reads parked on stdin hold both pool threads, so the compression only
+  // runs once the parent answers "ready" -- after the memory has grown.
+  const prologue = /* js */ `
+    import fs from "node:fs";
+    import zlib from "node:zlib";
+    const call = (fn, ...args) =>
+      new Promise((resolve, reject) => fn(...args, (err, n) => (err ? reject(err) : resolve(n))));
+    const memory = new WebAssembly.Memory({ initial: 1, maximum: 4 });
+    const parked = Array.from({ length: 3 }, () => call(fs.read, 0, Buffer.alloc(16), 0, 16, null));
+    process.stdout.write("park\\n");
+    await Promise.race(parked);
+    function grow() {
+      memory.grow(1);
+      const others = Array.from({ length: 8 }, () => new WebAssembly.Memory({ initial: 1, maximum: 4 }));
+      for (const m of others) new Uint8Array(m.buffer).fill(0x62);
+      process.stdout.write("ready\\n");
+      return () => others.every(m => new Uint8Array(m.buffer).every(b => b === 0x62));
+    }
+  `;
+
+  async function run(body) {
+    using dir = tempDir("zlib-wasm-memory-view", { "fixture.mjs": prologue + body });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", UV_THREADPOOL_SIZE: "2" },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderrText = proc.stderr.text();
+    let stdout = "";
+    let parked = false;
+    let released = false;
+    const decoder = new TextDecoder();
+    for await (const chunk of proc.stdout) {
+      stdout += decoder.decode(chunk, { stream: true });
+      if (!parked && stdout.includes("park\n")) {
+        parked = true;
+        proc.stdin.write(Buffer.alloc(16, "c"));
+        await proc.stdin.flush();
+      }
+      if (!released && stdout.includes("ready\n")) {
+        released = true;
+        proc.stdin.write(Buffer.alloc(32, "c"));
+        await proc.stdin.end();
+      }
+    }
+    const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
+    expect(stderr).toBe("");
+    return { report: JSON.parse(stdout.slice(stdout.indexOf("ready\n") + "ready\n".length)), exitCode };
+  }
+
+  it("compresses the bytes the input view held", async () => {
+    const { report, exitCode } = await run(/* js */ `
+      const view = new Uint8Array(memory.buffer, 128, 4096).fill(0x61);
+      const deflated = call(zlib.deflate, view);
+      const othersUntouched = grow();
+      await Promise.all(parked);
+      const inflated = zlib.inflateSync(await deflated);
+      console.log(JSON.stringify({
+        detached: view.byteLength === 0,
+        length: inflated.length,
+        allA: inflated.every(b => b === 0x61),
+        othersUntouched: othersUntouched(),
+      }));
+    `);
+    expect(report).toEqual({ detached: true, length: 4096, allA: true, othersUntouched: true });
+    expect(exitCode).toBe(0);
+  });
+
+  it("produces into the output view without touching any other memory", async () => {
+    const { report, exitCode } = await run(/* js */ `
+      const deflate = zlib.createDeflate();
+      const handle = deflate._handle;
+      const input = Buffer.alloc(64, "a");
+      const out = new Uint8Array(memory.buffer, 128, 1024);
+      const written = new Promise(resolve => (handle.cb = resolve));
+      handle.buffer = input;
+      handle.availOutBefore = out.byteLength;
+      handle.availInBefore = input.byteLength;
+      handle.inOff = 0;
+      handle.flushFlag = zlib.constants.Z_FINISH;
+      handle.write(zlib.constants.Z_FINISH, input, 0, input.byteLength, out, 0, out.byteLength);
+      const othersUntouched = grow();
+      await written;
+      deflate.close();
+      console.log(JSON.stringify({ detached: out.byteLength === 0, othersUntouched: othersUntouched() }));
+    `);
+    expect(report).toEqual({ detached: true, othersUntouched: true });
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("streaming a WebAssembly.Memory view larger than one output chunk", () => {
+  // More than 16 KiB of incompressible output takes several handle writes for
+  // one input chunk.
+  async function run(body) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          const zlib = require("node:zlib");
+          const memory = new WebAssembly.Memory({ initial: 4, maximum: 8 });
+          const view = new Uint8Array(memory.buffer, 4096, 3 * 65536);
+          require("node:crypto").randomFillSync(view);
+          const expected = Buffer.from(view);
+          ${body}
+        `,
+      ],
+      env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    return { report: JSON.parse(stdout), exitCode };
+  }
+
+  it("compresses the whole view", async () => {
+    const { report, exitCode } = await run(/* js */ `
+      zlib.deflate(view, { chunkSize: 16384 }, (error, deflated) => {
+        console.log(JSON.stringify({
+          error: error?.code ?? null,
+          chunks: Math.ceil(deflated.length / 16384),
+          equal: Buffer.compare(zlib.inflateSync(deflated), expected) === 0,
+        }));
+      });
+    `);
+    expect(report.error).toBeNull();
+    expect(report.chunks).toBeGreaterThan(1);
+    expect(report.equal).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  it("keeps compressing the bytes the view held when the memory grows between output chunks", async () => {
+    const { report, exitCode } = await run(/* js */ `
+      const deflate = zlib.createDeflate({ chunkSize: 16384 });
+      const chunks = [];
+      deflate.on("data", chunk => {
+        if (chunks.push(chunk) === 1) memory.grow(1);
+      });
+      deflate.on("error", error => console.log(JSON.stringify({ error: error.code })));
+      deflate.on("end", () =>
+        console.log(
+          JSON.stringify({
+            error: null,
+            detached: view.byteLength === 0,
+            chunks: chunks.length,
+            equal: Buffer.compare(zlib.inflateSync(Buffer.concat(chunks)), expected) === 0,
+          }),
+        ),
+      );
+      deflate.end(view);
+    `);
+    expect(report.error).toBeNull();
+    expect(report.detached).toBe(true);
+    expect(report.chunks).toBeGreaterThan(1);
+    expect(report.equal).toBe(true);
+    expect(exitCode).toBe(0);
   });
 });
 

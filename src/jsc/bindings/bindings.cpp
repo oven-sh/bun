@@ -3486,8 +3486,16 @@ bool JSC__JSValue__asArrayBuffer(
 // Pin/unpin the backing ArrayBuffer of a JSArrayBuffer or JSArrayBufferView so
 // its storage cannot move or be freed while a native borrower holds a slice
 // into it. SharedArrayBuffer is never detachable and never moves, so it is left
-// unpinned rather than rejected. Returns false if `value` has no ArrayBuffer
-// impl.
+// unpinned rather than rejected.
+//
+//   NotPinned  `value` has no ArrayBuffer impl.
+//   Pinned     (or shared): the storage stays put until `unpinArrayBuffer`.
+//   MustCopy   Not pinnable, nothing was pinned (`Bun::tryPin`): a
+//              pin only stops a detach. The buffer of a non-shared
+//              WebAssembly.Memory borrows pages that belong to the memory,
+//              which `memory.grow()` and the memory's own lifetime release
+//              regardless; a resizable ArrayBuffer's `resize()` maps trimmed
+//              pages out. The caller must work on its own copy of the bytes.
 //
 // A pin does not make detaching fail, it makes it copy. `pin()` clears
 // `ArrayBuffer::isDetachable()`, and `ArrayBuffer::transferTo()` answers an
@@ -3510,15 +3518,21 @@ static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
         return view->possiblySharedBuffer();
     return nullptr;
 }
-CPP_DECL bool JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
+extern "C++" Bun::ArrayBufferPin Bun::tryPin(JSC::ArrayBuffer& buf)
 {
-    if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v))) {
-        if (!buf->isShared())
-            buf->pin();
-        return true;
-    }
-    return false;
+    if (!buf.isShared() && (buf.isWasmMemory() || buf.isResizableNonShared()))
+        return ArrayBufferPin::MustCopy;
+    if (!buf.isShared())
+        buf.pin();
+    return ArrayBufferPin::Pinned;
 }
+CPP_DECL Bun::ArrayBufferPin JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
+{
+    if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v)))
+        return Bun::tryPin(*buf);
+    return Bun::ArrayBufferPin::NotPinned;
+}
+// Only for a value `pinArrayBuffer` answered `Pinned` for.
 CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 {
     if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v))) {
@@ -3527,7 +3541,7 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
     }
 }
 
-// Borrow `v`'s byte storage for off-thread reading. Splits out only the
+// Borrow `v`'s byte storage for off-thread reading. Splits out the
 // `FastTypedArray` case from `pinArrayBuffer`, because that's the one mode
 // where `possiblySharedBuffer()` actually COPIES data
 // (`ArrayBuffer::tryCreate(span())`) — and it's ≤ fastSizeLimit elements, so
@@ -3541,8 +3555,9 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 // storage the worker is reading.
 //
 //   0  Detached/null — nothing to read.
-//   1  `FastTypedArray` — ≤ fastSizeLimit elements, GC-movable. Caller
-//      should dupe `out_ptr[0..out_len]`; no unpin.
+//   1  Caller should dupe `out_ptr[0..out_len]`; no unpin. Either a
+//      `FastTypedArray` (≤ fastSizeLimit elements, GC-movable) or storage a
+//      pin cannot hold (see `pinArrayBuffer`).
 //   2  Everything else — `pin()`ed via `possiblySharedBuffer()`; caller
 //      MUST `unpinArrayBuffer(v)` when done.
 //
@@ -3564,20 +3579,16 @@ CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, co
         // contract allows it).
         auto* buf = view->possiblySharedBuffer();
         if (!buf) return 0;
-        if (!buf->isShared())
-            buf->pin();
         *out_ptr = static_cast<const uint8_t*>(view->vector());
         *out_len = view->byteLength();
-        return 2;
+        return Bun::tryPin(*buf) == Bun::ArrayBufferPin::Pinned ? 2 : 1;
     }
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
         auto* buf = jb->impl();
         if (!buf || buf->isDetached()) return 0;
-        if (!buf->isShared())
-            buf->pin();
         *out_ptr = static_cast<const uint8_t*>(buf->data());
         *out_len = buf->byteLength();
-        return 2;
+        return Bun::tryPin(*buf) == Bun::ArrayBufferPin::Pinned ? 2 : 1;
     }
     return 0;
 }
@@ -6873,7 +6884,10 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
 // and pinned before its data pointer is read, so the span stays valid after
 // control returns to JS (an in-flight async I/O). The caller must balance
 // every pinned element with `JSC__JSValue__unpinArrayBuffer`. SharedArrayBuffer
-// is never detachable and never moves, so it is left unpinned.
+// is never detachable and never moves, so it is left unpinned. An element
+// whose storage a pin cannot hold (see `Bun::tryPin`) is
+// reported as `MustCopy` and left unpinned; the caller works on its own copy
+// of that span. Without `pinBuffers` every element is reported `NotPinned`.
 //
 // Returns 0 on success, 1 if the value is not a JSArray or an element is not
 // an ArrayBufferView, 2 on allocation failure, -1 if an exception is pending.
@@ -6882,7 +6896,7 @@ extern "C" int32_t Bun__JSArray__collectBufferSpans(
     JSC::EncodedJSValue encodedValue,
     bool pinBuffers,
     void* ctx,
-    void (*append)(void* ctx, JSC::EncodedJSValue element, void* data, size_t byteLength))
+    void (*append)(void* ctx, JSC::EncodedJSValue element, void* data, size_t byteLength, Bun::ArrayBufferPin pin))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -6909,6 +6923,7 @@ extern "C" int32_t Bun__JSArray__collectBufferSpans(
         auto* view = dynamicDowncast<JSC::JSArrayBufferView>(values.at(i));
         if (!view)
             return 1;
+        auto pin = Bun::ArrayBufferPin::NotPinned;
         if (pinBuffers) {
             // possiblySharedBuffer() converts a FastTypedArray (GC-movable
             // storage, no ArrayBuffer yet) into a malloc-backed one and can
@@ -6916,10 +6931,9 @@ extern "C" int32_t Bun__JSArray__collectBufferSpans(
             auto* buf = view->possiblySharedBuffer();
             if (!buf) [[unlikely]]
                 return 2;
-            if (!buf->isShared())
-                buf->pin();
+            pin = Bun::tryPin(*buf);
         }
-        append(ctx, JSC::JSValue::encode(view), view->vector(), view->byteLength());
+        append(ctx, JSC::JSValue::encode(view), view->vector(), view->byteLength(), pin);
     }
     return 0;
 }

@@ -739,9 +739,8 @@ impl Image {
                     JSC__JSValue__borrowBytesForOffThread(v, &raw mut ptr, &raw mut len)
                 } {
                     0 => Err(PinError::Detached),
-                    // FastTypedArray (≤ fastSizeLimit elements, GC-movable): tiny
-                    // by definition — dupe instead of forcing JSC to copy via
-                    // tryCreate(span()) + allocate a butterfly.
+                    // Storage a pin cannot hold in place (a GC-movable
+                    // FastTypedArray, a WebAssembly.Memory): dupe.
                     1 => {
                         if len == 0 {
                             Err(PinError::Detached)

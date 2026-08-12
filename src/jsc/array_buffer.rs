@@ -33,6 +33,39 @@ pub struct ArrayBuffer {
     pub resizable: bool,
 }
 
+/// `JSC__JSValue__pinArrayBuffer`'s answer; mirrors `Bun::ArrayBufferPin`
+/// in headers-handwritten.h.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ArrayBufferPin {
+    /// Not an ArrayBuffer or view (or pinning was not requested).
+    NotPinned = 0,
+    Pinned = 1,
+    /// The storage cannot be held in place by a pin; nothing was pinned.
+    MustCopy = 2,
+}
+
+/// Which way the bytes of a buffer handed to [`MarkedArrayBuffer::from_js_pinned_range`]
+/// flow, for when a private buffer has to stand in for it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BorrowedFor {
+    /// The operation reads the buffer: the stand-in starts as a copy.
+    Input,
+    /// The operation fills the buffer: the stand-in starts zeroed and is
+    /// published with [`MarkedArrayBuffer::write_back`].
+    Output,
+}
+
+/// What [`JSValue::as_pinned_arraybuffer`] could do for a buffer.
+pub enum PinnedArrayBuffer {
+    /// The backing store is pinned; release with [`ArrayBuffer::unpin`].
+    Pinned(ArrayBuffer),
+    /// The backing store cannot be held in place by a pin and was left
+    /// unpinned. The descriptor is only good for taking a copy right now, on
+    /// the JS thread.
+    MustCopy(ArrayBuffer),
+}
+
 impl Default for ArrayBuffer {
     fn default() -> Self {
         Self {
@@ -636,6 +669,11 @@ impl ArrayBuffer {
 pub struct ArrayBufferStrong {
     pub array_buffer: ArrayBuffer,
     pub held: crate::StrongOptional, // jsc.Strong.Optional
+    /// `array_buffer` is a pinned borrow of `held`'s storage (see
+    /// [`JSValue::as_pinned_arraybuffer`]) that stays put until unpinned.
+    /// Otherwise the descriptor is only current until JS runs again; see
+    /// [`Self::refresh`].
+    pub pinned: bool,
 }
 
 impl Default for ArrayBufferStrong {
@@ -643,6 +681,7 @@ impl Default for ArrayBufferStrong {
         Self {
             array_buffer: ArrayBuffer::default(),
             held: crate::StrongOptional::empty(),
+            pinned: false,
         }
     }
 }
@@ -655,10 +694,51 @@ impl ArrayBufferStrong {
     pub fn slice_mut(&mut self) -> &mut [u8] {
         self.array_buffer.slice_mut()
     }
+
+    /// Hold `value` and borrow its bytes for as long as this lives: pinned
+    /// when a pin can hold the storage in place, otherwise looked up afresh by
+    /// [`Self::refresh`] before each use. `Ok(None)`: not an ArrayBuffer or
+    /// view.
+    pub fn from_js_pinned(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
+        let (array_buffer, pinned) = match value.as_pinned_arraybuffer(global) {
+            Some(PinnedArrayBuffer::Pinned(pinned)) => (pinned, true),
+            Some(PinnedArrayBuffer::MustCopy(unpinned)) => (unpinned, false),
+            None if value.as_array_buffer(global).is_none() => return Ok(None),
+            None => return Err(global.throw_out_of_memory()),
+        };
+        Ok(Some(Self {
+            array_buffer,
+            held: crate::StrongOptional::create(value, global),
+            pinned,
+        }))
+    }
+
+    /// JS thread: for a descriptor that is not a pinned borrow, look the
+    /// held object's current storage up again (empty once detached).
+    pub fn refresh(&mut self, global: &JSGlobalObject) {
+        if !self.pinned {
+            self.array_buffer = self
+                .held
+                .get()
+                .and_then(|value| value.as_array_buffer(global))
+                .unwrap_or_default();
+        }
+    }
+
+    /// Releases the pin, if `array_buffer` is a pinned borrow.
+    pub fn unpin(&mut self) {
+        if self.pinned {
+            self.pinned = false;
+            self.array_buffer.unpin();
+        }
+    }
 }
 
-// `crate::Strong` already impls `Drop`, so no explicit
-// `impl Drop for ArrayBufferStrong` is needed.
+impl Drop for ArrayBufferStrong {
+    fn drop(&mut self) {
+        self.unpin();
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // BinaryType
@@ -849,15 +929,7 @@ impl MarkedArrayBuffer {
     }
 
     pub fn from_string(str: &[u8]) -> Result<MarkedArrayBuffer, bun_alloc::AllocError> {
-        // allocator.dupe(u8, str) → Box::<[u8]>::from(str), but we need a raw
-        // pointer because the buffer is later freed via the default allocator
-        // (`MarkedArrayBuffer_deallocator` → `default_alloc::free`).
-        let buf: Box<[u8]> = Box::from(str);
-        let len = buf.len();
-        let ptr = bun_core::heap::into_raw(buf).cast::<u8>();
-        // SAFETY: ptr/len from heap::alloc; backed by the global allocator.
-        let bytes = unsafe { bun_core::ffi::slice_mut(ptr, len) };
-        Ok(MarkedArrayBuffer::from_bytes(bytes, JSType::Uint8Array))
+        Self::private_copy(JSValue::ZERO, str)
     }
 
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> Option<MarkedArrayBuffer> {
@@ -869,13 +941,134 @@ impl MarkedArrayBuffer {
         })
     }
 
-    pub fn from_js_pinned(global: &JSGlobalObject, value: JSValue) -> Option<MarkedArrayBuffer> {
-        let buffer = value.as_pinned_arraybuffer(global)?;
-        Some(MarkedArrayBuffer {
-            buffer,
-            owns_buffer: false,
-            pinned: true,
-        })
+    /// Borrow `value`'s bytes as input to an operation that keeps running
+    /// after control returns to JS (off the JS thread). The backing store is
+    /// pinned (`pinned`); when a pin cannot hold it in place the bytes are
+    /// copied instead (`owns_buffer`), with `buffer.value` still naming the JS
+    /// object. `Ok(None)`: not an ArrayBuffer or view.
+    pub fn from_js_pinned(
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Option<MarkedArrayBuffer>> {
+        Ok(
+            Self::from_js_pinned_range(global, value, 0, usize::MAX, BorrowedFor::Input)?
+                .map(|(buffer, _)| buffer),
+        )
+    }
+
+    /// [`Self::from_js_pinned`] for an operation that only touches
+    /// `offset..offset + len` of the object's bytes: when a private buffer has
+    /// to stand in, it covers only that window (clamped to the object) and
+    /// starts out holding the object's bytes only for [`BorrowedFor::Input`]. Returns
+    /// the buffer and where the window starts within it.
+    pub fn from_js_pinned_range(
+        global: &JSGlobalObject,
+        value: JSValue,
+        offset: usize,
+        len: usize,
+        borrowed_for: BorrowedFor,
+    ) -> JsResult<Option<(MarkedArrayBuffer, usize)>> {
+        Ok(Some(match value.as_pinned_arraybuffer(global) {
+            None => return Ok(None),
+            Some(PinnedArrayBuffer::Pinned(buffer)) => (
+                MarkedArrayBuffer {
+                    buffer,
+                    owns_buffer: false,
+                    pinned: true,
+                },
+                offset,
+            ),
+            Some(PinnedArrayBuffer::MustCopy(buffer)) => {
+                let bytes = buffer.byte_slice();
+                let start = offset.min(bytes.len());
+                let window = &bytes[start..start + len.min(bytes.len() - start)];
+                let copy = if borrowed_for == BorrowedFor::Input {
+                    Self::private_copy(value, window)
+                } else {
+                    Self::private_zeroed(value, window.len())
+                };
+                (copy.map_err(|_| global.throw_out_of_memory())?, 0)
+            }
+        }))
+    }
+
+    /// An owned copy of `bytes` standing in for the JS object `value`.
+    pub fn private_copy(
+        value: JSValue,
+        bytes: &[u8],
+    ) -> Result<MarkedArrayBuffer, bun_alloc::AllocError> {
+        let mut copy = Vec::new();
+        copy.try_reserve_exact(bytes.len())
+            .map_err(|_| bun_alloc::AllocError)?;
+        copy.extend_from_slice(bytes);
+        Ok(Self::private_owned(value, copy.into_boxed_slice()))
+    }
+
+    /// An owned, zero-filled buffer of `len` bytes standing in for the JS
+    /// object `value`.
+    pub fn private_zeroed(
+        value: JSValue,
+        len: usize,
+    ) -> Result<MarkedArrayBuffer, bun_alloc::AllocError> {
+        let mut zeroed = Vec::new();
+        zeroed
+            .try_reserve_exact(len)
+            .map_err(|_| bun_alloc::AllocError)?;
+        zeroed.resize(len, 0u8);
+        Ok(Self::private_owned(value, zeroed.into_boxed_slice()))
+    }
+
+    fn private_owned(value: JSValue, bytes: Box<[u8]>) -> MarkedArrayBuffer {
+        let len = bytes.len();
+        MarkedArrayBuffer {
+            buffer: ArrayBuffer {
+                ptr: bun_core::heap::into_raw(bytes).cast::<u8>(),
+                len,
+                byte_len: len,
+                value,
+                typed_array_type: JSType::Uint8Array,
+                ..Default::default()
+            },
+            owns_buffer: len != 0,
+            pinned: false,
+        }
+    }
+
+    /// For an operation that produced `len` bytes into this buffer off the JS
+    /// thread: when the bytes live in a private copy (see
+    /// [`Self::from_js_pinned`]), publish them into the JS object's current
+    /// storage starting at byte `at`. A no-op for a pinned borrow.
+    pub fn write_back(&self, global: &JSGlobalObject, at: usize, len: usize) {
+        if self.owns_buffer && !self.buffer.value.is_empty() {
+            let bytes = self.slice();
+            Self::write_back_into(
+                global,
+                self.buffer.value,
+                at,
+                &bytes[..len.min(bytes.len())],
+            );
+        }
+    }
+
+    /// Copy `bytes` into `value`'s current storage starting at byte `at`,
+    /// as far as that storage reaches (nothing, once detached).
+    pub fn write_back_into(global: &JSGlobalObject, value: JSValue, at: usize, bytes: &[u8]) {
+        let Some(mut live) = value.as_array_buffer(global) else {
+            return;
+        };
+        let Some(dst) = live.byte_slice_mut().get_mut(at..) else {
+            return;
+        };
+        let n = dst.len().min(bytes.len());
+        dst[..n].copy_from_slice(&bytes[..n]);
+    }
+
+    /// Releases the pin taken by [`Self::from_js_pinned`], if one was taken.
+    pub fn unpin(&mut self) {
+        if self.pinned {
+            self.pinned = false;
+            self.buffer.unpin();
+        }
     }
 
     pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> MarkedArrayBuffer {

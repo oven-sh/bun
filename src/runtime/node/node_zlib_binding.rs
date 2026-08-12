@@ -195,6 +195,15 @@ pub(crate) trait CompressionContext {
 // R-2 (host-fn re-entrancy): every JS-exposed mixin method takes `&T`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). Accessors return the
 // cell wrapper so the mixin can `.get()`/`.set()`/`.with_mut()` as needed.
+
+/// The buffers of an async write: pinned borrows of the `in`/`out`
+/// arguments, or private stand-ins for storage a pin cannot hold in place.
+pub struct WriteBuffers {
+    input: Option<jsc::MarkedArrayBuffer>,
+    output: jsc::MarkedArrayBuffer,
+    output_at: u32,
+}
+
 pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     type Stream: CompressionContext;
 
@@ -236,6 +245,7 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     fn task(&self) -> &JsCell<WorkPoolTask>;
     fn write_in_progress(&self) -> &Cell<bool>;
     fn pending_close(&self) -> &Cell<bool>;
+    fn write_buffers(&self) -> &JsCell<Option<WriteBuffers>>;
     fn closed(&self) -> &Cell<bool>;
 
     /// Recover `*mut Self` from the embedded `WorkPoolTask`.
@@ -268,8 +278,6 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     fn error_callback_set_cached(this_value: JSValue, global: &JSGlobalObject, cb: JSValue);
     fn pending_input_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue);
     fn pending_output_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue);
-    fn pending_input_get_cached(this_value: JSValue) -> Option<JSValue>;
-    fn pending_output_get_cached(this_value: JSValue) -> Option<JSValue>;
 }
 
 impl<T: CompressionStreamImpl> CompressionStream<T> {
@@ -357,18 +365,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                         .throw());
                 }
             };
-            // Growable SharedArrayBuffer only grows in place; the captured
-            // (ptr, len) stays valid. Only non-shared resizable can shrink.
-            if in_buf.resizable && !in_buf.shared {
-                return Err(global_this
-                    .err(
-                        ErrorCode::INVALID_ARG_VALUE,
-                        format_args!(
-                            "The \"in\" argument must not be backed by a resizable ArrayBuffer"
-                        ),
-                    )
-                    .throw());
-            }
             in_off = jsv_to_u32(arguments[2]);
             in_len = jsv_to_u32(arguments[3]);
             if in_buf.byte_len < in_off as usize + in_len as usize {
@@ -407,46 +403,83 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         }
-        if out_buf.resizable && !out_buf.shared {
-            return Err(global_this
-                .err(
-                    ErrorCode::INVALID_ARG_VALUE,
-                    format_args!(
-                        "The \"out\" argument must not be backed by a resizable ArrayBuffer"
-                    ),
-                )
-                .throw());
-        }
         let _ = (in_off, in_len, out_off, out_len);
 
         Self::throw_unless_idle(this, global_this)?;
         // Pin both buffers before mutating any state: materializing a
         // FastTypedArray's backing store can fail on OOM, and failing here
-        // leaves nothing to unwind.
-        let in_buf: jsc::ArrayBuffer;
-        let in_: Option<&[u8]> = if arguments[1].is_null() {
+        // leaves nothing to unwind. Storage a pin cannot hold in place is
+        // swapped for a private buffer: a copy of the input window, and an
+        // output window that is copied back on completion.
+        // A private copy of the input window is handed to JS as a
+        // Uint8Array and returned, so a caller feeding the rest of the same
+        // chunk continues from the copy instead of copying again.
+        let mut substitute = JSValue::UNDEFINED;
+        let input = if arguments[1].is_null() {
             None
         } else {
-            let Some(buf) = arguments[1].as_pinned_arraybuffer(global_this) else {
-                return Err(global_this.throw_out_of_memory());
-            };
-            in_buf = buf;
-            Some(&in_buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize])
+            let pinned = jsc::MarkedArrayBuffer::from_js_pinned_range(
+                global_this,
+                arguments[1],
+                in_off as usize,
+                in_len as usize,
+                jsc::BorrowedFor::Input,
+            )?
+            .ok_or_else(|| global_this.throw_out_of_memory())?;
+            Some(match pinned {
+                (mut copy, _) if copy.owns_buffer => {
+                    copy.buffer.value = JSValue::ZERO;
+                    substitute = copy.to_js(global_this)?;
+                    let pinned = jsc::MarkedArrayBuffer::from_js_pinned(global_this, substitute)?
+                        .ok_or_else(|| global_this.throw_out_of_memory())?;
+                    (pinned, 0)
+                }
+                pinned => pinned,
+            })
         };
-        let Some(mut out_buf) = arguments[4].as_pinned_arraybuffer(global_this) else {
-            if !arguments[1].is_null() {
-                arguments[1].unpin_array_buffer();
-            }
-            return Err(global_this.throw_out_of_memory());
-        };
-        let out: Option<&mut [u8]> = Some(
-            &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
+        let output = jsc::MarkedArrayBuffer::from_js_pinned_range(
+            global_this,
+            arguments[4],
+            out_off as usize,
+            out_len as usize,
+            jsc::BorrowedFor::Output,
         );
+        let (output, out_at) = match output {
+            Ok(Some(output)) => output,
+            other => {
+                if let Some((mut input, _)) = input {
+                    input.unpin();
+                }
+                return Err(other
+                    .err()
+                    .unwrap_or_else(|| global_this.throw_out_of_memory()));
+            }
+        };
+        let in_desc = input.as_ref().map(|(input, at)| (input.buffer, *at));
+        let in_: Option<&[u8]> = in_desc
+            .as_ref()
+            .map(|(desc, at)| &desc.byte_slice()[*at..*at + in_len as usize]);
+        let mut out_desc = output.buffer;
+        let out: Option<&mut [u8]> =
+            Some(&mut out_desc.byte_slice_mut()[out_at..out_at + out_len as usize]);
 
         this.write_in_progress().set(true);
         this.ref_();
+        this.write_buffers().set(Some(WriteBuffers {
+            input: input.map(|(input, _)| input),
+            output,
+            output_at: out_off,
+        }));
 
-        T::pending_input_set_cached(this_value, global_this, arguments[1]);
+        T::pending_input_set_cached(
+            this_value,
+            global_this,
+            if substitute.is_undefined() {
+                arguments[1]
+            } else {
+                substitute
+            },
+        );
         T::pending_output_set_cached(this_value, global_this, arguments[4]);
 
         this.stream().with_mut(|s| {
@@ -471,7 +504,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.loop_handle().embedded_work_scheduled();
         WorkPool::schedule(this.task().as_ptr());
 
-        Ok(JSValue::UNDEFINED)
+        Ok(substitute)
     }
 
     // Safe fn: coerces to the `WorkPoolTask.callback` field type at the
@@ -509,6 +542,31 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         loop_handle.embedded_work_finished();
     }
 
+    /// JS thread, once the pool is done with an async write's buffers:
+    /// release the pins `write()` took and publish a private output stand-in.
+    /// The stand-in itself stays until the next `write()` or `close()`,
+    /// because the stream context keeps pointing into its last buffers.
+    fn release_write_buffers(this: &T, global: &JSGlobalObject) {
+        let avail_out = this.stream().with_mut(|s| {
+            let (mut avail_in, mut avail_out) = (0u32, 0u32);
+            s.update_write_result(&mut avail_in, &mut avail_out);
+            avail_out as usize
+        });
+        this.write_buffers().with_mut(|buffers| {
+            let Some(buffers) = buffers else {
+                return;
+            };
+            if let Some(input) = &mut buffers.input {
+                input.unpin();
+            }
+            let produced = buffers.output.slice().len().saturating_sub(avail_out);
+            buffers
+                .output
+                .write_back(global, buffers.output_at as usize, produced);
+            buffers.output.unpin();
+        });
+    }
+
     /// VM teardown, JS thread, heap alive: a completion that was queued but
     /// will not run. The cleanup half of `run_from_js_thread`, no callbacks.
     ///
@@ -519,21 +577,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         let global: &JSGlobalObject = this.global_this();
         let vm = global.bun_vm();
         this.write_in_progress().set(false);
-        if let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) {
-            for pinned in [
-                T::pending_input_get_cached(this_value),
-                T::pending_output_get_cached(this_value),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                if pinned.is_cell() {
-                    if let Some(buf) = pinned.as_array_buffer(global) {
-                        buf.unpin();
-                    }
-                }
-            }
-        }
+        Self::release_write_buffers(&this, global);
+        let _ = this.this_value().with_mut(|v| v.try_swap());
         this.poll_ref().with_mut(|p| p.unref(vm));
         // SAFETY: fn contract — the write's ref.
         unsafe { T::deref(this_ptr) };
@@ -566,6 +611,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // Clear the strong handle before we call any callbacks.
         let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) else {
             bun_output::scoped_log!(zlib, "this_value is null in runFromJSThread");
+            Self::release_write_buffers(&this, global);
             this.poll_ref().with_mut(|p| p.unref(vm));
             // SAFETY: matching `ref_()` in `write()`; `this_ptr` is the heap
             // payload and is not accessed after this call.
@@ -575,19 +621,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         this_value.ensure_still_alive();
 
-        for pinned in [
-            T::pending_input_get_cached(this_value),
-            T::pending_output_get_cached(this_value),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if pinned.is_cell() {
-                if let Some(buf) = pinned.as_array_buffer(global) {
-                    buf.unpin();
-                }
-            }
-        }
+        this.flush_write_result(global, this_value);
+        Self::release_write_buffers(&this, global);
         T::pending_input_set_cached(this_value, global, JSValue::ZERO);
         T::pending_output_set_cached(this_value, global, JSValue::ZERO);
 
@@ -598,7 +633,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             return;
         }
 
-        this.flush_write_result(global, this_value);
         this_value.ensure_still_alive();
 
         // `init()` caches the JS write callback; a handle whose `init()` was
@@ -797,6 +831,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.closed().set(true);
         this.this_value().with_mut(|v| v.deinit());
         this.stream().with_mut(|s| s.close());
+        this.write_buffers().set(None);
     }
 
     pub(crate) fn set_on_error(
@@ -1057,6 +1092,7 @@ macro_rules! __impl_compression_stream {
             #[inline] fn task(&self) -> &::bun_jsc::JsCell<::bun_jsc::WorkPoolTask> { &self.task }
             #[inline] fn write_in_progress(&self) -> &::core::cell::Cell<bool> { &self.write_in_progress }
             #[inline] fn pending_close(&self) -> &::core::cell::Cell<bool> { &self.pending_close }
+            #[inline] fn write_buffers(&self) -> &::bun_jsc::JsCell<Option<$crate::node::node_zlib_binding::WriteBuffers>> { &self.write_buffers }
             #[inline] fn closed(&self) -> &::core::cell::Cell<bool> { &self.closed }
 
             #[inline]
@@ -1096,12 +1132,6 @@ macro_rules! __impl_compression_stream {
             }
             #[inline] fn pending_output_set_cached(this_value: ::bun_jsc::JSValue, global: &::bun_jsc::JSGlobalObject, value: ::bun_jsc::JSValue) {
                 js::pending_output_set_cached(this_value, global, value)
-            }
-            #[inline] fn pending_input_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
-                js::pending_input_get_cached(this_value)
-            }
-            #[inline] fn pending_output_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
-                js::pending_output_get_cached(this_value)
             }
         }
     };

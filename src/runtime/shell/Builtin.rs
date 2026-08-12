@@ -247,7 +247,7 @@ pub enum BuiltinIO {
     /// stderr aimed at stdout's buffer.
     Buf(IoKind),
     ArrayBuf {
-        buf: PinnedArrayBuf,
+        buf: crate::jsc::array_buffer::ArrayBufferStrong,
         i: u32,
     },
     Blob(Arc<BuiltinBlob>),
@@ -257,36 +257,12 @@ pub enum BuiltinIO {
 /// Input stream of a builtin.
 pub enum BuiltinInput {
     Fd(Arc<IOReader>),
-    ArrayBuf { buf: PinnedArrayBuf, i: u32 },
+    ArrayBuf {
+        buf: crate::jsc::array_buffer::ArrayBufferStrong,
+        i: u32,
+    },
     Blob(Arc<BuiltinBlob>),
     Ignore,
-}
-
-pub struct PinnedArrayBuf {
-    buf: crate::jsc::array_buffer::ArrayBufferStrong,
-    pinned: bool,
-}
-
-impl core::ops::Deref for PinnedArrayBuf {
-    type Target = crate::jsc::array_buffer::ArrayBufferStrong;
-
-    fn deref(&self) -> &Self::Target {
-        &self.buf
-    }
-}
-
-impl core::ops::DerefMut for PinnedArrayBuf {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.buf
-    }
-}
-
-impl Drop for PinnedArrayBuf {
-    fn drop(&mut self) {
-        if self.pinned {
-            self.buf.array_buffer.unpin();
-        }
-    }
 }
 
 /// Refcounted wrapper around a `webcore.Blob`. `Arc` provides the refcount;
@@ -377,6 +353,7 @@ impl BuiltinIO {
                 Ok(buf.len())
             }
             BuiltinIO::ArrayBuf { buf: arraybuf, i } => {
+                arraybuf.refresh(crate::jsc::virtual_machine::VirtualMachine::get().global());
                 // `len = buf.len` stays usize so `i + len > byte_len` is
                 // computed at usize width and cannot overflow; only the
                 // stored cursor is u32.
@@ -452,7 +429,7 @@ impl Builtin {
         &self.args
     }
 
-    /// `PinnedArrayBuf::drop`'s unpin would write to a `JSC::ArrayBuffer`
+    /// `ArrayBufferStrong::drop`'s unpin would write to a `JSC::ArrayBuffer`
     /// impl the heap sweep already deleted; see
     /// `ShellSubprocess::defuse_array_buffer_unpins`. VM-shutdown finalizer
     /// only.
@@ -724,24 +701,43 @@ impl Builtin {
                     // Each slot gets its own Strong (sharing one would
                     // double-free on Drop).
                     let mk = || {
-                        let pinned = jsval.as_pinned_arraybuffer(global);
-                        PinnedArrayBuf {
-                            buf: crate::jsc::array_buffer::ArrayBufferStrong {
-                                array_buffer: pinned.unwrap_or(buf),
-                                held: crate::jsc::StrongOptional::create(buf.value, global),
-                            },
-                            pinned: pinned.is_some(),
+                        crate::jsc::array_buffer::ArrayBufferStrong::from_js_pinned(global, jsval)?
+                            .ok_or_else(|| global.throw_out_of_memory())
+                    };
+                    let stdin = if redirect.stdin() {
+                        match mk() {
+                            Ok(buf) if buf.pinned => BuiltinInput::ArrayBuf { buf, i: 0 },
+                            Ok(_unpinned) => {
+                                let mut bytes = Vec::new();
+                                if bytes.try_reserve_exact(buf.byte_slice().len()).is_err() {
+                                    let _ = global.throw_out_of_memory();
+                                    return Some(Yield::failed());
+                                }
+                                bytes.extend_from_slice(buf.byte_slice());
+                                BuiltinInput::Blob(Arc::new(BuiltinBlob {
+                                    blob: crate::webcore::Blob::init(bytes, global),
+                                }))
+                            }
+                            Err(_) => return Some(Yield::failed()),
                         }
+                    } else {
+                        BuiltinInput::Ignore
+                    };
+                    let Ok(stdout) = redirect.stdout().then(&mk).transpose() else {
+                        return Some(Yield::failed());
+                    };
+                    let Ok(stderr) = redirect.stderr().then(&mk).transpose() else {
+                        return Some(Yield::failed());
                     };
                     let me = Self::of_mut(interp, cmd);
                     if redirect.stdin() {
-                        me.stdin = BuiltinInput::ArrayBuf { buf: mk(), i: 0 };
+                        me.stdin = stdin;
                     }
-                    if redirect.stdout() {
-                        me.stdout = BuiltinIO::ArrayBuf { buf: mk(), i: 0 };
+                    if let Some(buf) = stdout {
+                        me.stdout = BuiltinIO::ArrayBuf { buf, i: 0 };
                     }
-                    if redirect.stderr() {
-                        me.stderr = BuiltinIO::ArrayBuf { buf: mk(), i: 0 };
+                    if let Some(buf) = stderr {
+                        me.stderr = BuiltinIO::ArrayBuf { buf, i: 0 };
                     }
                 } else if let Some(body) =
                     crate::webcore::body::Value::from_request_or_response(jsval)
@@ -752,10 +748,13 @@ impl Builtin {
                     let is_file_blob = matches!(body, crate::webcore::body::Value::Blob(b)
                         if !b.needs_to_read_file());
                     if (redirect.stdout() || redirect.stderr()) && !is_file_blob {
-                        let _ = global.throw(format_args!(
-                            "Cannot redirect stdout/stderr to an immutable blob. Expected a file"
+                        return Some(Self::cmd_write_failing_error(
+                            interp,
+                            cmd,
+                            format_args!(
+                                "bun: cannot redirect stdout/stderr to an immutable blob. Expected a file\n"
+                            ),
                         ));
-                        return Some(Yield::failed());
                     }
                     let original_blob = body.use_();
                     if !redirect.stdin() && !redirect.stdout() && !redirect.stderr() {
@@ -778,10 +777,13 @@ impl Builtin {
                     }
                 } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {
                     if (redirect.stdout() || redirect.stderr()) && !blob_ref.needs_to_read_file() {
-                        let _ = global.throw(format_args!(
-                            "Cannot redirect stdout/stderr to an immutable blob. Expected a file"
+                        return Some(Self::cmd_write_failing_error(
+                            interp,
+                            cmd,
+                            format_args!(
+                                "bun: cannot redirect stdout/stderr to an immutable blob. Expected a file\n"
+                            ),
                         ));
-                        return Some(Yield::failed());
                     }
                     let theblob = Arc::new(BuiltinBlob {
                         blob: blob_ref.dupe(),

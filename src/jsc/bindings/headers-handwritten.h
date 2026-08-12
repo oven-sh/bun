@@ -309,7 +309,19 @@ extern "C" void Bun__WTFStringImpl__destroy(WTF::StringImpl* impl);
 extern "C" bool BunString__fromJS(JSC::JSGlobalObject*, JSC::EncodedJSValue, BunString*);
 extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunString*);
 
+namespace JSC {
+class ArrayBuffer;
+}
 namespace Bun {
+/// Mirrors `ArrayBufferPin` in src/jsc/array_buffer.rs.
+enum class ArrayBufferPin : uint8_t {
+    NotPinned = 0,
+    Pinned = 1,
+    MustCopy = 2,
+};
+/// Pins `buf` if a pin can hold its storage in place (`Pinned`, balance with
+/// `unpin()` unless shared); otherwise pins nothing (`MustCopy`).
+ArrayBufferPin tryPin(JSC::ArrayBuffer&);
 JSC::JSString* toJS(JSC::JSGlobalObject*, BunString);
 BunString toString(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
 BunString toString(const char* bytes, size_t length);

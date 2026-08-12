@@ -14,7 +14,7 @@ use core::ptr::{self, NonNull};
 
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::zig_string::ZigString as JscZigString;
-use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, Strong};
+use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, PinnedArrayBuffer, Strong};
 
 use bun_brotli::c as brotli;
 use bun_zlib as zlib;
@@ -595,19 +595,14 @@ impl Drop for PinnedChunk {
 }
 
 impl AsyncInput {
-    /// JS thread: pin `chunk` if it is a pinnable ArrayBuffer/view, else copy `fallback`.
+    /// JS thread: pin `chunk` if it is an ArrayBuffer/view a pin can hold in
+    /// place, else copy `fallback`.
     pub(crate) fn new(
         global: &JSGlobalObject,
         chunk: JSValue,
         fallback: &[u8],
     ) -> (Self, Option<PinnedChunk>) {
-        if let Some(buf) = chunk.as_pinned_arraybuffer(global) {
-            // A resizable non-shared backing can `mprotect()` pages out on
-            // `resize()`; pinning does not block that, so spill to a copy.
-            if buf.resizable && !buf.shared {
-                chunk.unpin_array_buffer();
-                return (Self::Owned(fallback.to_vec()), None);
-            }
+        if let Some(PinnedArrayBuffer::Pinned(buf)) = chunk.as_pinned_arraybuffer(global) {
             chunk.protect();
             return (
                 Self::Pinned {

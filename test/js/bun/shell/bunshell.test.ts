@@ -3109,6 +3109,113 @@ test("stdin redirect from a Uint8Array sends the bytes captured when the command
   expect(result.exitCode).toBe(0);
 }, 60_000);
 
+describe.concurrent("redirects and views of a WebAssembly.Memory that can move when it grows", () => {
+  const fixture = /* js */ `
+    import { $ } from "bun";
+    const memory = new WebAssembly.Memory({ initial: 1, maximum: 4 });
+    const view = new Uint8Array(memory.buffer, 128, 64).fill(0x41);
+    const [which, move, bun] = [process.argv[2], process.argv[3] === "move", process.execPath];
+    const command =
+      which === "builtin-out" ? $\`ls . > \${view}\`
+      : which === "spawned-out" ? $\`\${bun} -e \${"console.log('hello')"} > \${view}\`
+      : which === "builtin-in" ? $\`cat < \${view}\`
+      : $\`\${bun} -e \${"process.stdin.pipe(process.stdout)"} < \${view}\`;
+    const running = command.quiet().nothrow().then(result => result);
+    let others = [];
+    if (move) {
+      memory.grow(1);
+      others = Array.from({ length: 8 }, () => new WebAssembly.Memory({ initial: 1, maximum: 4 }));
+      for (const m of others) new Uint8Array(m.buffer).fill(0x62);
+    }
+    const result = await running;
+    console.log(
+      JSON.stringify({
+        exitCode: result.exitCode,
+        stdout: result.stdout.toString(),
+        view: view.byteLength ? Buffer.from(memory.buffer, 128, 64).toString().replace(/[A\\0]+$/, "") : "",
+        othersUntouched: others.every(m => new Uint8Array(m.buffer).every(b => b === 0x62)),
+      }),
+    );
+  `;
+  async function run(which: string, move: boolean) {
+    using dir = tempDir("shell-redirect-wasm", { "fixture.mjs": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs", which, move ? "move" : "stay"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    return { report: JSON.parse(stdout), exitCode };
+  }
+
+  test("stdout of a builtin lands in the view", async () => {
+    const { report, exitCode } = await run("builtin-out", false);
+    expect(report).toEqual({ exitCode: 0, stdout: "", view: "fixture.mjs\n", othersUntouched: true });
+    expect(exitCode).toBe(0);
+  });
+
+  test("stdout of a spawned command lands in the view", async () => {
+    const { report, exitCode } = await run("spawned-out", false);
+    expect(report).toEqual({ exitCode: 0, stdout: "", view: "hello\n", othersUntouched: true });
+    expect(exitCode).toBe(0);
+  });
+
+  test("stdout of a builtin touches no other memory once the view's memory has grown", async () => {
+    const { report, exitCode } = await run("builtin-out", true);
+    expect(report).toEqual({ exitCode: 0, stdout: "", view: "", othersUntouched: true });
+    expect(exitCode).toBe(0);
+  });
+
+  test("stdout of a spawned command touches no other memory once the view's memory has grown", async () => {
+    const { report, exitCode } = await run("spawned-out", true);
+    expect(report).toEqual({ exitCode: 0, stdout: "", view: "", othersUntouched: true });
+    expect(exitCode).toBe(0);
+  });
+
+  // `cat` is only a builtin on Windows; elsewhere the next test covers it.
+  test.skipIf(!isWindows)("stdin of a builtin is read from the view", async () => {
+    const { report, exitCode } = await run("builtin-in", true);
+    expect(report).toEqual({ exitCode: 0, stdout: Buffer.alloc(64, "A").toString(), view: "", othersUntouched: true });
+    expect(exitCode).toBe(0);
+  });
+
+  test("stdin of a spawned command is read from the view", async () => {
+    const { report, exitCode } = await run("spawned-in", true);
+    expect(report).toEqual({ exitCode: 0, stdout: Buffer.alloc(64, "A").toString(), view: "", othersUntouched: true });
+    expect(exitCode).toBe(0);
+  });
+});
+
+test("a redirect the shell refuses fails that command and the pipeline still finishes", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+        import { $ } from "bun";
+        const sibling = process.execPath;
+        const result = await $\`\${sibling} -e \${"console.error('sibling done')"} | echo hi > \${new Response("immutable")}\`
+          .quiet()
+          .nothrow();
+        console.log(JSON.stringify({ exitCode: result.exitCode, stderr: result.stderr.toString() }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const report = JSON.parse(stdout);
+  expect(report.exitCode).toBe(1);
+  expect(report.stderr).toContain("cannot redirect stdout/stderr to an immutable blob");
+  expect(report.stderr).toContain("sibling done");
+  expect(exitCode).toBe(0);
+});
+
 describe("stdin redirect from a zero-length buffer delivers EOF to the spawned command", () => {
   // A spawned command reading stdin (cat) must see EOF when the redirect
   // source is an empty ArrayBuffer/TypedArray, same as an empty Blob.

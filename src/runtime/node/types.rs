@@ -299,10 +299,7 @@ impl bun_jsc::Unprotect for StringOrBuffer {
     #[inline]
     fn unprotect(&mut self) {
         if let Self::Buffer(buffer) = self {
-            if buffer.pinned {
-                buffer.pinned = false;
-                buffer.buffer.unpin();
-            }
+            buffer.unpin();
             buffer.buffer.value.unprotect();
         }
     }
@@ -438,8 +435,8 @@ impl StringOrBuffer {
             | JSType::BigUint64Array
             | JSType::DataView => {
                 let buffer = if is_async {
-                    Buffer::from_js_pinned(global, value)
-                        .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
+                    Buffer::from_js_pinned(global, value)?
+                        .ok_or_else(|| global.throw_out_of_memory())?
                 } else {
                     Buffer::from_array_buffer(global, value)
                 };
@@ -509,8 +506,8 @@ impl StringOrBuffer {
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
             let buffer = if is_async {
-                Buffer::from_js_pinned(global, value)
-                    .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
+                Buffer::from_js_pinned(global, value)?
+                    .ok_or_else(|| global.throw_out_of_memory())?
             } else {
                 Buffer::from_array_buffer(global, value)
             };
@@ -1142,36 +1139,12 @@ impl PathLikeExt for PathLike {
         };
         use jsc::JSType;
         match arg.js_type() {
-            JSType::Uint8Array | JSType::DataView => {
-                let mut buffer = Buffer::from_js_pinned(ctx, arg)
-                    .unwrap_or_else(|| Buffer::from_typed_array(ctx, arg));
-                if let Err(err) = Valid::path_buffer(&buffer, ctx)
-                    .and_then(|_| Valid::path_null_bytes(buffer.slice(), ctx))
-                {
-                    if buffer.pinned {
-                        buffer.pinned = false;
-                        buffer.buffer.unpin();
-                    }
-                    return Err(err);
-                }
-
-                arguments.protect_eat();
-                Ok(Some(Self::Buffer(buffer)))
-            }
-
-            JSType::ArrayBuffer => {
-                let mut buffer = Buffer::from_js_pinned(ctx, arg)
-                    .unwrap_or_else(|| Buffer::from_array_buffer(ctx, arg));
-                if let Err(err) = Valid::path_buffer(&buffer, ctx)
-                    .and_then(|_| Valid::path_null_bytes(buffer.slice(), ctx))
-                {
-                    if buffer.pinned {
-                        buffer.pinned = false;
-                        buffer.buffer.unpin();
-                    }
-                    return Err(err);
-                }
-
+            JSType::Uint8Array | JSType::DataView | JSType::ArrayBuffer => {
+                let buffer = Buffer::from_typed_array(ctx, arg);
+                Valid::path_buffer(&buffer, ctx)?;
+                Valid::path_null_bytes(buffer.slice(), ctx)?;
+                let buffer =
+                    Buffer::from_js_pinned(ctx, arg)?.ok_or_else(|| ctx.throw_out_of_memory())?;
                 arguments.protect_eat();
                 Ok(Some(Self::Buffer(buffer)))
             }
@@ -1353,12 +1326,39 @@ pub struct VectorArrayBuffer {
     pub value: JSValue,
     pub(crate) buffers: Vec<PlatformIoVec>,
     /// The collected elements, in order. Rooted (and their backing stores
-    /// pinned) for the lifetime of an async operation; see [`Self::release`].
+    /// pinned, per `pins`) for the lifetime of an async operation; see
+    /// [`Self::release`].
     pub(crate) views: Vec<JSValue>,
+    pins: Vec<jsc::ArrayBufferPin>,
+    /// When some element's storage cannot be held by a pin, `buffers` is a
+    /// single span over this private buffer instead: every element's bytes,
+    /// concatenated. `lengths` remembers each element's share.
+    stand_in: Option<Box<[u8]>>,
+    lengths: Vec<usize>,
     pinned: bool,
 }
 
 impl VectorArrayBuffer {
+    /// For an operation that produced `len` bytes into the spans off the JS
+    /// thread: publish what landed in the private stand-in into the elements'
+    /// current storage, in order. Must run on the JS thread before
+    /// [`Self::release`].
+    pub(crate) fn write_back(&self, global: &JSGlobalObject, len: usize) {
+        let Some(stand_in) = &self.stand_in else {
+            return;
+        };
+        let (mut from, mut remaining) = (0usize, len);
+        for (view, share) in self.views.iter().zip(&self.lengths) {
+            if remaining == 0 {
+                break;
+            }
+            let filled = remaining.min(*share);
+            Buffer::write_back_into(global, *view, 0, &stand_in[from..from + filled]);
+            from += share;
+            remaining -= filled;
+        }
+    }
+
     /// Release the per-element roots and pins taken by `from_js(.., pin: true)`.
     /// Must run on the JS thread, exactly once, after the I/O completes.
     pub(crate) fn release(&mut self) {
@@ -1366,10 +1366,41 @@ impl VectorArrayBuffer {
             return;
         }
         self.pinned = false;
-        for view in self.views.drain(..) {
-            view.unpin_array_buffer();
+        for (view, pin) in self.views.drain(..).zip(self.pins.drain(..)) {
+            if pin == jsc::ArrayBufferPin::Pinned {
+                view.unpin_array_buffer();
+            }
             view.unprotect();
         }
+    }
+
+    /// Replace the collected spans with one private buffer holding the
+    /// elements' bytes, so nothing points into storage a pin cannot hold.
+    fn stand_in_for_spans(&mut self, global: &JSGlobalObject) -> Result<(), bun_alloc::AllocError> {
+        let total = self.buffers.iter().map(bun_sys::platform_iovec_len).sum();
+        #[cfg(windows)]
+        if u32::try_from(total).is_err() {
+            return Err(bun_alloc::AllocError);
+        }
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(total)
+            .map_err(|_| bun_alloc::AllocError)?;
+        let mut lengths = Vec::new();
+        lengths
+            .try_reserve_exact(self.views.len())
+            .map_err(|_| bun_alloc::AllocError)?;
+        for view in &self.views {
+            let element = view.as_array_buffer(global).unwrap_or_default();
+            let share = element.byte_slice().len().min(total - bytes.len());
+            bytes.extend_from_slice(&element.byte_slice()[..share]);
+            lengths.push(share);
+        }
+        let mut bytes = bytes.into_boxed_slice();
+        self.buffers = vec![bun_sys::platform_iovec_create(&mut bytes)];
+        self.stand_in = Some(bytes);
+        self.lengths = lengths;
+        Ok(())
     }
 }
 
@@ -1384,6 +1415,7 @@ unsafe extern "C" {
             element: JSValue,
             data: *mut u8,
             byte_len: usize,
+            pin: jsc::ArrayBufferPin,
         ),
     ) -> i32;
 }
@@ -1393,6 +1425,7 @@ unsafe extern "C" fn append_buffer_span(
     element: JSValue,
     data: *mut u8,
     byte_len: usize,
+    pin: jsc::ArrayBufferPin,
 ) {
     // SAFETY: `ctx` is the `&mut VectorArrayBuffer` passed to
     // `Bun__JSArray__collectBufferSpans` by `from_js` below, alive for the
@@ -1407,6 +1440,7 @@ unsafe extern "C" fn append_buffer_span(
     };
     out.buffers.push(bun_sys::platform_iovec_create(slice));
     out.views.push(element);
+    out.pins.push(pin);
 }
 
 impl VectorArrayBuffer {
@@ -1427,6 +1461,9 @@ impl VectorArrayBuffer {
             value: val,
             buffers: Vec::new(),
             views: Vec::new(),
+            pins: Vec::new(),
+            stand_in: None,
+            lengths: Vec::new(),
             pinned: false,
         };
         bun_jsc::validation_scope!(scope, global_object);
@@ -1453,6 +1490,14 @@ impl VectorArrayBuffer {
                 view.protect();
             }
         }
+        let status = if status == 0
+            && out.pins.contains(&jsc::ArrayBufferPin::MustCopy)
+            && out.stand_in_for_spans(global_object).is_err()
+        {
+            2
+        } else {
+            status
+        };
         match status {
             0 => Ok(out),
             -1 => {

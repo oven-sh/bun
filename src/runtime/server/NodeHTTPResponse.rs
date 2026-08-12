@@ -15,7 +15,8 @@ use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
 use crate::server::jsc::{
-    self, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
+    self, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, PinnedArrayBuffer,
+    StrongOptional, VirtualMachine,
 };
 use crate::server::{AnyServer, AnyServerTag, HTTPStatusText, ServerWebSocket};
 use crate::webcore::AutoFlusher;
@@ -2138,15 +2139,11 @@ impl NodeHTTPResponse {
                     bytes_len
                 );
                 // For buffers, pin so `transfer()` copies instead of detaching.
-                // Resizable (non-shared) buffers are spilled: `resize()` mprotect()s
-                // trimmed pages PROT_NONE and `pin()` doesn't prevent it.
+                // Storage a pin cannot hold in place is spilled.
                 let pinned_value = if is_buffer && input_value.is_cell() {
                     match input_value.as_pinned_arraybuffer(global_object) {
-                        Some(ab) if ab.resizable && !ab.shared => {
-                            input_value.unpin_array_buffer();
-                            None
-                        }
-                        Some(_) => Some(input_value),
+                        Some(PinnedArrayBuffer::Pinned(_)) => Some(input_value),
+                        Some(PinnedArrayBuffer::MustCopy(_)) => None,
                         None => Some(JSValue::ZERO),
                     }
                 } else {

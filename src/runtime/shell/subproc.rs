@@ -562,7 +562,7 @@ impl ShellSubprocess {
 
     /// `Heap::lastChanceToFinalize` deletes the `JSC::ArrayBuffer` impls
     /// before the sweep that reaches us, so the `> ${arraybuffer}` unpin in
-    /// `BufferedOutput::drop` would write to a freed impl. Clear the value
+    /// `ArrayBufferStrong::drop` would write to a freed impl. Clear `pinned`
     /// so the drop skips it; the `Strong` handle still releases normally.
     ///
     /// # Safety
@@ -582,9 +582,7 @@ impl ShellSubprocess {
             // borrow of the `PipeReader` is live.
             unsafe {
                 if let BufferedOutput::ArrayBuffer { buf, .. } = &mut (*pipe).buffered_output {
-                    // `Default` has `value: JSValue::ZERO`, which
-                    // `BufferedOutput::drop` reads as "nothing to unpin".
-                    let _ = core::mem::take(&mut buf.array_buffer);
+                    buf.pinned = false;
                 }
             }
         }
@@ -1575,10 +1573,21 @@ impl BufferedOutput {
         }
     }
 
-    pub(crate) fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> std::borrow::Cow<'_, [u8]> {
         match self {
-            BufferedOutput::Bytelist(b) => b.slice(),
-            BufferedOutput::ArrayBuffer { buf, .. } => buf.slice(),
+            BufferedOutput::Bytelist(b) => b.slice().into(),
+            BufferedOutput::ArrayBuffer { buf, .. } if buf.pinned => buf.slice().into(),
+            BufferedOutput::ArrayBuffer { buf, .. } => {
+                let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
+                match buf
+                    .held
+                    .get()
+                    .and_then(|value| value.as_array_buffer(global))
+                {
+                    Some(live) => live.byte_slice().to_vec().into(),
+                    None => (&[][..]).into(),
+                }
+            }
         }
     }
 
@@ -1588,6 +1597,7 @@ impl BufferedOutput {
                 let _ = b.append_slice(bytes); // OOM/capacity: fire-and-forget
             }
             BufferedOutput::ArrayBuffer { buf, i } => {
+                buf.refresh(bun_jsc::virtual_machine::VirtualMachine::get().global());
                 let array_buf_slice = buf.slice_mut();
                 let idx = *i as usize;
                 // TODO: We should probably throw error here?
@@ -1597,21 +1607,6 @@ impl BufferedOutput {
                 let length = (array_buf_slice.len() - idx).min(bytes.len());
                 array_buf_slice[idx..idx + length].copy_from_slice(&bytes[..length]);
                 *i += u32::try_from(length).expect("int cast");
-            }
-        }
-    }
-}
-
-impl Drop for BufferedOutput {
-    fn drop(&mut self) {
-        match self {
-            BufferedOutput::Bytelist(_b) => {
-                // Vec<u8> drops its own storage.
-            }
-            BufferedOutput::ArrayBuffer { buf, .. } => {
-                if !buf.array_buffer.value.is_empty() {
-                    buf.array_buffer.unpin();
-                }
             }
         }
     }
@@ -2096,7 +2091,7 @@ impl PipeReader {
         self.reader.take_buffer()
     }
 
-    pub(crate) fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> std::borrow::Cow<'_, [u8]> {
         self.buffered_output.slice()
     }
 

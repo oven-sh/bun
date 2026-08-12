@@ -346,7 +346,7 @@ impl Value {
                     return match JSC__JSValue__borrowBytesForOffThread(value, &mut ptr, &mut len) {
                         // detached / null
                         0 => Ok(Value::Bytes(Bytes::default())),
-                        // FastTypedArray — tiny, GC-movable vector; dupe.
+                        // Storage a pin cannot hold in place; dupe.
                         1 => Ok(Value::Bytes(Bytes {
                             // SAFETY: ptr/len returned from helper are valid for the
                             // duration of this call; init_dupe copies immediately.

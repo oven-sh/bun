@@ -134,12 +134,20 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_execute, (JSGlobalObject * globalObject, C
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
-        if (!backingBuffer->isShared())
-            backingBuffer->pin();
+        std::span<const uint8_t> bytes { static_cast<const uint8_t*>(buffer->vector()), buffer->byteLength() };
+        Vector<uint8_t> copy;
+        auto pin = Bun::tryPin(*backingBuffer);
+        if (pin == Bun::ArrayBufferPin::MustCopy) {
+            if (!copy.tryAppend(bytes)) {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            bytes = copy.span();
+        }
 
-        JSValue result = parser->impl()->execute(globalObject, reinterpret_cast<const char*>(buffer->vector()), buffer->byteLength());
+        JSValue result = parser->impl()->execute(globalObject, reinterpret_cast<const char*>(bytes.data()), bytes.size());
 
-        if (!backingBuffer->isShared())
+        if (pin == Bun::ArrayBufferPin::Pinned && !backingBuffer->isShared())
             backingBuffer->unpin();
         RETURN_IF_EXCEPTION(scope, {});
 

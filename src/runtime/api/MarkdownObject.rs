@@ -2,7 +2,7 @@
 
 use bun_core::StackCheck;
 use bun_jsc::{
-    ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer,
+    CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, MarkedArrayBuffer,
     RangeErrorOptions,
 };
 // Note: the `bun_md` crate's lib.rs is a
@@ -72,22 +72,22 @@ fn parser_err_to_js(
     }
 }
 
-struct PinnedView(ArrayBuffer);
+struct PinnedView(MarkedArrayBuffer);
 
 impl PinnedView {
     fn pin(global: &JSGlobalObject, buffer: &StringOrBuffer) -> JsResult<Option<Self>> {
         let Some(b) = buffer.buffer() else {
             return Ok(None);
         };
-        match b.buffer.value.as_pinned_arraybuffer(global) {
-            Some(pinned) => Ok(Some(Self(pinned))),
+        match MarkedArrayBuffer::from_js_pinned(global, b.buffer.value)? {
+            Some(view) => Ok(Some(Self(view))),
             None => Err(global.throw_out_of_memory()),
         }
     }
 
     #[inline]
     fn slice(&self) -> &[u8] {
-        self.0.byte_slice()
+        self.0.slice()
     }
 }
 

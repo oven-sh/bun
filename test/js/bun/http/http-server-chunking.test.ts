@@ -3,16 +3,17 @@ import { describe, expect, test } from "bun:test";
 import { isPosix } from "harness";
 
 /**
- * A way to wait until something written to a loopback connection has not only
- * been delivered but also read by its in-process receiver, without guessing at
- * a delay. Loopback delivers in order, so by the time a byte sent through this
- * extra connection shows up in JS, everything written before it has reached
- * its socket too and was readable in the same poll; the immediate then lets the
- * loop finish dispatching that poll's batch, which includes the receiver's read.
+ * Lets a test wait until bytes it wrote to one loopback connection have been
+ * read by their in-process receiver, without guessing at a delay. Two orderings
+ * make it work: loopback delivers in the order things were written, so once a
+ * byte pushed through this spare connection has shown up in JS, anything
+ * written before it had reached its socket too and was readable in the same
+ * poll; and an immediate queued while that poll's batch is being dispatched
+ * runs only once the whole batch, the receiver's read included, is done.
  *
- * setImmediate alone would not do: an immediate queued from ordinary JS runs
- * before the loop polls again, and an already-due timer fires in the tick that
- * armed it, so either one lets a second write coalesce with the first.
+ * Neither half works alone. An immediate queued from ordinary JS runs before
+ * the loop polls again, and an already-due timer fires in the tick that armed
+ * it, so a second write paced by either one lands in the same read as the first.
  */
 async function loopbackClock() {
   let arrived = () => {};
@@ -54,6 +55,7 @@ interface SeenRequest {
   error?: string;
 }
 
+/** What a pending `req.text()` rejects with once the parser has closed the connection. */
 const BODY_REJECTED = "AbortError: The connection was closed.";
 
 /**
@@ -157,13 +159,13 @@ describe.if(isPosix)("HTTP server handles chunked transfer encoding", () => {
       socket: { data() {} },
     });
 
-    for (const segment of ["5\r", "\n", "Hello\r\n"]) {
+    for (const segment of ["first", "second", "third"]) {
       socket.write(segment);
       socket.flush();
       await clock.tick();
     }
 
-    expect(reads).toEqual(["5\r", "\n", "Hello\r\n"]);
+    expect(reads).toEqual(["first", "second", "third"]);
   });
 
   test.concurrent.each([
@@ -289,18 +291,17 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
   test.concurrent("parses pipelined requests trickling in through a tiny send buffer", async () => {
     // The parser used to answer 400 when a read ended right after the request
     // line, with the header block still on its way. A 1-byte send buffer gets
-    // the requests across in pieces of a few bytes; as the request length is
-    // not a multiple of the piece size, every byte offset of the request is a
-    // read boundary on some request of the connection.
+    // the requests across in pieces of a few bytes, so over 20 pipelined
+    // requests the read boundaries fall at offsets all over the request.
     const connections = 10;
     const requestsPerConnection = 20;
-    const seen: { connection: string; method: string; headers: Record<string, string> }[] = [];
+    // Keyed by request path, which names the connection the request came in on.
+    const seen: Record<string, { method: string; headers: Record<string, string> }[]> = {};
     await using server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
       fetch(req) {
-        seen.push({
-          connection: new URL(req.url).pathname,
+        (seen[new URL(req.url).pathname] ??= []).push({
           method: req.method,
           headers: Object.fromEntries(req.headers),
         });
@@ -361,19 +362,15 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
 
     const statuses = await Promise.all(Array.from({ length: connections }, (_, connection) => drive(connection)));
 
-    const expectedSeen = Object.fromEntries(
-      Array.from({ length: connections }, (_, connection) => [
-        `/connection-${connection}`,
-        Array.from({ length: requestsPerConnection }, (_, index) => ({
-          connection: `/connection-${connection}`,
-          method: "GET",
-          headers: index === requestsPerConnection - 1 ? { ...headers, connection: "close" } : headers,
-        })),
-      ]),
-    );
-    expect({ statuses, seen: Object.groupBy(seen, ({ connection }) => connection) }).toEqual({
+    const expectedRequests = Array.from({ length: requestsPerConnection }, (_, index) => ({
+      method: "GET",
+      headers: index === requestsPerConnection - 1 ? { ...headers, connection: "close" } : headers,
+    }));
+    expect({ statuses, seen }).toEqual({
       statuses: Array.from({ length: connections }, () => Array(requestsPerConnection).fill("HTTP/1.1 200 OK")),
-      seen: expectedSeen,
+      seen: Object.fromEntries(
+        Array.from({ length: connections }, (_, connection) => [`/connection-${connection}`, expectedRequests]),
+      ),
     });
   });
 });

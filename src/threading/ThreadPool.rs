@@ -1150,9 +1150,7 @@ impl Thread {
                     bun_core::ZStr::from_raw(c"Bun Pool".as_ptr().cast(), 8)
                 }
             };
-            // Also initializes this thread's `StackCheck` bounds. Skipping that
-            // saves nothing (`main()` already ran the same code, so it is
-            // resident) and would leave any parser a task runs here unguarded.
+            // Also initializes `StackCheck` for this thread; parsers run by tasks rely on it.
             Output::Source::configure_named_thread(named);
         }
 

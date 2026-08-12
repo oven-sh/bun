@@ -463,6 +463,87 @@ describe("new File([blob], name) names only the new File", () => {
   });
 });
 
+describe("a File's name reaches other threads through an object URL as a private copy", () => {
+  // A name that has been used as a property key is an atom of the thread that
+  // did so, and the process aborts if the last reference to it is dropped on a
+  // different thread. The registry used to hand the File's own name string to
+  // whichever thread resolved the URL; here the worker holds the resolved Blob
+  // until the main thread has dropped everything else that referenced the name.
+  test.concurrent.each(["bytes", "Bun.file"])("File backed by %s", async backing => {
+    using dir = tempDir("blob-url-name-thread", { "on-disk.txt": "xyz" });
+    const bits =
+      backing === "bytes" ? `["xyz"]` : `[Bun.file(${JSON.stringify(path.join(String(dir), "on-disk.txt"))})]`;
+    const script = `
+      const workerURL = URL.createObjectURL(
+        new Blob(
+          [
+            \`
+              import { resolveObjectURL } from "node:buffer";
+              let held;
+              self.onmessage = ({ data }) => {
+                if (data.url) {
+                  held = resolveObjectURL(data.url);
+                  postMessage({ holdsName: held.name === data.name });
+                } else {
+                  held = undefined;
+                  Bun.gc(true);
+                  postMessage({ released: true });
+                }
+              };
+            \`,
+          ],
+          { type: "text/javascript" },
+        ),
+      );
+      const worker = new Worker(workerURL);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      worker.onerror = event => reject(new Error(event.message));
+
+      let name = "name-" + process.pid;
+      ({})[name]; // used as a property key: the string is now an atom of this thread
+      let file = new File(${bits}, name);
+      let url = URL.createObjectURL(file);
+      worker.onmessage = ({ data }) => {
+        if ("holdsName" in data) {
+          console.log("worker holds the name:", data.holdsName);
+          // Drop every reference this thread has to the name (the structured
+          // clone sent to the worker is a separate string), so the worker's is
+          // the last one.
+          URL.revokeObjectURL(url);
+          file = url = name = undefined;
+          Bun.gc(true);
+          worker.postMessage({ release: true });
+        } else {
+          resolve();
+        }
+      };
+      worker.postMessage({ url, name });
+      await promise;
+      worker.terminate();
+      console.log("released on the worker");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout,
+      stderr: stderr
+        .split("\n")
+        .filter(line => line && !line.startsWith("WARNING: ASAN interferes"))
+        .join("\n"),
+      exitCode,
+    }).toEqual({
+      stdout: "worker holds the name: true\nreleased on the worker\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 test("dupeWithContentType does not alias the source's allocated content_type", async () => {
   // Regression: #23015 refactored Blob to be ref-counted and moved
   // `setNotHeapAllocated()` before the `isHeapAllocated()` guard in

@@ -40,9 +40,22 @@ const _: fn() = || {
 impl Entry {
     pub(crate) fn init(blob: &Blob) -> Box<Entry> {
         Box::new(Entry {
-            blob: blob.dupe_with_content_type(true),
+            blob: dupe_with_private_name(blob),
         })
     }
+}
+
+/// The registry is shared by every thread; a `WTF::StringImpl` must not be.
+/// The first thread to use one as a property key turns it into an atom of its
+/// own string table, and dropping the last reference from any other thread
+/// then aborts in `AtomStringImpl::remove`. So the entry and every resolved
+/// copy each get a `name` impl that no thread's JS can reach.
+fn dupe_with_private_name(blob: &Blob) -> Blob {
+    let copy = blob.dupe_with_content_type(true);
+    let mut name = copy.name.replace(bun_core::String::dead()).into_inner();
+    name.to_thread_safe();
+    copy.name.set(name);
+    copy
 }
 
 impl Drop for Entry {
@@ -70,7 +83,7 @@ impl ObjectURLRegistry {
         let uuid = uuid_from_pathname(pathname)?;
         let map = self.map.lock();
         map.get(&uuid.bytes)
-            .map(|e| e.blob.dupe_with_content_type(true))
+            .map(|e| dupe_with_private_name(&e.blob))
     }
 
     pub(crate) fn resolve_and_dupe_to_js(

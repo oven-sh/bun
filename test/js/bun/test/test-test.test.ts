@@ -749,3 +749,261 @@ test("my-test", () => {
     });
   }
 });
+
+describe("unhandled errors after the final test are reported", () => {
+  // jest and `node --test` both drain the event loop after the last test
+  // settles; a fire-and-forget rejection or a throw inside a leaked
+  // setTimeout must fail the run, not exit 0 with the error dropped.
+  async function runFixture(files: Record<string, string>, extraArgs: string[] = []) {
+    const dir = tempDirWithFiles("unhandled-after-last", { ...files, "package.json": "{}" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...extraArgs, ...Object.keys(files)],
+      cwd: dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env: bunEnv,
+      timeout: 30_000,
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  const cases = [
+    [
+      "unhandled rejection from a fire-and-forget async IIFE",
+      `(async () => { await Bun.sleep(5); throw new Error("POST-END-REJECT"); })();`,
+      "POST-END-REJECT",
+    ],
+    [
+      "rejection scheduled from setTimeout(0)",
+      `setTimeout(() => { Promise.reject(new Error("T0-REJECT")); }, 0);`,
+      "T0-REJECT",
+    ],
+    [
+      "failing expect inside a leaked setTimeout",
+      `setTimeout(() => { expect("late").toBe("never"); }, 10);`,
+      `expect(received).toBe(expected)`,
+    ],
+  ] as const;
+
+  for (const [name, stmt, needle] of cases) {
+    test.concurrent(name, async () => {
+      const { stderr, exitCode, signalCode } = await runFixture({
+        "late.test.js": `
+import { test, expect } from "bun:test";
+test("only test", async () => {
+  await Bun.sleep(1);
+  ${stmt}
+  expect(1).toBe(1);
+});
+`,
+      });
+
+      expect(stderr).toContain(needle);
+      expect(stderr).toContain("Unhandled error between tests");
+      expect(stderr).toContain("1 pass");
+      expect(stderr).toContain("0 fail");
+      expect(stderr).toContain("1 error");
+      expect(signalCode).toBeNull();
+      expect(exitCode).toBe(1);
+    });
+  }
+
+  test.concurrent("does not hang when the last test leaves an unref'd handle", async () => {
+    const { stderr, exitCode, signalCode } = await runFixture({
+      "unref.test.js": `
+import { test, expect } from "bun:test";
+test("only test", () => {
+  setInterval(() => {}, 100000).unref();
+  expect(1).toBe(1);
+});
+`,
+    });
+
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("does not hang on a far-future ref'd setTimeout/setInterval", async () => {
+    const { stderr, exitCode, signalCode } = await runFixture({
+      "far.test.js": `
+import { test, expect } from "bun:test";
+test("only test", () => {
+  setTimeout(() => {}, 3_600_000);
+  setInterval(() => {}, 3_600_000);
+  expect(1).toBe(1);
+});
+`,
+    });
+
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent(
+    "does not hang when a near-term timer queues setImmediate with a far-future timer pending",
+    async () => {
+      const { stderr, exitCode, signalCode } = await runFixture({
+        "imm.test.js": `
+import { test, expect } from "bun:test";
+test("only test", () => {
+  setTimeout(() => {}, 3_600_000);
+  setTimeout(() => setImmediate(() => {}), 5);
+  expect(1).toBe(1);
+});
+`,
+      });
+
+      expect(stderr).toContain("1 pass");
+      expect(stderr).toContain("0 fail");
+      expect(signalCode).toBeNull();
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent(
+    "does not hang when a nested setImmediate clears the near-term timer with a far-future timer pending",
+    async () => {
+      const { stderr, exitCode, signalCode } = await runFixture({
+        "clear.test.js": `
+import { test, expect } from "bun:test";
+test("only test", () => {
+  const near = setTimeout(() => {}, 200);
+  setTimeout(() => {}, 3_600_000);
+  setTimeout(() => setImmediate(() => setImmediate(() => clearTimeout(near))), 5);
+  expect(1).toBe(1);
+});
+`,
+      });
+
+      expect(stderr).toContain("1 pass");
+      expect(stderr).toContain("0 fail");
+      expect(signalCode).toBeNull();
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent("does not stall on an unref'd near-term interval with a ref'd far-future timer", async () => {
+    const { stderr, exitCode, signalCode } = await runFixture({
+      "unref-near.test.js": `
+import { test, expect } from "bun:test";
+test("only test", () => {
+  setInterval(() => {}, 5).unref();
+  setTimeout(() => {}, 3_600_000);
+  expect(1).toBe(1);
+});
+`,
+    });
+
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("does not busy-spin on a self-rescheduling setImmediate", async () => {
+    const { stderr, exitCode, signalCode } = await runFixture({
+      "spin.test.js": `
+import { test, expect } from "bun:test";
+test("only test", () => {
+  setImmediate(function f() { setImmediate(f); });
+  expect(1).toBe(1);
+});
+`,
+    });
+
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("surfaces a late setTimeout throw alongside a self-rescheduling setImmediate", async () => {
+    const { stderr, exitCode, signalCode } = await runFixture({
+      "spin-throw.test.js": `
+import { test, expect } from "bun:test";
+test("only test", () => {
+  setImmediate(function f() { setImmediate(f); });
+  setTimeout(() => { throw new Error("LATE-THROW"); }, 50);
+  expect(1).toBe(1);
+});
+`,
+    });
+
+    expect(stderr).toContain("LATE-THROW");
+    expect(stderr).toContain("Unhandled error between tests");
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("1 error");
+    expect(signalCode).toBeNull();
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("does not hang when the last test leaks a ref'd Bun.serve()", async () => {
+    const { stderr, exitCode, signalCode } = await runFixture({
+      "serve.test.js": `
+import { test, expect } from "bun:test";
+test("only test", async () => {
+  Bun.serve({ port: 0, fetch: () => new Response("ok") });
+  setTimeout(() => { throw new Error("LATE-THROW"); }, 5);
+  expect(1).toBe(1);
+});
+`,
+    });
+
+    expect(stderr).toContain("LATE-THROW");
+    expect(stderr).toContain("Unhandled error between tests");
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("1 error");
+    expect(signalCode).toBeNull();
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("a short-period interval leaked by an earlier file does not stall later files", async () => {
+    const { stderr, exitCode, signalCode } = await runFixture({
+      "a.test.js": `
+import { test, expect } from "bun:test";
+test("a", () => {
+  setInterval(() => {}, 100);
+  expect(1).toBe(1);
+});
+`,
+      "b.test.js": `
+import { test, expect } from "bun:test";
+test("b", () => { expect(1).toBe(1); });
+`,
+      "c.test.js": `
+import { test, expect } from "bun:test";
+test("c", () => { expect(1).toBe(1); });
+`,
+    });
+
+    expect(stderr).toContain("3 pass");
+    expect(stderr).toContain("0 fail");
+    expect(signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a short-period interval under --rerun-each does not stall later repeats", async () => {
+    const { stderr, exitCode, signalCode } = await runFixture(
+      {
+        "leak.test.js": `
+import { test, expect } from "bun:test";
+test("t", () => {
+  setInterval(() => {}, 100);
+  expect(1).toBe(1);
+});
+`,
+      },
+      ["--rerun-each=3"],
+    );
+
+    expect(stderr).toContain("3 pass");
+    expect(stderr).toContain("0 fail");
+    expect(signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  });
+});

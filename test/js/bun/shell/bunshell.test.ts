@@ -3176,9 +3176,17 @@ describe("stdin redirect still held open by a helper after the command's process
     // The ASAN CI lanes run with this set, which makes the child SIGKILL the helper when it exits.
     delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
     const running = command(env).then(r => r); // `$` is lazy; start it now.
-    const pid = Number(await until("child pid file", () => fileContents(env.PID_FILE!)));
-    await until("child exit", () => hasExited(pid));
-    await Bun.write(env.RELEASE_FILE!, "");
+    let pid = 0;
+    try {
+      pid = Number(await until("child pid file", () => fileContents(env.PID_FILE!)));
+      await until("child exit", () => hasExited(pid));
+    } finally {
+      // Also on the failure path, so the helper and the command wind down now rather
+      // than lingering for the rest of the file.
+      await Bun.write(env.RELEASE_FILE!, "");
+      if (pid !== 0 && !hasExited(pid)) process.kill(pid, "SIGKILL");
+      await running;
+    }
     const result = await running;
     const helperResult = await until("helper result", () => fileContents(env.RESULT_FILE!)).catch(async error => {
       throw new Error(`${error.message}; helper stderr: ${JSON.stringify(await fileContents(env.HELPER_STDERR!))}`);

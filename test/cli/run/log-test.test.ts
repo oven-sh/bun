@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 it("should not log .env when quiet", async () => {
   using dir = tempDir("log-test-silent", {
@@ -65,15 +65,16 @@ describe.concurrent("bun test", () => {
 });
 
 // A Worker VM creates its own loader and configures it from its own log, which
-// is `Log::default()`: info when debug assertions are compiled in (debug and
-// asan builds, see scripts/build/rust.ts), warn otherwise. Bun.build borrows the
-// calling VM's loader for the transpiler it sets up on the bundle thread (and
-// for the macro VM a macro import creates there), and `new Bun.Transpiler()`
-// borrows it on the JS thread; none of them may re-derive the setting from
-// their own log level, which is the process-wide one and so differs from the
-// worker's in one direction or the other depending on the build. So builds
-// called from the worker must report the .env file exactly as often as the
-// worker's own startup did.
+// is `Log::default()`: info in builds with debug assertions, warn otherwise, so
+// whether the worker reports the file at startup depends on the build and is
+// only used as the reference value here. Bun.build borrows the calling VM's
+// loader for the transpiler it sets up on the bundle thread (and for the macro
+// VM a macro import creates there), and `new Bun.Transpiler()` borrows it on the
+// JS thread; none of them may re-derive the setting from their own log level,
+// which is the process-wide one and so differs from the worker's in one
+// direction or the other depending on the build. So builds called from the
+// worker must report the .env file exactly as often as the worker's own startup
+// did.
 describe.concurrent("Bun.build and Bun.Transpiler leave the calling VM's env loader output setting alone", () => {
   test.each([
     // The Bun.Transpiler log level is the opposite of what the worker's loader
@@ -127,11 +128,11 @@ describe.concurrent("Bun.build and Bun.Transpiler leave the calling VM's env loa
     expect(segments).toHaveLength(7);
     const [mainStartup, workerStartup, build1, build2, , build4] = segments;
     const atWorkerStartup = envLines(workerStartup);
+    expect([0, 1]).toContain(atWorkerStartup);
     expect({
       // The main VM uses the process-wide level, i.e. what a build's transpiler
       // would apply if it configured the loader.
       mainStartup: envLines(mainStartup),
-      workerStartup: atWorkerStartup,
       build1: envLines(build1),
       afterTranspiler: envLines(build2),
       // Build 3's own segment is not compared: the macro VM it creates also
@@ -140,7 +141,6 @@ describe.concurrent("Bun.build and Bun.Transpiler leave the calling VM's env loa
       afterMacroBuild: envLines(build4),
     }).toEqual({
       mainStartup: bunfig === "" ? 0 : 1,
-      workerStartup: isDebug || isASAN ? 1 : 0,
       build1: atWorkerStartup,
       afterTranspiler: atWorkerStartup,
       afterMacroBuild: atWorkerStartup,

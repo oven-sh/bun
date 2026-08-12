@@ -565,3 +565,228 @@ devTest("html routes reject requests whose host header does not match the dev se
     expect(normal.status).toBe(200);
   },
 });
+
+devTest("a module that failed to load fails the same way when it is loaded again", {
+  // A failed ESM module must be recorded as failed by every loader path.
+  // Otherwise it stays half-initialized in the registry and the next
+  // `import()` or `require()` of it silently gets a namespace that is `null`
+  // (or empty, through `require`) instead of the error.
+  framework: minimalFramework,
+  files: {
+    "a.ts": `
+      import "./a-dep";
+      export const value = "unreachable";
+    `,
+    "a-dep.ts": `
+      throw new Error("a-dep threw");
+    `,
+    "b.ts": `
+      import "./b-dep";
+      export const value = "unreachable";
+    `,
+    "b-dep.ts": `
+      throw new Error("b-dep threw");
+    `,
+    "c.ts": `
+      import "./c-dep";
+      export const value = "unreachable";
+    `,
+    "c-dep.ts": `
+      throw new Error("c-dep threw");
+    `,
+    "d.ts": `
+      export const value = "unreachable";
+      await 1;
+      throw new Error("d rejected");
+    `,
+    "e.ts": `
+      import "./e-mid";
+      export const value = "unreachable";
+    `,
+    "e-mid.ts": `
+      import "./e-dep";
+      export const value = "unreachable";
+    `,
+    "e-dep.ts": `
+      throw new Error("e-dep threw");
+    `,
+    "f.ts": `
+      export const value = "unreachable";
+      throw new Error("f threw");
+    `,
+    "g.ts": `
+      export { value } from "./g-dep";
+    `,
+    "g-dep.ts": `
+      await 1;
+      export const value = "g loaded";
+    `,
+    "h.ts": `
+      export const value = "unreachable";
+      throw new Error("h threw");
+    `,
+    "i.ts": `
+      import "./i-dep";
+      export const value = "unreachable";
+    `,
+    "i-dep.ts": `
+      await 1;
+      throw new Error("i-dep rejected");
+    `,
+    "routes/index.ts": `
+      // A synchronous throw and a rejection produce the same result, so this
+      // does not depend on which of the two import() reports a failure with.
+      async function attempt(load) {
+        try {
+          return "resolved: " + JSON.stringify(await load());
+        } catch (e) {
+          return "threw: " + e.message;
+        }
+      }
+      export default async function () {
+        const results = {};
+        results.importWithThrowingDep = [
+          await attempt(() => import("../a")),
+          await attempt(() => import("../a")),
+        ];
+        results.requireWithThrowingDep = [
+          await attempt(() => require("../b")),
+          await attempt(() => require("../b")),
+        ];
+        results.importThenRequireWithThrowingDep = [
+          await attempt(() => import("../c")),
+          await attempt(() => require("../c")),
+        ];
+        results.importWithRejectingTopLevelAwait = [
+          await attempt(() => import("../d")),
+          await attempt(() => import("../d")),
+        ];
+        results.importChain = [
+          await attempt(() => import("../e")),
+          await attempt(() => import("../e")),
+          await attempt(() => import("../e-mid")),
+        ];
+        results.requireThrowingModule = [
+          await attempt(() => require("../f")),
+          await attempt(() => require("../f")),
+        ];
+        results.requireWithAsyncDep = [
+          await attempt(() => require("../g")),
+          await attempt(() => require("../g")),
+          await attempt(() => import("../g")),
+        ];
+        results.importThrowingModule = [
+          await attempt(() => import("../h")),
+          await attempt(() => import("../h")),
+        ];
+        results.importWithRejectingDep = [
+          await attempt(() => import("../i")),
+          await attempt(() => import("../i")),
+        ];
+        return Response.json(results);
+      }
+    `,
+  },
+  async test(dev) {
+    const cannotRequireG = `threw: Cannot require "g.ts" because "g-dep.ts" uses top-level await, but 'require' is a synchronous operation.`;
+    expect(await dev.fetch("/").json()).toEqual({
+      // A static dependency throws while the module is being loaded.
+      importWithThrowingDep: ["threw: a-dep threw", "threw: a-dep threw"],
+      requireWithThrowingDep: ["threw: b-dep threw", "threw: b-dep threw"],
+      // The failure recorded by one loader is seen by the other one too.
+      importThenRequireWithThrowingDep: ["threw: c-dep threw", "threw: c-dep threw"],
+      // The module's own top-level await rejects.
+      importWithRejectingTopLevelAwait: ["threw: d rejected", "threw: d rejected"],
+      // Every module between the importer and the throwing dependency fails.
+      importChain: ["threw: e-dep threw", "threw: e-dep threw", "threw: e-dep threw"],
+      // The module's own body throws synchronously during require().
+      requireThrowingModule: ["threw: f threw", "threw: f threw"],
+      // Refusing to require() a module with an async dependency is not an
+      // evaluation failure: it keeps failing under require() and still loads
+      // through import().
+      requireWithAsyncDep: [cannotRequireG, cannotRequireG, 'resolved: {"value":"g loaded"}'],
+      // These two paths already recorded the failure; the ones above now match them.
+      importThrowingModule: ["threw: h threw", "threw: h threw"],
+      importWithRejectingDep: ["threw: i-dep rejected", "threw: i-dep rejected"],
+    });
+  },
+});
+
+devTest("a module that failed to load fails the same way when it is loaded again (client)", {
+  // Same loader as the server test above, running in the browser runtime.
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      async function attempt(load) {
+        try {
+          return "resolved: " + JSON.stringify(await load());
+        } catch (e) {
+          return "threw: " + e.message;
+        }
+      }
+      console.log({
+        importWithThrowingDep: [await attempt(() => import("./a")), await attempt(() => import("./a"))],
+        requireWithThrowingDep: [await attempt(() => require("./b")), await attempt(() => require("./b"))],
+        importWithRejectingTopLevelAwait: [await attempt(() => import("./c")), await attempt(() => import("./c"))],
+      });
+    `,
+    "a.ts": `
+      import "./a-dep";
+      export const value = "unreachable";
+    `,
+    "a-dep.ts": `
+      throw new Error("a-dep threw");
+    `,
+    "b.ts": `
+      import "./b-dep";
+      export const value = "unreachable";
+    `,
+    "b-dep.ts": `
+      throw new Error("b-dep threw");
+    `,
+    "c.ts": `
+      export const value = "unreachable";
+      await 1;
+      throw new Error("c rejected");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage({
+      importWithThrowingDep: ["threw: a-dep threw", "threw: a-dep threw"],
+      requireWithThrowingDep: ["threw: b-dep threw", "threw: b-dep threw"],
+      importWithRejectingTopLevelAwait: ["threw: c rejected", "threw: c rejected"],
+    });
+  },
+});
+
+devTest("a route whose dependency throws reports that error on every request", {
+  // The server runtime loads the route's modules again for each request. A
+  // route left half-initialized by a failed dependency used to report the real
+  // error once and then "null is not an object" for every later request.
+  framework: minimalFramework,
+  files: {
+    "dep.ts": `
+      export const value = "unreachable";
+      throw new Error("dep threw");
+    `,
+    "routes/index.ts": `
+      import { value } from "../dep";
+      export default function () {
+        return new Response(value);
+      }
+    `,
+  },
+  async test(dev) {
+    // The dev error page embeds its payload as JSON (see src/runtime/server/DevErrorPage.rs).
+    const errorPageJson = /<script id="__bunfallback" type="application\/json">([^<]*)<\/script>/;
+    for (let i = 0; i < 2; i++) {
+      const response = await dev.fetch("/");
+      const payload = JSON.parse(errorPageJson.exec(await response.text())![1]);
+      expect(payload.problems.exceptions.map((exception: any) => exception.message)).toEqual(["dep threw"]);
+      expect(response.status).toBe(500);
+    }
+  },
+});

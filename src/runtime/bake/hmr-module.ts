@@ -349,7 +349,11 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     const { list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync);
     const exportsBefore = mod.exports;
     mod.imports = depsList.map(getEsmExports);
-    load(mod);
+    try {
+      load(mod);
+    } catch (e) {
+      throwLoadFailure(mod, e);
+    }
     mod.imports = depsList;
     if (mod.exports === exportsBefore) mod.exports = {};
     mod.cjs = null;
@@ -457,11 +461,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     return isAsync
       ? Promise.all(list).then(
           list => finishLoadModuleAsync(mod, load, list),
-          e => {
-            mod.state = State.Error;
-            mod.failure = e;
-            throw e;
-          },
+          e => throwLoadFailure(mod, e),
         )
       : finishLoadModuleAsync(
           mod,
@@ -479,13 +479,16 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HM
     const p = load(mod);
     mod.imports = modules;
     if (p) {
-      return p.then(() => {
-        mod.state = State.Loaded;
-        if (mod.exports === exportsBefore) mod.exports = {};
-        mod.cjs = null;
-        if (shouldPatchImporters) patchImporters(mod);
-        return mod;
-      });
+      return p.then(
+        () => {
+          mod.state = State.Loaded;
+          if (mod.exports === exportsBefore) mod.exports = {};
+          mod.cjs = null;
+          if (shouldPatchImporters) patchImporters(mod);
+          return mod;
+        },
+        e => throwLoadFailure(mod, e),
+      );
     }
     if (mod.exports === exportsBefore) mod.exports = {};
     mod.cjs = null;
@@ -493,10 +496,18 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HM
     mod.state = State.Loaded;
     return mod;
   } catch (e) {
-    mod.state = State.Error;
-    mod.failure = e;
-    throw e;
+    throwLoadFailure(mod, e);
   }
+}
+
+/** Every module whose evaluation failed, including each importer that was
+ * waiting on it, has to record the failure. A module left in `State.Pending`
+ * is handed out as-is by the loaders (that is how circular imports work), so
+ * the next load of it would receive its `null` namespace instead of the error. */
+function throwLoadFailure(mod: HMRModule, e: unknown): never {
+  mod.state = State.Error;
+  mod.failure = e;
+  throw e;
 }
 
 type GenericModuleLoader<R> = (id: Id, isUserDynamic: false, importer: HMRModule) => R;
@@ -515,7 +526,19 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
     DEBUG.ASSERT(typeof dep === "string");
     let expectedExportKeyEnd = i + 2 + (deps[i + 1] as number);
     DEBUG.ASSERT(typeof deps[i + 1] === "number");
-    const promiseOrModule = enqueueModuleLoad(dep, false, parent);
+    let promiseOrModule;
+    try {
+      promiseOrModule = enqueueModuleLoad(dep, false, parent);
+    } catch (e) {
+      // A dependency that refused to be loaded synchronously did not fail to
+      // evaluate: `parent` still loads fine through `import()`, so it only
+      // goes back to needing a load instead of recording a failure.
+      if (e instanceof AsyncImportError) {
+        parent.state = State.Stale;
+        throw e;
+      }
+      throwLoadFailure(parent, e);
+    }
     list.push(promiseOrModule);
 
     const unloadedModule = unloadedModuleRegistry[dep];

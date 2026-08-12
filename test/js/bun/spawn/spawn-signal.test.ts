@@ -145,9 +145,9 @@ test("AbortSignal.timeout() passed to spawn still fires after the child has exit
     signal,
   });
   await proc.exited;
-  if (!signal.aborted) {
-    await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
-  }
+  // Proves nothing unless the child was gone before the timer fired.
+  expect(signal.aborted).toBe(false);
+  await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
   expect(signal.reason).toBeInstanceOf(DOMException);
   expect(signal.reason.name).toBe("TimeoutError");
 });

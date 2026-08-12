@@ -1826,21 +1826,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         // watchOrReap will handle the already exited case for us.
     }
 
-    match subprocess.process_mut().watch_or_reap() {
-        sys::Result::Ok(_) => {
-            // Once everything is set up, we can add the abort listener
-            // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
-            // Therefore, we must do this at the very end.
-            if let Some(signal) = abort_signal.take() {
-                let signal = jsc::abort_signal::PendingActivityRef::new(signal);
-                signal.add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
-                // SAFETY: see the matching block above.
-                unsafe { (*subprocess_ptr).abort_signal.set(Some(signal)) };
-            }
-        }
-        sys::Result::Err(_) => {
-            subprocess.process_mut().wait(true);
-        }
+    if subprocess.process_mut().watch_or_reap().is_err() {
+        subprocess.process_mut().wait(true);
     }
 
     if !subprocess.has_exited() {

@@ -1090,10 +1090,7 @@ impl Drop for DevServer {
             debug_assert!(self.active_websocket_connections.is_empty());
         }
 
-        if self.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE {
-            let timer_ptr: *mut EventLoopTimer = &raw mut self.memory_visualizer_timer;
-            self.timer_heap().remove(timer_ptr);
-        }
+        self.disarm_memory_visualizer_timer();
         self.graph_safety_lock.lock();
         // Hand ownership of the heap allocation to the watcher thread (which frees it in
         // `thread_main` once `running` flips false). Auto-dropping the `Box`
@@ -5451,13 +5448,53 @@ impl DevServer {
         crate::jsc_hooks::timer_all_mut()
     }
 
-    pub fn emit_memory_visualizer_message_timer(
-        _timer: &mut EventLoopTimer,
-        _: &bun_core::Timespec,
-    ) {
+    /// Interval between `MemoryVisualizer` frames while at least one HMR
+    /// socket is subscribed to the topic.
+    const MEMORY_VISUALIZER_TICK_MS: i64 = 1000;
+
+    /// (Re)schedules `memory_visualizer_timer` one tick from now. Called when
+    /// the first subscriber arrives and from every tick; `disarm` undoes it
+    /// when the last subscriber leaves.
+    pub(crate) fn arm_memory_visualizer_timer(&mut self) {
+        let next = bun_core::Timespec::ms_from_now(
+            bun_core::TimespecMockMode::ForceRealTime,
+            Self::MEMORY_VISUALIZER_TICK_MS,
+        );
+        let timer_ptr: *mut EventLoopTimer = &raw mut self.memory_visualizer_timer;
+        self.timer_heap().update(timer_ptr, &next);
     }
 
-    pub fn emit_memory_visualizer_message_if_needed(&mut self) {}
+    pub(crate) fn disarm_memory_visualizer_timer(&mut self) {
+        if self.memory_visualizer_timer.state != EventLoopTimerState::ACTIVE {
+            return;
+        }
+        let timer_ptr: *mut EventLoopTimer = &raw mut self.memory_visualizer_timer;
+        self.timer_heap().remove(timer_ptr);
+    }
+
+    /// `DevServerMemoryVisualizerTick` handler. The event loop has already
+    /// popped `timer` from the heap, so it must be marked fired before anything
+    /// else runs: a subscriber leaving while the node still reads `ACTIVE` would
+    /// `remove()` a node the heap no longer contains.
+    ///
+    /// # Safety
+    /// `timer` must point to the `memory_visualizer_timer` field of a live,
+    /// heap-allocated `DevServer`.
+    pub(crate) unsafe fn emit_memory_visualizer_message_timer(timer: *mut EventLoopTimer) {
+        // SAFETY: caller contract; `from_timer_ptr` recovers the owning DevServer.
+        let dev: &mut DevServer = unsafe { &mut *DevServer::from_timer_ptr(timer) };
+        debug_assert!(dev.magic == Magic::Valid);
+        dev.memory_visualizer_timer.state = EventLoopTimerState::FIRED;
+        dev.emit_memory_visualizer_message();
+        dev.arm_memory_visualizer_timer();
+    }
+
+    pub fn emit_memory_visualizer_message_if_needed(&mut self) {
+        if self.emit_memory_visualizer_events == 0 {
+            return;
+        }
+        self.emit_memory_visualizer_message();
+    }
 
     pub fn emit_memory_visualizer_message(&mut self) {
         debug_assert!(self.emit_memory_visualizer_events > 0);

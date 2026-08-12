@@ -1097,7 +1097,7 @@ pub(crate) unsafe fn __bun_fire_timer(
         EventLoopTimerTag::DevServerMemoryVisualizerTick => {
             // SAFETY: per fn contract; `t` is the `memory_visualizer_timer`
             // field of a live DevServer.
-            DevServer::emit_memory_visualizer_message_timer(unsafe { &mut *t }, unsafe { &*now });
+            unsafe { DevServer::emit_memory_visualizer_message_timer(t) };
             Ok(())
         }
         EventLoopTimerTag::BunTest => {

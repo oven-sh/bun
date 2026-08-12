@@ -4491,9 +4491,16 @@ pub(super) fn finalize_bundle(
     let css_chunks = &*css_chunks_mut;
     if will_hear_hot_update {
         if dev.client_graph.current_chunk_len > 0 || !css_chunks.is_empty() {
-            // Send CSS mutations
+            // Send CSS mutations. The count is patched in afterwards because
+            // a root that failed after Pass 1 stored its chunk (for example a
+            // resolution failure reported through a plugin's onResolve) had
+            // its asset released by `insert_failure`. Nothing is sent for it:
+            // the client keeps the stylesheet it already has, exactly as it
+            // does for roots that fail before producing a chunk.
             dev.assets.reindex_if_needed()?;
-            w_int!(u32, u32::try_from(css_chunks.len()).expect("int cast"));
+            let css_count_offset = hot_update_payload.len();
+            w_int!(u32, 0);
+            let mut css_count: u32 = 0;
             use bun_bundler::Graph::InputFileColumns as _;
             let sources = bv2.graph.input_files.items_source();
             for chunk in css_chunks {
@@ -4501,16 +4508,19 @@ pub(super) fn finalize_bundle(
                     .path
                     .key_for_incremental_graph();
                 let content_hash = hash(key);
+                let Some(route) = dev.assets.get(content_hash) else {
+                    continue;
+                };
+                let css_data: &[u8] = &route.blob.internal_blob().bytes;
+                css_count += 1;
                 let mut hex = [0u8; 16];
                 let n = bun_core::fmt::bytes_to_hex_lower(&content_hash.to_ne_bytes(), &mut hex);
                 w_all!(&hex[..n]);
-                let css_data: &[u8] = match dev.assets.get(content_hash) {
-                    Some(route) => &route.blob.internal_blob().bytes,
-                    None => b"",
-                };
                 w_int!(u32, u32::try_from(css_data.len()).expect("int cast"));
                 w_all!(css_data);
             }
+            hot_update_payload[css_count_offset..css_count_offset + ::core::mem::size_of::<u32>()]
+                .copy_from_slice(&css_count.to_le_bytes());
 
             // Send the JS chunk
             if dev.client_graph.current_chunk_len > 0 {

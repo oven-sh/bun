@@ -253,6 +253,133 @@ devTest("css url resolve error on hot reload is recoverable", {
     expect((await dev.fetch("/")).status).toBe(200);
   },
 });
+// The next three tests fail a stylesheet's rebuild after it has been parsed
+// (rather than with a syntax error) and check that the client keeps the rules
+// it already has, the same as "css file with syntax error does not kill old
+// styles". Previously the failed root still produced a CSS chunk, and the hot
+// update either emptied the stylesheet on the client (the failure had released
+// its asset) or applied the rejected stylesheet.
+const failedRootKeepsOldStylesFiles = {
+  "index.html": emptyHtmlFile({
+    styles: ["styles.css"],
+    body: `<div class="a">hello</div>`,
+  }),
+  "styles.css": `
+    .a { color: red; }
+  `,
+};
+devTest("css url that falls through a plugin onResolve and fails to resolve keeps old styles", {
+  files: {
+    ...failedRootKeepsOldStylesFiles,
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./css-plugin.ts"]
+    `,
+    "css-plugin.ts": `
+      export default {
+        name: "css-plugin",
+        setup(build) {
+          build.onResolve({ filter: /missing\\.png$/ }, () => undefined);
+        },
+      };
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".a").color.expect.toBe("red");
+    await dev.write(
+      "styles.css",
+      `
+        .a { background-image: url(./missing.png); }
+      `,
+      {
+        errors: ['styles.css:1:24: error: Could not resolve: "./missing.png"'],
+      },
+    );
+    await c.style(".a").color.expect.toBe("red");
+
+    await dev.write(
+      "styles.css",
+      `
+        .a { color: green; }
+      `,
+    );
+    await c.style(".a").color.expect.toBe("green");
+    expect((await dev.fetch("/")).status).toBe(200);
+  },
+});
+devTest("css url whose plugin onResolve throws keeps old styles", {
+  files: {
+    ...failedRootKeepsOldStylesFiles,
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./css-plugin.ts"]
+    `,
+    "css-plugin.ts": `
+      export default {
+        name: "css-plugin",
+        setup(build) {
+          build.onResolve({ filter: /missing\\.png$/ }, () => {
+            throw new Error("css-plugin rejected this url");
+          });
+        },
+      };
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".a").color.expect.toBe("red");
+    await dev.write(
+      "styles.css",
+      `
+        .a { background-image: url(./missing.png); }
+      `,
+      {
+        errors: ["styles.css: error: css-plugin rejected this url"],
+      },
+    );
+    await c.style(".a").color.expect.toBe("red");
+
+    await dev.write(
+      "styles.css",
+      `
+        .a { color: green; }
+      `,
+    );
+    await c.style(".a").color.expect.toBe("green");
+    expect((await dev.fetch("/")).status).toBe(200);
+  },
+});
+devTest("css root that imports a non-css file keeps old styles", {
+  files: {
+    ...failedRootKeepsOldStylesFiles,
+    "not-css.js": `export const x = 1;`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".a").color.expect.toBe("red");
+    await dev.write(
+      "styles.css",
+      `
+        @import "./not-css.js";
+        .a { color: blue; }
+      `,
+      {
+        errors: ['styles.css:1:1: error: Cannot import a ".jsx" file into a CSS file'],
+      },
+    );
+    await c.style(".a").color.expect.toBe("red");
+
+    await dev.write(
+      "styles.css",
+      `
+        .a { color: green; }
+      `,
+    );
+    await c.style(".a").color.expect.toBe("green");
+    expect((await dev.fetch("/")).status).toBe(200);
+  },
+});
 devTest("circular css imports handle hot reload", {
   files: {
     "index.html": emptyHtmlFile({
@@ -413,6 +540,8 @@ devTest("css hot update carries the edited stylesheet when another root fails in
       }
       await c2.style(".second").color.expect.toBe("green");
       await c1.style(".second").notFound();
+      // The failed root keeps the rules it had before the rebuild.
+      await c1.style(".first").color.expect.toBe("red");
     }
 
     await dev.write(

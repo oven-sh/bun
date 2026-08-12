@@ -5291,6 +5291,27 @@ pub mod bv2_impl {
 
                 let asts = self.graph.ast.slice();
                 let css_asts = asts.items_css();
+
+                // Find CSS entry points. Originally, this was computed up front, but
+                // failed files do not remember their loader, and plugins can
+                // asynchronously decide a file is CSS.
+                //
+                // This runs before the loop below so that a root the loop removes
+                // (its parts were cleared by a resolution failure reported after
+                // parsing, such as one that went through a plugin's onResolve, or
+                // `scan_css_imports` rejected one of its imports) stays removed
+                // instead of getting a chunk anyway.
+                for entry_point in &self.graph.entry_points {
+                    if css_asts[entry_point.get() as usize].is_some() {
+                        start.css_entry_points.put(
+                            Index::init(entry_point.get()),
+                            CssEntryPointMeta {
+                                imported_on_server: false,
+                            },
+                        )?;
+                    }
+                }
+
                 // SoA columns are physically disjoint slabs but rustc cannot
                 // see that through `&Slice`. Route the two columns we mutate (`parts`,
                 // `import_records`) through `split_raw()` (root-provenance `*mut [T]`,
@@ -5410,21 +5431,6 @@ pub mod bv2_impl {
                         let _ = start
                             .css_entry_points
                             .swap_remove(&Index::init(u32::try_from(index).expect("int cast")));
-                    }
-                }
-
-                // Find CSS entry points. Originally, this was computed up front, but
-                // failed files do not remember their loader, and plugins can
-                // asynchronously decide a file is CSS.
-                let css = asts.items_css();
-                for entry_point in &self.graph.entry_points {
-                    if css[entry_point.get() as usize].is_some() {
-                        start.css_entry_points.put(
-                            Index::init(entry_point.get()),
-                            CssEntryPointMeta {
-                                imported_on_server: false,
-                            },
-                        )?;
                     }
                 }
 

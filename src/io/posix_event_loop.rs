@@ -388,10 +388,13 @@ impl FilePoll {
     // put back via `Store::put`; Drop would be wrong here.
     //
     // The `deinit*` entry points take the slot pointer the owner holds, not
-    // `&mut self`: for a poll that was never registered `Store::put` recycles
-    // the slot before returning (a `Box` free once the hive has spilled to the
-    // heap), and a reference argument is protected, so must stay allocated,
-    // until the call it was passed to returns.
+    // `&mut self`: `Store::put` may recycle the slot before it returns (a
+    // `Box` free once the hive has spilled to the heap) when the poll never
+    // went through `register*`, and a reference argument is protected, so must
+    // stay allocated, until the call it was passed to returns. (In-tree owners
+    // all register right after `init`, and `register*` marks the poll
+    // `WasEverRegistered` even when the syscall fails, so that branch is
+    // currently the store's contract rather than a path anything takes.)
 
     /// Returns the slot to the event loop's `Store`.
     ///
@@ -430,15 +433,17 @@ impl FilePoll {
     /// As for [`FilePoll::deinit_with_vm`].
     unsafe fn deinit_possibly_defer(this: *mut FilePoll, vm: EventLoopCtx, force_unregister: bool) {
         // SAFETY: fn contract. The `&mut` the autoref forms ends with the
-        // statement, so no reference into the slot is live when the store
-        // takes it back.
+        // statement, so this path holds no reference into the slot when the
+        // store takes it back. (A poll deinit'd from inside its own callback
+        // still has `on_update`'s `&mut self` live up the stack; a dispatched
+        // poll was registered, so that put is the deferred one and frees
+        // nothing under it.)
         let was_ever_registered = unsafe { (*this).clear_for_put(vm, force_unregister) };
         // SAFETY: `this` is non-null per fn contract.
         let slot = unsafe { ptr::NonNull::new_unchecked(this) };
         // `file_polls_mut()` is the per-thread set-once `Store` back-pointer
-        // (`BackRef`-shaped); the `&mut Store` it produces is the only
-        // reference into the hive at this point. `Store::put` touches `slot`
-        // only via raw-pointer ops (see its doc).
+        // (`BackRef`-shaped); `Store::put` touches `slot` only via raw-pointer
+        // ops (see its doc).
         vm.file_polls_mut().put(slot, vm, was_ever_registered);
     }
 

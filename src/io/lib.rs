@@ -369,11 +369,15 @@ impl EventLoopCtx {
     /// Single backref-deref accessor for the per-thread `Store`. Same contract
     /// as [`loop_mut`]: `pub(crate)`, `&self → &mut`, must NOT be called while
     /// another `&mut Store` (or a `&mut FilePoll` that lives inside the inline
-    /// hive buffer) is live. Every in-crate caller is a leaf op that holds no
-    /// `&mut FilePoll` at the call: the `FilePoll::deinit*` path works on the
-    /// raw slot pointer and has dropped its statement-scoped reborrow by then,
-    /// and `init_with_owner` / `alloc_file_poll` never form one. So no two
-    /// `&mut Store` ever coexist.
+    /// hive buffer) is live. Every in-crate caller is a leaf op that itself
+    /// holds no `&mut FilePoll` at the call: the `FilePoll::deinit*` path works
+    /// on the raw slot pointer and has dropped its statement-scoped reborrow by
+    /// then, and `init_with_owner` / `alloc_file_poll` never form one. So no
+    /// two `&mut Store` ever coexist. The one `&mut FilePoll` that can still be
+    /// live is the receiver of `on_update` when an owner deinits its poll from
+    /// inside the poll's own callback (the dispatch chain in
+    /// `posix_event_loop` is still `&mut self` based); that put only queues
+    /// the slot.
     #[inline]
     fn file_polls_mut(&self) -> &'static mut Store {
         // SAFETY: per-thread set-once pointer (`BackRef`-shaped); the event

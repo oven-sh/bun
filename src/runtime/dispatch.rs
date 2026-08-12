@@ -656,9 +656,9 @@ pub(crate) fn tick_queue_with_count(
 #[cfg(not(windows))]
 #[unsafe(no_mangle)]
 pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
-    // SAFETY: contract above; both reads end at the `;`. No reference into the
-    // slot is kept: the arms below may return it to the store (directly in the
-    // memory-pressure and DNS arms, through the owner's close path elsewhere).
+    // SAFETY: contract above; both reads end at the `;`. The arms below get
+    // `poll` itself where they need it (the memory-pressure and DNS arms may
+    // return it to the store), so this frame keeps no reference into the slot.
     let (owner, hup) = unsafe { ((*poll).owner, (*poll).flags.contains(PollFlag::Hup)) };
 
     debug_assert!(!owner.is_null());

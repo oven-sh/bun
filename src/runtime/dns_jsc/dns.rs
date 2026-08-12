@@ -4783,11 +4783,13 @@ impl Resolver {
     /// the structural fix for the previously ASM-verified PROVEN_CACHED
     /// miscompile that needed `black_box` laundering under `&mut self`.
     ///
-    /// `poll` is raw rather than `&mut`: this either returns the slot to the
-    /// store itself (no channel) or runs `Channel::process`, whose socket-state
-    /// callback (`on_dns_socket_state`) returns it when c-ares closes the
-    /// socket. Neither may happen while a reference argument to the slot is
-    /// still live, so the poll is read before and never touched after.
+    /// `poll` is raw, the shape `FilePoll::deinit` takes: this either returns
+    /// the slot to the store itself (no channel) or runs `Channel::process`,
+    /// whose socket-state callback (`on_dns_socket_state`) returns it when
+    /// c-ares closes the socket, so the poll is read up front and not touched
+    /// afterwards. (A fired poll was registered, so either put only queues the
+    /// slot, and `on_update`'s `&mut self` is still live up the stack; this
+    /// just keeps this frame's parameter out of it.)
     ///
     /// # Safety
     /// `poll` is the live poll that fired, registered in `self.polls` for its fd

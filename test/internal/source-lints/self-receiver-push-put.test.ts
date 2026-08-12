@@ -9,6 +9,8 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //
 //   queue.push(NonNull::from(&mut *self))
 //   store.put(ptr::from_mut(self))
+//   list.push(self)                          (`&mut Self` coercing to `*mut Self`)
+//   queue.push(NonNull::new_unchecked(self)) (the same coercion, one call in)
 //   let job = NonNull::from(&mut *self); ... queue.push(job)
 //   let p: *mut Self = self;             ... queue.push(NonNull::new_unchecked(p))
 //
@@ -55,21 +57,29 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // src/io/windows_event_loop.rs), `NetworkTask::notify` in
 // src/install/NetworkTask.rs, `Task::callback` in src/install/PackageManagerTask.rs.
 //
-// Scope: the exclusive spellings below (`from_mut(self)`, `&mut *self`,
-// `&raw mut *self`, `self as *mut _`, ...), with `self` as the receiver and
-// `.push(` / `.put(` as the callee, inline or through a local of the same
-// function. Outside it: the shared spellings (`from_ref(self)`, `&*self`; what
-// this tree pushes from a `&self` method is a same-thread registry entry,
-// quic's `ENDPOINT_REGISTRY`, whose consumer neither writes nor frees), a bare
-// `self` argument (the `put(self, ..)` map inserts and `err.put(global, ..)`
-// property writes, where `self` is a key or a context, not storage being given
-// away), a pointer produced by a helper (`self.as_ptr()`), something the
-// receiver owns (`NonNull::from(&mut self.task)`, `&raw mut self.task`), and
-// reference parameters other than `self` (`fn f(this: &mut Task)` pushing
+// Scope: the exclusive spellings below (`from_mut(self)`, `NonNull::from(self)`,
+// `NonNull::new_unchecked(self)`, `self.into()`, `&raw mut *self`, ...), plus
+// `self` on its own as the only argument (the implicit `&mut Self` to
+// `*mut Self` coercion, which is the shortest spelling of all of these and the
+// one clippy does not catch: `ref_as_ptr` / `borrow_as_ptr` already deny the
+// `self as *mut _` and `&mut *self as *mut _` forms workspace-wide), with
+// `self` as the receiver and `.push(` / `.put(` as the callee, inline or through
+// a local of the same function. Outside it: the shared spellings
+// (`from_ref(self)`, `&*self`; what this tree pushes from a `&self` method is a
+// same-thread registry entry, quic's `ENDPOINT_REGISTRY`, whose consumer
+// neither writes nor frees), `self` as one of several arguments (the
+// `put(self, ..)` map inserts and `err.put(global, ..)` property writes, where
+// `self` is a key or a context, not storage being given away), a pointer
+// produced by a helper (`self.as_ptr()`), something the receiver owns
+// (`NonNull::from(&mut self.task)`, `&raw mut self.task`), and reference
+// parameters other than `self` (`fn f(this: &mut Task)` pushing
 // `NonNull::from(this)`; a local reference is not protected and the push moves
 // it, but a reference *parameter* pushed that way is the same bug, convert it
-// on sight). Other helpers that free their argument (`Self::destroy(..)`) are
-// the population self-receiver-reclaim.test.ts names as outside its scope.
+// on sight). A by-value `self` moved into a `Vec` would also spell
+// `v.push(self)`; nothing in the tree does that today, and such a method can
+// bind the value first (`let me = self;`) to say so. Other helpers that free
+// their argument (`Self::destroy(..)`) are the population
+// self-receiver-reclaim.test.ts names as outside its scope.
 // Siblings: self-receiver-reclaim.test.ts, fn-long-mut-reborrow.test.ts,
 // frozen-nonnull-reborrow.test.ts.
 
@@ -108,12 +118,18 @@ const SELF_AS_RAW = [
   String.raw`${PATH}addr_of_mut!\s*\(\s*\*\s*self\s*\)`,
 ].join("|");
 
-// `self` as a `NonNull`: from the reference itself (`NonNull::from(self)`,
-// `NonNull::from(&mut *self)`; the `\)` right after `self` keeps
-// `NonNull::from(&mut *self.field)` out) or wrapped around a raw spelling.
+// The receiver reference itself: `self` or its reborrow `&mut *self`. Every
+// use below is followed by `\s*\)` or `\s*,?\s*\)`, which keeps `self.field` /
+// `&mut *self.field` (something the receiver owns) out.
+const SELF_REF = String.raw`(?:&\s*mut\s+\*\s*)?self`;
+
+// `self` as a `NonNull`: converted from the reference itself (`NonNull::from(self)`,
+// `self.into()`), coerced to `*mut` inside a constructor
+// (`NonNull::new_unchecked(self)`), or wrapped around a raw spelling.
 const SELF_AS_NONNULL = [
-  String.raw`${PATH}NonNull::from\(\s*(?:&\s*mut\s+\*\s*)?self\s*\)`,
-  String.raw`${PATH}NonNull::(?:new_unchecked|new)${TURBOFISH}\(\s*(?:${SELF_AS_RAW})\s*\)`,
+  String.raw`${PATH}NonNull::from\(\s*${SELF_REF}\s*\)`,
+  String.raw`${PATH}NonNull::(?:new_unchecked|new)${TURBOFISH}\(\s*(?:${SELF_REF}|${SELF_AS_RAW})\s*\)`,
+  String.raw`${SELF_REF}\s*\.\s*into\(\)`,
 ].join("|");
 
 const SELF_AS_POINTER = `(?:${SELF_AS_RAW}|${SELF_AS_NONNULL})`;
@@ -127,6 +143,12 @@ const SAME_ADDRESS = String.raw`(?:\s*\.\s*(?:cast(?:_mut|_const)?${TURBOFISH}\(
 const ARG_END = String.raw`\s*[,)]`;
 
 const DIRECT = new RegExp(`${HAND_OVER}${SELF_AS_POINTER}${SAME_ADDRESS}${ARG_END}`, "g");
+
+// The reference itself as the whole argument list, coerced to `*mut Self` by
+// the callee's signature (`list.push(self)`, `store.put(&mut *self)`). Only as
+// the sole argument: with more arguments `self` is a key or a context (see the
+// header), not the storage being handed over.
+const COERCED = new RegExp(`${HAND_OVER}${SELF_REF}\\s*,?\\s*\\)`, "g");
 
 // A local bound to the receiver's address, then handed over further down the
 // same function (which ends at the next `fn` item; a closure inside it is the
@@ -149,6 +171,7 @@ function handOverOfBinding(name: string): RegExp {
 function findHandOvers(stripped: string): number[] {
   const hits: number[] = [];
   for (const m of stripped.matchAll(DIRECT)) hits.push(m.index);
+  for (const m of stripped.matchAll(COERCED)) hits.push(m.index);
   for (const pattern of SELF_POINTER_BINDINGS) {
     for (const binding of stripped.matchAll(pattern)) {
       const start = binding.index + binding[0].length;
@@ -176,6 +199,11 @@ const ALLOW: Record<string, number> = {
   // converted separately (#37778); delete these entries when that lands.
   "src/jsc/RuntimeTranspilerStore.rs": 2,
   "src/install/patch_install.rs": 1,
+  // `Resolve::dispatch(&mut self)` and `Load::dispatch(&mut self)` link their
+  // receiver into the bundle's outstanding lists (`outstanding_*.push(self)`,
+  // the coercion spelling) before posting it to the JS thread. Being converted
+  // separately (#37732); delete this entry when that lands.
+  "src/bundler/bundle_v2.rs": 2,
 };
 
 const counts: Record<string, number> = {};
@@ -221,6 +249,19 @@ test("the patterns match the banned spellings and nothing else", () => {
     // windows spellings.
     "let this = ptr::NonNull::from(self);\nvm.file_polls_mut().put(this, vm, was_ever_registered);",
     "let this: ptr::NonNull<FilePoll> = ptr::NonNull::from(&mut *self);\nvm.file_polls_mut().put(this, vm, was_ever_registered);",
+    // `Resolve::dispatch(&mut self)` in src/bundler/bundle_v2.rs (allowlisted
+    // above): the bare coercion.
+    "bv2.graph.outstanding_resolves.push(self);",
+    // The coercion spellings of the three instances above.
+    "unsafe { (*vm).transpiler_store.store.put(self) };",
+    "(*self.pool).put(&mut *self);",
+    "queue.push(NonNull::new_unchecked(self));",
+    "queue.push(NonNull::new(self).unwrap());",
+    "queue.push(NonNull::new_unchecked(&mut *self));",
+    "queue.push(self.into());",
+    "pending.push(\n    self,\n);",
+    "let this = NonNull::new_unchecked(self);\nqueue.push(this);",
+    "let this: NonNull<Self> = self.into();\nqueue.push(this);",
     // Other spellings of the same thing.
     "queue.push(NonNull::from(self));",
     "queue.push(core::ptr::NonNull::from(&mut  *self));",
@@ -255,8 +296,12 @@ test("the patterns match the banned spellings and nothing else", () => {
     "batch.push(Batch::from(&raw mut self.task));",
     "batch.push(Batch::from(core::ptr::addr_of_mut!(self.task)));",
     "self.tasks.push(NonNull::new_unchecked(concurrent));",
+    "self.tasks.push(NonNull::new_unchecked(self.task));",
     "self.entries.push(item);",
     "out.push(self.len);",
+    "out.push(self.node.into());",
+    "out.push(&mut *self.node);",
+    "out.push(selfie);",
     "let job = NonNull::from(&mut *self.job);\nqueue.push(job);",
     // A helper-produced pointer and the shared spellings are out of scope.
     "queue.push(self.as_non_null());",

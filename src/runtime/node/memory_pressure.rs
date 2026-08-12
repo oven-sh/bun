@@ -236,11 +236,13 @@ mod posix {
     }
 
     /// `__bun_run_file_poll` dispatch target. `fflags` is the kqueue `fflags`
-    /// on macOS (carrying the pressure level) and 0 on Linux.
+    /// on macOS (carrying the pressure level) and 0 on Linux. `poll` is raw
+    /// because the Linux teardown branch hands it to `deinit_poll`, which
+    /// takes the pointer like `FilePoll::deinit` does.
     ///
     /// # Safety
     /// `poll` is the live watcher poll that fired (`__bun_run_file_poll`'s
-    /// contract); the Linux teardown branch returns it to the store.
+    /// contract).
     pub(crate) unsafe fn on_poll(poll: *mut FilePoll, fflags: i64) {
         let vm = VirtualMachine::get_mut();
 

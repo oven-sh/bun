@@ -385,8 +385,7 @@ impl SharedConnection {
             )
         };
         if rc.is_err() {
-            // SAFETY: as above. Never registered, so the store recycles the slot
-            // inside this call; nothing uses it afterwards.
+            // SAFETY: as above; nothing uses the slot after this.
             unsafe { FilePoll::deinit(poll_ptr) };
             // SAFETY: FFI; `main_ref` is the live connection ref.
             unsafe { DNSServiceRefDeallocate(main_ref) };

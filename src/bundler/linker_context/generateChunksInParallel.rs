@@ -114,14 +114,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 }
             }
             debug_assert_eq!(tasks.len(), total_count);
-            // Fill the Vec first, then take the addresses (`tasks` is not touched
-            // again until `wait_for_all` returns). `prepare_css_asts_for_chunk`
-            // recovers the whole `PrepareCssAstTask` from the pointer, so it is
-            // projected through the element pointer, not through a `&mut` element.
             let tasks_ptr = tasks.as_mut_ptr();
             let mut batch = ThreadPoolLib::Batch::default();
             for i in 0..tasks.len() {
-                // SAFETY: `i < tasks.len()`, so `tasks_ptr.add(i)` is a live element.
+                // SAFETY: `i < tasks.len()`; the callback recovers the whole
+                // `PrepareCssAstTask` from this element pointer.
                 batch.push(ThreadPoolLib::Batch::from(unsafe {
                     &raw mut (*tasks_ptr.add(i)).task
                 }));
@@ -248,14 +245,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 }
             }
             debug_assert_eq!(combined_part_ranges.len(), total_count);
-            // Same as the CSS batch above: the `generate_compile_result_for_*_chunk`
-            // callbacks recover the whole `PendingPartRange` from the pointer, and
-            // `combined_part_ranges` is not touched again until `wait_for_all`.
             let part_ranges_ptr = combined_part_ranges.as_mut_ptr();
             let mut batch = ThreadPoolLib::Batch::default();
             for i in 0..combined_part_ranges.len() {
-                // SAFETY: `i < combined_part_ranges.len()`, so `part_ranges_ptr.add(i)`
-                // is a live element.
+                // SAFETY: `i < combined_part_ranges.len()`; the callbacks recover
+                // the whole `PendingPartRange` from this element pointer.
                 batch.push(ThreadPoolLib::Batch::from(unsafe {
                     &raw mut (*part_ranges_ptr.add(i)).task
                 }));

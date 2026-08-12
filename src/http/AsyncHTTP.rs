@@ -528,12 +528,10 @@ impl<'a> AsyncHTTP<'a> {
         )
     }
 
-    /// Queue `self` for [`crate::HTTPThread::schedule`], which recovers the
-    /// whole `AsyncHTTP` from the `task` pointer, so the pointer is projected
-    /// out of `self`'s address rather than out of the `task` field.
     pub fn schedule(&mut self, batch: &mut Batch) {
         let this = core::ptr::from_mut(self);
-        // SAFETY: `this` is `self`; only a field projection is formed.
+        // SAFETY: field projection of `self`; `HTTPThread::schedule` recovers
+        // the whole `AsyncHTTP` from this pointer.
         batch.push(Batch::from(unsafe { &raw mut (*this).task }));
     }
 }

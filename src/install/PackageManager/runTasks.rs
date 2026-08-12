@@ -1610,8 +1610,7 @@ pub fn flush_patch_task_queue(this: &mut PackageManager) {
         } else {
             &mut this.patch_calc_hash_batch
         };
-        // SAFETY: same pointer as above; `schedule` projects the pool task out
-        // of it so the pool's container-of covers the whole `PatchTask`.
+        // SAFETY: as above.
         unsafe { PatchTask::schedule(patch_task, batch) };
     }
 }

@@ -586,13 +586,10 @@ impl<'a> LinkerContext<'a> {
                     callback: SourceMapDataTask::run_quoted_source_contents,
                 },
             };
-            // `run_line_offset` / `run_quoted_source_contents` recover the
-            // `SourceMapDataTask` from its `thread_task` pointer, so project
-            // through the element pointer rather than the `&mut` above.
             let line_offset = std::ptr::from_mut(line_offset);
             let quoted = std::ptr::from_mut(quoted);
-            // SAFETY: both point at the slice elements borrowed by this
-            // iteration; field projections only.
+            // SAFETY: field projections of the two live elements; the callbacks
+            // recover the whole `SourceMapDataTask` from these pointers.
             unsafe {
                 batch.push(ThreadPoolLib::Batch::from(
                     &raw mut (*line_offset).thread_task,

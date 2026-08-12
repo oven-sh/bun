@@ -554,13 +554,10 @@ impl ThreadPool {
                 ctx: bun_ptr::BackRef::new(&wait_context),
             });
         }
-        // Fill the Vec first, then take the addresses: nothing reallocates or
-        // reborrows the buffer between here and `wait_for_all`. `call` recovers
-        // each `RunnerTask` from its `task` pointer, so project through the
-        // element pointer rather than a `&mut RunnerTask`.
         let runner_tasks = tasks.as_mut_ptr();
         for i in 0..tasks.len() {
-            // SAFETY: `i < tasks.len()`, so `runner_tasks.add(i)` is a live element.
+            // SAFETY: `i < tasks.len()`; `call` recovers the whole `RunnerTask`
+            // from this element pointer.
             batch.push(Batch::from(unsafe { &raw mut (*runner_tasks.add(i)).task }));
         }
         self.schedule(batch);

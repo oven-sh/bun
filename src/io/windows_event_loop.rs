@@ -86,27 +86,20 @@ impl FilePoll {
     }
 
     // Note: not `impl Drop` — FilePoll lives in a HiveArray pool slot, not a Box;
-    // teardown returns the slot to the pool via `Store::put`.
-    //
-    // Like the POSIX `FilePoll`, the `deinit*` entry points take the slot
-    // pointer, not `&mut self`: for a poll that was never registered (on
-    // Windows, every poll; see `unregister`) `Store::put` recycles the slot
-    // before returning (a `Box` free once the hive has spilled to the heap),
-    // and a reference argument is protected, so must stay allocated, until the
-    // call it was passed to returns.
+    // teardown returns the slot to the pool via `Store::put`. As on POSIX, the
+    // `deinit*` entry points take the slot pointer rather than `&mut self`
+    // because `Store::put` frees the slot before it returns.
 
     /// Returns the slot to the event loop's `Store`.
     ///
     /// # Safety
-    /// `this` is a live slot returned by [`FilePoll::init`] on this thread;
-    /// the caller must not use it afterwards.
+    /// `this` is a live slot from [`FilePoll::init`] on this thread and is not used afterwards.
     pub unsafe fn deinit(this: *mut FilePoll) {
         // SAFETY: fn contract.
         unsafe { Self::deinit_with_vm(this, js_vm_ctx()) }
     }
 
-    /// # Safety
-    /// As for [`FilePoll::deinit`].
+    /// Safety: as for [`FilePoll::deinit`].
     pub(crate) unsafe fn deinit_force_unregister(this: *mut FilePoll) {
         // SAFETY: fn contract.
         unsafe { Self::deinit(this) }
@@ -131,9 +124,7 @@ impl FilePoll {
         true
     }
 
-    /// Unregisters and clears the poll; returns whether it was ever
-    /// registered, which is what decides whether `Store::put` recycles the
-    /// slot now or after the current event loop turn.
+    /// Returns whether the poll was ever registered, which `Store::put` needs.
     fn clear_for_put(&mut self, loop_: &mut WindowsLoop) -> bool {
         if self.is_registered() {
             let _ = self.unregister(loop_);
@@ -145,23 +136,15 @@ impl FilePoll {
         was_ever_registered
     }
 
-    /// # Safety
-    /// As for [`FilePoll::deinit`]; `vm` is the context the poll was created on.
+    /// Safety: as for [`FilePoll::deinit`]; `vm` is the context the poll was created on.
     pub(crate) unsafe fn deinit_with_vm(this: *mut FilePoll, vm: EventLoopCtx) {
-        // `loop_mut()` — crate-private nonnull-asref accessor (single deref in
-        // `EventLoopCtx`); the uws loop is a disjoint allocation from the slot,
-        // and the borrow is consumed by `clear_for_put`.
         let loop_ = vm.loop_mut();
-        // SAFETY: fn contract. The `&mut` the autoref forms ends with the
-        // statement, so no reference into the slot is live when the store
-        // takes it back.
+        // SAFETY: fn contract. The `&mut` the autoref forms ends with this
+        // statement, so this path holds no reference into the slot when the
+        // store takes it back.
         let was_ever_registered = unsafe { (*this).clear_for_put(loop_) };
         // SAFETY: `this` is non-null per fn contract.
         let slot = unsafe { ptr::NonNull::new_unchecked(this) };
-        // `file_polls_mut()` is the per-thread set-once `Store` back-pointer
-        // (`BackRef`-shaped); the `&mut Store` it produces is the only
-        // reference into the hive at this point. `Store::put` touches `slot`
-        // only via raw-pointer ops (see its doc).
         vm.file_polls_mut().put(slot, vm, was_ever_registered);
     }
 

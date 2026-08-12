@@ -818,16 +818,15 @@ pub enum PollerPosix {
 #[cfg(unix)]
 impl PollerPosix {
     /// NOT `impl Drop`: this enum is reassigned freely (`self.poller =
-    /// Poller::Detached`, `Poller::WaiterThread(..)`, etc.), and `close()`
-    /// reassigns it to `Detached` right after calling this. A `Drop` impl
-    /// would double-free the hive slot on those reassignments. Called from
-    /// `Process::close` and `Process` drop (a no-op on `Detached`).
+    /// Poller::Detached`, `Poller::WaiterThread(..)`, etc.) and `close()`
+    /// calls this explicitly before reassigning. A `Drop` impl would
+    /// double-free the hive slot on those reassignments. Also called from
+    /// `Process` drop.
     pub(crate) fn deinit(&mut self) {
         match self {
             // SAFETY: `Fd` holds the only handle to a live hive slot, and the
-            // variant is overwritten (`close`) or dropped with the `Process`
-            // right after this, so nothing uses the slot once the store has it
-            // back.
+            // variant is overwritten (`close`) or dropped with the `Process` right
+            // after this, so nothing uses the slot once the store has it back.
             PollerPosix::Fd(poll) => unsafe { FilePoll::deinit(poll.as_ptr()) },
             PollerPosix::WaiterThread(w) => w.disable(),
             PollerPosix::Detached => {}

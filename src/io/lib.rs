@@ -369,15 +369,11 @@ impl EventLoopCtx {
     /// Single backref-deref accessor for the per-thread `Store`. Same contract
     /// as [`loop_mut`]: `pub(crate)`, `&self → &mut`, must NOT be called while
     /// another `&mut Store` (or a `&mut FilePoll` that lives inside the inline
-    /// hive buffer) is live. Every in-crate caller is a leaf op that itself
-    /// holds no `&mut FilePoll` at the call: the `FilePoll::deinit*` path works
-    /// on the raw slot pointer and has dropped its statement-scoped reborrow by
-    /// then, and `init_with_owner` / `alloc_file_poll` never form one. So no
-    /// two `&mut Store` ever coexist. The one `&mut FilePoll` that can still be
-    /// live is the receiver of `on_update` when an owner deinits its poll from
-    /// inside the poll's own callback (the dispatch chain in
-    /// `posix_event_loop` is still `&mut self` based); that put only queues
-    /// the slot.
+    /// hive buffer) is live. Every in-crate caller is a leaf op holding none
+    /// itself (`FilePoll::deinit*` works on the raw slot pointer; `init_with_owner`
+    /// / `alloc_file_poll` never form one), so no two `&mut Store` coexist; the
+    /// `&mut self` of `on_update` further up the stack during an in-callback
+    /// deinit is the remaining exception, and that put only queues the slot.
     #[inline]
     fn file_polls_mut(&self) -> &'static mut Store {
         // SAFETY: per-thread set-once pointer (`BackRef`-shaped); the event
@@ -1827,9 +1823,8 @@ impl FilePollRef {
     #[inline]
     pub(crate) fn deinit_force_unregister(self) {
         // SAFETY: type invariant — `self.0` is the live slot `init` claimed, and
-        // every copy of this handle is dead once the owner calls this. Not
-        // routed through `inner()`: the store may free the slot inside the
-        // call, so it gets the pointer rather than a `&mut` (see `FilePoll::deinit`).
+        // every copy of this handle is dead once the owner calls this. Passed as
+        // the pointer, not via `inner()`: the store may free the slot in there.
         unsafe { FilePoll::deinit_force_unregister(self.0.as_ptr()) };
     }
     /// Single nonnull-asref accessor for the process-global uWS loop pointer.

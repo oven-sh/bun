@@ -4783,17 +4783,9 @@ impl Resolver {
     /// the structural fix for the previously ASM-verified PROVEN_CACHED
     /// miscompile that needed `black_box` laundering under `&mut self`.
     ///
-    /// `poll` is raw, the shape `FilePoll::deinit` takes: this either returns
-    /// the slot to the store itself (no channel) or runs `Channel::process`,
-    /// whose socket-state callback (`on_dns_socket_state`) returns it when
-    /// c-ares closes the socket, so the poll is read up front and not touched
-    /// afterwards. (A fired poll was registered, so either put only queues the
-    /// slot, and `on_update`'s `&mut self` is still live up the stack; this
-    /// just keeps this frame's parameter out of it.)
-    ///
-    /// # Safety
-    /// `poll` is the live poll that fired, registered in `self.polls` for its fd
-    /// (`__bun_run_file_poll`'s contract).
+    /// Safety: `poll` is the live poll that fired (`__bun_run_file_poll`'s contract). It is
+    /// raw, as `FilePoll::deinit` takes it, since both the no-channel branch and (through
+    /// `on_dns_socket_state`) `Channel::process` may return it to the store.
     #[cfg(not(windows))]
     pub(crate) unsafe fn on_dns_poll(&self, poll: *mut FilePoll) {
         let vm = self.vm();

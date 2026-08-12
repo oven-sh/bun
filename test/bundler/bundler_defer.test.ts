@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, tempDir } from "harness";
 import * as path from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -654,5 +654,168 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
       );
     }
     expect(onFinalizeCallCount).toBe(3);
+  });
+});
+
+// An onLoad callback that calls `defer()` without waiting for it. The bundler used
+// to count such a load twice (once when `defer()` parked its pending unit, again
+// when the parse scheduled by the answer completed) and, on the Bun.build thread,
+// to queue both notifications on the same intrusive node, so a build died with
+// `panic: int cast: TryFromIntError(NegOverflow)` in `BundleV2::on_parse_task_complete`
+// or never finished. The builds run in a subprocess because that takes the whole
+// process down.
+describe("defer() that is not awaited", () => {
+  test.concurrent("before answering: builds with the plugin's contents instead of crashing or hanging", async () => {
+    const moduleNames = Array.from({ length: 24 }, (_, i) => `m${i}`);
+    using dir = tempDir(
+      "defer-no-await",
+      Object.fromEntries([
+        ...moduleNames.map(name => [`${name}.ts`, `throw new Error("disk contents of ${name} were bundled");`]),
+        ["entry.ts", `throw new Error("disk contents of entry were bundled");`],
+        [
+          "build.ts",
+          /* ts */ `
+            const moduleNames = ${JSON.stringify(moduleNames)};
+            const entryContents = moduleNames.map(name => 'import "./' + name + '";').join("\\n");
+            for (let build = 0; build < 4; build++) {
+              const result = await Bun.build({
+                entrypoints: [import.meta.dir + "/entry.ts"],
+                format: "iife",
+                plugins: [
+                  {
+                    name: "defer-without-await",
+                    setup(build) {
+                      build.onLoad({ filter: /\\.ts$/ }, args => {
+                        void args.defer();
+                        const base = args.path.replaceAll("\\\\", "/").split("/").pop().slice(0, -".ts".length);
+                        return {
+                          loader: "ts",
+                          contents: base === "entry" ? entryContents : 'globalThis.loaded.push("' + base + '");',
+                        };
+                      });
+                    },
+                  },
+                ],
+              });
+              if (!result.success) {
+                console.log("build " + build + " failed:", result.logs.map(String));
+                process.exit(1);
+              }
+              globalThis.loaded = [];
+              new Function(await result.outputs[0].text())();
+              const loaded = globalThis.loaded;
+              if (loaded.length !== moduleNames.length || moduleNames.some((name, i) => loaded[i] !== name)) {
+                console.log("build " + build + " bundled the wrong modules:", loaded);
+                process.exit(1);
+              }
+            }
+            console.log("ok");
+          `,
+        ],
+      ]),
+    );
+
+    expect(await bunRun(path.join(String(dir), "build.ts"))).toSpawn("ok");
+  });
+
+  // Here the load's pending unit already belongs to the parse its answer scheduled.
+  // Parking it anyway made the scan look finished early, which resolved the
+  // `defer()` promises of loads that were genuinely waiting before the answer's
+  // own imports had been loaded.
+  test.concurrent("after answering: does not resolve other loads' defer() early", async () => {
+    using dir = tempDir("defer-after-answer", {
+      "entry.ts": `import "./x"; import "./y";`,
+      "x.ts": `throw new Error("disk contents of x were bundled");`,
+      "y.ts": `throw new Error("disk contents of y were bundled");`,
+      "z.ts": `throw new Error("disk contents of z were bundled");`,
+      "build.ts": /* ts */ `
+        for (let build = 0; build < 5; build++) {
+          const events: string[] = [];
+          const result = await Bun.build({
+            entrypoints: [import.meta.dir + "/entry.ts"],
+            plugins: [
+              {
+                name: "late-defer",
+                setup(build) {
+                  // x waits for every other module, as documented.
+                  build.onLoad({ filter: /[\\\\/]x\\.ts$/ }, async ({ defer }) => {
+                    events.push("x:defer");
+                    await defer();
+                    events.push("x:resumed");
+                    return { contents: "export const x = 1;", loader: "ts" };
+                  });
+                  // y answers synchronously (so onLoadAsync runs before the microtask),
+                  // then calls defer() once its answer is already on its way.
+                  build.onLoad({ filter: /[\\\\/]y\\.ts$/ }, ({ defer }) => {
+                    queueMicrotask(() => void defer());
+                    events.push("y:load");
+                    return { contents: 'import "./z";', loader: "ts" };
+                  });
+                  // z only becomes known once y's answer has been parsed.
+                  build.onLoad({ filter: /[\\\\/]z\\.ts$/ }, () => {
+                    events.push("z:load");
+                    return { contents: "export const z = 1;", loader: "ts" };
+                  });
+                },
+              },
+            ],
+          });
+          if (!result.success) {
+            console.log("build " + build + " failed:", result.logs.map(String));
+            process.exit(1);
+          }
+          const resumed = events.indexOf("x:resumed");
+          const zLoaded = events.indexOf("z:load");
+          if (resumed === -1 || zLoaded === -1 || zLoaded > resumed) {
+            console.log("build " + build + " resumed x before z was loaded:", events);
+            process.exit(1);
+          }
+        }
+        console.log("ok");
+      `,
+    });
+
+    expect(await bunRun(path.join(String(dir), "build.ts"))).toSpawn("ok");
+  });
+
+  // Terminating the worker cancels the build while one load is parked in
+  // `defer()` and another is still unanswered; both are failed through the
+  // same path, and the parked one has to give its unit back first.
+  test.concurrent("cancelling the build while a load is parked in defer()", async () => {
+    using dir = tempDir("defer-cancelled", {
+      "main.ts": /* ts */ `
+        const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+        await new Promise(resolve => worker.addEventListener("message", resolve, { once: true }));
+        await worker.terminate();
+        console.log("terminated");
+      `,
+      "worker.ts": /* ts */ `
+        let entered = 0;
+        const armIfBothEntered = () => ++entered === 2 && postMessage("armed");
+        Bun.build({
+          entrypoints: ["virtual:deferring", "virtual:stuck"],
+          plugins: [
+            {
+              name: "cancelled-while-deferred",
+              setup(build) {
+                build.onResolve({ filter: /^virtual:/ }, args => ({ path: args.path, namespace: "v" }));
+                build.onLoad({ filter: /deferring/, namespace: "v" }, async ({ defer }) => {
+                  const everythingElse = defer();
+                  armIfBothEntered();
+                  await everythingElse;
+                  return { contents: "export const deferring = 1;", loader: "ts" };
+                });
+                build.onLoad({ filter: /stuck/, namespace: "v" }, () => new Promise(armIfBothEntered));
+              },
+            },
+          ],
+        }).then(
+          () => console.log("unexpected: the build finished"),
+          error => console.log("unexpected: the build failed before being cancelled:", error),
+        );
+      `,
+    });
+
+    expect(await bunRun(path.join(String(dir), "main.ts"))).toSpawn("terminated");
   });
 });

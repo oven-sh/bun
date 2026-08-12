@@ -110,6 +110,53 @@ devTest("onResolve + onLoad virtual file", {
     ]);
   },
 });
+// The dev server runs the bundle on the JS thread itself (the other arm of the
+// plugin hops exercised by test/bundler/bundler_defer.test.ts). A `defer()` issued
+// after the callback already answered must not count against the scan: y's pending
+// unit already belongs to the parse of its answer, and parking it again made the
+// scan look finished before z (imported by that answer) was loaded, so x's
+// `defer()` resolved early.
+devTest("onLoad defer() after answering does not resolve other loads' defer() early", {
+  framework: minimalFramework,
+  pluginFile: `
+    let zLoaded = false;
+    export default [
+      {
+        name: 'late-defer',
+        setup(build) {
+          build.onLoad({ filter: /[\\\\/]x\\.ts$/ }, async ({ defer }) => {
+            await defer();
+            return { contents: 'export const zLoadedBeforeXResumed = ' + zLoaded + ';', loader: 'ts' };
+          });
+          build.onLoad({ filter: /[\\\\/]y\\.ts$/ }, ({ defer }) => {
+            queueMicrotask(() => void defer());
+            return { contents: 'import "./z.ts";', loader: 'ts' };
+          });
+          build.onLoad({ filter: /[\\\\/]z\\.ts$/ }, () => {
+            zLoaded = true;
+            return { contents: 'export const z = 1;', loader: 'ts' };
+          });
+        },
+      },
+    ];
+  `,
+  files: {
+    "x.ts": `throw new Error('disk contents of x were bundled');`,
+    "y.ts": `throw new Error('disk contents of y were bundled');`,
+    "z.ts": `throw new Error('disk contents of z were bundled');`,
+    "routes/index.ts": `
+      import { zLoadedBeforeXResumed } from '../x.ts';
+      import '../y.ts';
+
+      export default function (req, meta) {
+        return new Response('z loaded before x resumed: ' + zLoadedBeforeXResumed);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("z loaded before x resumed: true");
+  },
+});
 // devTest("onLoad with watchFile", {
 //   framework: minimalFramework,
 //   pluginFile: `

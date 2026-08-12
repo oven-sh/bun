@@ -54,6 +54,9 @@ pub struct Graph<'a> {
     ///
     /// When `pending_items` hits zero and there are deferred pending tasks, those
     /// tasks will be run, and the count is "moved" back to `pending_items`
+    /// (`drain_deferred_tasks`). A load that is answered before then takes its
+    /// own count back (`BundleV2::on_load`). `Load::deferred` marks whose
+    /// counts are in here.
     pub(crate) deferred_pending: u32,
 
     /// onResolve / onLoad requests a plugin currently holds (dispatched to its
@@ -272,6 +275,12 @@ impl<T> Default for OutstandingLink<T> {
             next: core::ptr::null_mut(),
             linked: false,
         }
+    }
+}
+impl<T> OutstandingLink<T> {
+    /// Dispatched to the plugin and not answered yet.
+    pub(crate) fn is_linked(&self) -> bool {
+        self.linked
     }
 }
 pub trait OutstandingNode: Sized {

@@ -188,7 +188,8 @@ const testPlatforms = [
   // lanes — see buildPlatforms).
   { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
-  { os: "darwin", arch: "x64", release: "14", tier: "latest" },
+  // x64 is off until enough Intel test agents are back on the queue.
+  // { os: "darwin", arch: "x64", release: "14", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13", tier: "latest" },

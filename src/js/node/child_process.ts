@@ -238,6 +238,7 @@ function execFile(file, args, options, callback) {
     killSignal: options.killSignal,
     uid: options.uid,
     gid: options.gid,
+    cgroup: options.cgroup,
     windowsHide: options.windowsHide,
     windowsVerbatimArguments: options.windowsVerbatimArguments,
     shell: options.shell,
@@ -569,6 +570,7 @@ function spawnSync(file, args, options) {
       detached: options.detached,
       uid: options.uid,
       gid: options.gid,
+      cgroup: options.cgroup,
       windowsVerbatimArguments: options.windowsVerbatimArguments,
       windowsHide: options.windowsHide,
       argv0: options.args[0],
@@ -1410,6 +1412,7 @@ class ChildProcess extends EventEmitter {
         detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
         uid: options.uid,
         gid: options.gid,
+        cgroup: options.cgroup,
         onExit: (handle, exitCode, signalCode, err) => {
           this.#handle = handle;
           this.pid = this.#handle.pid;

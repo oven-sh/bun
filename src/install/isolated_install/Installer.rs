@@ -279,24 +279,12 @@ impl<'a> Installer<'a> {
         let node_id = entry_node_ids[entry_id.get() as usize];
         let node_pkg_ids = store.nodes.items_pkg_id();
         let pkg_id = node_pkg_ids[node_id.get() as usize];
-        let patch_task_ptr = install::PatchTask::new_apply_patch_hash(
+        let mut patch_task = install::PatchTask::new_apply_patch_hash(
             self.manager_mut(),
             pkg_id,
             patch.contents_hash,
             patch.name_and_version_hash,
         );
-        // SAFETY: `new_apply_patch_hash` returns a freshly Box-allocated PatchTask;
-        // sole ownership lives in this scope.
-        struct PatchTaskGuard(*mut install::PatchTask);
-        impl Drop for PatchTaskGuard {
-            fn drop(&mut self) {
-                // SAFETY: exclusive owner; created by `heap::alloc` in `new_*`.
-                unsafe { install::PatchTask::destroy(self.0) };
-            }
-        }
-        let _guard = PatchTaskGuard(patch_task_ptr);
-        // SAFETY: exclusive owner — see above.
-        let patch_task = unsafe { &mut *patch_task_ptr };
         // Every peer variant shares one patched cache dir (named by the patch
         // contents hash, not the peer set). Once it exists, reuse it: rebuilding
         // it replaces the directory under earlier entries' running hardlink tasks.

@@ -475,7 +475,9 @@ enum JsonValue {
     Null,
     Bool(bool),
     Integer(i64),
-    Float(#[expect(dead_code)] f64),
+    /// The metafile only ever reads integers (byte counts), so a float is
+    /// validated and otherwise ignored.
+    Float,
     String(Box<[u8]>),
     Array(Vec<JsonValue>),
     Object(JsonObject),
@@ -714,7 +716,8 @@ impl<'a> JsonParser<'a> {
         }
         let s = &self.input[start..self.pos];
         if is_float {
-            Ok(JsonValue::Float(bun_core::fmt::parse_f64(s).ok_or(())?))
+            bun_core::fmt::parse_f64(s).ok_or(())?;
+            Ok(JsonValue::Float)
         } else {
             Ok(JsonValue::Integer(
                 bun_core::fmt::parse_int::<i64>(s, 10).map_err(|_| ())?,

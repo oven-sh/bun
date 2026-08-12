@@ -199,8 +199,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             break;
         }
         // SAFETY: `next()` returned non-null; node is exclusively owned by this
-        // batch. `ptask_ptr` was produced by `heap::alloc` in `PatchTask::new_*`
-        // — reclaim ownership exactly once here so the `Box` drops at end of
+        // batch. `ptask_ptr` is the `Box` that `enqueue_patch_task` /
+        // `enqueue_patch_task_pre` handed to the fifo via `heap::into_raw`;
+        // reclaim ownership exactly once here so the `Box` drops at end of
         // iteration on every path.
         let mut ptask = unsafe { bun_core::heap::take(ptask_ptr) };
         debug_assert!(manager.pending_task_count() > 0);
@@ -1788,15 +1789,11 @@ pub fn generate_network_task_for_tarball<'a>(
         ))
     });
     let apply_patch_task = if let Some((h, patch_hash)) = patch {
-        let task: *mut PatchTask =
-            PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h);
-        // SAFETY: `task` is a fresh non-null `heap::alloc` from
-        // `new_apply_patch_hash`; we hold the only reference.
-        if let PatchTaskCallback::Apply(apply) = unsafe { &mut (*task).callback } {
+        let mut task = PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h);
+        if let PatchTaskCallback::Apply(apply) = &mut task.callback {
             apply.task_id = Some(task_id);
         }
-        // SAFETY: reclaiming the `Box` produced by `new_apply_patch_hash`.
-        Some(unsafe { bun_core::heap::take(task) })
+        Some(task)
     } else {
         None
     };

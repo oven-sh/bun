@@ -232,10 +232,6 @@ pub struct VirtualMachine {
     // stored as the enum's `u8` repr.
     pub(crate) default_verbose_fetch: core::cell::Cell<Option<u8>>,
 
-    /// Do not access this field directly! It exists in the VirtualMachine struct so
-    /// that we don't accidentally make a stack copy of it; only use it through
-    /// `source_mappings`.
-    pub(crate) saved_source_map_table: crate::saved_source_map::HashTable,
     pub source_mappings: SavedSourceMap,
 
     // BACKREF — `&'a mut Arena` in spirit; caller-owned (web_worker) and
@@ -2481,12 +2477,7 @@ impl VirtualMachine {
             let _ = (*regular).tasks.ensure_unused_capacity(64);
             addr_of_mut!((*vm).event_loop).write(regular);
 
-            // `source_mappings.map` is a sibling-field backref onto
-            // `saved_source_map_table`.
-            addr_of_mut!((*vm).saved_source_map_table)
-                .write(crate::saved_source_map::HashTable::default());
             addr_of_mut!((*vm).source_mappings).write(SavedSourceMap::default());
-            (*addr_of_mut!((*vm).source_mappings)).map = addr_of_mut!((*vm).saved_source_map_table);
         }
 
         // High-tier per-VM state — Transpiler / Timer::All / entry_point.
@@ -4701,8 +4692,7 @@ impl VirtualMachine {
 
         drop_source_code_printer();
 
-        // Note: `SavedSourceMap`'s `Drop` frees
-        // each stored map and `deinit()`s the sibling `saved_source_map_table`.
+        // `SavedSourceMap`'s `Drop` frees each stored map along with its table.
         drop(core::mem::take(&mut self.source_mappings));
 
         // Drain cron jobs BEFORE taking rare_data off `self`: the teardown

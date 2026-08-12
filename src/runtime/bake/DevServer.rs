@@ -5467,8 +5467,7 @@ impl DevServer {
         self.timer_heap().remove(timer_ptr);
     }
 
-    /// # Safety
-    /// `timer` must be the `memory_visualizer_timer` field of a live, heap-allocated `DevServer`.
+    /// SAFETY: `timer` must be the `memory_visualizer_timer` field of a live, boxed `DevServer`.
     pub(crate) unsafe fn emit_memory_visualizer_message_timer(timer: *mut EventLoopTimer) {
         // SAFETY: caller contract; `from_timer_ptr` recovers the owning DevServer.
         let dev: &mut DevServer = unsafe { &mut *DevServer::from_timer_ptr(timer) };

@@ -4365,23 +4365,32 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
   }
 });
 
-// Sends one raw request over an http/1.1 ALPN connection; `head` resolves once the first
-// response head arrived, `ended` once the server ended the connection (with everything received).
+// Sends one raw request over an http/1.1 ALPN connection. `head` settles once the first response
+// head arrived, `ended` once the server ended the connection (with everything received); both
+// reject if the connection errors or closes without the server ending it.
 function rawHttp1RequestOverAlpn(server, rawRequest) {
-  const chunks = [];
-  const { promise: head, resolve: resolveHead, reject } = Promise.withResolvers();
-  const { promise: ended, resolve: resolveEnded } = Promise.withResolvers();
+  let received = "";
+  const { promise: head, resolve: resolveHead, reject: rejectHead } = Promise.withResolvers();
+  const { promise: ended, resolve: resolveEnded, reject: rejectEnded } = Promise.withResolvers();
+  // A test awaits whichever of the two it needs; the other one's rejection must not surface as a
+  // separate unhandled error.
+  head.catch(() => {});
+  ended.catch(() => {});
+  const fail = err => {
+    rejectHead(err);
+    rejectEnded(err);
+  };
   const socket = tls.connect(
     { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
     () => socket.write(rawRequest),
   );
-  socket.on("error", reject);
   socket.on("data", chunk => {
-    chunks.push(chunk);
-    const received = Buffer.concat(chunks).toString("latin1");
+    received += chunk.toString("latin1");
     if (received.includes("\r\n\r\n")) resolveHead(received);
   });
-  socket.on("end", () => resolveEnded(Buffer.concat(chunks).toString("latin1")));
+  socket.on("end", () => resolveEnded(received));
+  socket.on("error", fail);
+  socket.on("close", () => fail(new Error(`connection closed before the server ended it; received: ${received}`)));
   return { head, ended, socket };
 }
 
@@ -4465,6 +4474,31 @@ for (const [description, options] of [
     }
   });
 }
+
+it("http2.createSecureServer validates requireHostHeader like Node's storeHTTPOptions, only when allowHTTP1 is set", () => {
+  const codes = [];
+  for (const options of [
+    { requireHostHeader: "yes" },
+    { requireHostHeader: 0 },
+    { http1Options: { requireHostHeader: 1 } },
+    { requireHostHeader: true, http1Options: { requireHostHeader: "no" } },
+  ]) {
+    try {
+      http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true, ...options });
+      codes.push("no error");
+    } catch (err) {
+      codes.push(`${err.code}: ${err.message}`);
+    }
+  }
+  expect(codes).toEqual([
+    `ERR_INVALID_ARG_TYPE: The "options.requireHostHeader" property must be of type boolean. Received type string ('yes')`,
+    `ERR_INVALID_ARG_TYPE: The "options.requireHostHeader" property must be of type boolean. Received type number (0)`,
+    `ERR_INVALID_ARG_TYPE: The "options.requireHostHeader" property must be of type boolean. Received type number (1)`,
+    `ERR_INVALID_ARG_TYPE: The "options.requireHostHeader" property must be of type boolean. Received type string ('no')`,
+  ]);
+  // Without allowHTTP1 there is no HTTP/1 path: Node neither validates nor stores the option.
+  expect(http2.createSecureServer({ ...TLS_CERT, requireHostHeader: "yes" }).requireHostHeader).toBeUndefined();
+});
 
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
 // waits on nghttp2_session_want_write()/want_read(), which does not track outstanding

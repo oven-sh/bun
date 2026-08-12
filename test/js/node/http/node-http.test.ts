@@ -4141,23 +4141,31 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
 });
 
 describe("connectionListener requireHostHeader", () => {
-  // Drives one raw request through server.emit("connection", ...) (the JS fallback parser) and
-  // returns the first response head the client saw plus a promise for the server ending the
-  // connection. A duplexPair does not propagate destroy(), so both halves are torn down.
+  // Drives one raw request through server.emit("connection", ...) (the JS fallback parser).
+  // `head` settles once the first response head arrived, `ended` once the server ended the
+  // connection (with everything received); both reject if the connection errors or the server
+  // destroys it instead.
   function rawRequestOverEmittedConnection(server: Server, rawRequest: string) {
     const [clientSide, serverSide] = duplexPair();
-    const chunks: Buffer[] = [];
-    const ended = new Promise<string>(resolve =>
-      clientSide.on("end", () => resolve(Buffer.concat(chunks).toString("latin1"))),
-    );
-    const head = new Promise<string>((resolve, reject) => {
-      clientSide.on("data", (chunk: Buffer) => {
-        chunks.push(chunk);
-        const received = Buffer.concat(chunks).toString("latin1");
-        if (received.includes("\r\n\r\n")) resolve(received);
-      });
-      clientSide.on("error", reject);
+    let received = "";
+    const { promise: head, resolve: resolveHead, reject: rejectHead } = Promise.withResolvers<string>();
+    const { promise: ended, resolve: resolveEnded, reject: rejectEnded } = Promise.withResolvers<string>();
+    // A test awaits whichever of the two it needs; the other one's rejection must not surface as a
+    // separate unhandled error.
+    head.catch(() => {});
+    ended.catch(() => {});
+    const fail = (err: Error) => {
+      rejectHead(err);
+      rejectEnded(err);
+    };
+    clientSide.on("data", (chunk: Buffer) => {
+      received += chunk.toString("latin1");
+      if (received.includes("\r\n\r\n")) resolveHead(received);
     });
+    clientSide.on("end", () => resolveEnded(received));
+    clientSide.on("error", fail);
+    serverSide.on("error", fail);
+    serverSide.on("close", () => fail(new Error(`server destroyed the connection; received: ${received}`)));
     server.emit("connection", serverSide);
     clientSide.write(rawRequest);
     return {

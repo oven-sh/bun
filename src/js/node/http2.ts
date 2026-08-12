@@ -6804,7 +6804,9 @@ class Http2SecureServer extends tls.Server {
       this.requestTimeout = http1Options.requestTimeout ?? 300000;
       this.maxHeadersCount = http1Options.maxHeadersCount ?? null;
       this.maxRequestsPerSocket = http1Options.maxRequestsPerSocket ?? 0;
-      this.requireHostHeader = http1Options.requireHostHeader ?? true;
+      const requireHostHeader = http1Options.requireHostHeader;
+      if (requireHostHeader !== undefined) validateBoolean(requireHostHeader, "options.requireHostHeader");
+      this.requireHostHeader = requireHostHeader ?? true;
       // connectionListenerHTTP1 reads these off the server when initializing
       // the per-connection parser, matching Node's storeHTTP1Options.
       this.maxHeaderSize = http1Options.maxHeaderSize;

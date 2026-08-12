@@ -493,16 +493,10 @@ devTest("import.meta.hot.dispose runs once per module when one update replaces s
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],
     }),
-    // Both replaced modules bubble up to the same boundary. Every module is
-    // disposed of once and evaluated once per update:
-    // - the boundary is reached from both replaced modules (disposing of it
-    //   twice used to throw, since its dispose list is cleared by the first
-    //   pass)
-    // - the boundary is reloaded before whichever replaced module the update
-    //   listed second, and imports it. Marking that module stale before its
-    //   own reload would make the boundary's reload evaluate it, and its own
-    //   reload evaluate it again, which would also register its dispose
-    //   callback twice (hence the second round).
+    // The boundary is reached from both replaced modules, and is reloaded
+    // before the second of them, which it imports. Each module must be
+    // disposed of once and evaluated once per update; the second round catches
+    // dispose callbacks registered by a duplicate evaluation.
     "index.ts": `
       import "./d";
       import "./e";

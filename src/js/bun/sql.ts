@@ -263,11 +263,6 @@ const SQL: typeof Bun.SQL = function SQL(
     validateCallback("onlisten", onlisten, true);
     return listenable ? listenable.listen(channel, onnotify, onlisten) : listenUnsupported();
   };
-  const unlisten: Bun.SQL["unlisten"] = async (channel, onnotify) => {
-    validateChannel(channel);
-    validateCallback("onnotify", onnotify, true);
-    return listenable ? listenable.unlisten(channel, onnotify) : listenUnsupported();
-  };
   // .execute(): queries are lazy, and notify() must send even when not awaited.
   function makeNotify(target: { unsafe: Bun.SQL["unsafe"] }): Bun.SQL["notify"] {
     return (channel, payload) => {
@@ -360,7 +355,6 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.reserve = () => sql.reserve();
     reserved_sql.array = sql.array;
     reserved_sql.listen = listen;
-    reserved_sql.unlisten = unlisten;
     reserved_sql.notify = makeNotify(reserved_sql);
     function onTransactionFinished(transaction_promise: Promise<any>) {
       reservedTransaction.delete(transaction_promise);
@@ -638,7 +632,6 @@ const SQL: typeof Bun.SQL = function SQL(
     transaction_sql.reserve = () => sql.reserve();
     transaction_sql.array = sql.array;
     transaction_sql.listen = listen;
-    transaction_sql.unlisten = unlisten;
     transaction_sql.notify = makeNotify(transaction_sql);
 
     transaction_sql.connect = () => {
@@ -987,7 +980,6 @@ const SQL: typeof Bun.SQL = function SQL(
   sql.distributed = sql.beginDistributed;
   sql.end = sql.close;
   sql.listen = listen;
-  sql.unlisten = unlisten;
   sql.notify = makeNotify(sql);
   return sql;
 };
@@ -1071,10 +1063,6 @@ defaultSQLObject.flush = (...args: Parameters<typeof lazyDefaultSQL.flush>) => {
 defaultSQLObject.listen = (...args: Parameters<typeof lazyDefaultSQL.listen>) => {
   ensureDefaultSQL();
   return lazyDefaultSQL.listen(...args);
-};
-defaultSQLObject.unlisten = (...args: Parameters<typeof lazyDefaultSQL.unlisten>) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.unlisten(...args);
 };
 defaultSQLObject.notify = (...args: Parameters<typeof lazyDefaultSQL.notify>) => {
   ensureDefaultSQL();

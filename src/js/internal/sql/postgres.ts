@@ -526,13 +526,9 @@ class PostgresAdapter
 
   #listener: ListenConnection | null = null;
 
-  listen(channel: string, onnotify: Listener, onlisten: OnListen | undefined) {
+  listen(channel: string, onnotify: Listener, onlisten: OnListen | undefined): Promise<ListenSubscription> {
     if (this.closed) return Promise.$reject(this.connectionClosedError());
     return (this.#listener ??= new ListenConnection(this)).listen(channel, onnotify, onlisten);
-  }
-
-  unlisten(channel: string, onnotify: Listener | undefined): Promise<void> {
-    return this.#listener?.unlisten(channel, onnotify) ?? Promise.$resolve(undefined);
   }
 
   protected closeDedicatedConnections() {
@@ -542,18 +538,45 @@ class PostgresAdapter
 }
 
 type Listener = (payload: string) => void;
-type ListenState = { pid: number; secret: number };
-type OnListen = (state: ListenState) => void;
+type OnListen = () => void;
 type ListenHandle = $ZigGeneratedClasses.PostgresSQLConnection;
 
-// unlisten() removes the entry synchronously, so a racing listen() gets a new
-// entry and a new round trip, and code resuming after an await compares its
-// entry against the map to learn whether it was unsubscribed meanwhile.
+/** Resolved from `sql.listen()`; removes the registration that call made. */
+class ListenSubscription {
+  readonly channel: string;
+  #connection: ListenConnection | null;
+  readonly #onnotify: Listener;
+  readonly #onlisten: OnListen | undefined;
+
+  constructor(connection: ListenConnection, channel: string, onnotify: Listener, onlisten: OnListen | undefined) {
+    this.channel = channel;
+    this.#connection = connection;
+    this.#onnotify = onnotify;
+    this.#onlisten = onlisten;
+  }
+
+  unlisten(): Promise<void> {
+    const connection = this.#connection;
+    if (connection === null) return Promise.$resolve(undefined);
+    this.#connection = null;
+    return connection.unsubscribe(this.channel, this.#onnotify, this.#onlisten);
+  }
+
+  [Symbol.asyncDispose](): Promise<void> {
+    return this.unlisten();
+  }
+}
+
+// Removing the last subscription deletes the entry synchronously, so a racing
+// listen() gets a new entry and a new round trip, and code resuming after an
+// await compares its entry against the map to learn whether it is still live.
+// Each listen() call is one registration, so a callback may appear more than
+// once and removal takes out a single occurrence.
 class Channel {
   // One listener is stored bare. The array is replaced, never mutated, so a
   // dispatch in progress is unaffected by listen()/unlisten() from a callback.
   listeners: Listener | readonly Listener[];
-  onlisten: Array<[Listener, OnListen]> | null = null;
+  onlisten: readonly OnListen[] | null = null;
   /** LISTEN round trip on the current connection; reset to null on disconnect. */
   ready: Promise<void> | null = null;
 
@@ -563,43 +586,39 @@ class Channel {
 
   add(listener: Listener) {
     const current = this.listeners;
-    if (typeof current === "function") {
-      if (current !== listener) this.listeners = [current, listener];
-    } else if (!current.includes(listener)) {
-      this.listeners = [...current, listener];
-    }
+    this.listeners = typeof current === "function" ? [current, listener] : [...current, listener];
   }
 
-  /** @returns true when no listeners remain */
+  /** @returns true when the channel has no registrations left */
   remove(listener: Listener): boolean {
     const current = this.listeners;
     if (typeof current === "function") return current === listener;
-    if (current.includes(listener)) {
-      const remaining = current.filter(fn => fn !== listener);
-      this.listeners = remaining.length === 1 ? remaining[0] : remaining;
-    }
-    if (this.onlisten !== null) {
-      this.onlisten = this.onlisten.filter(pair => pair[0] !== listener);
-      if (this.onlisten.length === 0) this.onlisten = null;
-    }
+    const index = current.indexOf(listener);
+    if (index !== -1) this.listeners = current.length === 2 ? current[1 - index] : current.toSpliced(index, 1);
     return false;
   }
 
-  has(listener: Listener): boolean {
-    const current = this.listeners;
-    return typeof current === "function" ? current === listener : current.includes(listener);
+  addOnlisten(callback: OnListen) {
+    this.onlisten = this.onlisten === null ? [callback] : [...this.onlisten, callback];
   }
 
-  fireOnlisten(state: ListenState) {
-    const pairs = this.onlisten;
-    if (pairs === null) return;
-    for (let i = 0; i < pairs.length; i++) invoke(pairs[i][1], state);
+  removeOnlisten(callback: OnListen) {
+    const current = this.onlisten;
+    if (current === null) return;
+    const index = current.indexOf(callback);
+    if (index !== -1) this.onlisten = current.length === 1 ? null : current.toSpliced(index, 1);
+  }
+
+  fireOnlisten() {
+    const callbacks = this.onlisten;
+    if (callbacks === null) return;
+    for (let i = 0; i < callbacks.length; i++) invoke(callbacks[i]);
   }
 }
 
 // A throwing callback is reported as uncaught; it must not skip the callbacks
 // after it, reject listen(), or look like a failed LISTEN to #sweep.
-function invoke<T>(callback: (arg: T) => void, arg: T) {
+function invoke<T>(callback: (arg?: T) => void, arg?: T) {
   try {
     callback(arg);
   } catch (err) {
@@ -643,8 +662,6 @@ const RECONNECT_MAX_MS = 32_000;
 class ListenConnection {
   readonly #adapter: PostgresAdapter;
   readonly #channels = new Map<string, Channel>();
-  /** Shared with every listen() result; updated in place on (re)connect. */
-  readonly #state: ListenState = { pid: 0, secret: 0 };
 
   #conn: ListenHandle | null = null;
   #connecting: Promise<ListenHandle> | null = null;
@@ -668,7 +685,7 @@ class ListenConnection {
     for (let i = 0; i < listeners.length; i++) invoke(listeners[i], payload);
   };
 
-  async listen(channel: string, onnotify: Listener, onlisten: OnListen | undefined) {
+  async listen(channel: string, onnotify: Listener, onlisten: OnListen | undefined): Promise<ListenSubscription> {
     let entry = this.#channels.get(channel);
     if (entry === undefined) {
       entry = new Channel(onnotify);
@@ -691,19 +708,18 @@ class ListenConnection {
       throw err;
     }
 
-    if (onlisten !== undefined && this.#channels.get(channel) === entry && entry.has(onnotify)) {
-      (entry.onlisten ??= []).push([onnotify, onlisten]);
-      invoke(onlisten, this.#state);
+    if (onlisten !== undefined && this.#channels.get(channel) === entry) {
+      entry.addOnlisten(onlisten);
+      invoke(onlisten);
     }
-
-    const unlisten = () => this.unlisten(channel, onnotify);
-    return { state: this.#state, unlisten, [Symbol.asyncDispose]: unlisten };
+    return new ListenSubscription(this, channel, onnotify, onlisten);
   }
 
-  async unlisten(channel: string, onnotify: Listener | undefined): Promise<void> {
+  async unsubscribe(channel: string, onnotify: Listener, onlisten: OnListen | undefined): Promise<void> {
     const entry = this.#channels.get(channel);
     if (entry === undefined) return;
-    if (onnotify !== undefined && !entry.remove(onnotify)) return;
+    if (onlisten !== undefined) entry.removeOnlisten(onlisten);
+    if (!entry.remove(onnotify)) return;
 
     this.#channels.delete(channel);
     if (this.#channels.size === 0) {
@@ -738,7 +754,7 @@ class ListenConnection {
       }
       await ListenQuery.run(conn, "LISTEN " + quoteChannel(channel));
       if (this.#channels.get(channel) !== entry) return;
-      entry.fireOnlisten(this.#state);
+      entry.fireOnlisten();
     } catch (err) {
       entry.ready = null;
       throw err;
@@ -769,8 +785,6 @@ class ListenConnection {
         }
         live = this.#conn = conn;
         this.#backoffMs = RECONNECT_MIN_MS;
-        this.#state.pid = conn.processId;
-        this.#state.secret = conn.secretKey;
         conn.onnotification = this.#onNotification;
         conn.ref();
         resolve(conn);

@@ -175,8 +175,6 @@ pub struct PostgresSQLConnection {
     max_lifetime_timer: JsCell<EventLoopTimer>,
     pub(crate) auto_flusher: JsCell<AutoFlusher>,
 
-    /// `(process_id, secret_key)` from BackendKeyData.
-    pub(crate) backend_key: Cell<(u32, u32)>,
     /// Interned notification channel names; see `channel_name_js`.
     channel_names: JsCell<Vec<InternedChannel>>,
 }
@@ -1225,7 +1223,6 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
                 EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
             )),
             auto_flusher: JsCell::new(AutoFlusher::default()),
-            backend_key: Cell::new((0, 0)),
             channel_names: JsCell::new(Vec::new()),
         }));
 
@@ -2967,8 +2964,7 @@ impl PostgresSQLConnection {
                 }
             }
             MessageType::BackendKeyData => {
-                let key = protocol::BackendKeyData::decode_internal(reader.reborrow())?;
-                self.backend_key.set((key.process_id, key.secret_key));
+                let _ = protocol::BackendKeyData::decode_internal(reader.reborrow())?;
             }
             MessageType::ErrorResponse => {
                 let err = protocol::ErrorResponse::decode_internal(reader.reborrow())?;
@@ -3094,14 +3090,6 @@ impl PostgresSQLConnection {
 
     pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
         JSValue::from(this.status.get() == Status::Connected)
-    }
-
-    pub fn get_process_id(this: &Self, _: &JSGlobalObject) -> JSValue {
-        JSValue::from(this.backend_key.get().0)
-    }
-
-    pub fn get_secret_key(this: &Self, _: &JSGlobalObject) -> JSValue {
-        JSValue::from(this.backend_key.get().1)
     }
 
     const MAX_INTERNED_CHANNELS: usize = 256;

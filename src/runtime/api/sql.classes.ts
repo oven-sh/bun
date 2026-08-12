@@ -63,12 +63,6 @@ for (const type of types) {
                 setter: "setOnNotification",
                 this: true,
               },
-              processId: {
-                getter: "getProcessId",
-              },
-              secretKey: {
-                getter: "getSecretKey",
-              },
             }
           : {}),
       },

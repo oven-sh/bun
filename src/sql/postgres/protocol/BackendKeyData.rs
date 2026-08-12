@@ -1,11 +1,7 @@
 use super::new_reader::NewReader;
 use crate::postgres::AnyPostgresError;
-use crate::postgres::types::int_types::Int4;
 
-pub struct BackendKeyData {
-    pub process_id: Int4,
-    pub secret_key: Int4,
-}
+pub struct BackendKeyData {}
 
 impl BackendKeyData {
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
@@ -15,9 +11,9 @@ impl BackendKeyData {
             return Err(AnyPostgresError::InvalidBackendKeyData);
         }
 
-        Ok(Self {
-            process_id: reader.int4()?,
-            secret_key: reader.int4()?,
-        })
+        // process_id, secret_key
+        reader.int4()?;
+        reader.int4()?;
+        Ok(Self {})
     }
 }

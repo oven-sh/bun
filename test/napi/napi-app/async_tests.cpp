@@ -325,6 +325,77 @@ napi_value test_cancel_async_work(const Napi::CallbackInfo &info) {
   return result;
 }
 
+// napi_cancel_async_work while `execute` is running on the pool thread: the
+// cancellation must fail (napi_generic_failure, as uv_cancel fails on a
+// running request) and `complete` must still run with napi_ok. The JS thread
+// makes the call while the pool thread is inside `execute`, so the two sides
+// are touching the same work object at the same time; `complete` then deletes
+// the work, as addons usually do.
+struct RunningCancelData {
+  napi_ref callback;
+  napi_async_work work;
+  std::atomic<bool> execute_started{false};
+  std::atomic<bool> release_execute{false};
+  napi_status cancel_status;
+};
+
+static void execute_for_running_cancel(napi_env env, void *data) {
+  RunningCancelData *running = reinterpret_cast<RunningCancelData *>(data);
+  running->execute_started = true;
+  while (!running->release_execute) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+}
+
+static void complete_for_running_cancel(napi_env env, napi_status status,
+                                        void *data) {
+  RunningCancelData *running = reinterpret_cast<RunningCancelData *>(data);
+  printf("cancel while running: %s\n",
+         running->cancel_status == napi_generic_failure ? "napi_generic_failure"
+                                                        : "unexpected status");
+  printf("complete status: %s\n", status == napi_ok          ? "napi_ok"
+                                  : status == napi_cancelled ? "napi_cancelled"
+                                                             : "unexpected");
+  fflush(stdout);
+
+  napi_value callback;
+  napi_get_reference_value(env, running->callback, &callback);
+  napi_value global;
+  napi_get_global(env, &global);
+  napi_delete_reference(env, running->callback);
+  napi_delete_async_work(env, running->work);
+  delete running;
+  napi_call_function(env, global, callback, 0, nullptr, nullptr);
+}
+
+napi_value test_cancel_running_async_work(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  RunningCancelData *running = new RunningCancelData;
+  NODE_API_CALL(env,
+                napi_create_reference(env, info[0], 1, &running->callback));
+  napi_value resource_name =
+      Napi::String::New(env, "napitests__test_cancel_running_async_work");
+  NODE_API_CALL(env, napi_create_async_work(env, nullptr, resource_name,
+                                            &execute_for_running_cancel,
+                                            &complete_for_running_cancel,
+                                            running, &running->work));
+  NODE_API_CALL(env, napi_queue_async_work(env, running->work));
+
+  // Wait (bounded) for the pool thread to enter `execute`.
+  for (int i = 0; i < 10000 && !running->execute_started; i++) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  if (!running->execute_started) {
+    printf("execute did not start\n");
+    running->cancel_status = napi_ok;
+  } else {
+    running->cancel_status = napi_cancel_async_work(env, running->work);
+  }
+  running->release_execute = true;
+  return info.Env().Undefined();
+}
+
 // An addon whose native threads are process-global (like next-swc's tokio
 // pool) can outlive the worker env that created a threadsafe function: the
 // worker unrefs the tsfn so its event loop can exit, and the addon makes its
@@ -564,6 +635,7 @@ void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_async_work_with_null_execute);
   REGISTER_FUNCTION(env, exports, create_async_work_with_null_complete);
   REGISTER_FUNCTION(env, exports, test_cancel_async_work);
+  REGISTER_FUNCTION(env, exports, test_cancel_running_async_work);
   REGISTER_FUNCTION(env, exports, create_orphaned_threadsafe_functions);
   REGISTER_FUNCTION(env, exports, use_orphaned_threadsafe_functions);
   REGISTER_FUNCTION(env, exports, create_leaked_threadsafe_functions);

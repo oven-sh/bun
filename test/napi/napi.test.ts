@@ -550,6 +550,12 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(output).toContain("success!");
       expect(output).not.toContain("failure!");
     });
+    it("cannot cancel work whose execute callback is running, and still completes it", async () => {
+      const output = await checkSameOutput("test_napi_async_work_cancel_running", []);
+      expect(output).toBe(
+        ["cancel while running: napi_generic_failure", "complete status: napi_ok", "resolved to undefined"].join("\n"),
+      );
+    });
   });
 
   describe("napi_threadsafe_function", () => {

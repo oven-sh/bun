@@ -616,7 +616,6 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   const toReload = new Set<HMRModule>();
   const toAccept: ToAccept[] = [];
   let failures: Set<Id> | null = null;
-  // A set like `toReload`: a boundary reached from several replaced modules is disposed of once.
   const toDispose = new Set<HMRModule>();
 
   // Discover all HMR boundaries
@@ -636,9 +635,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
 
     // Discover all HMR boundaries
     const visited = new Set<HMRModule>();
-    // Importers accepting `key` are reached again through every module walked
-    // past on the way up (they import `key` directly as well). Each callback
-    // runs once for `key`; the array form still runs once per updated module.
+    // An importer accepting `key` is reached again from every module walked past on the way up.
     const accepted = new Set<HotAccept>();
     const queue: HMRModule[] = [existing];
     visited.add(existing);

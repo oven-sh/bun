@@ -87,11 +87,14 @@ pub struct EventLoop {
     #[cfg(not(windows))]
     pub holds_forever_poll: bool,
     pub deferred_tasks: DeferredTaskQueue::DeferredTaskQueue,
-    #[cfg(windows)]
-    // `?*uws.Loop` FFI handle.
+    /// The uws loop this `EventLoop` instance drives: the thread's loop for the
+    /// VM's embedded loops (set by `ensure_waker`), the private loop for a
+    /// `Bun.spawnSync` loop. `concurrent_ref` is folded into this loop, not into
+    /// `vm.event_loop_handle`: spawnSync points the latter at its private loop
+    /// while it waits, and a `MessagePort`/`BroadcastChannel` torn down during
+    /// that wait (a GC sweep, the test runner moving on after a timeout) has to
+    /// release its ref on the loop that holds it.
     pub uws_loop: Option<NonNull<uws::Loop>>,
-    #[cfg(not(windows))]
-    pub uws_loop: (),
 
     pub entered_event_loop_count: isize,
     pub concurrent_ref: AtomicI32,
@@ -132,10 +135,7 @@ impl Default for EventLoop {
             #[cfg(not(windows))]
             holds_forever_poll: false,
             deferred_tasks: DeferredTaskQueue::DeferredTaskQueue::default(),
-            #[cfg(windows)]
             uws_loop: None,
-            #[cfg(not(windows))]
-            uws_loop: (),
             entered_event_loop_count: 0,
             concurrent_ref: AtomicI32::new(0),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
@@ -563,13 +563,8 @@ impl EventLoop {
     /// ports/channels/sockets on a loop that no longer ticks) so the loop is not
     /// torn down still believing something keeps it alive.
     pub(crate) fn apply_concurrent_ref_delta(&self) {
-        // Do NOT silently drop the swapped delta when the handle is
-        // missing — queued refs would be lost forever.
         let delta = self.concurrent_ref.swap(0, Ordering::SeqCst);
-        let loop_ = self
-            .vm_ref()
-            .platform_loop_opt()
-            .expect("event_loop_handle");
+        let loop_ = self.own_uws_loop();
         #[cfg(windows)]
         {
             if delta > 0 {
@@ -625,6 +620,23 @@ impl EventLoop {
                 "usockets_loop: event_loop_handle not initialized (call ensure_waker first)",
             )
         }
+    }
+
+    /// The loop this instance's keep-alive refs are counted on (see
+    /// [`Self::uws_loop`]). Unlike [`Self::usockets_loop`] this does not follow
+    /// `vm.event_loop_handle`, which `Bun.spawnSync` repoints while it waits.
+    /// An embedded loop that has not run `ensure_waker` yet is driven by the
+    /// thread's loop.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    fn own_uws_loop(&self) -> &mut uws::Loop {
+        let loop_ = self.uws_loop.map_or_else(uws::Loop::get, NonNull::as_ptr);
+        // SAFETY: the thread's loop lives as long as the thread; a spawnSync
+        // loop's private uws loop is destroyed together with its `EventLoop`
+        // (`SpawnSyncEventLoop::drop`). The loop is a separate allocation, so the
+        // `&mut` aliases no field of `self`, and it is only reborrowed from the
+        // owning JS thread, for the duration of one counter update.
+        unsafe { &mut *loop_ }
     }
 
     #[inline]
@@ -909,10 +921,6 @@ impl EventLoop {
     pub fn ensure_waker(&mut self) {
         jsc::mark_binding();
         if self.vm_ref().event_loop_handle.is_none() {
-            #[cfg(windows)]
-            {
-                self.uws_loop = NonNull::new(uws::Loop::get());
-            }
             let vm = self.vm();
             // SAFETY: `vm` is the live owning VM.
             unsafe { (*vm).event_loop_handle = Some(Async::Loop::get()) };
@@ -925,11 +933,8 @@ impl EventLoop {
                 (*gc).init(&mut *vm);
             }
         }
-        #[cfg(windows)]
-        {
-            if self.uws_loop.is_none() {
-                self.uws_loop = NonNull::new(uws::Loop::get());
-            }
+        if self.uws_loop.is_none() {
+            self.uws_loop = NonNull::new(uws::Loop::get());
         }
         // Note: `EventLoopHandle` lives in `bun_event_loop` (lower tier),
         // which cannot name `jsc::EventLoop`, so it stores `*mut ()`.
@@ -1375,22 +1380,15 @@ fn vm_from_ptr<'a>(vm: *mut ()) -> &'a mut VirtualMachine {
     unsafe { &mut *vm.cast::<VirtualMachine>() }
 }
 
-/// Heap-allocate a fresh `EventLoop` bound to `vm`; on Windows, store
-/// `uws_loop` in `event_loop.uws_loop`.
+/// Heap-allocate a fresh `EventLoop` bound to `vm` and driven by `uws_loop`
+/// (spawnSync's private loop).
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop) -> *mut () {
     let vm = vm_from_ptr(vm);
     let mut el = Box::new(EventLoop::default());
     el.global = NonNull::new(vm.global);
     el.virtual_machine = NonNull::new(std::ptr::from_mut(vm));
-    #[cfg(windows)]
-    {
-        el.uws_loop = NonNull::new(uws_loop);
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = uws_loop;
-    }
+    el.uws_loop = NonNull::new(uws_loop);
     let el = bun_core::heap::into_raw(el);
     // SAFETY: `el` is the stable heap address the poster targets until destroy.
     unsafe { (*el).isolated_poster = Some(crate::vm_handle::IsolatedPosterInner::new(el)) };

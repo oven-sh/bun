@@ -8,9 +8,9 @@
 //!
 //! Implementation approach:
 //! - Creates a separate uws.Loop instance with its own kqueue/epoll fd (POSIX) or libuv loop (Windows)
-//! - Wraps it in a full jsc.EventLoop instance
-//! - On POSIX: temporarily overrides vm.event_loop_handle to point to isolated loop
-//! - On Windows: stores isolated loop pointer in EventLoop.uws_loop
+//! - Wraps it in a full jsc.EventLoop instance, whose `uws_loop` is the isolated loop
+//! - Temporarily overrides vm.event_loop_handle to point to the isolated loop, so the
+//!   subprocess' own polls register on it
 //! - Minimal handler callbacks (wakeup/pre/post are no-ops)
 //!
 //! Similar to Node.js's approach in vendor/node/src/spawn_sync.cc but adapted for Bun's architecture.
@@ -46,7 +46,7 @@ pub type VmEventLoopHandle = Option<NonNull<libuv::Loop>>;
 // no caller-side `unsafe { }` needed.
 unsafe extern "Rust" {
     /// Heap-allocate and zero-init a `jsc::EventLoop` bound to `vm`, with
-    /// `uws_loop` as its loop on Windows. Returns erased `*mut jsc::EventLoop`.
+    /// `uws_loop` as its loop. Returns erased `*mut jsc::EventLoop`.
     safe fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop) -> *mut ();
     safe fn __bun_spawn_sync_destroy_event_loop(el: *mut ());
     /// Re-bind `event_loop.{global, virtual_machine}` to `vm` (prepare path).
@@ -152,8 +152,7 @@ impl SpawnSyncEventLoop {
         let loop_ =
             NonNull::new(loop_).expect("uws::Loop::create never returns null (asserts on OOM)");
 
-        // Initialize the JSC EventLoop with empty state.
-        // CRITICAL: On Windows, the impl stores our isolated loop pointer in `uws_loop`.
+        // Initialize the JSC EventLoop with empty state, driven by our isolated loop.
         let event_loop = __bun_spawn_sync_create_event_loop(vm, loop_.as_ptr());
 
         this.write(Self {

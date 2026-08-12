@@ -331,33 +331,18 @@ bun_dispatch::link_interface! {
 }
 
 impl EventLoopCtx {
-    /// SAFETY: caller must not hold another live `&mut` to the same loop
-    /// across this borrow (resolver-style accessor; the loop is per-thread).
-    #[inline]
-    pub unsafe fn platform_event_loop(&self) -> &'static mut bun_uws_sys::Loop {
-        // Route through the single nonnull-asref accessor below; the `unsafe`
-        // on this fn's signature is the caller-side aliasing contract — the
-        // body itself needs no extra `unsafe`.
-        self.loop_mut()
-    }
-
     // ── safe leaf wrappers (nonnull-asref) ──────────────────────────────
     // The platform loop / poll store are per-thread, set-once back-pointers
-    // (`BackRef`-shaped). [`platform_event_loop`] cannot be a safe fn because
-    // handing out `&mut Loop` from `&self` would let a caller alias two
-    // copies; these wrappers instead perform one counter adjustment and drop
-    // the borrow before returning, so no `&mut` escapes. Collapses N
-    // identical `ctx.platform_event_loop().op()` call sites into the single
-    // deref inside [`loop_mut`].
+    // (`BackRef`-shaped). Handing out `&mut Loop` from `&self` would let a
+    // caller alias two copies; these wrappers instead perform one counter
+    // adjustment and drop the borrow before returning, so no `&mut` escapes.
+    // Anything that needs the loop for longer (`FilePoll`, `KeepAlive`) takes
+    // the raw pointer from [`loop_`](Self::loop_) instead.
     //
-    // `loop_mut` is the single nonnull-asref accessor: `pub(crate)`,
-    // `&self → &mut` (so it must NOT be called twice with overlapping live
-    // results). Every in-crate caller is a leaf op — counter bump,
-    // `FilePoll::activate`/`deactivate`, `unregister` — that consumes the
-    // borrow before returning and never re-enters `EventLoopCtx`, so no two
-    // `&mut Loop` ever coexist. Widened from impl-private to crate-private so
-    // `posix_event_loop`/`windows_event_loop` route their N identical
-    // `ctx.platform_event_loop()` derefs through this single accessor.
+    // `loop_mut` is the single nonnull-asref accessor: `&self → &mut` (so it
+    // must NOT be called twice with overlapping live results). Every caller
+    // is a counter bump that consumes the borrow before returning and never
+    // re-enters `EventLoopCtx`, so no two `&mut Loop` ever coexist.
     #[inline]
     fn loop_mut(&self) -> &'static mut bun_uws_sys::Loop {
         // SAFETY: per-thread set-once pointer (the uws loop singleton); the
@@ -408,10 +393,12 @@ impl EventLoopCtx {
         self.loop_mut().dec();
     }
     #[inline]
+    #[cfg(windows)]
     pub(crate) fn loop_add_active(&self, n: u32) {
         self.loop_mut().add_active(n);
     }
     #[inline]
+    #[cfg(windows)]
     pub(crate) fn loop_sub_active(&self, n: u32) {
         self.loop_mut().sub_active(n);
     }
@@ -1817,15 +1804,14 @@ impl FilePollRef {
     pub(crate) fn deinit_force_unregister(self) {
         self.inner().deinit_force_unregister();
     }
-    /// Single nonnull-asref accessor for the process-global uWS loop pointer.
+    /// Single nonnull-asref accessor for the uWS loop pointer.
     ///
     /// Type invariant (encapsulated `unsafe`): every caller of
-    /// [`unregister`](Self::unregister) / [`register_with_fd`](Self::register_with_fd)
-    /// passes `Loop::get()` (the per-thread uWS loop singleton), which is
-    /// non-null after init and lives for the program. The event loop is
+    /// [`unregister`](Self::unregister) passes its event loop's live uWS loop,
+    /// which outlives every poll registered on it. The event loop is
     /// single-threaded so the returned `&mut` is the sole live borrow at the
-    /// point of use. Collapses the two identical `&mut *loop_` deref blocks in
-    /// those wrappers into one.
+    /// point of use. (On POSIX `FilePoll` takes the pointer itself.)
+    #[cfg(windows)]
     #[inline(always)]
     fn uws_loop_mut<'a>(loop_: *mut bun_uws_sys::Loop) -> &'a mut bun_uws_sys::Loop {
         debug_assert!(!loop_.is_null());
@@ -1834,7 +1820,6 @@ impl FilePollRef {
     }
     #[inline]
     pub(crate) fn unregister(self, loop_: *mut bun_uws_sys::Loop, force: bool) -> sys::Result<()> {
-        let loop_ = Self::uws_loop_mut(loop_);
         #[cfg(not(windows))]
         {
             self.inner().unregister(loop_, force)
@@ -1844,7 +1829,7 @@ impl FilePollRef {
             let _ = force;
             // The windows `FilePoll::unregister` always returns true — the
             // bool is vestigial, so there is no error path to surface here.
-            let _ = self.inner().unregister(loop_);
+            let _ = self.inner().unregister(Self::uws_loop_mut(loop_));
             Ok(())
         }
     }
@@ -1861,12 +1846,8 @@ impl FilePollRef {
         };
         #[cfg(not(windows))]
         {
-            self.inner().register_with_fd(
-                Self::uws_loop_mut(loop_),
-                flag,
-                OneShotFlag::Dispatch,
-                fd,
-            )
+            self.inner()
+                .register_with_fd(loop_, flag, OneShotFlag::Dispatch, fd)
         }
         #[cfg(windows)]
         {

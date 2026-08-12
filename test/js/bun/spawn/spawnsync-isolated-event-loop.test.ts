@@ -158,48 +158,40 @@ describe.concurrent("spawnSync isolated event loop", () => {
     expect(stdout).not.toContain("FAIL");
     expect(exitCode).toBe(0);
   });
+});
 
-  // While spawnSync waits, the VM's "current" uws loop is spawnSync's private
-  // loop. Event-loop refs that were taken on the main loop (JS timers, fs.watch
-  // and every other KeepAlive, registered FilePolls) and then released during
-  // that wait used to be subtracted from the private loop instead, so its
-  // num_polls could read 0 while a child's pidfd was still registered. Once that
-  // happens us_loop_run_bun_tick returns without polling and spawnSync spins
-  // forever, never observing the exit (seen in CI as `bun test --parallel`
-  // workers stuck in spawnSync of a local bun child until the batch is killed).
-  //
-  // The test runner's timeout path is the one place that runs JS inside a
-  // spawnSync wait: when a test whose callback is no longer on the stack times
-  // out inside spawnSync, the runner carries on with the following tests right
-  // there. Test `a` gets the runner into that state, `b` releases four main-loop
-  // refs while the private loop is current, and `c` runs a spawnSync that needs
-  // the private loop to actually poll.
-  //
-  // Arithmetic on an unfixed build: `a`'s pipeless spawnSync holds one poll on
-  // the private loop (the child's pidfd), `b` wrongly subtracts 4 (1 for the
-  // last JS timer going away, 3 for the watchers), `c` adds 3 (pidfd + two
-  // pipes) => 0, so `c` spins without ever reading the child's output or
-  // noticing its exit until a timeout (bun test's per-test timeout, or the
-  // `timeout` option) fires inside the spin; closing the two pipe readers then
-  // makes the count non-zero, the loop finally polls, and `c` comes back with
-  // empty stdout after several seconds and fails. Fixed, the refs come off the
-  // main loop and `c` completes normally.
-  test.skipIf(isWindows)("refs released during a spawnSync wait come off the loop they were taken on", async () => {
+// While Bun.spawnSync waits, the VM's "current" uws loop is spawnSync's private
+// loop. A ref that was taken on the main loop and released during that wait
+// used to be subtracted from the private loop instead, so the private loop's
+// poll count could read 0 while the child's pidfd was still registered;
+// us_loop_run_bun_tick then returns without polling and spawnSync spins
+// forever, never observing the exit (seen as `bun test --parallel` workers
+// stuck inside spawnSync of a local bun child until the batch is killed, and
+// as #34069).
+//
+// The test runner's timeout path is the one place that runs JS inside a
+// spawnSync wait: when a test whose callback has already left the stack times
+// out inside spawnSync, the runner carries on with the following tests right
+// there. In each fixture below, test `a` enters a spawnSync that its per-test
+// timeout interrupts (bun test kills the dangling child, which is what lets the
+// spawnSync return once the private loop gets polled) and the tests after it
+// run inside that wait. `a`'s spawnSync holds exactly one poll on the private
+// loop, so a single misdirected release in `b` zeroes the count and `a` never
+// returns: the inner `bun test` then spins instead of exiting and this test
+// times out. These tests are deliberately not concurrent: bun test only kills
+// the processes of a timed-out test when that test is not sharing a concurrent
+// group, and that is what cleans up such a spinning child.
+describe.skipIf(isWindows)("refs taken on the main loop and a spawnSync wait", () => {
+  async function runFixture(setup: string, insideWait: string, extraTests = "") {
     using dir = tempDir("spawnsync-loop-refs", {
       "loop-refs.test.ts": `
         import { expect, test } from "bun:test";
-        import { watch } from "node:fs";
 
         const cmd = (code: string) => [process.execPath, "-e", code];
-        let timer: ReturnType<typeof setTimeout>;
-        const watchers: ReturnType<typeof watch>[] = [];
         let aIsInsideSpawnSync = false;
+        ${setup}
 
-        // The per-test timeout is the mechanism here: it has to fire while
-        // spawnSync is waiting and after the callback has left the stack.
         test("a", async () => {
-          timer = setTimeout(() => {}, 1e9);
-          for (let i = 0; i < 3; i++) watchers.push(watch(import.meta.dir));
           await Bun.sleep(1);
           aIsInsideSpawnSync = true;
           Bun.spawnSync({ cmd: cmd("setTimeout(() => {}, 1e9)"), env: process.env, stdout: "ignore", stderr: "ignore" });
@@ -208,25 +200,10 @@ describe.concurrent("spawnSync isolated event loop", () => {
 
         test("b", () => {
           expect(aIsInsideSpawnSync).toBe(true);
-          clearTimeout(timer);
-          for (const w of watchers) w.unref();
+          ${insideWait}
         });
 
-        test("c", () => {
-          expect(aIsInsideSpawnSync).toBe(true);
-          const result = Bun.spawnSync({
-            cmd: cmd("console.log('from c')"),
-            env: process.env,
-            stdout: "pipe",
-            stderr: "pipe",
-            timeout: 10_000,
-          });
-          expect({
-            exitedDueToTimeout: result.exitedDueToTimeout,
-            exitCode: result.exitCode,
-            stdout: result.stdout.toString(),
-          }).toEqual({ exitedDueToTimeout: false, exitCode: 0, stdout: "from c\\n" });
-        });
+        ${extraTests}
       `,
     });
 
@@ -238,9 +215,63 @@ describe.concurrent("spawnSync isolated event loop", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const output = stdout + stderr;
+    return { output: stdout + stderr, exitCode };
+  }
 
-    // `a` is the deliberate casualty; `b` and `c` are the assertions.
+  // One case per kind of ref, each released on its own. The child in the
+  // FilePoll case exits by itself as a fallback, in case `b` never runs.
+  test.each([
+    ["a JS timer", `const timer = setTimeout(() => {}, 1e9);`, `clearTimeout(timer);`],
+    [
+      "a KeepAlive (Bun.serve)",
+      `const server = Bun.serve({ port: 0, fetch: () => new Response() });`,
+      `server.unref();`,
+    ],
+    [
+      "a registered FilePoll (subprocess stdout)",
+      `const child = Bun.spawn({ cmd: cmd("setTimeout(() => {}, 20_000)"), env: process.env, stdout: "pipe", stderr: "ignore" });`,
+      `child.stdout.cancel(); child.kill();`,
+    ],
+    [
+      "an event loop keep-alive ref (BroadcastChannel)",
+      `const channel = new BroadcastChannel("spawnsync-loop-refs");`,
+      `channel.unref();`,
+    ],
+  ])("%s released during the wait comes off the main loop", async (_, setup, release) => {
+    const { output, exitCode } = await runFixture(setup, release);
+
+    // `a` is the deliberate casualty; `b` passing and the process exiting are
+    // the assertions.
+    expect(output).toContain("(fail) a");
+    expect(output).toContain("(pass) b");
+    expect(output).toContain(" 1 pass");
+    expect(output).toContain(" 1 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  // A spawnSync nested inside the wait (what the runner's timeout path does
+  // whenever a following test spawns something) has to leave the main loop as
+  // the current loop once the outer spawnSync returns too: the saved "previous
+  // loop" used to be a single slot that the nested call overwrote. `c` starts
+  // inside the wait like `b`, but its await can only complete once `a`'s
+  // spawnSync has returned and the loop being polled is the main loop, where
+  // the child's pidfd is registered.
+  test("a spawnSync nested inside the wait restores the main loop afterwards", async () => {
+    const { output, exitCode } = await runFixture(
+      `const child = Bun.spawn({ cmd: cmd("setTimeout(() => {}, 20_000)"), env: process.env, stdout: "ignore", stderr: "ignore" });`,
+      `
+        const nested = Bun.spawnSync({ cmd: cmd("console.log('nested')"), env: process.env, stdout: "pipe", stderr: "pipe" });
+        expect(nested.stdout.toString()).toBe("nested\\n");
+      `,
+      `
+        test("c", async () => {
+          child.kill();
+          await child.exited;
+          expect(aIsInsideSpawnSync).toBe(false);
+        });
+      `,
+    );
+
     expect(output).toContain("(fail) a");
     expect(output).toContain("(pass) b");
     expect(output).toContain("(pass) c");

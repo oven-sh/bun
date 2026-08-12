@@ -27,6 +27,27 @@ fn loop_sub_active(loop_: &mut Loop, value: u32) {
     loop_.active = loop_.active.saturating_sub(value);
 }
 
+/// The one place a loop pointer handed to (or retained by) a `FilePoll` is
+/// dereferenced.
+///
+/// `FilePoll` takes loops as `*mut Loop` rather than `&mut Loop` because it
+/// keeps the pointer in `counted_loop` until the poll is unregistered: a
+/// pointer derived from a caller's `&mut` reborrow would be invalidated by the
+/// next `&mut Loop` anyone forms in between, whereas the handles callers pass
+/// (`EventLoopCtx::loop_` and the like) are the loop's own pointer.
+#[cfg(not(windows))]
+#[inline]
+fn loop_mut<'a>(loop_: *mut Loop) -> &'a mut Loop {
+    debug_assert!(!loop_.is_null());
+    // SAFETY: `loop_` is the thread's loop or `Bun.spawnSync`'s private loop
+    // (owned by the VM's rare data); both outlive every poll registered on
+    // them, and the pointer carries the handle's own provenance (see above).
+    // The event loop is single-threaded, and every caller consumes the borrow
+    // with a counter adjustment or a field read before anything else can reach
+    // the loop.
+    unsafe { &mut *loop_ }
+}
+
 #[cfg(not(windows))]
 use bun_sys::syslog;
 
@@ -304,8 +325,8 @@ pub struct FilePoll {
     /// epoll/kqueue fd it is registered with), null while not registered.
     ///
     /// Callers hand every register/unregister the loop that is *current*
-    /// (`EventLoopCtx::platform_event_loop`), and `Bun.spawnSync` points that
-    /// at its private loop for the duration of the call. A poll torn down
+    /// (`EventLoopCtx::loop_`), and `Bun.spawnSync` points that at its
+    /// private loop for the duration of the call. A poll torn down
     /// while the private loop is current (a GC sweep finalizing a reader, a
     /// test body run by the test runner's timeout path) must still be
     /// removed from, and uncounted on, the loop it was registered with:
@@ -360,8 +381,8 @@ impl FilePoll {
 
     // Note: these handlers take no loop parameter: holding a
     // protected `&mut Loop` across `on_update` would alias the fresh `&mut Loop`
-    // that downstream `__bun_run_file_poll` handlers conjure via
-    // `EventLoopCtx::platform_event_loop()` when they re-enter the loop
+    // that downstream `__bun_run_file_poll` handlers conjure (via `loop_mut`
+    // here or `EventLoopCtx`) when they re-enter the loop
     // (`register_with_fd`/`unregister`/`deinit`).
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub(crate) fn on_kqueue_event(&mut self, kqueue_event: &KQueueEvent) {
@@ -413,10 +434,7 @@ impl FilePoll {
     }
 
     fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, force_unregister: bool) {
-        // `loop_mut()` is the crate-private nonnull-asref accessor (single
-        // deref in `EventLoopCtx`); the `&mut Loop` is consumed by `unregister`
-        // and dropped before any `&mut Store` is materialised.
-        let _ = self.unregister(vm.loop_mut(), force_unregister);
+        let _ = self.unregister(vm.loop_(), force_unregister);
 
         self.owner.clear();
         let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
@@ -478,29 +496,21 @@ impl FilePoll {
     /// The loop a register/unregister must act on: the one this poll is
     /// already counted on (see `counted_loop`), otherwise the current one the
     /// caller passed.
-    fn counted_or<'a>(&self, current: &'a mut Loop) -> &'a mut Loop {
-        let counted = self.counted_loop;
-        if counted.is_null() || ptr::eq(counted, current) {
-            return current;
+    fn counted_or(&self, current: *mut Loop) -> *mut Loop {
+        if self.counted_loop.is_null() {
+            current
+        } else {
+            self.counted_loop
         }
-        // SAFETY: `counted_loop` is set from a live loop in `activate` and
-        // cleared in `deactivate`; both the thread's loop and spawnSync's
-        // private loop (owned by the VM's RareData) outlive every poll counted
-        // on them. It is a different allocation from `current`, so the two
-        // `&mut` do not alias.
-        unsafe { &mut *counted }
     }
 
     /// This decrements the active counter if it was previously incremented
     /// "active" controls whether or not the event loop should potentially idle
     pub fn disable_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx) {
-        let count = self.flags.contains(Flags::HasIncrementedActiveCount) as u32;
-        if self.counted_loop.is_null() {
-            event_loop_ctx.loop_sub_active(count);
-        } else {
-            // SAFETY: see `counted_or`.
-            loop_sub_active(unsafe { &mut *self.counted_loop }, count);
-        }
+        loop_sub_active(
+            loop_mut(self.counted_or(event_loop_ctx.loop_())),
+            self.flags.contains(Flags::HasIncrementedActiveCount) as u32,
+        );
 
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
@@ -511,21 +521,18 @@ impl FilePoll {
             return;
         }
 
-        let count = (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32;
-        if self.counted_loop.is_null() {
-            event_loop_ctx.loop_add_active(count);
-        } else {
-            // SAFETY: see `counted_or`.
-            loop_add_active(unsafe { &mut *self.counted_loop }, count);
-        }
+        loop_add_active(
+            loop_mut(self.counted_or(event_loop_ctx.loop_())),
+            (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32,
+        );
 
         self.flags.insert(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::HasIncrementedActiveCount);
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    fn deactivate(&mut self, loop_: &mut Loop) {
-        let loop_ = self.counted_or(loop_);
+    fn deactivate(&mut self, loop_: *mut Loop) {
+        let loop_ = loop_mut(self.counted_or(loop_));
         if self.flags.contains(Flags::HasIncrementedPollCount) {
             loop_.dec();
         }
@@ -541,14 +548,15 @@ impl FilePoll {
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    fn activate(&mut self, loop_: &mut Loop) {
+    fn activate(&mut self, loop_: *mut Loop) {
         self.flags.remove(Flags::Closed);
+        self.counted_loop = loop_;
+        let loop_ = loop_mut(loop_);
 
         if !self.flags.contains(Flags::HasIncrementedPollCount) {
             loop_.inc();
         }
         self.flags.insert(Flags::HasIncrementedPollCount);
-        self.counted_loop = loop_;
 
         if self.flags.contains(Flags::KeepsEventLoopAlive) {
             loop_add_active(
@@ -600,7 +608,9 @@ impl FilePoll {
         poll
     }
 
-    pub fn register(&mut self, loop_: &mut Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {
+    /// `loop_` is retained in `counted_loop` until the poll is unregistered, so
+    /// it has to be the loop's own handle, not a pointer to a borrow of it.
+    pub fn register(&mut self, loop_: *mut Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {
         self.register_with_fd(
             loop_,
             flag,
@@ -613,9 +623,10 @@ impl FilePoll {
         )
     }
 
+    /// See [`register`](Self::register) for what `loop_` may be.
     pub fn register_with_fd(
         &mut self,
-        loop_: &mut Loop,
+        loop_: *mut Loop,
         flag: Flags,
         one_shot: OneShotFlag,
         fd: Fd,
@@ -627,8 +638,7 @@ impl FilePoll {
             target_os = "freebsd"
         ))]
         {
-            let loop_ = self.counted_or(loop_);
-            return self.register_with_fd_impl(loop_, flag, one_shot, fd);
+            return self.register_with_fd_impl(self.counted_or(loop_), flag, one_shot, fd);
         }
         #[cfg(not(any(
             target_os = "linux",
@@ -650,12 +660,12 @@ impl FilePoll {
     ))]
     fn register_with_fd_impl(
         &mut self,
-        loop_: &mut Loop,
+        loop_: *mut Loop,
         flag: Flags,
         one_shot: OneShotFlag,
         fd: Fd,
     ) -> sys::Result<()> {
-        let watcher_fd = loop_.fd;
+        let watcher_fd = loop_mut(loop_).fd;
 
         syslog!(
             "register: FilePoll(0x{:x}, generation_number={}) {} ({})",
@@ -919,13 +929,13 @@ impl FilePoll {
         sys::Result::Ok(())
     }
 
-    pub fn unregister(&mut self, loop_: &mut Loop, force_unregister: bool) -> sys::Result<()> {
+    pub fn unregister(&mut self, loop_: *mut Loop, force_unregister: bool) -> sys::Result<()> {
         self.unregister_with_fd(loop_, self.fd, force_unregister)
     }
 
     pub(crate) fn unregister_with_fd(
         &mut self,
-        loop_: &mut Loop,
+        loop_: *mut Loop,
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
@@ -961,7 +971,7 @@ impl FilePoll {
     ))]
     fn unregister_with_fd_impl(
         &mut self,
-        loop_: &mut Loop,
+        loop_: *mut Loop,
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
@@ -978,7 +988,7 @@ impl FilePoll {
         }
 
         debug_assert!(fd != INVALID_FD);
-        let watcher_fd = loop_.fd;
+        let watcher_fd = loop_mut(loop_).fd;
         let both_directions =
             self.flags.contains(Flags::PollReadable) && self.flags.contains(Flags::PollWritable);
         let flag: Flags = 'brk: {
@@ -1551,7 +1561,7 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
 
     // SAFETY: `loop_` is the live uws loop. Do *not* materialize `&mut *loop_`
     // here — `on_update` (via `__bun_run_file_poll`) re-enters the loop and conjures
-    // a fresh `&mut Loop` through `EventLoopCtx::platform_event_loop()`; a
+    // a fresh `&mut Loop` through `loop_mut` / `EventLoopCtx`; a
     // protected `&mut Loop` spanning that call would be SB-UB. Take a short-lived
     // `&*loop_` only to copy the POD event onto the stack (the `BackRef`-style
     // accessor returns by value), then drop the borrow before dispatching so the

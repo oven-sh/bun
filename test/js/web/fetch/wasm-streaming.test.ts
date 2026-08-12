@@ -264,8 +264,10 @@ describe("streaming a module whose function body fails validation", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    // On a regressed build the JSC assertion text lands here, so check it first.
+    expect(stderr).toBe("");
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
       "validate: false
       compileStreaming: CompileError

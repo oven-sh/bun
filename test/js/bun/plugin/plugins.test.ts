@@ -850,14 +850,7 @@ it.concurrent("plugins run for file imports whose query string contains a dot (#
       "?v=1.2.3": "plugin",
       "?mtime=1786494961337.0317": "plugin",
     },
-    onResolveQueries: [
-      "?mtime=1786494961337.0317",
-      "?v=.456",
-      "?v=1.2.3",
-      "?v=123",
-      "?v=123.",
-      "?v=123.456",
-    ],
+    onResolveQueries: ["?mtime=1786494961337.0317", "?v=.456", "?v=1.2.3", "?v=123", "?v=123.", "?v=123.456"],
   });
   expect(exitCode).toBe(0);
 });

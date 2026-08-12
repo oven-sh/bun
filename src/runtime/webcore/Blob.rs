@@ -99,7 +99,18 @@ pub enum ReadBytesResult {
 /// Handler trait for `read_bytes_to_handler` — the body only requires
 /// `on_read_bytes`.
 pub trait ReadBytesHandler {
-    fn on_read_bytes(&mut self, result: ReadBytesResult);
+    /// Invoked exactly once, on the JS thread, with the `ctx` given to
+    /// `read_bytes_to_handler`; ownership of `*this` comes back to the handler
+    /// here, and a heap-allocated one reclaims itself (`heap::take(this)`).
+    /// That is why the receiver is a raw pointer, as in
+    /// `read_file::ReadFileCompletion::run`: freeing the allocation behind a
+    /// `&mut self` argument is UB under the aliasing model (the argument is
+    /// protected for the whole call), even if `self` is never touched again.
+    ///
+    /// # Safety
+    /// `this` is the `ctx` passed to `read_bytes_to_handler`, still live, and
+    /// the caller does not use it afterwards.
+    unsafe fn on_read_bytes(this: *mut Self, result: ReadBytesResult);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -147,8 +158,10 @@ pub trait BlobExt {
     ) -> JsTerminatedResult<JSValue>;
     fn do_read_file<F: read_file::ReadFileToJs>(&self, global: &JSGlobalObject) -> JSValue;
     /// # Safety
-    /// `ctx` must be a valid, exclusively-accessible `*mut H` that stays alive
-    /// until `H::on_read_bytes` is invoked (synchronously or via the async task).
+    /// `ctx` must be a valid, exclusively-accessible `*mut H`. Ownership of
+    /// `*ctx` passes to the single `H::on_read_bytes(ctx, ..)` this makes
+    /// (synchronously or from the async completion), whatever this returns;
+    /// the caller must not use `ctx` afterwards.
     unsafe fn read_bytes_to_handler<H: ReadBytesHandler>(
         &self,
         ctx: *mut H,
@@ -510,9 +523,18 @@ impl BlobExt for Blob {
     /// callers that already special-case `shared_view()` can keep doing that and
     /// only call this when it's empty.
     ///
+    /// Every store kind hands `ctx` to exactly one `H::on_read_bytes` call:
+    /// in-memory stores synchronously below, file stores from the read's
+    /// `run`/`cancel` completion (exactly one of which fires), S3 from the
+    /// download callback (which `execute_simple_s3_request` also invokes
+    /// synchronously when it cannot start the request). An `Err` here is a
+    /// termination raised by a synchronous delivery, so the handler has
+    /// already been consumed in that case too.
+    ///
     /// # Safety
-    /// `ctx` must be a valid, exclusively-accessible `*mut H` that stays alive
-    /// until `H::on_read_bytes` is invoked.
+    /// `ctx` must be a valid, exclusively-accessible `*mut H`. Ownership of
+    /// `*ctx` passes to the single `H::on_read_bytes(ctx, ..)` this makes,
+    /// whatever this returns; the caller must not use `ctx` afterwards.
     unsafe fn read_bytes_to_handler<H: ReadBytesHandler>(
         &self,
         ctx: *mut H,
@@ -531,12 +553,12 @@ impl BlobExt for Blob {
                         }
                         read_file::ReadFileResultType::Err(e) => ReadBytesResult::Err(Box::new(e)),
                     };
-                    // SAFETY: `c` is the `*mut H` passed by the caller and kept alive
-                    // across the async read by contract; exclusive borrow scoped to the call.
-                    H::on_read_bytes(unsafe { &mut *c }, result);
+                    // SAFETY: `c` is the `ctx` handed to `read_bytes_to_handler`,
+                    // and the read completion fires exactly once (`call` or
+                    // `cancel`), so this is its single delivery.
+                    unsafe { H::on_read_bytes(c, result) };
                 }
                 fn cancel(c: *mut H) {
-                    // The caller owns `H` and waits for exactly one `on_read_bytes`.
                     let err = jsc::SystemError {
                         code: BunString::static_("ECANCELED").into(),
                         message: BunString::static_(
@@ -547,7 +569,7 @@ impl BlobExt for Blob {
                         ..Default::default()
                     };
                     // SAFETY: as for `call`.
-                    H::on_read_bytes(unsafe { &mut *c }, ReadBytesResult::Err(Box::new(err)));
+                    unsafe { H::on_read_bytes(c, ReadBytesResult::Err(Box::new(err))) };
                 }
             }
             self.do_read_file_internal::<H, Adapter<H>>(ctx, global);
@@ -565,9 +587,10 @@ impl BlobExt for Blob {
                     self.blob.deinit();
                     let ctx = self.ctx;
                     drop(self);
-                    // SAFETY: caller-owned ctx, kept alive by contract; exclusive
-                    // borrow scoped to the call.
-                    H::on_read_bytes(unsafe { &mut *ctx }, r);
+                    // SAFETY: `ctx` is the pointer handed to `read_bytes_to_handler`;
+                    // the download callback (and so `done`) runs exactly once, and
+                    // the `Task` that held the pointer is gone.
+                    unsafe { H::on_read_bytes(ctx, r) };
                 }
                 fn cb(
                     result: crate::webcore::__s3_client::S3DownloadResult,
@@ -661,8 +684,9 @@ impl BlobExt for Blob {
         // In-memory or detached.
         let view = self.shared_view();
         let owned = view.to_vec();
-        // SAFETY: caller-owned ctx.
-        H::on_read_bytes(unsafe { &mut *ctx }, ReadBytesResult::Ok(owned));
+        // SAFETY: `ctx` is this call's handler (fn contract) and this is its
+        // only delivery.
+        unsafe { H::on_read_bytes(ctx, ReadBytesResult::Ok(owned)) };
         Ok(())
     }
 

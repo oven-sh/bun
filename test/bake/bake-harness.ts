@@ -319,28 +319,33 @@ export class Dev extends EventEmitter {
     const b = {
       write: resetSeenFilesWithResolvers,
       [Symbol.asyncDispose]: async () => {
-        if (wantsHmrEvent && interactive) {
-          await seenFiles.promise;
-        } else if (wantsHmrEvent) {
-          await Promise.race([seenFiles.promise]);
-        }
-        // One Bun.write can surface as several watcher events (notably on
-        // Windows); let them coalesce so releasing the batch bundles once.
-        await Bun.sleep(50);
-
-        dev.off("watch_synchronization", onSeenFiles);
-
-        this.socket!.send("H");
-        await wait;
-
-        let errors = options.errors;
-        if (errors !== null) {
-          errors ??= [];
-          for (const client of this.connectedClients) {
-            await client.expectErrorOverlay(errors, options.snapshot);
+        // The batch ends even when the wait or the overlay check below throws,
+        // so a test that expects one write to reject can keep using `dev`.
+        try {
+          if (wantsHmrEvent && interactive) {
+            await seenFiles.promise;
+          } else if (wantsHmrEvent) {
+            await Promise.race([seenFiles.promise]);
           }
+          // One Bun.write can surface as several watcher events (notably on
+          // Windows); let them coalesce so releasing the batch bundles once.
+          await Bun.sleep(50);
+
+          dev.off("watch_synchronization", onSeenFiles);
+
+          this.socket!.send("H");
+          await wait;
+
+          let errors = options.errors;
+          if (errors !== null) {
+            errors ??= [];
+            for (const client of this.connectedClients) {
+              await client.expectErrorOverlay(errors, options.snapshot);
+            }
+          }
+        } finally {
+          this.batchingChanges = null;
         }
-        this.batchingChanges = null;
       },
     };
     this.batchingChanges = b;
@@ -547,7 +552,7 @@ export class Dev extends EventEmitter {
       this.output.on("panic", onPanic);
       if (this.nodeEnv === "development") {
         try {
-          await client.output.waitForLine(hmrClientInitRegex);
+          await client.waitForPageLoad();
         } catch (e) {
           this.output.off("panic", onPanic);
           try {
@@ -892,13 +897,38 @@ export class Client extends EventEmitter {
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       await maybeWaitInteractive("hard-reload");
       if (this.exited) throw new Error("Client is not running.");
-      this.#proc.send({ type: "hard-reload" });
-
-      if (this.hmr) {
-        await this.output.waitForLine(hmrClientInitRegex);
-        await this.expectErrorOverlay(options.errors ?? []);
+      if (!this.hmr) {
+        this.#proc.send({ type: "hard-reload" });
+        return;
       }
+      const loaded = this.waitForPageLoad();
+      this.#proc.send({ type: "hard-reload" });
+      await loaded;
+      await this.expectErrorOverlay(options.errors ?? []);
     });
+  }
+
+  /**
+   * Resolves once the page being loaded has connected its HMR socket and the
+   * fixture acked it, which it only does after the page's stylesheets loaded.
+   * Call this before the load starts so the ack cannot be missed. The line
+   * wait adds a timeout and the fixture's output when it dies while loading.
+   */
+  async waitForPageLoad(): Promise<void> {
+    const acked = new Promise<void>((resolve, reject) => {
+      const onAck = () => {
+        this.off("exit", onExit);
+        resolve();
+      };
+      const onExit = (code: number | string) => {
+        this.off("received-hmr-event", onAck);
+        const mapped = exitCodeMapStrings[code];
+        reject(new Error(`Client exited while loading the page${mapped ? `: ${mapped}` : ` (${code})`}`));
+      };
+      this.once("received-hmr-event", onAck);
+      this.once("exit", onExit);
+    });
+    await Promise.all([this.output.waitForLine(hmrClientInitRegex), acked]);
   }
 
   elemText(selector: string): Promise<string> {
@@ -910,6 +940,35 @@ export class Client extends EventEmitter {
       `;
       if (text == null) throw new Error(`Element found but has no text content: ${selector}`);
       return text;
+    });
+  }
+
+  /**
+   * Waits until the element's innerHTML is `text`. For DOM that a framework
+   * updates asynchronously after the harness has already synchronized with the
+   * dev server, e.g. React committing a server-side route reload.
+   */
+  expectElemText(selector: string, text: string): Promise<void> {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      await this.js`
+        const read = () => document.querySelector(${selector})?.innerHTML;
+        if (read() === ${text}) return;
+        await new Promise((resolve, reject) => {
+          const observer = new MutationObserver(() => {
+            if (read() !== ${text}) return;
+            observer.disconnect();
+            clearTimeout(timer);
+            resolve();
+          });
+          // Observe the document itself: a re-render may replace <html> rather
+          // than patch it, which an observer on the old root would never see.
+          observer.observe(document, { subtree: true, childList: true, characterData: true });
+          const timer = setTimeout(() => {
+            observer.disconnect();
+            reject(new Error("Expected " + ${selector} + " to become " + JSON.stringify(${text}) + ", last saw " + JSON.stringify(read())));
+          }, ${interactive ? interactive_timeout : 2000 * WAIT_MULTIPLIER});
+        });
+      `;
     });
   }
 
@@ -1046,59 +1105,43 @@ export class Client extends EventEmitter {
   expectErrorOverlay(errors: ErrorSpec[], caller: string | null = null) {
     return withAnnotatedStack(caller ?? snapshotCallerLocationMayFail(), async () => {
       this.suppressInteractivePrompt = true;
-      let retries = 0;
-      let hasVisibleModal = false;
-      while (retries < 5) {
-        hasVisibleModal = await this.js`document.querySelector("bun-hmr")?.style.display === "block"`;
-        if (hasVisibleModal) break;
-        await Bun.sleep(200);
-        retries++;
+      let hasVisibleModal: boolean;
+      try {
+        hasVisibleModal = await this.#hasVisibleErrorOverlay();
+        // Build errors are already on the page when callers get here: the error
+        // page renders them before its socket connects, and after a write the
+        // fixture acks the build only after the runtime handled the errors
+        // frame. Only runtime errors reach the overlay later (the runtime remaps
+        // them through /_bun/report_error first), so polling is only useful when
+        // errors are expected.
+        for (let retries = 0; errors.length > 0 && !hasVisibleModal && retries < 5; retries++) {
+          await Bun.sleep(200);
+          hasVisibleModal = await this.#hasVisibleErrorOverlay();
+        }
+      } finally {
+        this.suppressInteractivePrompt = false;
       }
-      this.suppressInteractivePrompt = false;
-      if (errors && errors.length > 0) {
-        if (!hasVisibleModal) {
-          await maybeWaitInteractive("expectErrorOverlay");
-          throw new Error("Expected errors, but none found");
-        }
-
-        // Create unique message ID for this evaluation
-        const messageId = Math.random().toString(36).slice(2);
-
-        // Send the evaluation request and wait for response
-        this.#proc.send({
-          type: "get-errors",
-          args: [messageId],
-        });
-
-        const [result] = await EventEmitter.once(this, `get-errors-result-${messageId}`);
-
-        if (result.error) {
-          throw new Error(result.error);
-        }
-        const actualErrors = result.value;
-        const expectedErrors = [...errors].sort();
-        expect(actualErrors).toEqual(expectedErrors);
-      } else {
-        if (hasVisibleModal) {
-          // Create unique message ID for this evaluation
-          const messageId = Math.random().toString(36).slice(2);
-
-          // Send the evaluation request and wait for response
-          this.#proc.send({
-            type: "get-errors",
-            args: [messageId],
-          });
-
-          const [result] = await EventEmitter.once(this, `get-errors-result-${messageId}`);
-
-          if (result.error) {
-            throw new Error(result.error);
-          }
-          const actualErrors = result.value;
-          expect(actualErrors).toEqual([]);
-        }
+      if (!hasVisibleModal) {
+        if (errors.length === 0) return;
+        await maybeWaitInteractive("expectErrorOverlay");
+        throw new Error("Expected errors, but none found");
       }
+
+      const messageId = Math.random().toString(36).slice(2);
+      this.#proc.send({
+        type: "get-errors",
+        args: [messageId],
+      });
+      const [result] = await EventEmitter.once(this, `get-errors-result-${messageId}`);
+      if (result.error) {
+        throw new Error(result.error);
+      }
+      expect(result.value).toEqual([...errors].sort());
     });
+  }
+
+  #hasVisibleErrorOverlay() {
+    return this.js<boolean>`document.querySelector("bun-hmr")?.style.display === "block"`;
   }
 
   getStringMessage(): Promise<string> {

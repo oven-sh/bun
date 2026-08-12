@@ -32,15 +32,16 @@ let expectingReload = false;
 let webSockets = [];
 let pendingReload = null;
 let pendingReloadTimer = null;
-let isUpdating = null;
+// Bumped whenever the current window is abandoned (reload requested, or a new
+// window created). Acks captured by an older window are dropped: the harness
+// expects exactly one "received-hmr-event" per build per client, and after a
+// reload that one ack comes from the new window once it has connected.
+let windowGeneration = 0;
 let objectURLRegistry = new Map();
 let internalAPIs;
 
 function reset() {
-  if (isUpdating !== null) {
-    clearImmediate(isUpdating);
-    isUpdating = null;
-  }
+  windowGeneration++;
   for (const ws of webSockets) {
     ws.onclose = () => {};
     ws.onerror = () => {};
@@ -71,15 +72,21 @@ function createWindow(windowUrl) {
     height: 768,
   });
 
+  const generation = ++windowGeneration;
+  const ackToHarness = () => {
+    if (generation !== windowGeneration) return;
+    process.send({ type: "received-hmr-event", args: [] });
+  };
+
   // The HMR runtime reads this symbol-keyed callback off `globalThis` (which is
   // `window` inside happy-dom's script context) and passes its internal hooks.
   let hmrEventHookInstalled = false;
-  let pendingHotUpdateAcks = 0;
+  let pendingBuildAcks = 0;
   let hmrScriptQueued = false;
-  const sendHmrAck = () => {
-    if (pendingHotUpdateAcks === 0) return;
-    pendingHotUpdateAcks--;
-    process.send({ type: "received-hmr-event", args: [] });
+  const ackBuild = () => {
+    if (pendingBuildAcks === 0) return;
+    pendingBuildAcks--;
+    ackToHarness();
   };
   window[Symbol.for("bun testing api, may change at any time")] = internal => {
     window.internal = internal;
@@ -88,9 +95,10 @@ function createWindow(windowUrl) {
       // Ack a hot update only once the new module code has actually run. Node's
       // Blob.arrayBuffer() resolves on a later macrotask than the WS listener's
       // setImmediate, so acking from the WS listener would race the eval.
-      // Full reloads are not acked here; the new window acks from the
-      // `[Bun] Hot-module-reloading socket connected` handler after loadPage.
-      internal.onEvent("bun:afterUpdate", sendHmrAck);
+      // Updates that end in a full reload are acked by the new window's
+      // "socket connected" handler instead; this window's generation is stale
+      // by the time its runtime gets here.
+      internal.onEvent("bun:afterUpdate", ackBuild);
     }
   };
 
@@ -110,25 +118,29 @@ function createWindow(windowUrl) {
       webSockets.push(this);
       this.addEventListener("message", event => {
         const data = new Uint8Array(event.data);
-        if (data[0] === "u".charCodeAt(0) && hmrEventHookInstalled) {
+        const kind = String.fromCharCode(data[0]);
+        // One ack per build, for the last frame it sends this page. finalize_bundle
+        // (DevServer.rs) publishes errors ("e") before the hot update ("u") and,
+        // while a page running the HMR runtime is connected, always ends with
+        // "u", so those pages ack "u" only; acking "e" would release the harness
+        // before the update behind it is applied. The bundling error page only
+        // subscribes to errors, so its last frame is "e", applied synchronously
+        // by the runtime's own listener right after this one. ("u" without the
+        // hook means the runtime lost its onEvent testing export; acking keeps
+        // that a test failure instead of a hang.)
+        if (hmrEventHookInstalled ? kind === "u" : kind === "e" || kind === "u") {
           // JS updates queue a script tag and ack via bun:afterUpdate once it
-          // evals; everything else (CSS, reloads, route reloads) acks here on
-          // the next tick when no script was queued.
-          pendingHotUpdateAcks++;
+          // evals; everything else (CSS, errors, server-side route reloads)
+          // acks on the next tick when no script was queued.
+          pendingBuildAcks++;
           hmrScriptQueued = false;
-          isUpdating = setImmediate(() => {
-            isUpdating = null;
-            if (!hmrScriptQueued) sendHmrAck();
-          });
-        } else if (data[0] === "e".charCodeAt(0) || data[0] === "u".charCodeAt(0)) {
-          isUpdating = setImmediate(() => {
-            process.send({ type: "received-hmr-event", args: [] });
-            isUpdating = null;
+          setImmediate(() => {
+            if (!hmrScriptQueued) ackBuild();
           });
         }
         if (!allowWebSocketMessages) {
           const allowedTypes = ["n", "r"];
-          if (allowedTypes.includes(String.fromCharCode(data[0]))) {
+          if (allowedTypes.includes(kind)) {
             return;
           }
           dumpWebSocketMessage("[E] WebSocket message received while messages are not allowed", data);
@@ -230,9 +242,7 @@ function createWindow(windowUrl) {
 
           // If no stylesheets of any kind, just emit the event
           if (styleLinks.length === 0 && styleTags.length === 0 && adoptedSheets.length === 0) {
-            process.nextTick(() => {
-              process.send({ type: "received-hmr-event", args: [] });
-            });
+            process.nextTick(ackToHarness);
             return;
           }
 
@@ -270,9 +280,7 @@ function createWindow(windowUrl) {
             if (checkAttempts >= MAX_CHECK_ATTEMPTS && !allLoaded) {
               console.warn("[W] Reached maximum CSS load check attempts, proceeding anyway");
             }
-            process.nextTick(() => {
-              process.send({ type: "received-hmr-event", args: [] });
-            });
+            process.nextTick(ackToHarness);
           } else {
             // Wait a bit and check again
             console.info(

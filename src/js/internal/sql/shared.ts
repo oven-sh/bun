@@ -1790,12 +1790,6 @@ function parseOptions(
     port ||= options.port || url.port;
     username ||= options.user || options.username || decodeIfValid(url.username);
     password ||= options.pass || options.password || decodeIfValid(url.password);
-    // postgres://host/<database>: the pathname names the database and, like the
-    // fields above, outranks PGDATABASE and friends. Without a host the pathname
-    // is a socket path (below); the per-adapter switch still falls back to it last.
-    if (url.hostname) {
-      database ||= options.database || options.db || decodeIfValid(url.pathname.slice(1));
-    }
 
     path ||= options.path || (url.hostname ? "" : url.pathname);
 
@@ -1818,6 +1812,16 @@ function parseOptions(
       }
     }
     query = query.trim();
+
+    // The pathname names the database (postgres://host/db) and, like the fields
+    // above, outranks PGDATABASE and friends. The exception is a host-less URL
+    // whose pathname was taken as the socket path above and not replaced by
+    // options.path or ?path=; the per-adapter switch below still uses that as
+    // the last-resort database name it has always been.
+    const pathnameIsSocketPath = !url.hostname && path === url.pathname;
+    if (!pathnameIsSocketPath) {
+      database ||= options.database || options.db || decodeIfValid(url.pathname.slice(1));
+    }
   }
 
   switch (adapter) {

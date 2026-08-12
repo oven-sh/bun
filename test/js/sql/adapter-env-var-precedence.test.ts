@@ -381,18 +381,48 @@ describe("SQL adapter environment variable precedence", () => {
       },
     );
 
-    test.each([
-      ["postgres", "PGDATABASE"],
-      ["mysql", "MYSQL_DATABASE"],
-      ["mariadb", "MARIADB_DATABASE"],
-    ] as const)(
-      "%s: the pathname of a host-less URL is a socket path, so $%s still names the database",
-      (adapter, envVar) => {
-        process.env[envVar] = "envdb";
+    // A host-less URL's pathname is taken as the unix socket path. None of these
+    // sockets need to exist: parseOptions drops a missing socket path but resolves
+    // the database name the same way either way.
+    describe("host-less URLs", () => {
+      const socket = "/tmp/bun-sql-database-precedence.sock";
 
-        expect(new SQL("unix:///tmp/bun-sql-database-precedence.sock", { adapter }).options.database).toBe("envdb");
-      },
-    );
+      // prettier-ignore
+      const hostlessUrls = [
+        ["postgres", "PGDATABASE",       "postgres:///urldb"],
+        ["mysql",    "MYSQL_DATABASE",   "mysql:///urldb"],
+        ["mariadb",  "MARIADB_DATABASE", "mariadb:///urldb"],
+      ] as const;
+
+      test.each(hostlessUrls)(
+        "%s: $%s still names the database when the pathname is taken as the socket path",
+        (adapter, envVar, url) => {
+          process.env[envVar] = "envdb";
+
+          expect(new SQL(url).options.database).toBe("envdb");
+          expect(new SQL(`unix://${socket}`, { adapter }).options.database).toBe("envdb");
+        },
+      );
+
+      test.each(hostlessUrls)(
+        "%s: without $%s the pathname is still the last-resort database name",
+        (_adapter, _envVar, url) => {
+          expect(new SQL(url).options.database).toBe("urldb");
+          expect(new SQL(url.replace("urldb", "url%20db")).options.database).toBe("url db");
+        },
+      );
+
+      test.each(hostlessUrls)(
+        "%s: when the socket comes from ?path= or options.path, the pathname names the database and wins over $%s",
+        (_adapter, envVar, url) => {
+          process.env[envVar] = "envdb";
+
+          expect(new SQL(`${url}?path=${socket}`).options.database).toBe("urldb");
+          expect(new SQL(url, { path: socket }).options.database).toBe("urldb");
+          expect(new SQL({ url, path: socket }).options.database).toBe("urldb");
+        },
+      );
+    });
   });
 
   describe("PGSSLMODE", () => {

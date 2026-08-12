@@ -3231,9 +3231,7 @@ impl DevServer {
         );
         let mut bv2: Box<BundleV2<'static>> = match bv2 {
             Ok(bv2) => bv2,
-            // `init` put the OS error in `self.log`. No bundle can run while
-            // that holds, and the callers of this fn abort on any error, so exit
-            // showing the reason rather than with a crash report.
+            // The reason is in `self.log`; the callers abort on any error here, so exit showing it instead of a crash report.
             Err(bundler::Error::ThreadSpawnFailed) => {
                 let _ = self.log.print(std::ptr::from_mut(Output::error_writer()));
                 bun_core::Global::exit(1);

@@ -305,16 +305,12 @@ pub fn from_errno(errno: i32) -> SystemErrno {
 }
 
 impl SystemErrno {
-    /// The OS error behind a `std::io::Error` (e.g. from a failed
-    /// `std::thread::Builder::spawn`). `None` when the error did not come from
-    /// the OS or its code has no `SystemErrno`.
+    /// The OS error behind a `std::io::Error`; `None` if it is not an OS error or its code has no `SystemErrno`.
     pub fn from_io_error(err: &std::io::Error) -> Option<SystemErrno> {
         let code = err.raw_os_error()?;
         #[cfg(windows)]
         {
-            // A `GetLastError()` code: the `u32` entry point maps it through
-            // the Win32 → errno table, whereas `i64` would read it as an errno
-            // discriminant.
+            // A Win32 code: the `u32` entry point maps it, `i64` would read it as an errno discriminant.
             SystemErrno::init(code as u32)
         }
         #[cfg(not(windows))]
@@ -533,9 +529,7 @@ mod errno_name_tests {
         );
         #[cfg(windows)]
         {
-            // `raw_os_error()` holds Win32 codes there: ERROR_NOT_ENOUGH_MEMORY
-            // and ERROR_ACCESS_DENIED, which would read as ENOEXEC and EIO if
-            // taken for errno values.
+            // Win32 ERROR_NOT_ENOUGH_MEMORY and ERROR_ACCESS_DENIED; read as errno values, 8 and 5 would be ENOEXEC and EIO.
             assert_eq!(
                 SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(8)),
                 Some(SystemErrno::ENOMEM)

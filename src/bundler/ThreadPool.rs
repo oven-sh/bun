@@ -249,8 +249,7 @@ impl ThreadPool {
         self.io_pool.as_deref()
     }
 
-    /// Fails only when a pool could not get a single worker; parse tasks
-    /// scheduled on it would then never complete (see `ThreadPoolLib::warm`).
+    /// Fails only if a pool got no worker at all; see `ThreadPoolLib::ThreadPool::warm`.
     pub(crate) fn start(&self) -> Result<(), bun_errno::SystemErrno> {
         self.worker_pool().warm(8)?;
         if let Some(io) = self.io_pool_ref() {

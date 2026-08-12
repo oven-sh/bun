@@ -655,8 +655,7 @@ impl BuildCommand {
                     }
 
                     Output::flush();
-                    // `BundleV2::init` fails with this before it installs the
-                    // watcher, so there is nothing that could trigger a rebuild.
+                    // Raised before the watcher is installed, so nothing could ever trigger a rebuild.
                     let watch = ctx.debug.hot_reload == HotReload::Watch
                         && err != bun_bundler::Error::ThreadSpawnFailed;
                     exit_or_watch(1, watch);

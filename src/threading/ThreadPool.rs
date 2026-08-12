@@ -707,7 +707,7 @@ pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
     }
 };
 
-/// See [`ThreadPool::spawn_worker`].
+/// Nothing will ever run the queued tasks and `schedule()` has no caller to return an error to, so this is the only way to report it.
 #[cold]
 #[inline(never)]
 fn exit_with_stranded_tasks(errno: SystemErrno) -> ! {
@@ -731,12 +731,8 @@ fn exit_with_stranded_tasks(errno: SystemErrno) -> ! {
 
 impl ThreadPool {
     /// Warm the thread pool up to the given number of threads.
+    /// Fails only if the pool got no worker at all; workers never exit before shutdown, so a later failure just ends the warm-up.
     /// https://www.youtube.com/watch?v=ys3qcbO5KWw
-    ///
-    /// Workers only exit at shutdown, so once the pool has one it stays usable
-    /// and a failed spawn merely ends the warm-up. The error is the OS refusing
-    /// the pool its *first* worker: nothing scheduled afterwards could run, and
-    /// a caller that warms before scheduling can still fail cleanly.
     pub fn warm(&self, count: u16) -> Result<(), SystemErrno> {
         // Thread counts are 14-bit fields in `Sync`; truncate to 14 bits.
         self.is_running.store(true, Ordering::Relaxed);
@@ -761,20 +757,7 @@ impl ThreadPool {
         Ok(())
     }
 
-    /// Spawns the worker whose `spawned` slot the caller just CAS'd into
-    /// `sync`; on failure the slot is released again and the OS error returned.
-    ///
-    /// The pool's first worker (`pool_was_empty`) gets one retry, as in
-    /// `Watcher::start`: `EAGAIN` from `pthread_create` is often momentary
-    /// (a fork storm, an exec'd image's threads not reaped yet), and unlike a
-    /// later spawn, whose failure only costs parallelism, this one failing
-    /// leaves the pool unable to run anything.
-    ///
-    /// When that happens with tasks already queued, nothing can ever run them.
-    /// `schedule()` is fire-and-forget, so there is no caller to hand the error
-    /// to; whoever waits on those tasks (`wait_for_all()`, the bundler's or
-    /// `bun install`'s event loop, a `node:fs` promise) would wait forever.
-    /// Exiting with the error is the only way left to report it.
+    /// Spawns the worker whose `spawned` slot the caller just took; on failure the slot is released and the OS error returned.
     fn spawn_worker(&self, pool_was_empty: bool) -> Result<(), SystemErrno> {
         let stack_size = self.stack_size as usize;
         let spawn = || {
@@ -786,6 +769,7 @@ impl ThreadPool {
                 .spawn(move || Thread::run(pool))
         };
         let spawned = spawn().or_else(|first| {
+            // EAGAIN is often momentary (as in `Watcher::start`); only the first worker is worth a retry, later ones just add parallelism.
             if !pool_was_empty {
                 return Err(first);
             }
@@ -847,10 +831,7 @@ impl ThreadPool {
                             return self.idle_event.notify();
                         }
 
-                        // We signaled to spawn a new thread. A failure needs no
-                        // handling here: either the existing workers drain the
-                        // queue on their own, or `spawn_worker` found the queued
-                        // tasks stranded and did not return.
+                        // We signaled to spawn a new thread. On failure the existing workers drain the queue; if there were none, `spawn_worker` did not return.
                         if can_wake && (sync.spawned() as u32) < self.max_threads {
                             let _ = self.spawn_worker(sync.spawned() == 0);
                         }
@@ -983,26 +964,15 @@ impl ThreadPool {
         }
     }
 
-    /// Un-spawn one thread, either because spawning it failed or because it is
-    /// exiting. Returns the number of workers the pool still counts (running
-    /// ones plus spawns in flight).
-    ///
-    /// # Safety
-    /// `pool` must be live on entry. After `(*pool).join_event.notify()` the
-    /// joiner may return and the pool may be **deallocated**, so this fn takes
-    /// `*const Self` (no `&self` protector), never touches `pool` past that
-    /// point, and callers must not touch it after this returns unless they
-    /// hold a `&self` of their own.
+    /// Releases one `spawned` slot (failed spawn or exiting worker); returns how many the pool still counts.
+    /// SAFETY: `pool` is live on entry. Once this returns the joiner may have freed it, unless the caller holds a `&self`.
     unsafe fn unspawn(pool: *const Self) -> u16 {
         let one_spawned = {
             let mut s = Sync::zero();
             s.set_spawned(1);
             s
         };
-        // The Acquire half pairs with the Release of an earlier un-spawn by
-        // another thread: observing its decrement also makes the
-        // `wait_group.add()` its `schedule()` did visible to `spawn_worker`'s
-        // stranded-tasks check.
+        // Acquire: seeing another thread's release of its slot must also show the `wait_group.add()` behind it (`spawn_worker`).
         // SAFETY: `pool` is live until at least the `join_event.notify()` below
         // wakes the joiner.
         let sync = unsafe { (*pool).sync.fetch_sub(one_spawned, Ordering::AcqRel) };
@@ -1019,20 +989,13 @@ impl ThreadPool {
         workers_left
     }
 
-    /// # Safety
-    /// `pool` is the worker's owning pool; see [`Self::unspawn`] — it may be
-    /// deallocated once that returns, so the shutdown chain below follows
-    /// worker-stack `.next` links only. `thread` is the calling worker's own
-    /// stack-local `Thread` (set in `ThreadRegistration::new`).
+    /// SAFETY: `pool` as for [`Self::unspawn`]; `thread` is the calling worker's own stack-local `Thread`.
     unsafe fn unregister(pool: *const Self, thread: NonNull<Thread>) {
         // SAFETY: per the contract above, `pool` is live on entry.
         unsafe { Self::unspawn(pool) };
         // ── `*pool` may be invalid past this point. ──
 
-        // Wait for a shutdown signal by the thread pool join()er.
-        // `thread` lives on this OS thread's stack and outlives the entire
-        // `unregister` call. BackRef invariant — pointee outlives holder —
-        // covers the `join_event.wait()` and `.next` reads below.
+        // Wait for the shutdown signal from `join()`; `thread` is our own stack slot, so it outlives this call.
         let thread = bun_ptr::BackRef::from(thread);
         thread.join_event.wait();
 

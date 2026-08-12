@@ -318,6 +318,12 @@ function connectionListenerHTTP1(server, socket, options) {
     // path must carry them too or keep-alive responses lose their timeout line.
     res._keepAliveTimeout = keepAliveTimeout;
     res._maxRequestsPerSocket = server.maxRequestsPerSocket;
+    // Node's parserOnIncoming: an HTTP/1.1 request without a Host header is answered 400 below
+    // instead of being dispatched (RFC 9112 §3.2). That reply advertises Connection: close, and
+    // the handle is what ends the connection after a response, so it must not see keep-alive.
+    const missingHostHeader =
+      versionMajor === 1 && versionMinor === 1 && server.requireHostHeader && req.headers.host === undefined;
+    if (missingHostHeader) shouldKeepAlive = false;
     const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout);
     handle.onfinished = function () {
       socket[kHttp1ActiveRequests] = Math.max(0, (socket[kHttp1ActiveRequests] || 1) - 1);
@@ -333,6 +339,12 @@ function connectionListenerHTTP1(server, socket, options) {
     res.on("finish", function onFallbackResponseFinish() {
       this.detachSocket(socket);
     });
+
+    if (missingHostHeader) {
+      res.writeHead(400, { Connection: "close" });
+      res.end();
+      return 0;
+    }
 
     // Node's parserOnIncoming Expect routing (the native dispatcher applies the
     // same at _http_server.ts's DISPATCH_HAS_EXPECT branch).

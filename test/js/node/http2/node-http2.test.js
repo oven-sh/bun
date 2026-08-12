@@ -4365,6 +4365,107 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
   }
 });
 
+// Sends one raw request over an http/1.1 ALPN connection; `head` resolves once the first
+// response head arrived, `ended` once the server ended the connection (with everything received).
+function rawHttp1RequestOverAlpn(server, rawRequest) {
+  const chunks = [];
+  const { promise: head, resolve: resolveHead, reject } = Promise.withResolvers();
+  const { promise: ended, resolve: resolveEnded } = Promise.withResolvers();
+  const socket = tls.connect(
+    { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+    () => socket.write(rawRequest),
+  );
+  socket.on("error", reject);
+  socket.on("data", chunk => {
+    chunks.push(chunk);
+    const received = Buffer.concat(chunks).toString("latin1");
+    if (received.includes("\r\n\r\n")) resolveHead(received);
+  });
+  socket.on("end", () => resolveEnded(Buffer.concat(chunks).toString("latin1")));
+  return { head, ended, socket };
+}
+
+// Node answers from parserOnIncoming with res.writeHead(400, ["Connection", "close"]); res.end().
+const nodeMissingHostReply =
+  "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n";
+function normalizeDate(raw) {
+  return raw.replace(/^Date: .*$/m, "Date: <date>");
+}
+
+it("http2 allowHTTP1 fallback answers an HTTP/1.1 request without a Host header with 400 and closes the connection", async () => {
+  let requests = 0;
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    requests++;
+    res.end("served");
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const client = rawHttp1RequestOverAlpn(server, "GET / HTTP/1.1\r\n\r\n");
+    try {
+      expect(await client.head).toStartWith("HTTP/1.1 400 Bad Request\r\n");
+      expect(normalizeDate(await client.ended)).toBe(nodeMissingHostReply);
+      expect(requests).toBe(0);
+      // Stored like Node's storeHTTPOptions does for allowHTTP1 servers.
+      expect(server.requireHostHeader).toBe(true);
+    } finally {
+      client.socket.destroy();
+    }
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback still dispatches Host-less HTTP/1.0 requests and Host-carrying HTTP/1.1 requests", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    res.end(`served:${req.httpVersion}:${req.headers.host}`);
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const bodies = [];
+    for (const rawRequest of [
+      "GET / HTTP/1.0\r\n\r\n",
+      "GET / HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n",
+    ]) {
+      const client = rawHttp1RequestOverAlpn(server, rawRequest);
+      try {
+        const raw = await client.ended;
+        expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+        bodies.push(raw.slice(raw.indexOf("served:")));
+      } finally {
+        client.socket.destroy();
+      }
+    }
+    expect(bodies).toEqual(["served:1.0:undefined", "served:1.1:example.test"]);
+  } finally {
+    server.close();
+  }
+});
+
+for (const [description, options] of [
+  ["requireHostHeader: false", { requireHostHeader: false }],
+  ["http1Options: { requireHostHeader: false }", { http1Options: { requireHostHeader: false } }],
+]) {
+  it(`http2 allowHTTP1 fallback dispatches a Host-less HTTP/1.1 request when created with ${description}`, async () => {
+    const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true, ...options }, (req, res) => {
+      res.end(`served:${req.headers.host}`);
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    try {
+      const client = rawHttp1RequestOverAlpn(server, "GET / HTTP/1.1\r\nConnection: close\r\n\r\n");
+      try {
+        const raw = await client.ended;
+        expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+        expect(raw).toEndWith("served:undefined");
+        expect(server.requireHostHeader).toBe(false);
+      } finally {
+        client.socket.destroy();
+      }
+    } finally {
+      server.close();
+    }
+  });
+}
+
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
 // waits on nghttp2_session_want_write()/want_read(), which does not track outstanding
 // ACKs. A server that never ACKs a client-sent SETTINGS must not stall close().

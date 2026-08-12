@@ -4139,3 +4139,98 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     expect(serverSide.destroyed).toBe(true);
   }
 });
+
+describe("connectionListener requireHostHeader", () => {
+  // Drives one raw request through server.emit("connection", ...) (the JS fallback parser) and
+  // returns the first response head the client saw plus a promise for the server ending the
+  // connection. A duplexPair does not propagate destroy(), so both halves are torn down.
+  function rawRequestOverEmittedConnection(server: Server, rawRequest: string) {
+    const [clientSide, serverSide] = duplexPair();
+    const chunks: Buffer[] = [];
+    const ended = new Promise<string>(resolve =>
+      clientSide.on("end", () => resolve(Buffer.concat(chunks).toString("latin1"))),
+    );
+    const head = new Promise<string>((resolve, reject) => {
+      clientSide.on("data", (chunk: Buffer) => {
+        chunks.push(chunk);
+        const received = Buffer.concat(chunks).toString("latin1");
+        if (received.includes("\r\n\r\n")) resolve(received);
+      });
+      clientSide.on("error", reject);
+    });
+    server.emit("connection", serverSide);
+    clientSide.write(rawRequest);
+    return {
+      head,
+      ended,
+      [Symbol.dispose]() {
+        clientSide.destroy();
+        serverSide.destroy();
+      },
+    };
+  }
+
+  // Node answers from parserOnIncoming with res.writeHead(400, ["Connection", "close"]); res.end().
+  function normalizeDate(raw: string) {
+    return raw.replace(/^Date: .*$/m, "Date: <date>");
+  }
+  const nodeMissingHostReply =
+    "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n";
+
+  it("answers an HTTP/1.1 request without a Host header with 400 and closes the connection", async () => {
+    const onRequest = mock((req, res) => res.end("served"));
+    const server = createServer(onRequest);
+    using client = rawRequestOverEmittedConnection(server, "GET / HTTP/1.1\r\n\r\n");
+    expect(await client.head).toStartWith("HTTP/1.1 400 Bad Request\r\n");
+    expect(normalizeDate(await client.ended)).toBe(nodeMissingHostReply);
+    expect(onRequest).not.toHaveBeenCalled();
+  });
+
+  it("rejects a Host-less HTTP/1.1 request before its Expect header is looked at", async () => {
+    const onRequest = mock((req, res) => res.end("served"));
+    const onCheckContinue = mock((req, res) => {
+      res.writeContinue();
+      res.end("served");
+    });
+    const server = createServer(onRequest);
+    server.on("checkContinue", onCheckContinue);
+    using client = rawRequestOverEmittedConnection(
+      server,
+      "POST / HTTP/1.1\r\nExpect: 100-continue\r\nContent-Length: 0\r\n\r\n",
+    );
+    expect(await client.head).toStartWith("HTTP/1.1 400 Bad Request\r\n");
+    expect(normalizeDate(await client.ended)).toBe(nodeMissingHostReply);
+    expect(onCheckContinue).not.toHaveBeenCalled();
+    expect(onRequest).not.toHaveBeenCalled();
+  });
+
+  it("dispatches an HTTP/1.0 request without a Host header", async () => {
+    const onRequest = mock((req, res) => res.end("served:" + req.httpVersion));
+    const server = createServer(onRequest);
+    using client = rawRequestOverEmittedConnection(server, "GET / HTTP/1.0\r\n\r\n");
+    expect(await client.ended).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(await client.ended).toEndWith("served:1.0");
+    expect(onRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispatches a Host-less HTTP/1.1 request when the server was created with requireHostHeader: false", async () => {
+    const onRequest = mock((req, res) => res.end("served:" + req.headers.host));
+    const server = createServer({ requireHostHeader: false }, onRequest);
+    using client = rawRequestOverEmittedConnection(server, "GET / HTTP/1.1\r\nConnection: close\r\n\r\n");
+    expect(await client.ended).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(await client.ended).toEndWith("served:undefined");
+    expect(onRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispatches an HTTP/1.1 request that carries a Host header", async () => {
+    const onRequest = mock((req, res) => res.end("served:" + req.headers.host));
+    const server = createServer(onRequest);
+    using client = rawRequestOverEmittedConnection(
+      server,
+      "GET / HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n",
+    );
+    expect(await client.ended).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(await client.ended).toEndWith("served:example.test");
+    expect(onRequest).toHaveBeenCalledTimes(1);
+  });
+});

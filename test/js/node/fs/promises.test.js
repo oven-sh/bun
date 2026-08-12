@@ -1,4 +1,6 @@
-import { tempDir, tempDirWithFiles } from "harness";
+import { heapStats } from "bun:jsc";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { mkfifo } from "mkfifo";
 import { join } from "path";
 const assert = require("assert");
 const os = require("os");
@@ -469,6 +471,34 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     }
   });
 
+  // The operation itself has to keep the signal's wrapper alive (it shows up as
+  // a protected AbortSignal while in flight): the reason is only reachable
+  // through the wrapper, so if the caller keeps nothing and a GC runs before the
+  // operation settles, the rejection would lose its cause. Nothing here may hold
+  // the controller, the signal or the reason, or the GC would not be the one
+  // deciding.
+  test("readFile aborted while in flight keeps its reason when the caller holds nothing", async () => {
+    await using dir = tempDir("fs-abort-readfile-gc", { "f.txt": "hello" });
+    const protectedSignals = () => heapStats().protectedObjectTypeCounts.AbortSignal ?? 0;
+    const protectedBefore = protectedSignals();
+    function startAndAbort() {
+      const ac = new AbortController();
+      const promise = fsPromises.readFile(join(dir, "f.txt"), { signal: ac.signal });
+      ac.abort(new Error("stop"));
+      return promise;
+    }
+    const promise = startAndAbort();
+    expect(protectedSignals() - protectedBefore).toBe(1);
+    Bun.gc(true);
+    Bun.gc(true);
+    const outcome = await promise.then(
+      () => "resolved",
+      err => ({ code: err.code, cause: err.cause?.message }),
+    );
+    expect(outcome).toEqual({ code: "ABORT_ERR", cause: "stop" });
+    expect(protectedSignals()).toBe(protectedBefore);
+  });
+
   // abort() with no reason stores the signal's lazily-created DOMException in a
   // common-reason slot; the cause must still be that exact object, not a copy.
   test("readFile aborted while in flight with the default abort reason", async () => {
@@ -551,3 +581,86 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     expectNodeAbortError(writeErr, signal.reason);
   });
 });
+
+// Every entry point taking { signal } keeps the signal alive (GC protection on
+// the wrapper) and counted as pending activity only until it has finished. A
+// leaked protection pins every wrapper; a leaked pending-activity count still
+// pins the ones with a JS abort listener and the timeout ones (pending activity
+// counts as observing the timeout), so either shows up as uncollectable wrappers;
+// the protection is also counted directly.
+test("readFile/writeFile/appendFile release their signal once they have finished", async () => {
+  await using dir = tempDir("fs-signal-release", { "f.txt": "hello" });
+  const file = join(dir, "f.txt");
+  const out = join(dir, "out.txt");
+  const liveSignals = () => {
+    Bun.gc(true);
+    return heapStats().objectTypeCounts.AbortSignal ?? 0;
+  };
+  const protectedSignals = () => heapStats().protectedObjectTypeCounts.AbortSignal ?? 0;
+  const before = liveSignals();
+  const protectedBefore = protectedSignals();
+
+  const iterations = 10;
+  for (let i = 0; i < iterations; i++) {
+    const plain = new AbortController().signal;
+    const listened = new AbortController().signal;
+    listened.addEventListener("abort", () => {});
+    const timeout = AbortSignal.timeout(60_000);
+    for (const signal of [plain, listened, timeout]) {
+      await fsPromises.readFile(file, { signal });
+      await fsPromises.writeFile(out, "x", { signal });
+      await fsPromises.appendFile(out, "x", { signal });
+      await new Promise((resolve, reject) => fs.readFile(file, { signal }, err => (err ? reject(err) : resolve())));
+      await new Promise((resolve, reject) =>
+        fs.writeFile(out, "x", { signal }, err => (err ? reject(err) : resolve())),
+      );
+      fs.readFileSync(file, { signal });
+      fs.writeFileSync(out, "x", { signal });
+    }
+  }
+
+  expect(protectedSignals()).toBe(protectedBefore);
+  // The weakest leak pins two signals per iteration; a healthy run keeps at most
+  // the last iteration's three alive.
+  expect(liveSignals() - before).toBeLessThan(iterations);
+});
+
+// A readFile/writeFile/appendFile with { signal } is on the thread pool while
+// pending. When the worker that started it is torn down while it is still
+// queued, the pool thread that later frees the job must not be what releases
+// the signal: its refcount, abort listeners, reason and the timer of
+// AbortSignal.timeout() all belong to the JS thread that is gone by then.
+// Release builds die on WebCore's thread check, ASAN builds on the freed GC
+// handles. The fixture parks the whole (two-thread) pool on FIFOs first so the
+// worker's operations are guaranteed to still be queued when it is terminated.
+// Starting and tearing down a worker alone takes ~3s on a debug build.
+test.skipIf(isWindows)(
+  "signals of operations still queued on the pool when their worker is torn down",
+  async () => {
+    using dir = tempDir("fs-signal-worker-teardown", { "data.txt": "data" });
+    mkfifo(join(String(dir), "fifo-a"));
+    mkfifo(join(String(dir), "fifo-b"));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "abort-signal-read-write-file-worker-teardown-fixture.ts"), String(dir)],
+      env: {
+        ...bunEnv,
+        UV_THREADPOOL_SIZE: "2",
+        // JSC/WebCore memory is libpas-backed and invisible to ASAN otherwise.
+        // Leak detection stays off: under Malloc=1 LSan reports WTF's
+        // process-lifetime allocations.
+        Malloc: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+      stdout: "pool parked\nworker torn down\npool drained, worker writes that ran: 0\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  30_000,
+);

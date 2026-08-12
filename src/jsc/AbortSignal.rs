@@ -115,7 +115,7 @@ impl AbortSignal {
         WebCore__AbortSignal__decrementPendingActivity(self)
     }
 
-    /// This function is not threadsafe. aborted is a boolean, not an atomic!
+    /// Readable from any thread (an atomic load); whoever calls it keeps the signal alive.
     pub fn aborted(&self) -> bool {
         WebCore__AbortSignal__aborted(self)
     }

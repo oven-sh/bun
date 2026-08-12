@@ -68,10 +68,14 @@ describe.skipIf(isWindows)("Bun.file(fifo)", () => {
     using dir = tempDir("bun-file-read-fifo", {});
     const fifo = path.join(String(dir), "in.fifo");
     mkfifo(fifo);
-    // Opening the write end needs a reader to exist. The holder stays open so
-    // the child finds a connected writer (rather than EOF) whenever it opens
-    // the FIFO; it never reads, so every byte goes to the child.
-    const holder = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+    // The write end can only be opened, and written to without EPIPE, while
+    // some reader has the FIFO open; `holder` is that reader until the child
+    // has opened its own. It never reads, so every byte goes to the child.
+    let holder = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+    const closeHolder = () => {
+      if (holder !== -1) closeSync(holder);
+      holder = -1;
+    };
     let writer = openSync(fifo, "w");
     try {
       await using proc = Bun.spawn({
@@ -84,14 +88,22 @@ describe.skipIf(isWindows)("Bun.file(fifo)", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      // The write end is blocking, so this only completes as the child drains
-      // the pipe; closing it afterwards is what ends the child's read.
-      const written = await Bun.write(Bun.file(writer), payload);
+      const stderr = proc.stderr.text();
+      // The write end is blocking, so the write only completes as the child
+      // drains the pipe, and closing it afterwards is what ends the child's
+      // read. The child cannot exit before that unless it failed; dropping
+      // `holder` then leaves the pipe without readers, so the blocked write
+      // fails with EPIPE instead of waiting forever.
+      const childDied = proc.exited.then(async exitCode => {
+        closeHolder();
+        throw new Error(`child exited with ${exitCode} before the payload was written: ${await stderr}`);
+      });
+      const written = await Promise.race([Bun.write(Bun.file(writer), payload), childDied]);
       closeSync(writer);
       writer = -1;
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderrText, exitCode] = await Promise.all([proc.stdout.text(), stderr, proc.exited]);
 
-      expect({ written, stdout, stderr }).toEqual({
+      expect({ written, stdout, stderr: stderrText }).toEqual({
         written: payload.length,
         stdout: `${payload.length} ${Bun.hash(payload)}`,
         stderr: "",
@@ -99,7 +111,7 @@ describe.skipIf(isWindows)("Bun.file(fifo)", () => {
       expect(exitCode).toBe(0);
     } finally {
       if (writer !== -1) closeSync(writer);
-      closeSync(holder);
+      closeHolder();
     }
   });
 });

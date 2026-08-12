@@ -339,27 +339,21 @@ impl FileOpener for ReadFile {
 crate::webcore::blob::impl_file_closer!(ReadFile);
 
 impl ReadFile {
-    /// Pool thread re-entry (`do_read_loop_task`, `on_close_io_request`).
-    ///
-    /// This and everything it calls take the pointer the pool handed us
-    /// instead of `&mut self`: each of these paths ends by handing `*this` to
-    /// another thread (`wait_for_readable` / `do_close` to the io thread,
-    /// `io_task.finish()` to the JS thread), and a `&mut self` argument would
-    /// still be live, and protected, on this stack while that thread writes to
-    /// or frees the object. Accesses are scoped to end before the hand-over.
+    /// Pool thread re-entry (`do_read_loop_task`, `on_close_io_request`). This
+    /// and everything below it end by handing `*this` to another thread (the io
+    /// thread, or the JS thread that frees it), so they carry the pointer the
+    /// pool gave us rather than a `&mut self` that would outlive the hand-over.
     ///
     /// # Safety
-    /// `this` is the live `ReadFile` this thread currently holds; the caller
-    /// must not touch it afterwards.
+    /// `this` is the live `ReadFile` this thread holds; not to be touched after.
     pub(crate) unsafe fn update(this: *mut Self) {
         #[cfg(windows)]
         {
-            let _ = this;
-            // Windows reads go through ReadFileUV; this is never scheduled.
+            let _ = this; // Reads go through ReadFileUV; never scheduled.
         }
         #[cfg(not(windows))]
         {
-            // SAFETY: fn contract; the load ends before `this` is passed on.
+            // SAFETY: fn contract.
             let closing =
                 unsafe { (*this).state.load(Ordering::Relaxed) } == ClosingState::Closing as u8;
             // SAFETY: fn contract, passed through.
@@ -376,9 +370,7 @@ impl ReadFile {
         }
     }
 
-    /// Performs the step a pool-side function decided on once its own
-    /// accesses to `*this` are over. `ReadLoop` reads until it has to hand the
-    /// object on; the other two are the hand-overs themselves.
+    /// Performs the step a `&mut self` stage decided on, after that borrow ended.
     ///
     /// # Safety
     /// As [`update`](Self::update).
@@ -482,19 +474,16 @@ impl ReadFile {
         unsafe { (*ctx.cast::<ReadFile>()).on_io_error(err) }
     }
 
-    /// io thread: the `io::RequestCallback` installed by `wait_for_readable`.
+    /// The `io::RequestCallback` installed by `wait_for_readable`.
     ///
     /// # Safety
-    /// `io::RequestCallback`'s contract: `request` is the pointer
-    /// `wait_for_readable` scheduled.
+    /// `io::RequestCallback`'s contract.
     #[cfg(not(windows))]
     pub(crate) unsafe fn on_request_readable(request: *mut io::Request) -> io::Action {
         bloblog!("ReadFile.onRequestReadable");
-        // SAFETY: fn contract — `request` is `&raw mut (*this).io_request` of a
-        // live `ReadFile`, so the parent is reachable through it.
+        // SAFETY: fn contract — `request` is the projection `wait_for_readable` scheduled.
         let this = unsafe { ReadFile::from_io_request(request) };
-        // SAFETY: as above; the `fd` read ends here and `io_poll` is only
-        // projected, so no reference into the parent outlives this call.
+        // SAFETY: as above; a field read and a projection, no reference escapes.
         let (fd, poll) = unsafe { ((*this).opened_fd, &raw mut (*this).io_poll) };
         io::Action::Readable(FileAction {
             on_error: Self::on_io_error_thunk,
@@ -505,19 +494,15 @@ impl ReadFile {
         })
     }
 
-    /// Hands `*this` to the io thread until `opened_fd` is readable; it comes
-    /// back through `on_ready` / `on_io_error`. The schedule is the last access
-    /// (see `update` for why this is pointer-shaped).
+    /// Hands `*this` to the io thread; it comes back through `on_ready` /
+    /// `on_io_error`.
     ///
     /// # Safety
-    /// `this` is the live `ReadFile` this thread currently holds; the caller
-    /// must not touch it afterwards.
+    /// As [`update`](Self::update).
     #[cfg(not(windows))]
     pub(crate) unsafe fn wait_for_readable(this: *mut Self) {
         bloblog!("ReadFile.waitForReadable");
-        // SAFETY: fn contract. The `store_callback_seq_cst` reborrow ends with
-        // its statement; the request is projected (not reborrowed) for
-        // `schedule`, which needs the whole `ReadFile` reachable through it.
+        // SAFETY: fn contract; the schedule is the last access.
         unsafe {
             (*this).close_after_io = true;
             (*this)
@@ -691,32 +676,28 @@ impl ReadFile {
         self.file_store.pathlike.is_path()
     }
 
-    /// Ends with one of two hand-overs: `do_close` gives `*this` to the io
-    /// thread, otherwise `io_task.finish()` gives it to the JS thread, which
-    /// frees it. Pointer-shaped for that reason (see `update`).
+    /// Hands `*this` to the io thread (`do_close`) or to the JS thread, which
+    /// frees it (`io_task.finish()`).
     ///
     /// # Safety
-    /// `this` is the live `ReadFile` this thread currently holds; the caller
-    /// must not touch it afterwards.
+    /// As [`update`](Self::update).
     #[cfg(not(windows))]
     unsafe fn on_finish(this: *mut Self) {
-        // SAFETY: fn contract; these reads and the `is_allowed_to_close`
-        // reborrow end before `do_close`.
+        // SAFETY: fn contract; the reborrow ends with the block.
         let (close_after_io, is_allowed_to_close_fd) = unsafe {
             (*this).size = (*this).buffer.len() as SizeType;
             ((*this).close_after_io, (*this).is_allowed_to_close())
         };
 
-        // SAFETY: fn contract, passed through; on `true` the io thread owns
-        // `*this` and nothing below runs.
+        // SAFETY: fn contract, passed through.
         if unsafe { Self::do_close(this, is_allowed_to_close_fd) } {
             bloblog!("ReadFile.onFinish() = deferred");
             // we have to wait for the close to finish
             return;
         }
         if !close_after_io {
-            // SAFETY: fn contract — `do_close` returned `false`, so `*this` is
-            // still ours; the `take` ends before `finish` posts the job.
+            // SAFETY: `do_close` returned `false`, so `*this` is still ours;
+            // `finish` is the hand-over.
             if let Some(io_task) = unsafe { (*this).io_task.take() } {
                 bloblog!("ReadFile.onFinish() = immediately");
                 io_task.finish();
@@ -777,22 +758,18 @@ impl ReadFile {
         }
     }
 
-    /// `FileOpener::get_fd`'s callback, reached from `JobContext::run`. Both
-    /// of those hand this frame `&mut self`, so unlike the pool re-entries
-    /// (`update`) a reference to the object is still live up the stack during
-    /// the hand-over; this frame at least finishes its own use of `self`
-    /// first and hands over through a pointer as its last act.
+    /// `FileOpener::get_fd`'s callback. `get_fd` and `JobContext::run` still
+    /// pass `&mut self` down to here, so this frame's own use of it ends before
+    /// the hand-over.
     #[cfg(not(windows))]
     fn run_async_with_fd(&mut self, fd: Fd) {
         let next = self.prepare_read(fd);
         let this: *mut Self = self;
-        // SAFETY: `this` is the live `ReadFile` `get_fd` called us with, and
-        // this frame does not use `self` or `this` after the call.
+        // SAFETY: live `ReadFile` from `get_fd`; neither binding is used afterwards.
         unsafe { Self::proceed(this, next) }
     }
 
-    /// The part of starting a read that happens before anything is handed
-    /// on: stat, buffer sizing, and the initial readability check.
+    /// Stat, buffer sizing and the initial readability check.
     #[cfg(not(windows))]
     fn prepare_read(&mut self, fd: Fd) -> Next {
         if self.errno.is_some() {
@@ -851,10 +828,8 @@ impl ReadFile {
     }
 
     fn do_read_loop_task(task: *mut WorkPoolTask) {
-        // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
-        // `&raw mut self.task` (intrusive) scheduled by `on_ready` /
-        // `on_io_error`; recover the parent, which is this thread's until
-        // `update` hands it on.
+        // SAFETY: `task` is the intrusive field `on_ready` / `on_io_error`
+        // scheduled; the parent is this thread's until `update` hands it on.
         unsafe { Self::update(ReadFile::from_task_ptr(task)) }
     }
 
@@ -862,16 +837,14 @@ impl ReadFile {
     /// As [`update`](Self::update).
     #[cfg(not(windows))]
     unsafe fn do_read_loop(this: *mut Self) {
-        // SAFETY: fn contract; the reborrow ends with the call, before
-        // `proceed` hands the object on through `this`.
+        // SAFETY: fn contract; the reborrow ends with the call.
         let next = unsafe { (*this).read_until_blocked() };
         // SAFETY: fn contract, passed through.
         unsafe { Self::proceed(this, next) }
     }
 
-    /// Reads until the read is complete (`Finish`: EOF, `max_length`, or an
-    /// error recorded in `errno`) or the fd would block (`WaitForReadable`).
-    /// Never produces `ReadLoop`.
+    /// Reads until done (`Finish`: EOF, `max_length` or `errno`) or the fd
+    /// would block (`WaitForReadable`).
     #[cfg(not(windows))]
     fn read_until_blocked(&mut self) -> Next {
         // we hold a 64 KB stack buffer incase the amount of data to
@@ -1211,8 +1184,7 @@ impl<'a> ReadFileUV<'a> {
 
         if needs_close {
             let is_allowed_to_close_fd = self.is_allowed_to_close();
-            // SAFETY: `self` is live; with no `io_request` (see the
-            // `FileCloser` impl) this only closes the fd and returns `false`.
+            // SAFETY: `self` is live; without an `io_request` this only closes the fd.
             if unsafe { Self::do_close(self, is_allowed_to_close_fd) } {
                 // we have to wait for the close to finish
                 return;

@@ -915,26 +915,19 @@ impl IoRequestLoop {
     /// async-signal-safe `waker`. This is the *only* cross-thread entry
     /// point — every other `IoRequestLoop` method is IO-thread-only.
     ///
-    /// The push is the hand-over: from that instant the IO thread may pop the
-    /// request, clear `scheduled`, run its callback and (through `on_error` /
-    /// `on_done`) pass the owner on to a pool thread, all before this returns
-    /// from `wake()`. That is why this takes the pointer rather than `&mut
-    /// Request` (a reference argument would stay protected across the push),
-    /// and why the pointer has to be projected from the owner: the IO thread
-    /// hands this exact pointer to [`Request::callback`], which recovers the
-    /// owner from it by container-of, so its provenance must cover the owner,
-    /// which a `&mut self.io_request` reborrow's does not.
+    /// The push is the hand-over (the IO thread may be running the callback
+    /// before `wake()` returns), and the callback recovers the owner from this
+    /// very pointer by container-of, hence `*mut` projected from the owner
+    /// rather than `&mut`.
     ///
     /// # Safety
-    /// `request` is `&raw mut (*owner).io_request` of a live owner that the
-    /// calling thread currently holds, with `scheduled == false`. Once this is
-    /// called the owner belongs to the IO thread: the caller must not touch the
-    /// request or its owner again (not even through a reference it already
-    /// holds) until the IO thread hands it back.
+    /// `request` is `&raw mut (*owner).io_request` of a live, unscheduled owner
+    /// the caller holds; the caller touches neither again until the IO thread
+    /// hands the owner back.
     pub unsafe fn schedule(request: *mut Request) {
         Self::ensure_init();
         let request = core::ptr::NonNull::new(request).expect("io request of a live owner");
-        // SAFETY: fn contract — live and ours until the push below.
+        // SAFETY: fn contract — ours until the push below.
         unsafe {
             debug_assert!(!(*request.as_ptr()).scheduled);
             (*request.as_ptr()).scheduled = true;
@@ -954,20 +947,13 @@ impl IoRequestLoop {
         }
     }
 
-    /// IO thread: a request just popped from `pending` is this thread's now.
-    /// Clears its `scheduled` bit and asks the owner what to do with it.
-    ///
-    /// The callback gets `request` as popped, i.e. the pointer `schedule` was
-    /// given, so the owner it recovers by container-of is in bounds of it. The
-    /// returned action's `poll` points into that owner, which stays this
-    /// thread's only until the action's `on_error` / `on_done` hands it on:
-    /// every use of `poll` has to come before that call.
+    /// IO thread: runs the callback of a request just popped from `pending`,
+    /// passing the pointer through as `schedule` was given it (see [`Action`]
+    /// for how long the result may be used).
     #[cfg(not(windows))]
     fn take_request(request: *mut Request) -> Action {
-        // SAFETY: `pending` only holds pointers that went through `schedule`,
-        // whose contract makes each the request field of a live owner, with
-        // the owner's provenance, that nobody else touches until the IO thread
-        // hands it on; popping it made it this thread's.
+        // SAFETY: `pending` only holds pointers that went through `schedule`
+        // (live owner, owner provenance); popping one made it this thread's.
         unsafe {
             (*request).scheduled = false;
             ((*request).callback)(request)
@@ -1002,8 +988,7 @@ impl IoRequestLoop {
     /// The `Readable` / `Writable` arm of [`tick_epoll`](Self::tick_epoll).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn register_epoll(watcher_fd: Fd, file: &FileAction, flag: Flags) {
-        // SAFETY: `take_request` — the owner is ours until `on_error` hands it
-        // on, and this is the last use of `poll` before that.
+        // SAFETY: see `Action` — `poll` is live and ours until `on_error` below.
         let registered = unsafe {
             Poll::register_for_epoll(file.poll, flag, file.tag, watcher_fd, true, file.fd)
         };
@@ -1033,9 +1018,8 @@ impl IoRequestLoop {
                             Self::register_epoll(watcher_fd, &file, Flags::PollWritable)
                         }
                         Action::Close(close) => {
-                            // SAFETY: `take_request` — the owner is ours until
-                            // `on_done` hands it on; the reborrow ends with this
-                            // block.
+                            // SAFETY: see `Action` — `poll` is live and ours until
+                            // `on_done` below; the reborrow ends with the block.
                             unsafe {
                                 let poll = &mut *close.poll;
                                 log!(
@@ -1148,9 +1132,8 @@ impl IoRequestLoop {
                     }
                     match Self::take_request(request) {
                         Action::Readable(readable) => {
-                            // SAFETY: `take_request` — the owner stays ours
-                            // until the kernel reports the fd (no hand-on in
-                            // this arm).
+                            // SAFETY: see `Action` — `poll` is live and ours
+                            // (nothing in this arm hands the owner on).
                             unsafe {
                                 Poll::apply_kqueue(
                                     ApplyAction::Readable,
@@ -1174,9 +1157,8 @@ impl IoRequestLoop {
                             }
                         }
                         Action::Close(close) => {
-                            // SAFETY: `take_request` — the owner is ours until
-                            // `on_done` hands it on, and this block is the last
-                            // use of `poll` before that.
+                            // SAFETY: see `Action` — `poll` is live and ours until
+                            // `on_done` below.
                             unsafe {
                                 let flags = (*close.poll).flags;
                                 if flags.contains(Flags::PollReadable)
@@ -1236,15 +1218,12 @@ impl IoRequestLoop {
 
 // ─── Request ──────────────────────────────────────────────────────────────────
 
-/// What the IO thread does with a popped [`Request`]. Receives the pointer
-/// [`IoRequestLoop::schedule`] was given (the owner's `io_request` field, with
-/// the owner's provenance), so the trampoline may recover the owner from it
-/// with [`IntrusiveIoRequest::from_io_request`]. `scheduled` has already been
-/// cleared when this runs.
+/// Run by the IO thread with the pointer [`IoRequestLoop::schedule`] was given
+/// (`scheduled` already cleared), so it may recover the owner via
+/// [`IntrusiveIoRequest::from_io_request`].
 ///
 /// # Safety
-/// Only the IO thread may call it, with a pointer that went through
-/// `schedule` and has not been handed back since.
+/// IO thread only, with a pointer `schedule` was given and has not handed back.
 pub type RequestCallback = unsafe fn(*mut Request) -> Action;
 
 pub struct Request {
@@ -1307,9 +1286,8 @@ pub unsafe trait IntrusiveIoRequest: Sized {
     /// # Safety
     /// `req` must point to the [`Request`] field at `Self::IO_REQUEST_OFFSET`
     /// inside a live `Self` allocation that was scheduled via that field, and
-    /// the pointer's provenance must cover the whole allocation. The pointer a
-    /// [`RequestCallback`] receives satisfies this: it is the one
-    /// [`IoRequestLoop::schedule`] requires to be projected from the owner.
+    /// the pointer's provenance must cover the whole allocation (true of the
+    /// pointer a [`RequestCallback`] receives, per [`IoRequestLoop::schedule`]).
     #[inline(always)]
     unsafe fn from_io_request(req: *mut Request) -> *mut Self {
         // SAFETY: caller upholds the trait safety contract above.
@@ -1398,13 +1376,10 @@ pub(crate) type RequestQueue = bun_threading::UnboundedQueue<Request>;
 
 // ─── Action ───────────────────────────────────────────────────────────────────
 
-/// Returned by a [`RequestCallback`]. `poll` and `ctx` point into the
-/// request's owner, which is the IO thread's until the action's `on_error` /
-/// `on_done` hands it on; `poll` is a pointer (projected from the owner, like
-/// the request itself) rather than a `&mut` both so the IO thread holds no
-/// reference into the owner across that hand-on and because the address
-/// registered with the kernel is derived from it and later turned back into
-/// the owner by container-of (`__bun_io_pollable_on_ready`).
+/// Returned by a [`RequestCallback`]. `poll` / `ctx` point into the owner,
+/// which is the IO thread's only until `on_error` / `on_done` hands it on.
+/// `poll` is projected from the owner like the request: the kernel hands its
+/// address back and `__bun_io_pollable_on_ready` container-ofs the owner from it.
 pub enum Action {
     Readable(FileAction),
     Writable(FileAction),
@@ -1570,12 +1545,8 @@ enum ApplyAction {
 }
 
 impl Poll {
-    /// `poll` is an [`Action`]'s `poll` (see there): the address the kernel
-    /// hands back as `udata` is taken from it as given, so that the owner
-    /// recovered from it in `on_update_kqueue`'s dispatch is in bounds of it.
-    ///
     /// # Safety
-    /// `poll` is the `io_poll` of a live owner the IO thread currently holds.
+    /// `poll` is an [`Action`]'s `poll`, live and the IO thread's.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     #[inline]
     pub(crate) unsafe fn apply_kqueue(
@@ -1596,9 +1567,9 @@ impl Poll {
         );
 
         let one_shot_flag = libc::EV_ONESHOT;
+        // `udata` comes from the pointer itself (see `Action`), not the reborrow.
         let udata: usize = Pollable::init(tag, poll).ptr() as usize;
-        // SAFETY: fn contract; the reborrow lasts for this call only, and the
-        // `udata` the kernel keeps was taken from the pointer above it.
+        // SAFETY: fn contract; the reborrow lasts for this call only.
         let poll = unsafe { &mut *poll };
         let (filter, flags_): (i16, u16) = match action {
             ApplyAction::Readable => (libc::EVFILT_READ, libc::EV_ADD | one_shot_flag),
@@ -1752,13 +1723,8 @@ impl Poll {
         }
     }
 
-    /// `poll` is an [`Action`]'s `poll` (see there): the address the kernel
-    /// hands back in `epoll_event.u64` is taken from it as given, so that the
-    /// owner recovered from it in `on_update_epoll`'s dispatch is in bounds of
-    /// it.
-    ///
     /// # Safety
-    /// `poll` is the `io_poll` of a live owner the IO thread currently holds.
+    /// `poll` is an [`Action`]'s `poll`, live and the IO thread's.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     // `enumset::EnumSetType` cannot be a const generic, so `flag` is a runtime
     // arg. The `match` below preserves the exhaustiveness check.
@@ -1774,9 +1740,9 @@ impl Poll {
 
         debug_assert!(fd != Fd::INVALID);
 
+        // `udata` comes from the pointer itself (see `Action`), not the reborrow.
         let udata = Pollable::init(tag, poll).ptr();
-        // SAFETY: fn contract; the reborrow lasts for this call only, and the
-        // `udata` the kernel keeps was taken from the pointer above it.
+        // SAFETY: fn contract; the reborrow lasts for this call only.
         let this = unsafe { &mut *poll };
 
         if one_shot {

@@ -7037,12 +7037,8 @@ pub trait FileCloser: Sized {
     fn set_opened_fd(&mut self, fd: Fd);
     fn close_after_io(&self) -> bool;
     fn state(&self) -> &core::sync::atomic::AtomicU8;
-    /// The embedded request [`do_close`](Self::do_close) hands to the io
-    /// thread, projected from `this` (`&raw mut (*this).io_request`, never a
-    /// `&mut` reborrow: `bun_io::IoRequestLoop::schedule` wants a pointer the
-    /// whole `Self` is reachable through, because `schedule_close` gets it
-    /// back and recovers `Self` from it). `None` when the type never goes
-    /// through the io thread (`ReadFileUV`).
+    /// `&raw mut (*this).io_request`, as `bun_io::IoRequestLoop::schedule`
+    /// requires; `None` if the type never uses the io thread (`ReadFileUV`).
     ///
     /// # Safety
     /// `this` points at a live `Self`.
@@ -7052,14 +7048,12 @@ pub trait FileCloser: Sized {
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t;
 
-    /// The io thread's side of `do_close`: a `bun_io::RequestCallback`.
-    /// Intrusive backref: Rust `offset_of!` cannot name fields on a trait
-    /// `Self`, so each concrete impl supplies its own container_of recovery
-    /// (no default body).
+    /// The `bun_io::RequestCallback` `do_close` installs. Intrusive backref:
+    /// Rust `offset_of!` cannot name fields on a trait `Self`, so each concrete
+    /// impl supplies its own container_of recovery (no default body).
     ///
     /// # Safety
-    /// `bun_io::RequestCallback`'s contract: io thread, `request` is the
-    /// pointer `do_close` scheduled.
+    /// `bun_io::RequestCallback`'s contract.
     unsafe fn schedule_close(request: *mut bun_io::Request) -> bun_io::Action;
 
     fn on_io_request_closed(this: &mut Self) {
@@ -7081,18 +7075,14 @@ pub trait FileCloser: Sized {
     /// `container_of` deref locally, so a fn-level qualifier is redundant.
     fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask);
 
-    /// Returns `true` when the close was handed to the io thread instead:
-    /// `*this` belongs to it from that moment (it comes back through
-    /// `on_close_io_request`), which is why this takes the pointer the caller
-    /// holds rather than `&mut self`, and why the hand-over is the last thing
-    /// here that touches `*this`.
+    /// Returns `true` when `*this` was handed to the io thread instead (it comes
+    /// back through `on_close_io_request`); that hand-over is the last access.
     ///
     /// # Safety
-    /// `this` is a live `Self` that the calling thread currently holds. After
-    /// a `true` return the caller must not touch `*this` again.
+    /// `this` is a live `Self` the caller holds; after a `true` return the
+    /// caller must not touch it again.
     unsafe fn do_close(this: *mut Self, is_allowed_to_close_fd: bool) -> bool {
-        // SAFETY: fn contract. Each access below is a place expression or a
-        // reborrow that ends with its statement; nothing follows the schedule.
+        // SAFETY: fn contract; every reborrow below ends with its statement.
         unsafe {
             if (*this).close_after_io() {
                 (*this).state().store(
@@ -7131,10 +7121,8 @@ pub trait FileCloser: Sized {
 
 /// Implements [`FileCloser`] for a task struct with the standard field set
 /// (`opened_fd`, `close_after_io`, `state`, `io_request`, `io_poll`, `task`),
-/// an inherent `unsafe fn update(this: *mut Self)` (the pool re-entry after
-/// the io thread closed the request), and a [`bun_io::Tag`] variant named
-/// after the type.
-/// The type must also carry `bun_threading::intrusive_work_task!` and
+/// an inherent `unsafe fn update(this: *mut Self)`, and a [`bun_io::Tag`]
+/// variant named after the type. The type must also carry `bun_threading::intrusive_work_task!` and
 /// `bun_io::intrusive_io_request!`, which provide the parent-pointer recovery
 /// used by the two trampolines.
 macro_rules! impl_file_closer {
@@ -7170,17 +7158,14 @@ macro_rules! impl_file_closer {
 
             unsafe fn schedule_close(request: *mut ::bun_io::Request) -> ::bun_io::Action {
                 use ::bun_io::IntrusiveIoRequest as _;
-                // SAFETY: fn contract — `request` is the `&raw mut (*this).io_request`
-                // that `do_close` scheduled, so the parent is live and reachable
-                // through it.
+                // SAFETY: fn contract — `request` is the projection `do_close` scheduled.
                 let this = unsafe { $T::from_io_request(request) };
                 fn on_done(ctx: *mut ()) {
                     // SAFETY: ctx is `self as *mut Self` set below.
                     let this = unsafe { ::bun_ptr::callback_ctx::<$T>(ctx.cast()) };
                     <$T as crate::webcore::blob::FileCloser>::on_io_request_closed(this);
                 }
-                // SAFETY: as above; the `fd` read ends here and `io_poll` is only
-                // projected, so no reference into the parent outlives this call.
+                // SAFETY: as above; a field read and a projection, no reference escapes.
                 let (fd, poll) = unsafe { ((*this).opened_fd, &raw mut (*this).io_poll) };
                 ::bun_io::Action::Close(::bun_io::CloseAction {
                     fd,
@@ -7202,8 +7187,7 @@ macro_rules! impl_file_closer {
                 // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
                 // recover parent.
                 let this = unsafe { $T::from_task_ptr(task) };
-                // SAFETY: `this` is the live parent (see above) and this thread's
-                // until `update` hands it on, which is why it gets the pointer.
+                // SAFETY: as above; `update` takes the pointer because it hands it on.
                 unsafe {
                     (*this).close_after_io = false;
                     $T::update(this);

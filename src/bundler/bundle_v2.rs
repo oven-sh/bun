@@ -5367,8 +5367,6 @@ pub mod bv2_impl {
                                 if loaders[record.source_index.get() as usize] != Loader::Css {
                                     continue;
                                 }
-                                // No chunk for failed CSS, but keep the record's source index:
-                                // the HTML rewriter and HMR import conversion key on it.
                                 if parts[record.source_index.get() as usize].len() == 0 {
                                     continue;
                                 }

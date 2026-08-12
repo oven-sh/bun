@@ -3355,17 +3355,11 @@ describe.concurrent(
       expect(exitCode).toBe(0);
       return JSON.parse(stdout.trim());
     }
-    // Every case here spawns a debug-build subprocess, and the block runs them concurrently, so on a
-    // debug build they land around the default timeout; scale the ceiling like the other slow cases
-    // in this file.
-    const SUBPROCESS_TIMEOUT = 5_000 * ASAN_MULTIPLIER;
 
     // A single-frame write (<= 16374 bytes) corked behind HEADERS straddles the 16 KiB cork;
     // the mid-write cork flush is what runs the Duplex.
-    it.each(["transfer", "resize0"])(
-      "single DATA frame straddling the cork flush (%s)",
-      async mode => {
-        const result = await run(/* js */ `
+    it.each(["transfer", "resize0"])("single DATA frame straddling the cork flush (%s)", async mode => {
+      const result = await run(/* js */ `
       const holder = { src: payload(16374, ${mode === "resize0"}) };
       const snap = Buffer.from(holder.src);
       let armed = false, fired = 0;
@@ -3382,19 +3376,15 @@ describe.concurrent(
       console.log(JSON.stringify({ fired: fired > 0, foreign: foreign(duplex.data(), snap) }));
       process.exit(0);
     `);
-        expect(result).toEqual({ fired: true, foreign: 0 });
-      },
-      SUBPROCESS_TIMEOUT,
-    );
+      expect(result).toEqual({ fired: true, foreign: 0 });
+    });
 
     // HEADERS sized so the cork sits within 8 bytes of full: the 9-byte DATA frame header is
     // what straddles, so the Duplex runs before the payload itself is written at all. The
     // header value uses a character HPACK will not huffman-encode, so the block length tracks
     // N byte for byte; the sweep keeps the case on target if the fixed overhead ever shifts.
-    it(
-      "DATA frame header straddling the cork flush",
-      async () => {
-        const result = await run(/* js */ `
+    it("DATA frame header straddling the cork flush", async () => {
+      const result = await run(/* js */ `
       const results = [];
       for (let n = 16344; n <= 16352; n++) {
         const holder = { src: payload(8000, false) };
@@ -3420,17 +3410,13 @@ describe.concurrent(
       }));
       process.exit(0);
     `);
-        expect(result).toEqual({ hitWindow: true, allFired: true, foreign: 0 });
-      },
-      SUBPROCESS_TIMEOUT,
-    );
+      expect(result).toEqual({ hitWindow: true, allFired: true, foreign: 0 });
+    });
 
     // A write larger than the peer's window: the in-window part is batched and flushed (running
     // the Duplex) and only then is the remainder queued until WINDOW_UPDATE arrives.
-    it(
-      "flow-control-limited tail queued after a flush",
-      async () => {
-        const result = await run(/* js */ `
+    it("flow-control-limited tail queued after a flush", async () => {
+      const result = await run(/* js */ `
       const SZ = 65535 + 32768;
       const holder = { src: payload(SZ, false) };
       const snap = Buffer.from(holder.src);
@@ -3451,17 +3437,13 @@ describe.concurrent(
       console.log(JSON.stringify({ fired: fired > 0, foreign: foreign(duplex.data(), snap) }));
       process.exit(0);
     `);
-        expect(result).toEqual({ fired: true, foreign: 0 });
-      },
-      SUBPROCESS_TIMEOUT,
-    );
+      expect(result).toEqual({ fired: true, foreign: 0 });
+    });
 
     // Two sessions share the thread's cork slot. B's write first flushes A's corked HEADERS
     // through A's Duplex, and it is A's transport JS that detaches B's payload.
-    it(
-      "another session's transport JS running on cork handover",
-      async () => {
-        const result = await run(/* js */ `
+    it("another session's transport JS running on cork handover", async () => {
+      const result = await run(/* js */ `
       const holder = { src: payload(8000, false) };
       const snap = Buffer.from(holder.src);
       let armed = false, fired = 0;
@@ -3480,10 +3462,8 @@ describe.concurrent(
       console.log(JSON.stringify({ fired: fired > 0, foreign: foreign(duplexB.data(), snap) }));
       process.exit(0);
     `);
-        expect(result).toEqual({ fired: true, foreign: 0 });
-      },
-      SUBPROCESS_TIMEOUT,
-    );
+      expect(result).toEqual({ fired: true, foreign: 0 });
+    });
 
     // Same handover, but B is a native TCP connection to a local h2c server: B's own writes
     // never run JS, so the only JS that can touch B's payload mid-send is A's Duplex being
@@ -3532,17 +3512,14 @@ describe.concurrent(
     `);
         expect(result).toEqual({ native: true, firedDuringWrite: true, foreign: 0 });
       },
-      SUBPROCESS_TIMEOUT,
     );
 
     // The session's socket is a native TLSSocket, but one upgraded from a JS Duplex
     // (tls.connect({ socket })), so every TLS record is written through that Duplex's JS.
     // Oracle: the request body a real secure server receives.
-    it.each(["straddle", "tail"])(
-      "TLSSocket over a JS Duplex against a real server (%s)",
-      async face => {
-        const result = await run(
-          /* js */ `
+    it.each(["straddle", "tail"])("TLSSocket over a JS Duplex against a real server (%s)", async face => {
+      const result = await run(
+        /* js */ `
       const net = require("node:net");
       const tls = require("node:tls");
       const SZ = ${face === "tail" ? 65535 + 32768 : 16374};
@@ -3592,12 +3569,10 @@ describe.concurrent(
       console.log(JSON.stringify({ native: !!socket._handle, fired: fired > 0, foreign: foreign(got, snap) }));
       process.exit(0);
     `,
-          { ...bunEnv, TLS_CERT_JSON: JSON.stringify(TLS_CERT) },
-        );
-        expect(result).toEqual({ native: true, fired: true, foreign: 0 });
-      },
-      SUBPROCESS_TIMEOUT,
-    );
+        { ...bunEnv, TLS_CERT_JSON: JSON.stringify(TLS_CERT) },
+      );
+      expect(result).toEqual({ native: true, fired: true, foreign: 0 });
+    });
   },
 );
 

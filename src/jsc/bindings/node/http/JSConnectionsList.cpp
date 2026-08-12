@@ -149,7 +149,9 @@ JSArray* JSConnectionsList::expired(JSGlobalObject* globalObject, uint64_t heade
 
         if ((!parser->impl()->headersCompleted() && headersDeadline > 0 && parser->impl()->lastMessageStart() < headersDeadline) || (requestDeadline > 0 && parser->impl()->lastMessageStart() < requestDeadline)) {
             result->putDirectIndex(globalObject, i++, item);
+            RETURN_IF_EXCEPTION(scope, {});
             active->remove(globalObject, item);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 

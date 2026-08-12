@@ -540,6 +540,208 @@ devTest("error report endpoint tolerates a browser url whose normalized origin i
   },
 });
 
+/** The dev error page embeds its payload as JSON (see src/runtime/server/DevErrorPage.rs). */
+async function expectErrorPage(response: Promise<Response>, ...messages: string[]) {
+  const res = await response;
+  const text = await res.text();
+  const payload = JSON.parse(/<script id="__bunfallback" type="application\/json">([^<]*)<\/script>/.exec(text)![1]);
+  expect(payload.problems.exceptions.map((exception: any) => exception.message)).toEqual(messages);
+  expect(res.status).toBe(500);
+}
+
+devTest("a route that failed because its dependency rejected is loaded again once the dependency is fixed", {
+  // The route fails together with its dependency and remembers that failure.
+  // Fixing the dependency only replaces the dependency; the route, whose body
+  // never ran, has no import bindings to patch, so it has to be evaluated
+  // again on the next request instead of rethrowing the old failure.
+  framework: minimalFramework,
+  files: {
+    "dep.ts": `
+      await 1;
+      export const value = "unreachable";
+      throw new Error("dep rejected");
+    `,
+    "routes/index.ts": `
+      import { value } from "../dep";
+      export default function () {
+        return new Response("value: " + value);
+      }
+    `,
+  },
+  async test(dev) {
+    await expectErrorPage(dev.fetch("/"), "dep rejected");
+    await expectErrorPage(dev.fetch("/"), "dep rejected");
+    await dev.write(
+      "dep.ts",
+      `
+        await 1;
+        export const value = "fixed";
+      `,
+    );
+    await dev.fetch("/").equals("value: fixed");
+  },
+});
+
+devTest("a failed module with top-level await is loaded again by import() once its dependency is fixed", {
+  // `async-mod` fails along with `dep` and is marked for another evaluation
+  // when `dep` is fixed. require() still refuses it (it has top-level await),
+  // which must not consume that mark: the import() after it has to evaluate
+  // it instead of getting back the never-evaluated module.
+  framework: minimalFramework,
+  files: {
+    "dep.ts": `
+      await 1;
+      export const value = "unreachable";
+      throw new Error("dep rejected");
+    `,
+    "async-mod.ts": `
+      import { value } from "./dep";
+      await 1;
+      export const result = "async-mod: " + value;
+    `,
+    "routes/index.ts": `
+      export default async function () {
+        const results = [];
+        try {
+          results.push("require: " + require("../async-mod").result);
+        } catch (e) {
+          results.push("require threw: " + e.message);
+        }
+        try {
+          results.push("import: " + (await import("../async-mod")).result);
+        } catch (e) {
+          results.push("import threw: " + e.message);
+        }
+        return Response.json(results);
+      }
+    `,
+  },
+  async test(dev) {
+    const cannotRequire = `require threw: Cannot require "async-mod.ts" because "async-mod.ts" uses top-level await, but 'require' is a synchronous operation.`;
+    expect(await dev.fetch("/").json()).toEqual([cannotRequire, "import threw: dep rejected"]);
+    await dev.write(
+      "dep.ts",
+      `
+        await 1;
+        export const value = "fixed";
+      `,
+    );
+    expect(await dev.fetch("/").json()).toEqual([cannotRequire, "import: async-mod: fixed"]);
+  },
+});
+
+devTest("a route that threw because of its dependency's exports is evaluated again when the dependency changes", {
+  framework: minimalFramework,
+  files: {
+    "config.ts": `
+      export const port = "not a number";
+    `,
+    "routes/index.ts": `
+      import { port } from "../config";
+      if (typeof port !== "number") throw new Error("invalid port: " + port);
+      export default function () {
+        return new Response("port: " + port);
+      }
+    `,
+  },
+  async test(dev) {
+    await expectErrorPage(dev.fetch("/"), "invalid port: not a number");
+    // Still broken: the route is evaluated against the new dependency and
+    // reports the new failure, not the remembered one.
+    await dev.write("config.ts", `export const port = "still not a number";`);
+    await expectErrorPage(dev.fetch("/"), "invalid port: still not a number");
+    await dev.write("config.ts", `export const port = 3000;`);
+    await dev.fetch("/").equals("port: 3000");
+    // Once loaded, the route takes further updates as a regular importer.
+    await dev.write("config.ts", `export const port = 3001;`);
+    await dev.fetch("/").equals("port: 3001");
+  },
+});
+
+devTest("every route that failed because of a dependency is evaluated again when the dependency changes", {
+  // `dep` is imported by one route directly and by the other one through
+  // `shared`. Discovering the failed modules must walk all of `dep`'s
+  // importers, including the ones behind a root that does not accept the
+  // update, rather than stopping at the first such root.
+  framework: minimalFramework,
+  files: {
+    "dep.ts": `
+      export const value = "broken";
+    `,
+    "shared.ts": `
+      export { value } from "./dep";
+    `,
+    "routes/index.ts": `
+      import { value } from "../dep";
+      if (value === "broken") throw new Error("index: dep is broken");
+      export default function () {
+        return new Response("index: " + value);
+      }
+    `,
+    "routes/other.ts": `
+      import { value } from "../shared";
+      if (value === "broken") throw new Error("other: dep is broken");
+      export default function () {
+        return new Response("other: " + value);
+      }
+    `,
+  },
+  async test(dev) {
+    await expectErrorPage(dev.fetch("/"), "index: dep is broken");
+    await expectErrorPage(dev.fetch("/other"), "other: dep is broken");
+    await dev.write("dep.ts", `export const value = "fixed";`);
+    await dev.fetch("/").equals("index: fixed");
+    await dev.fetch("/other").equals("other: fixed");
+  },
+});
+
+devTest("a module that failed because its dependency rejected is loaded again once the dependency is fixed (client)", {
+  // Same as the server tests above, in the browser runtime. The failure is
+  // reached through import() so that it does not take the page down; the
+  // entry point accepts the update so that it is applied without a reload.
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      globalThis.loadLazy = async () => {
+        try {
+          return (await import("./lazy")).value;
+        } catch (e) {
+          return "failed: " + e.message;
+        }
+      };
+      console.log("ready");
+      import.meta.hot.accept();
+    `,
+    "lazy.ts": `
+      import { value } from "./dep";
+      export { value };
+    `,
+    "dep.ts": `
+      await 1;
+      export const value = "unreachable";
+      throw new Error("dep rejected");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("ready");
+    expect(await c.js`loadLazy()`).toBe("failed: dep rejected");
+    expect(await c.js`loadLazy()`).toBe("failed: dep rejected");
+    await dev.write(
+      "dep.ts",
+      `
+        await 1;
+        export const value = "fixed";
+      `,
+    );
+    // The self-accepting entry point is evaluated again by the update.
+    await c.expectMessage("ready");
+    expect(await c.js`loadLazy()`).toBe("fixed");
+  },
+});
+
 devTest("html routes reject requests whose host header does not match the dev server", {
   files: {
     "index.html": emptyHtmlFile({

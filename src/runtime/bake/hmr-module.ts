@@ -82,8 +82,9 @@ export class HMRModule {
   /** For ESM, this is the converted CJS exports.
    *  For CJS, this is the `module` object. */
   cjs: CJSModule | any | null;
-  /** When a module fails to load, trying to load it again
-   *  should throw the same error */
+  /** When a module fails to load, trying to load it again should throw the
+   *  same error, until a hot update replaces it or a module it imports
+   *  (`replaceModules` then has it evaluated again). */
   failure: unknown = null;
   /** Two purposes:
    * 1. HMRModule[] - List of parsed imports. indexOf is used to go from HMRModule -> updater function
@@ -332,6 +333,10 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     }
     const { [ESMProps.imports]: deps, [ESMProps.load]: load, [ESMProps.isAsync]: isAsync } = loadOrEsmModule;
     if (isAsync) {
+      // `mod` is only set here if it was stale. Put it back: a refused
+      // require() does not evaluate it, and a Pending module would be handed
+      // out as-is by the next load.
+      if (mod) mod.state = State.Stale;
       throw new AsyncImportError(id);
     }
     if (!mod) {
@@ -619,7 +624,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   const toDispose: HMRModule[] = [];
 
   // Discover all HMR boundaries
-  outer: for (const key of Object.keys(modules)) {
+  for (const key of Object.keys(modules)) {
     // Unref old source maps, and track new ones
     if (side === "client") {
       DEBUG.ASSERT(sourceMapId);
@@ -641,9 +646,22 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       const mod = queue.shift();
       if (!mod) break;
 
-      // Stop propagation if the module is self-accepting
       let hadSelfAccept = true;
-      if (mod.selfAccept) {
+      if (mod.state === State.Error) {
+        // A failed evaluation left no import bindings to patch, and nothing it
+        // registered can accept the update: the module is evaluated again by
+        // its next load (for a replaced module, the reload below). Not doing
+        // that here reports a repeated failure to whatever loads the module,
+        // and does not evaluate it while a replaced dependency with top-level
+        // await is still loading. Its importers failed along with it, so the
+        // walk continues through it.
+        mod.state = State.Stale;
+        mod.failure = null;
+        mod.selfAccept = null;
+        mod.depAccepts = null;
+      }
+      // Stop propagation if the module is self-accepting
+      else if (mod.selfAccept) {
         toReload.add(mod);
         visited.add(mod);
         hadSelfAccept = false;
@@ -662,15 +680,18 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         }
       }
 
-      // All importers will be visited
+      // A root that does not accept the update. The rest of the queue is still
+      // walked: the boundaries and failed modules behind the other importers
+      // are needed by the server, which applies the update regardless.
       if (hadSelfAccept && mod.importers.size === 0) {
         failures ??= new Set();
         failures.add(key);
-        continue outer;
       }
 
       for (const importer of mod.importers) {
-        const cb = importer.depAccepts?.[key];
+        // A failed importer is queued to be evaluated again (above) rather
+        // than asked to accept the update.
+        const cb = importer.state === State.Error ? null : importer.depAccepts?.[key];
         if (cb) {
           toAccept.push({ cb, key });
         } else if (hadSelfAccept) {

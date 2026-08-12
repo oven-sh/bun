@@ -1421,6 +1421,24 @@ describe("SQL helpers", () => {
     const raw = await strictSql.unsafe("SELECT id FROM named_modes_test WHERE id = :id", { id: 7 }).raw();
     expect(raw).toHaveLength(1);
     expect(raw[0]).toHaveLength(1);
+    const idBuf = raw[0][0] as Uint8Array;
+    expect(idBuf).toBeInstanceOf(Uint8Array);
+    expect(new DataView(idBuf.buffer, idBuf.byteOffset, idBuf.byteLength).getBigInt64(0, true)).toBe(7n);
+  });
+
+  test("unsafe with named parameters rejects on missing bindings in strict mode", async () => {
+    await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE missing_binding_test (id INTEGER, name TEXT)`;
+    await strictSql.unsafe("INSERT INTO missing_binding_test VALUES (:id, :name)", { id: 1, name: "Alice" });
+
+    await expect(
+      async () =>
+        await strictSql.unsafe("SELECT * FROM missing_binding_test WHERE id = :id AND name = :name", { id: 1 }),
+    ).toThrow('Missing parameter "name"');
+
+    // The statement from the failed query is finalized and the connection stays usable.
+    const rows = await strictSql.unsafe("SELECT * FROM missing_binding_test WHERE id = :id", { id: 1 });
+    expect(rows).toEqual([{ id: 1, name: "Alice" }]);
   });
 
   test("unsafe with named parameters for UPDATE and DELETE", async () => {

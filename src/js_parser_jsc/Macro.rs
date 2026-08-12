@@ -429,13 +429,10 @@ impl Macro {
             // JSC needs to be initialized if building from CLI
             jsc::initialize(false);
 
-            // This VM stays on the thread and serves every later build's
-            // macros too, while `env` is the current build's (Bun.build frees
-            // its copy with the build), so the VM gets a copy that lives as
-            // long as it does: it is never destroyed.
+            // The VM outlives this build (later builds' macros reuse it; it is
+            // never destroyed) and `env` does not, so the VM gets its own copy.
             let env_loader = NonNull::new(env).map(|env| {
-                // SAFETY: the caller's loader, live for this call and not
-                // written to while the build's files are being parsed.
+                // SAFETY: the caller's loader, live and unwritten during this build.
                 let copy = bun_core::handle_oom(unsafe { env.as_ref() }.clone());
                 bun_core::heap::into_raw_nn(Box::new(copy))
             });

@@ -1194,9 +1194,8 @@ impl CompletionStruct for JSBundleCompletionTask {
         };
 
         let log: *mut bun_ast::Log = &raw mut self.log;
-        // Freed with `self`, so only read until `complete_on_bundle_thread` hands
-        // `self` back; the per-thread macro VM, which outlives the build, takes
-        // its own copy (`Macro::init`).
+        // Freed with `self`: read only until `complete_on_bundle_thread`, except
+        // by the per-thread macro VM, which copies it (`Macro::init`).
         let env: *mut bun_dotenv::Loader = &raw mut *self.env;
         let t = Transpiler::init(bump, log, opts, Some(env))?;
         let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);

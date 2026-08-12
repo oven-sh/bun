@@ -143,8 +143,7 @@ pub mod whatwg {
         }
         /// # Safety
         /// `this` must be a live handle from `from_string`/`from_utf8`; it is `delete`d here
-        /// and must not be used afterwards. (A `&mut URL` to this ZST would prove neither,
-        /// hence the pointer.)
+        /// and must not be used afterwards.
         pub unsafe fn destroy(this: *mut Self) {
             // SAFETY: fn contract.
             unsafe { URL__deinit(this) }

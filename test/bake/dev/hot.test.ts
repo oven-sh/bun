@@ -388,6 +388,181 @@ devTest("import.meta.hot.dispose cleanup", {
     await c.expectMessage("Cleaning up", "Third setup");
   },
 });
+devTest("import.meta.hot.dispose runs when the update is accepted by an importer", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { d } from "./d";
+      console.log("index " + d);
+      import.meta.hot.accept("./d", newModule => {
+        console.log("index accepted " + newModule.d);
+      });
+    `,
+    "d.ts": `
+      export const d = "d1";
+      console.log("evaluated " + d);
+      import.meta.hot.dispose(() => {
+        console.log("disposed " + d);
+      });
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("evaluated d1", "index d1");
+
+    // The copy being thrown away is disposed of before the next one is evaluated.
+    await dev.patch("d.ts", { find: "d1", replace: "d2" });
+    await c.expectMessage("disposed d1", "evaluated d2", "index accepted d2");
+
+    // The dispose callback registered by a copy that was itself hot-loaded
+    // runs too, and the first copy's callback does not run again.
+    await dev.patch("d.ts", { find: "d2", replace: "d3" });
+    await c.expectMessage("disposed d2", "evaluated d3", "index accepted d3");
+
+    // The next copy self-accepts. The copy being replaced still does not, so
+    // this update is still accepted by index.
+    await dev.write(
+      "d.ts",
+      `
+        export const d = "d4";
+        console.log("evaluated " + d);
+        import.meta.hot.dispose(() => {
+          console.log("disposed " + d);
+        });
+        import.meta.hot.accept();
+      `,
+    );
+    await c.expectMessage("disposed d3", "evaluated d4", "index accepted d4");
+
+    // Self-accepting update. Only the copy being replaced is disposed of; the
+    // callbacks of d1, d2 and d3 were consumed by the earlier updates instead
+    // of piling up until a self-accepting copy came along.
+    await dev.patch("d.ts", { find: "d4", replace: "d5" });
+    await c.expectMessage("disposed d4", "evaluated d5", "index accepted d5");
+  },
+});
+devTest("import.meta.hot.dispose runs when the update is accepted by a self-accepting importer", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    // index (self-accepting) -> mid -> d
+    "index.ts": `
+      import { mid } from "./mid";
+      console.log("index " + mid());
+      import.meta.hot.dispose(() => {
+        console.log("index disposed");
+      });
+      import.meta.hot.accept();
+    `,
+    "mid.ts": `
+      import { d } from "./d";
+      console.log("mid evaluated");
+      export function mid() {
+        return "mid(" + d + ")";
+      }
+      import.meta.hot.dispose(() => {
+        console.log("mid disposed");
+      });
+    `,
+    "d.ts": `
+      export const d = "d1";
+      import.meta.hot.dispose(() => {
+        console.log("disposed " + d);
+      });
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("mid evaluated", "index mid(d1)");
+
+    // d (replaced) and index (the boundary) are both evaluated again, so both
+    // are disposed of first. mid keeps its instance and gets its import of d
+    // patched, so it is neither disposed of nor evaluated again.
+    await dev.patch("d.ts", { find: "d1", replace: "d2" });
+    await c.expectMessage("disposed d1", "index disposed", "index mid(d2)");
+
+    await dev.patch("d.ts", { find: "d2", replace: "d3" });
+    await c.expectMessage("disposed d2", "index disposed", "index mid(d3)");
+  },
+});
+devTest("import.meta.hot.dispose runs once per module when one update replaces several modules", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    // Both replaced modules bubble up to the same boundary. It is evaluated
+    // again once, so it is disposed of once (disposing of it twice used to
+    // throw, since its dispose list is cleared by the first pass).
+    "index.ts": `
+      import "./d";
+      import "./e";
+      console.log("index evaluated");
+      import.meta.hot.dispose(() => {
+        console.log("index disposed");
+      });
+      import.meta.hot.accept();
+    `,
+    "d.ts": `
+      export const d = "d1";
+      import.meta.hot.dispose(() => {
+        console.log("disposed " + d);
+      });
+    `,
+    "e.ts": `
+      export const e = "e1";
+      import.meta.hot.dispose(() => {
+        console.log("disposed " + e);
+      });
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index evaluated");
+    {
+      await using batch = await dev.batchChanges();
+      await dev.patch("d.ts", { find: "d1", replace: "d2" });
+      await dev.patch("e.ts", { find: "e1", replace: "e2" });
+    }
+    // The replaced modules are disposed of in the order they appear in the
+    // update, which is not specified.
+    await c.expectMessageInAnyOrder("disposed d1", "disposed e1", "index disposed", "index evaluated");
+  },
+});
+devTest("import.meta.hot.on listeners of a module accepted by its importer are removed when it is replaced", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { d } from "./d";
+      console.log("index " + d);
+      import.meta.hot.accept("./d", newModule => {
+        console.log("index accepted " + newModule.d);
+      });
+    `,
+    "d.ts": `
+      export const d = "d1";
+      import.meta.hot.on("bun:afterUpdate", () => {
+        console.log(d + " saw afterUpdate");
+      });
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index d1");
+
+    // Only the listener registered by the current copy of d is still attached
+    // once the update is applied.
+    await dev.patch("d.ts", { find: "d1", replace: "d2" });
+    await c.expectMessage("index accepted d2", "d2 saw afterUpdate");
+
+    await dev.patch("d.ts", { find: "d2", replace: "d3" });
+    await c.expectMessage("index accepted d3", "d3 saw afterUpdate");
+  },
+});
 devTest("import.meta.hot invalid usage", {
   files: {
     "index.html": emptyHtmlFile({

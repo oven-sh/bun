@@ -616,7 +616,6 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   const toReload = new Set<HMRModule>();
   const toAccept: ToAccept[] = [];
   let failures: Set<Id> | null = null;
-  const toDispose: HMRModule[] = [];
 
   // Discover all HMR boundaries
   outer: for (const key of Object.keys(modules)) {
@@ -647,9 +646,6 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         toReload.add(mod);
         visited.add(mod);
         hadSelfAccept = false;
-        if (mod.onDispose) {
-          toDispose.push(mod);
-        }
       }
       // Modules that mutate data are implied to handle updates via reusing their `data` property
       else if (Object.keys(mod.data).length > 0) {
@@ -657,9 +653,6 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         toReload.add(mod);
         visited.add(mod);
         hadSelfAccept = false;
-        if (mod.onDispose) {
-          toDispose.push(mod);
-        }
       }
 
       // All importers will be visited
@@ -732,22 +725,24 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     }
   }
 
-  // Dispose all modules
-  if (toDispose.length > 0) {
-    const disposePromises: Promise<void>[] = [];
-    for (const mod of toDispose) {
-      mod.state = State.Stale;
-      for (const fn of mod.onDispose!) {
-        const p = fn(mod.data);
-        if (p && p instanceof Promise) {
-          disposePromises.push(p);
-        }
+  // Dispose of every module that is about to be evaluated again: the replaced
+  // modules (also when an importer accepts them) and the boundaries they
+  // bubbled up to.
+  const disposePromises: Promise<void>[] = [];
+  for (const mod of toReload) {
+    const { onDispose } = mod;
+    if (!onDispose) continue;
+    mod.state = State.Stale;
+    for (const fn of onDispose) {
+      const p = fn(mod.data);
+      if (p && p instanceof Promise) {
+        disposePromises.push(p);
       }
-      mod.onDispose = null;
     }
-    if (disposePromises.length > 0) {
-      await Promise.all(disposePromises);
-    }
+    mod.onDispose = null;
+  }
+  if (disposePromises.length > 0) {
+    await Promise.all(disposePromises);
   }
 
   // Reload all modules

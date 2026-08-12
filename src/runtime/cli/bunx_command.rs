@@ -1384,28 +1384,27 @@ impl BunxCommand {
                                     }
                                     // Same mid-install guard as the first
                                     // cache probe.
-                                    let cache_read_lock =
-                                        if !opts.no_install
-                                            && strings::has_prefix(out, bunx_cache_dir)
-                                        {
-                                            match Self::lock_cache_dir(
-                                                bunx_cache_dir,
-                                                bun_sys::FileLockMode::Shared,
-                                                /* nonblocking */ true,
-                                            ) {
-                                                Some(lock) => Some(lock),
-                                                None => {
-                                                    bun_output::scoped_log!(
-                                                        bunx,
-                                                        "install in progress for {}, waiting",
-                                                        BStr::new(bunx_cache_dir)
-                                                    );
-                                                    break 'try_run_existing;
-                                                }
+                                    let cache_read_lock = if !opts.no_install
+                                        && strings::has_prefix(out, bunx_cache_dir)
+                                    {
+                                        match Self::lock_cache_dir(
+                                            bunx_cache_dir,
+                                            bun_sys::FileLockMode::Shared,
+                                            /* nonblocking */ true,
+                                        ) {
+                                            Some(lock) => Some(lock),
+                                            None => {
+                                                bun_output::scoped_log!(
+                                                    bunx,
+                                                    "install in progress for {}, waiting",
+                                                    BStr::new(bunx_cache_dir)
+                                                );
+                                                break 'try_run_existing;
                                             }
-                                        } else {
-                                            None
-                                        };
+                                        }
+                                    } else {
+                                        None
+                                    };
                                     let stored = fs.dirname_store.append_slice(out)?;
                                     drop(cache_read_lock);
                                     Run::run_binary(

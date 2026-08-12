@@ -380,9 +380,13 @@ function getBuildAgent(platform, options) {
   // Every build lane runs on the single debian-13 aarch64 host image
   // (buildHostPlatform) and cross-compiles to its target; the target's
   // os/arch only affect build args, not agent tags or image-name.
+  const { os, arch, abi, profile } = platform;
+  // Lanes without LTO (see ltoDefault in scripts/build/config.ts): rustc does its own fat LTO + codegen inside cargo, so the C++ compile overlapping it costs ~20s on 16 vCPUs; give them 32.
+  const nonLto =
+    profile === "asan" || abi === "android" || os === "freebsd" || (os === "windows" && arch === "aarch64");
   return getEc2Agent(buildHostPlatform, options, {
     // Replaces the c8g.4xlarge (C++) + r8g.2xlarge (cargo + ThinLTO link; r8g.4xlarge for asan) pair.
-    instanceType: "r8g.4xlarge",
+    instanceType: nonLto ? "r8g.8xlarge" : "r8g.4xlarge",
   });
 }
 

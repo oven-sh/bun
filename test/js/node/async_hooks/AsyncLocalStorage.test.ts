@@ -1,7 +1,8 @@
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import http2 from "http2";
+import { join } from "node:path";
 
 describe("AsyncLocalStorage", () => {
   test("throw inside of AsyncLocalStorage.run() will be passed out", () => {
@@ -1250,12 +1251,13 @@ describe("async generators", () => {
   });
 });
 
-// expect(promise).resolves/.rejects, expect(asyncFn).toThrow() and async
-// expect.extend matchers block the calling frame and run the event loop from
-// inside it; HTMLRewriter.transform() runs a microtask checkpoint from inside
-// it when a handler returns a pending promise. Work that was scheduled with no
-// store is stored unwrapped and runs in whatever context is installed at
-// dispatch time, which in these cases used to be the blocked caller's store.
+// expect(promise).resolves/.rejects, expect(asyncFn).toThrow(), async
+// expect.extend matchers and Bun.build() with a plugin whose setup() returns a
+// promise block the calling frame and run the event loop from inside it;
+// HTMLRewriter.transform() runs a microtask checkpoint from inside it when a
+// handler returns a pending promise. Work that was scheduled with no store is
+// stored unwrapped and runs in whatever context is installed at dispatch time,
+// which in these cases used to be the blocked caller's store.
 describe("event loop work dispatched from inside a blocked frame", () => {
   // Schedules a timer, an immediate and a microtask while no store is active
   // and records the store each one observes. `settled` resolves once all
@@ -1316,6 +1318,40 @@ describe("event loop work dispatched from inside a blocked frame", () => {
       });
     },
   );
+
+  test("Bun.build() blocking on an async plugin setup()", async () => {
+    using dir = tempDir("als-build-plugin", { "entry.js": "export default 1;" });
+    const als = new AsyncLocalStorage<string>();
+    const { seen, settled } = scheduleWithoutStore(als);
+    const setup = { sync: "not run", afterAwait: "not run" };
+    let callerAfterwards: string | undefined;
+    const build = als.run("caller", () => {
+      const result = Bun.build({
+        entrypoints: [join(String(dir), "entry.js")],
+        plugins: [
+          {
+            name: "als",
+            async setup() {
+              setup.sync = als.getStore() ?? "none";
+              await settled;
+              setup.afterAwait = als.getStore() ?? "none";
+            },
+          },
+        ],
+      });
+      callerAfterwards = als.getStore();
+      return result;
+    });
+    expect((await build).success).toBe(true);
+    expect({ ...seen, ...setup, callerAfterwards }).toEqual({
+      timer: "none",
+      immediate: "none",
+      microtask: "none",
+      sync: "caller",
+      afterAwait: "caller",
+      callerAfterwards: "caller",
+    });
+  });
 
   test("work that captured a store keeps it while the caller blocks", async () => {
     const als = new AsyncLocalStorage<string>();

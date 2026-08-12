@@ -4009,15 +4009,14 @@ function stripInvalidWhitespaceFields(rawheaders: string[]): string[] {
 // node validates header constraints in JS before anything reaches the native encoder, so a
 // throwing request leaves no partial state in the shared HPACK table. Mirror the single-value
 // rule here: duplicated single-value fields (across case variants) and multi-element arrays for
-// them throw before encoding starts. Takes either the object form or the raw [name, value, ...]
-// list; the list is judged slot by slot, like the encoder will, so a slot the encoder skips
-// (undefined value, empty array) is not an occurrence whichever position it is in.
+// them throw before encoding starts. Accepts the object form or the raw [name, value, ...] list.
 function assertSingleValueHeaders(headers) {
   let seen = null;
   if ($isArray(headers)) {
     for (let i = 0; i < headers.length; i += 2) {
       const name = headers[i];
       const value = headers[i + 1];
+      // A slot the encoder skips is not an occurrence, wherever it is in the list.
       if (typeof name !== "string" || value === undefined || ($isArray(value) && value.length === 0)) continue;
       seen = noteSingleValueField(seen, name, value);
     }

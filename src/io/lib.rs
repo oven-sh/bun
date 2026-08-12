@@ -369,10 +369,11 @@ impl EventLoopCtx {
     /// Single backref-deref accessor for the per-thread `Store`. Same contract
     /// as [`loop_mut`]: `pub(crate)`, `&self → &mut`, must NOT be called while
     /// another `&mut Store` (or a `&mut FilePoll` that lives inside the inline
-    /// hive buffer) is live. Every in-crate caller is a leaf op that decays
-    /// any conflicting `&mut FilePoll` to a raw slot pointer first
-    /// (`deinit_possibly_defer`) or holds none (`init_with_owner`,
-    /// `alloc_file_poll`), so no two `&mut Store` ever coexist.
+    /// hive buffer) is live. Every in-crate caller is a leaf op that holds no
+    /// `&mut FilePoll` at the call: the `FilePoll::deinit*` path works on the
+    /// raw slot pointer and has dropped its statement-scoped reborrow by then,
+    /// and `init_with_owner` / `alloc_file_poll` never form one. So no two
+    /// `&mut Store` ever coexist.
     #[inline]
     fn file_polls_mut(&self) -> &'static mut Store {
         // SAFETY: per-thread set-once pointer (`BackRef`-shaped); the event
@@ -1821,7 +1822,11 @@ impl FilePollRef {
     }
     #[inline]
     pub(crate) fn deinit_force_unregister(self) {
-        self.inner().deinit_force_unregister();
+        // SAFETY: type invariant — `self.0` is the live slot `init` claimed, and
+        // every copy of this handle is dead once the owner calls this. Not
+        // routed through `inner()`: the store may free the slot inside the
+        // call, so it gets the pointer rather than a `&mut` (see `FilePoll::deinit`).
+        unsafe { FilePoll::deinit_force_unregister(self.0.as_ptr()) };
     }
     /// Single nonnull-asref accessor for the process-global uWS loop pointer.
     ///

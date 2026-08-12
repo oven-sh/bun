@@ -105,10 +105,17 @@ mod posix {
         Some(unsafe { bun_core::heap::take(raw.as_ptr().cast::<MemoryPressureWatcher>()) })
     }
 
-    fn deinit_poll(poll: &mut FilePoll) {
+    /// Returns the slot to the store and (Linux) closes the PSI fd it watched.
+    ///
+    /// # Safety
+    /// `poll` is the live slot `register_os_watch` created, and this is its
+    /// last use.
+    unsafe fn deinit_poll(poll: *mut FilePoll) {
+        // SAFETY: fn contract; the read ends at the `;`.
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        let fd = poll.fd;
-        poll.deinit();
+        let fd = unsafe { (*poll).fd };
+        // SAFETY: fn contract.
+        unsafe { FilePoll::deinit(poll) };
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let _ = bun_sys::close(fd);
@@ -196,8 +203,8 @@ mod posix {
                 (*poll).register(ctx.platform_event_loop(), Flags::MemoryPressure, false)
             };
             if result.is_err() {
-                // SAFETY: fresh hive slot never handed out.
-                deinit_poll(unsafe { &mut *poll });
+                // SAFETY: fresh hive slot that nothing else refers to.
+                unsafe { deinit_poll(poll) };
                 return None;
             }
             NonNull::new(poll)
@@ -219,27 +226,39 @@ mod posix {
         let Some(watcher) = take_watcher(global.bun_vm().as_mut()) else {
             return;
         };
-        if let Some(mut poll) = watcher.poll {
-            // SAFETY: `on_poll` enqueues a task instead of running user JS,
-            // so this is never reached from inside the dispatch and no other
-            // `&mut FilePoll` is live.
-            deinit_poll(unsafe { poll.as_mut() });
+        if let Some(poll) = watcher.poll {
+            // SAFETY: the watcher (just taken out of the slot, so the last
+            // reference to the poll) owned this live slot. `on_poll` enqueues a
+            // task instead of running user JS, so this is never reached from
+            // inside the poll's own dispatch.
+            unsafe { deinit_poll(poll.as_ptr()) };
         }
     }
 
     /// `__bun_run_file_poll` dispatch target. `fflags` is the kqueue `fflags`
     /// on macOS (carrying the pressure level) and 0 on Linux.
-    pub(crate) fn on_poll(poll: &mut FilePoll, fflags: i64) {
+    ///
+    /// # Safety
+    /// `poll` is the live watcher poll that fired (`__bun_run_file_poll`'s
+    /// contract); the Linux teardown branch returns it to the store.
+    pub(crate) unsafe fn on_poll(poll: *mut FilePoll, fflags: i64) {
         let vm = VirtualMachine::get_mut();
 
         // `EPOLLERR`/`EPOLLHUP` on a PSI fd means the trigger is dead (e.g.
         // the cgroup was removed). kernfs reports that permanently, so tear
         // the watch down instead of emitting to avoid a level-triggered spin.
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        if poll.flags.contains(Flags::Eof) || poll.flags.contains(Flags::Hup) {
-            drop(take_watcher(vm));
-            deinit_poll(poll);
-            return;
+        {
+            // SAFETY: fn contract; the reads end at the `;`.
+            let dead =
+                unsafe { (*poll).flags.contains(Flags::Eof) || (*poll).flags.contains(Flags::Hup) };
+            if dead {
+                drop(take_watcher(vm));
+                // SAFETY: fn contract; the watcher that held the slot is gone,
+                // so this is its last use.
+                unsafe { deinit_poll(poll) };
+                return;
+            }
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "android")))]

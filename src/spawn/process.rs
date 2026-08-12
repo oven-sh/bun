@@ -564,15 +564,11 @@ impl Process {
     pub fn close(&mut self) {
         #[cfg(unix)]
         {
-            let mut stranded_watch_ref = false;
-            // Route the `Fd` arm through the centralized `fd_poll_mut()`
-            // accessor instead of open-coding `(*poll.as_ptr()).deinit()`.
-            if let Some(poll) = self.poller.fd_poll_mut() {
-                stranded_watch_ref = poll.is_registered();
-                poll.deinit();
-            } else if let Poller::WaiterThread(waiter) = &mut self.poller {
-                waiter.disable();
-            }
+            let stranded_watch_ref = self
+                .poller
+                .fd_poll_mut()
+                .is_some_and(|poll| poll.is_registered());
+            self.poller.deinit();
             self.poller = Poller::Detached;
             if stranded_watch_ref && !self.has_exited() {
                 // SAFETY: callers hold their own +1, so this never drops to zero.
@@ -822,17 +818,19 @@ pub enum PollerPosix {
 #[cfg(unix)]
 impl PollerPosix {
     /// NOT `impl Drop`: this enum is reassigned freely (`self.poller =
-    /// Poller::Detached`, `Poller::WaiterThread(..)`, etc.) and `close()`
-    /// already performs the same teardown explicitly before reassigning. A
-    /// `Drop` impl would double-free the hive slot on those reassignments.
-    /// Called only from `Process` drop.
+    /// Poller::Detached`, `Poller::WaiterThread(..)`, etc.), and `close()`
+    /// reassigns it to `Detached` right after calling this. A `Drop` impl
+    /// would double-free the hive slot on those reassignments. Called from
+    /// `Process::close` and `Process` drop (a no-op on `Detached`).
     pub(crate) fn deinit(&mut self) {
-        // Route the `Fd` arm through the centralized `fd_poll_mut()` accessor
-        // instead of open-coding the `NonNull` deref here.
-        if let Some(poll) = self.fd_poll_mut() {
-            poll.deinit();
-        } else if let PollerPosix::WaiterThread(w) = self {
-            w.disable();
+        match self {
+            // SAFETY: `Fd` holds the only handle to a live hive slot, and the
+            // variant is overwritten (`close`) or dropped with the `Process`
+            // right after this, so nothing uses the slot once the store has it
+            // back.
+            PollerPosix::Fd(poll) => unsafe { FilePoll::deinit(poll.as_ptr()) },
+            PollerPosix::WaiterThread(w) => w.disable(),
+            PollerPosix::Detached => {}
         }
     }
 

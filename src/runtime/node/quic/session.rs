@@ -2032,7 +2032,7 @@ impl QuicSession {
             unsafe {
                 (*qs).outbound.with_mut(|o| {
                     o.started = true;
-                    o.data.extend(buf.byte_slice().iter().copied());
+                    o.data.extend(buf.byte_slice());
                     o.fin_pending = true;
                 });
                 // As attach_source/init_streaming_source/send_headers do: this

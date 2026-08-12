@@ -134,11 +134,10 @@ impl<C: CompletionStruct> BundleThread<C> {
     }
 
     /// # Safety
-    /// `instance` must be valid for `'static` (the spawned thread runs forever and
-    /// accesses it). After this returns `Ok`, the bundle thread concurrently accesses
-    /// `*instance`; callers must only touch it via the raw-pointer methods on this
-    /// impl (e.g. `enqueue`) and never materialize a `&mut Self`. On `Err` no thread
-    /// was started and nothing else refers to `*instance`.
+    /// `instance` must be valid for `'static`: after `Ok` the bundle thread accesses it
+    /// forever, so callers must only touch it through the raw-pointer methods on this
+    /// impl (e.g. `enqueue`) and never materialize a `&mut Self`. After `Err` no thread
+    /// exists and the caller still owns it.
     pub(crate) unsafe fn spawn(
         instance: *mut Self,
     ) -> std::io::Result<std::thread::JoinHandle<()>> {
@@ -355,31 +354,20 @@ pub mod singleton {
 
     use super::*;
 
-    /// `Send` newtype around the leaked `BundleThread` allocation so it can
-    /// sit inside the `Guarded` static. Type-erased because Rust forbids
-    /// generic statics; see module comment. Stored as a raw pointer (not
-    /// `&'static`) because the bundle thread mutates `*self` concurrently —
-    /// callers must only ever project fields via raw-pointer access.
+    /// The leaked `BundleThread<C>`, type-erased (see module comment). A raw
+    /// pointer because the bundle thread mutates it concurrently.
     struct Instance(NonNull<()>);
     // SAFETY: the allocation is a leaked `Box<BundleThread<C>>` valid for
     // `'static`; cross-thread access is mediated entirely through
     // `UnboundedQueue` / `ResetEvent` atomics inside `BundleThread::enqueue`.
     unsafe impl Send for Instance {}
 
-    // `None` until the bundle thread is running. Holding the lock across the
-    // spawn makes concurrent first callers (workers) wait for one attempt
-    // instead of each starting a thread; a failed attempt leaves `None`, so
-    // the next build retries.
     static INSTANCE: bun_threading::Guarded<Option<Instance>> = bun_threading::Guarded::new(None);
 
-    /// Returns the raw singleton pointer, starting the bundle thread on first
-    /// use. The bundle thread runs `thread_main` against this allocation for
-    /// the process lifetime, so callers MUST NOT materialize `&mut BundleThread`
-    /// from it. Use `BundleThread::enqueue(get()?, ...)` instead.
-    ///
-    /// Thread creation fails like any other OS resource (`EAGAIN` at the pids
-    /// or `RLIMIT_NPROC` limit); that is reported to the caller rather than
-    /// cached, and nothing of the failed attempt is kept.
+    /// Starts the bundle thread on first use; only `BundleThread::enqueue` may
+    /// be used on the returned pointer. A failed spawn (an OS limit) leaves the
+    /// slot empty, so the next build tries again; the lock is held across the
+    /// attempt, so concurrent first callers wait for it instead of racing it.
     ///
     /// # Safety
     /// All calls (across the process) must use the same `C`; the static is
@@ -387,23 +375,18 @@ pub mod singleton {
     pub(crate) fn get<C: CompletionStruct>() -> Result<*mut BundleThread<C>, SystemErrno> {
         let mut instance = INSTANCE.lock();
         if let Some(instance) = &*instance {
-            // A leaked 'static Box of `BundleThread<C>` (same `C` per the
-            // safety contract).
             return Ok(instance.0.as_ptr().cast::<BundleThread<C>>());
         }
 
         let bundle_thread =
             bun_core::heap::into_raw_nn(Box::new(BundleThread::<C>::uninitialized()));
-        // SAFETY: `bundle_thread` is a leaked Box, valid for 'static; `spawn` takes the
-        // raw pointer directly so no `&mut` is materialized that would alias the
-        // bundle thread's own access.
+        // SAFETY: a leaked Box, valid for 'static; passed as a raw pointer so no
+        // `&mut` aliases the bundle thread's own access.
         match unsafe { BundleThread::spawn(bundle_thread.as_ptr()) } {
             // `std.Thread.detach()` — drop the JoinHandle without joining.
             Ok(os_thread) => drop(os_thread),
             Err(err) => {
-                // SAFETY: no thread was started, so this is still the only
-                // reference to the allocation; the placeholder contents own
-                // nothing that needs the bundle thread to release.
+                // SAFETY: `spawn` started nothing, so this is still the sole owner.
                 unsafe { bun_core::heap::destroy(bundle_thread.as_ptr()) };
                 return Err(spawn_errno(&err));
             }
@@ -413,9 +396,7 @@ pub mod singleton {
     }
 
     fn spawn_errno(err: &std::io::Error) -> SystemErrno {
-        // Windows: `raw_os_error()` is a Win32 `GetLastError()` code, so route
-        // it through the u32 (Win32Error) mapper rather than `from_errno`'s
-        // errno path.
+        // On Windows the raw code is a Win32 error, which `init(u32)` maps.
         #[cfg(windows)]
         let errno = err
             .raw_os_error()
@@ -425,10 +406,8 @@ pub mod singleton {
         errno.unwrap_or(SystemErrno::EAGAIN)
     }
 
-    /// Hands `completion` to the bundle thread. If the bundle thread cannot be
-    /// started, the build is failed right here with the reason in its log,
-    /// through the same hand-back a build failing on the bundle thread takes:
-    /// either way the caller gets exactly one completion for it.
+    /// Hands `completion` to the bundle thread, or fails it right here if that
+    /// thread cannot be started; either way its owner gets exactly one completion.
     pub fn enqueue<C: CompletionStruct>(completion: *mut C) {
         // Validate the caller's pointer at the public boundary so the unsafe
         // path below never receives null.
@@ -445,16 +424,13 @@ pub mod singleton {
             Err(errno) => errno,
         };
 
-        // The task never reached the queue, so this thread stands in for the
-        // bundle thread and takes the same steps as the dequeue in `thread_main`.
-        // SAFETY: the task is live until its completion is posted (below), and
-        // `try_start` is the atomic handshake for claiming it.
+        // Same steps as the dequeue in `thread_main`, on this thread instead.
+        // SAFETY: the task is live until its completion is posted below.
         if !unsafe { (*completion.as_ptr()).try_start() } {
             C::free_released_unstarted(completion.as_ptr());
             return;
         }
-        // SAFETY: started ⇒ the owner waits for the completion posted below
-        // and does not touch the task until then.
+        // SAFETY: started ⇒ the owner does not touch the task until its completion runs.
         let completion = unsafe { &mut *completion.as_ptr() };
         let hint = if errno == SystemErrno::EAGAIN {
             " The process or thread limit may have been reached (ulimit -u, or the container's pids limit)."

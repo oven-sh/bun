@@ -25,8 +25,7 @@ impl bun_event_loop::Taskable for DeferredBatchTask {
 }
 
 impl DeferredBatchTask {
-    /// Bundle thread. `arena` is the pass's `graph.heap`, passed by the caller
-    /// because it holds `&mut Graph` while `bv2` is borrowed.
+    /// Bundle thread; `arena` is the pass's `graph.heap`.
     pub(crate) fn schedule(bv2: &mut BundleV2<'_>, arena: &bun_alloc::Arena) {
         let this = arena.alloc(Self {
             plugins: bv2.plugins,

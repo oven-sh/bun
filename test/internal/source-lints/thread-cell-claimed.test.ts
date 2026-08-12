@@ -100,6 +100,14 @@ test("scans a non-empty set of tracked Rust sources", () => {
   expect(scanned).toBeGreaterThan(0);
 });
 
+test("crate roots were found", () => {
+  // If glob-sources.ts stopped listing Cargo.toml, crateOf() would degrade to
+  // the file's own directory. That can only cause false failures (a claim in
+  // another directory of the same crate would be missed), but fail here with a
+  // clear reason rather than on whichever static moves first.
+  expect(crateDirs.length).toBeGreaterThan(0);
+});
+
 test("DECLARATION still matches real ThreadCell statics", () => {
   // `bun_io`'s LOOP and `bun_http`'s HTTP_THREAD exist today; if the type or
   // the declaration shape changes, the regex needs updating rather than the

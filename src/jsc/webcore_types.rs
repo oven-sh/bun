@@ -434,8 +434,7 @@ impl Blob {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
-    /// `Blob.getFileName()` — the store's name (`Bytes.stored_name`, the file path,
-    /// or the S3 key), which [`Self::name`] overrides. `None` for fd-backed or unnamed stores.
+    /// The store's own name (`stored_name`, path, or S3 key); `None` when fd-backed or unnamed.
     pub fn get_file_name(&self) -> Option<&[u8]> {
         match &self.store.get().as_deref()?.data {
             store::Data::Bytes(bytes) => {
@@ -611,8 +610,7 @@ pub mod store {
         pub len: SizeType,
         pub cap: SizeType,
         pub allocator: bun_alloc::StdAllocator,
-        /// Set only when the store is created; a name given to one of the Blobs
-        /// sharing the store goes in `Blob::name`. Heap-owned (or empty); freed by `Drop`.
+        /// Set only at store creation (names given later go in `Blob::name`); heap-owned or empty.
         pub stored_name: Box<[u8]>,
     }
 

@@ -4249,8 +4249,7 @@ pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob
     )
 }
 
-/// blob.cpp `toJS`: names the FormData entry's own Blob (its store is shared with
-/// the appended blob). An empty `path_str` means no filename was given.
+/// blob.cpp `toJS`: names the FormData entry's Blob; empty means no filename was given.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunString) {
     this.is_jsdom_file.set(true);
@@ -4264,8 +4263,7 @@ pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
     Blob::new(this.dupe_with_content_type(true))
 }
 
-/// JSDOMFormData.cpp's default entry filename. Borrowed: the caller refs it via
-/// `toWTFString` and never derefs it.
+/// Borrowed: JSDOMFormData.cpp refs it via `toWTFString` and never derefs it.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
     this.get_name_string().unwrap_or_else(BunString::empty)

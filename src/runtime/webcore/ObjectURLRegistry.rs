@@ -45,8 +45,7 @@ impl Entry {
     }
 }
 
-/// A name impl that some thread's JS can reach may become that thread's atom, and an
-/// atom must not be released on another thread (`AtomStringImpl::remove`), so none is shared.
+/// A name impl reachable from JS may become that thread's atom, which no other thread may release.
 fn dupe_with_private_name(blob: &Blob) -> Blob {
     let copy = blob.dupe_with_content_type(true);
     let mut name = copy.name.replace(bun_core::String::dead()).into_inner();

@@ -549,10 +549,7 @@ describe("update", () => {
           },
         }),
       ),
-      write(
-        join(packageDir, "packages", "pkg1", "package.json"),
-        JSON.stringify({ name: "pkg1" }),
-      ),
+      write(join(packageDir, "packages", "pkg1", "package.json"), JSON.stringify({ name: "pkg1" })),
     ]);
     await runBunInstall(bunEnv, packageDir);
 

@@ -1,7 +1,9 @@
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import http2 from "http2";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 describe("AsyncLocalStorage", () => {
   test("throw inside of AsyncLocalStorage.run() will be passed out", () => {
@@ -1247,5 +1249,200 @@ describe("async generators", () => {
       }
     });
     expect(caughtStore).toBe("STORE_X");
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/32693
+//
+// A dynamic import() links and evaluates its module graph from the module loader's
+// internal microtasks, several hops after the import() call. JSC carries the async
+// context captured at the import() call site through that pipeline (oven-sh/WebKit#274),
+// so module bodies evaluate under the importer's store, as they do in Node.
+describe("dynamic import() module evaluation", () => {
+  const storeModule = `
+    import { AsyncLocalStorage } from "node:async_hooks";
+    export const als = new AsyncLocalStorage();
+  `;
+
+  // Each test gets its own directory, so every module below is a fresh registry entry
+  // whose body runs when the test import()s it.
+  function load(dir: string, file: string): Promise<any> {
+    return import(pathToFileURL(join(dir, file)).href);
+  }
+
+  test("import() from an entry module's top level (issue repro)", async () => {
+    using dir = tempDir("als-dynamic-import-entry", {
+      "store.mjs": storeModule,
+      "imported.mjs": `
+        import { als } from "./store.mjs";
+        console.log("imported:" + als.getStore());
+      `,
+      "index.mjs": `
+        import { als } from "./store.mjs";
+        await als.run("CONTEXT", () => import("./imported.mjs"));
+        console.log("after:" + als.getStore());
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "imported:CONTEXT\nafter:undefined\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("the imported module's top level sees the importer's store", async () => {
+    using dir = tempDir("als-dynamic-import", {
+      "store.mjs": storeModule,
+      "lazy.mjs": `
+        import { als } from "./store.mjs";
+        export const storeAtEvaluation = als.getStore();
+      `,
+    });
+    const { als } = await load(String(dir), "store.mjs");
+
+    const lazy = await als.run("CONTEXT", () => load(String(dir), "lazy.mjs"));
+
+    expect(lazy.storeAtEvaluation).toBe("CONTEXT");
+    expect(als.getStore()).toBeUndefined();
+  });
+
+  test("static dependencies evaluated by the import() see the store too", async () => {
+    using dir = tempDir("als-dynamic-import-deps", {
+      "store.mjs": storeModule,
+      "dep.mjs": `
+        import { als } from "./store.mjs";
+        export const depStore = als.getStore();
+      `,
+      "lazy.mjs": `
+        import { als } from "./store.mjs";
+        export { depStore } from "./dep.mjs";
+        export const store = als.getStore();
+      `,
+    });
+    const { als } = await load(String(dir), "store.mjs");
+
+    const { depStore, store } = await als.run("CONTEXT", () => load(String(dir), "lazy.mjs"));
+
+    expect({ depStore, store }).toEqual({ depStore: "CONTEXT", store: "CONTEXT" });
+  });
+
+  test("the store survives the imported module's own top-level await", async () => {
+    using dir = tempDir("als-dynamic-import-tla", {
+      "store.mjs": storeModule,
+      "lazy.mjs": `
+        import { als } from "./store.mjs";
+        export const before = als.getStore();
+        await 0;
+        export const after = als.getStore();
+      `,
+    });
+    const { als } = await load(String(dir), "store.mjs");
+
+    const { before, after } = await als.run("CONTEXT", () => load(String(dir), "lazy.mjs"));
+
+    expect({ before, after }).toEqual({ before: "CONTEXT", after: "CONTEXT" });
+  });
+
+  // The importing module's body is not run by the import()'s evaluate() call here: it is
+  // deferred until its top-level-await dependency settles, and executed from the
+  // dependency's completion microtask (AsyncModuleExecutionFulfilled).
+  test("a module waiting on a top-level-await dependency still sees the store", async () => {
+    using dir = tempDir("als-dynamic-import-tla-dep", {
+      "store.mjs": storeModule,
+      "dep.mjs": `
+        import { als } from "./store.mjs";
+        export const depBefore = als.getStore();
+        await 0;
+        export const depAfter = als.getStore();
+      `,
+      "lazy.mjs": `
+        import { als } from "./store.mjs";
+        export { depBefore, depAfter } from "./dep.mjs";
+        export const store = als.getStore();
+      `,
+    });
+    const { als } = await load(String(dir), "store.mjs");
+
+    const { depBefore, depAfter, store } = await als.run("CONTEXT", () => load(String(dir), "lazy.mjs"));
+
+    expect({ depBefore, depAfter, store }).toEqual({ depBefore: "CONTEXT", depAfter: "CONTEXT", store: "CONTEXT" });
+  });
+
+  test("concurrent import()s each evaluate under their own importer's store", async () => {
+    const moduleSource = `
+      import { als } from "./store.mjs";
+      export const store = als.getStore();
+    `;
+    using dir = tempDir("als-dynamic-import-concurrent", {
+      "store.mjs": storeModule,
+      "a.mjs": moduleSource,
+      "b.mjs": moduleSource,
+      "c.mjs": moduleSource,
+    });
+    const { als } = await load(String(dir), "store.mjs");
+
+    const [a, b, c] = await Promise.all([
+      als.run("A", () => load(String(dir), "a.mjs")),
+      als.run("B", () => load(String(dir), "b.mjs")),
+      als.run("C", () => load(String(dir), "c.mjs")),
+    ]);
+
+    expect([a.store, b.store, c.store]).toEqual(["A", "B", "C"]);
+  });
+
+  test("a module that throws while evaluating saw the store, and the importer's context is intact", async () => {
+    using dir = tempDir("als-dynamic-import-throws", {
+      "store.mjs": `${storeModule}
+        export const observed = [];
+      `,
+      "lazy.mjs": `
+        import { als, observed } from "./store.mjs";
+        observed.push(als.getStore());
+        throw new Error("boom");
+      `,
+    });
+    const { als, observed } = await load(String(dir), "store.mjs");
+
+    // Not expect().rejects: that matcher spins the event loop synchronously inside run(),
+    // which would evaluate the module while the store is still installed regardless of
+    // whether import() propagates it.
+    const outcome = await als.run("CONTEXT", async () => {
+      try {
+        await load(String(dir), "lazy.mjs");
+        return "resolved";
+      } catch (e) {
+        return { rejectedWith: (e as Error).message, storeAfterRejection: als.getStore() };
+      }
+    });
+
+    expect({ observed, outcome, storeAfterRun: als.getStore() }).toEqual({
+      observed: ["CONTEXT"],
+      outcome: { rejectedWith: "boom", storeAfterRejection: "CONTEXT" },
+      storeAfterRun: undefined,
+    });
+  });
+
+  test("an import() made with no active store evaluates with none, even after an earlier run()", async () => {
+    using dir = tempDir("als-dynamic-import-no-context", {
+      "store.mjs": storeModule,
+      "lazy.mjs": `
+        import { als } from "./store.mjs";
+        export const storeAtEvaluation = als.getStore();
+      `,
+    });
+    const { als } = await load(String(dir), "store.mjs");
+    als.run("CONTEXT", () => {});
+
+    const { storeAtEvaluation } = await load(String(dir), "lazy.mjs");
+
+    expect(storeAtEvaluation).toBeUndefined();
   });
 });

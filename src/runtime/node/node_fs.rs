@@ -946,8 +946,7 @@ mod _async_tasks {
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
-        /// Settles the promise; dropping the box on the way out releases the
-        /// keep-alive and frees the request.
+        /// Settles the promise; the request (and its keep-alive) is released on return.
         #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
         pub(crate) fn run_from_js_thread(mut self: Box<Self>) -> Result<(), bun_jsc::JsTerminated> {
             // Moved out: `fs_to_js` needs `&mut` while `global_object()` borrows `self`.
@@ -1646,8 +1645,7 @@ mod _async_tasks {
         /// drops to zero) enqueues `runFromJSThread`, which resolves the promise
         /// and destroys `this`.
         ///
-        /// Takes `*mut Self` (not `&self`): the completion frees the box through
-        /// this pointer, so it must keep the `Box::leak` provenance.
+        /// `*mut Self`, not `&self`: the completion frees the box through this pointer.
         fn on_subtask_done(this: *mut Self) {
             // SAFETY: `this` is a live Box-leaked task; shared access only here —
             // other workpool threads may concurrently hold `&Self` until the
@@ -1679,8 +1677,8 @@ mod _async_tasks {
                     AnyTaskWithExtraContext::from_callback_auto_deinit(this, |p: *mut Self, _| {
                         debug_assert!(IS_SHELL, "only the shell posts cp tasks to a mini loop");
                         // SAFETY: count hit zero ⇒ sole pointer to the box `schedule_new` leaked.
-                        // The shell path settles no promise, so the result is always `Ok`.
-                        let _ = unsafe { bun_core::heap::take(p) }.run_from_js_thread();
+                        let task = unsafe { bun_core::heap::take(p) };
+                        let _ = task.run_from_js_thread(); // shell tasks settle no promise: always `Ok`
                     });
                 // `from_callback_auto_deinit` heap-allocates; never null.
                 poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
@@ -1689,9 +1687,7 @@ mod _async_tasks {
             poster.embedded_work_finished();
         }
 
-        /// Settles the promise (or, for the shell, continues the `ShellCpTask`);
-        /// dropping the box on the way out releases the keep-alive and
-        /// frees the task.
+        /// Settles the promise (shell: continues the `ShellCpTask`); the task is freed on return.
         #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
         pub(crate) fn run_from_js_thread(self: Box<Self>) -> Result<(), bun_jsc::JsTerminated> {
             // `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap `Ok(())` placeholder.

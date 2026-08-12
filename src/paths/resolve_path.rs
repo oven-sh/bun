@@ -4,6 +4,9 @@ use crate::fs as Fs;
 use crate::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS};
 use bun_core::{ZStr, strings};
 
+/// Output capacity of [`join_abs_string`] / [`join_abs_string_z`].
+const PARSER_JOIN_INPUT_BUFFER_LEN: usize = 4096;
+
 // Thread-local scratch buffers. Stored in `UnsafeCell` (not `RefCell`)
 // because callers must receive a raw `&mut` slice that outlives the `.with` closure
 // — the contract is "valid until next call on this thread". RefCell's
@@ -12,7 +15,8 @@ use bun_core::{ZStr, strings};
 // SAFETY invariant: each buffer has at most one live mutable borrow per thread;
 // callers must not re-enter the accessor while a previous borrow is alive.
 thread_local! {
-    static PARSER_JOIN_INPUT_BUFFER: UnsafeCell<[u8; 4096]> = const { UnsafeCell::new([0u8; 4096]) };
+    static PARSER_JOIN_INPUT_BUFFER: UnsafeCell<[u8; PARSER_JOIN_INPUT_BUFFER_LEN]> =
+        const { UnsafeCell::new([0u8; PARSER_JOIN_INPUT_BUFFER_LEN]) };
     static PARSER_BUFFER: UnsafeCell<[u8; 1024]> = const { UnsafeCell::new([0u8; 1024]) };
 }
 
@@ -1364,6 +1368,23 @@ pub fn join_abs_string_z<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'
     PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf_z::<P>(cwd, tl_buf_mut(b), parts))
 }
 
+/// [`join_abs_string`], but joins into `spill` when the result may not fit the thread-local buffer.
+pub fn join_abs_string_spill<'a, P: PlatformT>(
+    cwd: &'a [u8],
+    spill: &'a mut Vec<u8>,
+    parts: &[&[u8]],
+) -> &'a [u8] {
+    debug_assert!(!matches!(P::P, Platform::Nt));
+    let needed = join_abs_needed(cwd.len(), parts);
+    if needed < PARSER_JOIN_INPUT_BUFFER_LEN {
+        return join_abs_string::<P>(cwd, parts);
+    }
+    if spill.len() < needed {
+        spill.resize(needed, 0);
+    }
+    join_abs_string_buf::<P>(cwd, &mut spill[..], parts)
+}
+
 const JOIN_BUF_LEN: usize = 4096;
 
 thread_local! {
@@ -1567,6 +1588,12 @@ fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(buf: &'a mut [T], parts: &[&
     normalize_string_node_t::<T, P>(&temp_buf[0..written], buf)
 }
 
+/// Buffer size that always holds `_join_abs_string_buf`'s scratch and output for these inputs.
+#[inline]
+fn join_abs_needed(cwd_len: usize, parts: &[&[u8]]) -> usize {
+    parts.iter().map(|p| p.len() + 1).sum::<usize>() + cwd_len + 2
+}
+
 /// Scratch buffer for `_join_abs_string_buf`'s unnormalized concatenation.
 /// Draws from the
 /// thread-local `path_buffer_pool` for the common case and only heap-allocates
@@ -1580,10 +1607,7 @@ enum JoinScratch {
 impl JoinScratch {
     #[inline]
     fn init(base: usize, parts: &[&[u8]]) -> Self {
-        let mut total = base + 2;
-        for p in parts {
-            total += p.len() + 1;
-        }
+        let total = join_abs_needed(base, parts);
         if total <= MAX_PATH_BYTES {
             JoinScratch::Pooled(crate::path_buffer_pool::get())
         } else {
@@ -1621,10 +1645,7 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     debug_assert!(!matches!(P::P, Platform::Nt));
     // Fast path: size check only — don't allocate a JoinScratch here since the
     // inner join_abs_string_buf already has its own (avoids doubling stack usage).
-    let mut total: usize = cwd.len() + 2;
-    for p in parts {
-        total += p.len() + 1;
-    }
+    let total = join_abs_needed(cwd.len(), parts);
     if total < buf.len() {
         return Some(join_abs_string_buf::<P>(cwd, buf, parts));
     }

@@ -35,11 +35,11 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // at the time of writing) is not caught until its name is added here, which is
 // the thing to do once its remaining sites are converted. In-place
 // finalizers, and `&mut self` methods that forward `self` itself
-// (`Self::finalize(self)`), take no address and are not matched; the one
-// `finalize` forwarder that does take the address is allowlisted below.
+// (`Self::finalize(self)`), take no address and are not matched.
 // Deliberately outside it:
 //   - the other reclaim primitives (`heap::take(from_mut(self))`,
-//     `Box::from_raw(self as *mut _)`), a separate population one layer down;
+//     `Box::from_raw(self as *mut _)`), which self-receiver-reclaim.test.ts
+//     covers one layer down;
 //   - refcount releases (`Self::deref(from_mut(self))`), which only free on the
 //     last count, so each site needs its own argument about who else holds one;
 //   - a bare `self` argument coerced to `*mut Self` by a raw-pointer callee
@@ -47,8 +47,8 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //     pointer stashed in a local and freed later, and reference parameters
 //     (`fn f(this: &mut T)` freeing `this`).
 //
-// Sibling guards: fn-long-mut-reborrow.test.ts, frozen-nonnull-reborrow.test.ts,
-// unsound-erased-box.test.ts.
+// Sibling guards: self-receiver-reclaim.test.ts, fn-long-mut-reborrow.test.ts,
+// frozen-nonnull-reborrow.test.ts, unsound-erased-box.test.ts.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
@@ -107,10 +107,6 @@ const DEFERRED = new RegExp(
 // shape while their conversion is in flight. Delete an entry when its file is
 // converted; never raise one.
 const ALLOW: Record<string, number> = {
-  // `<ArrayBufferSink as JsSinkType>::finalize(&mut self)` forwards to the
-  // `Self::finalize(*mut Self)` that frees the sink's m_ctx payload; the
-  // receiver shape comes from the trait / generated `__finalize` thunk.
-  "src/runtime/webcore/ArrayBufferSink.rs": 1,
   // `LifecycleScriptSubprocess::handle_exit` / `deinit_and_delete_package`
   // (`&mut self`) free the subprocess at five sites; #37551 turns them into a
   // disposition that the raw-pointer thunks act on.

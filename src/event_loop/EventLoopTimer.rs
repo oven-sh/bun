@@ -219,7 +219,10 @@ impl Tag {
     /// other owner must use `ForceRealTime`, because the real heap is drained
     /// against the real clock (`timer::All::next`).
     pub fn allow_fake_timers(self) -> bool {
-        matches!(self, Tag::TimeoutObject | Tag::AbortSignalTimeout | Tag::CronJob)
+        matches!(
+            self,
+            Tag::TimeoutObject | Tag::AbortSignalTimeout | Tag::CronJob
+        )
     }
 }
 

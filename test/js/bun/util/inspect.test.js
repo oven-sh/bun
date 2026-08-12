@@ -579,6 +579,75 @@ it("Bun.inspect huge sparse array summarizes holes without iterating them", asyn
   });
 });
 
+// When resolving a property throws partway through the property walk (a Proxy trap, or a
+// lazily-initialized native property whose initializer threw), the exception used to be
+// left pending while the walk moved on to the next property and up the prototype chain.
+describe.concurrent("Bun.inspect when looking up a property throws", () => {
+  async function inspectInChild(code) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("skips the property whose Proxy get trap threw and prints the rest", async () => {
+    const result = await inspectInChild(`
+      const proto = new Proxy(
+        { a: 1, b: 2, c: 3 },
+        {
+          get(target, key) {
+            if (key === "a") throw new Error("boom");
+            return target[key];
+          },
+        },
+      );
+      console.log(JSON.stringify(Bun.inspect(Object.create(proto))));
+    `);
+    expect(result).toEqual({ stdout: JSON.stringify("{\n  b: 2,\n  c: 3,\n}") + "\n", stderr: "", exitCode: 0 });
+  });
+
+  it("stops walking the prototype chain when a Proxy getPrototypeOf trap throws", async () => {
+    const result = await inspectInChild(`
+      const proto = new Proxy(
+        { a: 1 },
+        {
+          getPrototypeOf() {
+            throw new Error("boom");
+          },
+        },
+      );
+      console.log(JSON.stringify(Bun.inspect(Object.create(proto))));
+    `);
+    expect(result).toEqual({ stdout: JSON.stringify("{\n  a: 1,\n}") + "\n", stderr: "", exitCode: 0 });
+  });
+
+  it("keeps printing the Bun object after a lazily-initialized property throws", async () => {
+    // Bun.$ is built lazily by JS that calls Object.setPrototypeOf, so removing it makes
+    // resolving that property throw. "$" is the first property in Bun's table, and the
+    // properties after it used to be dropped from the output.
+    const result = await inspectInChild(`
+      Object.setPrototypeOf = undefined;
+      let shellThrew = false;
+      try {
+        Bun.$;
+      } catch {
+        shellThrew = true;
+      }
+      const inspected = Bun.inspect(Bun);
+      console.log(JSON.stringify({ shellThrew, hasArchive: inspected.includes("Archive: ") }));
+    `);
+    expect(result).toEqual({
+      stdout: JSON.stringify({ shellThrew: true, hasArchive: true }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 describe("console.logging function displays async and generator names", async () => {
   const cases = [
     function () {},

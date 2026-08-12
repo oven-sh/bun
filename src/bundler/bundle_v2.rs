@@ -1488,10 +1488,9 @@ pub mod bv2_impl {
 
     impl<'a> BundleV2<'a> {
         /// Bundle thread: parks an onResolve / onLoad request in the arena, links it
-        /// into the pass and posts it to the plugins' thread (a cancelled pass only
-        /// links it, for `is_done` to fail). Taking the request by value makes the
-        /// pointer created here the only one: the list, the JS thread and the
-        /// answer all hold it. Guarded by bundler-plugin-dispatch-raw-request.test.ts.
+        /// into the pass and posts it to the plugins' thread. By value, so that the
+        /// pointer made here is the only one: the list, the JS thread and the answer
+        /// all hold it.
         pub(crate) fn dispatch_plugin_request<T>(&mut self, request: T)
         where
             T: bun_event_loop::Taskable + crate::Graph::OutstandingNode,

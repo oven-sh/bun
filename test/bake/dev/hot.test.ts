@@ -1,7 +1,7 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
   files: {
@@ -311,6 +311,160 @@ devTest("import.meta.hot.accept multiple modules", {
     }
 
     await c.expectMessageInAnyOrder("Counter updated: 3", "Name updated: Charlie");
+  },
+});
+devTest("modules between the updated module and the importer accepting it are evaluated again", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    // index -> d
+    // index -> a -> d
+    //
+    // `index` accepts `d`, so it is not evaluated again itself, but `a`
+    // computed its export from `d` and has to be. The accept callback records
+    // what it saw instead of logging it, so that the test does not depend on
+    // how many times it runs per update (#37773).
+    "index.ts": `
+      import { d } from "./d";
+      import { a } from "./a";
+      console.log("index " + d + " " + a);
+      globalThis.snapshot = () => d + " " + a;
+      import.meta.hot.accept("./d", newModule => {
+        globalThis.accepted = newModule.d + " " + a;
+      });
+    `,
+    "a.ts": `
+      import { d } from "./d";
+      export const a = "a(" + d + ")";
+      console.log("a evaluated " + a);
+    `,
+    "d.ts": `
+      export const d = "d1";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("a evaluated a(d1)", "index d1 a(d1)");
+
+    await dev.write("d.ts", `export const d = "d2";`);
+    await c.expectMessage("a evaluated a(d2)");
+    expect(await c.js<string>`snapshot()`).toBe("d2 a(d2)");
+    expect(await c.js<string>`globalThis.accepted`).toBe("d2 a(d2)");
+
+    // The re-evaluated `a` takes part in the next update like the original did.
+    await dev.write("d.ts", `export const d = "d3";`);
+    await c.expectMessage("a evaluated a(d3)");
+    expect(await c.js<string>`snapshot()`).toBe("d3 a(d3)");
+    expect(await c.js<string>`globalThis.accepted`).toBe("d3 a(d3)");
+  },
+});
+devTest("modules between the updated module and a self-accepting importer are evaluated again, in dependency order", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    // index -> b -> d
+    //          b -> a -> d
+    //
+    // `b` loads `d` before `a` does, so `d` lists `b` as an importer before
+    // `a`, and walking up from `d` finds `b` first. `b` must still be evaluated
+    // after `a`, which it imports.
+    "index.ts": `
+      import { b } from "./b";
+      console.log("index " + b);
+      import.meta.hot.accept();
+    `,
+    "b.ts": `
+      import { d } from "./d";
+      import { a } from "./a";
+      export const b = "b(" + d + "," + a + ")";
+      console.log("b evaluated " + b);
+    `,
+    "a.ts": `
+      import { d } from "./d";
+      export const a = "a(" + d + ")";
+      console.log("a evaluated " + a);
+    `,
+    "d.ts": `
+      export const d = "d1";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("a evaluated a(d1)", "b evaluated b(d1,a(d1))", "index b(d1,a(d1))");
+
+    await dev.write("d.ts", `export const d = "d2";`);
+    await c.expectMessage("a evaluated a(d2)", "b evaluated b(d2,a(d2))", "index b(d2,a(d2))");
+  },
+});
+devTest("a self-accepting module imported by another one being reloaded is evaluated first", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    // index -> d
+    // index -> y -> d
+    //
+    // Both accept updates to `d`. `d` lists `index` as an importer first, so
+    // `index` is reloaded first; it must still see the new `y`, and `y`'s own
+    // accept callback must only run once `y`, which has top-level await, has
+    // finished evaluating.
+    "index.ts": `
+      import { d } from "./d";
+      import { y } from "./y";
+      console.log("index " + d + " " + y);
+      import.meta.hot.accept();
+    `,
+    "y.ts": `
+      import { d } from "./d";
+      await 0;
+      export const y = "y(" + d + ")";
+      console.log("y evaluated " + y);
+      import.meta.hot.accept(newModule => {
+        console.log("y accepted " + newModule.y);
+      });
+    `,
+    "d.ts": `
+      export const d = "d1";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("y evaluated y(d1)", "index d1 y(d1)");
+
+    await dev.write("d.ts", `export const d = "d2";`);
+    // A callback that ran too early would see the previous `y`. Whether it runs
+    // before or after `index` finishes depends on how the loader reports a load
+    // that is already in flight (#37759), so only the values are checked.
+    await c.expectMessageInAnyOrder("y evaluated y(d2)", "index d2 y(d2)", "y accepted y(d2)");
+  },
+});
+devTest("server: modules between the updated module and the route are evaluated again", {
+  framework: minimalFramework,
+  files: {
+    // Routes never accept updates; the server applies them anyway (and warns).
+    // The route imports `config` before `derived`, so walking up from `config`
+    // reaches the route before `derived`, which still has to be found.
+    "config.ts": `
+      export const value = "v1";
+    `,
+    "derived.ts": `
+      import { value } from "./config";
+      export const derived = "derived(" + value + ")";
+    `,
+    "routes/index.ts": `
+      import { value } from "../config";
+      import { derived } from "../derived";
+      export default function () {
+        return new Response(value + " " + derived);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("v1 derived(v1)");
+    await dev.write("config.ts", `export const value = "v2";`);
+    await dev.fetch("/").equals("v2 derived(v2)");
   },
 });
 devTest("import.meta.hot.data persistence", {

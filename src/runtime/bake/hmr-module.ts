@@ -613,13 +613,14 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     cb: HotAccept;
     key: Id;
   };
+  /** Replaced modules, the modules their updates propagate through, and the self-accepting modules they stop at. */
   const toReload = new Set<HMRModule>();
   const toAccept: ToAccept[] = [];
   let failures: Set<Id> | null = null;
   const toDispose: HMRModule[] = [];
 
   // Discover all HMR boundaries
-  outer: for (const key of Object.keys(modules)) {
+  for (const key of Object.keys(modules)) {
     // Unref old source maps, and track new ones
     if (side === "client") {
       DEBUG.ASSERT(sourceMapId);
@@ -642,11 +643,11 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       if (!mod) break;
 
       // Stop propagation if the module is self-accepting
-      let hadSelfAccept = true;
+      let propagates = true;
       if (mod.selfAccept) {
         toReload.add(mod);
         visited.add(mod);
-        hadSelfAccept = false;
+        propagates = false;
         if (mod.onDispose) {
           toDispose.push(mod);
         }
@@ -656,24 +657,29 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         mod.selfAccept ??= implicitAcceptFunction;
         toReload.add(mod);
         visited.add(mod);
-        hadSelfAccept = false;
+        propagates = false;
         if (mod.onDispose) {
           toDispose.push(mod);
         }
       }
 
-      // All importers will be visited
-      if (hadSelfAccept && mod.importers.size === 0) {
-        failures ??= new Set();
-        failures.add(key);
-        continue outer;
+      if (propagates) {
+        if (mod.importers.size === 0) {
+          // Keep walking: the server applies the update regardless, so the
+          // modules behind the other importers of `key` still have to be found.
+          failures ??= new Set();
+          failures.add(key);
+        } else {
+          // Its body ran against the previous version of `key`.
+          toReload.add(mod);
+        }
       }
 
       for (const importer of mod.importers) {
         const cb = importer.depAccepts?.[key];
         if (cb) {
           toAccept.push({ cb, key });
-        } else if (hadSelfAccept) {
+        } else if (propagates) {
           if (visited.has(importer)) continue;
           visited.add(importer);
           queue.push(importer);
@@ -727,9 +733,10 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         }),
       );
       fullReload();
-    } else {
-      console.warn(message);
+      return;
     }
+    // The server has no page to reload; the update is applied as far as it goes.
+    console.warn(message);
   }
 
   // Dispose all modules
@@ -750,20 +757,20 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     }
   }
 
-  // Reload all modules
-  const promises: Promise<HMRModule>[] = [];
+  // Reload all modules. All of them are marked stale before any is loaded, so
+  // that one importing another has the loader evaluate the imported one first.
+  const selfAccepts = new Map<HMRModule, HotAcceptFunction | null>();
   for (const mod of toReload) {
     mod.state = State.Stale;
-    const selfAccept = mod.selfAccept;
+    selfAccepts.set(mod, mod.selfAccept);
     mod.selfAccept = null;
     mod.depAccepts = null;
-
+  }
+  const promises: Promise<HMRModule>[] = [];
+  const acceptsAfterLoad: [HMRModule, HotAcceptFunction][] = [];
+  for (const [mod, selfAccept] of selfAccepts) {
     const modOrPromise = loadModuleAsync(mod.id, false, null);
-    if (modOrPromise === mod) {
-      if (selfAccept) {
-        selfAccept(getEsmExports(mod));
-      }
-    } else {
+    if (modOrPromise !== mod) {
       DEBUG.ASSERT(modOrPromise instanceof Promise);
       promises.push(
         (modOrPromise as Promise<HMRModule>).then(mod => {
@@ -773,10 +780,24 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
           return mod;
         }),
       );
+    } else if (selfAccept) {
+      if (mod.state === State.Loaded) {
+        selfAccept(getEsmExports(mod));
+      } else {
+        // Still loading (top-level await) on behalf of a module reloaded
+        // earlier in this loop that imports it; that module's promise waits for it.
+        acceptsAfterLoad.push([mod, selfAccept]);
+      }
     }
   }
   if (promises.length > 0) {
     await Promise.all(promises);
+  }
+  for (const [mod, selfAccept] of acceptsAfterLoad) {
+    // Only still pending when it was reached through import(), which nothing above waits for.
+    if (mod.state === State.Loaded) {
+      selfAccept(getEsmExports(mod));
+    }
   }
   for (const mod of toReload) {
     const { selfAccept } = mod;

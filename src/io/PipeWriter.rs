@@ -167,6 +167,9 @@ pub trait PosixPipeWriter {
                 self.on_write(amt, WriteStatus::Drained);
             }
             WriteResult::Err(err) => {
+                // Same rule as `.drained`: `on_error` runs the parent's error
+                // callback and then `close()`, either of which may free the
+                // writer, so nothing may touch `self` after this returns.
                 self.on_error(err);
             }
             WriteResult::Done(amt) => {
@@ -175,11 +178,15 @@ pub trait PosixPipeWriter {
         }
     }
 
-    /// Re-derives the slice from `self.get_buffer()` each iteration.
-    /// `try_write` only needs `&self`, so the shared borrow of the buffer
-    /// coexists with it, and the `&mut self` for `on_error` is taken after
-    /// the temporary slice borrow has ended — no raw-pointer escape needed.
-    fn drain_buffered_data(&mut self, max_write_size: usize, received_hup: bool) -> WriteResult {
+    /// Writes as much of `get_buffer()` as the fd accepts and reports the
+    /// outcome to the caller; it never dispatches a callback itself (`&self`
+    /// enforces that). A write error is returned as `Err` even when earlier
+    /// iterations drained some bytes: the caller's error report
+    /// (`on_error` -> `close()`) is terminal for the parent, so there is no
+    /// one left to tell about the partial progress, and reporting it through
+    /// `on_write` after `on_error` would run against a closed (possibly
+    /// already freed) parent.
+    fn drain_buffered_data(&self, max_write_size: usize, received_hup: bool) -> WriteResult {
         let _ = received_hup; // autofix
 
         let buf_len = self.get_buffer().len();
@@ -193,12 +200,9 @@ pub trait PosixPipeWriter {
 
         while drained < limit {
             let force_sync = self.get_force_sync();
-            // `try_write` takes `&self`; re-fetching the buffer here keeps the
-            // shared borrow scoped to this statement so the `&mut self` for
-            // `on_error` below is unencumbered. `try_write` does not mutate
-            // `self`, so `get_buffer()` is stable across iterations.
-            let attempt = self.try_write(force_sync, &self.get_buffer()[drained..limit]);
-            match attempt {
+            // `try_write` does not mutate `self`, so `get_buffer()` is stable
+            // across iterations.
+            match self.try_write(force_sync, &self.get_buffer()[drained..limit]) {
                 WriteResult::Pending(pending) => {
                     drained += pending;
                     return WriteResult::Pending(drained);
@@ -207,12 +211,7 @@ pub trait PosixPipeWriter {
                     drained += amt;
                 }
                 WriteResult::Err(err) => {
-                    if drained > 0 {
-                        self.on_error(err);
-                        return WriteResult::Wrote(drained);
-                    } else {
-                        return WriteResult::Err(err);
-                    }
+                    return WriteResult::Err(err);
                 }
                 WriteResult::Done(amt) => {
                     drained += amt;

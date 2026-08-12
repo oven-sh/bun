@@ -13,18 +13,39 @@ const SERVERS = 2;
 const MARKER = "text-from-plugin";
 
 const liveCells = () => heapStats().objectTypeCounts.BundlerPlugin ?? 0;
-const turn = () => new Promise(resolve => setTimeout(resolve, 0));
+const liveServerWrappers = () => {
+  const counts = heapStats().objectTypeCounts;
+  return (counts.HTTPServer ?? 0) + (counts.DebugHTTPServer ?? 0);
+};
+// A turn of the event loop: a freed server releases its cell from a deferred
+// task. The two scheduling paths alternate so that convergence does not hinge
+// on what one of them happens to keep reachable for a few turns.
+const turn = (i: number) => new Promise<void>(resolve => (i % 2 ? setImmediate(resolve) : setTimeout(resolve, 0)));
 
-// A released cell is only unprotected; it still has to be collected, and a
-// freed server releases its cell from a deferred task, so alternate turns of
-// the event loop with collections.
-async function collectCells() {
-  for (let i = 0; i < 20 && liveCells() > 0; i++) {
-    await turn();
+// A released cell is only unprotected; it still has to be collected, so
+// alternate turns with collections. This converges within a few rounds when
+// the cells are released and never when they are not, so the bound only
+// decides how long the failing case takes. On failure the per-round survivors
+// go to stderr (run-length encoded), which tells whether the Server object
+// itself or only its cell is still alive.
+async function collectCells(phase: string) {
+  const survivors: { what: string; rounds: number }[] = [];
+  for (let i = 0; i < 100 && liveCells() > 0; i++) {
+    await turn(i);
     Bun.gc(true);
-    await turn();
+    await turn(i + 1);
+    // The Server object count includes the shared prototype: 1 means no instances are left.
+    const what = `${liveCells()} BundlerPlugin cells, ${liveServerWrappers()} Server objects`;
+    const last = survivors.at(-1);
+    if (last?.what === what) last.rounds++;
+    else survivors.push({ what, rounds: 1 });
   }
-  return liveCells();
+  const remaining = liveCells();
+  if (remaining > 0) {
+    const trace = survivors.map(({ what, rounds }) => `${what} x${rounds}`).join("\n");
+    console.error(`${phase}: still alive after each collection round:\n${trace}`);
+  }
+  return remaining;
 }
 
 async function build() {
@@ -36,7 +57,7 @@ async function build() {
   return result.success && (await result.outputs[0].text()).includes(MARKER);
 }
 
-// Separate function so the servers are unreachable by the time collectCells() runs.
+// Separate functions so the servers are unreachable by the time collectCells() runs.
 async function serve() {
   const servers: Server[] = [];
   let usedPlugin = 0;
@@ -61,10 +82,44 @@ async function serve() {
   return { usedPlugin, cellsWhileServing };
 }
 
+// The server is stopped while its route is still being bundled with the
+// shared plugin; the build then finishes against the stopped server, which
+// still has to give the cell up once it is gone.
+async function stopMidBuild() {
+  const parked = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
+  globalThis.holdBuild = () => {
+    parked.resolve();
+    return released.promise;
+  };
+  try {
+    const server = Bun.serve({
+      port: 0,
+      development: false,
+      routes: { "/": html },
+      fetch: () => new Response("not found", { status: 404 }),
+    });
+    const page = fetch(server.url);
+    await parked.promise;
+    // Graceful: stops listening but lets the parked request finish.
+    const stopped = server.stop();
+    released.resolve();
+    const response = await page;
+    await response.text();
+    await server.stop(true);
+    await stopped;
+    return response.status;
+  } finally {
+    globalThis.holdBuild = undefined;
+  }
+}
+
 const buildUsedPlugin = await build();
-const buildCellsAfter = await collectCells();
+const buildCellsAfter = await collectCells("after Bun.build()");
 const { usedPlugin: serveUsedPlugin, cellsWhileServing } = await serve();
-const serveCellsAfter = await collectCells();
+const serveCellsAfter = await collectCells("after the servers were stopped");
+const stopMidBuildStatus = await stopMidBuild();
+const stopMidBuildCellsAfter = await collectCells("after the server stopped mid-build");
 
 console.log(
   JSON.stringify({
@@ -74,5 +129,7 @@ console.log(
     serveUsedPlugin,
     cellsWhileServing,
     serveCellsAfter,
+    stopMidBuildStatus,
+    stopMidBuildCellsAfter,
   }),
 );

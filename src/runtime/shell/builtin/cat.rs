@@ -35,8 +35,7 @@ pub enum CatState {
         chunks_queued: usize,
         chunks_done: usize,
         in_done: bool,
-        /// Errno the current file's reader finished with (0 on EOF); non-zero
-        /// ends the command instead of moving on to the next file.
+        /// Errno the current file's reader finished with; non-zero ends the command.
         errno: ExitCode,
     },
     WaitingWriteErr,
@@ -63,8 +62,7 @@ impl CatState {
         self.input_step()
     }
 
-    /// The input's reader finished, with `errno` (0 on EOF). The chunks it
-    /// queued are left to drain: a cancelled chunk never calls back.
+    /// The reader finished with `errno` (0 on EOF); the chunks it queued still drain.
     fn reader_done(&mut self, errno: ExitCode) -> Step {
         match self {
             CatState::ExecStdin {
@@ -85,8 +83,7 @@ impl CatState {
         self.input_step()
     }
 
-    /// The input is over once its reader is done and every chunk it queued
-    /// has completed, whichever of the two happens last.
+    /// Finishes the input once the reader is done and every chunk it queued completed.
     fn input_step(&mut self) -> Step {
         match self {
             CatState::ExecStdin {

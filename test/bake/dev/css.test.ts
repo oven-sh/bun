@@ -843,9 +843,11 @@ async function viewRouteOverHmr(dev: Dev, route: string) {
   const viewing = Promise.withResolvers<number>();
   const unreadHotUpdates: ArrayBuffer[] = [];
   let reader: PromiseWithResolvers<ArrayBuffer> | null = null;
+  let failure: Error | null = null;
   const fail = (reason: string) => {
-    viewing.reject(new Error(reason));
-    reader?.reject(new Error(reason));
+    failure = new Error(reason);
+    viewing.reject(failure);
+    reader?.reject(failure);
   };
   ws.onerror = () => fail("hmr websocket errored");
   ws.onclose = () => fail("hmr websocket closed");
@@ -874,6 +876,7 @@ async function viewRouteOverHmr(dev: Dev, route: string) {
     async nextHotUpdate(): Promise<HotUpdateRouteLists> {
       let payload = unreadHotUpdates.shift();
       if (!payload) {
+        if (failure) throw failure;
         reader = Promise.withResolvers<ArrayBuffer>();
         payload = await reader.promise;
       }

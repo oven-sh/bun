@@ -124,7 +124,9 @@ JSValue constructS3FileInternal(JSC::JSGlobalObject* lexicalGlobalObject, void* 
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* structure = globalObject->m_JSS3FileStructure.getInitializedOnMainThread(lexicalGlobalObject);
-    return JSS3File::create(vm, globalObject, structure, ptr);
+    auto* instance = JSS3File::create(vm, globalObject, structure, ptr);
+    vm.heap.reportExtraMemoryAllocated(instance, JSBlob::memoryCost(ptr));
+    return instance;
 }
 
 JSC::Structure* JSS3File::createStructure(JSC::JSGlobalObject* globalObject)

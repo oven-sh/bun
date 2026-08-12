@@ -69,38 +69,75 @@ describe("Native types report their size correctly", () => {
     expect(estimateShallowMemoryUsageOf(formData.get("file") as File)).toBeGreaterThanOrEqual(payload.byteLength);
   });
 
-  it("File reports its bytes to the GC when constructed", async () => {
-    // Every File below is garbage as soon as it is constructed. Only the
-    // reported payload makes JSC collect during the loop; the cells alone
-    // (a few dozen bytes per 1 MiB payload) never reach a collection threshold.
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        /* js */ `
-          const { heapStats } = require("bun:jsc");
-          const payload = Buffer.alloc(1024 * 1024, "abc");
-          const created = 256;
-          for (let i = 0; i < created; i++) {
-            new File([payload], "file.bin");
-          }
-          console.log(JSON.stringify({ created, alive: heapStats().objectTypeCounts.Blob ?? 0 }));
-        `,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
+  // `new File()` and S3 files are the two Blob wrappers created outside the
+  // generated Blob constructor. Bun caps JSC's allocation budget per GC cycle at
+  // 8 MiB (largeHeapSize), so 512 instances that each own ~64 KB (a payload, or
+  // the credentials an S3 file copies) are worth several collections, but only if
+  // the wrapper reports that size when it is created: the cells themselves are a
+  // few dozen bytes each and never get near the budget. `className` is the heap
+  // type both the prototype and the instances are counted under.
+  describe.each([
+    {
+      className: "Blob",
+      setup: /* js */ `const payload = Buffer.alloc(64 * 1024, "abc");`,
+      construct: /* js */ `new File([payload], "file.bin")`,
+    },
+    {
+      className: "S3File",
+      setup: /* js */ `
+        const client = new Bun.S3Client({
+          accessKeyId: "id",
+          secretAccessKey: "secret",
+          endpoint: "http://localhost:1",
+          bucket: Buffer.alloc(64 * 1024, "b").toString(),
+        });
+      `,
+      construct: /* js */ `client.file("key")`,
+    },
+  ])("$construct", ({ className, setup, construct }) => {
+    it("reports its size to the GC when constructed", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+            const { heapStats } = require("bun:jsc");
+            ${setup}
+            const count = () => heapStats().objectTypeCounts[${JSON.stringify(className)}];
+            // Stays referenced: creating it also creates the lazily allocated prototype.
+            const warmup = ${construct};
+            // heapStats() runs a full collection itself if none has happened yet
+            // (BUN_GC_TIMER_DISABLE=1 skips the startup one). Taking the baseline
+            // here absorbs that, so the counts below are plain live-cell counts.
+            const before = count();
+            const held = ${construct};
+            const withHeld = count();
+            const created = 512;
+            for (let i = 0; i < created; i++) {
+              ${construct};
+            }
+            const alive = count() - withHeld;
+            console.log(JSON.stringify({ before, withHeld, created, alive, kept: [warmup.name, held.name] }));
+          `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const stderrLines = stderr
+        .split("\n")
+        .filter(line => line && !line.startsWith("WARNING: ASAN interferes"))
+        .join("\n");
+      expect(stderrLines).toBe("");
+      const { before, withHeld, created, alive } = JSON.parse(stdout);
+      // Positive control: the counter really counts these instances.
+      expect(withHeld).toBe(before + 1);
+      // Seen: 10-25 alive when the size is reported on construction, and the
+      // 8 MiB budget keeps whatever piles up after the last collection to about a
+      // quarter of them; exactly `created` when it is not reported.
+      expect(alive).toBeLessThan(created / 2);
+      expect(exitCode).toBe(0);
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const stderrLines = stderr
-      .split("\n")
-      .filter(line => line && !line.startsWith("WARNING: ASAN interferes"))
-      .join("\n");
-    expect(stderrLines).toBe("");
-    const { created, alive } = JSON.parse(stdout);
-    // Seen: 6-23 alive (release through loaded debug+ASAN) once the payload is reported,
-    // and created + 1 when it is not, since nothing else ever triggers a collection.
-    expect(alive).toBeLessThan(created / 2);
-    expect(exitCode).toBe(0);
   });
 
   it("Request", () => {

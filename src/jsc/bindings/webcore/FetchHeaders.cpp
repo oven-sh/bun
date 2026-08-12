@@ -207,6 +207,7 @@ ExceptionOr<Ref<FetchHeaders>> FetchHeaders::create(std::optional<Init>&& header
 
 ExceptionOr<void> FetchHeaders::fill(const Init& headerInit)
 {
+    ++m_updateCounter;
     return fillHeaderMap(m_headers, headerInit, m_guard);
 }
 
@@ -218,10 +219,10 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
         headers.uncommonHeaders().appendVector(otherHeaders.m_headers.uncommonHeaders());
         headers.getSetCookieHeaders().appendVector(otherHeaders.m_headers.getSetCookieHeaders());
         setInternalHeaders(WTF::move(headers));
-        m_updateCounter++;
         return {};
     }
 
+    ++m_updateCounter;
     for (auto& header : otherHeaders.m_headers) {
         auto result = appendToHeaderMap(header, m_headers, m_guard);
         if (result.hasException())
@@ -320,66 +321,48 @@ ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
     return {};
 }
 
+// https://webidl.spec.whatwg.org/#es-iterable: each next() reads the current
+// list of value pairs to iterate over (for Headers, "sort and combine" of the
+// header list) at the iterator's index, so a mutation between two next() calls
+// is observed from the current index onwards. The list is materialized as
+// (name, value) pairs and only rebuilt after a mutation, so a full iteration
+// costs one sort rather than one header-map lookup per step.
 std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
 {
-    if (m_keys.isEmpty() || m_updateCounter != m_headers->m_updateCounter) {
-        bool hasSetCookie = !m_headers->getSetCookieHeaders().isEmpty();
-        m_keys.resize(0);
-        m_keys.reserveCapacity(m_headers->m_headers.size() + (hasSetCookie ? 1 : 0));
+    if (!m_hasEntries || m_updateCounter != m_headers->m_updateCounter) {
+        auto& headers = m_headers->m_headers;
+
+        m_entries.resize(0);
+        m_entries.reserveCapacity(headers.size());
         if (m_lowerCaseKeys) {
-            for (auto& header : m_headers->m_headers)
-                m_keys.unsafeAppendWithoutCapacityCheck(header.asciiLowerCaseName());
+            for (auto& header : headers)
+                m_entries.unsafeAppendWithoutCapacityCheck({ header.asciiLowerCaseName(), header.value });
         } else {
-            for (auto& header : m_headers->m_headers)
-                m_keys.unsafeAppendWithoutCapacityCheck(header.name());
+            for (auto& header : headers)
+                m_entries.unsafeAppendWithoutCapacityCheck({ header.name(), header.value });
         }
-        std::sort(m_keys.begin(), m_keys.end(), WTF::codePointCompareLessThan);
-        if (hasSetCookie)
-            m_keys.unsafeAppendWithoutCapacityCheck(String());
+        // Names are unique within a header map, so the order is fully determined.
+        std::sort(m_entries.begin(), m_entries.end(), [](const auto& a, const auto& b) {
+            return WTF::codePointCompareLessThan(a.key, b.key);
+        });
+        // One entry per set-cookie value, after the combined headers.
+        for (auto& value : headers.getSetCookieHeaders())
+            m_entries.unsafeAppendWithoutCapacityCheck({ WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie), value });
 
-        m_currentIndex += m_cookieIndex;
-        if (hasSetCookie) {
-            size_t setCookieKeyIndex = m_keys.size() - 1;
-            if (m_currentIndex < setCookieKeyIndex)
-                m_cookieIndex = 0;
-            else {
-                m_cookieIndex = std::min(m_currentIndex - setCookieKeyIndex, m_headers->getSetCookieHeaders().size());
-                m_currentIndex -= m_cookieIndex;
-            }
-        } else
-            m_cookieIndex = 0;
-
+        m_hasEntries = true;
         m_updateCounter = m_headers->m_updateCounter;
     }
 
-    auto& setCookieHeaders = m_headers->m_headers.getSetCookieHeaders();
+    if (m_currentIndex >= m_entries.size())
+        return std::nullopt;
 
-    while (m_currentIndex < m_keys.size()) {
-        auto key = m_keys[m_currentIndex];
-
-        if (key.isNull()) {
-            if (m_cookieIndex < setCookieHeaders.size()) {
-                String value = setCookieHeaders[m_cookieIndex++];
-                return KeyValuePair<String, String> { WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie), WTF::move(value) };
-            }
-            m_currentIndex++;
-            continue;
-        }
-
-        m_currentIndex++;
-        auto value = m_headers->m_headers.get(key);
-        if (!value.isNull())
-            return KeyValuePair<String, String> { WTF::move(key), WTF::move(value) };
-    }
-
-    return std::nullopt;
+    return m_entries[m_currentIndex++];
 }
 
-FetchHeaders::Iterator::Iterator(FetchHeaders& headers, bool lowerCaseKeys = true)
+FetchHeaders::Iterator::Iterator(FetchHeaders& headers, bool lowerCaseKeys)
     : m_headers(headers)
+    , m_lowerCaseKeys(lowerCaseKeys)
 {
-    m_cookieIndex = 0;
-    m_lowerCaseKeys = lowerCaseKeys;
 }
 
 } // namespace WebCore

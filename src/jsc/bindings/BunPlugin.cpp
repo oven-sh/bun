@@ -484,6 +484,25 @@ struct ModuleMockUndoLog {
     {
         return installed.findIf([&](auto& entry) { return entry.specifier == specifier; });
     }
+
+    ModuleMockUndoLog take() { return std::exchange(*this, {}); }
+
+    // Adds entries logged after this one was taken, except where this one already has the older (winning) entry.
+    void absorbNewer(ModuleMockUndoLog&& newer)
+    {
+        for (auto& entry : newer.bindings) {
+            if (findBindingIndex(entry.record.get(), entry.localName) == notFound)
+                bindings.append(WTF::move(entry));
+        }
+        for (auto& entry : newer.commonJSModules) {
+            if (findCommonJS(entry.module.get()) == notFound)
+                commonJSModules.append(WTF::move(entry));
+        }
+        for (auto& entry : newer.installed) {
+            if (findInstalled(entry.specifier) == notFound)
+                installed.append(WTF::move(entry));
+        }
+    }
 };
 
 static ModuleMockUndoLog& ensureUndoLog(BunPlugin::OnLoad& onLoad)
@@ -947,10 +966,11 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Taken out of the log first: a lazy export's getter runs JS, which may call mock.module() or restore() itself.
-    Vector<ModuleMockUndoLog::Binding> bindings = std::exchange(log->bindings, {});
+    // Taken out first: a lazy getter may run JS that mocks (logged afresh, for the next restore) or restores (sees only that).
+    ModuleMockUndoLog pending = log->take();
+
     size_t restored = 0;
-    for (auto& binding : bindings) {
+    for (auto& binding : pending.bindings) {
         JSValue value = binding.original.get();
         if (auto* lazySource = binding.lazySource.get()) {
             value = lazySource->get(globalObject, binding.localName);
@@ -962,27 +982,25 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
             break;
         restored++;
     }
-    if (restored < bindings.size()) {
-        // On a throw the entries not yet restored stay logged (ahead of anything logged meanwhile) for the next restore().
-        bindings.removeAt(0, restored);
-        bindings.appendVector(std::exchange(log->bindings, {}));
-        log->bindings = WTF::move(bindings);
+    if (restored < pending.bindings.size()) {
+        // Threw: everything not yet undone goes back, ahead of what was logged meanwhile, for the next restore().
+        pending.bindings.removeAt(0, restored);
+        pending.absorbNewer(log->take());
+        *log = WTF::move(pending);
     }
     RETURN_IF_EXCEPTION(scope, void());
 
-    for (auto& entry : log->commonJSModules)
+    for (auto& entry : pending.commonJSModules)
         entry.module->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), entry.originalExports.get(), 0);
-    log->commonJSModules.clear();
 
     if (virtualModules) {
-        for (auto& entry : log->installed) {
+        for (auto& entry : pending.installed) {
             if (entry.displaced)
                 virtualModules->set(entry.specifier, JSC::Strong<JSC::JSObject> { vm, entry.displaced.get() });
             else
                 virtualModules->remove(entry.specifier);
         }
     }
-    log->installed.clear();
 }
 
 EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path)

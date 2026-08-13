@@ -536,43 +536,69 @@ test.concurrent('"bun": a throwing getter fails mock.restore() and keeps the moc
   expect(exitCode).toBe(0);
 });
 
-test.concurrent('"bun": a getter that itself mocks and restores does not derail the restore', async () => {
+test.concurrent('"bun": a getter that itself mocks (and maybe restores) does not derail the restore', async () => {
   const { stderr, exitCode } = await run(
     {
       "reexport.mjs": bunReexport,
       "dep.mjs": `export const value = "real dep";`,
+      "dep.cjs": `module.exports = { value: "real cjs dep" };`,
+      "never-loaded.mjs": `export const value = "real never-loaded";`,
       "lazy.test.ts": `
         import { expect, mock, test } from "bun:test";
         import * as dep from "./dep.mjs";
 
-        // Defined before anything builds the "bun" module record, so it becomes a lazy export with a user getter.
-        let reads = 0;
-        Object.defineProperty(Bun, "userLazy", {
+        // Defined before anything builds the "bun" module record, so these become lazy exports with user getters.
+        const reads = { restoring: 0, mockingOnly: 0 };
+        Object.defineProperty(Bun, "restoringLazy", {
           configurable: true,
           enumerable: true,
           get() {
-            reads++;
-            mock.module("./dep.mjs", () => ({ value: "mocked from the getter" }));
+            reads.restoring++;
+            mock.module("./dep.mjs", () => ({ value: "mocked inside the getter" }));
             mock.restore();
-            return "from the getter";
+            return "restoring getter";
+          },
+        });
+        Object.defineProperty(Bun, "mockingLazy", {
+          configurable: true,
+          enumerable: true,
+          get() {
+            reads.mockingOnly++;
+            mock.module("./dep.mjs", () => ({ value: "esm mocked by the getter" }));
+            mock.module("./dep.cjs", () => ({ value: "cjs mocked by the getter" }));
+            mock.module("./never-loaded.mjs", () => ({ value: "never-loaded mocked by the getter" }));
+            return "mocking getter";
           },
         });
 
-        test("re-entrant restore", async () => {
+        test("the getter restores as well", async () => {
           const reexported = await import("./reexport.mjs");
-          mock.module("./reexport.mjs", () => ({ userLazy: "mocked", Glob: "mocked glob" }));
-          expect([reexported.userLazy, reexported.Glob]).toEqual(["mocked", "mocked glob"]);
+          mock.module("./reexport.mjs", () => ({ restoringLazy: "mocked", Glob: "mocked glob" }));
+          expect([reexported.restoringLazy, reexported.Glob]).toEqual(["mocked", "mocked glob"]);
           mock.restore();
-          expect(reads).toBe(1);
-          expect(reexported.userLazy).toBe("from the getter");
-          expect(reexported.Glob).toBe(Bun.Glob);
+          expect(reads).toEqual({ restoring: 1, mockingOnly: 0 });
+          expect([reexported.restoringLazy, reexported.Glob, dep.value]).toEqual(["restoring getter", Bun.Glob, "real dep"]);
+        });
+
+        test("the getter only mocks: its mocks all stay until the next restore", async () => {
+          const reexported = await import("./reexport.mjs");
+          expect(require("./dep.cjs").value).toBe("real cjs dep");
+          mock.module("./reexport.mjs", () => ({ mockingLazy: "mocked" }));
+          mock.restore();
+          expect(reads).toEqual({ restoring: 1, mockingOnly: 1 });
+          expect(reexported.mockingLazy).toBe("mocking getter");
+          expect(dep.value).toBe("esm mocked by the getter");
+          expect(require("./dep.cjs").value).toBe("cjs mocked by the getter");
+          expect((await import("./never-loaded.mjs")).value).toBe("never-loaded mocked by the getter");
+          mock.restore();
           expect(dep.value).toBe("real dep");
+          expect(require("./dep.cjs").value).toBe("real cjs dep");
         });
       `,
     },
     ["test", "lazy.test.ts"],
   );
-  expect(stderr).toContain(" 1 pass");
+  expect(stderr).toContain(" 2 pass");
   expect(stderr).toContain(" 0 fail");
   expect(exitCode).toBe(0);
 });

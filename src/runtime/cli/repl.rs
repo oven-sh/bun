@@ -944,17 +944,39 @@ impl<'a> Repl<'a> {
         }
         #[cfg(windows)]
         {
+            // With ENABLE_PROCESSED_INPUT the console turns Ctrl+C into a
+            // CTRL_C_EVENT, whose default handler exits the process, instead of
+            // the 0x03 byte that read_key maps to Key::CtrlC. libuv's raw mode
+            // (setRawMode, which node's REPL uses) leaves it off as well;
+            // processed_input_while_evaluating() turns it back on while
+            // JavaScript runs.
             self.original_windows_mode = bun_sys::windows::update_stdio_mode_flags(
                 bun_sys::Stdio::StdIn,
                 bun_sys::windows::UpdateStdioModeFlagsOpts {
-                    set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT
-                        | bun_sys::windows::ENABLE_PROCESSED_INPUT,
+                    set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
                     unset: bun_sys::windows::ENABLE_LINE_INPUT
-                        | bun_sys::windows::ENABLE_ECHO_INPUT,
+                        | bun_sys::windows::ENABLE_ECHO_INPUT
+                        | bun_sys::windows::ENABLE_PROCESSED_INPUT,
                 },
             )
             .ok();
         }
+    }
+
+    /// Nothing reads stdin while JavaScript runs, so a Ctrl+C typed during an
+    /// evaluation would sit in the console input buffer until the next prompt.
+    /// With ENABLE_PROCESSED_INPUT back on it raises CTRL_C_EVENT instead and
+    /// ends the process, which is the only way out of a hung evaluation. The
+    /// guard restores the line editor's mode on drop. `None` when
+    /// setup_terminal() left the console alone (stdin or stdout is not a tty).
+    #[cfg(windows)]
+    fn processed_input_while_evaluating(&self) -> Option<bun_sys::windows::StdinModeGuard> {
+        self.original_windows_mode.is_some().then(|| {
+            bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
+                set: bun_sys::windows::ENABLE_PROCESSED_INPUT,
+                ..Default::default()
+            })
+        })
     }
 
     fn restore_terminal(&mut self) {
@@ -1001,7 +1023,8 @@ impl<'a> Repl<'a> {
                 bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
             }
         }
-        // On Windows, ENABLE_PROCESSED_INPUT is already set so Ctrl+C works
+        // On Windows, processed_input_while_evaluating() already has Ctrl+C
+        // raising CTRL_C_EVENT for the whole evaluation, this wait included.
     }
 
     /// Restore raw terminal mode after promise wait
@@ -1293,6 +1316,8 @@ impl<'a> Repl<'a> {
         let Some(vm) = self.vm else {
             return;
         };
+        #[cfg(windows)]
+        let _processed_input = self.processed_input_while_evaluating();
 
         // Transform the code using REPL mode (hoists declarations, wraps result in { value: expr })
         let Some(transformed_code) = self.transform_for_repl(code) else {
@@ -1607,6 +1632,8 @@ impl<'a> Repl<'a> {
         let Some(vm) = self.vm else {
             return;
         };
+        #[cfg(windows)]
+        let _processed_input = self.processed_input_while_evaluating();
 
         let Some(transformed_code) = self.transform_for_repl(code) else {
             self.evaluate_raw(code);

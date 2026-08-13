@@ -78,31 +78,35 @@ async function withTerminalRepl(
   const waitFor = async (pattern: string | RegExp, timeoutMs = 5000): Promise<string> => {
     const deadline = Date.now() + timeoutMs;
     while (true) {
-      const all = received.join("");
+      // Match on text only: ConPTY re-renders the REPL's output from its screen
+      // buffer (the trailing space of the "> " prompt comes back as an erase
+      // sequence, for instance), so the escape sequences are not the REPL's own.
+      const all = stripAnsi(received.join(""));
       const recent = all.slice(cursor);
       const matched = typeof pattern === "string" ? recent.includes(pattern) : pattern.test(recent);
       if (matched) {
         cursor = all.length;
         return recent;
       }
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) {
+      if (proc.exitCode !== null || proc.signalCode !== null) {
         throw new Error(
-          `Timed out waiting for pattern: ${pattern}\nReceived so far:\n${stripAnsi(received.join("").slice(cursor))}`,
+          `REPL exited (code ${proc.exitCode}, signal ${proc.signalCode}) before printing ${pattern}\nReceived so far:\n${recent}`,
         );
       }
-      // Wait for the next chunk of terminal data (or time out).
-
-      await new Promise<void>(resolve => {
-        resolveWaiter = resolve;
-      });
+      if (Date.now() >= deadline) {
+        throw new Error(`Timed out waiting for pattern: ${pattern}\nReceived so far:\n${recent}`);
+      }
+      // Wait for the next chunk of terminal data, or for the REPL to exit.
+      const { promise, resolve } = Promise.withResolvers<void>();
+      resolveWaiter = resolve;
+      await Promise.race([promise, proc.exited]);
       resolveWaiter = null;
     }
   };
 
   const allOutput = () => stripAnsi(received.join(""));
 
-  await waitFor(/\u276f|> /); // Wait for prompt
+  await waitFor(/\u276f|>/); // Wait for prompt
 
   await fn({ terminal, proc, send, waitFor, allOutput });
 
@@ -973,18 +977,6 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
     });
   });
 
-  test("Ctrl+C cancels current input", async () => {
-    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
-      send("some partial input");
-      await waitFor("some partial input");
-      send("\x03"); // Ctrl+C
-      await waitFor(/\u276f|> /);
-      // Should be back at a clean prompt
-      send("1 + 1\n");
-      await waitFor("2");
-    });
-  });
-
   test("Ctrl+D exits on empty line", async () => {
     await withTerminalRepl(async ({ terminal, proc }) => {
       terminal.write("\x04"); // Ctrl+D
@@ -1189,6 +1181,64 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       terminal.write(new Uint8Array([0xc2, 0x62])); // stray lead + 'b'
       send('".length\n');
       await waitFor(/\n\s*2\b/);
+    });
+  });
+});
+
+// Ctrl+C is a keystroke (0x03) the line editor handles itself. These run on
+// Windows too: the REPL used to leave ENABLE_PROCESSED_INPUT set on the console
+// while line editing, so conhost turned Ctrl+C into a CTRL_C_EVENT and the
+// process exited with STATUS_CONTROL_C_EXIT instead of reaching handle_ctrl_c.
+describe("Bun REPL (Terminal) Ctrl+C", () => {
+  test("Ctrl+C with pending input clears the line", async () => {
+    await withTerminalRepl(async ({ send, waitFor, proc }) => {
+      send("some partial input");
+      await waitFor("some partial input");
+      send("\x03");
+      await waitFor("^C");
+      // The next evaluation must not see the cancelled text. The operands are
+      // split so the echoed input does not contain the expected result.
+      send('"still" + "-alive"\n');
+      await waitFor('"still-alive"');
+      expect(proc.exitCode).toBeNull();
+    });
+  });
+
+  test("Ctrl+C on an empty line shows the exit hint; a second one exits", async () => {
+    await withTerminalRepl(async ({ send, waitFor, proc }) => {
+      send("\x03");
+      await waitFor("press Ctrl+C again to exit");
+      expect(proc.exitCode).toBeNull();
+      send("\x03");
+      expect(await proc.exited).toBe(0);
+    });
+  });
+
+  test("Ctrl+C while a multiline input is pending discards it", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send("function __abandoned() {\n");
+      await waitFor("...");
+      send("\x03");
+      // Evaluates as a fresh line only if Ctrl+C dropped the open function body.
+      send('typeof __abandoned + "-" + "checked"\n');
+      await waitFor('"undefined-checked"');
+    });
+  });
+
+  // The REPL does not read stdin while JavaScript runs, so a Ctrl+C typed then
+  // would sit in the console input buffer until the next prompt. On Windows the
+  // REPL turns ENABLE_PROCESSED_INPUT back on for the duration of an evaluation,
+  // so conhost raises CTRL_C_EVENT and the process ends instead of hanging.
+  // (POSIX re-enables ISIG only around the promise wait and interrupts the wait
+  // rather than exiting, so this assertion is Windows-specific.)
+  test.skipIf(!isWindows)("Ctrl+C during an evaluation still ends the process", async () => {
+    await withTerminalRepl(async ({ send, waitFor, proc }) => {
+      // The marker is printed from inside the evaluation; it is split so the
+      // echoed input does not match it.
+      send('console.log("EVAL" + "UATING"); await new Promise(() => {})\n');
+      await waitFor("EVALUATING");
+      send("\x03");
+      expect(await proc.exited).not.toBe(0);
     });
   });
 });

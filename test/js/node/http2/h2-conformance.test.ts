@@ -1727,14 +1727,17 @@ describe("stream release after a queued END_STREAM", () => {
     const client = http2.connect(await listen(server));
     try {
       const stalled = client.request({ ":path": "/stalled" });
-      stalled.on("error", () => {});
+      let stalledError: Error | null = null;
+      stalled.on("error", err => (stalledError = err));
       await once(stalled, "response");
       for (let i = 0; i < STREAMS; i++) {
         await roundTrip(client, { ":path": "/" }).closed;
       }
       expect(refs).toHaveLength(STREAMS);
       const live = await liveCount(refs);
-      // The premise: the stalled response was still queued while the other requests were answered.
+      // The premise: the stalled stream is still open (not errored or reset into releasing the
+      // queue) and its response was still queued while the other requests were answered.
+      expect(stalledError).toBeNull();
       expect(stalledFinished()).toBe(false);
       stalled.close();
       return live;

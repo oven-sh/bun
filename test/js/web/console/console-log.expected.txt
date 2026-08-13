@@ -20,6 +20,12 @@ Symbol(Symbol Description)
 [String: "Hello 👋🏼"]
 [Number: 5]
 [Boolean: true]
+{
+  s: [String: "Hello"],
+  n: [Number: 5],
+  b: [Boolean: true],
+}
+[ [String: "Hello"], [String: "Hello 👋🏼"], "Hello" ]
 [ 123, 456, 789 ]
 {
   name: "foo",

@@ -38,6 +38,7 @@
 #include "SerializedScriptValue.h"
 #include "Worker.h"
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/HeapObserver.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -68,7 +69,8 @@ void* WebWorker__create(
     BunString* preloadModulesPtr,
     size_t preloadModulesLen);
 // Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Any thread.
-void WebWorker__requestTermination(void*);
+// False if the thread was already stopping.
+bool WebWorker__requestTermination(void*);
 // Toggle the keep-alive this worker holds on the parent event loop. Parent thread.
 void WebWorker__setRef(void*, bool);
 // Release that keep-alive. Parent thread.
@@ -80,6 +82,67 @@ void WebWorker__join(void*);
 void WebWorker__deref(void*);
 
 } // extern "C"
+
+// ---- resourceLimits ------------------------------------------------------------------------------
+
+// didGarbageCollect runs on whichever thread finished the collection (possibly JSC's collector thread, which has no per-thread Bun state), before the mutator resumes.
+class WorkerHeapLimitObserver final : public JSC::HeapObserver {
+    WTF_MAKE_TZONE_ALLOCATED(WorkerHeapLimitObserver);
+
+public:
+    WorkerHeapLimitObserver(WorkerMessagingProxy& proxy, JSC::VM& vm, void* workerThread, size_t limitBytes)
+        : m_proxy(proxy)
+        , m_vm(vm)
+        , m_workerThread(workerThread)
+        , m_limitBytes(limitBytes)
+    {
+    }
+
+private:
+    void willGarbageCollect() final {}
+
+    void didGarbageCollect(JSC::CollectionScope scope) final
+    {
+        // Only a full collection's survivor size is the live set; an eden collection's is not.
+        if (scope != JSC::CollectionScope::Full)
+            return;
+        if (m_proxy.m_heapLimitDisarmed.load(std::memory_order_acquire))
+            return;
+        if (m_vm.heap.sizeAfterLastFullCollection() <= m_limitBytes)
+            return;
+        // A thread that is already stopping (terminate(), process.exit()) keeps its own reason.
+        if (!WebWorker__requestTermination(m_workerThread))
+            return;
+        m_proxy.m_stoppedByHeapLimit.store(true, std::memory_order_release);
+    }
+
+    WorkerMessagingProxy& m_proxy;
+    JSC::VM& m_vm;
+    void* const m_workerThread;
+    const size_t m_limitBytes;
+};
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WorkerHeapLimitObserver);
+
+void WorkerMessagingProxy::installHeapLimitObserver(JSC::VM& vm, void* workerThread)
+{
+    size_t limitBytes = m_options.resourceLimits.heapLimitBytes();
+    if (!limitBytes)
+        return;
+    ASSERT(!m_heapLimitObserver);
+    m_heapLimitObserver = makeUnique<WorkerHeapLimitObserver>(*this, vm, workerThread, limitBytes);
+    vm.heap.addObserver(m_heapLimitObserver.get());
+}
+
+extern "C" void WebWorker__installHeapLimitObserver(WorkerMessagingProxy* proxy, Zig::GlobalObject* globalObject, void* workerThread)
+{
+    proxy->installHeapLimitObserver(JSC::getVM(globalObject), workerThread);
+}
+
+extern "C" void WebWorker__disarmHeapLimitObserver(WorkerMessagingProxy* proxy)
+{
+    proxy->disarmHeapLimitObserver();
+}
 
 WorkerMessagingProxy::WorkerMessagingProxy(Worker& workerObject, ScriptExecutionContext& parentContext, WorkerOptions&& options)
     : m_scriptExecutionContext(&parentContext)
@@ -516,6 +579,10 @@ void WorkerMessagingProxy::workerGlobalScopeDestroyedInternal(int32_t exitCode, 
     // Web Worker's 'close' event keeps 0 for that case (documented).
     if (m_options.kind == WorkerOptions::Kind::Node && stoppedByParent)
         exitCode = 1;
+    // Node: ERR_WORKER_OUT_OF_MEMORY always comes with exit code 1.
+    const bool stoppedByHeapLimit = m_stoppedByHeapLimit.load(std::memory_order_acquire);
+    if (stoppedByHeapLimit)
+        exitCode = 1;
 
     // Closing while 'close' dispatches so handlers observe threadId == -1 / !isOnline() but a
     // postMessage() from inside them is still accepted and dropped (browser/Node behaviour).
@@ -531,9 +598,20 @@ void WorkerMessagingProxy::workerGlobalScopeDestroyedInternal(int32_t exitCode, 
     // task then finds it empty.
     drainMessagesToWorkerObject(*m_scriptExecutionContext, DrainBudget::UntilEmpty);
 
-    if (RefPtr workerObject = m_workerObject; workerObject && workerObject->hasEventListeners(eventNames().closeEvent)) {
-        auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
-        workerObject->dispatchCloseEvent(event);
+    if (RefPtr workerObject = m_workerObject) {
+        // Node emits 'error' (with worker.resourceLimits already {}) and then 'exit' for a worker that hit its heap limit.
+        if (stoppedByHeapLimit && workerObject->hasEventListeners(eventNames().errorEvent)) {
+            ErrorEvent::Init init;
+            // An empty message makes worker_threads.ts emit `error` itself, keeping its `code`.
+            init.error = Bun::createError(m_scriptExecutionContext->globalObject(), Bun::ErrorCode::ERR_WORKER_OUT_OF_MEMORY,
+                "Worker terminated due to reaching memory limit: JS heap out of memory"_s);
+            auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
+            workerObject->dispatchExitEvent(event);
+        }
+        if (workerObject->hasEventListeners(eventNames().closeEvent)) {
+            auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
+            workerObject->dispatchExitEvent(event);
+        }
     }
 
     releaseWorkerThread();

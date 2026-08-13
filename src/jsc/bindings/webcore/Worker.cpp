@@ -134,7 +134,7 @@ void Worker::dispatchEvent(Event& event)
     EventTargetWithInlineData::dispatchEvent(event);
 }
 
-void Worker::dispatchCloseEvent(Event& event)
+void Worker::dispatchExitEvent(Event& event)
 {
     EventTargetWithInlineData::dispatchEvent(event);
 }
@@ -202,6 +202,17 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetParentPort);
+
+JSObject* createResourceLimitsObject(JSGlobalObject* globalObject, const WorkerResourceLimits& limits)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* object = constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+    object->putDirect(vm, Identifier::fromString(vm, "maxYoungGenerationSizeMb"_s), jsNumber(limits.maxYoungGenerationSizeMb));
+    object->putDirect(vm, Identifier::fromString(vm, "maxOldGenerationSizeMb"_s), jsNumber(limits.maxOldGenerationSizeMb));
+    object->putDirect(vm, Identifier::fromString(vm, "codeRangeSizeMb"_s), jsNumber(limits.codeRangeSizeMb));
+    object->putDirect(vm, Identifier::fromString(vm, "stackSizeMb"_s), jsNumber(limits.stackSizeMb));
+    return object;
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -344,7 +355,11 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
     bool isNodeWorker = proxy && proxy->options().kind == WorkerOptions::Kind::Node;
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 12);
+    // Node: `{}` on the main thread, the limits this thread was created with inside a worker.
+    JSObject* resourceLimits = proxy ? createResourceLimitsObject(globalObject, proxy->options().resourceLimits) : constructEmptyObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 13);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
@@ -358,6 +373,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 9, JSFunction::create(vm, globalObject, 1, "setEntryEvaluatedHook"_s, jsFunctionSetEntryEvaluatedHook, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
     array->putDirectIndex(globalObject, 11, JSFunction::create(vm, globalObject, 1, "setParentPort"_s, jsFunctionSetParentPort, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 12, resourceLimits);
     return array;
 }
 

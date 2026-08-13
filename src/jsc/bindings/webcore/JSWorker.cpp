@@ -321,6 +321,31 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             RETURN_IF_EXCEPTION(throwScope, {});
         }
 
+        JSValue resourceLimitsValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "resourceLimits"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        // As in Node's parseResourceLimits: non-objects, functions and non-number fields are ignored.
+        if (resourceLimitsValue && resourceLimitsValue.isObject() && !resourceLimitsValue.isCallable()) {
+            auto* limitsObject = asObject(resourceLimitsValue);
+            WorkerResourceLimits limits;
+            auto readLimit = [&](ASCIILiteral key, double& out, std::optional<double> floor = std::nullopt) -> bool {
+                JSValue value = limitsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, key));
+                if (throwScope.exception())
+                    return false;
+                if (value && value.isNumber())
+                    out = floor ? std::max(value.asNumber(), *floor) : value.asNumber();
+                return true;
+            };
+            if (!readLimit("maxYoungGenerationSizeMb"_s, limits.maxYoungGenerationSizeMb)) return {};
+            // Node floors this one at 2 MB (MathMax(value, 2)).
+            if (!readLimit("maxOldGenerationSizeMb"_s, limits.maxOldGenerationSizeMb, 2.0)) return {};
+            if (!readLimit("codeRangeSizeMb"_s, limits.codeRangeSizeMb)) return {};
+            if (!readLimit("stackSizeMb"_s, limits.stackSizeMb)) return {};
+            // Node replaces a non-positive stack size with its 4 MB default.
+            if (!(limits.stackSizeMb > 0))
+                limits.stackSizeMb = 4;
+            options.resourceLimits = limits;
+        }
+
         JSValue execArgvValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "execArgv"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
         if (execArgvValue && execArgvValue.pureToBoolean() != TriState::False) {
@@ -431,6 +456,19 @@ JSC_DEFINE_CUSTOM_GETTER(jsWorker_threadIdGetter, (JSGlobalObject * lexicalGloba
     return JSValue::encode(jsNumber(worker.clientIdentifier() - 1));
 }
 
+JSC_DEFINE_CUSTOM_GETTER(jsWorker_resourceLimitsGetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto* castedThis = dynamicDowncast<JSWorker>(JSValue::decode(thisValue));
+    if (!castedThis) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    auto& worker = castedThis->wrapped();
+    // Node reports {} once the thread has exited (the proxy is already Closing inside the OOM 'error' handler).
+    if (worker.hasExited())
+        return JSValue::encode(constructEmptyObject(lexicalGlobalObject));
+    return JSValue::encode(createResourceLimitsObject(lexicalGlobalObject, worker.contextProxy().options().resourceLimits));
+}
+
 /* Hash table for prototype */
 
 static const HashTableValue JSWorkerPrototypeTableValues[] = {
@@ -440,6 +478,7 @@ static const HashTableValue JSWorkerPrototypeTableValues[] = {
     { "onmessageerror"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_onmessageerror, setJSWorker_onmessageerror } },
     { "postMessage"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_postMessage, 1 } },
     { "ref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_ref, 0 } },
+    { "resourceLimits"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_resourceLimitsGetter, nullptr } },
     { "terminate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_terminate, 0 } },
     { "threadId"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_threadIdGetter, nullptr } },
     { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_unref, 0 } },

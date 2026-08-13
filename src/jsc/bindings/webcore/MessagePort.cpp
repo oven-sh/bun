@@ -293,8 +293,7 @@ TransferredMessagePort MessagePort::disentangle()
     removeAllEventListeners();
     m_hasMessageEventListener = false;
 
-    // The transferred-away object is inert and stops observing its context below, so nothing
-    // later would release a jsRef() taken on it (a port with no 'message' listener still has one).
+    // Inert from here on and about to stop observing its context: nothing later could release a jsRef().
     releaseJsRef();
 
     // A transferred port is inert; clear the listener keepalive too so hasRef()
@@ -384,8 +383,7 @@ void MessagePort::contextDestroyed()
 {
     ASSERT(scriptExecutionContext());
 
-    // Without a stop phase first (collected ShadowRealm / retired test-isolation global), the
-    // self-ref that close() drops may be this port's last reference.
+    // With no stop phase before this (ShadowRealm, retired test-isolation global), close() may drop the last reference.
     Ref protectedThis { *this };
     close();
     ActiveDOMObject::contextDestroyed();

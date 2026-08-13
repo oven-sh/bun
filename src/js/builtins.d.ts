@@ -430,7 +430,13 @@ declare function $evaluateCommonJSModule(
 declare function $evictIsolationSourceProviderCache(key?: string): void;
 
 declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
-declare function $requireCommonJSModule(this: JSCommonJSModule, id: string, options?: { paths?: string[] }): any;
+/** `recordedParent` is passed only by the native `Module._load`; it becomes the new module's `parent` instead of `this`. */
+declare function $requireCommonJSModule(
+  this: JSCommonJSModule,
+  id: string,
+  options?: { paths?: string[] },
+  recordedParent?: unknown,
+): any;
 /** `require("node:module")`, the `this` a user-supplied `Module._load` is invoked with. */
 declare const $nodeModuleConstructor: any;
 /** User-installed `Module._load`, else `undefined`; `options` is Bun's `require(id, options)` extension. */

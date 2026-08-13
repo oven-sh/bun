@@ -773,6 +773,7 @@ static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
 }
 
 // `Module._load(request, parent, isMain)`: the default a patched `_load` forwards to.
+// `isMain` is not honored; `require.main` stays keyed off the entry point (see nodejs-compat docs).
 JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -782,9 +783,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * lexicalGlobalObject, 
     JSValue request = callFrame->argument(0);
     JSValue parent = callFrame->argument(1);
 
+    JSC::MarkedArgumentBuffer args;
+    args.append(request);
+
     auto* parentModule = dynamicDowncast<Bun::JSCommonJSModule>(parent);
-    if (!parentModule) [[unlikely]] {
-        // Node accepts a plain `{ filename }` / `{ id }` object or no parent at all.
+    if (parentModule) [[likely]] {
+        if (callFrame->argumentCount() > 3) {
+            args.append(callFrame->uncheckedArgument(3));
+        }
+    } else {
+        // Non-module parent (`{ filename }`, null, absent): a throwaway module anchors resolution,
+        // and `parent` itself is what the loaded module records as `module.parent`, as in Node.
         WTF::String from;
         if (parent.isObject()) {
             auto* parentObject = parent.getObject();
@@ -801,15 +810,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * lexicalGlobalObject, 
         }
         parentModule = Bun::JSCommonJSModule::create(globalObject, from, JSC::constructEmptyObject(globalObject), true, JSC::jsUndefined());
         RETURN_IF_EXCEPTION(scope, {});
+        args.append(callFrame->argument(3));
+        args.append(parent);
     }
 
     JSValue requireFunction = globalObject->getDirect(vm, builtinNames(vm).requireCommonJSModulePrivateName());
     ASSERT(requireFunction.isCallable());
-    JSC::MarkedArgumentBuffer args;
-    args.append(request);
-    if (callFrame->argumentCount() > 3) {
-        args.append(callFrame->uncheckedArgument(3));
-    }
     ASSERT(!args.hasOverflowed());
     RELEASE_AND_RETURN(scope,
         JSValue::encode(JSC::profiledCall(globalObject, JSC::ProfilingReason::API, requireFunction,

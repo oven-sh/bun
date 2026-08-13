@@ -47,11 +47,12 @@ eql(Module._load, originalLoad);
 require("assert");
 eql(calls.length, 4);
 
-// Direct calls to the unpatched Module._load perform a real load. Node also
-// accepts a plain `{ filename }` parent or no parent at all.
-eql(Module._load("./moduleLoadOverwrite-fixture-2.cjs", module, false), "direct");
-eql(Module._load(path.join(__dirname, "moduleLoadOverwrite-fixture-2.cjs")), "direct");
-eql(typeof Module._load("fs", { filename: here }).readFileSync, "function");
+// Direct calls to the unpatched Module._load. Each file below is loaded for the
+// first time here, so each call exercises a real load and records `parent`.
+const fixture2 = path.join(__dirname, "moduleLoadOverwrite-fixture-2.cjs");
+const fixture3 = path.join(__dirname, "moduleLoadOverwrite-fixture-3.cjs");
+const fixture4 = path.join(__dirname, "moduleLoadOverwrite-fixture-4.cjs");
+const fixture5 = path.join(__dirname, "moduleLoadOverwrite-fixture-5.cjs");
 
 // https://github.com/oven-sh/bun/issues/5925: the `eval` npm package (used by
 // Docusaurus' SSG) builds its `require` shim as `Module._load(file, parentModule)`
@@ -64,5 +65,23 @@ eql(
   }),
   "direct",
 );
+eql(require.cache[fixture2].parent, module);
+
+// No parent: `module.parent` is undefined.
+eql(Module._load(fixture3), "three");
+eql(require.cache[fixture3].parent, undefined);
+
+// A plain `{ filename }` parent anchors relative resolution and is recorded as-is.
+const plainParent = { filename: here };
+eql(Module._load("./moduleLoadOverwrite-fixture-4.cjs", plainParent, false), "four");
+eql(require.cache[fixture4].parent, plainParent);
+eql(typeof Module._load("fs", plainParent).readFileSync, "function");
+
+// `null` is recorded as-is. `isMain` makes `require.main === module` inside the
+// file in Node; Bun keeps `require.main` pointed at the entry point (documented
+// in docs/runtime/nodejs-compat.mdx), so this pins the divergence.
+const five = Module._load(fixture5, null, true);
+eql(five.parent, null);
+eql(five.isMain, typeof Bun === "undefined");
 
 console.log("--pass--");

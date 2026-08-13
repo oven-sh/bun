@@ -25,10 +25,14 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string) {
     }
     return customLoad.$call($nodeModuleConstructor, originalId, this, false);
   }
-  return $requireCommonJSModule.$apply(this, arguments);
+  if ($argumentCount() > 1) {
+    return $requireCommonJSModule.$call(this, originalId, $argument(1));
+  }
+  return $requireCommonJSModule.$call(this, originalId);
 }
 
-// The default `Module._load(request, parent, isMain)` calls this with `parent` as `this`.
+// `this` anchors resolution. Only the native `Module._load` passes a 3rd argument: the
+// non-module `parent` it was given, which the loaded module records as `module.parent`.
 $overriddenName = "require";
 $visibility = "Private";
 export function requireCommonJSModule(this: JSCommonJSModule, originalId: string, options: { paths?: string[] } = {}) {
@@ -89,7 +93,7 @@ export function requireCommonJSModule(this: JSCommonJSModule, originalId: string
 
   // To handle import/export cycles, we need to create a module object and put
   // it into the map before we import it.
-  const mod = $createCommonJSModule(id, {}, false, this);
+  const mod = $createCommonJSModule(id, {}, false, $argumentCount() > 2 ? $argument(2) : this);
   $requireMap.$set(id, mod);
 
   var out: LoaderModule | -1;

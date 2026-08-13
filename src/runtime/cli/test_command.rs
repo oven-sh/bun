@@ -1569,9 +1569,7 @@ impl CommandLineReporter {
         }
     }
 
-    /// Everything the normal end of a run reports that must also survive a
-    /// `--bail` exit: coverage for what did execute, the summary line, the
-    /// JUnit report and timings. The caller exits the process afterwards.
+    /// Writes every end-of-run report for a `--bail` exit; the caller exits the process.
     pub(crate) fn bail_out(&mut self, vm: &VirtualMachine) {
         Output::flush();
         let mut coverage_options: CodeCoverageOptions = self.jest.test_options.coverage.clone();

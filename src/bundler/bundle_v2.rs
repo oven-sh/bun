@@ -3728,6 +3728,27 @@ pub mod bv2_impl {
             Ok(source_index.get())
         }
 
+        /// Copies a "use client" module's export names into the bundle arena
+        /// for the `ReferenceProxy` generated in its place. The proxy is built
+        /// on a worker thread, so it cannot read the module's `named_exports`
+        /// out of `graph.ast`, which this thread keeps appending to.
+        fn copy_export_names_for_reference_proxy(
+            &self,
+            named_exports: &crate::bundled_ast::NamedExports,
+        ) -> &'static [&'static [u8]] {
+            // SAFETY: same contract as `interned_slice` — the arena outlives the
+            // bundle pass, and the proxy task (and the AST it produces, which
+            // stores these slices) is consumed within it.
+            let arena: &'static bun_alloc::Arena =
+                unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
+            arena.alloc_slice_fill_iter(
+                named_exports
+                    .keys()
+                    .iter()
+                    .map(|name| -> &'static [u8] { arena.alloc_slice_copy(&name[..]) }),
+            )
+        }
+
         /// Enqueue a ServerComponentParseTask.
         /// `source_without_index` is copied and assigned a new source index. That index is returned.
         pub(crate) fn enqueue_server_component_generated_file(
@@ -7178,11 +7199,8 @@ pub mod bv2_impl {
                     }
                     result.ast.import_records = import_records;
 
-                    // `result.ast` is moved into `graph.ast` and `result.source` was
-                    // swapped earlier, so snapshot the data the use-directive block
-                    // needs *before* the move. Only paid for files that hit the SCB gate.
-                    let named_exports_for_scb = if result.use_directive != crate::UseDirective::None
-                        && {
+                    let is_server_component_boundary =
+                        result.use_directive != crate::UseDirective::None && {
                             let separate = this
                                 .framework
                                 .as_ref()
@@ -7198,11 +7216,7 @@ pub mod bv2_impl {
                             } else {
                                 is_client != is_browser
                             }
-                        } {
-                        Some(result.ast.named_exports.clone().expect("oom"))
-                    } else {
-                        None
-                    };
+                        };
 
                     let result_heap = *result.ast.parts.allocator();
                     this.graph.ast.set(
@@ -7221,7 +7235,8 @@ pub mod bv2_impl {
                         .expect("oom");
                     }
 
-                    if let Some(named_exports) = named_exports_for_scb {
+                    // Index the boundary and enqueue the files for its other side.
+                    if is_server_component_boundary {
                         if result.use_directive == crate::UseDirective::Server {
                             bun_core::todo_panic!("\"use server\"");
                         }
@@ -7243,17 +7258,21 @@ pub mod bv2_impl {
 
                         let (reference_source_index, ssr_index) = if separate_ssr_graph {
                             // Enqueue two files, one in server graph, one in ssr graph.
-                            let other_source =
-                                this.graph.input_files.items_source()[result_source_index].clone();
-                            let scb_source =
-                                this.graph.input_files.items_source()[result_source_index].clone();
+                            let export_names = this.copy_export_names_for_reference_proxy(
+                                &this.graph.ast.items_named_exports()[result_source_index],
+                            );
+                            let client_source =
+                                &this.graph.input_files.items_source()[result_source_index];
+                            let proxy = crate::ServerComponentParseTask::ReferenceProxy {
+                                client_path: client_source.path,
+                                client_source_index: client_source.index,
+                                export_names,
+                            };
+                            let scb_source = client_source.clone();
                             let reference_source_index = this
                                 .enqueue_server_component_generated_file(
                                     crate::ServerComponentParseTask::Data::ClientReferenceProxy(
-                                        crate::ServerComponentParseTask::ReferenceProxy {
-                                            other_source,
-                                            named_exports,
-                                        },
+                                        proxy,
                                     ),
                                     scb_source,
                                 )

@@ -19,10 +19,10 @@ test("dev server deinitializes itself", () => {
 // makes the bundler generate a "reference proxy" module in its place. The
 // proxy is built on the thread pool from a heap-allocated
 // ServerComponentParseTask, which used to be scheduled and never freed (one
-// allocation per client module per bundle). LeakSanitizer reports that
-// allocation at exit, so this needs the ASAN build. The proxy's exports must
-// still come out right after the task is freed: their names are printed from
-// the generated module long after the task is gone.
+// per client module per bundle). LeakSanitizer reports the task at exit, so
+// this needs the ASAN build. The rendered output checks what the task hands
+// to the generator: the client module's path and its export names, which the
+// proxy passes to registerClientReference.
 test.skipIf(!isASAN)(
   'bundling a "use client" reference proxy does not leak its ServerComponentParseTask',
   async () => {
@@ -57,7 +57,7 @@ test.skipIf(!isASAN)(
         }
         // Called once per export of the client module by the generated proxy.
         export function registerClientReference(value, file, exportName) {
-          return () => exportName;
+          return () => file + "#" + exportName;
         }
       `,
       // The server graph imports the client module, so it gets the proxy.
@@ -87,7 +87,7 @@ test.skipIf(!isASAN)(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toBe("200 default Alpha Beta\n");
+    expect(stdout).toBe("200 components/Widget.ts#default components/Widget.ts#Alpha components/Widget.ts#Beta\n");
     // The dev server logs its bundle timing here; a leak report would follow it.
     expect(stderr).not.toContain("LeakSanitizer");
     expect(exitCode).toBe(0);

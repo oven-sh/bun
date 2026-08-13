@@ -8,10 +8,10 @@ use std::fmt::Write as _;
 use bun_alloc::{AllocError as OOM, Arena}; // bumpalo::Bump re-export
 use bun_collections::VecExt;
 
-use bun_ast::{Loc, Log, Source};
+use bun_ast::{Index, Loc, Log, Source};
+use bun_paths::fs::Path as FsPath;
 use bun_threading::thread_pool::Task as ThreadPoolTask;
 
-use bun_ast::ast_result::NamedExports;
 use bun_ast::{B, Binding, E, G, S, Stmt, symbol};
 use bun_ast::{ExprNodeList, LocRef, StmtOrExpr, UseDirective};
 use bun_ast::{ImportKind, ImportRecordFlags};
@@ -24,6 +24,10 @@ use crate::cache::ExternalFreeFunction;
 use crate::options::{Loader, Target};
 use crate::parse_task::{self, ResultValue, Success, WatcherData, on_complete};
 
+/// Boxed by `BundleV2::enqueue_server_component_generated_file`, which hands
+/// it to the worker pool; [`task_callback_wrap`] takes the box back and frees
+/// it once the file has been generated. Everything the generated AST may
+/// point at (`Data`) lives in the bundle arena, never in the task itself.
 pub(crate) struct ServerComponentParseTask {
     pub task: ThreadPoolTask,
     pub data: Data,
@@ -31,13 +35,10 @@ pub(crate) struct ServerComponentParseTask {
     // `ParentRef` (write-provenance via `NonNull::from(&mut self)` at construction)
     // so deref sites are safe; `None` only for the FRU `Default` placeholder.
     pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
+    /// The generated file's own source record; moved into the result.
     pub source: Source,
 }
 
-// One heap allocation per generated file, freed as soon as the file has been
-// generated (`task_callback_wrap`); boxing the large arm would only add a
-// second allocation with the same lifetime.
-#[allow(clippy::large_enum_variant)]
 pub enum Data {
     /// Generate server-side code for a "use client" module. Given the
     /// client ast, a "reference proxy" is created with identical exports.
@@ -47,13 +48,19 @@ pub enum Data {
 }
 
 pub struct ReferenceProxy {
-    pub(crate) other_source: Source,
-    pub(crate) named_exports: NamedExports,
+    /// Path of the "use client" module the proxy stands in for.
+    pub(crate) client_path: FsPath<'static>,
+    /// Source index of that module; production builds refer to its chunk
+    /// through a `UniqueKey` built from it.
+    pub(crate) client_source_index: Index,
+    /// That module's export names, in export order. Bundle-arena copies made
+    /// by `BundleV2::copy_export_names_for_reference_proxy`.
+    pub(crate) export_names: &'static [&'static [u8]],
 }
 
 pub struct ClientEntryWrapper {
-    // Owned copy.
-    pub(crate) path: Box<[u8]>,
+    /// Bundle-arena or `'static` bytes; stored as-is in the `ImportRecord`.
+    pub(crate) path: &'static [u8],
 }
 
 /// Raw thread-pool callback. Takes back the `Box<ServerComponentParseTask>`
@@ -64,12 +71,10 @@ pub struct ClientEntryWrapper {
 // `ServerComponentParseTask` (heap-allocated, scheduled exactly once). Writes:
 // own fields + `Log` (local) + result is posted via
 // `ctx.loop_.enqueue_task_concurrent` (MPSC). Reads `ctx: &BundleV2` shared.
-// `ServerComponentParseTask` is `Send` because `ctx: *mut BundleV2` is a
-// backref to a `Send` type and `Source`/`Data` payloads are bundle-arena
-// slices. Dropping it here (off the bundle thread that built it) is fine for
-// the same reason: the only heap-owning payloads are global-heap `Cow`/`Box`
-// buffers and the `NamedExports` clone, whose `AstAlloc` storage is reclaimed
-// by its arena, not by `Drop` (`AstAlloc::deallocate` is a no-op).
+// `ServerComponentParseTask` is `Send` (built on the bundle thread, used and
+// freed here) because `ctx: *mut BundleV2` is a backref to a `Send` type,
+// `Data` is `Copy` data plus bundle-arena slices, and `Source` owns at most
+// global-heap buffers.
 fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     // SAFETY: `thread_pool_task` is the `task` field of the
     // `ServerComponentParseTask` that `enqueue_server_component_generated_file`
@@ -101,10 +106,8 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         // Only possible error is OOM; abort like `bun.outOfMemory()`.
         Err(_oom) => bun_core::out_of_memory(),
     };
-    // Everything the generated AST refers to was copied into the worker arena
-    // by `task_callback`, and `source` was moved into `value`; nothing points
-    // back into the task, so it is freed before the result becomes visible to
-    // the bundle thread.
+    // `task_callback` moved `source` into `value` and nothing else in the
+    // result refers to the task, so it is gone before the result is posted.
     drop(task);
 
     let result = Box::new(parse_task::Result {
@@ -232,9 +235,7 @@ impl Default for ServerComponentParseTask {
                 node: Default::default(),
                 callback: task_callback_wrap,
             },
-            data: Data::ClientEntryWrapper(ClientEntryWrapper {
-                path: Box::default(),
-            }),
+            data: Data::ClientEntryWrapper(ClientEntryWrapper { path: b"" }),
             ctx: None,
             source: Source::default(),
         }
@@ -242,12 +243,7 @@ impl Default for ServerComponentParseTask {
 }
 
 fn generate_client_entry_wrapper(data: &ClientEntryWrapper, b: &mut AstBuilder) -> Result<(), OOM> {
-    // `add_import_record` stores the slice raw in the `ImportRecord`, and
-    // `data.path` dies with the task as soon as this file is generated, so the
-    // record gets a copy in the AST arena. Route through `StoreStr` so the
-    // lifetime erasure goes through one audited unsafe.
-    let path = bun_ast::StoreStr::new(b.bump.alloc_slice_copy(&data.path));
-    let record = b.add_import_record(path.slice(), ImportKind::Stmt)?;
+    let record = b.add_import_record(data.path, ImportKind::Stmt)?;
     let namespace_ref = b.new_symbol(symbol::Kind::Other, b"main")?;
     b.append_stmt(S::Import {
         namespace_ref,
@@ -275,8 +271,6 @@ fn generate_client_reference_proxy(
         // config must be non-null to enter this function
         .unwrap_or_else(|| unreachable!());
 
-    let client_named_exports = &data.named_exports;
-
     // `add_import_stmt` stores the slices raw in `ImportRecord`/`ClauseItem`s;
     // the framework config outlives the bundle pass. Route through `StoreStr`
     // so the lifetime erasure goes through one audited unsafe.
@@ -293,7 +287,7 @@ fn generate_client_reference_proxy(
         // that information is not yet available since chunks are not
         // computed. The unique_key replacement system is used here.
         if ctx.transpiler().options.has_dev_server() {
-            b.bump.alloc_slice_copy(data.other_source.path.pretty)
+            b.bump.alloc_slice_copy(data.client_path.pretty)
         } else {
             let mut buf = bun_alloc::ArenaString::new_in(b.bump);
             write!(
@@ -302,7 +296,7 @@ fn generate_client_reference_proxy(
                 crate::chunk::UniqueKey {
                     prefix: ctx.unique_key,
                     kind: crate::chunk::QueryKind::Scb,
-                    index: data.other_source.index.0,
+                    index: data.client_source_index.0,
                 },
             )
             .map_err(|_| OOM)?;
@@ -310,11 +304,7 @@ fn generate_client_reference_proxy(
         },
     ));
 
-    for key in client_named_exports.keys() {
-        // `new_symbol` stores the name raw, and `client_named_exports` dies with
-        // the task as soon as this file is generated, so the symbol (and the
-        // string literal below) gets a copy in the AST arena.
-        let key: &[u8] = b.bump.alloc_slice_copy(key.as_ref());
+    for &key in data.export_names {
         let is_default = key == b"default";
 
         // This error message is taken from
@@ -330,7 +320,7 @@ fn generate_client_reference_proxy(
                         "client function from the server, it can only be rendered as a ",
                         "Component or passed to props of a Client Component.",
                     ),
-                    module_path = bstr::BStr::new(data.other_source.path.pretty),
+                    module_path = bstr::BStr::new(data.client_path.pretty),
                 )
             } else {
                 write!(

@@ -437,11 +437,8 @@ fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> May
     sys::openat_windows(dirfd, path.as_slice(), flags, mode)
 }
 
-/// What `mkdir -p` found at a `(fd, path)` that `mkdir` reported as existing, following
-/// symlinks on both platforms (`fstatat`; on Windows the wide arm, which resolves the
-/// reparse point, so a directory link whose target is gone is an error rather than a
-/// directory). Dispatches on path element width: on Windows `OSPathSliceZ` is already
-/// `&WStr`, so forward to the wide overload instead of narrowing to UTF-8 and re-widening.
+/// `exists_at_type` over an `OSPathSliceZ`: `fstatat` on POSIX, the link-following wide
+/// arm on Windows (where `OSPathSliceZ` is already `&WStr`), so both follow symlinks.
 #[inline]
 fn exists_at_type_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<sys::ExistsAtType> {
     #[cfg(not(windows))]
@@ -5669,8 +5666,6 @@ impl NodeFS {
                 // it is unclear if macOS lies about if the existing item is
                 // a directory or not, so it is checked.
                 E::EISDIR | E::EEXIST => {
-                    // A directory (or a link that resolves to one) is fine; anything
-                    // else, including a link that cannot be followed, is a failure.
                     return match exists_at_type_os_path(FD::INVALID, path) {
                         Ok(sys::ExistsAtType::Directory) => Ok(StringOrUndefined::None),
                         Ok(sys::ExistsAtType::File) | Err(_) => Err(sys::Error {
@@ -5746,11 +5741,8 @@ impl NodeFS {
                         // is never observed with its terminator clobbered.
                         match err.get_errno() {
                             E::EEXIST => {
-                                // On Windows, this may happen if trying to mkdir replacing a file
-                                // (`CreateDirectoryW` under a file reports ENOENT, so the POSIX
-                                // ENOTDIR has to be produced here). A link that cannot be
-                                // followed (`Err`) breaks out like a directory so the mkdir of
-                                // the next component reports ENOENT, as it does on POSIX.
+                                // Only a file is ENOTDIR here; an unfollowable link falls through
+                                // to the next mkdir's ENOENT.
                                 #[cfg(windows)]
                                 {
                                     if let Ok(sys::ExistsAtType::File) =

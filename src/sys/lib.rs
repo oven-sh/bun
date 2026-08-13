@@ -7332,12 +7332,9 @@ pub enum ExistsAtType {
     File,
     Directory,
 }
-/// Windows tail — `NtQueryAttributesFile` against an
-/// OBJECT_ATTRIBUTES built from an already NT-prefixed wide path, returning the
-/// entry's `FileAttributes`. Shared by the UTF-8 (`exists_at_type`) and UTF-16
-/// (`exists_at_type_w`) entry points so the width dispatch does not duplicate
-/// the syscall body. Like `GetFileAttributesW`, this describes a reparse point
-/// (symlink, junction) itself, not what it points at.
+/// `FileAttributes` of an already NT-prefixed wide path via `NtQueryAttributesFile`,
+/// shared by `exists_at_type` and `exists_at_type_w`. Like `GetFileAttributesW` it
+/// describes a reparse point itself, not what it points at.
 #[cfg(windows)]
 fn query_attributes_nt(dir: Fd, mut path: &[u16]) -> Maybe<u32> {
     use bun_windows_sys::externs as w;
@@ -7393,9 +7390,8 @@ fn exists_at_type_from_attributes(attributes: u32) -> ExistsAtType {
         ExistsAtType::File
     }
 }
-/// `fstatat` then `S_ISDIR`. The Windows arm answers from the entry's own
-/// attributes, so unlike `fstatat` it does not follow a symlink or junction;
-/// `exists_at_type_w` is the arm that does.
+/// `fstatat` then `S_ISDIR`. The Windows arm does not follow a symlink or
+/// junction (`exists_at_type_w` does).
 pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
     #[cfg(unix)]
     {
@@ -7415,13 +7411,8 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
         query_attributes_nt(dir, path).map(exists_at_type_from_attributes)
     }
 }
-/// Wide-path arm of `exists_at_type` for node:fs' recursive mkdir, which asks
-/// about a path `mkdir` just reported as existing. It follows a symlink or
-/// junction the way the POSIX arm's `fstatat` does: a directory-type link
-/// carries `FILE_ATTRIBUTE_DIRECTORY` itself whether or not its target exists,
-/// so answering from the link's own attributes would let `mkdir -p` accept a
-/// link to nowhere as an existing directory. A link that cannot be followed
-/// fails with the open error (ENOENT when it points nowhere).
+/// Wide-path arm of `exists_at_type` that follows a symlink or junction like the
+/// POSIX arm's `fstatat`, failing with the open error when it cannot be followed.
 #[cfg(windows)]
 pub fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
     use bun_windows_sys::externs as w;
@@ -7433,7 +7424,8 @@ pub fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
     if (attributes & w::FILE_ATTRIBUTE_REPARSE_POINT) == 0 {
         return Ok(exists_at_type_from_attributes(attributes));
     }
-    // No `FILE_OPEN_REPARSE_POINT`, so this opens whatever the link resolves to.
+    // A directory-type link carries FILE_ATTRIBUTE_DIRECTORY even when it points nowhere;
+    // without FILE_OPEN_REPARSE_POINT this open lands on whatever the link resolves to.
     let fd = open_file_at_windows(
         dir,
         sub,

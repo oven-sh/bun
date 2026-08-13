@@ -63,8 +63,7 @@ public:
             res->result.value.needsDeref = false;
             res->result.value.source_code.impl.wtf->deref();
         }
-        // Still set only if no SourceProvider was created for this source, e.g.
-        // createCommonJSModule() found the module already in the require map.
+        // No-op once a SourceProvider has taken the blob.
         Zig::freeOwnedBytecodeCache(res->result.value);
     }
 

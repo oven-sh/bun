@@ -95,7 +95,6 @@ describe("Bun.build", () => {
       {
         name: "require() followed by import() of the same file",
         load: "(require(path), (await import(path)).default)",
-        sidecarReadsPerLoad: 2,
       },
       {
         name: "require() with an overridden module._compile",
@@ -184,7 +183,7 @@ describe("Bun.build", () => {
       expect(sidecarMB).toBeGreaterThan(0.5);
     }, 30000); // generating the bytecode takes ~1.5s in a debug build
 
-    variants.forEach(({ name, sidecarReadsPerLoad = 1 }, i) => {
+    variants.forEach(({ name }, i) => {
       test(
         name,
         async () => {
@@ -197,12 +196,13 @@ describe("Bun.build", () => {
           expect(result).toSpawn();
 
           const growthMB = Number(result.stdout);
-          // Leaking keeps every sidecar read during the measured loads resident (~37 MB per read
-          // per load). When they are freed, what is left is allocator noise plus whatever the last
-          // load still holds: 1 to 12 MB across these variants in a debug build.
-          const leakMB = LOADS * sidecarReadsPerLoad * sidecarMB;
-          console.log(`${name}: RSS grew ${growthMB} MB, leaking would add ${leakMB.toFixed(1)} MB`);
-          expect(growthMB).toBeLessThan(leakMB / 2);
+          // A leak on any of the paths a variant goes through keeps at least one sidecar per load
+          // resident, so it adds at least leakMB (~37 MB). With the sidecars freed, what is left is
+          // allocator noise plus whatever the last load still holds: 1 to 12 MB across these
+          // variants in a debug build.
+          const leakMB = LOADS * sidecarMB;
+          console.log(`${name}: RSS grew ${growthMB} MB, a leak would add at least ${leakMB.toFixed(1)} MB`);
+          expect(growthMB).toBeLessThan((leakMB * 2) / 3);
         },
         30000, // ~2s each in a debug build
       );

@@ -41,14 +41,9 @@ pub struct ResolvedSource {
     /// This is for source_code
     pub source_code_needs_deref: bool,
     pub already_bundled: bool,
-    /// `bytecode_cache` is a `heap::into_raw`'d `Box<[u8]>` of `bytecode_cache_size`
-    /// bytes (a `.jsc` sidecar read by the transpiler) that whoever holds this struct
-    /// must free: `Zig::SourceProvider::create` hands it to the `JSC::CachedBytecode`
-    /// destructor, [`OwnedResolvedSource`] frees it if dropped before that.
-    ///
-    /// When `false`, `bytecode_cache` borrows memory owned elsewhere for the life of
-    /// the process (a Node compile cache entry, the bytecode section of a
-    /// `bun build --compile` executable) and must never be freed.
+    /// `bytecode_cache` is a `heap::into_raw`'d `Box<[u8]>` (a `.jsc` sidecar) that the
+    /// holder of this struct must free. Unset for blobs borrowed from the Node compile
+    /// cache or a standalone executable, which live as long as the process.
     pub bytecode_cache_needs_free: bool,
 
     // -- Bytecode cache fields --
@@ -154,11 +149,9 @@ impl Drop for OwnedResolvedSource {
         self.0.source_url.deref();
         self.0.bytecode_origin_path.deref();
         if self.0.bytecode_cache_needs_free {
-            // SAFETY: the flag is only set by the `.jsc` sidecar producers, which
-            // store the `heap::into_raw` pointer and length of a `Box<[u8]>` in
-            // `bytecode_cache` / `bytecode_cache_size`, and it is cleared by
-            // whoever takes the blob over (`Zig::SourceProvider::create`), so
-            // this owner is the unique holder of the allocation.
+            // SAFETY: while the flag is set, `bytecode_cache` / `bytecode_cache_size`
+            // are the `heap::into_raw` pointer and length of a `Box<[u8]>` that
+            // nothing else has taken over (taking it over clears the flag).
             unsafe {
                 bun_core::heap::destroy(core::ptr::slice_from_raw_parts_mut(
                     self.0.bytecode_cache,

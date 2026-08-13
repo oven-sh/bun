@@ -59,9 +59,7 @@ extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
 extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, BunString* specifier);
 extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, BunString* specifier);
 
-// An owned `bytecode_cache` was `heap::into_raw`'d from a Rust `Box<[u8]>` (the
-// global allocator); free with `defaultAllocatorFree` so it agrees with the
-// `#[global_allocator]`.
+// An owned `bytecode_cache` is a Rust `Box<[u8]>`, hence `defaultAllocatorFree`.
 static void freeSidecarBytecode(const void* ptr)
 {
     Bun::defaultAllocatorFree(const_cast<void*>(ptr));
@@ -121,11 +119,9 @@ Ref<SourceProvider> SourceProvider::create(
 
     const auto getProvider = [&]() -> Ref<SourceProvider> {
         if (resolvedSource.bytecode_cache != nullptr) {
-            // A blob borrowed from the Node compile cache or a `bun build --compile`
-            // executable gets no destructor. A `.jsc` sidecar blob is taken over by
-            // the CachedBytecode: clear the flag so that neither the copy stored in
-            // the provider below nor the caller's struct (ResolvedSourceCodeHolder)
-            // frees it again.
+            // The CachedBytecode takes over an owned blob; clearing the flag keeps the
+            // copy stored in the provider and the caller's struct from freeing it too.
+            // Borrowed blobs (compile cache, standalone executable) get no destructor.
             JSC::CachePayload::Destructor destructor;
             if (resolvedSource.bytecode_cache_needs_free) {
                 resolvedSource.bytecode_cache_needs_free = false;

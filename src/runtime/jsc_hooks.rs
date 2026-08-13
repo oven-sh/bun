@@ -2956,8 +2956,6 @@ fn transpile_source_code_inner(
                             if len == 0 {
                                 (core::ptr::null_mut(), 0)
                             } else {
-                                // Ownership travels with the `ResolvedSource`
-                                // (`bytecode_cache_needs_free` below).
                                 (bun_core::heap::into_raw(bytes).cast::<u8>(), len)
                             }
                         }

@@ -22,8 +22,7 @@
  * the Windows directory count as aware); `exposePlaceholders()` opts the
  * current process in so the code under test sees the placeholders.
  *
- * Everything here goes through bun:ffi, which is unavailable on Windows
- * arm64: gate callers with `isWindows && !isArm64`.
+ * Windows only: gate callers with `isWindows`.
  */
 import { dlopen, ptr } from "bun:ffi";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
@@ -111,6 +110,11 @@ export function isReparsePoint(path: string): boolean {
   return (fileAttributes(path) & FILE_ATTRIBUTE_REPARSE_POINT) !== 0;
 }
 
+/** Set on directories and on directory-flavored links (directory symlinks, junctions). */
+export function hasDirectoryAttribute(path: string): boolean {
+  return (fileAttributes(path) & FILE_ATTRIBUTE_DIRECTORY) !== 0;
+}
+
 /**
  * Stamps an existing file or directory with a non-Microsoft reparse tag that
  * is not a name surrogate. A directory gets the tag's "directory" bit (bit 28),
@@ -169,7 +173,7 @@ export function registerSyncRoot(root: string): Disposable {
   const rootW = wide(root);
   const providerName = wide("bun test");
   const providerVersion = wide("1.0");
-  // CF_SYNC_REGISTRATION (x64 layout): StructSize, ProviderName, ProviderVersion,
+  // CF_SYNC_REGISTRATION (64-bit layout): StructSize, ProviderName, ProviderVersion,
   // SyncRootIdentity, SyncRootIdentityLength, FileIdentity, FileIdentityLength, ProviderId.
   const registration = Buffer.alloc(72);
   registration.writeUInt32LE(registration.length, 0);

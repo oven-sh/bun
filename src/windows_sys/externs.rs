@@ -395,6 +395,24 @@ pub struct FILE_DIRECTORY_INFORMATION {
     pub FileName: [WCHAR; 1],
 }
 
+/// `FILE_FULL_DIR_INFORMATION` (`ntifs.h`): `FILE_DIRECTORY_INFORMATION` plus
+/// `EaSize`, which for a reparse point holds the reparse tag instead.
+#[repr(C)]
+pub struct FILE_FULL_DIR_INFORMATION {
+    pub NextEntryOffset: ULONG,
+    pub FileIndex: ULONG,
+    pub CreationTime: LARGE_INTEGER,
+    pub LastAccessTime: LARGE_INTEGER,
+    pub LastWriteTime: LARGE_INTEGER,
+    pub ChangeTime: LARGE_INTEGER,
+    pub EndOfFile: LARGE_INTEGER,
+    pub AllocationSize: LARGE_INTEGER,
+    pub FileAttributes: ULONG,
+    pub FileNameLength: ULONG,
+    pub EaSize: ULONG,
+    pub FileName: [WCHAR; 1],
+}
+
 /// `FILE_INFORMATION_CLASS` (`wdm.h`) — selector for `NtQuery*` /
 /// `NtSetInformationFile`. Newtype-over-u32 so unmapped values round-trip.
 #[repr(transparent)]
@@ -402,6 +420,7 @@ pub struct FILE_DIRECTORY_INFORMATION {
 pub struct FILE_INFORMATION_CLASS(pub u32);
 impl FILE_INFORMATION_CLASS {
     pub const FileDirectoryInformation: Self = Self(1);
+    pub const FileFullDirectoryInformation: Self = Self(2);
     pub const FileBasicInformation: Self = Self(4);
     pub const FileDispositionInformation: Self = Self(13);
     pub const FileAllInformation: Self = Self(18);

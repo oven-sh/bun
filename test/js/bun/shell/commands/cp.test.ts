@@ -2,6 +2,7 @@ import {
   cloudFilesAvailable,
   convertToPlaceholder,
   exposePlaceholders,
+  hasDirectoryAttribute,
   isReparsePoint,
   registerSyncRoot,
   setNonLinkReparsePoint,
@@ -9,8 +10,8 @@ import {
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { isArm64, isWindows, tempDir, tempDirWithFiles } from "harness";
-import { lstatSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
+import { isWindows, tempDir, tempDirWithFiles } from "harness";
+import { lstatSync, readdirSync, readFileSync, readlinkSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
@@ -187,13 +188,15 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
   // deduplicated files and similar entries also carry
   // FILE_ATTRIBUTE_REPARSE_POINT but are plain files and directories; cp used
   // to recreate every one of them as a symlink pointing back at the source.
-  // The fixtures are built with bun:ffi, which is unavailable on Windows arm64.
-  describe.if(isWindows && !isArm64)("reparse points that are not links", () => {
-    // What cp produced at `path`: a link, or the entry's kind, its contents and
-    // whether the copy is itself a reparse point.
+  describe.if(isWindows)("reparse points that are not links", () => {
+    // What cp produced at `path`: for a link its flavor and target, otherwise
+    // the entry's kind, its contents and whether the copy is itself a reparse
+    // point.
     function copied(path: string) {
       const stat = lstatSync(path);
-      if (stat.isSymbolicLink()) return "link";
+      if (stat.isSymbolicLink()) {
+        return { link: hasDirectoryAttribute(path) ? "directory" : "file", target: readlinkSync(path) };
+      }
       return {
         kind: stat.isDirectory() ? "directory" : "file",
         reparsePoint: isReparsePoint(path),
@@ -221,8 +224,10 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       });
       using outDir = tempDir("cp-reparse-out", {});
       const src = String(srcDir);
-      symlinkSync(join(src, "plain.txt"), join(src, "file_link.txt"), "file");
-      symlinkSync(join(src, "plain_dir"), join(src, "junction"), "junction");
+      const fileTarget = join(src, "plain.txt");
+      const dirTarget = join(src, "plain_dir");
+      symlinkSync(fileTarget, join(src, "file_link.txt"), "file");
+      symlinkSync(dirTarget, join(src, "junction"), "junction");
       setNonLinkReparsePoint(join(src, "tagged_dir"));
       const entries = ["tagged_dir", "file_link.txt", "junction", "plain.txt", "plain_dir"];
       expect(entries.map(name => isReparsePoint(join(src, name)))).toEqual([true, true, true, false, false]);
@@ -239,8 +244,8 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
         "tagged_dir": taggedDirectory,
         "tagged_dir/inner.txt": innerFile,
         "plain.txt": { kind: "file", reparsePoint: false, contents: "plain" },
-        "file_link.txt": "link",
-        "junction": "link",
+        "file_link.txt": { link: "file", target: fileTarget },
+        "junction": { link: "directory", target: dirTarget },
       });
     });
 
@@ -268,7 +273,7 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
     // make, so they are what exercises the file copy. Needs the Cloud Files
     // platform (cldapi.dll, its filter driver, and permission to register a
     // sync root); skipped where that is missing.
-    describe.if(isWindows && !isArm64 && cloudFilesAvailable())("cloud-file placeholders", () => {
+    describe.if(isWindows && cloudFilesAvailable())("cloud-file placeholders", () => {
       const placeholderFile = { kind: "file", reparsePoint: false, contents: "placeholder contents" };
 
       test("cp -R copies a placeholder file and its folder inside a directory", async () => {

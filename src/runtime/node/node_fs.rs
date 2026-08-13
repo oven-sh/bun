@@ -1411,6 +1411,10 @@ mod _async_tasks {
         path_buf: Box<[OSPathChar]>,
         src_len: usize,
         dest_len: usize,
+        /// Classification the directory scan already made for a reparse entry;
+        /// `None` makes `copy_single_file_sync` look at the entry itself.
+        #[cfg(windows)]
+        kind: Option<CpEntryKind>,
         pub task: WorkPoolTask,
     }
 
@@ -1423,6 +1427,7 @@ mod _async_tasks {
             path_buf: Box<[OSPathChar]>,
             src_len: usize,
             dest_len: usize,
+            #[cfg(windows)] kind: Option<CpEntryKind>,
         ) {
             debug_assert_eq!(path_buf.len(), src_len + 1 + dest_len + 1);
             debug_assert_eq!(path_buf[src_len], 0);
@@ -1436,6 +1441,8 @@ mod _async_tasks {
                 path_buf,
                 src_len,
                 dest_len,
+                #[cfg(windows)]
+                kind,
                 task: WorkPoolTask::default(),
             });
         }
@@ -1467,6 +1474,10 @@ mod _async_tasks {
             let mut node_fs = NodeFS::default();
 
             let args = &parent.args;
+            #[cfg(windows)]
+            let reuse_stat = self.kind;
+            #[cfg(not(windows))]
+            let reuse_stat = None;
             let result = node_fs.copy_single_file_sync(
                 self.src(),
                 self.dest(),
@@ -1475,7 +1486,7 @@ mod _async_tasks {
                 } else {
                     0i32
                 }),
-                None,
+                reuse_stat,
                 &parent.args,
             );
 
@@ -2064,22 +2075,23 @@ mod _async_tasks {
                     return false;
                 }
 
-                // Non-link reparse directories come back as `SymLink` too.
+                // Every reparse point is reported as `SymLink`; work out here,
+                // once, which of them are really directories to walk or files.
                 #[cfg(windows)]
-                let kind = match current.kind {
-                    crate::node::dirent::Kind::SymLink => {
+                let reparse_kind =
+                    (current.kind == crate::node::dirent::Kind::SymLink).then(|| {
                         let sd = src_dir_len as usize;
                         src_buf[sd + 1..sd + 1 + cname.len()].copy_from_slice(cname);
                         src_buf[sd] = paths::SEP as OSPathChar;
                         src_buf[sd + 1 + cname.len()] = 0;
                         let child = OSPathSliceZ::from_buf(&src_buf[..], sd + 1 + cname.len());
-                        if CpEntryKind::reparse_entry_is_directory(child) {
-                            crate::node::dirent::Kind::Directory
-                        } else {
-                            current.kind
-                        }
-                    }
-                    kind => kind,
+                        CpEntryKind::of_reparse_entry(&current, child)
+                    });
+                #[cfg(windows)]
+                let kind = if reparse_kind == Some(CpEntryKind::Directory) {
+                    crate::node::dirent::Kind::Directory
+                } else {
+                    current.kind
                 };
                 #[cfg(not(windows))]
                 let kind = current.kind;
@@ -2133,6 +2145,8 @@ mod _async_tasks {
                             path_buf,
                             sd + 1 + cname.len(),
                             dd + 1 + cname.len(),
+                            #[cfg(windows)]
+                            reparse_kind,
                         );
                     }
                 }
@@ -4636,12 +4650,17 @@ impl CpEntryKind {
         }
     }
 
-    /// Whether an entry the iterator reported as `SymLink` (on Windows: "has
-    /// the reparse attribute") is really a directory to descend into.
-    pub(crate) fn reparse_entry_is_directory(src: &OSPathSliceZ) -> bool {
-        windows::query_attribute_tag(src).is_some_and(|info| {
-            Self::from_attribute_tag(info.FileAttributes, info.ReparseTag) == Self::Directory
-        })
+    /// A walked entry that has the reparse attribute. The listing normally
+    /// carries its tag; only on a filesystem that leaves it out is `child`,
+    /// the entry's path, looked at.
+    pub(crate) fn of_reparse_entry(
+        entry: &DirIterator::IteratorResultW,
+        child: &OSPathSliceZ,
+    ) -> Self {
+        if entry.reparse_tag != 0 {
+            return Self::from_attribute_tag(entry.file_attributes, entry.reparse_tag);
+        }
+        Self::classify(child, entry.file_attributes)
     }
 }
 
@@ -8484,13 +8503,17 @@ impl NodeFS {
             dest_buf[dd] = paths::SEP as OSPathChar;
             dest_buf[dd + 1 + name_slice.len()] = 0;
 
-            // Non-link reparse directories come back as `SymLink` too.
+            // Every reparse point is reported as `SymLink`; work out here, once,
+            // which of them are really directories to walk or files.
             #[cfg(windows)]
-            let kind = if current.kind == sys::FileKind::SymLink
-                && CpEntryKind::reparse_entry_is_directory(OSPathSliceZ::from_buf(
-                    &src_buf[..],
-                    sd + 1 + name_slice.len(),
-                )) {
+            let reparse_kind = (current.kind == sys::FileKind::SymLink).then(|| {
+                CpEntryKind::of_reparse_entry(
+                    &current,
+                    OSPathSliceZ::from_buf(&src_buf[..], sd + 1 + name_slice.len()),
+                )
+            });
+            #[cfg(windows)]
+            let kind = if reparse_kind == Some(CpEntryKind::Directory) {
                 sys::FileKind::Directory
             } else {
                 current.kind
@@ -8513,6 +8536,10 @@ impl NodeFS {
                     // NUL written at [len] above; `from_buf` debug-asserts it.
                     let src_z = OSPathSliceZ::from_buf(&src_buf[..], sd + 1 + name_slice.len());
                     let dest_z = OSPathSliceZ::from_buf(&dest_buf[..], dd + 1 + name_slice.len());
+                    #[cfg(windows)]
+                    let reuse_stat = reparse_kind;
+                    #[cfg(not(windows))]
+                    let reuse_stat = None;
                     let r = self.copy_single_file_sync(
                         src_z,
                         dest_z,
@@ -8523,7 +8550,7 @@ impl NodeFS {
                                 0i32
                             },
                         ),
-                        None,
+                        reuse_stat,
                         args,
                     );
                     if let Err(ref e) = r {

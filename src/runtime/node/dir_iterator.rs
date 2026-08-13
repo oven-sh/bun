@@ -58,6 +58,11 @@ impl IteratorResultWName {
 pub struct IteratorResultW {
     pub name: IteratorResultWName,
     pub(crate) kind: EntryKind,
+    /// `kind` is `SymLink` for every entry with `FILE_ATTRIBUTE_REPARSE_POINT`;
+    /// these say what the entry actually is. `reparse_tag` is 0 for anything
+    /// but a reparse point, and for one whose filesystem does not report tags.
+    pub(crate) file_attributes: u32,
+    pub(crate) reparse_tag: u32,
 }
 #[cfg(windows)]
 pub(crate) type ResultW = sys::Result<Option<IteratorResultW>>;
@@ -438,7 +443,7 @@ mod platform {
     use bun_sys::windows::ntdll;
     use bun_sys::windows::{
         BOOLEAN, FALSE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
-        FILE_DIRECTORY_INFORMATION, IO_STATUS_BLOCK, TRUE, UNICODE_STRING, Win32ErrorExt as _,
+        FILE_FULL_DIR_INFORMATION, IO_STATUS_BLOCK, TRUE, UNICODE_STRING, Win32ErrorExt as _,
     };
 
     // While the official api docs guarantee FILE_BOTH_DIR_INFORMATION to be aligned properly
@@ -462,6 +467,8 @@ mod platform {
             name_data: &mut Self::NameData,
             dir_info_name: &[u16],
             kind: EntryKind,
+            file_attributes: u32,
+            reparse_tag: u32,
         ) -> Self::Entry;
     }
     pub struct OsPathFalse;
@@ -478,6 +485,8 @@ mod platform {
             name_data: &mut [u8; 513],
             dir_info_name: &[u16],
             kind: EntryKind,
+            _file_attributes: u32,
+            _reparse_tag: u32,
         ) -> IteratorResult {
             // Trust that Windows gives us valid UTF-16LE
             let name_utf8 = strings::paths::from_w_path(&mut name_data[..], dir_info_name);
@@ -499,6 +508,8 @@ mod platform {
             name_data: &mut [u16; 257],
             dir_info_name: &[u16],
             kind: EntryKind,
+            file_attributes: u32,
+            reparse_tag: u32,
         ) -> IteratorResultW {
             let len = dir_info_name.len();
             name_data[..len].copy_from_slice(dir_info_name);
@@ -508,6 +519,8 @@ mod platform {
                     data: RawSlice::new(&name_data[..len]),
                 },
                 kind,
+                file_attributes,
+                reparse_tag,
             }
         }
     }
@@ -534,7 +547,7 @@ mod platform {
         // If a buffer contains two or more of these structures, the
         // NextEntryOffset value in each entry, except the last, falls on an
         // 8-byte boundary.
-        // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_directory_information
+        // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_full_dir_information
         pub(crate) buf: [u8; 8192],
         pub(crate) index: usize,
         pub(crate) end_index: usize,
@@ -599,7 +612,7 @@ mod platform {
                             &mut io,
                             self.buf.as_mut_ptr().cast(),
                             self.buf.len() as u32,
-                            w::FILE_INFORMATION_CLASS::FileDirectoryInformation,
+                            w::FILE_INFORMATION_CLASS::FileFullDirectoryInformation,
                             FALSE as BOOLEAN,
                             filter_ptr,
                             if self.first {
@@ -654,30 +667,41 @@ mod platform {
 
                 let entry_offset = self.index;
                 let p = self.buf.as_ptr();
-                // While the official api docs guarantee FILE_DIRECTORY_INFORMATION to
+                // While the official api docs guarantee FILE_FULL_DIR_INFORMATION to
                 // be aligned properly this may not always be the case (e.g. due to
                 // faulty VM/Sandboxing tools) — read fields via unaligned loads.
                 // SAFETY: entry_offset < end_index ≤ buf.len(); the header up through
                 // FileName lies within `buf` per the kernel contract.
-                let next_entry_offset =
-                    unsafe {
-                        core::ptr::read_unaligned(p.add(
-                            entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, NextEntryOffset),
-                        ) as *const u32)
-                    };
+                let next_entry_offset = unsafe {
+                    core::ptr::read_unaligned(
+                        p.add(entry_offset + offset_of!(FILE_FULL_DIR_INFORMATION, NextEntryOffset))
+                            as *const u32,
+                    )
+                };
                 // SAFETY: see above.
                 let file_name_length = unsafe {
                     core::ptr::read_unaligned(
-                        p.add(entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileNameLength))
+                        p.add(entry_offset + offset_of!(FILE_FULL_DIR_INFORMATION, FileNameLength))
                             as *const u32,
                     )
                 } as usize;
                 // SAFETY: see above.
                 let file_attributes = unsafe {
                     core::ptr::read_unaligned(
-                        p.add(entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileAttributes))
+                        p.add(entry_offset + offset_of!(FILE_FULL_DIR_INFORMATION, FileAttributes))
                             as *const u32,
                     )
+                };
+                let reparse_tag = if file_attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                    // SAFETY: see above.
+                    unsafe {
+                        core::ptr::read_unaligned(
+                            p.add(entry_offset + offset_of!(FILE_FULL_DIR_INFORMATION, EaSize))
+                                as *const u32,
+                        )
+                    }
+                } else {
+                    0
                 };
 
                 if next_entry_offset != 0 {
@@ -687,14 +711,14 @@ mod platform {
                 }
 
                 // Some filesystem / filter drivers have been observed returning
-                // FILE_DIRECTORY_INFORMATION entries with an out-of-range
+                // FILE_FULL_DIR_INFORMATION entries with an out-of-range
                 // FileNameLength (well beyond the 255-WCHAR NTFS component
                 // limit). Clamp to what fits in name_data (destination) and to
                 // what remains in buf (source) so a misbehaving driver cannot
                 // walk us past the end of either buffer.
                 let max_name_u16 = <Select<USE_WINDOWS_OSPATH> as WindowsOsPath>::max_name_u16();
                 let name_byte_offset =
-                    entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileName);
+                    entry_offset + offset_of!(FILE_FULL_DIR_INFORMATION, FileName);
                 let buf_remaining_u16 =
                     self.buf.len().saturating_sub(name_byte_offset) / size_of::<u16>();
                 let name_len_u16 = (file_name_length / 2)
@@ -702,8 +726,8 @@ mod platform {
                     .min(buf_remaining_u16);
                 // name_byte_offset + name_len_u16*2 ≤ buf.len() by clamp above.
                 // `buf` follows the 8-byte `Fd` in a `repr(C, align(8))` struct so
-                // it is itself 8-byte aligned, and per MS docs each record (and
-                // thus its FileName at offset 64) lands on an 8-byte boundary —
+                // it is itself 8-byte aligned, and per MS docs each record lands on
+                // an 8-byte boundary, so its FileName (offset 68) is u16-aligned —
                 // bytemuck checks the u8→u16 alignment at runtime.
                 let dir_info_name: &[u16] = bytemuck::cast_slice(
                     &self.buf[name_byte_offset..name_byte_offset + name_len_u16 * 2],
@@ -734,6 +758,8 @@ mod platform {
                         &mut self.name_data,
                         dir_info_name,
                         kind,
+                        file_attributes,
+                        reparse_tag,
                     ),
                 ));
             }

@@ -159,6 +159,7 @@ pub use bun_windows_sys::FILE_DIRECTORY_FILE;
 pub use bun_windows_sys::FILE_DIRECTORY_INFORMATION;
 pub use bun_windows_sys::FILE_FS_DEVICE_INFORMATION;
 pub use bun_windows_sys::FILE_FS_VOLUME_INFORMATION;
+pub use bun_windows_sys::FILE_FULL_DIR_INFORMATION;
 pub use bun_windows_sys::FILE_INFO_BY_HANDLE_CLASS;
 pub use bun_windows_sys::FILE_INFORMATION_CLASS;
 pub use bun_windows_sys::FILE_NON_DIRECTORY_FILE;

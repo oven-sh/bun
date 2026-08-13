@@ -417,18 +417,24 @@ describe.concurrent("bun pm pkg", () => {
             "note: keywords[] appends to the end of the array\n",
         ],
         ["keywords.foo=x", 'error: "keywords.foo": "keywords" is an array, so "foo" must be an index or []\n'],
-        ["keywords[foo]=x", 'error: "keywords[foo]": "keywords" is an array, so "foo" must be an index or []\n'],
         ["scripts[]=x", 'error: "scripts[]": cannot append to "scripts" because it is not an array\n'],
         ["name[]=x", 'error: "name[]": "name" already exists and is not an object or array\n'],
         ["name.first=x", 'error: "name.first": "name" already exists and is not an object or array\n'],
+        // nested values are named by the part of the key that leads to them
+        [
+          "matrix[0][9]=x",
+          'error: "matrix[0][9]": index 9 is out of range for "matrix[0]" (length 2)\n' +
+            "note: matrix[0][] appends to the end of the array\n",
+        ],
+        ["matrix[0].foo=x", 'error: "matrix[0].foo": "matrix[0]" is an array, so "foo" must be an index or []\n'],
         [
           "contributors[0].name.first=x",
-          'error: "contributors[0].name.first": "name" already exists and is not an object or array\n',
+          'error: "contributors[0].name.first": "contributors[0].name" already exists and is not an object or array\n',
         ],
       ] as const;
 
       it.each(rejected)("should reject %s without touching package.json", async (arg, expectedError) => {
-        using dir = makeTestDir();
+        using dir = tempDir("pm-pkg-reject", { "package.json": createTestPackageJson({ matrix: [["a", "b"]] }) });
         const before = await readRaw(dir);
         const { output, error, code } = await runPmPkg(["set", arg], dir, false);
         expect({ output, error, code }).toEqual({ output: "", error: expectedError, code: 1 });

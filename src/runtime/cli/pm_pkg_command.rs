@@ -51,7 +51,16 @@ struct PackageJson {
 
 /// One step of a key path such as `contributors[0].name` or `keywords[]`.
 #[derive(Clone, Copy)]
-enum Segment<'a> {
+struct Segment<'a> {
+    kind: SegmentKind<'a>,
+    /// Offset just past this segment in the key it was parsed from, so
+    /// `&key[..end]` is the path down to it (`contributors[0]` for the second
+    /// segment of `contributors[0].name`). Error messages name values this way.
+    end: usize,
+}
+
+#[derive(Clone, Copy)]
+enum SegmentKind<'a> {
     /// `b` in `a.b` or `a[b]`. Applied to an existing array it is an index,
     /// applied to an object it is a property name.
     Key { name: &'a [u8], bracketed: bool },
@@ -59,25 +68,18 @@ enum Segment<'a> {
     Append,
 }
 
-impl<'a> Segment<'a> {
+impl Segment<'_> {
     /// Whether `set` creates an array (rather than an object) for this segment
     /// to land in when nothing exists yet: `files[0]=x` and `files[]=x` create
     /// an array, `config.0=x` creates an object with the property `"0"`.
     fn creates_array(self) -> bool {
-        match self {
-            Segment::Key {
+        match self.kind {
+            SegmentKind::Key {
                 name,
                 bracketed: true,
             } => array_index(name).is_some(),
-            Segment::Key { .. } => false,
-            Segment::Append => true,
-        }
-    }
-
-    fn name(self) -> &'a [u8] {
-        match self {
-            Segment::Key { name, .. } => name,
-            Segment::Append => b"[]",
+            SegmentKind::Key { .. } => false,
+            SegmentKind::Append => true,
         }
     }
 }
@@ -532,7 +534,7 @@ impl PmPkgCommand {
     fn resolve_path(root: Expr, key: &[u8]) -> Result<Expr, Error> {
         let mut current = root;
         for segment in Self::parse_key_path(key)? {
-            let Segment::Key { name, .. } = segment else {
+            let SegmentKind::Key { name, .. } = segment.kind else {
                 return Err(crate::Error::InvalidPath);
             };
             current = match &current.data {
@@ -547,48 +549,49 @@ impl PmPkgCommand {
     }
 
     /// Splits `a.b[0][c][]` into `[Key("a"), Key("b"), Key("0"), Key("c"), Append]`.
-    /// Segments are sub-slices of `key`: `E::Object::put` stores keys by
+    /// Names are sub-slices of `key`: `E::Object::put` stores keys by
     /// reference (no copy into the AST arena), so they must outlive the `Expr`
     /// tree, which `key` (an argv slice) does. Returning owned buffers here
     /// would leave dangling keys.
     fn parse_key_path(key: &[u8]) -> Result<Vec<Segment<'_>>, Error> {
         let mut segments: Vec<Segment<'_>> = Vec::new();
 
-        for part in strings::tokenize(key, b".") {
-            let Some(first_bracket) = strings::index_of(part, b"[") else {
-                segments.push(Segment::Key {
-                    name: part,
-                    bracketed: false,
-                });
-                continue;
-            };
+        let mut part_start = 0;
+        for part in strings::split(key, b".") {
+            let start = part_start;
+            part_start += part.len() + b".".len();
 
-            if first_bracket > 0 {
-                segments.push(Segment::Key {
-                    name: &part[..first_bracket],
-                    bracketed: false,
+            let name_len = strings::index_of(part, b"[").unwrap_or(part.len());
+            if name_len > 0 {
+                segments.push(Segment {
+                    kind: SegmentKind::Key {
+                        name: &part[..name_len],
+                        bracketed: false,
+                    },
+                    end: start + name_len,
                 });
             }
 
-            let mut remaining_part = &part[first_bracket..];
-            while let Some(bracket_start) = strings::index_of(remaining_part, b"[") {
-                let Some(bracket_end) = strings::index_of(&remaining_part[bracket_start..], b"]")
-                else {
+            let mut cursor = name_len;
+            while let Some(open) = strings::index_of(&part[cursor..], b"[") {
+                let open = cursor + open;
+                let Some(close) = strings::index_of(&part[open..], b"]") else {
                     return Err(crate::Error::InvalidPath);
                 };
-                let actual_bracket_end = bracket_start + bracket_end;
-                let index_str = &remaining_part[bracket_start + 1..actual_bracket_end];
-
-                segments.push(if index_str.is_empty() {
-                    Segment::Append
-                } else {
-                    Segment::Key {
-                        name: index_str,
-                        bracketed: true,
-                    }
+                let close = open + close;
+                let name = &part[open + 1..close];
+                segments.push(Segment {
+                    kind: if name.is_empty() {
+                        SegmentKind::Append
+                    } else {
+                        SegmentKind::Key {
+                            name,
+                            bracketed: true,
+                        }
+                    },
+                    end: start + close + 1,
                 });
-
-                remaining_part = &remaining_part[actual_bracket_end + 1..];
+                cursor = close + 1;
             }
         }
 
@@ -609,8 +612,9 @@ impl PmPkgCommand {
         Self::set_in_container(root, b"package.json", key, &path, expr)
     }
 
-    /// `container` is the object or array that `container_name` refers to;
-    /// `path` is the remaining, non-empty key path below it.
+    /// `container` is the object or array that `container_name` (a prefix of
+    /// `key`, or `package.json` for the root) refers to; `path` is the
+    /// remaining, non-empty part of `key` below it.
     ///
     /// Like `npm pkg set`, only the final segment ever replaces a value: a
     /// scalar or an array standing in the way of an earlier segment is an
@@ -625,12 +629,13 @@ impl PmPkgCommand {
         let [segment, rest @ ..] = path else {
             return Ok(());
         };
+        let slot_name = &key[..segment.end];
 
         if let Some(array) = container.data.e_array_mut() {
             let len = array.items.len();
-            let index = match *segment {
-                Segment::Append => len,
-                Segment::Key { name, .. } => match array_index(name) {
+            let index = match segment.kind {
+                SegmentKind::Append => len,
+                SegmentKind::Key { name, .. } => match array_index(name) {
                     Some(index) if index <= len => index,
                     Some(index) => {
                         Output::err_generic(
@@ -661,13 +666,12 @@ impl PmPkgCommand {
                 array.items[index] = value;
                 return Ok(());
             };
-            let slot_name = segment.name();
             let mut child = Self::child_container(Some(array.items[index]), *next, key, slot_name);
             array.items[index] = child;
             return Self::set_in_container(&mut child, slot_name, key, rest, value);
         }
 
-        let Segment::Key { name, .. } = *segment else {
+        let SegmentKind::Key { name, .. } = segment.kind else {
             Output::err_generic(
                 "{s}: cannot append to {s} because it is not an array",
                 (quote(key), quote(container_name)),
@@ -682,9 +686,9 @@ impl PmPkgCommand {
             object.put(dummy_bump(), name, value)?;
             return Ok(());
         };
-        let mut child = Self::child_container(object.get(name), *next, key, name);
+        let mut child = Self::child_container(object.get(name), *next, key, slot_name);
         object.put(dummy_bump(), name, child)?;
-        Self::set_in_container(&mut child, name, key, rest, value)
+        Self::set_in_container(&mut child, slot_name, key, rest, value)
     }
 
     /// The object or array `set` descends into at a slot currently holding
@@ -759,7 +763,7 @@ impl PmPkgCommand {
         let [segment, rest @ ..] = path else {
             return Ok(false);
         };
-        let Segment::Key { name, .. } = *segment else {
+        let SegmentKind::Key { name, .. } = segment.kind else {
             Output::err_generic(
                 "Empty brackets are not valid syntax for deleting values.",
                 (),

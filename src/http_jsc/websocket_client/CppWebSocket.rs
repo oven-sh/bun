@@ -54,7 +54,11 @@ unsafe extern "C" {
         buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
     );
-    safe fn WebSocket__didAbruptClose(websocket_context: &CppWebSocket, reason: ErrorCode);
+    safe fn WebSocket__didAbruptClose(
+        websocket_context: &CppWebSocket,
+        reason: ErrorCode,
+        buffered_amount: usize,
+    );
     safe fn WebSocket__didReceiveHandshakeResponse(
         websocket_context: &CppWebSocket,
         status_code: u16,
@@ -62,7 +66,12 @@ unsafe extern "C" {
         headers: FfiSlice<'_, RawHeader<'_>>,
         body: FfiSlice<'_>,
     );
-    safe fn WebSocket__didClose(websocket_context: &CppWebSocket, code: u16, reason: BunString);
+    safe fn WebSocket__didClose(
+        websocket_context: &CppWebSocket,
+        code: u16,
+        reason: BunString,
+        buffered_amount: usize,
+    );
     safe fn WebSocket__didReceiveText(
         websocket_context: &CppWebSocket,
         clone: bool,
@@ -85,12 +94,13 @@ unsafe extern "C" {
 // borrows (often while `&mut WebSocket<SSL>` is also live), so `&mut self`
 // would force needless `unsafe { &mut *ptr }` at every site.
 impl CppWebSocket {
-    pub(crate) fn did_abrupt_close(&self, reason: ErrorCode) {
-        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
-        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
+    /// `buffered_amount` is the sender's unsent backlog captured *before* this
+    /// call (the connection's send buffer may be freed during the abrupt-close
+    /// teardown), so C++ can keep `WebSocket.bufferedAmount` from resetting to 0.
+    pub(crate) fn did_abrupt_close(&self, reason: ErrorCode, buffered_amount: usize) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
-        WebSocket__didAbruptClose(self, reason);
+        WebSocket__didAbruptClose(self, reason, buffered_amount);
         event_loop.exit();
     }
 
@@ -114,10 +124,13 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    pub(crate) fn did_close(&self, code: u16, reason: BunString) {
+    /// `buffered_amount` is the sender's unsent backlog captured *before* this
+    /// call (the send buffer is freed during close teardown), so C++ can keep
+    /// `WebSocket.bufferedAmount` from resetting to 0 once closed.
+    pub(crate) fn did_close(&self, code: u16, reason: BunString, buffered_amount: usize) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
-        WebSocket__didClose(self, code, reason);
+        WebSocket__didClose(self, code, reason, buffered_amount);
         event_loop.exit();
     }
 

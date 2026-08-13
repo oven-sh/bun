@@ -557,6 +557,7 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
 
 export const timerInternals = {
   timerClockMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.timerClockMs", 0),
+  monotonicNowMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.monotonicNowMs", 0),
 };
 
 // Raw datagram descriptor helpers for tests that need an unbound fd (which

@@ -6,7 +6,8 @@ const {
   SQLQueryFlags,
   symbols: { _strings, _values },
 } = require("internal/sql/query");
-const { monotonicNowMs } = require("internal/timers");
+// not Date.now(): bun:test's setSystemTime() / useFakeTimers() override that inside the engine
+const monotonicNowMs = $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.monotonicNowMs", 0);
 
 declare global {
   interface NumberConstructor {

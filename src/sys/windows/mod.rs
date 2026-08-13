@@ -550,7 +550,27 @@ pub fn CreateHardLinkW(
     rc
 }
 
-pub use bun_windows_sys::externs::CopyFileW;
+/// This module's spelling of `CopyFileW`: raw-ABI drop-in that fails an empty
+/// destination itself. KERNELBASE looks at the destination name's last unit
+/// (`dest[len - 1]`), so for `L""` it reads the unit *before* the buffer: a
+/// fault when the buffer starts a mapping (a work-pool thread's first pooled
+/// `WPathBuffer`, i.e. `fs.promises.copyFile(src, "")`), and
+/// `ERROR_PATH_NOT_FOUND` whenever the stray read happens to land on mapped
+/// memory. Report the latter without making the call.
+///
+/// # Safety
+/// `source` and `dest` must point at NUL-terminated wide strings that stay
+/// valid for the duration of the call.
+pub unsafe fn CopyFileW(source: LPCWSTR, dest: LPCWSTR, bFailIfExists: BOOL) -> BOOL {
+    // SAFETY: caller contract — `dest` is NUL-terminated, so its first unit
+    // is readable.
+    if unsafe { *dest } == 0 {
+        kernel32::SetLastError(u32::from(Win32Error::PATH_NOT_FOUND.0));
+        return FALSE;
+    }
+    // SAFETY: caller contract.
+    unsafe { externs::CopyFileW(source, dest, bFailIfExists) }
+}
 
 pub use bun_windows_sys::externs::SetFileInformationByHandle;
 

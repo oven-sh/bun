@@ -1007,6 +1007,73 @@ describe("copyFileSync", () => {
   }
 });
 
+// Windows: CopyFileW reads the code unit before an empty destination string. The
+// async forms convert the destination into a work-pool thread's freshly pooled
+// path buffer, which tends to start a mapping, so they crashed the process
+// instead of failing with ENOENT. Runs in a child (it used to segfault) and
+// queues a batch per form so several pool threads each convert into their own
+// fresh buffer.
+it.concurrent("copyFile to an empty destination path fails with ENOENT in every form", async () => {
+  using dir = tempDir("fs-copyfile-empty-dest", { "src.txt": "x" });
+  const script = `
+    const fs = require("fs");
+    const N = 16;
+    const shape = e => ({ code: e.code, syscall: e.syscall, path: e.path });
+    const unique = list => [...new Set(list.map(r => JSON.stringify(r)))].map(s => JSON.parse(s));
+    const promiseForm = Promise.all(
+      Array.from({ length: N }, () => fs.promises.copyFile("src.txt", "").then(() => "resolved", shape)),
+    );
+    const callbackForm = Promise.all(
+      Array.from(
+        { length: N },
+        () => new Promise(resolve => fs.copyFile("src.txt", "", e => resolve(e ? shape(e) : "resolved"))),
+      ),
+    );
+    let sync;
+    try {
+      fs.copyFileSync("src.txt", "");
+      sync = "resolved";
+    } catch (e) {
+      sync = shape(e);
+    }
+    let cpSync;
+    try {
+      fs.cpSync("src.txt", "");
+      cpSync = "resolved";
+    } catch (e) {
+      cpSync = { code: e.code };
+    }
+    const cp = fs.promises.cp("src.txt", "").then(() => "resolved", e => ({ code: e.code }));
+    Promise.all([promiseForm, callbackForm, cp]).then(([promises, callback, cp]) => {
+      console.log(JSON.stringify({ promises: unique(promises), callback: unique(callback), sync, cpSync, cp }));
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const enoent = { code: "ENOENT", syscall: "copyfile", path: "src.txt" };
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout:
+      JSON.stringify({
+        promises: [enoent],
+        callback: [enoent],
+        sync: enoent,
+        // fs.cp reaches the same copy routine for a file source, but reports
+        // the parent mkdir on POSIX and copyfile on Windows, so only the code
+        // is pinned.
+        cpSync: { code: "ENOENT" },
+        cp: { code: "ENOENT" },
+      }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 describe("mkdirSync", () => {
   it("should create a directory", () => {
     const now = Date.now().toString();

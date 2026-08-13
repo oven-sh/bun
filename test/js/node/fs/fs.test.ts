@@ -3201,10 +3201,9 @@ describe("rm", () => {
 // it. On Windows, Bun resolves relative paths against a directory handle with
 // NtCreateFile, which resolves an empty name to that directory itself, so
 // readdir("") listed the cwd, writeFile("") opened it and recursive rm("")
-// deleted everything inside it. Each case therefore runs in a child process
-// whose cwd is a throwaway directory, and the parent checks that directory
-// afterwards.
-describe.concurrent("operations on the empty path", () => {
+// deleted everything inside it. The cases therefore run in a child process
+// that gives each one a throwaway cwd and reports what was left of it.
+describe("operations on the empty path", () => {
   const enoent = { code: "ENOENT" };
   const ok = { ok: true };
   const cases: [expression: string, expected: object][] = [
@@ -3223,34 +3222,56 @@ describe.concurrent("operations on the empty path", () => {
     [`fs.rmSync("", { recursive: true, force: true })`, ok],
     [`fs.promises.rm("", { recursive: true, force: true })`, ok],
   ];
+  const untouched = ["keep.txt", "sub", "sub/inner.txt"];
 
-  it.each(cases)("%s", async (expression, expected) => {
-    using dir = tempDir("fs-empty-path", { "keep.txt": "keep", "sub/inner.txt": "keep" });
+  const script = `
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const { promisify } = require("node:util");
+    const root = process.cwd();
+    const report = {};
+    let n = 0;
+    async function run(expression, operation) {
+      const cwd = path.join(root, String(n++));
+      fs.mkdirSync(path.join(cwd, "sub"), { recursive: true });
+      fs.writeFileSync(path.join(cwd, "keep.txt"), "keep");
+      fs.writeFileSync(path.join(cwd, "sub", "inner.txt"), "keep");
+      process.chdir(cwd);
+      let result;
+      try {
+        await operation();
+        result = { ok: true };
+      } catch (err) {
+        result = { code: err.code };
+      }
+      process.chdir(root);
+      const left = fs.readdirSync(cwd, { recursive: true }).map(entry => entry.replaceAll("\\\\", "/")).sort();
+      report[expression] = { result, left };
+    }
+    ${cases.map(([expression]) => `await run(${JSON.stringify(expression)}, () => ${expression});`).join("\n")}
+    console.log(JSON.stringify(report));
+  `;
+
+  it("every operation reports ENOENT (or is ignored by force) and leaves the cwd alone", async () => {
+    using dir = tempDir("fs-empty-path", {});
     await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const fs = require("node:fs");
-         const { promisify } = require("node:util");
-         Promise.resolve()
-           .then(() => ${expression})
-           .then(() => ({ ok: true }), err => ({ code: err.code }))
-           .then(result => console.log(JSON.stringify(result)));`,
-      ],
+      cmd: [bunExe(), "-e", script],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const left = readdirSync(String(dir), { recursive: true })
-      .map(entry => entry.replaceAll("\\", "/"))
-      .sort();
-    expect({ stdout, stderr, exitCode, left }).toEqual({
-      stdout: JSON.stringify(expected) + "\n",
+    // If the child died before printing its report, the comparison below shows
+    // whatever it did print.
+    let report: unknown = stdout;
+    try {
+      report = JSON.parse(stdout);
+    } catch {}
+    expect({ report, stderr, exitCode }).toEqual({
+      report: Object.fromEntries(cases.map(([expression, result]) => [expression, { result, left: untouched }])),
       stderr: "",
       exitCode: 0,
-      left: ["keep.txt", "sub", "sub/inner.txt"],
     });
   });
 });

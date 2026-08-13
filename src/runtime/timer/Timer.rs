@@ -361,8 +361,9 @@ impl All {
             self.maps.set_interval.swap_remove_at(idx).1
         };
         // SAFETY: entry value points to EventLoopTimer embedded in a TimeoutObject
+        let tag = unsafe { (*value).tag };
         debug_assert!(matches!(
-            unsafe { (*value).tag },
+            tag,
             EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::InternalTimeoutObject
         ));
         // SAFETY: entry value points to TimeoutObject.event_loop_timer

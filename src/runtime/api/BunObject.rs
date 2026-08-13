@@ -525,6 +525,23 @@ pub(crate) fn braces(
     bun_string_jsc::to_js_array(global, &out_strings[..])
 }
 
+/// `bun_which` already treats these as not found; throw instead so `Bun.which`
+/// rejects them the way `node:fs` and `Bun.spawn` reject the same strings.
+fn which_reject_null_bytes(global_this: &JSGlobalObject, what: &str, value: &[u8]) -> JsResult<()> {
+    if strings::contains_char(value, 0) {
+        return Err(global_this
+            .err(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "The {what} must be a string without null bytes. Received {}",
+                    bun_core::fmt::quote(value)
+                ),
+            )
+            .throw());
+    }
+    Ok(())
+}
+
 #[bun_jsc::host_fn]
 fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -552,6 +569,8 @@ fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
         return Ok(JSValue::NULL);
     }
 
+    which_reject_null_bytes(global_this, "argument 'command'", bin_str.slice())?;
+
     // SAFETY: `transpiler.env` / `.fs` are process-lifetime singletons set during VM init.
     let mut path_str =
         ZigStringSlice::from_utf8_never_free(vm.env_loader().get(b"PATH").unwrap_or(b""));
@@ -561,10 +580,12 @@ fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
         if !arg.is_empty_or_undefined_or_null() && arg.is_object() {
             if let Some(str_) = arg.get(global_this, "PATH")? {
                 path_str = str_.to_slice(global_this)?;
+                which_reject_null_bytes(global_this, "property 'options.PATH'", path_str.slice())?;
             }
 
             if let Some(str_) = arg.get(global_this, "cwd")? {
                 cwd_str = str_.to_slice(global_this)?;
+                which_reject_null_bytes(global_this, "property 'options.cwd'", cwd_str.slice())?;
             }
         }
     }

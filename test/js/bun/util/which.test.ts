@@ -32,6 +32,27 @@ test("which rlly long", async () => {
   expect(() => which(longstr)).toThrow("bin path is too long");
 });
 
+test("which rejects strings with interior null bytes", () => {
+  expect(() => which("sh\0anything")).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: `The argument 'command' must be a string without null bytes. Received "sh\\u0000anything"`,
+    }),
+  );
+
+  // The OS stops reading a path at its first NUL, so each lookup below used to
+  // check process.execPath and hand back the full string as the match.
+  const exe = process.execPath;
+  const rejected = (what: string) =>
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: expect.stringContaining(`The ${what} must be a string without null bytes.`),
+    });
+  expect(() => which(`${exe}\0zz`)).toThrow(rejected("argument 'command'"));
+  expect(() => which("zz", { PATH: `${exe}\0zz` })).toThrow(rejected("property 'options.PATH'"));
+  expect(() => which("./zz", { cwd: `${exe}\0zz` })).toThrow(rejected("property 'options.cwd'"));
+});
+
 if (isWindows) {
   test("which", () => {
     expect(which("cmd")).toBe("C:\\Windows\\system32\\cmd.exe");

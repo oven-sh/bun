@@ -22,6 +22,27 @@ test.skipIf(isWindows)("which with an absolute path at the platform path length 
   expect(exitCode).toBe(0);
 });
 
+test("a PATH entry with an interior null byte never matches", async () => {
+  // The OS stops reading a path at its first NUL, so the candidate
+  // `<execPath>\0zz/zz` used to be checked as `<execPath>`: `which` printed the
+  // phantom path and running `zz` executed bun itself.
+  const env = { PATH: `${bunExe()}\0zz` };
+
+  const lookup = await $`which zz`.env(env).quiet().nothrow();
+  expect({
+    stdout: lookup.stdout.toString(),
+    stderr: lookup.stderr.toString(),
+    exitCode: lookup.exitCode,
+  }).toEqual({ stdout: "which: zz not found\n", stderr: "", exitCode: 1 });
+
+  const run = await $`zz --version`.env(env).quiet().nothrow();
+  expect({
+    stdout: run.stdout.toString(),
+    stderr: run.stderr.toString(),
+    exitCode: run.exitCode,
+  }).toEqual({ stdout: "", stderr: "bun: command not found: zz\n", exitCode: 1 });
+});
+
 test("which rlly long", async () => {
   const longstr = "a".repeat(100000);
   expect(async () => await $`${longstr}`.throws(true)).toThrow();

@@ -21,6 +21,15 @@ mod scope {
 }
 use scope::which as which_log;
 
+/// The OS reads a candidate path only up to its first NUL, so a candidate
+/// built from a part with an interior NUL would be checked as a shorter path
+/// than the one `which` returns. Such a candidate is never a match: `bin` is
+/// checked once up front, directories per candidate so that one bad `$PATH`
+/// entry only skips itself.
+fn contains_nul(part: &[u8]) -> bool {
+    strings::contains_char(part, 0)
+}
+
 /// Writes `[cwd/]segment/bin\0` into `buf` and stats it as an executable.
 #[cfg(not(windows))]
 fn is_valid(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Option<u16> {
@@ -30,6 +39,9 @@ fn is_valid(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Opt
             Some(&SEP) => part.len(),
             Some(_) => part.len() + 1,
         }
+    }
+    if contains_nul(cwd) || contains_nul(segment) {
+        return None;
     }
     let cwd_prefix_len = len_with_sep(cwd);
     let prefix_len = cwd_prefix_len + len_with_sep(segment);
@@ -98,7 +110,7 @@ pub fn which_for_spawn<'a>(
 // Like /usr/bin/which but without needing to exec a child process
 // Remember to resolve the symlink if necessary
 pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
-    if bin.len() >= MAX_PATH_BYTES {
+    if bin.len() >= MAX_PATH_BYTES || contains_nul(bin) {
         return None;
     }
     bun_core::scoped_log!(
@@ -282,7 +294,7 @@ fn search_bin_in_path<'a>(
     bin: &[u8],
     check_windows_extensions: bool,
 ) -> Option<&'a mut [u16]> {
-    if path.is_empty() {
+    if path.is_empty() || contains_nul(path) {
         return None;
     }
     let segment: &[u8] = if is_absolute(path) {

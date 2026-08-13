@@ -8849,8 +8849,7 @@ mod win_symlink_impl {
 #[cfg(windows)]
 pub use win_symlink_impl::{mkdir_w, symlink_or_junction, symlink_w, unlink_w};
 
-/// `link(u16, ...)` Windows arm — `CreateHardLinkW` with
-/// errno mapping. The u8/ZStr overload (`link`) routes through `sys_uv::link`.
+/// `link(u16, ...)` Windows arm — `CreateHardLinkW` with errno mapping.
 #[cfg(windows)]
 pub fn link_w(src: &bun_core::WStr, dest: &bun_core::WStr) -> Maybe<()> {
     if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) == 0 {

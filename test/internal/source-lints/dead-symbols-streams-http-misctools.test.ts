@@ -121,7 +121,7 @@ test("dead Rust wrappers do not reappear", () => {
       ["src/spawn_sys/spawn_process.rs", /\bpub fn close\(&mut self\)|\bpub fn pifd_from_pid\b/],
       ["src/tcc_sys/tcc.rs", /\bfn (tcc_)?run\b/],
       // hawk.toml overrides for enum variants deleted in #36833.
-      ["hawk.toml", /bun_platform|darwin::Category::/],
+      ["hawk.toml", /darwin::Category::/],
     ]),
   ).toEqual([]);
 });

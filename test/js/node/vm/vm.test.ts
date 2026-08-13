@@ -1767,10 +1767,12 @@ describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
     ["new Script, columnOffset", `new vm.Script(${JSON.stringify("1;\n2;")}, { columnOffset: ${INT32_MAX} })`],
     ["compileFunction", `vm.compileFunction("return 1", [], { lineOffset: ${INT32_MAX} })`],
     [
-      "compileFunction with params and both offsets",
-      `vm.compileFunction("return a", ["a"], { lineOffset: ${INT32_MAX}, columnOffset: ${INT32_MAX} })`,
+      "compileFunction with params, a multi-line body and both offsets",
+      `vm.compileFunction(${JSON.stringify("a;\nreturn a;")}, ["a"], { lineOffset: ${INT32_MAX - 1}, columnOffset: ${INT32_MAX} })`,
     ],
-    ["SourceTextModule", `new vm.SourceTextModule(${JSON.stringify("1;\n2;")}, { lineOffset: ${INT32_MAX} })`],
+    // Three lines so the counter steps past INT32_MAX whether the module's
+    // first line is taken as lineOffset or, like Script, as lineOffset + 1.
+    ["SourceTextModule", `new vm.SourceTextModule(${JSON.stringify("1;\n2;\n3;")}, { lineOffset: ${INT32_MAX - 1} })`],
   ])("%s compiles", async (_, expression) => {
     const stdout = await runFixture(`${expression};\nconsole.log("ok");`);
     expect(stdout).toBe("ok\n");

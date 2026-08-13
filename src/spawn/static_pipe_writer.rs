@@ -211,8 +211,9 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             // On POSIX `StdioResult` is an `Option<Fd>`. The buffered writer's
             // `start()` only registers the poll and never reports to the
             // parent, so nothing in this arm can close or free the writer.
-            // SAFETY: live; each borrow is confined to its own statement.
+            // SAFETY: live; the borrow ends before the match body runs.
             let fd = unsafe { (*this).stdio_result.unwrap() };
+            // SAFETY: live; the borrow of the field ends when the call returns.
             match unsafe { (*this).writer.start(fd, true) } {
                 bun_sys::Result::Err(err) => {
                     // `started` stays false so no release site fires; release

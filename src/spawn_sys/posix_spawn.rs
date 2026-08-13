@@ -529,16 +529,16 @@ pub mod posix_spawn {
         let arg0 = unsafe {
             let p = *argv;
             if p.is_null() {
-                &b""[..]
+                None
             } else {
-                bun_core::ffi::cstr(p).to_bytes()
+                Some(bun_core::ffi::cstr(p).to_bytes())
             }
         };
         sys::Result::Err(sys::Error {
             // posix_spawn* returns the errno value directly.
             errno: rc as sys::ErrorInt,
             syscall: SYSCALL_POSIX_SPAWN,
-            path: arg0.into(),
+            path: arg0.map(Box::from),
             ..Default::default()
         })
     }
@@ -708,7 +708,7 @@ pub mod posix_spawn {
             return sys::Result::Err(sys::Error {
                 errno: rc as sys::ErrorInt,
                 syscall: SYSCALL_POSIX_SPAWN,
-                path: path.to_bytes().into(),
+                path: Some(path.to_bytes().into()),
                 ..Default::default()
             });
         }
@@ -756,7 +756,7 @@ pub mod posix_spawn {
             sys::Result::Err(sys::Error {
                 errno: rc as sys::ErrorInt,
                 syscall: SYSCALL_POSIX_SPAWN,
-                path: path.to_bytes().into(),
+                path: Some(path.to_bytes().into()),
                 ..Default::default()
             })
         }

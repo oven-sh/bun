@@ -1598,12 +1598,9 @@ impl PipelineTask {
                 }
             };
             if !sys::S::ISREG(st.st_mode as _) {
-                self.result = TaskResult::IoErr(sys::Error {
-                    errno: sys::E::ENODEV as _,
-                    syscall: sys::Tag::read,
-                    path: p.as_bytes().to_vec().into_boxed_slice(),
-                    ..Default::default()
-                });
+                self.result = TaskResult::IoErr(
+                    sys::Error::from_code(sys::E::ENODEV, sys::Tag::read).with_path(p.as_bytes()),
+                );
                 return;
             }
             if u64::try_from(st.st_size.max(0)).expect("int cast") > MAX_INPUT_FILE_BYTES {

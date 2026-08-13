@@ -987,25 +987,20 @@ impl Builtin {
         use crate::shell::ShellErr;
         match err {
             ShellErr::Sys(sys) => {
-                // `"{message}\n"` or `"{message}: {path}\n"`.
-                if sys.path.is_empty() {
-                    Self::fmt_error_arena(
+                // `"{message}: {path}\n"`, or just the message for an empty operand.
+                match sys.path.as_deref().filter(|path| !path.is_empty()) {
+                    Some(path) => Self::fmt_error_arena(
+                        interp,
+                        cmd,
+                        Some(kind),
+                        format_args!("{}: {}\n", bstr::BStr::new(sys.message.byte_slice()), path),
+                    ),
+                    None => Self::fmt_error_arena(
                         interp,
                         cmd,
                         Some(kind),
                         format_args!("{}\n", bstr::BStr::new(sys.message.byte_slice())),
-                    )
-                } else {
-                    Self::fmt_error_arena(
-                        interp,
-                        cmd,
-                        Some(kind),
-                        format_args!(
-                            "{}: {}\n",
-                            bstr::BStr::new(sys.message.byte_slice()),
-                            sys.path,
-                        ),
-                    )
+                    ),
                 }
             }
             ShellErr::Custom(s) => Self::fmt_error_arena(
@@ -1041,12 +1036,13 @@ impl Builtin {
     ) -> &'a [u8] {
         if let Some((_code, sys_errno)) = err.get_error_code_tag_name() {
             if let Some(message) = bun_sys::coreutils_error_map::get(sys_errno) {
-                if !err.path.is_empty() {
+                // `"{path}: {message}"`, or just the message for an empty operand.
+                if let Some(path) = err.path.as_deref().filter(|path| !path.is_empty()) {
                     return Self::fmt_error_arena(
                         interp,
                         cmd,
                         Some(kind),
-                        format_args!("{}: {}\n", bstr::BStr::new(&err.path[..]), message),
+                        format_args!("{}: {}\n", bstr::BStr::new(path), message),
                     );
                 }
                 return Self::fmt_error_arena(

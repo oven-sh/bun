@@ -41,11 +41,12 @@ pub struct SystemError {
     pub code: bun_core::OwnedString,
     /// it is illegal to have an empty message
     pub message: bun_core::OwnedString,
-    pub path: bun_core::OwnedString,
+    /// `None` when the operation had no path operand; an operand of "" is `Some`.
+    pub path: Option<bun_core::OwnedString>,
     pub syscall: bun_core::OwnedString,
     pub hostname: bun_core::OwnedString,
     pub fd: Option<core::ffi::c_int>,
-    pub dest: bun_core::OwnedString,
+    pub dest: Option<bun_core::OwnedString>,
 }
 impl SystemError {
     /// (`Error::to_system_error` stores `errno` negated to match Node.)
@@ -69,16 +70,15 @@ impl core::fmt::Display for SystemError {
     /// `Display` stays side-effect-free. The colored path is handled by
     /// `bun_core::Output::pretty*` at the call site that prints the error.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if !self.path.is_empty() {
+        match self.path.as_deref().filter(|path| !path.is_empty()) {
             // "<code>: <path>: <message> (<syscall>())"
-            write!(
+            Some(path) => write!(
                 f,
                 "{}: {}: {} ({}())",
-                self.code, self.path, self.message, self.syscall,
-            )
-        } else {
+                self.code, path, self.message, self.syscall,
+            ),
             // "<code>: <message> (<syscall>())"
-            write!(f, "{}: {} ({}())", self.code, self.message, self.syscall)
+            None => write!(f, "{}: {} ({}())", self.code, self.message, self.syscall),
         }
     }
 }
@@ -1337,7 +1337,7 @@ impl Tag {
     pub const readlink: Tag = Tag(39);
     pub const rename: Tag = Tag(40);
     pub(crate) const stat: Tag = Tag(41);
-    pub(crate) const statfs: Tag = Tag(42);
+    pub const statfs: Tag = Tag(42);
     pub const symlink: Tag = Tag(43);
     #[cfg(not(windows))]
     pub(crate) const symlinkat: Tag = Tag(44);

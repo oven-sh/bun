@@ -137,10 +137,11 @@ impl CopyFile {
         if matches!(
             self.source_file_store.pathlike,
             PathOrFileDescriptor::Path(_)
-        ) && system_error.path.is_empty()
+        ) && system_error.path.is_none()
         {
-            system_error.path =
-                bun_core::String::clone_utf8(self.source_file_store.pathlike.path().slice()).into();
+            system_error.path = Some(
+                bun_core::String::clone_utf8(self.source_file_store.pathlike.path().slice()).into(),
+            );
         }
 
         if system_error.message.is_empty() {
@@ -1421,7 +1422,7 @@ impl<'a> CopyFileWindows<'a> {
                         return bun_sys::Result::Err(bun_sys::Error {
                             errno: bun_sys::SystemErrno::EMFILE as u16,
                             syscall: bun_sys::Tag::open,
-                            path: path.slice().into(),
+                            path: Some(path.slice().into()),
                             ..Default::default()
                         });
                     }
@@ -1627,7 +1628,7 @@ impl<'a> CopyFileWindows<'a> {
                     errno
                 },
                 syscall: bun_sys::Tag::copyfile,
-                path: old_path.as_bytes().into(),
+                path: Some(old_path.as_bytes().into()),
                 ..Default::default()
             });
             return;

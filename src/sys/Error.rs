@@ -29,11 +29,10 @@ pub struct Error {
     pub fd: Fd,
     #[cfg(windows)]
     pub from_libuv: bool,
-    // Box<[u8]> per PORTING.md; `with_path*` eagerly clones. Revisit if
-    // profiling shows regressions.
-    pub path: Box<[u8]>,
+    /// `None` when the operation had no path operand; an operand of "" is `Some`.
+    pub path: Option<Box<[u8]>>,
     pub syscall: Tag,
-    pub dest: Box<[u8]>,
+    pub dest: Option<Box<[u8]>>,
 }
 
 impl Default for Error {
@@ -43,9 +42,9 @@ impl Default for Error {
             fd: Fd::INVALID,
             #[cfg(windows)]
             from_libuv: false,
-            path: Box::default(),
+            path: None,
             syscall: Tag::TODO,
-            dest: Box::default(),
+            dest: None,
         }
     }
 }
@@ -222,7 +221,7 @@ impl Error {
             errno: self.errno,
             syscall: self.syscall,
             // PERF: clones the slice into a Box — profile if hot.
-            path: Box::from(path),
+            path: Some(Box::from(path)),
             ..Default::default()
         }
     }
@@ -233,7 +232,7 @@ impl Error {
             errno: self.errno,
             syscall: syscall_,
             // PERF: clones the slice into a Box — profile if hot.
-            path: Box::from(path),
+            path: Some(Box::from(path)),
             ..Default::default()
         }
     }
@@ -253,7 +252,7 @@ impl Error {
             #[cfg(windows)]
             from_libuv: self.from_libuv,
             path: self.path.clone(),
-            dest: Box::from(dest),
+            dest: Some(Box::from(dest)),
         }
     }
 
@@ -263,8 +262,8 @@ impl Error {
             errno: self.errno,
             syscall: self.syscall,
             // PERF: clones the slices into Boxes — profile if hot.
-            path: Box::from(path),
-            dest: Box::from(dest),
+            path: Some(Box::from(path)),
+            dest: Some(Box::from(dest)),
             ..Default::default()
         }
     }
@@ -280,8 +279,8 @@ impl Error {
             #[cfg(windows)]
             from_libuv: self.from_libuv,
             syscall: self.syscall,
-            path: Box::default(),
-            dest: Box::default(),
+            path: None,
+            dest: None,
         }
     }
 
@@ -369,6 +368,14 @@ impl Error {
         let mut err = SystemError {
             errno: js_errno,
             syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()).into(),
+            path: self
+                .path
+                .as_deref()
+                .map(|path| BunString::clone_utf8(path).into()),
+            dest: self
+                .dest
+                .as_deref()
+                .map(|dest| BunString::clone_utf8(dest).into()),
             ..Default::default()
         };
 
@@ -377,14 +384,6 @@ impl Error {
             err.code = BunString::static_(code.as_bytes()).into();
             (code, map[system_errno])
         });
-
-        if !self.path.is_empty() {
-            err.path = BunString::clone_utf8(&self.path).into();
-        }
-
-        if !self.dest.is_empty() {
-            err.dest = BunString::clone_utf8(&self.dest).into();
-        }
 
         if let Some(valid) = fd_unwrap_valid(self.fd) {
             // When the FD is a windows handle, there is no sane way to report this.
@@ -444,22 +443,22 @@ impl Error {
                 {
                     break 'brk;
                 }
-                if !self.path.is_empty() {
+                if let Some(path) = self.path.as_deref() {
                     if cursor.write_all(b" '").is_err() {
                         break 'brk;
                     }
-                    if cursor.write_all(&self.path).is_err() {
+                    if cursor.write_all(path).is_err() {
                         break 'brk;
                     }
                     if cursor.write_all(b"'").is_err() {
                         break 'brk;
                     }
 
-                    if !self.dest.is_empty() {
+                    if let Some(dest) = self.dest.as_deref() {
                         if cursor.write_all(b" -> '").is_err() {
                             break 'brk;
                         }
-                        if cursor.write_all(&self.dest).is_err() {
+                        if cursor.write_all(dest).is_err() {
                             break 'brk;
                         }
                         if cursor.write_all(b"'").is_err() {
@@ -495,12 +494,15 @@ impl fmt::Display for Error {
         // because we're intending to pass them to writer.print()
         // which will convert them back into UTF*.
         let mut that = self.without_path().to_shell_system_error();
-        debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
-        debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
-        that.path = BunString::borrow_utf8(&self.path).into();
-        that.dest = BunString::borrow_utf8(&self.dest).into();
-        debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
-        debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
+        debug_assert!(that.path.is_none() && that.dest.is_none());
+        that.path = self
+            .path
+            .as_deref()
+            .map(|path| BunString::borrow_utf8(path).into());
+        that.dest = self
+            .dest
+            .as_deref()
+            .map(|dest| BunString::borrow_utf8(dest).into());
 
         fmt::Display::fmt(&that, f)
     }

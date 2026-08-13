@@ -1250,7 +1250,7 @@ pub(crate) fn collect_compile_assets(
     let fail = |err: bun_sys::Error| -> Result<(), String> {
         Err(format!(
             "failed to read asset {}: {}",
-            bun_fmt::quote(&err.path),
+            bun_fmt::quote(err.path.as_deref().unwrap_or_default()),
             err,
         ))
     };

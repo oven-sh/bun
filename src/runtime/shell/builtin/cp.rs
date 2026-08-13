@@ -279,12 +279,16 @@ impl Cp {
                     // i.e. ANY sys error whose `path` equals `src_absolute` is
                     // deferred regardless of errno; preserved deliberately for
                     // compatibility.
-                    let is_ebusy = matches!(err, ShellErr::Sys(sys)
-                        if (sys.get_errno() == bun_sys::E::EBUSY
-                                && task.tgt_absolute.as_deref()
-                                    .map_or(false, |p| sys.path.eql_utf8(p)))
-                            || task.src_absolute.as_deref()
-                                    .map_or(false, |p| sys.path.eql_utf8(p)));
+                    let is_ebusy = match err {
+                        ShellErr::Sys(sys) => {
+                            let path_is =
+                                |p: &[u8]| sys.path.as_deref().is_some_and(|path| path.eql_utf8(p));
+                            (sys.get_errno() == bun_sys::E::EBUSY
+                                && task.tgt_absolute.as_deref().is_some_and(path_is))
+                                || task.src_absolute.as_deref().is_some_and(path_is)
+                        }
+                        _ => false,
+                    };
                     if is_ebusy {
                         exec.ebusy.tasks.push(bun_core::heap::into_raw(task));
                         return Self::next(interp, cmd).run(interp);

@@ -58,7 +58,7 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
         Err(sys::Error {
             errno: (e as u16),
             syscall,
-            path: path.as_ref().into(),
+            path: Some(path.as_ref().into()),
             ..Default::default()
         })
     }
@@ -96,7 +96,7 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
             e => Some(Err(sys::Error {
                 errno: (e as u16),
                 syscall,
-                path: path.as_ref().into(),
+                path: Some(path.as_ref().into()),
                 ..Default::default()
             })),
         }
@@ -113,8 +113,8 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
             e => Some(Err(sys::Error {
                 errno: (e as u16),
                 syscall,
-                path: path.as_ref().into(),
-                dest: dest.as_ref().into(),
+                path: Some(path.as_ref().into()),
+                dest: Some(dest.as_ref().into()),
                 ..Default::default()
             })),
         }
@@ -600,17 +600,9 @@ mod _async_tasks {
                     ..Default::default()
                 });
                 match result {
-                    Err(err) => {
-                        (self.completion)(
-                            self.completion_ctx,
-                            // `with_path` already clones into a fresh `Box<[u8]>`; pass the
-                            // existing path slice.
-                            Err(err.with_path(&err.path)),
-                        );
-                    }
-                    Ok(_) => {
-                        (self.completion)(self.completion_ctx, Ok(()));
-                    }
+                    // `err.path` is an owned `Box<[u8]>`, so it outlives `node_fs`.
+                    Err(err) => (self.completion)(self.completion_ctx, Err(err)),
+                    Ok(_) => (self.completion)(self.completion_ctx, Ok(())),
                 }
             }
         }
@@ -1792,7 +1784,7 @@ mod _async_tasks {
             let name_too_long = |path: &PathLike| sys::Error {
                 errno: E::ENAMETOOLONG as _,
                 syscall: sys::Tag::copyfile,
-                path: path.slice().into(),
+                path: Some(path.slice().into()),
                 ..Default::default()
             };
             let src = match args.src.os_path(&mut src_buf) {
@@ -1818,7 +1810,7 @@ mod _async_tasks {
                     this.finish_concurrently(Err(sys::Error {
                         errno: SystemErrno::ENOENT as _,
                         syscall: sys::Tag::copyfile,
-                        path: nodefs.os_path_into_sync_error_buf(src).into(),
+                        path: Some(nodefs.os_path_into_sync_error_buf(src).into()),
                         ..Default::default()
                     }));
                     return;
@@ -1907,7 +1899,7 @@ mod _async_tasks {
                 this.finish_concurrently(Err(sys::Error {
                     errno: E::EISDIR as _,
                     syscall: sys::Tag::copyfile,
-                    path: nodefs.os_path_into_sync_error_buf(src).into(),
+                    path: Some(nodefs.os_path_into_sync_error_buf(src).into()),
                     ..Default::default()
                 }));
                 return;
@@ -2057,9 +2049,11 @@ mod _async_tasks {
                     this_ref.finish_concurrently(Err(sys::Error {
                         errno: E::ENAMETOOLONG as _,
                         syscall: sys::Tag::copyfile,
-                        path: nodefs
-                            .os_path_into_sync_error_buf(&src_buf[..src_dir_len as usize])
-                            .into(),
+                        path: Some(
+                            nodefs
+                                .os_path_into_sync_error_buf(&src_buf[..src_dir_len as usize])
+                                .into(),
+                        ),
                         ..Default::default()
                     }));
                     return false;
@@ -2439,10 +2433,9 @@ mod _async_tasks {
                             {
                                 let _lock = self.pending_err_mutex.lock_guard();
                                 if self.pending_err.is_none() {
-                                    let err_path: &[u8] = if !err.path.is_empty() {
-                                        &err.path[..]
-                                    } else {
-                                        &self.root_path[..self.root_path.len() - 1]
+                                    let err_path: &[u8] = match err.path.as_deref() {
+                                        Some(path) => path,
+                                        None => &self.root_path[..self.root_path.len() - 1],
                                     };
                                     self.pending_err = Some(err.with_path(err_path));
                                 }
@@ -4876,8 +4869,8 @@ impl NodeFS {
             Err(err) => Err(sys::Error {
                 errno: err.errno,
                 syscall: sys::Tag::copyfile,
-                path: args.src.slice().into(),
-                dest: args.dest.slice().into(),
+                path: Some(args.src.slice().into()),
+                dest: Some(args.dest.slice().into()),
                 ..Default::default()
             }),
         }
@@ -5040,7 +5033,7 @@ impl NodeFS {
                     return Err(sys::Error {
                         errno: SystemErrno::EINVAL as _,
                         syscall: sys::Tag::copyfile,
-                        path: args.src.slice().into(),
+                        path: Some(args.src.slice().into()),
                         ..Default::default()
                     });
                 }
@@ -5281,7 +5274,7 @@ impl NodeFS {
                     return Err(sys::Error {
                         errno: E::ENAMETOOLONG as _,
                         syscall: sys::Tag::copyfile,
-                        path: path.slice().into(),
+                        path: Some(path.slice().into()),
                         ..Default::default()
                     });
                 }
@@ -5500,7 +5493,7 @@ impl NodeFS {
             return Err(sys::Error {
                 errno: E::EOPNOTSUPP as _,
                 syscall: sys::Tag::lchmod,
-                path: args.path.slice().into(),
+                path: Some(args.path.slice().into()),
                 ..Default::default()
             });
         }
@@ -5587,12 +5580,7 @@ impl NodeFS {
 
     pub(crate) fn mkdir(&mut self, args: &args::Mkdir, _: Flavor) -> Maybe<ret::Mkdir> {
         if args.path.slice().is_empty() {
-            return Err(sys::Error {
-                errno: E::ENOENT as _,
-                syscall: sys::Tag::mkdir,
-                path: b"".as_slice().into(),
-                ..Default::default()
-            });
+            return Err(sys::Error::from_code(E::ENOENT, sys::Tag::mkdir).with_path(b""));
         }
         if args.recursive {
             self.mkdir_recursive(args)
@@ -5626,7 +5614,7 @@ impl NodeFS {
                 return Err(sys::Error {
                     errno: E::ENAMETOOLONG as _,
                     syscall: sys::Tag::mkdir,
-                    path: args.path.slice().into(),
+                    path: Some(args.path.slice().into()),
                     ..Default::default()
                 });
             }
@@ -5671,9 +5659,10 @@ impl NodeFS {
                         Err(_) => Err(sys::Error {
                             errno: err.errno,
                             syscall: sys::Tag::mkdir,
-                            path: self
-                                .os_path_into_sync_error_buf(without_nt_prefix(&path[..]))
-                                .into(),
+                            path: Some(
+                                self.os_path_into_sync_error_buf(without_nt_prefix(&path[..]))
+                                    .into(),
+                            ),
                             ..Default::default()
                         }),
                         // if is a directory, OK. otherwise failure
@@ -5684,9 +5673,12 @@ impl NodeFS {
                                 Err(sys::Error {
                                     errno: err.errno,
                                     syscall: sys::Tag::mkdir,
-                                    path: self
-                                        .os_path_into_sync_error_buf(without_nt_prefix(&path[..]))
+                                    path: Some(
+                                        self.os_path_into_sync_error_buf(without_nt_prefix(
+                                            &path[..],
+                                        ))
                                         .into(),
+                                    ),
                                     ..Default::default()
                                 })
                             }
@@ -5769,11 +5761,15 @@ impl NodeFS {
                                             return Err(sys::Error {
                                                 errno: E::ENOTDIR as _,
                                                 syscall: sys::Tag::mkdir,
-                                                path: Self::os_path_into_buf(
-                                                    unsafe { &mut *sync_error_buf_ptr },
-                                                    without_nt_prefix(&(&path[..])[..len as usize]),
-                                                )
-                                                .into(),
+                                                path: Some(
+                                                    Self::os_path_into_buf(
+                                                        unsafe { &mut *sync_error_buf_ptr },
+                                                        without_nt_prefix(
+                                                            &(&path[..])[..len as usize],
+                                                        ),
+                                                    )
+                                                    .into(),
+                                                ),
                                                 ..Default::default()
                                             });
                                         }
@@ -5923,7 +5919,7 @@ impl NodeFS {
                 return Err(sys::Error {
                     errno,
                     syscall: sys::Tag::mkdtemp,
-                    path: prefix_buf[..len + 6].into(),
+                    path: Some(prefix_buf[..len + 6].into()),
                     ..Default::default()
                 });
             }
@@ -5950,7 +5946,7 @@ impl NodeFS {
             Err(sys::Error {
                 errno: errno as _,
                 syscall: sys::Tag::mkdtemp,
-                path: prefix_buf[..len + 6].into(),
+                path: Some(prefix_buf[..len + 6].into()),
                 ..Default::default()
             })
         }
@@ -5975,7 +5971,7 @@ impl NodeFS {
             return Err(sys::Error {
                 errno: (-rc) as _,
                 syscall: sys::Tag::open,
-                path: args.path.slice().into(),
+                path: Some(args.path.slice().into()),
                 from_libuv: true,
                 ..Default::default()
             });
@@ -5993,8 +5989,8 @@ impl NodeFS {
         if rc < 0 {
             return Err(sys::Error {
                 errno: (-rc) as _,
-                syscall: sys::Tag::open,
-                path: args.path.slice().into(),
+                syscall: sys::Tag::statfs,
+                path: Some(args.path.slice().into()),
                 #[cfg(windows)]
                 from_libuv: true,
                 ..Default::default()
@@ -6324,7 +6320,7 @@ impl NodeFS {
             Err(err) => Err(sys::Error {
                 syscall: sys::Tag::scandir,
                 errno: err.errno,
-                path: args.path.slice().into(),
+                path: Some(args.path.slice().into()),
                 ..Default::default()
             }),
             Ok(result) => Ok(result),
@@ -7581,7 +7577,7 @@ impl NodeFS {
             Err(err) => Err(sys::Error {
                 errno: err.errno,
                 syscall: sys::Tag::lstat,
-                path: args.path.slice().into(),
+                path: Some(args.path.slice().into()),
                 ..Default::default()
             }),
         }
@@ -7593,7 +7589,7 @@ impl NodeFS {
             Err(err) => Err(sys::Error {
                 errno: err.errno,
                 syscall: sys::Tag::realpath,
-                path: args.path.slice().into(),
+                path: Some(args.path.slice().into()),
                 ..Default::default()
             }),
         }
@@ -7623,7 +7619,7 @@ impl NodeFS {
                 return Err(sys::Error {
                     errno,
                     syscall: sys::Tag::realpath,
-                    path: args.path.slice().into(),
+                    path: Some(args.path.slice().into()),
                     ..Default::default()
                 });
             }
@@ -7636,7 +7632,7 @@ impl NodeFS {
                 return Err(sys::Error {
                     errno: E::ENOENT as _,
                     syscall: sys::Tag::realpath,
-                    path: args.path.slice().into(),
+                    path: Some(args.path.slice().into()),
                     ..Default::default()
                 });
             }
@@ -7679,7 +7675,7 @@ impl NodeFS {
                 return Err(sys::Error {
                     errno: E::ENAMETOOLONG as _,
                     syscall: sys::Tag::realpath,
-                    path: args.path.slice().into(),
+                    path: Some(args.path.slice().into()),
                     ..Default::default()
                 });
             };
@@ -8018,7 +8014,7 @@ impl NodeFS {
                 let Err(e) = file else { unreachable!() };
                 return Err(sys::Error {
                     errno: e.errno,
-                    path: path.slice().into(),
+                    path: Some(path.slice().into()),
                     syscall: sys::Tag::truncate,
                     ..Default::default()
                 });
@@ -8136,7 +8132,7 @@ impl NodeFS {
                 Err(sys::Error {
                     errno,
                     syscall: sys::Tag::utime,
-                    path: args.path.slice().into(),
+                    path: Some(args.path.slice().into()),
                     ..Default::default()
                 })
             } else {
@@ -8173,7 +8169,7 @@ impl NodeFS {
                 Err(sys::Error {
                     errno,
                     syscall: sys::Tag::lutime,
-                    path: args.path.slice().into(),
+                    path: Some(args.path.slice().into()),
                     ..Default::default()
                 })
             } else {
@@ -8210,7 +8206,7 @@ impl NodeFS {
         let name_too_long = |path: &PathLike| sys::Error {
             errno: E::ENAMETOOLONG as _,
             syscall: sys::Tag::copyfile,
-            path: path.slice().into(),
+            path: Some(path.slice().into()),
             ..Default::default()
         };
         let src_len = match args.src.os_path(&mut src_buf) {
@@ -8276,7 +8272,7 @@ impl NodeFS {
                 return Err(sys::Error {
                     errno: SystemErrno::ENOENT as _,
                     syscall: sys::Tag::copyfile,
-                    path: self.os_path_into_sync_error_buf(src.as_slice()).into(),
+                    path: Some(self.os_path_into_sync_error_buf(src.as_slice()).into()),
                     ..Default::default()
                 });
             }
@@ -8336,7 +8332,7 @@ impl NodeFS {
             return Err(sys::Error {
                 errno: E::EISDIR as _,
                 syscall: sys::Tag::copyfile,
-                path: self.os_path_into_sync_error_buf(&src_buf[..sd]).into(),
+                path: Some(self.os_path_into_sync_error_buf(&src_buf[..sd]).into()),
                 ..Default::default()
             });
         }
@@ -8410,7 +8406,7 @@ impl NodeFS {
                 return Err(sys::Error {
                     errno: E::ENAMETOOLONG as _,
                     syscall: sys::Tag::copyfile,
-                    path: self.os_path_into_sync_error_buf(&src_buf[..sd]).into(),
+                    path: Some(self.os_path_into_sync_error_buf(&src_buf[..sd]).into()),
                     ..Default::default()
                 });
             }
@@ -8537,7 +8533,7 @@ impl NodeFS {
             return Err(sys::Error {
                 errno: E::ENAMETOOLONG as _,
                 syscall: sys::Tag::symlink,
-                path: self.sync_error_buf[..src.len()].into(),
+                path: Some(self.sync_error_buf[..src.len()].into()),
                 ..Default::default()
             });
         };
@@ -8601,7 +8597,7 @@ impl NodeFS {
                 self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
                 return Err(sys::Error {
                     errno: SystemErrno::ENOTSUP as _,
-                    path: self.sync_error_buf[..src.len()].into(),
+                    path: Some(self.sync_error_buf[..src.len()].into()),
                     syscall: sys::Tag::copyfile,
                     ..Default::default()
                 });
@@ -8920,7 +8916,7 @@ impl NodeFS {
                     return Err(sys::Error {
                         errno: SystemErrno::EINVAL as _,
                         syscall: sys::Tag::copyfile,
-                        path: self.sync_error_buf[..src.len()].into(),
+                        path: Some(self.sync_error_buf[..src.len()].into()),
                         ..Default::default()
                     });
                 }
@@ -8974,7 +8970,7 @@ impl NodeFS {
                         return Err(sys::Error {
                             errno: e as _,
                             syscall: sys::Tag::copyfile,
-                            path: self.sync_error_buf[..dest.len()].into(),
+                            path: Some(self.sync_error_buf[..dest.len()].into()),
                             ..Default::default()
                         });
                     }

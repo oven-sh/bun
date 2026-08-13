@@ -13,11 +13,13 @@ pub struct SystemError {
     pub code: OwnedString,
     /// it is illegal to have an empty message
     pub message: OwnedString,
+    /// `Empty` tag = no `path` property; see `operand_to_c` for an operand of "".
     pub path: OwnedString,
     pub syscall: OwnedString,
     pub hostname: OwnedString,
     /// MinInt = no file descriptor
     pub fd: c_int,
+    /// Same convention as `path`.
     pub dest: OwnedString,
 }
 
@@ -55,12 +57,21 @@ impl From<bun_sys::SystemError> for SystemError {
             errno: errno as c_int,
             code,
             message,
-            path,
+            path: operand_to_c(path),
             syscall,
             hostname,
             fd: fd.unwrap_or(c_int::MIN),
-            dest,
+            dest: operand_to_c(dest),
         }
+    }
+}
+
+/// C++ takes the `Empty` tag as "no property", so a present "" has to cross under another tag.
+fn operand_to_c(operand: Option<OwnedString>) -> OwnedString {
+    match operand {
+        None => OwnedString::default(),
+        Some(operand) if operand.is_empty() => String::static_(b"").into(),
+        Some(operand) => operand,
     }
 }
 

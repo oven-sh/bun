@@ -7,6 +7,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isMacOS,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -135,6 +136,56 @@ const IS_UV_FS_COPYFILE_DISABLED =
     } finally {
       fs.unlinkSync(src.name);
     }
+  });
+
+  // Like node:fs, an operand that is the empty string is still an operand: it is
+  // quoted in the message and set as err.path.
+  describe("an empty path operand is reported in the error", () => {
+    const rejectionOf = promise =>
+      promise.then(
+        () => undefined,
+        err => err,
+      );
+    const shapeOf = err => err && { code: err.code, syscall: err.syscall, message: err.message, path: err.path };
+    const enoent = syscall => ({
+      code: "ENOENT",
+      syscall,
+      message: `ENOENT: no such file or directory, ${syscall} ''`,
+      path: "",
+    });
+
+    it("Bun.file('').text()", async () => {
+      expect(shapeOf(await rejectionOf(Bun.file("").text()))).toEqual(enoent("open"));
+    });
+
+    // After open("") fails, Bun.write tries to create the parent directory. POSIX
+    // then reports the open again; Windows reports the failed mkdir instead.
+    const enoentWrite = enoent(isWindows ? "mkdir" : "open");
+
+    it("Bun.write('', string)", async () => {
+      expect(shapeOf(await rejectionOf(Bun.write("", "data")))).toEqual(enoentWrite);
+    });
+
+    it("Bun.write(Bun.file(''), string)", async () => {
+      expect(shapeOf(await rejectionOf(Bun.write(Bun.file(""), "data")))).toEqual(enoentWrite);
+    });
+
+    // File to file copies take a different route on Windows (uv_fs_copyfile),
+    // whose errors name the source; these are the shapes of the POSIX copy.
+    describe.skipIf(isWindows)("Bun.write(file, Bun.file(file))", () => {
+      it("empty destination is reported, not the source", async () => {
+        using dir = tempDir("bun-write-empty-dest", { "src.txt": "data" });
+        const err = await rejectionOf(Bun.write("", Bun.file(join(String(dir), "src.txt"))));
+        expect(shapeOf(err)).toEqual(enoent("open"));
+      });
+
+      it("empty source", async () => {
+        using dir = tempDir("bun-write-empty-src", {});
+        const err = await rejectionOf(Bun.write(join(String(dir), "out.txt"), Bun.file("")));
+        // macOS stats the source before trying clonefile(2); the others go straight to open(2).
+        expect(shapeOf(err)).toEqual(enoent(isMacOS ? "stat" : "open"));
+      });
+    });
   });
 
   describe.each(["plain-ascii-missing.txt", "surro-\ud800-gate.txt"])(

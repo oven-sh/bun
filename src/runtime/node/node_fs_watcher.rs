@@ -1115,7 +1115,7 @@ impl FSWatcher {
             return Err(bun_sys::Error {
                 errno: SystemErrno::ENAMETOOLONG as _,
                 syscall: bun_sys::Tag::watch,
-                path: args.path.slice().into(),
+                path: Some(args.path.slice().into()),
                 ..Default::default()
             });
         };
@@ -1187,7 +1187,7 @@ impl FSWatcher {
                         return Err(bun_sys::Error {
                             errno: err.errno,
                             syscall: bun_sys::Tag::watch,
-                            path: args.path.slice().into(),
+                            path: Some(args.path.slice().into()),
                             ..Default::default()
                         });
                     }

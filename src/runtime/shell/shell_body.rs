@@ -86,7 +86,7 @@ impl ShellErr {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: Failed due to error: <b>bunsh: {}: {}<r>",
                     err.message,
-                    err.path
+                    err.path.as_deref().unwrap_or(&BunString::EMPTY)
                 );
             }
             ShellErr::Custom(custom) => {
@@ -115,7 +115,12 @@ impl ShellErr {
 impl fmt::Display for ShellErr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ShellErr::Sys(e) => write!(f, "bun: {}: {}", e.message, e.path),
+            ShellErr::Sys(e) => write!(
+                f,
+                "bun: {}: {}",
+                e.message,
+                e.path.as_deref().unwrap_or(&BunString::EMPTY)
+            ),
             ShellErr::Custom(msg) => write!(f, "bun: {}", bstr::BStr::new(msg)),
             ShellErr::InvalidArguments { val } => {
                 write!(f, "bun: invalid arguments: {}", bstr::BStr::new(val))

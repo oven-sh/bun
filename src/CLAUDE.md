@@ -61,8 +61,9 @@ Key types and functions:
 - `bun_sys::open`, `read`, `write`, `pread`, `pwrite`, `stat`, `fstat`, `lstat`, `mkdir`, `unlink`, `rename`, `symlink`, `chmod` — free fns over `Fd`
 - Open flags: `bun_sys::O::RDONLY`, `O::WRONLY | O::CREAT | O::TRUNC`, etc.
 
-`bun_sys::Error` carries `errno`, `syscall: Tag`, `path: Box<[u8]>`. Convert
-to a JS exception via `bun_sys_jsc::ErrorJsc::to_js`:
+`bun_sys::Error` carries `errno`, `syscall: Tag`, `path: Option<Box<[u8]>>`
+(`None` when the operation had no path operand; an empty operand is `Some`).
+Convert to a JS exception via `bun_sys_jsc::ErrorJsc::to_js`:
 
 ```rust
 use bun_sys_jsc::ErrorJsc;

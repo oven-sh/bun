@@ -384,11 +384,13 @@ for (const [name, copy] of impls) {
       assertContent(basename + "/hello/world/b.txt", "b");
     });
 
-    // Both of these options route through the ported implementation, which
-    // creates a missing destination parent with a recursive mkdir. When the
-    // parent's name is a symlink to a missing target, that mkdir reports ENOENT
-    // (as node's does); it used to report EEXIST. On Windows the mkdir's
-    // existence probe does not follow the link yet, so this is fixed separately.
+    // The ported implementation creates a missing destination parent with a
+    // recursive mkdir. When the parent's name is a symlink to a missing target,
+    // that mkdir reports ENOENT (as node's does); it used to report EEXIST.
+    // `force: false` always takes the ported implementation; a directory does
+    // everywhere but macOS, where the native copy fails with the same ENOENT.
+    // On Windows the mkdir's existence probe does not follow the link yet, so
+    // that is fixed separately.
     for (const [what, src, options] of [
       ["a directory with 'recursive: true'", "/from", { recursive: true }],
       ["a file with 'force: false'", "/from/a.txt", { force: false }],

@@ -10,10 +10,11 @@ import {
   isMacOS,
   isMusl,
   isWindows,
+  mergeWindowEnvs,
   nodeExeMatchingAbi,
   tempDir,
 } from "harness";
-import { delimiter, dirname, join } from "path";
+import { dirname, join } from "path";
 
 // The napi-app addons don't link against bun, so existing binaries stay valid
 // across bun builds. `bun install` runs a full `node-gyp rebuild` (clean + build
@@ -1395,15 +1396,31 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   );
 
   // https://github.com/oven-sh/bun/issues/10690 (Windows-only crash; on POSIX this is a plain load check)
-  it.each(["no_delay_load_hook_addon", "regular_node_exe_import_addon"])(
+  it.each([
+    // [target, where node.exe must appear in the PE: regular import table or delay-load table]
+    ["no_delay_load_hook_addon", { imports: false, delayImports: true }],
+    ["regular_node_exe_import_addon", { imports: true, delayImports: false }],
+  ] as const)(
     "loads an addon that imports node.exe without win_delay_load_hook (%s)",
-    async target => {
+    async (target, nodeExeImportedVia) => {
       const addon = join(__dirname, `napi-app/build/Debug/${target}.node`);
+      if (isWindows) {
+        // Pin the link shape each fixture stands for; a fixture that drifted into a
+        // shape Bun already loaded fine would make the load below pass vacuously.
+        const dlls = peImportedDlls(readFileSync(addon));
+        expect({
+          imports: dlls.imports.includes("node.exe"),
+          delayImports: dlls.delayImports.includes("node.exe"),
+        }).toEqual(nodeExeImportedVia);
+      }
+
+      // The only directory on PATH is the one holding node.exe: the regular-import
+      // addon cannot be loaded at all unless LoadLibrary finds a node.exe (its
+      // imports are rebound afterwards), and nothing else in this child needs PATH.
       const nodeDir = dirname(await nodeExeMatchingAbi());
       await using proc = spawn({
         cmd: [bunExe(), "-e", `console.log(require(${JSON.stringify(addon)}).hello())`],
-        // LoadLibrary on the regular-import addon needs a node.exe on the DLL search path.
-        env: { ...bunEnv, PATH: `${bunEnv.PATH ?? process.env.PATH}${delimiter}${nodeDir}` },
+        env: mergeWindowEnvs([bunEnv, { PATH: nodeDir }]),
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -1412,6 +1429,56 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     },
   );
 });
+
+/** DLL names in a PE32+ image's import and delay-load import directories, lower-cased. */
+function peImportedDlls(image: Buffer): { imports: string[]; delayImports: string[] } {
+  const ntHeaders = image.readUInt32LE(0x3c);
+  expect(image.toString("latin1", ntHeaders, ntHeaders + 4)).toBe("PE\0\0");
+  const numberOfSections = image.readUInt16LE(ntHeaders + 6);
+  const sizeOfOptionalHeader = image.readUInt16LE(ntHeaders + 20);
+  const optionalHeader = ntHeaders + 24;
+  expect(image.readUInt16LE(optionalHeader)).toBe(0x20b); // PE32+
+
+  const sections = Array.from({ length: numberOfSections }, (_, i) => {
+    const header = optionalHeader + sizeOfOptionalHeader + i * 40;
+    const virtualSize = image.readUInt32LE(header + 8);
+    const virtualAddress = image.readUInt32LE(header + 12);
+    const sizeOfRawData = image.readUInt32LE(header + 16);
+    const pointerToRawData = image.readUInt32LE(header + 20);
+    return { virtualAddress, size: Math.max(virtualSize, sizeOfRawData), pointerToRawData };
+  });
+  const fileOffset = (rva: number): number => {
+    const section = sections.find(s => rva >= s.virtualAddress && rva < s.virtualAddress + s.size);
+    if (!section) throw new Error(`RVA 0x${rva.toString(16)} is outside every section`);
+    return rva - section.virtualAddress + section.pointerToRawData;
+  };
+  const cString = (rva: number): string => {
+    const start = fileOffset(rva);
+    return image.toString("latin1", start, image.indexOf(0, start)).toLowerCase();
+  };
+  // The data directory starts 112 bytes into a PE32+ optional header, 8 bytes ({ rva, size }) per entry.
+  const directoryRva = (index: number): number =>
+    index < image.readUInt32LE(optionalHeader + 108) ? image.readUInt32LE(optionalHeader + 112 + index * 8) : 0;
+
+  const imports: string[] = [];
+  for (let rva = directoryRva(1); rva !== 0; rva += 20) {
+    // IMAGE_IMPORT_DESCRIPTOR: Name is the fourth DWORD; a zero Name ends the list.
+    const name = image.readUInt32LE(fileOffset(rva) + 12);
+    if (name === 0) break;
+    imports.push(cString(name));
+  }
+  const delayImports: string[] = [];
+  for (let rva = directoryRva(13); rva !== 0; rva += 32) {
+    // IMAGE_DELAYLOAD_DESCRIPTOR: Attributes (bit 0: fields are RVAs, which is what
+    // process.dlopen's rebind requires too), then DllNameRVA; zero ends the list.
+    const descriptor = fileOffset(rva);
+    const dllName = image.readUInt32LE(descriptor + 4);
+    if (dllName === 0) break;
+    expect(image.readUInt32LE(descriptor) & 1).toBe(1);
+    delayImports.push(cString(dllName));
+  }
+  return { imports, delayImports };
+}
 
 // Kept outside describe.concurrent("napi") so RSS measurement isn't skewed by
 // the other tests' subprocesses and doesn't add load to the --compile tests.

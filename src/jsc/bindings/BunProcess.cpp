@@ -402,7 +402,9 @@ extern "C" bool Bun__VM__allowAddons(void* vm);
 extern "C" int32_t Bun__addonNeedsGlibcOnMusl(const char* path, size_t len, char* soname_out, size_t soname_cap);
 
 #if OS(WINDOWS)
-// Rebind an addon's node.exe imports to this process: https://github.com/oven-sh/bun/issues/10690
+// Addons link against node.lib, so their N-API imports name "node.exe"; inside node that name
+// is the running executable, inside bun the loader would go looking for a real node.exe.
+// Point those imports at this process instead: https://github.com/oven-sh/bun/issues/10690
 static void rebindThunks(BYTE* base, HMODULE host, PIMAGE_THUNK_DATA iat, PIMAGE_THUNK_DATA names)
 {
     size_t count = 0;
@@ -442,8 +444,8 @@ static void rebindNodeExeImports(HMODULE addon)
     if (nt->Signature != IMAGE_NT_SIGNATURE) return;
 
     HMODULE host = GetModuleHandleW(nullptr);
-    auto isHostName = [](const char* name) {
-        return _stricmp(name, "node.exe") == 0 || _stricmp(name, "bun.exe") == 0;
+    auto isNodeExe = [](const char* name) {
+        return _stricmp(name, "node.exe") == 0;
     };
 
     if (nt->OptionalHeader.NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_IMPORT) {
@@ -451,7 +453,7 @@ static void rebindNodeExeImports(HMODULE addon)
         if (dir.VirtualAddress && dir.Size) {
             auto* desc = reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(base + dir.VirtualAddress);
             for (; desc->Name != 0; ++desc) {
-                if (!isHostName(reinterpret_cast<const char*>(base + desc->Name))) continue;
+                if (!isNodeExe(reinterpret_cast<const char*>(base + desc->Name))) continue;
                 if (!desc->OriginalFirstThunk || !desc->FirstThunk) continue;
                 rebindThunks(base, host,
                     reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->FirstThunk),
@@ -467,7 +469,7 @@ static void rebindNodeExeImports(HMODULE addon)
             for (; desc->DllNameRVA != 0; ++desc) {
                 // Old VC6 delayimp used VAs here; MSVC has emitted RVAs since 2002.
                 if (!desc->Attributes.RvaBased) continue;
-                if (!isHostName(reinterpret_cast<const char*>(base + desc->DllNameRVA))) continue;
+                if (!isNodeExe(reinterpret_cast<const char*>(base + desc->DllNameRVA))) continue;
                 rebindThunks(base, host,
                     reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->ImportAddressTableRVA),
                     reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->ImportNameTableRVA));

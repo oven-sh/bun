@@ -974,15 +974,13 @@ impl WebWorker {
             if !self.has_requested_terminate() {
                 vm.global().handle_rejected_promises();
             }
+            // SAFETY: rooted by `entry_promise`.
+            let entry_pending = unsafe { (*promise).status() } == jsc::js_promise::Status::Pending;
             // Drained with the entry still pending: an unsettled top-level await,
             // Node's exit 13 (unless the user chose a nonzero exit code, or the
             // worker stopped itself just now, by process.exit() or an uncaught
             // error, whose exit handlers already ran with the code they keep).
-            // SAFETY: rooted by `entry_promise`.
-            if !self.has_requested_terminate()
-                && unsafe { (*promise).status() } == jsc::js_promise::Status::Pending
-                && vm.exit_handler.exit_code == 0
-            {
+            if entry_pending && !self.has_requested_terminate() && vm.exit_handler.exit_code == 0 {
                 vm.as_mut().exit_handler.exit_code = 13;
             }
         }

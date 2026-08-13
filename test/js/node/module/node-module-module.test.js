@@ -250,6 +250,11 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
       for (const invalid of [null, {}, [], Symbol(), () => {}, true, false, 1, 0]) {
         expect(() => findPackageJSON("", invalid)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
       }
+      // A malformed file: URL is rejected rather than treated as an empty path.
+      expect(() => findPackageJSON("file://[", import.meta.path)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_URL", message: "Invalid URL: file://[" }),
+      );
+      expect(() => findPackageJSON("dep", "file://[")).toThrow(expect.objectContaining({ code: "ERR_INVALID_URL" }));
       // Longer than any path the OS accepts (including Windows' ~96 KiB limit).
       const tooLong = path.join(import.meta.dir, Buffer.alloc(100_000, "a").toString());
       expect(() => findPackageJSON("dep", tooLong)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));

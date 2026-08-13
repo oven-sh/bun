@@ -121,10 +121,12 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         return Err(global.throw_invalid_argument_type_value("base", "string", base_value));
     };
 
-    let specifier = location_to_path(specifier.get());
+    let specifier = location_to_path(global, specifier.get())?;
     let specifier_utf8 = specifier.get().to_utf8();
     let specifier = specifier_utf8.slice();
-    let base = base.map(|base| location_to_path(base.get()));
+    let base = base
+        .map(|base| location_to_path(global, base.get()))
+        .transpose()?;
     let base_utf8 = base.as_ref().map(|base| base.get().to_utf8());
 
     let top_level_dir = global.bun_vm().top_level_dir();
@@ -193,12 +195,20 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
 
 /// Both arguments accept either a path or a `file:` URL (`import.meta.url`,
 /// `import.meta.resolve()`).
-fn location_to_path(location: BunString) -> OwnedString {
-    OwnedString::new(if location.has_prefix_comptime(b"file:") {
-        jsc::URL::path_from_file_url(location)
-    } else {
-        location.dupe_ref()
-    })
+fn location_to_path(global: &JSGlobalObject, location: BunString) -> JsResult<OwnedString> {
+    if !location.has_prefix_comptime(b"file:") {
+        return Ok(OwnedString::new(location.dupe_ref()));
+    }
+    let path = OwnedString::new(jsc::URL::path_from_file_url(location));
+    if path.get().is_dead() {
+        return Err(global
+            .err(
+                jsc::ErrorCode::INVALID_URL,
+                format_args!("Invalid URL: {}", location),
+            )
+            .throw());
+    }
+    Ok(path)
 }
 
 pub fn stat(path: &[u8]) -> i32 {

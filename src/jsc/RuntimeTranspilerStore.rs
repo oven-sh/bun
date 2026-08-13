@@ -305,6 +305,7 @@ impl RuntimeTranspilerStore {
         path: &Fs::Path<'_>,
         referrer: String,
         loader: Loader,
+        module_type: ModuleType,
         package_json: Option<&PackageJSON>,
     ) -> *mut c_void {
         // The path text is heap-duplicated here and freed in `reset_for_pool` via
@@ -316,8 +317,11 @@ impl RuntimeTranspilerStore {
         let owned_path = bun_paths::fs::Path::init(unsafe { &*owned_text.cast_const() });
         let promise: *mut JSInternalPromise = JSInternalPromise::create(global_object);
 
-        // NOTE: DirInfo should already be cached since module loading happens
-        // after module resolution, so this should be cheap
+        // The tag only carries the package.json "type" to the CommonJS loader
+        // (`ignoreESModuleAnnotation`). The parser's format hint is
+        // `module_type`, which the caller derives from the file extension
+        // first and package.json second (same rule as the on-thread path in
+        // `transpile_file`), so it must not be re-derived from the tag.
         let mut resolved_source = OwnedResolvedSource::default();
         if let Some(pkg) = package_json {
             match pkg.module_type {
@@ -349,6 +353,7 @@ impl RuntimeTranspilerStore {
                 loop_handle: global_object.bun_vm().loop_handle(),
                 log: bun_ast::Log::init(),
                 loader,
+                module_type,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
                 poll_ref: KeepAlive::default(),
                 fetcher: Fetcher::File,
@@ -398,6 +403,7 @@ pub struct TranspilerJob {
     pub(crate) non_threadsafe_input_specifier: OwnedString,
     pub(crate) non_threadsafe_referrer: OwnedString,
     pub(crate) loader: Loader,
+    pub(crate) module_type: ModuleType,
     pub(crate) promise: StrongOptional,
     // Note: struct is stored in a HiveArray and crosses to a worker thread;
     // raw pointers/BackRefs are used (BACKREF — VM owns the
@@ -681,6 +687,7 @@ impl TranspilerJob {
         let path = self.path;
         let specifier = self.path.text;
         let loader = self.loader;
+        let module_type = self.module_type;
         let this_tag = self.resolved_source.get().tag;
 
         // RuntimeTranspilerCache has no per-allocator fields (Box<[u8]> + global mimalloc).
@@ -823,12 +830,6 @@ impl TranspilerJob {
         let is_main = vm_main.len() == path.text.len()
             && vm_main_hash == hash
             && strings::eql_long(vm_main, path.text, false);
-
-        let module_type: ModuleType = match this_tag {
-            ResolvedSourceTag::PackageJsonTypeCommonjs => ModuleType::Cjs,
-            ResolvedSourceTag::PackageJsonTypeModule => ModuleType::Esm,
-            _ => ModuleType::Unknown,
-        };
 
         let mut parse_options = ParseOptions {
             arena: &arena,

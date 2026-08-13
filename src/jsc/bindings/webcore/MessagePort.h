@@ -79,8 +79,8 @@ public:
     // The worker's entry module finished evaluating: a start() requested before that takes effect now.
     void entrySettled();
     void close();
-    // Called on the entangled peer when this side closes: releases the peer's
-    // event-loop refs so the loop can idle, then dispatches its 'close' event.
+    // Called on the entangled peer when this side closes: drops the peer's
+    // loop refs, then fires its 'close' event.
     void peerClosed();
     void dispatchCloseEvent();
 
@@ -114,12 +114,10 @@ public:
     JSValue tryTakeMessage(JSGlobalObject*, bool& hadMessage);
 
     void jsRef(JSGlobalObject*);
-    // .unref(), and the step that drops every loop ref this port holds when it is
-    // closed, transferred away, or its context stops. Idempotent.
+    // .unref(); also drops every loop ref on close, transfer, or context stop. Idempotent.
     void jsUnref();
-    // Report the actual loop-ref state, not the intent flag: node's HandleWrap::HasRef()
-    // is uv_has_ref() until the handle is closed, so a closing port keeps its refs until
-    // its 'close' event fires (https://github.com/nodejs/node/blob/v26.3.0/src/handle_wrap.h#L64-L72).
+    // The actual loop-ref state, not the intent flag: node's hasRef() stays true
+    // until the handle closes, right before its 'close' event fires.
     bool jsHasRef() { return m_hasRef || m_listenerLoopRefActive; }
 
 private:

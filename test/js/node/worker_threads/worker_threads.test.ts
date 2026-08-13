@@ -1174,6 +1174,41 @@ test("hasRef() survives collection of the unreferenced peer", () => {
   port1.close();
 });
 
+// A collected peer does close the channel (bun collects entangled ports; node
+// never does), and once this side's 'close' has fired, ref() must stay a no-op:
+// a re-taken loop ref is never released. Spawned: the symptom is "the process
+// never exits".
+test("ref() inside 'close' after the peer is collected does not pin the loop", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { MessageChannel } = require("worker_threads");
+       function setup() {
+         const { port1 } = new MessageChannel(); // port2 unreachable from birth
+         port1.on("message", () => {});
+         return port1;
+       }
+       const port1 = setup();
+       const pump = setInterval(() => Bun.gc(true), 10);
+       port1.on("close", () => {
+         clearInterval(pump);
+         port1.ref();
+         console.log("refInClose:" + port1.hasRef());
+       });`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // signalCode null => it exited on its own rather than being killed.
+  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "refInClose:false",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
 // markAsUncloneable blocks *cloning*, not transfer: a marked port in the transfer
 // list is moved, so node lets it through and it still works on the far side.
 test("markAsUncloneable blocks cloning a port but not transferring it", async () => {

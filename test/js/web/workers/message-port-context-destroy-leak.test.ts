@@ -88,12 +88,14 @@ test.skipIf(isWindows)(
 //
 // ASAN only: the port lives in a bmalloc heap, which Malloc=1 routes to the system
 // allocator so ASAN can see a read of the freed port.
-test.skipIf(!isASAN)("closing a ref()'d port during context destruction does not free it mid-close", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const { heapStats } = require("bun:jsc");
+test.skipIf(!isASAN)(
+  "closing a ref()'d port during context destruction does not free it mid-close",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { heapStats } = require("bun:jsc");
        const globals = () => heapStats().objectTypeCounts.GlobalObject;
        const baseline = globals();
        let realm = new ShadowRealm();
@@ -111,15 +113,19 @@ test.skipIf(!isASAN)("closing a ref()'d port during context destruction does not
          collected = globals() === baseline;
        }
        console.log(collected ? "PASS" : "the realm's global was never collected");`,
-    ],
-    env: { ...bunEnv, ...(isWindows ? {} : { Malloc: "1" }) },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+      ],
+      env: { ...bunEnv, ...(isWindows ? {} : { Malloc: "1" }) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout).toBe("PASS\n");
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  // The passing run takes about a second; a failing one has to symbolize an ASAN report
+  // for the debug binary first, which takes longer than the default timeout.
+  30_000,
+);

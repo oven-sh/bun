@@ -3810,7 +3810,13 @@ class ServerHttp2Stream extends Http2Stream {
       statusCode === HTTP_STATUS_NO_CONTENT ||
       statusCode === HTTP_STATUS_RESET_CONTENT ||
       statusCode === HTTP_STATUS_NOT_MODIFIED ||
-      this.headRequest === true
+      this.headRequest === true ||
+      // The writable side was ended before respond() (pushStream({ endStream }) or an explicit
+      // end() on a pushed stream) and _final parked its callback waiting for this call: no body
+      // can follow, so END_STREAM has to ride on the HEADERS frame, as node's SubmitResponse
+      // does once the stream's writable half is shut. The onStreamEnd dispatched by the native
+      // request() below is what completes the parked callback.
+      typeof this[bunHTTP2StreamFinal] === "function"
     ) {
       // When endStream is true the HEADERS frame itself carries END_STREAM
       // and the stream moves to HALF_CLOSED_LOCAL inside native request().

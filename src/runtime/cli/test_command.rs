@@ -3043,7 +3043,7 @@ impl TestCommand {
         }
         // on_exit() already set is_shutting_down; global_exit() asserts it.
         // Release `bun:test` GC roots before `global_exit()` so
-        // `destructOnExit()`'s `collectNow()` can reach the closures they pin
+        // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reach the closures they pin
         // (preload hooks, per-file describe/test callbacks). Clear `RUNNER`
         // before dropping `reporter` so finalizers running inside the GC can't
         // observe a dangling `TestRunner`.
@@ -3304,7 +3304,7 @@ impl TestCommand {
                         // `global_exit()` diverges, so the `exit_file()` defer
                         // above never fires. Release the active file's
                         // `Strong`s and the preload-hook scope here so
-                        // `destructOnExit()`'s `collectNow()` can reclaim them,
+                        // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim them,
                         // then clear `RUNNER` so finalizers can't observe a
                         // partially-torn-down `TestRunner`.
                         // SAFETY: single-threaded; raw-ptr reborrow mirrors the

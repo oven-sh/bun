@@ -2632,7 +2632,7 @@ impl NodeHTTPResponse {
         self.body_read_ref.with_mut(|r| r.unref(vm_get()));
 
         self.promise.with_mut(|p| p.deinit());
-        // SAFETY: self was allocated via `heap::into_raw` in `createForJS`;
+        // SAFETY: self was allocated via `heap::into_raw` in `NodeHTTPResponse__createForJS`;
         // refcount is zero so no other references remain — `self` is the unique
         // owner at count==0, so the `*const → *mut` cast is sound.
         unsafe { drop(bun_core::heap::take(self.as_ctx_ptr())) };

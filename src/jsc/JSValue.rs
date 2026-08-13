@@ -1108,7 +1108,7 @@ impl JSValue {
         property: impl AsRef<[u8]>,
     ) -> JsResult<Option<JSValue>> {
         let property = property.as_ref();
-        // Never route a runtime key to `fastGet`: a runtime byte-slice match
+        // Never route a runtime key to `fast_get`: a runtime byte-slice match
         // here is wrong because
         // C++ `builtinNameMap` maps e.g. `asyncIterator` → `Symbol.asyncIterator`
         // (and `inspectCustom` → `Symbol.for("nodejs.util.inspect.custom")`), so

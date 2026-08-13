@@ -141,7 +141,13 @@ describe("extensionless import with case-differing sibling (#22686)", () => {
   // keeps extension priority (the "upper" file); a case-sensitive one rejects
   // it and falls through to the exact-case "lower" file. Both branches also
   // assert the resolved path is the on-disk spelling.
-  const rows: [site: string, files: Record<string, string>, specifier: string, insensitive: string, sensitive: string][] = [
+  const rows: [
+    site: string,
+    files: Record<string, string>,
+    specifier: string,
+    insensitive: string,
+    sensitive: string,
+  ][] = [
     [
       "load_extension",
       { "Config.ts": `export const which = "upper";`, "config.json": `{ "which": "lower" }` },
@@ -187,21 +193,26 @@ describe("extensionless import with case-differing sibling (#22686)", () => {
     ],
   ];
 
-  test.each(rows)("%s: case-mismatched probe is kept only if it opens", async (_site, files, specifier, insensitive, sensitive) => {
-    using dir = tempDir("22686-matrix", {
-      ...files,
-      "entry.ts": `
+  test.each(rows)(
+    "%s: case-mismatched probe is kept only if it opens",
+    async (_site, files, specifier, insensitive, sensitive) => {
+      using dir = tempDir("22686-matrix", {
+        ...files,
+        "entry.ts": `
         import { which } from ${JSON.stringify(specifier)};
         console.log(which);
         console.log(Bun.resolveSync(${JSON.stringify(specifier)}, import.meta.dir));
       `,
-    });
-    const { stdout, stderr, exitCode } = await run(String(dir), "entry.ts");
-    expect(stderr).toBe("");
-    const expected = isCaseSensitiveFS ? ["lower", join(String(dir), sensitive)] : ["upper", join(String(dir), insensitive)];
-    expect(stdout.trim().split("\n")).toEqual(expected);
-    expect(exitCode).toBe(0);
-  });
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), "entry.ts");
+      expect(stderr).toBe("");
+      const expected = isCaseSensitiveFS
+        ? ["lower", join(String(dir), sensitive)]
+        : ["upper", join(String(dir), insensitive)];
+      expect(stdout.trim().split("\n")).toEqual(expected);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test.skipIf(isCaseSensitiveFS)("only Todos.tsx on case-insensitive FS: import './todos' resolves", async () => {
     using dir = tempDir("22686-i", {

@@ -23,7 +23,7 @@ import {
   VerdaccioRegistry,
   writeShebangScript,
 } from "harness";
-import { join, resolve } from "path";
+import { delimiter, join, resolve } from "path";
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({
@@ -8792,16 +8792,17 @@ describe("windows bin linking shim should work", async () => {
   }
 });
 
-// A `.bunx` file normally stores the target relative to the parent of the
-// directory holding the shim. A global install can put the global bin dir and
-// the global package dir anywhere relative to each other, and when the target
-// is not reachable through a single `..` (most commonly because the two dirs
-// are on different drives, https://github.com/oven-sh/bun/issues/23414) the
+// Bin links are created relative to the bin dir, and a global install can put
+// the global bin dir and the global package dir anywhere relative to each
+// other. Bin linking used to assume that path always starts with `..`. On
+// Windows that matters: a `.bunx` file stores the target relative to the parent
+// of the directory holding the shim, which is impossible when the two dirs are
+// on different drives (https://github.com/oven-sh/bun/issues/23414), so the
 // shim has to store the absolute target instead. CI machines have a single
-// drive, so this uses the other layout that has no `..\` relative path: the
-// package dir nested inside the bin dir. Both layouts take the same path
-// through the linker and the shim.
-describe.skipIf(!isWindows)("windows global bin shims with an absolute target", () => {
+// drive, so this uses the other layout whose relative path does not start with
+// `..`: the package dir nested inside the bin dir. Both layouts take the same
+// path through the linker and the shim.
+describe("global bin links when the package dir is inside the bin dir", () => {
   let root: string;
   let binDir: string;
   let globalDir: string;
@@ -8818,7 +8819,7 @@ describe.skipIf(!isWindows)("windows global bin shims with an absolute target", 
         BUN_INSTALL_GLOBAL_DIR: globalDir,
         BUN_INSTALL_CACHE_DIR: join(root, "cache"),
         BUN_TMPDIR: join(root, "tmp"),
-        PATH: binDir + ";" + process.env.PATH,
+        PATH: binDir + delimiter + process.env.PATH,
       },
     ]);
 
@@ -8845,6 +8846,11 @@ describe.skipIf(!isWindows)("windows global bin shims with an absolute target", 
     expect(await exited).toBe(0);
   });
 
+  test.skipIf(isWindows)("the bins are symlinks relative to the bin dir", async () => {
+    expect(await readlink(join(binDir, "bin-bun"))).toBe(join("global", "node_modules", "bunx-bins", "bin-bun.ts"));
+    expect(await exists(join(binDir, "bin-bun"))).toBe(true);
+  });
+
   // The `.bunx` layout is described in src/install/windows-shim/BinLinkingShim.rs:
   // the target path in UTF-16 terminated by a `"`, and the flags as the last u16.
   function readShim(bin: string) {
@@ -8856,7 +8862,7 @@ describe.skipIf(!isWindows)("windows global bin shims with an absolute target", 
     };
   }
 
-  test("the .bunx files store the absolute path of the target", () => {
+  test.skipIf(!isWindows)("the .bunx files store the absolute path of the target", () => {
     const packageDir = join(globalDir, "node_modules", "bunx-bins");
     expect(readShim("native")).toEqual({
       target: join(packageDir, "native.exe"),
@@ -8882,7 +8888,7 @@ describe.skipIf(!isWindows)("windows global bin shims with an absolute target", 
   ];
 
   for (const [name, cmd, expected] of runs) {
-    test(`${name} arg1 arg2`, async () => {
+    test.skipIf(!isWindows)(`${name} arg1 arg2`, async () => {
       const { stdout, stderr, exited } = spawn({
         cmd: [...cmd(), "arg1", "arg2"],
         cwd: root,

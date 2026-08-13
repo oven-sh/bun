@@ -1271,10 +1271,10 @@ impl<'a> Linker<'a> {
         // so each return path calls `Self::chmod_on_ok` explicitly instead.
 
         let abs_dest_dir = resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes());
+        // Usually starts with `..`, but a global install may nest the package
+        // directory inside the bin directory; any relative path works here.
         let rel_target =
             resolve_path::relative_buf_z(self.rel_buf, abs_dest_dir, abs_target.as_bytes());
-
-        debug_assert!(strings::has_prefix(rel_target.as_bytes(), b".."));
 
         match sys::symlink_running_executable(rel_target, abs_dest) {
             sys::Result::Err(err) => {

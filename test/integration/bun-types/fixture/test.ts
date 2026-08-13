@@ -343,6 +343,25 @@ const myNormalSpiedMethod = spyOn(myNormalSpyOnObject, "normalMethod");
 myNormalSpiedMethod("asdf");
 expectType<Mock<(name: string) => string>>(myNormalSpiedMethod);
 
+// #38037: Mock<T> must preserve generic call signatures. Rebuilding the call
+// signature with Parameters<T>/ReturnType<T> instantiates T's type parameters
+// as `unknown`, breaking callback runners whose return type depends on an argument.
+const genericMock = mock(async <T>(callback: () => PromiseLike<T>): Promise<T> => callback());
+const wrappedGenericMock: <T>(callback: () => PromiseLike<T>) => Promise<T> = genericMock;
+expectType<Promise<number>>(genericMock(async () => 42));
+expectType<Promise<string>>(wrappedGenericMock(async () => "hi"));
+genericMock.mockClear();
+expectType<number>(genericMock.mock.calls.length);
+
+const genericSpyTarget = {
+  run: async <T>(callback: () => PromiseLike<T>): Promise<T> => callback(),
+};
+const genericSpy = spyOn(genericSpyTarget, "run");
+const wrappedGenericSpy: <T>(callback: () => PromiseLike<T>) => Promise<T> = genericSpy;
+expectType<Promise<number>>(genericSpy(async () => 42));
+void wrappedGenericSpy;
+genericSpy.mockRestore();
+
 const spy = spyOn(console, "log");
 expectType(spy.mock.calls).is<any[][]>();
 

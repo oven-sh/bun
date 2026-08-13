@@ -20,6 +20,11 @@ declare module "bun:test" {
     /**
      * Creates a mock function. The optional `Function` becomes the mock's implementation.
      */
+    // Two overloads instead of one with an optional parameter: inferring T from an
+    // optional parameter instantiates a generic implementation's type parameters as
+    // `unknown` instead of preserving its generic call signature. The second overload
+    // keeps `mock()` and `mock<T>()` (explicit type argument, no value) working.
+    <T extends (...args: any[]) => any>(Function: T): Mock<T>;
     <T extends (...args: any[]) => any>(Function?: T): Mock<T>;
 
     /**
@@ -91,6 +96,9 @@ declare module "bun:test" {
     function restoreAllMocks(): void;
     function clearAllMocks(): void;
     function resetAllMocks(): void;
+    // Overload pair mirrors `mock()` above: the required-parameter overload preserves
+    // generic call signatures, the optional one keeps `fn()` and `fn<T>()` working.
+    function fn<T extends (...args: any[]) => any>(func: T): Mock<T>;
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     function setSystemTime(now?: number | Date): void;
     function setTimeout(milliseconds: number): void;
@@ -2017,9 +2025,10 @@ declare module "bun:test" {
       [K in keyof T as Required<T>[K] extends FunctionLike ? K : never]: T[K];
     };
 
-    export interface Mock<T extends (...args: any[]) => any> extends MockInstance<T> {
-      (...args: Parameters<T>): ReturnType<T>;
-    }
+    // Intersecting with `T` (rather than re-declaring a `(...args: Parameters<T>) => ReturnType<T>`
+    // call signature) preserves generic call signatures: `Parameters`/`ReturnType` would
+    // instantiate a generic function's type parameters as `unknown`.
+    export type Mock<T extends (...args: any[]) => any> = T & MockInstance<T>;
 
     /**
      * All what the internal typings need is to be sure that we have any-function.

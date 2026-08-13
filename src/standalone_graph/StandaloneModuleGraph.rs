@@ -432,6 +432,39 @@ mod elf {
     /// `&[u8]` here would freeze it to read-only and make the later
     /// `from_bytes` writable subslices UB under Stacked Borrows.
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
+        get_payload(get_blob()?)
+    }
+
+    /// `get_data()` for process startup. Linux's ELF loader maps each
+    /// `PT_LOAD`'s full `p_filesz` without checking that the file is really
+    /// that long, so a truncated executable (interrupted download or copy)
+    /// still execs and the first read of a page past EOF, in
+    /// `from_executable`, is a SIGBUS. Probe the two pages `from_executable`
+    /// reads first and exit with a real error instead.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(super) fn get_data_or_exit_if_truncated() -> Option<(*mut u8, usize)> {
+        let blob = get_blob()?;
+        exit_if_page_is_past_eof(blob as usize);
+        let (base, len) = get_payload(blob)?;
+        // Truncation removes a suffix of the file. The trailer `from_executable`
+        // reads next is the last thing in the payload, so if its page is on disk,
+        // so is everything `from_bytes` and the runtime read after it. `len` is
+        // unvalidated file data, hence `wrapping_add`.
+        exit_if_page_is_past_eof((base as usize).wrapping_add(len - 1));
+        Some((base, len))
+    }
+
+    /// FreeBSD's ELF loader refuses a truncated executable at `execve`, so
+    /// there is nothing to probe.
+    #[cfg(target_os = "freebsd")]
+    pub(super) fn get_data_or_exit_if_truncated() -> Option<(*mut u8, usize)> {
+        get_data()
+    }
+
+    /// Address of the `[u64 payload_len][payload]` blob that
+    /// `bun_exe_format::elf::write_bun_section` appended, or `None` in a plain
+    /// `bun` binary.
+    fn get_blob() -> Option<*mut u8> {
         // SAFETY: FFI call.
         let vaddr_ptr = unsafe { Bun__getStandaloneModuleGraphELFVaddr() };
         if vaddr_ptr.is_null() {
@@ -444,18 +477,56 @@ mod elf {
         }
         // BUN_COMPILED.size holds the virtual address of the appended data.
         // The kernel mapped it via PT_LOAD, so we can dereference directly.
-        // Format at target: [u64 payload_len][payload bytes]
         // Synthesize a `*mut u8` directly so the provenance carries write
         // permission for the in-place bytecode mutation done by JSC.
-        let target = vaddr as *mut u8;
-        // SAFETY: target points to 8-byte little-endian length prefix.
+        Some(vaddr as *mut u8)
+    }
+
+    fn get_payload(blob: *mut u8) -> Option<(*mut u8, usize)> {
+        // SAFETY: blob points to 8-byte little-endian length prefix.
         let payload_len =
-            u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });
+            u64::from_le_bytes(unsafe { core::ptr::read_unaligned(blob.cast::<[u8; 8]>()) });
         if payload_len < 8 {
             return None;
         }
-        // SAFETY: payload_len bytes follow the 8-byte header at `target`.
-        Some((unsafe { target.add(8) }, payload_len as usize))
+        // SAFETY: payload_len bytes follow the 8-byte header at `blob`.
+        Some((unsafe { blob.add(8) }, payload_len as usize))
+    }
+
+    /// `MADV_POPULATE_READ` faults the page in exactly like the read that
+    /// follows it would, except that a page the file does not back reports
+    /// `EFAULT` instead of raising SIGBUS. It never opens or stats the
+    /// executable. Kernels older than 5.14 reject the advice with `EINVAL`;
+    /// that and every other outcome fall through to the unchecked read.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn exit_if_page_is_past_eof(addr: usize) {
+        let page_size = bun_alloc::page_size();
+        let page = (addr & !(page_size - 1)) as *mut core::ffi::c_void;
+        // SAFETY: madvise validates the range itself and only touches page
+        // tables, never the bytes.
+        let rc = unsafe { libc::madvise(page, page_size, libc::MADV_POPULATE_READ) };
+        if rc != 0 && bun_sys::last_errno() == libc::EFAULT {
+            exit_truncated();
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cold]
+    #[inline(never)]
+    fn exit_truncated() -> ! {
+        match bun_core::self_exe_path() {
+            Ok(exe) => bun_core::err_generic!(
+                "{} is incomplete: the file ends before the program embedded in it does.",
+                bun_core::fmt::quote(exe.as_bytes())
+            ),
+            Err(_) => bun_core::err_generic!(
+                "This executable is incomplete: the file ends before the program embedded in it does."
+            ),
+        }
+        bun_core::note!(
+            "It was probably truncated while being downloaded or copied. Re-download or reinstall it and try again."
+        );
+        bun_core::Global::exit(1);
     }
 }
 
@@ -2151,7 +2222,7 @@ impl StandaloneModuleGraph {
 
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
-            let Some((base, len)) = elf::get_data() else {
+            let Some((base, len)) = elf::get_data_or_exit_if_truncated() else {
                 return Ok(None);
             };
             if len < size_of::<Offsets>() + TRAILER.len() {

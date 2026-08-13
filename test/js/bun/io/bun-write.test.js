@@ -7,6 +7,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isMacOS,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -146,23 +147,23 @@ const IS_UV_FS_COPYFILE_DISABLED =
         err => err,
       );
     const shapeOf = err => err && { code: err.code, syscall: err.syscall, message: err.message, path: err.path };
-    const enoentOpen = {
+    const enoent = syscall => ({
       code: "ENOENT",
-      syscall: "open",
-      message: "ENOENT: no such file or directory, open ''",
+      syscall,
+      message: `ENOENT: no such file or directory, ${syscall} ''`,
       path: "",
-    };
+    });
 
     it("Bun.file('').text()", async () => {
-      expect(shapeOf(await rejectionOf(Bun.file("").text()))).toEqual(enoentOpen);
+      expect(shapeOf(await rejectionOf(Bun.file("").text()))).toEqual(enoent("open"));
     });
 
     it("Bun.write('', string)", async () => {
-      expect(shapeOf(await rejectionOf(Bun.write("", "data")))).toEqual(enoentOpen);
+      expect(shapeOf(await rejectionOf(Bun.write("", "data")))).toEqual(enoent("open"));
     });
 
     it("Bun.write(Bun.file(''), string)", async () => {
-      expect(shapeOf(await rejectionOf(Bun.write(Bun.file(""), "data")))).toEqual(enoentOpen);
+      expect(shapeOf(await rejectionOf(Bun.write(Bun.file(""), "data")))).toEqual(enoent("open"));
     });
 
     // File to file copies take a different route on Windows (uv_fs_copyfile),
@@ -171,13 +172,14 @@ const IS_UV_FS_COPYFILE_DISABLED =
       it("empty destination is reported, not the source", async () => {
         using dir = tempDir("bun-write-empty-dest", { "src.txt": "data" });
         const err = await rejectionOf(Bun.write("", Bun.file(join(String(dir), "src.txt"))));
-        expect(shapeOf(err)).toEqual(enoentOpen);
+        expect(shapeOf(err)).toEqual(enoent("open"));
       });
 
       it("empty source", async () => {
         using dir = tempDir("bun-write-empty-src", {});
         const err = await rejectionOf(Bun.write(join(String(dir), "out.txt"), Bun.file("")));
-        expect(shapeOf(err)).toEqual(enoentOpen);
+        // macOS stats the source before trying clonefile(2); the others go straight to open(2).
+        expect(shapeOf(err)).toEqual(enoent(isMacOS ? "stat" : "open"));
       });
     });
   });

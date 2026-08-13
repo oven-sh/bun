@@ -1313,10 +1313,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.parse_path_inner(false)
     }
 
-    /// For TypeScript type-only imports (`import type X from "p" with { ... }`).
-    /// The whole import gets erased, so we must not emit a hard parse error
-    /// for unsupported attribute keys — TS 5.3+'s `resolution-mode` lives
-    /// in exactly this shape.
+    /// For erased TypeScript constructs (`import type`, `declare module` bodies):
+    /// allows unsupported attribute keys such as TS 5.3's `resolution-mode`.
     pub(crate) fn parse_type_only_path(&mut self) -> Result<ParsedPath<'a>, Error> {
         self.parse_path_inner(true)
     }
@@ -1362,11 +1360,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut has_seen_embed_true = false;
 
             while p.lexer.token != T::TCloseBrace {
+                // The key text is re-read from `p.source` via `key_range` later;
+                // lexer slices don't survive `p.lexer.next()`.
                 let key_range = p.lexer.range();
-                // Track whether the key was unsupported without holding a slice
-                // across a `p.lexer.next()`; `key_range` + `p.source` give us
-                // the identifier/literal text without tripping over lexer
-                // buffer reuse.
                 let mut has_unsupported_key = false;
                 let supported_attribute: Option<SupportedAttribute> = 'brk: {
                     // Parse the key
@@ -1408,15 +1404,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let estr = p.lexer.to_utf8_e_string()?;
                 let string_literal_text = estr.slice8();
 
-                // Suppress the "unsupported attribute" error for TypeScript
-                // type-only imports (e.g. `import type X from "p" with {
-                // "resolution-mode": "require" }`) — the whole import gets
-                // erased, and TS 5.3+ uses attributes like `resolution-mode`
-                // that are meaningful to the type checker only.
                 if has_unsupported_key && !is_type_only {
-                    // Grab the key text from the source — strips quotes for
-                    // string-literal keys, matching Node's error message
-                    // ("resolution-mode" not `"resolution-mode"` with quotes).
+                    // Strip quotes from string-literal keys to match Node's message.
                     let key_bytes: &[u8] = p.source.text_for_range(key_range);
                     let key_stripped: &[u8] = if key_bytes.len() >= 2
                         && (key_bytes[0] == b'"' || key_bytes[0] == b'\'')

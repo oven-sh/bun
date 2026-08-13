@@ -451,7 +451,7 @@ describe.concurrent("summary size column alignment", () => {
     `);
   });
 
-  test("outputs that share a directory", async () => {
+  test("outputs that share a directory under --root", async () => {
     using dir = tempDir("build-summary-shared-dir", {
       "sub/a.js": `console.log(1);`,
       "sub/bbb.js": `console.log(2);`,
@@ -462,6 +462,23 @@ describe.concurrent("summary size column alignment", () => {
 
         sub/a.js    28 bytes  (entry point)
         sub/bbb.js  30 bytes  (entry point)
+
+      "
+    `);
+  });
+
+  test("outputs that share a directory from --entry-naming", async () => {
+    using dir = tempDir("build-summary-entry-naming-dir", {
+      "a.js": `console.log(1);`,
+      "bbb.js": `console.log(2);`,
+    });
+
+    expect(await buildSummary(String(dir), ["--entry-naming=js/[name].[ext]", "./a.js", "./bbb.js"]))
+      .toMatchInlineSnapshot(`
+      "Bundled 2 modules in {time}ms
+
+        js/a.js    24 bytes  (entry point)
+        js/bbb.js  26 bytes  (entry point)
 
       "
     `);

@@ -826,31 +826,36 @@ impl<'a> Resolver<'a> {
     /// directory was deleted or is unreadable — callers surface that as a
     /// resolve failure rather than panicking.
     pub fn get_package_manager(&mut self) -> crate::CrateResult<*mut dyn AutoInstaller> {
-        if let Some(pm) = self.package_manager {
-            // Repoint the shared PM at this resolver's live log.
-            // SAFETY: `pm` names the process-lifetime singleton; `self.log`
-            // outlives this resolver's use of it.
-            unsafe { (*pm.as_ptr()).set_log(self.log.as_ptr()) };
-            return Ok(pm.as_ptr());
-        }
-        let env: NonNull<DotEnv::Loader> = self
-            .env_loader
-            .expect("Resolver.env_loader must be set before auto-install");
-        // SAFETY: `__bun_resolver_init_package_manager` is defined
-        // `#[no_mangle]` in `bun_install::auto_installer` and linked into the
-        // final binary; `self.log` / `self.opts.install` / `env` point at
-        // process-lifetime storage (Transpiler-owned). The returned pointer
-        // names the `PackageManager` singleton (`'static`).
-        let pm: NonNull<dyn AutoInstaller> =
-            unsafe { __bun_resolver_init_package_manager(self.log, self.opts.install, env) }?;
-        // Keep a pre-registered VM-side wake handler.
-        // SAFETY: `pm` is the just-initialized singleton; sole `&mut` here.
-        if unsafe { (*pm.as_ptr()).on_wake_context() }.is_none() {
-            // SAFETY: as above — `pm` names the live singleton; no other
-            // reference is held across this call.
+        let pm = match self.package_manager {
+            Some(pm) => pm,
+            None => {
+                let env: NonNull<DotEnv::Loader> = self
+                    .env_loader
+                    .expect("Resolver.env_loader must be set before auto-install");
+                // SAFETY: `__bun_resolver_init_package_manager` is defined
+                // `#[no_mangle]` in `bun_install::auto_installer` and linked
+                // into the final binary; `self.log` / `self.opts.install` /
+                // `env` point at process-lifetime storage (Transpiler-owned).
+                // The returned pointer names the `PackageManager` singleton.
+                let pm: NonNull<dyn AutoInstaller> = unsafe {
+                    __bun_resolver_init_package_manager(self.log, self.opts.install, env)
+                }?;
+                self.package_manager = Some(pm);
+                pm
+            }
+        };
+        // Re-point the singleton's backrefs at this resolver's live state
+        // before each wave; an earlier caller's log may have been freed.
+        // SAFETY: `pm` names the process-static singleton; sole `&mut` here.
+        unsafe { (*pm.as_ptr()).set_log(self.log.as_ptr()) };
+        // An all-`None` handler (bundler / CLI resolver) must not clobber a
+        // VM's registered one.
+        // SAFETY: as above.
+        let pm_has_handler = unsafe { (*pm.as_ptr()).on_wake_context() }.is_some();
+        if self.on_wake_package_manager.context.is_some() || !pm_has_handler {
+            // SAFETY: as above.
             unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager) };
         }
-        self.package_manager = Some(pm);
         Ok(pm.as_ptr())
     }
 

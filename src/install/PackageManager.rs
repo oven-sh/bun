@@ -973,6 +973,19 @@ impl PackageManager {
                     err.name(),
                 );
             }
+        } else {
+            // No JS-side handler (bun build CLI): surface the specific
+            // failure on the manager's log.
+            self.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "{} resolving \"{}@{}\"",
+                    err.name(),
+                    bstr::BStr::new(self.lockfile.str(&dependency.name)),
+                    bstr::BStr::new(self.lockfile.str(&dependency.version.literal)),
+                ),
+            );
         }
     }
 

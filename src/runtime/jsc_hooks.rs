@@ -486,16 +486,23 @@ unsafe fn init_runtime_state(
                                 id: bun_resolver::install_types::DependencyID,
                                 err: &'static str,
                             ) {
-                                // `Queue` is JS-thread-affine; VM-less
-                                // callers have no async module waiting.
-                                if VirtualMachine::get_or_null().is_none() {
+                                // `Queue` is JS-thread-affine: only the
+                                // thread whose VM owns `ctx` may run this.
+                                let Some(vm) = VirtualMachine::get_or_null() else {
+                                    return;
+                                };
+                                // SAFETY: `ctx` is the `WakeContext` set just above; its queue is `(*vm).modules`.
+                                let queue = unsafe {
+                                    bun_jsc::async_module::Queue::queue_from_wake_context(ctx)
+                                };
+                                // SAFETY: `vm` is this thread's live VM.
+                                if queue != unsafe { &raw mut (*vm).modules } {
                                     return;
                                 }
-                                // SAFETY: `ctx` is the `WakeContext` set just above; its queue is `(*vm).modules`.
+                                // SAFETY: queue identity checked above.
                                 unsafe {
                                     bun_jsc::async_module::Queue::on_dependency_error(
-                                        bun_jsc::async_module::Queue::queue_from_wake_context(ctx)
-                                            .cast(),
+                                        queue.cast(),
                                         dep,
                                         id,
                                         err,

@@ -3243,9 +3243,15 @@ describe.concurrent("operations on the empty path", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(expected) + "\n", stderr: "", exitCode: 0 });
-    expect(readdirSync(String(dir)).sort()).toEqual(["keep.txt", "sub"]);
-    expect(readdirSync(join(String(dir), "sub"))).toEqual(["inner.txt"]);
+    const left = readdirSync(String(dir), { recursive: true })
+      .map(entry => entry.replaceAll("\\", "/"))
+      .sort();
+    expect({ stdout, stderr, exitCode, left }).toEqual({
+      stdout: JSON.stringify(expected) + "\n",
+      stderr: "",
+      exitCode: 0,
+      left: ["keep.txt", "sub", "sub/inner.txt"],
+    });
   });
 });
 

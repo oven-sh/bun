@@ -1693,13 +1693,9 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsMockFn, (JSC::JSGlobalObject * lexicalGlobalO
 
 namespace Bun {
 
-// Write `value` onto `target` at `name` as a plain (enumerable, writable,
-// configurable) property, picking putDirectIndex when `name` is a canonical
-// integer index string (`"0"`, `"1"`, …). JSC's JSObject::putDirect carries
-// `ASSERT(!parseIndex(propertyName))` and expects the caller to keep index
-// keys in indexed storage — tripping that assert would fire on `bun bd test`
-// for modules exporting `{ 0: fn, 1: fn }`. Same pattern `spyOn` uses a few
-// hundred lines above.
+// Write `value` onto `target` at `name` as a plain property. putDirect
+// asserts `!parseIndex(propertyName)`, so canonical index strings ("0", "1")
+// must go through putDirectIndex — same pattern spyOn uses above.
 static ALWAYS_INLINE void putDirectMaybeIndex(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* target, const JSC::PropertyName& name, JSC::JSValue value)
 {
     if (auto index = JSC::parseIndex(name)) {
@@ -1742,18 +1738,11 @@ JSC::JSObject* createAutoMockedFunction(JSC::JSGlobalObject* lexicalGlobalObject
     return mockFn;
 }
 
-// Enumerate the mockable properties of `root` the way jest-mock's `_getSlots`
-// does: the union of own *string* property names walking the prototype chain,
-// stopping before Object.prototype / Function.prototype. A property qualifies
-// when it is a data property, or when the level that owns it is an ES-module
-// interop object (`__esModule` truthy) — esbuild, tsc and `bun build
-// --format=cjs` all emit CJS exports as getters next to an `__esModule`
-// marker, so skipping those getters would mock such a package down to
-// `{ __esModule: true }`. Values are read through `root` so getters run with
-// the right receiver.
-//
-// `func(name, value)` may throw; enumeration stops and the exception
-// propagates to the caller's scope.
+// Enumerate the mockable properties of `root` per jest-mock's `_getSlots`:
+// own string names up the prototype chain, stopping before Object.prototype
+// and Function.prototype. Data properties qualify always; accessors only when
+// the owning level has `__esModule` (esbuild/tsc CJS emits exports as getters
+// next to that marker). Values are read through `root`; exceptions propagate.
 template<typename Functor>
 static void forEachMockableProperty(JSC::JSGlobalObject* globalObject, JSC::JSObject* root, bool skipConstructor, const Functor& func)
 {
@@ -1776,10 +1765,8 @@ static void forEachMockableProperty(JSC::JSGlobalObject* globalObject, JSC::JSOb
         RETURN_IF_EXCEPTION(scope, void());
 
         for (auto& name : names) {
-            // Function plumbing (jest-mock's `_isReadonlyProp`). `prototype`
-            // and `constructor` are linked up separately by the caller so the
-            // mocked class keeps its own `prototype.constructor === Class`
-            // pair instead of aliasing the source's.
+            // Function plumbing (jest-mock's `_isReadonlyProp`); the caller
+            // links `prototype`/`constructor` itself.
             if (levelIsCallable
                 && (name == vm.propertyNames->length
                     || name == vm.propertyNames->name
@@ -1852,10 +1839,8 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
         return JSValue(existing.get());
     }
 
-    // Mocks are written as plain (enumerable, writable, configurable)
-    // properties, like jest-mock's `mock[slot] = ...` assignments — copying
-    // the source attributes would make every ESM-sourced mock
-    // non-configurable and a readonly source unassignable.
+    // Plain-property writes, like jest-mock's `mock[slot] = ...`; copying
+    // source attributes would make ESM-sourced mocks non-configurable.
     auto mockPropertyOnto = [&](JSC::JSObject* target, const JSC::Identifier& name, JSC::JSValue propValue) {
         JSValue mockedProp = autoMockValue(lexicalGlobalObject, propValue, visited, depth + 1);
         if (scope.exception()) [[unlikely]]
@@ -1874,12 +1859,8 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
 
         visited.set(object, JSC::Strong<JSC::JSObject> { vm, mockFn });
 
-        // Seed the visited map with the prototype → mockProto mapping up
-        // front, *before* walking the function's static properties. Without
-        // this, a static property that aliases the prototype
-        // (e.g. `MyClass.proto = MyClass.prototype`) would go through the
-        // plain-object recursion first and produce a second distinct mock
-        // object, breaking `mocked.MyClass.proto === mocked.MyClass.prototype`.
+        // Pre-register prototype → mockProto in `visited` so a static alias
+        // of the prototype resolves to the same mock object.
         JSObject* mockProto = nullptr;
         JSObject* originalProtoObj = nullptr;
         if (auto originalProto = object->getDirect(vm, vm.propertyNames->prototype); originalProto && originalProto.isObject()) {
@@ -1900,22 +1881,16 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
         });
         RETURN_IF_EXCEPTION(scope, {});
 
-        // Now fill in the prototype mock we pre-registered. Any of the static
-        // properties that hit this prototype during their own walk have
-        // already been redirected to `mockProto` via `visited`.
+        // Fill in the pre-registered prototype mock. `constructor` is skipped
+        // during the walk and re-established below.
         if (mockProto && originalProtoObj) {
-            // Skip the constructor back-pointer while walking — it is
-            // re-established below, so `instance.constructor === MockedClass`
-            // holds without recursing through the real class.
             forEachMockableProperty(lexicalGlobalObject, originalProtoObj, /* skipConstructor */ true, [&](const JSC::Identifier& name, JSC::JSValue propValue) {
                 mockPropertyOnto(mockProto, name, propValue);
             });
             RETURN_IF_EXCEPTION(scope, {});
 
-            // Establish the standard `Class.prototype.constructor === Class`
-            // back-reference. Matches Jest's auto-mock (`_generateMock` in
-            // jest-mock) and the ES2015 class descriptor: writable, DontEnum,
-            // configurable.
+            // `Class.prototype.constructor === Class`, with the ES2015 class
+            // descriptor (writable, DontEnum, configurable).
             mockProto->putDirect(vm, vm.propertyNames->constructor, mockFn,
                 static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
             // Function.prototype's own `prototype` descriptor is writable +

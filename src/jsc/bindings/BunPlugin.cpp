@@ -407,9 +407,8 @@ void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSOb
 
     virtualModules->set(path, JSC::Strong<JSC::JSObject> { vm, mockObject });
 
-    // Set only after the map exists — the module loader asserts
-    // `!mustDoExpensiveRelativeLookup` whenever `virtualModules` is null
-    // (moduleLoaderResolve in ZigGlobalObject.cpp).
+    // Set only after the map exists; moduleLoaderResolve asserts the flag
+    // is false whenever virtualModules is null.
     if (needsExpensiveRelativeLookup) {
         globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
     }
@@ -506,19 +505,11 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
 }
 
 // Resolve a module-mock specifier against the caller's source origin, in
-// place. Shared by `JSMock__jsModuleMock` and `JSMock__jsRequireMock` so
-// `jest.requireMock(id)` lands on the same resolved key that
-// `jest.mock(id)` installed into `virtualModules` — the two must produce
-// identical output. Throws (via `scope`) on an invalid `file:` URL; the
-// caller propagates with RETURN_IF_EXCEPTION.
-//
-// `needsExpensiveLookup` reports whether resolving this specifier later
-// requires `onLoadPlugins.mustDoExpensiveRelativeLookup`. The flag itself is
-// set by `addModuleMock` (never here), so it can only become true once a
-// `virtualModules` entry actually exists — the module loader asserts
-// `!mustDoExpensiveRelativeLookup` whenever `virtualModules` is null
-// (ZigGlobalObject.cpp). `jest.requireMock` caches in a separate side-map,
-// never installs into `virtualModules`, and ignores the out-param.
+// place, so jest.mock(id) and jest.requireMock(id) land on the same key.
+// Throws on an invalid `file:` URL. `needsExpensiveLookup` reports whether
+// the installed mock will need `mustDoExpensiveRelativeLookup`; only
+// addModuleMock sets that flag, keeping it false while virtualModules is
+// null (asserted in moduleLoaderResolve).
 static void resolveModuleMockSpecifier(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, JSC::ThrowScope& scope, WTF::String& specifier, JSC::JSString*& specifierString, bool& needsExpensiveLookup)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -573,12 +564,9 @@ static void resolveModuleMockSpecifier(Zig::GlobalObject* globalObject, JSC::JSG
     }
 }
 
-// Bun's CJS interop for mocked modules: `require()` of a mock object shaped
-// `{ __esModule: true, default: X }` yields `X` (see the commonJSModule
-// branch of handleVirtualModuleResult in ModuleLoader.cpp). Apply the same
-// rule everywhere a mock result is handed to a CJS consumer so the shape
-// doesn't depend on which consumer ran first. Returns an empty JSValue with
-// an exception pending on failure.
+// require() of a mock shaped `{ __esModule: true, default: X }` yields `X`
+// (handleVirtualModuleResult in ModuleLoader.cpp); apply the same rule at
+// every CJS consumer so the shape doesn't depend on which ran first.
 static JSC::JSValue unwrapESModuleDefaultForCJS(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -642,14 +630,8 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
     RETURN_IF_EXCEPTION(scope, {});
 
     // For auto-mock, synchronously require the real module and generate a
-    // mock from its exports. Two bypasses are needed so we get the *real*
-    // exports instead of a leftover mock:
-    //   1. An earlier mock may already live in `virtualModules` for this
-    //      specifier — we remove it before the require and restore it after
-    //      (or replace with the new one).
-    //   2. An earlier mock may have overwritten the cached `JSCommonJSModule`'s
-    //      `.exports` in requireMap — we remove that entry so the real source
-    //      re-executes.
+    // mock from its exports, bypassing any leftover mock in virtualModules
+    // and any mock-patched requireMap entry so the real exports are seen.
     JSC::JSObject* callback = nullptr;
     if (isAutoMock) {
         JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
@@ -666,13 +648,10 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         auto* boundRequire = Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, fromPath);
         RETURN_IF_EXCEPTION(scope, {});
 
-        // Stash any prior mock for this specifier so the internal `require()`
-        // hits the real module — and so we can put it back if `require()`
-        // throws. Without the restore the exception path would silently
-        // destroy a working `jest.mock(id, factory)` entry. Only JSModuleMock
-        // entries are stashed: `builder.module()` plugin callbacks live
-        // exclusively in this map, and removing one would make the require()
-        // below unable to find the module at all.
+        // Stash any prior mock so the internal require() hits the real module,
+        // restoring it if require() throws. Only JSModuleMock entries: a
+        // `builder.module()` plugin callback lives exclusively in this map,
+        // and removing it would make the require() below unable to resolve.
         JSC::Strong<JSC::JSObject> stashedVirtualEntry;
         if (globalObject->onLoadPlugins.hasVirtualModules()) {
             auto& virtualModules = *globalObject->onLoadPlugins.virtualModules;
@@ -682,33 +661,15 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
             }
         }
 
-        // Declared up front so every failure path below can call it —
-        // including the two `RETURN_IF_EXCEPTION` guards around the
-        // requireMap stash (those can't actually throw for a non-rope
-        // string key, but we keep the structural restore invariant
-        // honoured throughout the block).
-        //
-        // restoreStash may be called while the VM already has an
-        // exception pending (from the caller's failure). We snapshot
-        // it, transiently clear it so our own calls into JSMap::set run
-        // under a clean scope, run the restore, and reinstall the
-        // snapshot. If the set itself throws we drop that secondary
-        // exception and keep the original one — the caller's failure
-        // is what the user needs to see.
-        // Initialise to jsUndefined() — a default-constructed JSValue is
-        // *empty*, which is distinct from `undefined` and makes the
-        // `isUndefined()` guard below evaluate true (we'd call
-        // requireMap->set with an empty JSValue on the "get threw"
-        // restore path).
+        // Runs on every failure path below, usually with an exception already
+        // pending: snapshot it, restore the stashed entries under a clean
+        // scope, and rethrow the original. jsUndefined() (not the empty
+        // JSValue) so the isUndefined() guard holds before the stash is set.
         JSC::JSValue stashedRequireMapEntry = JSC::jsUndefined();
         auto* requireMap = globalObject->requireMap();
         auto restoreStash = [&]() {
-            // Re-check `hasVirtualModules()` — the map pointer can have been
-            // nulled out between our `take()` and the restore if user JS under
-            // `boundRequire()` called `Bun.plugin.clearAll()` (which deletes
-            // the map and sets the pointer to nullptr). If that happened, the
-            // prior entry is already gone from the user's perspective; we
-            // don't try to resurrect it.
+            // User JS under boundRequire() may have called
+            // Bun.plugin.clearAll(), deleting the map — don't resurrect.
             if (stashedVirtualEntry && globalObject->onLoadPlugins.hasVirtualModules()) {
                 globalObject->onLoadPlugins.virtualModules->set(specifier, WTF::move(stashedVirtualEntry));
             }
@@ -718,8 +679,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
                     (void)scope.tryClearException();
                 }
                 requireMap->set(globalObject, specifierString, stashedRequireMapEntry);
-                // Drop any secondary exception from the set() itself — we
-                // only want to surface the original.
+                // Drop a secondary exception from set(); surface the original.
                 if (scope.exception()) {
                     (void)scope.tryClearException();
                 }
@@ -729,16 +689,10 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
             }
         };
 
-        // Also drop any cached JSCommonJSModule entry whose `.exports` was
-        // previously overwritten by a mock — otherwise require() returns the
-        // patched mock exports instead of re-evaluating the real source.
-        // Stash the taken entry so we can reinstate it if the require fails.
-        //
-        // Only a prior mock (a `stashedVirtualEntry`) can have patched
-        // `.exports`; when the module was merely require()'d, the cached
-        // entry already holds the real exports — keep it so the internal
-        // require() below reuses it instead of re-running the module's
-        // top-level side effects.
+        // A prior mock may have patched the cached JSCommonJSModule's
+        // `.exports`; drop that entry so the real source re-evaluates. A
+        // merely-require()'d module keeps its cache (real exports, no
+        // side-effect re-run).
         if (stashedVirtualEntry) {
             stashedRequireMapEntry = requireMap->get(globalObject, specifierString);
             if (scope.exception()) [[unlikely]] {
@@ -783,11 +737,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
 
         JSC::JSObject* mockObject = mockValue.isObject() ? mockValue.getObject() : nullptr;
         if (!mockObject) {
-            // Primitive exports (`module.exports = 42`) need an object-shaped
-            // carrier so the JSModuleMock can cache them. `{ default: value,
-            // __esModule: true }` is the shape Bun's interop already unwraps:
-            // `require()` yields the raw value back and `import x from`
-            // resolves `x` to it.
+            // Primitive exports need an object carrier; `{ default, __esModule }`
+            // is the shape Bun's interop unwraps back to the raw value for
+            // both require() and default imports.
             mockObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
             if (scope.exception()) [[unlikely]] {
                 restoreStash();
@@ -796,13 +748,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
             mockObject->putDirect(vm, vm.propertyNames->defaultKeyword, mockValue, 0);
             mockObject->putDirect(vm, vm.propertyNames->__esModule, JSC::jsBoolean(true), 0);
         } else if (!realExportsWasNamespace) {
-            // CJS and builtin modules have no `default` export, and the
-            // synthetic module built from the mock object does not synthesize
-            // one (generateObjectModuleSourceCode), so `import pkg from
-            // "pkg"` would fail to link with "Missing 'default' export".
-            // Mirror require-to-import interop: `default` is the exports
-            // object itself. An existing `default` (e.g. esbuild-built CJS
-            // whose exports carry one) wins.
+            // CJS/builtin sources have no `default`, so `import pkg from`
+            // would fail to link. Mirror require-to-import interop: default
+            // is the exports object itself; an existing default wins.
             auto hasDefault = mockObject->hasOwnProperty(globalObject, vm.propertyNames->defaultKeyword);
             if (scope.exception()) [[unlikely]] {
                 restoreStash();
@@ -813,16 +761,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
             }
         }
 
-        // Re-seat the prior entry so that if any of the shared post-block
-        // steps (ESM namespace patching, requireMap remove, etc.) throws
-        // before `addModuleMock()` runs, the previous mock/plugin entry
-        // survives — the stash locals are about to go out of scope here.
-        // `addModuleMock()` unconditionally `set()`s the new mock on the
-        // success path, so this re-insert is a no-op there.
-        //
-        // Same `hasVirtualModules()` re-check as `restoreStash()` — user JS
-        // run from `boundRequire()` above may have called
-        // `Bun.plugin.clearAll()` and nulled the map pointer.
+        // Re-seat the prior entry in case a shared post-block step throws
+        // before addModuleMock() replaces it; on success the replace makes
+        // this a no-op. Same clearAll() re-check as restoreStash.
         if (stashedVirtualEntry && globalObject->onLoadPlugins.hasVirtualModules()) {
             globalObject->onLoadPlugins.virtualModules->set(specifier, WTF::move(stashedVirtualEntry));
         }
@@ -1000,18 +941,14 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsRequireMock, (JSC::JSGlobalObject 
         return {};
     }
 
-    // Resolve against the caller's source origin so `jest.requireMock(id)`
-    // lands on the same `virtualModules` key `jest.mock(id)` installed.
-    // requireMock caches in requireMockCache and never installs into
-    // virtualModules, so the expensive-lookup report is ignored.
+    // requireMock never installs into virtualModules, so the expensive-lookup
+    // report is ignored.
     bool ignoredNeedsExpensiveLookup = false;
     resolveModuleMockSpecifier(globalObject, lexicalGlobalObject, callframe, scope, specifier, specifierString, ignoredNeedsExpensiveLookup);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // If a `jest.mock(specifier)` has already installed a global mock for
-    // this specifier, return its cached result. (virtualModules also holds
-    // non-mock `builder.module()` callbacks — those are not mocks, so we
-    // ignore them and fall through.)
+    // A jest.mock(specifier) already installed a mock: return its cached
+    // result. builder.module() callbacks are not mocks; fall through.
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         auto& virtualModules = *globalObject->onLoadPlugins.virtualModules;
         if (auto existing = virtualModules.get(specifier)) {
@@ -1049,11 +986,8 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsRequireMock, (JSC::JSGlobalObject 
         }
     }
 
-    // Check the `requireMockCache` side-map. Caching here (and NOT in
-    // virtualModules) ensures a subsequent `require(id)` / `import(id)` on
-    // the same specifier still sees the REAL module — matching Jest's
-    // distinction between `jest.mock()` (globally patches imports) and
-    // `jest.requireMock()` (returns a mocked handle without side effects).
+    // The side-map keeps require()/import() seeing the real module, matching
+    // Jest: jest.mock() patches imports, jest.requireMock() does not.
     if (auto& cache = globalObject->mockModule.requireMockCache) {
         JSC::JSMap* map = cache.get();
         JSValue cached = map->get(globalObject, specifierString);
@@ -1093,10 +1027,8 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsRequireMock, (JSC::JSGlobalObject 
     JSC::JSValue mockValue = Bun::createAutoMockFromExports(globalObject, realExports);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Cache in the side-map so repeat calls return the same instance, without
-    // affecting how `require()` / `import()` resolve the specifier. Primitive
-    // exports are cached directly — no `{default:...}` wrapping, so the
-    // caller sees the same shape `require()` would have returned.
+    // Cache so repeat calls return the same instance. Primitives are cached
+    // bare, the same shape require() would have returned.
     if (!globalObject->mockModule.requireMockCache) {
         JSC::JSMap* map = JSC::JSMap::create(vm, globalObject->mapStructure());
         globalObject->mockModule.requireMockCache.set(vm, map);

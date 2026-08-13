@@ -5,7 +5,7 @@ use core::cmp::Ordering;
 
 use crate::BoundedArray;
 use crate::CrateError as Error;
-use bun_alloc::AllocError;
+use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
 use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
 
@@ -2644,16 +2644,17 @@ pub fn to_utf16_alloc(
     Ok(Some(out))
 }
 
-/// Decode `bytes` as UTF-8 and re-encode it: each ill-formed subsequence becomes
-/// one U+FFFD, well-formed sequences are copied through byte for byte. Uses the
-/// same WebKit decoder as [`to_utf16_alloc`] / `TextDecoder`, so the replacement
-/// characters land where `Bun.file().text()` would put them. Returns `None` when
-/// `bytes` is already well-formed UTF-8 so callers can keep using the input.
-pub fn to_well_formed_utf8_alloc(bytes: &[u8]) -> Option<Vec<u8>> {
+/// Decode `bytes` as UTF-8 and re-encode it into `arena`: each ill-formed
+/// subsequence becomes one U+FFFD, well-formed sequences are copied through byte
+/// for byte. Uses the same WebKit decoder as [`to_utf16_alloc`] / `TextDecoder`,
+/// so the replacement characters land where `Bun.file().text()` would put them.
+/// Returns `None` without allocating when `bytes` is already well-formed UTF-8,
+/// so callers can keep using the input.
+pub fn to_well_formed_utf8_in<'a>(bytes: &[u8], arena: &'a Arena) -> Option<&'a [u8]> {
     if is_valid_utf8(bytes) {
         return None;
     }
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut out = ArenaVec::<u8>::with_capacity_in(bytes.len(), arena);
     let mut remaining = bytes;
     while let Some(i) = first_non_ascii_usize(remaining) {
         out.extend_from_slice(&remaining[..i]);
@@ -2668,7 +2669,7 @@ pub fn to_well_formed_utf8_alloc(bytes: &[u8]) -> Option<Vec<u8>> {
         remaining = &remaining[len..];
     }
     out.extend_from_slice(remaining);
-    Some(out)
+    Some(out.into_bump_slice())
 }
 
 /// WTF-8 → UTF-16LE iff `bytes` contains any non-ASCII byte; pure-ASCII inputs return `None`.
@@ -2783,19 +2784,22 @@ mod tests {
     }
 
     #[test]
-    fn to_well_formed_utf8_alloc_keeps_well_formed_input() {
-        assert_eq!(super::to_well_formed_utf8_alloc(b""), None);
-        assert_eq!(super::to_well_formed_utf8_alloc(b"plain ascii\r\n\0"), None);
+    fn to_well_formed_utf8_in_keeps_well_formed_input() {
+        let arena = bun_alloc::Arena::new();
+        let fixed = |input: &[u8]| super::to_well_formed_utf8_in(input, &arena);
+        assert_eq!(fixed(b""), None);
+        assert_eq!(fixed(b"plain ascii\r\n\0"), None);
         assert_eq!(
-            super::to_well_formed_utf8_alloc(b"\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80\xEF\xBF\xBD"),
+            fixed(b"\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80\xEF\xBF\xBD"),
             None
         );
     }
 
     #[test]
-    fn to_well_formed_utf8_alloc_replaces_each_maximal_subpart() {
+    fn to_well_formed_utf8_in_replaces_each_maximal_subpart() {
         const R: &[u8] = b"\xEF\xBF\xBD";
-        let fixed = |input: &[u8]| super::to_well_formed_utf8_alloc(input).unwrap();
+        let arena = bun_alloc::Arena::new();
+        let fixed = |input: &[u8]| super::to_well_formed_utf8_in(input, &arena).unwrap();
         let cat = |parts: &[&[u8]]| parts.concat();
 
         // A bad lead byte must not swallow the ASCII that follows it.

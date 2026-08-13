@@ -2095,12 +2095,10 @@ fn parse_data_loader<'a>(
 /// U+FFFD. The printer requires `E::String` bytes to be well-formed WTF-8; fed
 /// raw file bytes it drops the bytes after a bad lead byte and passes stray
 /// continuation bytes through as Latin-1 (or verbatim into `bun build` output).
-/// Well-formed files are returned as-is; a repaired copy lives in `arena`.
+/// Well-formed files are returned as-is; a repaired copy is built in `arena`,
+/// which owns the rest of the AST.
 pub(crate) fn decode_utf8_file_contents<'a>(contents: &'a [u8], arena: &'a Arena) -> &'a [u8] {
-    match strings::to_well_formed_utf8_alloc(contents) {
-        None => contents,
-        Some(well_formed) => arena.alloc_slice_copy(&well_formed),
-    }
+    strings::to_well_formed_utf8_in(contents, arena).unwrap_or(contents)
 }
 
 #[cold]

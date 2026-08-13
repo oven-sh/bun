@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isBroken, isWindows, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
+import { BundlerTestInput, decodeSourceMappingsLine, itBundled } from "./expectBundled";
 
 // A public path composes with the referenced file's path relative to the output
 // directory, never relative to the importing chunk (esbuild's semantics).
@@ -2368,6 +2368,88 @@ describe("bundler", () => {
       stdout: "Disposing\ntrue",
     },
   });
+
+  // Lowering a top-level `using` moves the rest of the module's top-level
+  // declarations into a generated try/catch/finally. A module that is also
+  // reached through import() gets wrapped in `__esm(() => { ... })`, and the
+  // linker hoists the module's top-level declarations out of that closure so
+  // the export getters and the static importers can reach them. The ones that
+  // were moved into the try block have to end up hoisted as well.
+  const loweredTopLevelUsing = {
+    Using: `using handle = { val: 42, [Symbol.dispose]() { state.disposed = true; } };`,
+    AwaitUsing: `await using handle = { val: 42, async [Symbol.asyncDispose]() { state.disposed = true; } };`,
+  };
+  const loweredTopLevelUsingModule = (kind: keyof typeof loweredTopLevelUsing) => /* js */ `
+    export const state = { disposed: false };
+    ${loweredTopLevelUsing[kind]}
+    export const result = handle.val;
+    const { val } = handle;
+    let assignedLater;
+    assignedLater = val + 1;
+    export function internals() {
+      return [val, assignedLater];
+    }
+  `;
+  const loweredTopLevelUsingInEsmWrapper = (
+    kind: keyof typeof loweredTopLevelUsing,
+    target: "browser" | "node",
+  ): BundlerTestInput => ({
+    target,
+    files: {
+      "/entry.js": /* js */ `
+        import { result, state, internals } from "./lazy.js";
+        console.log(JSON.stringify(["static", result, state.disposed, internals()]));
+        const mod = await import("./lazy.js");
+        console.log(JSON.stringify(["dynamic", mod.result, mod.state.disposed, mod.internals()]));
+      `,
+      "/lazy.js": loweredTopLevelUsingModule(kind),
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("__esm(");
+      expect(out).toContain("__callDispose(");
+      // Everything the module declares at its top level is hoisted out of the
+      // wrapper in one declaration; the try block only keeps the assignments.
+      expect(out).toMatch(/^var __stack, state, handle, result, val, assignedLater;$/m);
+    },
+    run: {
+      stdout: `
+        ["static",42,true,[42,43]]
+        ["dynamic",42,true,[42,43]]
+      `,
+    },
+  });
+  itBundled("edgecase/LoweredTopLevelUsingInEsmWrapper", loweredTopLevelUsingInEsmWrapper("Using", "browser"));
+  itBundled(
+    "edgecase/LoweredTopLevelAwaitUsingInEsmWrapper",
+    loweredTopLevelUsingInEsmWrapper("AwaitUsing", "browser"),
+  );
+  itBundled("edgecase/LoweredTopLevelUsingInEsmWrapperNodeTarget", loweredTopLevelUsingInEsmWrapper("Using", "node"));
+  itBundled(
+    "edgecase/LoweredTopLevelAwaitUsingInEsmWrapperNodeTarget",
+    loweredTopLevelUsingInEsmWrapper("AwaitUsing", "node"),
+  );
+
+  // Without the import() the module is inlined into the entry point instead of
+  // being wrapped; the relocated declarations have to keep working there too.
+  const loweredTopLevelUsingInlined = (kind: keyof typeof loweredTopLevelUsing): BundlerTestInput => ({
+    files: {
+      "/entry.js": /* js */ `
+        import { result, state, internals } from "./lazy.js";
+        console.log(JSON.stringify([result, state.disposed, internals()]));
+      `,
+      "/lazy.js": loweredTopLevelUsingModule(kind),
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__esm(");
+      api.expectFile("/out.js").toContain("__callDispose(");
+    },
+    run: {
+      stdout: "[42,true,[42,43]]",
+    },
+  });
+  itBundled("edgecase/LoweredTopLevelUsingInlined", loweredTopLevelUsingInlined("Using"));
+  itBundled("edgecase/LoweredTopLevelAwaitUsingInlined", loweredTopLevelUsingInlined("AwaitUsing"));
 
   itBundled("edgecase/NoOutWithTwoFiles", {
     files: {

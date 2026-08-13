@@ -24,9 +24,10 @@ use crate::{
     FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, FunctionKind,
     IdentifierOpts, ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
     LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
-    PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeImports, ScopeOrder,
-    ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef, ThenCatchChain,
-    TransposeState, WrapMode, fs, is_eval_or_arguments, options, statement_cares_about_scope,
+    PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RelocateVarsMode, RuntimeImports,
+    ScopeOrder, ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef,
+    ThenCatchChain, TransposeState, WrapMode, fs, is_eval_or_arguments, options,
+    statement_cares_about_scope,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -8960,9 +8961,17 @@ impl LowerUsingDeclarationsContext {
     ) -> ListManaged<'a, Stmt> {
         let mut result = BumpVec::new_in(p.arena);
         let mut exports = BumpVec::<js_ast::ClauseItem>::new_in(p.arena);
+        // When the linker wraps a module in an `__esm` closure, it hoists the
+        // module's declarations out of the closure (where the export getters and
+        // the importing modules reference them) by looking at the module's
+        // top-level statements only; `var`s nested in other statements were
+        // already relocated up there while visiting. The module body's `var`s
+        // are about to be moved into the try block, so relocate them the same
+        // way and keep only their assignments in the try block.
+        let relocate_vars = p.options.bundle && p.current_scope == p.module_scope;
         let mut end: u32 = 0;
         for i in 0..stmts.len() {
-            let stmt = stmts[i];
+            let mut stmt = stmts[i];
             match stmt.data {
                 js_ast::StmtData::SDirective(_)
                 | js_ast::StmtData::SImport(_)
@@ -9029,6 +9038,16 @@ impl LowerUsingDeclarationsContext {
                         }
                         if any_ident {
                             local.kind = js_ast::s::Kind::KVar;
+                        }
+                    }
+
+                    if relocate_vars && local.kind == js_ast::s::Kind::KVar {
+                        match p.relocate_vars_to_top_level(
+                            local.decls.slice(),
+                            RelocateVarsMode::Normal,
+                        ) {
+                            Some(assignments) => stmt = assignments,
+                            None => continue,
                         }
                     }
                 }

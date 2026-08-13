@@ -57,6 +57,19 @@ impl Target {
         matches!(self, Target::Node)
     }
 
+    /// What `[target]` expands to in `--entry-naming` / `--chunk-naming` /
+    /// `--asset-naming` templates.
+    #[inline]
+    pub fn naming_placeholder(self) -> &'static [u8] {
+        match self {
+            Target::Browser => b"browser",
+            Target::Bun => b"bun",
+            Target::Node => b"node",
+            Target::BunMacro => b"macro",
+            Target::ServerComponentsSsr => b"ssr",
+        }
+    }
+
     #[inline]
     pub fn process_browser_define_value(self) -> Option<&'static str> {
         match self {

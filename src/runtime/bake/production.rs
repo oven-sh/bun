@@ -703,7 +703,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             match side {
                 bun_bundler::options::Side::Client => {
                     // Client-side resources will be written to disk for usage on the client side
-                    if let Err(err) = file.write_to_disk(root_dir.fd(), b".") {
+                    if let Err(err) = file.write_to_disk(root_dir.fd()) {
                         bun_core::handle_error_return_trace(err);
                         Output::err(
                             err,
@@ -714,7 +714,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 }
                 bun_bundler::options::Side::Server => {
                     if ctx.bundler_options.bake_debug_dump_server {
-                        if let Err(err) = file.write_to_disk(root_dir.fd(), b".") {
+                        if let Err(err) = file.write_to_disk(root_dir.fd()) {
                             bun_core::handle_error_return_trace(err);
                             Output::err(
                                 err,
@@ -794,7 +794,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         });
         if any_client_chunks {
             let runtime_file: &OutputFile = &bundled_outputs_list[runtime_file_index as usize];
-            if let Err(err) = runtime_file.write_to_disk(root_dir.fd(), b".") {
+            if let Err(err) = runtime_file.write_to_disk(root_dir.fd()) {
                 bun_core::handle_error_return_trace(err);
                 Output::err(
                     err,

@@ -248,21 +248,15 @@ impl OutputFile {
         }
     }
 
-    pub fn write_to_disk(&self, root_dir: Fd, root_dir_path: &[u8]) -> Result<(), Error> {
+    /// `dest_path` is relative to `root_dir`.
+    pub fn write_to_disk(&self, root_dir: Fd) -> Result<(), Error> {
         match &self.value {
             Value::Noop => {}
             Value::Saved(_) => {
                 // already written to disk
             }
             Value::Buffer { bytes } => {
-                let rel_path: &[u8] = if bun_paths::is_absolute(&self.dest_path)
-                    && self.dest_path.len() > root_dir_path.len()
-                {
-                    resolve_path::relative(root_dir_path, &self.dest_path)
-                } else {
-                    &self.dest_path
-                };
-                let parent = resolve_path::dirname::<platform::Auto>(rel_path);
+                let parent = resolve_path::dirname::<platform::Auto>(&self.dest_path);
                 if !parent.is_empty() && parent != b"." {
                     bun_sys::Dir::borrow(&root_dir).make_path(parent)?;
                 }
@@ -275,18 +269,18 @@ impl OutputFile {
                         encoding: bun_sys::WriteFileEncoding::Buffer,
                         mode: if self.is_executable { 0o755 } else { 0o644 },
                         dirfd: root_dir,
-                        file: bun_sys::PathOrFileDescriptor::Path(rel_path),
+                        file: bun_sys::PathOrFileDescriptor::Path(&self.dest_path),
                     },
                 )?;
             }
             Value::Copy(value) => {
-                self.copy_to(root_dir_path, &value.pathname, root_dir)?;
+                self.copy_to(&value.pathname, root_dir)?;
             }
         }
         Ok(())
     }
 
-    pub(crate) fn copy_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
+    pub(crate) fn copy_to(&self, rel_path: &[u8], dir: Fd) -> Result<(), Error> {
         let mut out_buf = PathBuffer::uninit();
         let fd_out = bun_sys::openat(
             dir,

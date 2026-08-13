@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
@@ -563,6 +563,95 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(stdout).toContain("src/nested/deep.js");
   });
 
+  test("writes entry points that share a subdirectory under --root", async () => {
+    using dir = tempDir("no-bundle-outdir-shared-subdir", {
+      "src/a.ts": `export const a = 1;\n`,
+      "src/b.ts": `export const b = 2;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--root=.", "./src/a.ts", "./src/b.ts", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("src/a.js");
+    expect(stdout).toContain("src/b.js");
+    expect(exitCode).toBe(0);
+
+    expect(fs.readdirSync(path.join(String(dir), "dist"), { recursive: true }).sort()).toEqual([
+      "src",
+      path.join("src", "a.js"),
+      path.join("src", "b.js"),
+    ]);
+  });
+
+  test("rejects two entry points that map to the same output path", async () => {
+    using dir = tempDir("no-bundle-outdir-collision", {
+      "src/app.ts": `export const a = 1;\n`,
+      "src/app.js": `export const b = 2;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "./src/app.ts", "./src/app.js", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
+      "error: Multiple files share the same output path
+        ./app.js:
+          from input src/app.ts
+          from input src/app.js
+
+
+      note: entry naming is '[dir]/[name].[ext]', consider adding '[hash]' to make filenames unique"
+    `);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+
+    expect(fs.existsSync(path.join(String(dir), "dist", "app.js"))).toBe(false);
+  });
+
+  test.each([
+    ["browser", []],
+    ["bun", ["--target=bun"]],
+    ["node", ["--target=node"]],
+  ])("fills [target] in --entry-naming with %s", async (expected, targetArgs) => {
+    using dir = tempDir("no-bundle-outdir-target", {
+      "app.ts": `export const app = 1;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--no-bundle",
+        ...targetArgs,
+        "./app.ts",
+        "--outdir=dist",
+        "--entry-naming",
+        "[target]/[name].[ext]",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain(`${expected}/app.js`);
+    expect(exitCode).toBe(0);
+
+    expect(fs.readdirSync(path.join(String(dir), "dist"))).toEqual([expected]);
+    expect(fs.readdirSync(path.join(String(dir), "dist", expected))).toEqual(["app.js"]);
+  });
+
   test("respects --entry-naming", async () => {
     using dir = tempDir("no-bundle-outdir-naming", {
       "src/app.ts": `export const app = 1;\n`,
@@ -618,15 +707,27 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(stdout).toContain(files[1]);
   });
 
-  test("writes data-loader entry points with a .js extension", async () => {
-    using dir = tempDir("no-bundle-outdir-data-loaders", {
+  test("names outputs by loader: js for transpiled data, css for the css loader", async () => {
+    using dir = tempDir("no-bundle-outdir-loaders", {
       "config.toml": `key = 1\n`,
       "data.yaml": `key: 2\n`,
       "style.css": `.x { color: red; }\n`,
+      "theme.pcss": `.y { color: blue; }\n`,
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--no-bundle", "./config.toml", "./data.yaml", "./style.css", "--outdir=dist"],
+      cmd: [
+        bunExe(),
+        "build",
+        "--no-bundle",
+        "./config.toml",
+        "./data.yaml",
+        "./style.css",
+        "./theme.pcss",
+        "--loader",
+        ".pcss:css",
+        "--outdir=dist",
+      ],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -636,11 +737,17 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
 
-    expect(fs.readdirSync(path.join(String(dir), "dist")).sort()).toEqual(["config.js", "data.js", "style.css"]);
+    expect(fs.readdirSync(path.join(String(dir), "dist")).sort()).toEqual([
+      "config.js",
+      "data.js",
+      "style.css",
+      "theme.css",
+    ]);
     expect(stdout).toContain("config.js");
     expect(stdout).toContain("data.js");
     expect(stdout).toContain("style.css");
-    expect(stdout).not.toMatch(/style\.css\s+0 /);
+    expect(stdout).toContain("theme.css");
+    expect(stdout).not.toMatch(/\.css\s+0 /);
   });
 
   test("does not escape --outdir when an entry point is outside --root", async () => {

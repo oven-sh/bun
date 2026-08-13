@@ -1278,11 +1278,9 @@ pub(crate) struct ESModule<'a> {
     pub(crate) conditions: &'a ConditionsMap,
     // allocator dropped — global mimalloc
     pub(crate) module_type: &'a mut ModuleType,
-    /// Input: skip the "bun" key. Set on the retry pass after a resolution that went through
-    /// the "bun" condition failed to load (#7142).
+    /// Input: skip the "bun" key (second pass of the #7142 retry).
     pub(crate) skip_bun_condition: bool,
-    /// Output: set when the "bun" key matched and produced a target; the caller uses it to decide
-    /// whether a failed load is worth retrying with `skip_bun_condition`.
+    /// Output: the "bun" key matched and produced a target, so a failed load is worth retrying.
     pub(crate) matched_bun_condition: &'a mut bool,
 }
 

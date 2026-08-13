@@ -2642,9 +2642,7 @@ impl<'a> Resolver<'a> {
                             if let Some(package_json) = pkg_dir_info.package_json() {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import.
-                                    //
-                                    // The second pass skips the "bun" condition and only runs when the
-                                    // first pass matched it and still failed to resolve (#7142).
+                                    // Pass 2 skips "bun" and only runs if pass 1 matched it and failed (#7142).
                                     let mut matched_bun = false;
                                     for skip_bun in [false, true] {
                                         if skip_bun && !matched_bun {
@@ -3158,7 +3156,7 @@ impl<'a> Resolver<'a> {
                             if let Some(package_json) = pkg_dir_info.package_json() {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import.
-                                    // Two-pass shape: see the note in the node_modules branch above.
+                                    // Two-pass shape as in the node_modules branch above.
                                     let mut matched_bun = false;
                                     for skip_bun in [false, true] {
                                         if skip_bun && !matched_bun {

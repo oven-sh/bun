@@ -57,6 +57,7 @@ import {
   isBuildkite,
   isCI,
   isGithubAction,
+  isAndroid,
   isLinux,
   isMacOS,
   isWindows,
@@ -184,7 +185,7 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["coredump-upload"]: {
       type: "boolean",
-      default: isBuildkite && isLinux,
+      default: isBuildkite && isLinux && !isAndroid,
     },
     ["parallel"]: {
       type: "boolean",

@@ -172,6 +172,17 @@ pub(crate) fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> crate:
                 }
                 last = i + 1;
             }
+            0xef if matches!(str_[i..], [_, 0xbf, 0xbe | 0xbf, ..]) => {
+                // U+FFFE and U+FFFF are the only UTF-8-encodable code points outside
+                // the C0 range that XML 1.0 excludes from Char. Like the controls
+                // above they have no escaped form either, so drop the 3-byte sequence.
+                if i > last {
+                    writer.write_all(&str_[last..i])?;
+                }
+                i += 3;
+                last = i;
+                continue;
+            }
             _ => {}
         }
         i += 1;

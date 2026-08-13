@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, isWindows, tempDirWithFiles } from "harness";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -171,6 +171,53 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
   });
+});
+
+describe("shellInternals.builtinDisabled", () => {
+  // The describe.if gate above is only trustworthy if builtinDisabled() matches
+  // what the interpreter actually dispatches. The env var is read once per
+  // process, so each configuration runs in its own child. With an empty PATH a
+  // name the interpreter does not run as a builtin fails with "command not
+  // found" instead of reaching the system binary.
+  const report = /* ts */ `
+    import { $ } from "bun";
+    import { shellInternals } from "bun:internal-for-testing";
+    const out = {};
+    for (const name of ["cp", "cat", "ls", "not-a-builtin"]) {
+      const { stderr } = await $\`\${name} /definitely/missing\`.env({ PATH: "" }).nothrow().quiet();
+      out[name] = {
+        builtinDisabled: shellInternals.builtinDisabled(name),
+        ranAsBuiltin: !stderr.toString().includes("command not found: " + name),
+      };
+    }
+    console.log(JSON.stringify(out));
+  `;
+
+  test.concurrent.each([
+    ["set", "1", false],
+    ["unset", undefined, !isWindows],
+  ] as const)(
+    "agrees with dispatch when BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS is %s",
+    async (_, value, gatedDisabled) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", report],
+        env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: value },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      const gated = { builtinDisabled: gatedDisabled, ranAsBuiltin: !gatedDisabled };
+      expect(JSON.parse(stdout)).toEqual({
+        cp: gated,
+        cat: gated,
+        ls: { builtinDisabled: false, ranAsBuiltin: true },
+        "not-a-builtin": { builtinDisabled: false, ranAsBuiltin: false },
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 function expectSortedOutput(expected: string) {

@@ -23,9 +23,18 @@
 // Uses plain TCP servers / closed ports so the tests run without Docker.
 
 import { SQL } from "bun";
-import { expect, test } from "bun:test";
+import { expect, setSystemTime, test } from "bun:test";
 import type net from "node:net";
-import { closedPort, listeningServer, pgAuthenticationOk, pgErrorResponse, pgReadyForQuery } from "./wire-frames";
+import {
+  closedPort,
+  listeningServer,
+  mysqlHandshakeV10,
+  mysqlOkPacket,
+  mysqlReadPackets,
+  pgAuthenticationOk,
+  pgErrorResponse,
+  pgReadyForQuery,
+} from "./wire-frames";
 
 // connectionTimeout (seconds, fractional allowed) bounds the connect-retry
 // budget; keep it short in tests that expect the failure to surface. Tests
@@ -46,6 +55,20 @@ async function connectError(url: string, connectionTimeout = 1): Promise<any> {
 
 function postgresAuthOkAndReady(socket: net.Socket) {
   socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+}
+
+/** Minimal MySQL server: greet, then answer the HandshakeResponse with OK. */
+function mysqlGreetAndAuthOk(socket: net.Socket) {
+  let buffered = Buffer.alloc(0);
+  let authenticated = false;
+  socket.write(mysqlHandshakeV10());
+  socket.on("data", chunk => {
+    buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), seq => {
+      if (authenticated) return;
+      authenticated = true;
+      socket.write(mysqlOkPacket(seq + 1));
+    });
+  });
 }
 
 test("postgres: connection refused is reported distinctly and fails fast", async () => {
@@ -332,6 +355,81 @@ test("mysql: connectionTimeout: 0 disables connect retries", async () => {
     expect(err.code).toBe("ERR_MYSQL_CONNECTION_FAILED");
     expect(connections).toBe(1);
   } finally {
+    await db.close({ timeout: 0 });
+    server.close();
+  }
+});
+
+// The retry budget is measured on the monotonic clock, so bun:test's
+// setSystemTime() (which pins Date.now() at the given instant) neither keeps
+// the pool retrying past connectionTimeout nor ends the budget early.
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+test("postgres: the retry budget elapses while Date.now() is pinned by setSystemTime()", async () => {
+  const { port, server } = await listeningServer(socket => socket.destroy());
+  setSystemTime(new Date("2020-01-01T00:00:00Z"));
+  try {
+    // with the budget measured via Date.now() this never rejects: every
+    // attempt sees 0ms elapsed and the pool redials forever
+    const err = await connectError(`postgres://postgres@127.0.0.1:${port}/postgres`, 0.25);
+    expect(err.code).toBe("ERR_POSTGRES_CONNECTION_FAILED");
+  } finally {
+    setSystemTime();
+    server.close();
+  }
+});
+
+test("postgres: setSystemTime() jumping ahead during a connect cycle does not end the retry budget", async () => {
+  let connections = 0;
+  const { port, server } = await listeningServer(socket => {
+    if (++connections === 1) {
+      // the pool recorded the start of this cycle before the jump; a Date.now()
+      // budget would now see a day of the default 30s budget gone and give up
+      setSystemTime(new Date(Date.now() + ONE_DAY_MS));
+      socket.destroy();
+      return;
+    }
+    socket.once("data", () => postgresAuthOkAndReady(socket));
+  });
+  const db = new SQL({ url: `postgres://postgres@127.0.0.1:${port}/postgres`, max: 1 });
+  try {
+    await db.connect();
+    expect(connections).toBe(2);
+  } finally {
+    setSystemTime();
+    await db.close({ timeout: 0 });
+    server.close();
+  }
+});
+
+test("mysql: the retry budget elapses while Date.now() is pinned by setSystemTime()", async () => {
+  const { port, server } = await listeningServer(socket => socket.destroy());
+  setSystemTime(new Date("2020-01-01T00:00:00Z"));
+  try {
+    const err = await connectError(`mysql://root@127.0.0.1:${port}/mysql`, 0.25);
+    expect(err.code).toBe("ERR_MYSQL_CONNECTION_FAILED");
+  } finally {
+    setSystemTime();
+    server.close();
+  }
+});
+
+test("mysql: setSystemTime() jumping ahead during a connect cycle does not end the retry budget", async () => {
+  let connections = 0;
+  const { port, server } = await listeningServer(socket => {
+    if (++connections === 1) {
+      setSystemTime(new Date(Date.now() + ONE_DAY_MS));
+      socket.destroy();
+      return;
+    }
+    mysqlGreetAndAuthOk(socket);
+  });
+  const db = new SQL({ url: `mysql://root@127.0.0.1:${port}/mysql`, max: 1 });
+  try {
+    await db.connect();
+    expect(connections).toBe(2);
+  } finally {
+    setSystemTime();
     await db.close({ timeout: 0 });
     server.close();
   }

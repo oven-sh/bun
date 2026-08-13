@@ -596,4 +596,18 @@ pub(crate) mod internal_bindings {
         // `js_number(f64)` (i64 → f64 is lossless for the millisecond range).
         Ok(JSValue::js_number(now as f64))
     }
+
+    /// Monotonic milliseconds for deadlines Bun's own JS measures (e.g. the SQL
+    /// connect-retry budget). bun:test's `setSystemTime()` / `useFakeTimers()`
+    /// override `Date.now()` and `performance.now()` inside the engine, so a
+    /// deadline measured with either freezes or jumps along with the mocked
+    /// clock. This is the real clock the timer heap is drained against.
+    #[bun_jsc::host_fn]
+    pub(crate) fn monotonic_now_ms(
+        _global_this: &JSGlobalObject,
+        _call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let now = Timespec::now(TimespecMockMode::ForceRealTime).ms();
+        Ok(JSValue::js_number(now as f64))
+    }
 }

@@ -2599,7 +2599,7 @@ pub fn to_utf16_alloc(
         .map_err(|_| ToUTF16Error::OutOfMemory)?;
     // SAFETY: `out` has ≥ `out_length` u16 of capacity (just reserved). simdutf
     // never reads from the output buffer and writes at most `out_length` code
-    // units (the upper bound returned by `utf16_length_from_utf8`), so passing
+    // units (the upper bound returned by `simdutf__utf16_length_from_utf8`), so passing
     // uninitialised storage is sound. We only commit the length after success.
     let res = unsafe {
         simdutf::simdutf__convert_utf8_to_utf16le_with_errors(

@@ -939,11 +939,6 @@ impl WebWorker {
             if self.has_requested_terminate() {
                 break;
             }
-            // auto_tick_active() leaves rejections to the next tick(); a final turn never gets one.
-            vm.global().handle_rejected_promises();
-            if self.has_requested_terminate() {
-                break;
-            }
             if let EntryOutcome::Stop = observe_entry(vm) {
                 stopped_by_entry = true;
             }
@@ -965,6 +960,7 @@ impl WebWorker {
             // Only emit 'beforeExit' on a natural drain, not on terminate().
             // TODO: is this able to allow the event loop to continue?
             vm.as_mut().on_before_exit();
+            // Rejections left by the 'beforeExit' listeners themselves (run_command.rs: likewise).
             if !self.has_requested_terminate() {
                 vm.global().handle_rejected_promises();
             }

@@ -2099,18 +2099,56 @@ describe.concurrent("a rejection from the worker's last turn is reported", () =>
     expect(messages).toEqual([`exit handler: ${code}`]);
   });
 
-  test("rejection from work a 'beforeExit' listener scheduled", async () => {
+  // Node reports the rejection as soon as the immediate's turn is over, so the
+  // worker dies of it before 'beforeExit' would have been emitted.
+  test("the rejection is reported before 'beforeExit', which then never fires", async () => {
+    const { messages, errors, code } = await outcome(
+      `const { parentPort } = require("worker_threads");
+       process.on("beforeExit", () => parentPort.postMessage("beforeExit"));
+       process.on("exit", c => parentPort.postMessage("exit handler: " + c));
+       setImmediate(() => Promise.reject(new Error("boom")));`,
+    );
+    expect(errors).toEqual(["boom"]);
+    expect(messages).toEqual([`exit handler: ${code}`]);
+  });
+
+  // Node: the rejection is reported right after the macrotask that left it,
+  // before anything that macrotask queued (here a MessagePort delivery) runs.
+  test("it is reported before tasks the same turn queued", async () => {
+    expect(
+      await outcome(
+        `const { parentPort } = require("worker_threads");
+         const { port1, port2 } = new MessageChannel();
+         port2.on("message", () => { parentPort.postMessage("task"); port2.close(); });
+         process.on("unhandledRejection", e => parentPort.postMessage("unhandledRejection: " + e.message));
+         setImmediate(() => { port1.postMessage(0); Promise.reject(new Error("boom")); });`,
+      ),
+    ).toEqual({ messages: ["unhandledRejection: boom", "task"], errors: [], code: 0 });
+  });
+
+  test("rejection from work a 'beforeExit' listener scheduled (and 'beforeExit' is not re-emitted)", async () => {
     const { messages, errors, code } = await outcome(
       `const { parentPort } = require("worker_threads");
        process.on("exit", c => parentPort.postMessage("exit handler: " + c));
        let scheduled = false;
        process.on("beforeExit", () => {
+         parentPort.postMessage("beforeExit");
          if (scheduled) return;
          scheduled = true;
          setImmediate(() => Promise.reject(new Error("late")));
        });`,
     );
     expect(errors).toEqual(["late"]);
+    expect(messages).toEqual(["beforeExit", `exit handler: ${code}`]);
+  });
+
+  test("rejection made by a 'beforeExit' listener itself", async () => {
+    const { messages, errors, code } = await outcome(
+      `const { parentPort } = require("worker_threads");
+       process.on("exit", c => parentPort.postMessage("exit handler: " + c));
+       process.on("beforeExit", () => { Promise.reject(new Error("in beforeExit")); });`,
+    );
+    expect(errors).toEqual(["in beforeExit"]);
     expect(messages).toEqual([`exit handler: ${code}`]);
   });
 

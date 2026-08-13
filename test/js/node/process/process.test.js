@@ -932,6 +932,72 @@ describe.concurrent(() => {
       expect(exitCode).toBe(0);
     });
 
+    // A promise left rejected by the callback that drained the loop (timer, immediate,
+    // I/O) used to be reported only after 'beforeExit' had been emitted, with
+    // whatever an 'unhandledRejection' listener scheduled never running; Node
+    // reports it as soon as that callback's turn is over.
+    it("is skipped after a fatal unhandled rejection from the last callback", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("beforeExit", () => console.log("beforeExit"));
+           process.on("exit", () => console.log("exit"));
+           setTimeout(() => Promise.reject(new Error("boom")), 1);`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("exit\n");
+      expect(stderr).toInclude("error: boom");
+      expect(exitCode).toBe(1);
+    });
+
+    it("fires after the work an unhandledRejection listener scheduled from the last callback", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("unhandledRejection", e => {
+             console.log("unhandledRejection", e.message);
+             setTimeout(() => console.log("late work"), 1);
+           });
+           process.on("beforeExit", () => console.log("beforeExit"));
+           setImmediate(() => Promise.reject(new Error("boom")));`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("unhandledRejection boom\nlate work\nbeforeExit\n");
+      expect(stderr).not.toInclude("error: boom");
+      expect(exitCode).toBe(0);
+    });
+
+    it("a rejection from work scheduled inside beforeExit is reported before beforeExit is re-emitted", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("unhandledRejection", e => console.log("unhandledRejection", e.message));
+           let scheduled = false;
+           process.on("beforeExit", () => {
+             console.log("beforeExit");
+             if (scheduled) return;
+             scheduled = true;
+             setImmediate(() => Promise.reject(new Error("late")));
+           });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("beforeExit\nunhandledRejection late\nbeforeExit\n");
+      expect(stderr).not.toInclude("error: late");
+      expect(exitCode).toBe(0);
+    });
+
     it("a throw from an exit listener after a fatal throw still stops subsequent exit listeners", async () => {
       // Skipping the beforeExit dispatch also skips the call that arms
       // exit_on_uncaught_exception; on_before_exit() arms it itself so a throw

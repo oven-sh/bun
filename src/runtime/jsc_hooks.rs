@@ -1114,9 +1114,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     unsafe { (*(*vm).global).handle_rejected_promises() };
 }
 
-/// `eventLoop().autoTickActive()`. Same shape as
-/// [`auto_tick`] but: no `runImminentGCTimer`, no `handleRejectedPromises` at
-/// the tail, and no debug sleep-timer logging. Used by `bun_main` /
+/// `eventLoop().autoTickActive()`. Same shape as [`auto_tick`] but with no
+/// `runImminentGCTimer` and no debug sleep-timer logging. Used by `bun_main` /
 /// `on_before_exit` drain loops where blocking when the loop is idle would
 /// hang shutdown.
 ///
@@ -1169,6 +1168,8 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         unsafe { (*loop_).tick_without_idle() };
         // SAFETY: per fn contract.
         unsafe { (*vm).on_after_event_loop() };
+        // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+        unsafe { (*(*vm).global).handle_rejected_promises() };
         return;
     }
 
@@ -1232,6 +1233,10 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
+    // The callbacks above (immediates, I/O, timers) may have left promises rejected; a caller's
+    // next `tick()` would report them, but a loop that just went idle does not tick again.
+    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+    unsafe { (*(*vm).global).handle_rejected_promises() };
 }
 
 /// `printException` / `printErrorlikeObject` — formats `value` to stderr via

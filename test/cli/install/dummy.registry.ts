@@ -108,7 +108,10 @@ function extractTestPrefix(url: string): { prefix: string; remainingPath: string
  * @param opts - Optional configuration for the test context
  * @returns A new TestContext that should be used for all test operations
  */
-export async function createTestContext(opts?: { linker: "hoisted" | "isolated" }): Promise<TestContext> {
+export async function createTestContext(opts?: {
+  linker: "hoisted" | "isolated";
+  saveTextLockfile?: boolean;
+}): Promise<TestContext> {
   const id = `test-${++testIdCounter}`;
   const pkg_dir = tmpdirSync();
 
@@ -129,7 +132,7 @@ export async function createTestContext(opts?: { linker: "hoisted" | "isolated" 
       install: {
         cache: false,
         registry: ctx.registry_url,
-        saveTextLockfile: false,
+        saveTextLockfile: opts?.saveTextLockfile ?? false,
         linker: opts?.linker,
       },
     }),

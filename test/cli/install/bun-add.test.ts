@@ -1,3 +1,4 @@
+import type { BunLockFile } from "bun";
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
@@ -1246,6 +1247,11 @@ it("should add aliased dependency (npm)", async () => {
 });
 
 describe("npm aliases", () => {
+  type TestCase = {
+    args: string[];
+    resolved: { name: string; version: string };
+    expected: BunLockFile["workspaces"][string];
+  };
   const packageJSON = {
     name: "foo",
     version: "0.0.1",
@@ -1262,7 +1268,7 @@ describe("npm aliases", () => {
   let urls: string[];
 
   beforeEach(async () => {
-    ctx = await createTestContext({ linker: "hoisted" });
+    ctx = await createTestContext({ linker: "hoisted", saveTextLockfile: true });
     urls = [];
     const registry = dummyRegistryForContext(ctx, urls, registryVersions);
     setContextHandler(ctx, async request => {
@@ -1280,90 +1286,118 @@ describe("npm aliases", () => {
 
   afterEach(() => destroyTestContext(ctx));
 
-  test.each(
-    [
-      {
-        args: ["format@npm:baz"],
-        resolved: { name: "baz", version: "0.0.3" },
-        expected: { dependencies: { format: "npm:baz@^0.0.3" } },
-      },
-      {
-        args: ["bar@npm:@scope/baz"],
-        resolved: { name: "@scope/baz", version: "0.0.3" },
-        expected: { dependencies: { bar: "npm:@scope/baz@^0.0.3" } },
-      },
-      {
-        args: ["bar@npm:@scope/baz@latest"],
-        resolved: { name: "@scope/baz", version: "0.0.3" },
-        expected: { dependencies: { bar: "npm:@scope/baz@^0.0.3" } },
-      },
-      {
-        args: ["bar@npm:@scope/baz@rc"],
-        resolved: { name: "@scope/baz", version: "0.0.5" },
-        expected: { dependencies: { bar: "npm:@scope/baz@^0.0.5" } },
-      },
-      {
-        args: ["--exact", "bar@npm:@scope/baz"],
-        resolved: { name: "@scope/baz", version: "0.0.3" },
-        expected: { dependencies: { bar: "npm:@scope/baz@0.0.3" } },
-      },
-      {
-        args: ["bar@npm:@scope/baz@0.0.3"],
-        resolved: { name: "@scope/baz", version: "0.0.3" },
-        expected: { dependencies: { bar: "npm:@scope/baz@0.0.3" } },
-      },
-      {
-        args: ["bar@npm:@scope/baz@^0.0.3"],
-        resolved: { name: "@scope/baz", version: "0.0.3" },
-        expected: { dependencies: { bar: "npm:@scope/baz@^0.0.3" } },
-      },
-      {
-        args: ["bar@npm:@scope/baz@~0.0.2"],
-        resolved: { name: "@scope/baz", version: "0.0.3" },
-        expected: { dependencies: { bar: "npm:@scope/baz@~0.0.2" } },
-      },
-      {
-        args: ["bar@npm:@scope/baz@>=0.0.2"],
-        resolved: { name: "@scope/baz", version: "0.0.3" },
-        expected: { dependencies: { bar: "npm:@scope/baz@>=0.0.2" } },
-      },
-      {
-        args: ["--dev", "bar@npm:@scope/baz"],
-        resolved: { name: "@scope/baz", version: "0.0.3" },
-        expected: { devDependencies: { bar: "npm:@scope/baz@^0.0.3" } },
-      },
-      {
-        args: ["--optional", "bar@npm:@scope/baz"],
-        resolved: { name: "@scope/baz", version: "0.0.3" },
-        expected: { optionalDependencies: { bar: "npm:@scope/baz@^0.0.3" } },
-      },
-      {
-        args: ["--peer", "bar@npm:@scope/baz"],
-        resolved: { name: "@scope/baz", version: "0.0.3" },
-        expected: { peerDependencies: { bar: "npm:@scope/baz@^0.0.3" } },
-      },
-    ].map(testCase => ({ ...testCase, command: `bun add ${testCase.args.join(" ")}` })),
-  )("$command", async ({ args, resolved, expected }) => {
-    const { stderr, exited } = spawn({
-      cmd: [bunExe(), "add", ...args],
-      cwd: ctx.package_dir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
-    });
+  const testCases: TestCase[] = [
+    {
+      args: ["format@npm:baz"],
+      resolved: { name: "baz", version: "0.0.3" },
+      expected: { dependencies: { format: "npm:baz@^0.0.3" } },
+    },
+    {
+      args: ["bar@npm:@scope/baz"],
+      resolved: { name: "@scope/baz", version: "0.0.3" },
+      expected: { dependencies: { bar: "npm:@scope/baz@^0.0.3" } },
+    },
+    {
+      args: ["bar@npm:@scope/baz@latest"],
+      resolved: { name: "@scope/baz", version: "0.0.3" },
+      expected: { dependencies: { bar: "npm:@scope/baz@^0.0.3" } },
+    },
+    {
+      args: ["bar@npm:@scope/baz@rc"],
+      resolved: { name: "@scope/baz", version: "0.0.5" },
+      expected: { dependencies: { bar: "npm:@scope/baz@^0.0.5" } },
+    },
+    {
+      args: ["--exact", "bar@npm:@scope/baz"],
+      resolved: { name: "@scope/baz", version: "0.0.3" },
+      expected: { dependencies: { bar: "npm:@scope/baz@0.0.3" } },
+    },
+    {
+      args: ["bar@npm:@scope/baz@0.0.3"],
+      resolved: { name: "@scope/baz", version: "0.0.3" },
+      expected: { dependencies: { bar: "npm:@scope/baz@0.0.3" } },
+    },
+    {
+      args: ["bar@npm:@scope/baz@^0.0.3"],
+      resolved: { name: "@scope/baz", version: "0.0.3" },
+      expected: { dependencies: { bar: "npm:@scope/baz@^0.0.3" } },
+    },
+    {
+      args: ["bar@npm:@scope/baz@~0.0.2"],
+      resolved: { name: "@scope/baz", version: "0.0.3" },
+      expected: { dependencies: { bar: "npm:@scope/baz@~0.0.2" } },
+    },
+    {
+      args: ["bar@npm:@scope/baz@>=0.0.2"],
+      resolved: { name: "@scope/baz", version: "0.0.3" },
+      expected: { dependencies: { bar: "npm:@scope/baz@>=0.0.2" } },
+    },
+    {
+      args: ["--dev", "bar@npm:@scope/baz"],
+      resolved: { name: "@scope/baz", version: "0.0.3" },
+      expected: { devDependencies: { bar: "npm:@scope/baz@^0.0.3" } },
+    },
+    {
+      args: ["--optional", "bar@npm:@scope/baz"],
+      resolved: { name: "@scope/baz", version: "0.0.3" },
+      expected: { optionalDependencies: { bar: "npm:@scope/baz@^0.0.3" } },
+    },
+    {
+      args: ["--peer", "bar@npm:@scope/baz"],
+      resolved: { name: "@scope/baz", version: "0.0.3" },
+      expected: { peerDependencies: { bar: "npm:@scope/baz@^0.0.3" } },
+    },
+  ];
 
-    expect(await stderr.text()).toContain("Saved lockfile");
-    expect(await exited).toBe(0);
-    expect(urls.sort()).toEqual([
-      `${ctx.registry_url}${resolved.name.replace("/", "%2f")}`,
-      `${ctx.registry_url}${resolved.name}-${resolved.version}.tgz`,
-    ]);
-    expect(await file(join(ctx.package_dir, "package.json")).json()).toEqual({
-      ...packageJSON,
-      ...expected,
-    });
-  });
+  test.each(testCases.map(testCase => ({ ...testCase, command: `bun add ${testCase.args.join(" ")}` })))(
+    "$command",
+    async ({ args, resolved, expected }) => {
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), "add", ...args],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      expect(await stderr.text()).toContain("Saved lockfile");
+      expect(await exited).toBe(0);
+      expect(urls.sort()).toEqual([
+        `${ctx.registry_url}${resolved.name.replace("/", "%2f")}`,
+        `${ctx.registry_url}${resolved.name}-${resolved.version}.tgz`,
+      ]);
+      expect(await file(join(ctx.package_dir, "package.json")).json()).toEqual({
+        ...packageJSON,
+        ...expected,
+      });
+
+      const lockfilePath = join(ctx.package_dir, "bun.lock");
+      const lockfile: BunLockFile = await import(lockfilePath);
+      expect(lockfile.workspaces[""]).toEqual({ name: packageJSON.name, ...expected });
+
+      const dependencyRecord = Object.values(expected)[0];
+      if (dependencyRecord === null || typeof dependencyRecord !== "object" || Array.isArray(dependencyRecord)) {
+        throw new Error("Expected a dependency record");
+      }
+      const [alias] = Object.keys(dependencyRecord);
+      expect(lockfile.packages[alias]?.[0]).toBe(`${resolved.name}@${resolved.version}`);
+
+      const frozenInstall = spawn({
+        cmd: [bunExe(), "install", "--frozen-lockfile", "--lockfile-only"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      expect(await frozenInstall.stderr.text()).toContain("Saved lockfile");
+      expect(await frozenInstall.exited).toBe(0);
+
+      const lockfileAfterFrozenInstall: BunLockFile = await import(`${lockfilePath}?after-frozen-install`);
+      expect(lockfileAfterFrozenInstall).toEqual(lockfile);
+    },
+  );
 });
 
 it("should add aliased dependency (GitHub)", async () => {

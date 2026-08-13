@@ -716,6 +716,7 @@ impl Lockfile {
                 let old_resolutions: &[PackageID] =
                     old_resolutions_list.get(old.buffers.resolutions.as_slice());
                 let resolutions_of_yore: &[Resolution] = old.packages.items_resolution();
+                let package_names = old.packages.items_name();
                 let packages_len = old.packages.len();
 
                 for update in updates.iter() {
@@ -728,19 +729,33 @@ impl Lockfile {
                                 }
                                 let res = resolutions_of_yore[old_resolution as usize];
                                 if res.tag != ResolutionTag::Npm
-                                    || update.version.tag != dependency::Tag::DistTag
+                                    || (update.version.tag != dependency::Tag::DistTag
+                                        && !update.resolve_npm_alias)
                                 {
                                     continue;
                                 }
 
-                                // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
+                                // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~)
 
                                 let npm_ver = res.npm().version;
-                                let len = bun_core::fmt::count(format_args!(
-                                    "{}{}",
-                                    if exact_versions { "" } else { "^" },
-                                    npm_ver.fmt(string_builder.string_bytes.as_slice()),
-                                ));
+                                let string_buf = string_builder.string_bytes.as_slice();
+                                let len = if update.resolve_npm_alias {
+                                    bun_core::fmt::count(format_args!(
+                                        "npm:{}@{}{}",
+                                        bstr::BStr::new(
+                                            package_names[old_resolution as usize]
+                                                .slice(string_buf)
+                                        ),
+                                        if exact_versions { "" } else { "^" },
+                                        npm_ver.fmt(string_buf),
+                                    ))
+                                } else {
+                                    bun_core::fmt::count(format_args!(
+                                        "{}{}",
+                                        if exact_versions { "" } else { "^" },
+                                        npm_ver.fmt(string_buf),
+                                    ))
+                                };
 
                                 if len >= SemverString::MAX_INLINE_LEN {
                                     string_builder.cap += len;
@@ -759,8 +774,6 @@ impl Lockfile {
             // the only fallible call above is `allocate()`, which precedes this point).
 
             {
-                let mut temp_buf = [0u8; 513];
-
                 let root_deps: &mut [Dependency] =
                     root_deps_list.mut_(old.buffers.dependencies.as_mut_slice());
                 let old_resolutions_list_lists = old.packages.items_resolutions();
@@ -769,6 +782,7 @@ impl Lockfile {
                 let old_resolutions: &[PackageID] =
                     old_resolutions_list.get(old.buffers.resolutions.as_slice());
                 let resolutions_of_yore: &[Resolution] = old.packages.items_resolution();
+                let package_names = old.packages.items_name();
                 let packages_len = old.packages.len();
 
                 for update in updates.iter_mut() {
@@ -783,32 +797,41 @@ impl Lockfile {
                                 }
                                 let res = resolutions_of_yore[old_resolution as usize];
                                 if res.tag != ResolutionTag::Npm
-                                    || update.version.tag != dependency::Tag::DistTag
+                                    || (update.version.tag != dependency::Tag::DistTag
+                                        && !update.resolve_npm_alias)
                                 {
                                     continue;
                                 }
 
-                                // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
+                                // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~)
 
                                 let npm_ver = res.npm().version;
-                                let buf = {
-                                    let mut cursor: &mut [u8] = &mut temp_buf[..];
-                                    let start_len = cursor.len();
-                                    if write!(
-                                        cursor,
+                                let string_buf = string_builder.string_bytes.as_slice();
+                                let mut buf = Vec::new();
+                                if update.resolve_npm_alias {
+                                    write!(
+                                        &mut buf,
+                                        "npm:{}@{}{}",
+                                        bstr::BStr::new(
+                                            package_names[old_resolution as usize]
+                                                .slice(string_buf)
+                                        ),
+                                        if exact_versions { "" } else { "^" },
+                                        npm_ver.fmt(string_buf),
+                                    )
+                                    .expect("infallible: in-memory write");
+                                } else {
+                                    write!(
+                                        &mut buf,
                                         "{}{}",
                                         if exact_versions { "" } else { "^" },
-                                        npm_ver.fmt(string_builder.string_bytes.as_slice()),
+                                        npm_ver.fmt(string_buf),
                                     )
-                                    .is_err()
-                                    {
-                                        break;
-                                    }
-                                    let written = start_len - cursor.len();
-                                    &temp_buf[..written]
-                                };
+                                    .expect("infallible: in-memory write");
+                                }
 
-                                let external_version = string_builder.append::<ExternalString>(buf);
+                                let external_version =
+                                    string_builder.append::<ExternalString>(&buf);
                                 let sliced = external_version
                                     .value
                                     .sliced(string_builder.string_bytes.as_slice());

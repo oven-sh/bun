@@ -353,6 +353,11 @@ expectType<Promise<string>>(wrappedGenericMock(async () => "hi"));
 genericMock.mockClear();
 expectType<number>(genericMock.mock.calls.length);
 
+const genericJestFn = jest.fn(async <T>(callback: () => PromiseLike<T>): Promise<T> => callback());
+const wrappedGenericJestFn: <T>(callback: () => PromiseLike<T>) => Promise<T> = genericJestFn;
+expectType<Promise<number>>(genericJestFn(async () => 42));
+void wrappedGenericJestFn;
+
 const genericSpyTarget = {
   run: async <T>(callback: () => PromiseLike<T>): Promise<T> => callback(),
 };

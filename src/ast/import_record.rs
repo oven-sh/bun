@@ -103,7 +103,9 @@ pub enum Tag {
     Bun,
     /// A builtin module, such as `node:fs` or `bun:sqlite`
     Builtin,
-    /// `require('bindings')('<name>')`; path holds the addon name to resolve.
+    /// Produced from `require("bindings")(name)`: the path is the addon's file
+    /// name (`name.node`), which `resolve_import_records` looks up the way the
+    /// `bindings` package would before resolving the record normally.
     NativeBindings,
     /// An import to the internal runtime
     Runtime,

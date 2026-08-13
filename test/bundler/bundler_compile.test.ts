@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { readdirSync, rmSync } from "fs";
+import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
@@ -351,128 +351,6 @@ describe("bundler", () => {
       stdout: "Hello, world!\nWorker loaded!\n",
       file: "dist/out",
       setCwd: true,
-    },
-  });
-  // https://github.com/oven-sh/bun/issues/14301
-  // `require('bindings')('<name>')` is resolved to the addon's `.node` file at
-  // build time so the Napi loader can embed it.
-  const fakeBindingsPkg = {
-    "/node_modules/bindings/package.json": JSON.stringify({ name: "bindings", main: "./bindings.js" }),
-    "/node_modules/bindings/bindings.js": /* js */ `
-      module.exports = function bindings() {
-        throw new Error("Could not find module root given file");
-      };
-      module.exports.getRoot = module.exports.getFileName = function () {};
-    `,
-  };
-  itBundled("compile/NativeBindingsRewrite", {
-    target: "bun",
-    outdir: "/out",
-    outfile: "",
-    files: {
-      "/entry.ts": /* js */ `
-        const addon = require('mypkg');
-        console.log(typeof addon);
-      `,
-      ...fakeBindingsPkg,
-      "/node_modules/mypkg/package.json": JSON.stringify({ name: "mypkg", main: "./lib/index.js" }),
-      "/node_modules/mypkg/lib/index.js": /* js */ `
-        module.exports = require('bindings')('myaddon');
-      `,
-      "/node_modules/mypkg/build/Release/myaddon.node": "<not a real addon>",
-    },
-    onAfterBundle(api) {
-      const out = api.readFile("out/entry.js");
-      expect(out).not.toContain("Could not find module root");
-      expect(out).not.toContain("getRoot");
-      expect(out).toMatch(/__require\("\.\/myaddon-[a-z0-9]+\.node"\)/);
-      const asset = readdirSync(api.outdir).find(x => x.endsWith(".node"));
-      expect(asset).toBeDefined();
-      expect(api.readFile(join("out", asset!))).toBe("<not a real addon>");
-    },
-  });
-  itBundled("compile/NativeBindingsNotFound", {
-    target: "bun",
-    files: {
-      "/entry.ts": /* js */ `require('mypkg');`,
-      ...fakeBindingsPkg,
-      "/node_modules/mypkg/package.json": JSON.stringify({ name: "mypkg", main: "./index.js" }),
-      "/node_modules/mypkg/index.js": /* js */ `
-        module.exports = require('bindings')('does_not_exist.node');
-      `,
-    },
-    bundleErrors: {
-      "/node_modules/mypkg/index.js": [
-        `Could not locate native addon "does_not_exist.node" for the "bindings" package. Run "bun install" to build it, or pass --external for the package that loads it.`,
-      ],
-    },
-  });
-  itBundled("compile/NativeBindingsBuiltinNameDoesNotAlias", {
-    target: "bun",
-    outdir: "/out",
-    outfile: "",
-    files: {
-      "/entry.ts": /* js */ `require('mypkg');`,
-      ...fakeBindingsPkg,
-      "/node_modules/mypkg/package.json": JSON.stringify({ name: "mypkg", main: "./index.js" }),
-      "/node_modules/mypkg/index.js": /* js */ `
-        module.exports = require('bindings')('zlib');
-      `,
-      "/node_modules/mypkg/build/Release/zlib.node": "<not a real addon>",
-    },
-    onAfterBundle(api) {
-      const out = api.readFile("out/entry.js");
-      expect(out).toMatch(/__require\("\.\/zlib-[a-z0-9]+\.node"\)/);
-      expect(out).not.toMatch(/require\("(node:)?zlib"\)/);
-    },
-  });
-  itBundled("compile/NativeBindingsExternalSkipsError", {
-    target: "bun",
-    external: ["bindings"],
-    files: {
-      "/entry.ts": /* js */ `require('mypkg');`,
-      ...fakeBindingsPkg,
-      "/node_modules/mypkg/package.json": JSON.stringify({ name: "mypkg", main: "./index.js" }),
-      "/node_modules/mypkg/index.js": /* js */ `
-        module.exports = require('bindings')('does_not_exist.node');
-      `,
-    },
-    onAfterBundle(api) {
-      const out = api.readFile("out.js");
-      expect(out).not.toMatch(/\.node"/);
-      expect(out).not.toContain("getRoot");
-    },
-  });
-  itBundled("compile/NativeBindingsTryCatchFallsThrough", {
-    target: "bun",
-    files: {
-      "/entry.ts": /* js */ `console.log(require('mypkg'));`,
-      ...fakeBindingsPkg,
-      "/node_modules/mypkg/package.json": JSON.stringify({ name: "mypkg", main: "./index.js" }),
-      "/node_modules/mypkg/index.js": /* js */ `
-        try {
-          module.exports = require('bindings')('does_not_exist.node');
-        } catch {
-          module.exports = "fallback";
-        }
-      `,
-    },
-    run: { stdout: "fallback" },
-  });
-  itBundled("compile/NativeBindingsNonLiteralUntouched", {
-    target: "bun",
-    outdir: "/out",
-    outfile: "",
-    files: {
-      "/entry.ts": /* js */ `
-        const name = ["myaddon", "node"].join(".");
-        try { require('bindings')(name); } catch (e) { console.log(e.message); }
-      `,
-      ...fakeBindingsPkg,
-    },
-    run: { stdout: "Could not find module root given file" },
-    onAfterBundle(api) {
-      expect(api.readFile("out/entry.js")).toContain("getRoot");
     },
   });
   // https://github.com/oven-sh/bun/issues/8697

@@ -939,7 +939,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    pub fn is_external_pattern(&self, import_path: &[u8]) -> bool {
+    pub(crate) fn is_external_pattern(&self, import_path: &[u8]) -> bool {
         if self.opts.packages == options::Packages::External && is_package_path(import_path) {
             return true;
         }
@@ -1542,6 +1542,61 @@ impl<'a> Resolver<'a> {
             }
         }
         self.resolve(source_dir, import_path, kind)
+    }
+
+    /// Locates the addon `require("bindings")(file_name)` would load at
+    /// runtime: the nearest directory above `source_dir` holding a
+    /// `package.json` or a `node_modules` folder is the module root, and the
+    /// file is looked for in the build output directories the `bindings`
+    /// package probes, in its order. Entries whose location depends on the
+    /// running Node version (`compiled/`, `lib/binding/`) are not probed.
+    pub fn resolve_bindings_addon(
+        &mut self,
+        source_dir: &[u8],
+        file_name: &[u8],
+    ) -> Option<&'static [u8]> {
+        const BUILD_DIRS: &[&[u8]] = &[
+            b"build",
+            b"build/Debug",
+            b"build/Release",
+            b"out/Debug",
+            b"Debug",
+            b"out/Release",
+            b"Release",
+            b"build/default",
+            b"addon-build/release/install-root",
+            b"addon-build/debug/install-root",
+            b"addon-build/default/install-root",
+        ];
+
+        let mut dir = self.read_dir_info_ignore_error(source_dir)?;
+        let module_root = loop {
+            if dir.package_json().is_some() || dir.has_node_modules() {
+                break dir.abs_path;
+            }
+            dir = dir.get_parent()?;
+        };
+
+        let mut buf = bun_paths::path_buffer_pool::get();
+        for build_dir in BUILD_DIRS {
+            let Some(candidate) = self
+                .fs_ref()
+                .abs_buf_checked(&[module_root, build_dir, file_name], &mut **buf)
+            else {
+                continue;
+            };
+            if let Some(found) = self.load_as_file(candidate, options::ExtOrder::DefaultDefault) {
+                return Some(found.path);
+            }
+        }
+        None
+    }
+
+    /// Whether a bare import of `package_name` is left external by the
+    /// user's `--external` / `--packages=external` configuration.
+    pub fn is_package_external(&self, package_name: &[u8]) -> bool {
+        self.opts.external.node_modules.contains(package_name)
+            || self.is_external_pattern(package_name)
     }
 
     pub(crate) fn finalize_result(

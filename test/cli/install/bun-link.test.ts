@@ -515,7 +515,10 @@ describe.each(["hoisted", "isolated"])("link: with a filesystem path (%s)", link
 
   it("treats a bare relative path (no ./) as a path, and stores it as ./", async () => {
     await mkdir(join(package_dir, "lib", "bare"), { recursive: true });
-    await writeFile(join(package_dir, "lib", "bare", "package.json"), JSON.stringify({ name: "bare", version: "1.0.0" }));
+    await writeFile(
+      join(package_dir, "lib", "bare", "package.json"),
+      JSON.stringify({ name: "bare", version: "1.0.0" }),
+    );
     await writeFile(
       join(package_dir, "package.json"),
       JSON.stringify({ name: "root", dependencies: { bare: "link:lib/bare" } }),

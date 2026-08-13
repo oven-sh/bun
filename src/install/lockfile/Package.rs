@@ -1900,7 +1900,8 @@ impl Package<u64> {
                     let relative =
                         resolve_path::relative(FileSystem::instance().top_level_dir(), joined);
                     let mut stored_buf = PathBuffer::uninit();
-                    let Some(stored) = dependency::link_path_for_lockfile(relative, &mut stored_buf)
+                    let Some(stored) =
+                        dependency::link_path_for_lockfile(relative, &mut stored_buf)
                     else {
                         log.add_error_fmt(
                             source,

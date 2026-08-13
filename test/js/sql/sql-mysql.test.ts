@@ -378,6 +378,28 @@ if (isDockerEnabled()) {
           expect(connAfter).not.toBe(connBefore);
         }, 30_000);
 
+        test("Max lifetime does not kill an in-flight parameterized query (#30646)", async () => {
+          const onClosePromise = Promise.withResolvers();
+          const onclose = mock(err => {
+            onClosePromise.resolve(err);
+          });
+          await using sql = new SQL({
+            ...getOptions(),
+            max_lifetime: 1,
+            onclose,
+            max: 1,
+          });
+
+          // A parameterized query goes through COM_STMT_PREPARE before
+          // execute; retirement must wait for the query to finish.
+          const result = await sql`select SLEEP(2) as s, ${42} as x`;
+          expect(result[0].x).toBe(42);
+
+          const err = await onClosePromise.promise;
+          expect(err).toBeInstanceOf(SQL.MySQLError);
+          expect((err as SQL.MySQLError).code).toBe(`ERR_MYSQL_LIFETIME_TIMEOUT`);
+        }, 30_000);
+
         // Last one wins.
         test("Handles duplicate string column names", async () => {
           const result = await sql`select 1 as x, 2 as x, 3 as x`;

@@ -11,7 +11,6 @@
 
 use core::cell::Cell;
 #[cfg(unix)]
-use core::ffi::c_ulong;
 use core::ffi::{c_int, c_void};
 #[cfg(windows)]
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -1571,10 +1570,6 @@ impl Terminal {
 
         #[cfg(unix)]
         {
-            #[cfg(target_os = "macos")]
-            const TIOCSWINSZ: c_ulong = 0x80087467;
-            #[cfg(not(target_os = "macos"))]
-            const TIOCSWINSZ: c_ulong = 0x5414;
 
             let winsize = bun_core::Winsize {
                 row: new_rows,
@@ -1588,7 +1583,7 @@ impl Terminal {
             let ioctl_result = unsafe {
                 libc::ioctl(
                     self.master_fd.get().native(),
-                    TIOCSWINSZ as _,
+                    libc::TIOCSWINSZ as _,
                     &raw const winsize,
                 )
             };

@@ -306,7 +306,11 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
     await once(server.listen(0, "127.0.0.1"), "listening");
     try {
       const { port } = server.address() as import("node:net").AddressInfo;
-      expect(async () => await fetch(`http://127.0.0.1:${port}/`)).toThrow("UnsupportedTransferEncoding");
+      await expect(fetch(`http://127.0.0.1:${port}/`)).rejects.toMatchObject({
+        name: "TypeError",
+        code: "UnsupportedTransferEncoding",
+        cause: expect.objectContaining({ code: "UnsupportedTransferEncoding" }),
+      });
     } finally {
       server.close();
     }

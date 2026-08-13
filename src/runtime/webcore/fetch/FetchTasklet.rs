@@ -1326,6 +1326,8 @@ impl FetchTasklet {
         }
 
         let fail = self.result.fail.unwrap();
+        // Headers already delivered: a body failure, which undici reports as "terminated".
+        let terminated = self.metadata.is_some();
 
         if fail == http::Error::RequestBodyNotReusable {
             return BodyValueError::TypeError(BunString::static_(
@@ -1360,15 +1362,22 @@ impl FetchTasklet {
                     hostname,
                 );
                 err.path = path.into();
-                return BodyValueError::SystemTypeError(err);
+                return BodyValueError::FetchFailed {
+                    cause: err,
+                    terminated,
+                };
             }
         }
 
-        let code = if fail == http::Error::ConnectionClosed {
-            BunString::static_("ECONNRESET")
-        } else {
-            BunString::static_(fail.name())
+        // Failures with a libuv equivalent use node's code/errno/syscall; the rest keep their `http::Error` name.
+        let (code, errno, syscall) = match fail {
+            http::Error::ConnectionRefused => {
+                ("ECONNREFUSED", -bun_sys::UV_E::CONNREFUSED, Some("connect"))
+            }
+            http::Error::ConnectionClosed => ("ECONNRESET", -bun_sys::UV_E::CONNRESET, None),
+            _ => (fail.name(), 0, None),
         };
+        let code = BunString::static_(code);
 
         let message = match fail {
             http::Error::ConnectionClosed => BunString::static_(
@@ -1593,14 +1602,16 @@ impl FetchTasklet {
             )),
         };
 
-        let fetch_error = jsc::SystemError {
+        let cause = jsc::SystemError {
+            errno,
             code: code.into(),
             message: message.into(),
             path: path.into(),
+            syscall: syscall.map_or(BunString::EMPTY, BunString::static_).into(),
             ..Default::default()
         };
 
-        BodyValueError::SystemTypeError(fetch_error)
+        BodyValueError::FetchFailed { cause, terminated }
     }
 
     fn on_readable_stream_available(

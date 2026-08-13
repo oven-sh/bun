@@ -6696,6 +6696,8 @@ impl<'a> Resolver<'a> {
                         if parent_configs.append(current_ptr).is_err() {
                             // Degenerate >64-config extends tree (or a cycle):
                             // drop this config and merge what was collected.
+                            // SAFETY: `current_ptr` came from `heap::into_raw` and the
+                            // failed append left this scope its sole owner.
                             TSConfigJSON::destroy(unsafe { bun_core::heap::take(current_ptr) });
                             break 'walk;
                         }
@@ -6727,6 +6729,8 @@ impl<'a> Resolver<'a> {
                                     if worklist.append(raw).is_err() {
                                         // Degenerate >64-config extends tree (or a
                                         // cycle): drop this base and stop walking.
+                                        // SAFETY: `raw` came from `heap::into_raw` just
+                                        // above and was never stored anywhere.
                                         TSConfigJSON::destroy(unsafe { bun_core::heap::take(raw) });
                                         break 'walk;
                                     }
@@ -6754,6 +6758,8 @@ impl<'a> Resolver<'a> {
                     // is still merged (and freed) rather than leaked.
                     while let Some(pending) = worklist.pop() {
                         if parent_configs.append(pending).is_err() {
+                            // SAFETY: `pending` came from `heap::into_raw`; popped off
+                            // the worklist, this scope is its sole owner.
                             TSConfigJSON::destroy(unsafe { bun_core::heap::take(pending) });
                         }
                     }

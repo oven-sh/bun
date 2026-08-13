@@ -322,11 +322,7 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_mark_wrote_content_length_header(Self::ssl_flag(), self.as_raw())
     }
 
-    /// The body is a file of known size being delivered by the runtime under
-    /// a Content-Length that is already on the wire. uWS then finishes it after
-    /// a peer FIN (`HttpContext::onEnd`) the way it drains a `try_end` tail,
-    /// instead of closing on the FIN as it does for a body the application is
-    /// still producing.
+    /// Sets `HTTP_FIXED_LENGTH_FILE_BODY`; see `HttpResponseData.h`.
     pub(crate) fn mark_fixed_length_file_body(&mut self) {
         c::uws_res_mark_fixed_length_file_body(Self::ssl_flag(), self.as_raw())
     }

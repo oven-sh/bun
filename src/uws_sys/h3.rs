@@ -145,8 +145,7 @@ impl Response {
     pub(crate) fn mark_wrote_content_length_header(&mut self) {
         c::uws_h3_res_mark_wrote_content_length_header(self)
     }
-    /// Only consulted by the TCP peer-FIN handling in `HttpContext::onEnd`;
-    /// an H3 stream has no equivalent.
+    /// No-op: only the TCP peer-FIN handling reads this bit.
     pub(crate) fn mark_fixed_length_file_body(&mut self) {}
     pub(crate) fn mark_wrote_date_header(&mut self) {
         c::uws_h3_res_mark_wrote_date_header(self)

@@ -4244,8 +4244,12 @@ it("survives aborted uploads while responding with a tee()d request-body branch"
 describe("a client half-close after the request does not truncate a large response body", () => {
   const BODY = 8 * 1024 * 1024;
 
+  // The advertised Content-Length, the body bytes actually delivered, and
+  // whether the server closed cleanly (FIN rather than a reset).
+  const WHOLE_RESPONSE = { contentLength: BODY, body: BODY, ended: true };
+
   function countBody(socket: net.Socket | nodeTls.TLSSocket) {
-    const out = { body: 0, ended: false };
+    const out = { contentLength: -1, body: 0, ended: false };
     let head = "";
     let gotHead = false;
     socket.on("data", chunk => {
@@ -4254,6 +4258,7 @@ describe("a client half-close after the request does not truncate a large respon
         const i = head.indexOf("\r\n\r\n");
         if (i >= 0) {
           gotHead = true;
+          out.contentLength = Number(/^content-length:\s*(\d+)/im.exec(head.slice(0, i))?.[1] ?? -1);
           out.body = Buffer.byteLength(head.slice(i + 4), "latin1");
         }
       } else {
@@ -4265,7 +4270,7 @@ describe("a client half-close after the request does not truncate a large respon
     return out;
   }
 
-  async function halfCloseRequest(port: number, secure = false): Promise<{ body: number; ended: boolean }> {
+  async function halfCloseRequest(port: number, secure = false): Promise<typeof WHOLE_RESPONSE> {
     const socket = secure
       ? nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
       : connect(port, "127.0.0.1");
@@ -4286,7 +4291,7 @@ describe("a client half-close after the request does not truncate a large respon
       port: 0,
       fetch: () => new Response(Buffer.alloc(BODY, "a"), { headers: { "content-length": String(BODY) } }),
     });
-    expect(await halfCloseRequest(server.port)).toEqual({ body: BODY, ended: true });
+    expect(await halfCloseRequest(server.port)).toEqual(WHOLE_RESPONSE);
   });
 
   it("static route (tryEnd tail)", async () => {
@@ -4297,7 +4302,7 @@ describe("a client half-close after the request does not truncate a large respon
       },
       fetch: () => new Response("miss", { status: 404 }),
     });
-    expect(await halfCloseRequest(server.port)).toEqual({ body: BODY, ended: true });
+    expect(await halfCloseRequest(server.port)).toEqual(WHOLE_RESPONSE);
   });
 
   it("https fetch handler (tryEnd tail)", async () => {
@@ -4306,7 +4311,7 @@ describe("a client half-close after the request does not truncate a large respon
       tls,
       fetch: () => new Response(Buffer.alloc(BODY, "a"), { headers: { "content-length": String(BODY) } }),
     });
-    expect(await halfCloseRequest(server.port, true)).toEqual({ body: BODY, ended: true });
+    expect(await halfCloseRequest(server.port, true)).toEqual(WHOLE_RESPONSE);
   });
 
   // A file body is not handed to uWS up front: FileResponseStream writes the
@@ -4319,7 +4324,7 @@ describe("a client half-close after the request does not truncate a large respon
   it("fetch handler returning Bun.file() (file body)", async () => {
     using dir = bigFile("half-close-file");
     using server = serve({ port: 0, fetch: () => new Response(file(join(String(dir), "big.bin"))) });
-    expect(await halfCloseRequest(server.port)).toEqual({ body: BODY, ended: true });
+    expect(await halfCloseRequest(server.port)).toEqual(WHOLE_RESPONSE);
   });
 
   it("Bun.file() route (file body)", async () => {
@@ -4329,13 +4334,13 @@ describe("a client half-close after the request does not truncate a large respon
       routes: { "/": file(join(String(dir), "big.bin")) },
       fetch: () => new Response("miss", { status: 404 }),
     });
-    expect(await halfCloseRequest(server.port)).toEqual({ body: BODY, ended: true });
+    expect(await halfCloseRequest(server.port)).toEqual(WHOLE_RESPONSE);
   });
 
   it("https fetch handler returning Bun.file() (file body)", async () => {
     using dir = bigFile("half-close-file-tls");
     using server = serve({ port: 0, tls, fetch: () => new Response(file(join(String(dir), "big.bin"))) });
-    expect(await halfCloseRequest(server.port, true)).toEqual({ body: BODY, ended: true });
+    expect(await halfCloseRequest(server.port, true)).toEqual(WHOLE_RESPONSE);
   });
 
   // The deferred connection must close promptly, not spin the writable

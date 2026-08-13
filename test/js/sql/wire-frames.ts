@@ -104,9 +104,47 @@ export function pgAuthenticationSASL(mechanisms: string[] = ["SCRAM-SHA-256"]): 
   return pgRaw("R", body);
 }
 
-// PostgreSQL FE/BE protocol §55.7 ParameterStatus: Byte1('S') Int32(len) String(name) String(value)
-export function pgParameterStatus(name: string, value: string): Buffer {
-  return pgRaw("S", Buffer.concat([pgCString(name), pgCString(value)]));
+// PostgreSQL FE/BE protocol §55.7 AuthenticationSASLContinue: Byte1('R') Int32(len) Int32(11) Byte[n](SASL server-first-message)
+export function pgAuthenticationSASLContinue(serverFirstMessage: string): Buffer {
+  return pgRaw("R", Buffer.concat([pgInt32(11), Buffer.from(serverFirstMessage, "utf-8")]));
+}
+
+// PostgreSQL FE/BE protocol §55.7 AuthenticationSASLFinal: Byte1('R') Int32(len) Int32(12) Byte[n](SASL server-final-message)
+export function pgAuthenticationSASLFinal(serverFinalMessage: string): Buffer {
+  return pgRaw("R", Buffer.concat([pgInt32(12), Buffer.from(serverFinalMessage, "utf-8")]));
+}
+
+/**
+ * Parse a frontend StartupMessage (§55.7: Int32(len) Int32(196608) then
+ * String(key) String(value) pairs ending in a lone NUL; no type byte) into its
+ * parameters. Returns null until `buffered` holds the whole message, otherwise
+ * the parameters and the bytes that followed the message.
+ */
+export function pgParseStartupMessage(buffered: Buffer): { params: Record<string, string>; rest: Buffer } | null {
+  if (buffered.length < 8) return null;
+  const len = buffered.readInt32BE(0);
+  if (buffered.length < len) return null;
+  const params: Record<string, string> = {};
+  let offset = 8;
+  while (offset < len && buffered[offset] !== 0) {
+    const keyEnd = buffered.indexOf(0, offset);
+    const valueEnd = buffered.indexOf(0, keyEnd + 1);
+    params[buffered.toString("utf-8", offset, keyEnd)] = buffered.toString("utf-8", keyEnd + 1, valueEnd);
+    offset = valueEnd + 1;
+  }
+  return { params, rest: buffered.subarray(len) };
+}
+
+// Parse the body of a frontend SASLInitialResponse (§55.7: String(mechanism)
+// Int32(len) Byte[len](client-first-message); type byte 'p' already stripped).
+export function pgParseSASLInitialResponse(body: Buffer): { mechanism: string; clientFirstMessage: string } {
+  const mechanismEnd = body.indexOf(0);
+  const len = body.readInt32BE(mechanismEnd + 1);
+  const start = mechanismEnd + 5;
+  return {
+    mechanism: body.toString("utf-8", 0, mechanismEnd),
+    clientFirstMessage: body.toString("utf-8", start, start + len),
+  };
 }
 
 // PostgreSQL FE/BE protocol §55.7 ReadyForQuery: Byte1('Z') Int32(5) Byte1(status)

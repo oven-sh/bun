@@ -256,11 +256,11 @@ fn encode_err_to_js(global: &JSGlobalObject, err: EncodeError) -> bun_jsc::JsErr
             max_bits,
             need_bits,
         } => global.throw_range_error(
-            need_bits as i64,
+            i64::try_from(need_bits).unwrap_or(i64::MAX),
             bun_jsc::RangeErrorOptions {
-                max: max_bits as i64,
+                max: i64::try_from(max_bits).unwrap_or(i64::MAX),
                 field_name: b"data bit length",
-                msg: b"Input is too long to encode as a QR code at the requested error correction level and version",
+                msg: b"Input is too long to encode as a QR code",
                 ..Default::default()
             },
         ),
@@ -285,6 +285,9 @@ fn encode_err_to_js(global: &JSGlobalObject, err: EncodeError) -> bun_jsc::JsErr
         EncodeError::InvalidVersionRange => global.throw_invalid_arguments(format_args!(
             "options.minVersion must be <= options.maxVersion"
         )),
+        EncodeError::InvalidEci => {
+            global.throw_invalid_arguments(format_args!("invalid ECI assignment"))
+        }
     }
 }
 
@@ -310,21 +313,25 @@ pub fn generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
     };
     let input: &[u8] = buffer.slice();
 
-    // Strings try numeric/alnum modes; buffers are byte-mode only.
-    let segs: Vec<Segment> = if data_value.is_string() {
+    // Strings try numeric/alnum modes; buffers are byte-mode only. The
+    // constructors reject input longer than any symbol can hold before
+    // touching the payload.
+    let encoded = (if data_value.is_string() {
         Segment::make_segments(input)
     } else {
-        vec![Segment::make_bytes(input)]
-    };
-
-    let qr = match QrCode::encode_segments(
-        &segs,
-        opts.ecc,
-        opts.min_version,
-        opts.max_version,
-        opts.mask,
-        opts.boost_ecc,
-    ) {
+        Segment::make_bytes(input).map(|seg| vec![seg])
+    })
+    .and_then(|segs: Vec<Segment>| {
+        QrCode::encode_segments(
+            &segs,
+            opts.ecc,
+            opts.min_version,
+            opts.max_version,
+            opts.mask,
+            opts.boost_ecc,
+        )
+    });
+    let qr = match encoded {
         Ok(qr) => qr,
         Err(e) => return Err(encode_err_to_js(global, e)),
     };

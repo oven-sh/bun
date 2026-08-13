@@ -76,6 +76,24 @@ impl Mode {
             Mode::Eci => 0,
         }
     }
+
+    /// Payload bit length for `num_chars` characters in this mode, computed
+    /// without building the segment. `None` on arithmetic overflow.
+    fn data_bits(self, num_chars: usize) -> Option<usize> {
+        match self {
+            Mode::Byte => num_chars.checked_mul(8),
+            Mode::Numeric => {
+                let groups = (num_chars / 3).checked_mul(10)?;
+                groups.checked_add([0, 4, 7][num_chars % 3])
+            }
+            Mode::Alphanumeric => {
+                let pairs = (num_chars / 2).checked_mul(11)?;
+                pairs.checked_add((num_chars % 2) * 6)
+            }
+            Mode::Kanji => num_chars.checked_mul(13),
+            Mode::Eci => Some(0),
+        }
+    }
 }
 
 /// Reasons encoding can fail. All are user-reachable; none should panic.
@@ -89,6 +107,8 @@ pub enum EncodeError {
     InvalidMask,
     /// `min_version > max_version`.
     InvalidVersionRange,
+    /// ECI assignment number outside 0..1_000_000.
+    InvalidEci,
 }
 
 impl fmt::Display for EncodeError {
@@ -107,6 +127,7 @@ impl fmt::Display for EncodeError {
             EncodeError::InvalidVersionRange => {
                 write!(f, "minVersion must be <= maxVersion")
             }
+            EncodeError::InvalidEci => write!(f, "ECI assignment must be below 1000000"),
         }
     }
 }
@@ -137,22 +158,48 @@ pub struct Segment {
     data: Vec<bool>,
 }
 
+/// Data-bit capacity of the largest, least-protected symbol (v40-L). Any
+/// segment that cannot fit here cannot fit anywhere, so the constructors
+/// check against it before allocating anything proportional to the input.
+fn max_data_bits() -> usize {
+    data_codeword_count(VERSION_MAX, Ecc::Low) * 8
+}
+
 impl Segment {
+    /// Rejects input that cannot fit in any symbol, before any allocation.
+    fn check_capacity(mode: Mode, num_chars: usize) -> Result<(), EncodeError> {
+        let max_bits = max_data_bits();
+        let header = 4 + usize::from(mode.char_count_bits(VERSION_MAX));
+        let need_bits = mode
+            .data_bits(num_chars)
+            .and_then(|b| b.checked_add(header))
+            .unwrap_or(usize::MAX);
+        if need_bits > max_bits {
+            return Err(EncodeError::DataTooLong {
+                max_bits,
+                need_bits,
+            });
+        }
+        Ok(())
+    }
+
     /// Byte-mode segment from raw bytes (any binary data, or UTF-8 text).
-    pub fn make_bytes(data: &[u8]) -> Segment {
+    pub fn make_bytes(data: &[u8]) -> Result<Segment, EncodeError> {
+        Segment::check_capacity(Mode::Byte, data.len())?;
         let mut bb = BitBuffer::default();
         for &b in data {
             bb.append_bits(u32::from(b), 8);
         }
-        Segment {
+        Ok(Segment {
             mode: Mode::Byte,
             num_chars: data.len(),
             data: bb.0,
-        }
+        })
     }
 
     /// Numeric-mode segment. Caller guarantees every byte is `b'0'..=b'9'`.
-    pub fn make_numeric(digits: &[u8]) -> Segment {
+    pub fn make_numeric(digits: &[u8]) -> Result<Segment, EncodeError> {
+        Segment::check_capacity(Mode::Numeric, digits.len())?;
         let mut bb = BitBuffer::default();
         let mut i = 0;
         while i + 3 <= digits.len() {
@@ -169,16 +216,17 @@ impl Segment {
         } else if rest == 1 {
             bb.append_bits(u32::from(digits[i] - b'0'), 4);
         }
-        Segment {
+        Ok(Segment {
             mode: Mode::Numeric,
             num_chars: digits.len(),
             data: bb.0,
-        }
+        })
     }
 
     /// Alphanumeric-mode segment. Caller guarantees each byte is in the
     /// 45-char alphanumeric set.
-    pub fn make_alphanumeric(text: &[u8]) -> Segment {
+    pub fn make_alphanumeric(text: &[u8]) -> Result<Segment, EncodeError> {
+        Segment::check_capacity(Mode::Alphanumeric, text.len())?;
         let mut bb = BitBuffer::default();
         let mut i = 0;
         while i + 2 <= text.len() {
@@ -189,11 +237,11 @@ impl Segment {
         if i < text.len() {
             bb.append_bits(u32::from(alnum_value(text[i])), 6);
         }
-        Segment {
+        Ok(Segment {
             mode: Mode::Alphanumeric,
             num_chars: text.len(),
             data: bb.0,
-        }
+        })
     }
 
     /// ECI designator segment for the given assignment value.
@@ -208,10 +256,7 @@ impl Segment {
             bb.append_bits(0b110, 3);
             bb.append_bits(value, 21);
         } else {
-            return Err(EncodeError::DataTooLong {
-                max_bits: 0,
-                need_bits: 0,
-            });
+            return Err(EncodeError::InvalidEci);
         }
         Ok(Segment {
             mode: Mode::Eci,
@@ -221,17 +266,21 @@ impl Segment {
     }
 
     /// Chooses the most compact single-segment encoding for `text`.
-    pub fn make_segments(text: &[u8]) -> Vec<Segment> {
+    pub fn make_segments(text: &[u8]) -> Result<Vec<Segment>, EncodeError> {
         if text.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        if text.iter().all(|&b| b.is_ascii_digit()) {
-            return vec![Segment::make_numeric(text)];
-        }
-        if text.iter().all(|&b| is_alnum(b)) {
-            return vec![Segment::make_alphanumeric(text)];
-        }
-        vec![Segment::make_bytes(text)]
+        // Numeric is the densest mode, so anything it rejects is too long for
+        // every mode; checking it first also bounds the classification scans.
+        Segment::check_capacity(Mode::Numeric, text.len())?;
+        let seg = if text.iter().all(|&b| b.is_ascii_digit()) {
+            Segment::make_numeric(text)?
+        } else if text.iter().all(|&b| is_alnum(b)) {
+            Segment::make_alphanumeric(text)?
+        } else {
+            Segment::make_bytes(text)?
+        };
+        Ok(vec![seg])
     }
 
     /// Total bit length of `segs` at `version`, or None on overflow.
@@ -307,13 +356,13 @@ impl QrCode {
     /// that fits, chooses the smallest version, and boosts ECC if it costs
     /// no extra version.
     pub fn encode_text(text: &[u8], ecc: Ecc) -> Result<QrCode, EncodeError> {
-        let segs = Segment::make_segments(text);
+        let segs = Segment::make_segments(text)?;
         QrCode::encode_segments(&segs, ecc, VERSION_MIN, VERSION_MAX, None, true)
     }
 
     /// Encode raw bytes in byte mode only (no numeric/alnum analysis).
     pub fn encode_binary(data: &[u8], ecc: Ecc) -> Result<QrCode, EncodeError> {
-        let segs = [Segment::make_bytes(data)];
+        let segs = [Segment::make_bytes(data)?];
         QrCode::encode_segments(&segs, ecc, VERSION_MIN, VERSION_MAX, None, true)
     }
 
@@ -1539,7 +1588,7 @@ mod tests {
         // 7089 digits is the documented max for version 40-L numeric.
         let digits = vec![b'3'; 7089];
         let qr = QrCode::encode_segments(
-            &[Segment::make_numeric(&digits)],
+            &[Segment::make_numeric(&digits).unwrap()],
             Ecc::Low,
             VERSION_MIN,
             VERSION_MAX,
@@ -1548,18 +1597,38 @@ mod tests {
         )
         .unwrap();
         assert_eq!(qr.version(), 40);
+        // One more digit is rejected by the constructor itself.
         let over = vec![b'3'; 7090];
-        assert!(
-            QrCode::encode_segments(
-                &[Segment::make_numeric(&over)],
-                Ecc::Low,
-                VERSION_MIN,
-                VERSION_MAX,
-                None,
-                false
-            )
-            .is_err()
-        );
+        assert!(matches!(
+            Segment::make_numeric(&over),
+            Err(EncodeError::DataTooLong { .. })
+        ));
+    }
+
+    #[test]
+    fn constructors_reject_oversized_input_before_allocating() {
+        // Documented v40-L maxima: 2953 bytes, 4296 alphanumeric, 7089 numeric.
+        assert!(Segment::make_bytes(&vec![0u8; 2953]).is_ok());
+        assert!(matches!(
+            Segment::make_bytes(&vec![0u8; 2954]),
+            Err(EncodeError::DataTooLong { .. })
+        ));
+        assert!(Segment::make_alphanumeric(&vec![b'A'; 4296]).is_ok());
+        assert!(matches!(
+            Segment::make_alphanumeric(&vec![b'A'; 4297]),
+            Err(EncodeError::DataTooLong { .. })
+        ));
+        // make_segments bails on length alone; the payload is never scanned,
+        // which is what keeps a huge input from costing more than a length read.
+        let huge_len = 1usize << 40;
+        assert!(matches!(
+            Segment::check_capacity(Mode::Byte, huge_len),
+            Err(EncodeError::DataTooLong { .. })
+        ));
+        assert!(matches!(
+            Segment::check_capacity(Mode::Numeric, usize::MAX),
+            Err(EncodeError::DataTooLong { .. })
+        ));
     }
 
     #[test]

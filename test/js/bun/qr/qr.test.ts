@@ -263,7 +263,7 @@ describe("Bun.QR", () => {
     });
 
     test("rejects wrong sizes", () => {
-      expect(() => Bun.QR.parse(new Uint8Array(20 * 20))).toThrow();
+      expect(() => Bun.QR.parse(new Uint8Array(20 * 20))).toThrow(TypeError);
       expect(() => Bun.QR.parse({ matrix: new Uint8Array(10), size: 10 })).toThrow(RangeError);
     });
   });
@@ -293,7 +293,7 @@ describe("Bun.QR", () => {
     });
 
     test("minVersion > maxVersion", () => {
-      expect(() => Bun.QR.generate("x", { minVersion: 10, maxVersion: 5 })).toThrow();
+      expect(() => Bun.QR.generate("x", { minVersion: 10, maxVersion: 5 })).toThrow(TypeError);
     });
 
     test("data too long", () => {
@@ -310,6 +310,18 @@ describe("Bun.QR", () => {
         boostErrorCorrection: false,
       });
       expect(ok.version).toBe(40);
+    });
+
+    test("oversized input is rejected up front", () => {
+      // Far beyond any symbol's capacity; must throw rather than build the
+      // intermediate bit buffer (which is 8x the input).
+      const big = new Uint8Array(64 * 1024 * 1024);
+      expect(() => Bun.QR.generate(big)).toThrow(RangeError);
+      expect(() => Bun.QR.generate(Buffer.alloc(64 * 1024 * 1024, "7").toString("latin1"))).toThrow(RangeError);
+      // Alphanumeric max is 4296 at v40-L; 4297 is rejected even though it
+      // is well under the numeric max.
+      expect(Bun.QR.generate(Buffer.alloc(4296, "A").toString(), { errorCorrection: "L", boostErrorCorrection: false }).version).toBe(40);
+      expect(() => Bun.QR.generate(Buffer.alloc(4297, "A").toString())).toThrow(RangeError);
     });
 
     test("data too long under maxVersion", () => {

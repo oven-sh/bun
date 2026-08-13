@@ -1345,9 +1345,9 @@ describe.concurrent("REPL history file", () => {
   });
 
   test("loads a CRLF history file without keeping the line endings", async () => {
-    // A history file rewritten with CRLF line endings (Windows, or a CRLF
-    // editor): the '\r' before each '\n' is part of the line ending, while
-    // the ones inside the second entry are its stored newlines.
+    // A history file re-saved by a CRLF editor: the '\r' before each '\n' is
+    // part of the line ending, while the ones inside the second entry are its
+    // stored newlines.
     using dir = tempDir("repl-history-crlf", {
       ".bun_repl_history": "1 + 1\r\nfunction h() {\r  return 3\r}\r\n",
     });

@@ -172,23 +172,6 @@ struct History {
     modified: bool,
 }
 
-/// Copies `entry` to `out`, replacing each `from` with `to`.
-///
-/// The history file holds one entry per line, so `save` stores the newlines of
-/// a multi-line entry as `\r` and `load` turns them back (the encoding node's
-/// repl history uses). `\r` is free for this because the line editor reads a
-/// typed `\r` as Enter, so no entry contains one.
-fn append_swapping_line_breaks(out: &mut Vec<u8>, entry: &[u8], from: &[u8], to: u8) {
-    let mut segments = strings::split(entry, from);
-    if let Some(first) = segments.next() {
-        out.extend_from_slice(first);
-    }
-    for segment in segments {
-        out.push(to);
-        out.extend_from_slice(segment);
-    }
-}
-
 impl History {
     fn init() -> History {
         History {
@@ -221,15 +204,14 @@ impl History {
         };
 
         for line in strings::split(&content, b"\n") {
-            // A CRLF line ending (file rewritten on Windows) is not part of the
-            // entry; drop it before the remaining CRs are decoded as newlines.
+            // Tolerate a file re-saved with CRLF line endings: that CR is not part
+            // of the entry, unlike the ones inside the line (see save()).
             let line = strings::trim_suffix(line, b"\r");
             if line.is_empty() {
                 continue;
             }
-            let mut entry: Vec<u8> = Vec::with_capacity(line.len());
-            append_swapping_line_breaks(&mut entry, line, b"\r", b'\n');
-            self.entries.push(entry.into_boxed_slice());
+            self.entries
+                .push(strings::replace_owned(line, b"\r", b"\n").into_boxed_slice());
         }
 
         // Trim to max size
@@ -258,7 +240,11 @@ impl History {
 
         let mut content: Vec<u8> = Vec::new();
         for entry in &self.entries[start..] {
-            append_swapping_line_breaks(&mut content, entry, b"\n", b'\r');
+            // One entry per line: the newlines of a multi-line entry are stored as
+            // CR, as node's repl history does. This is lossless because an entry
+            // never contains a CR (Key::from_byte reads it as Enter) and never ends
+            // in a newline (handle_enter trims them), so load() can undo it exactly.
+            content.extend_from_slice(&strings::replace_owned(entry, b"\n", b"\r"));
             content.push(b'\n');
         }
 

@@ -400,6 +400,30 @@ describe.concurrent("bunshell cp operands that are links", () => {
       expect(await cp(dir, "cp -R rel .")).toEqual(identical("rel", p("./rel")));
       expect(entry(dir, "rel")).toBe(`symlink -> ${join("inner", "target")}`);
     });
+
+    // Under -R the file is written through a link at the destination, and a
+    // link source would be recreated over the very file it points at.
+    test("with -R, a file and a link pointing at it", async () => {
+      using dir = setup("recursive-target-and-link");
+      expect(await cp(dir, "cp -R inner/target rel")).toEqual(identical("inner/target", "rel"));
+      expect(entry(dir, "rel")).toBe(`symlink -> ${join("inner", "target")}`);
+    });
+
+    test("with -R, a link and the file it points at", async () => {
+      using dir = setup("recursive-link-and-target");
+      expect(await cp(dir, "cp -R rel inner/target")).toEqual(identical("rel", "inner/target"));
+      expect(entry(dir, "inner/target")).toBe("file: target\n");
+    });
+
+    // Two links to one file are not the same file under -R: the link itself is
+    // what gets copied, as cp(1) also allows.
+    test("with -R, two links to one file are copied", async () => {
+      using dir = setup("recursive-two-links");
+      symlinkSync(join("inner", "target"), work(dir, "rel2"));
+      expect(await cp(dir, "cp -R rel rel2")).toEqual(copied);
+      expect(entry(dir, "rel2")).toStartWith("symlink -> ");
+      expect(entry(dir, "inner/target")).toBe("file: target\n");
+    });
   });
 });
 

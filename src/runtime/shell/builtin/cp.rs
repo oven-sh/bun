@@ -582,19 +582,44 @@ impl ShellCpTask {
         }
     }
 
-    /// `follow` must match how `src_stat` was taken. An inode number of 0
-    /// means the filesystem reports no identity.
-    fn is_same_file(src_stat: &bun_sys::Stat, tgt: &bun_core::ZStr, follow: bool) -> bool {
+    /// An inode number of 0 means the filesystem reports no identity.
+    fn is_same_inode(a: &bun_sys::Stat, b: &bun_sys::Stat) -> bool {
+        a.st_ino != 0 && a.st_ino == b.st_ino && a.st_dev == b.st_dev
+    }
+
+    /// Would the copy read and write one file? `follow` must match how
+    /// `src_stat` was taken.
+    fn is_same_file(
+        src: &bun_core::ZStr,
+        src_stat: &bun_sys::Stat,
+        tgt: &bun_core::ZStr,
+        follow: bool,
+    ) -> bool {
         let tgt_stat = if follow {
             bun_sys::stat(tgt)
         } else {
             bun_sys::lstat(tgt)
         };
-        tgt_stat.is_ok_and(|tgt_stat| {
-            src_stat.st_ino != 0
-                && src_stat.st_ino == tgt_stat.st_ino
-                && src_stat.st_dev == tgt_stat.st_dev
-        })
+        let Ok(tgt_stat) = tgt_stat else {
+            return false;
+        };
+        if Self::is_same_inode(src_stat, &tgt_stat) {
+            return true;
+        }
+        if follow {
+            return false;
+        }
+        // -R copies a link as a link, so one link may be copied over another
+        // link to the same file. A link on one side only is copied onto, or
+        // recreated over, the file it points at.
+        match (
+            bun_sys::S::ISLNK(src_stat.st_mode as _),
+            bun_sys::S::ISLNK(tgt_stat.st_mode as _),
+        ) {
+            (true, false) => bun_sys::stat(src).is_ok_and(|s| Self::is_same_inode(&s, &tgt_stat)),
+            (false, true) => bun_sys::stat(tgt).is_ok_and(|t| Self::is_same_inode(src_stat, &t)),
+            _ => false,
+        }
     }
 
     /// Resolves src/tgt to absolute paths, classifies them per the three
@@ -730,7 +755,7 @@ impl ShellCpTask {
         // A link, hard link or directory symlink can name `src` again; copying
         // a file onto itself is refused like cp(1) does (on macOS the copy
         // would unlink it first).
-        if !src_is_dir && Self::is_same_file(&src_stat, tgt, follow_src) {
+        if !src_is_dir && Self::is_same_file(src, &src_stat, tgt, follow_src) {
             let shown_tgt = match dest_basename {
                 Some(basename) => bun_paths::join_sep_maybe_z::<false>(&[&self.tgt, basename]),
                 None => self.tgt.as_slice().into(),

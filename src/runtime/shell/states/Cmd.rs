@@ -939,11 +939,25 @@ impl Cmd {
         }
     }
 
-    /// Mark the subprocess's buffered stdin as closed.
+    /// Called by `ShellSubprocess::on_close_io` once the `< ${buffer}` stdin
+    /// writer has closed, whether it drained or failed (`EPIPE` from a child
+    /// that exited without reading). This is one of the three events
+    /// [`Self::has_finished`] waits for, and it can be the last one to land:
+    /// a child that exits before the first write is attempted has its exit and
+    /// its stdout/stderr EOFs processed first, and the failed write is what
+    /// arrives last. Like the other two it must finish the command itself.
+    ///
+    /// No-op during `Cmd::deinit` (`exec` has been taken by then).
+    ///
+    /// May free the `Cmd` and its `ShellSubprocess`; the caller must not touch
+    /// either afterwards.
     pub(crate) fn buffered_input_close(&mut self) {
-        if let Exec::Subproc(sub) = &mut self.exec {
-            sub.buffered_closed.close_stdin();
-        }
+        let Exec::Subproc(sub) = &mut self.exec else {
+            return;
+        };
+        sub.buffered_closed.close_stdin();
+        log!("cmd close buffered stdin");
+        self.finish_if_done();
     }
 
     /// Mark the subprocess's buffered stdout/stderr as closed (flushing the
@@ -1051,29 +1065,49 @@ impl Cmd {
         child.close_io(StdioKind::Stderr);
     }
 
-    /// Called by `ShellSubprocess::on_process_exit`.
+    /// Called by `ShellSubprocess::on_process_exit`. May free the `Cmd` and
+    /// its `ShellSubprocess`, see [`Self::finish_if_done`].
     pub(crate) fn on_exit(&mut self, exit_code: ExitCode) {
+        log!("cmd exit code={}", exit_code);
         self.exit_code = Some(exit_code);
-        let has_finished = self.has_finished();
-        log!("cmd exit code={} has_finished={}", exit_code, has_finished);
-        if has_finished {
-            self.state = CmdState::Done;
-            // `self` lives inside `interp.nodes`, so resume via the stashed
-            // backrefs.
-            let (interp, this_id) = match &self.exec {
-                Exec::Subproc(sub) => (sub.interp, sub.this_id),
-                _ => return,
-            };
-            if interp.is_null() {
-                return;
-            }
-            // SAFETY: `interp` outlives every spawned subprocess (it owns the
-            // arena slot containing `self`). `&mut self` is dead by NLL after
-            // this point so the `&Interpreter` borrow does not alias it.
-            // The caller (`ShellSubprocess::on_process_exit`) does not touch
-            // its `*mut Cmd` again after this returns.
-            Yield::Next(this_id).run(unsafe { &*interp });
+        self.finish_if_done();
+    }
+
+    /// Shared tail of the subprocess completion callbacks that cannot hand a
+    /// [`Yield`] back to their caller (`on_exit`, `buffered_input_close`):
+    /// once the exit code and every piped stdio have all landed, transition
+    /// to `Done` and drive the trampoline, which reaches `Cmd::deinit` and
+    /// frees the `ShellSubprocess` that invoked us. `buffered_output_close`
+    /// is the same check, returning the `Yield` instead.
+    fn finish_if_done(&mut self) {
+        if !matches!(self.exec, Exec::Subproc(_)) {
+            return;
         }
+        let has_finished = self.has_finished();
+        log!("cmd has_finished={}", has_finished);
+        if !has_finished {
+            return;
+        }
+        self.state = CmdState::Done;
+        // `self` lives inside `interp.nodes`, so resume via the stashed
+        // backrefs.
+        let (interp, this_id) = match &self.exec {
+            Exec::Subproc(sub) => (sub.interp, sub.this_id),
+            _ => unreachable!(),
+        };
+        // `exec.interp` stays null until the spawn returns: a run from here
+        // would reach `Cmd::deinit` and free the `ShellSubprocess` still on
+        // the spawn frame. `transition_to_exec` sees `state == Done` and
+        // resumes instead.
+        if interp.is_null() {
+            return;
+        }
+        // SAFETY: `interp` outlives every spawned subprocess (it owns the
+        // arena slot containing `self`). `&mut self` is dead by NLL after
+        // this point so the `&Interpreter` borrow does not alias it. The
+        // callers (`ShellSubprocess::on_process_exit` / `on_close_io`) do not
+        // touch the `Cmd` or the subprocess again after this returns.
+        Yield::Next(this_id).run(unsafe { &*interp });
     }
 }
 

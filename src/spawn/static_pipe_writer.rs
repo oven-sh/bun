@@ -22,6 +22,11 @@ bun_output::declare_scope!(StaticPipeWriter, hidden);
 /// the process — materializing `&mut P` while `&mut writer` is live would alias.
 pub trait StaticPipeWriterProcess {
     const POLL_OWNER_TAG: bun_io::PollTag;
+    /// The writer has closed; the process drops it from its stdin slot. The
+    /// writer does not touch `this` afterwards, so the implementation is free
+    /// to tear the process down (the shell's does when this completes the
+    /// command).
+    ///
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind);
@@ -269,8 +274,11 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         // frees that storage so no dangling slice survives the close.
         self.buffer = RawSlice::EMPTY;
         self.source.detach();
-        // SAFETY: `process` is a backref to the owning process, guaranteed alive
-        // for the lifetime of this writer (the process owns/outlives its stdio writers).
+        // SAFETY: `process` is a backref to the owning process, which is alive
+        // here: it holds `create()`'s ref until this very call releases it.
+        // The call may free the process (the shell's does once this was the
+        // last thing its command waited on), so this is the last use of
+        // `process`; only `self` is touched below.
         unsafe { P::on_close_io(self.process, StdioKind::Stdin) };
         if release_start_ref {
             // SAFETY: token taken above. On POSIX this frees `self`: it is the

@@ -779,6 +779,10 @@ static WTF::String resolvePathForFileURL(JSC::JSGlobalObject* globalObject, JSC:
     if (path.isEmpty())
         return resolved;
 
+    // path.win32.resolve() turns //server/share/... into a UNC path; node does not restore the slash on those either.
+    if (isWindows && resolved.startsWith("\\\\"_s))
+        return resolved;
+
     char16_t last = path[path.length() - 1];
     bool endsWithSeparator = last == POSIX_PATH_SEP || (isWindows && last == WINDOWS_PATH_SEP);
     if (endsWithSeparator && !resolved.endsWith(PLATFORM_SEP))

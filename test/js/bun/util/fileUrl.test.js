@@ -93,9 +93,10 @@ describe("pathToFileURL", () => {
     });
   });
 
-  // `\\server\share` is handed to the URL layer as-is (the server becomes the
-  // host); `//server/share` goes through path.win32.resolve(), which gives the
-  // share a trailing separator. Both match node's pathToFileURL().
+  // `\\server\share...` is handed to the URL layer as-is (the server becomes the
+  // host). `//server/share...` goes through path.win32.resolve(), which gives a
+  // bare share a trailing separator and strips it from anything deeper; like
+  // node, the stripped separator is not restored on UNC paths.
   it.skipIf(!isWindows)("should keep the drive root, UNC host and a trailing backslash on Windows", () => {
     const cwd = pathToFileURL(process.cwd()).href;
     expect({
@@ -107,6 +108,7 @@ describe("pathToFileURL", () => {
       unc: pathToFileURL("\\\\server\\share").href,
       uncTrailingBackslash: pathToFileURL("\\\\server\\share\\dir\\").href,
       uncForwardSlashes: pathToFileURL("//server/share").href,
+      uncForwardSlashesTrailingSlash: pathToFileURL("//server/share/dir/").href,
     }).toEqual({
       driveRoot: "file:///C:/",
       driveRootForwardSlash: "file:///C:/",
@@ -116,6 +118,7 @@ describe("pathToFileURL", () => {
       unc: "file://server/share",
       uncTrailingBackslash: "file://server/share/dir/",
       uncForwardSlashes: "file://server/share/",
+      uncForwardSlashesTrailingSlash: "file://server/share/dir",
     });
   });
 
@@ -153,6 +156,8 @@ describe("pathToFileURL", () => {
             "\\\\server\\share",
             "\\\\server\\share\\dir\\",
             "//server/share",
+            "//server/share/dir/",
+            "//server/share/dir\\",
           ]
         : []),
     ];

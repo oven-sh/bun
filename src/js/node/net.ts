@@ -2027,7 +2027,9 @@ Socket.prototype.connect = function connect(...args) {
             }
           } else {
             // wait to be connected
-            connection.once("connect", () => {
+            const onConnect = () => {
+              connection.removeListener("error", onError);
+              connection.removeListener("close", onClose);
               // The TLS socket may have been destroyed before the underlying
               // socket connected (e.g. tls.connect({ socket }).destroy()); don't
               // start a handshake on a dead socket.
@@ -2073,7 +2075,27 @@ Socket.prototype.connect = function connect(...args) {
                   throw new Error("Invalid socket");
                 }
               }
-            });
+            };
+            // Until the upgrade above happens nothing ties this socket to the
+            // connection, so a connect failure would leave it pending forever.
+            // Node re-emits the wrapped socket's 'error' here and destroys the
+            // TLS socket when the wrapped socket closes:
+            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
+            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L740
+            const onError = error => {
+              // The connection keeps connecting after this socket is destroyed
+              // (onConnect tears it down); its failure must not surface as an
+              // 'error' after this socket's 'close'.
+              if (!this.destroyed) this._emitTLSError(error);
+            };
+            const onClose = () => {
+              connection.removeListener("connect", onConnect);
+              connection.removeListener("error", onError);
+              this.destroy();
+            };
+            connection.once("connect", onConnect);
+            connection.on("error", onError);
+            connection.once("close", onClose);
           }
         }
       } catch (error) {

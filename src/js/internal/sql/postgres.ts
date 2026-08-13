@@ -269,8 +269,7 @@ const enum Char {
   LOWER_Z = 122,        // z
 }
 
-// The predicates below get NaN once an index runs past the end of the text, so the scanning loops
-// that call them stop there on their own.
+// Every predicate rejects the NaN charCodeAt yields past the end, so the scanning loops need no bounds checks.
 function isDigit(c: number) {
   return c >= Char.ZERO && c <= Char.NINE;
 }
@@ -313,7 +312,7 @@ function skipQuoted(text: string, i: number, quote: number, backslashEscapes: bo
   return len;
 }
 
-/** `i` is the index right after `--`; returns the index of the line end, which the server takes to be either `\n` or `\r`. */
+/** `i` is the index right after `--`; returns the index of the line end, which to the server is `\n` or `\r`. */
 function skipLineComment(text: string, i: number): number {
   const len = text.length;
   while (i < len) {
@@ -347,13 +346,9 @@ function skipBlockComment(text: string, i: number): number {
 }
 
 /**
- * Rewrites every parameter reference `$k` in a `sql.unsafe` fragment to `$(k + offset)`, where `offset` is
- * the number of values the enclosing query binds ahead of it. Tokenizes the way the server does (with
- * standard_conforming_strings on, the default) so `$k` inside string literals, E'' strings, dollar-quoted
- * strings, quoted identifiers, comments and identifiers such as `col$1` stays as written.
- *
- * `count` is the number of values the fragment carries. Any `$k` outside 1..count would, once shifted,
- * silently read one of the enclosing query's values instead, so it is rejected up front.
+ * Rewrites every `$k` in a `sql.unsafe` fragment to `$(k + offset)`, tokenizing like the server so `$k` inside
+ * literals, comments and identifiers such as `col$1` stays as written. A `$k` the fragment has no value for
+ * (`count`) would alias one of the enclosing query's values once shifted, so it throws instead.
  */
 function offsetParameterReferences(fragment: string, offset: number, count: number): string {
   const len = fragment.length;

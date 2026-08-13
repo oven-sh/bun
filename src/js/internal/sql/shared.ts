@@ -363,10 +363,8 @@ interface QueryNormalizationAdapter {
   /** Pushes a plain bound value and returns its SQL fragment (always consumes one binding index). */
   bindParam(value: unknown, binding_values: unknown[], index: number): string;
   /**
-   * Prepares the text of a raw (`sql.unsafe`) fragment carrying `count` parameters of its own for being
-   * spliced into a query that already binds `offset` values ahead of it. Positional ("?") placeholders
-   * bind in order of appearance, so the text is returned as-is; numbered ("$N") placeholders must be
-   * shifted by `offset`.
+   * Shifts the "$N" of a `sql.unsafe` fragment holding `count` values past the `offset` values bound before it.
+   * "?" dialects return the fragment unchanged.
    */
   offsetFragmentPlaceholders(fragment: string, offset: number, count: number): string;
   /** Detects the SQL command preceding a helper, throwing if helpers are not allowed there. */

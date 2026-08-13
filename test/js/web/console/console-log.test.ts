@@ -143,24 +143,54 @@ NamedError: console.error a named error
 `);
 });
 
-it("console.log(Bun) prints remaining properties when a lazy property fails to initialize", async () => {
-  // With globalThis.Symbol clobbered, lazy Bun properties whose initializers
-  // call Symbol() (like Bun.$) throw while being reified during enumeration.
-  // The pending exception must be cleared so later properties still print.
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", "globalThis.Symbol = NaN; console.log(Bun)"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+// Bun.$ is a lazy property whose initializer evaluates the shell builtin, so
+// each of these clobbers makes it throw while the formatter behind console.log
+// and Bun.inspect is reifying it mid-enumeration, at a different point of the
+// builtin: Symbol is the first thing it calls, process.env comes after that,
+// and ShellPromise extends the global Promise before any of it runs. The
+// pending exception has to be cleared (debug builds otherwise abort on the
+// next lazy property), and the walk has to keep going, so everything after $
+// still prints.
+describe.each([
+  ["Symbol", "globalThis.Symbol = NaN;"],
+  ["process", "globalThis.process = undefined;"],
+  ["Promise", "globalThis.Promise = undefined;"],
+])("inspecting Bun with %s clobbered", (_label, clobber) => {
+  it.concurrent("skips the lazy property that failed to initialize and prints the rest", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `${clobber}
+const out = Bun.inspect(Bun);
+console.log(JSON.stringify({
+  shell: out.includes("$: [Function"),
+  archive: out.includes("Archive:"),
+  argv: out.includes("argv: ["),
+  gc: out.includes("gc: [Function: gc]"),
+  semver: out.includes("semver:"),
+  zstdDecompress: out.includes("zstdDecompress:"),
+}));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout).toContain("Archive:");
-  expect(stdout).toContain("CryptoHasher:");
-  expect(stdout).toContain("semver:");
-  expect(stdout).toContain("zstdDecompress:");
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        shell: false,
+        archive: true,
+        argv: true,
+        gc: true,
+        semver: true,
+        zstdDecompress: true,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 describe.each([
@@ -169,33 +199,37 @@ describe.each([
     "a throwing getter",
     `Object.defineProperty(require("node:util"), "inspect", { get() { throw new Error("boom"); } });`,
   ],
+  // node:util's top level reads the process binding, so requiring it throws.
+  ["unavailable because node:util failed to load", `globalThis.process = undefined;`],
 ])("console.log with node:util inspect %s", (_label, sabotage) => {
   it.concurrent("degrades gracefully instead of crashing", async () => {
-    // util.inspect is cached lazily when a custom inspect runs; with a tampered
-    // export the custom inspect still runs, and only calling the unavailable
-    // inspect argument throws.
+    // util.inspect is cached lazily the first time a custom inspect runs. With
+    // it unavailable the custom inspect still runs, options.stylize returns its
+    // input unchanged (both console.log's own colored path, via FORCE_COLOR,
+    // and an explicit colors: true), and only calling the inspect argument
+    // throws.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `${sabotage}
 console.log({ [Bun.inspect.custom]() { return "custom"; } });
-console.log(Bun.inspect({ [Bun.inspect.custom](d, o) { return o.stylize("styled", "string"); } }, { colors: true }));
+console.log({ [Bun.inspect.custom](d, o) { return o.stylize("styled by console.log", "string"); } });
+console.log(Bun.inspect({ [Bun.inspect.custom](d, o) { return o.stylize("styled by Bun.inspect", "string"); } }, { colors: true }));
 try { console.log({ [Bun.inspect.custom](d, o, inspect) { return inspect(1); } }) } catch (e) { console.log("caught " + e.constructor.name) }
 console.log("ok")`,
       ],
-      env: bunEnv,
+      env: { ...bunEnv, FORCE_COLOR: "1" },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toContain("custom");
-    expect(stdout).toContain("styled");
-    expect(stdout).toContain("caught TypeError");
-    expect(stdout).toContain("ok");
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "custom\nstyled by console.log\nstyled by Bun.inspect\ncaught TypeError\nok\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

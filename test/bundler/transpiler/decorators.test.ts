@@ -1321,6 +1321,74 @@ describe("accessor keyword with experimentalDecorators", () => {
     `);
   });
 
+  test("TypeScript modifiers are stripped and decorated siblings are lowered as usual", () => {
+    // tsc accepts a class that mixes legacy decorators with accessor members, so
+    // the accessors must not make the rest of the class an error.
+    expect(
+      transpile(`
+        declare const dec: any;
+        abstract class Entity {
+          @dec id = 0;
+          accessor name = "";
+          private accessor b = 2;
+          protected readonly accessor c = 3;
+          public static accessor d = 4;
+          protected static override accessor e = 5;
+          abstract accessor f: number;
+          @dec save() {}
+        }
+      `),
+    ).toMatchInlineSnapshot(`
+      "class Entity {
+        constructor() {
+          this.id = 0;
+        }
+        #name = "";
+        get name() {
+          return this.#name;
+        }
+        set name(v) {
+          this.#name = v;
+        }
+        #b = 2;
+        get b() {
+          return this.#b;
+        }
+        set b(v) {
+          this.#b = v;
+        }
+        #c = 3;
+        get c() {
+          return this.#c;
+        }
+        set c(v) {
+          this.#c = v;
+        }
+        static #d = 4;
+        static get d() {
+          return this.#d;
+        }
+        static set d(v) {
+          this.#d = v;
+        }
+        static #e = 5;
+        static get e() {
+          return this.#e;
+        }
+        static set e(v) {
+          this.#e = v;
+        }
+        save() {}
+      }
+      __legacyDecorateClassTS([
+        dec
+      ], Entity.prototype, "id", undefined);
+      __legacyDecorateClassTS([
+        dec
+      ], Entity.prototype, "save", null);"
+    `);
+  });
+
   test("emitDecoratorMetadata describes the accessor's declared type, unlike a getter's signature", () => {
     expect(
       transpile(

@@ -64,7 +64,7 @@ pub(crate) enum RESPType {
 }
 
 impl RESPType {
-    pub(crate) fn from_byte(byte: u8) -> Option<RESPType> {
+    fn from_byte(byte: u8) -> Option<RESPType> {
         match byte {
             x if x == RESPType::SimpleString as u8 => Some(RESPType::SimpleString),
             x if x == RESPType::Error as u8 => Some(RESPType::Error),
@@ -226,7 +226,7 @@ impl<'a> ValkeyReader<'a> {
         self.pos
     }
 
-    pub fn read_byte(&mut self) -> Result<u8, RedisError> {
+    pub(crate) fn read_byte(&mut self) -> Result<u8, RedisError> {
         if self.pos >= self.buffer.len() {
             return Err(RedisError::InvalidResponse);
         }
@@ -235,7 +235,7 @@ impl<'a> ValkeyReader<'a> {
         Ok(byte)
     }
 
-    pub fn read_until_crlf(&mut self) -> Result<&'a [u8], RedisError> {
+    pub(crate) fn read_until_crlf(&mut self) -> Result<&'a [u8], RedisError> {
         let buffer = &self.buffer[self.pos..];
         let limit = buffer.len().min(Self::MAX_LINE_LEN + 1);
         let start = self.crlf_skip.min(limit);
@@ -253,12 +253,12 @@ impl<'a> ValkeyReader<'a> {
         Err(RedisError::InvalidResponse)
     }
 
-    pub fn read_integer(&mut self) -> Result<i64, RedisError> {
+    pub(crate) fn read_integer(&mut self) -> Result<i64, RedisError> {
         let str = self.read_until_crlf()?;
         bun_core::fmt::parse_int::<i64>(str, 10).map_err(|_| RedisError::InvalidInteger)
     }
 
-    pub fn read_double(&mut self) -> Result<f64, RedisError> {
+    pub(crate) fn read_double(&mut self) -> Result<f64, RedisError> {
         let str = self.read_until_crlf()?;
 
         // Handle special values
@@ -276,7 +276,7 @@ impl<'a> ValkeyReader<'a> {
         bun_core::fmt::parse_f64(str).ok_or(RedisError::InvalidDouble)
     }
 
-    pub fn read_boolean(&mut self) -> Result<bool, RedisError> {
+    pub(crate) fn read_boolean(&mut self) -> Result<bool, RedisError> {
         let str = self.read_until_crlf()?;
         if str.len() != 1 {
             return Err(RedisError::InvalidBoolean);
@@ -289,7 +289,7 @@ impl<'a> ValkeyReader<'a> {
         }
     }
 
-    pub fn read_verbatim_string(&mut self) -> Result<VerbatimString, RedisError> {
+    pub(crate) fn read_verbatim_string(&mut self) -> Result<VerbatimString, RedisError> {
         let len = self.read_integer()?;
         if !(0..=Self::MAX_BULK_LEN).contains(&len) {
             return Err(RedisError::InvalidVerbatimString);
@@ -761,7 +761,7 @@ pub struct MapEntry {
 // `MapEntry::deinit` deleted — fields drop automatically.
 
 pub struct VerbatimString {
-    pub format: Box<[u8]>, // e.g. "txt" or "mkd"
+    pub(crate) format: Box<[u8]>, // e.g. "txt" or "mkd"
     pub content: Box<[u8]>,
 }
 
@@ -775,7 +775,7 @@ pub struct Push {
 // `Push::deinit` deleted — Box/Vec fields drop automatically.
 
 pub struct Attribute {
-    pub attributes: Vec<MapEntry>,
+    pub(crate) attributes: Vec<MapEntry>,
     pub value: Box<RESPValue>,
 }
 
@@ -787,6 +787,9 @@ pub enum SubscriptionPushMessage {
     Message,
     Subscribe,
     Unsubscribe,
+    /// `pmessage` / `smessage` — delivered without a promise pair; no listener
+    /// API is exposed for pattern subscriptions, so the payload is dropped.
+    PatternMessage,
 }
 
 bun_core::comptime_string_map! {
@@ -800,12 +803,21 @@ bun_core::comptime_string_map! {
 impl SubscriptionPushMessage {
     #[inline]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        SUBSCRIPTION_PUSH_MESSAGES.get(bytes).copied()
+        if let Some(kind) = SUBSCRIPTION_PUSH_MESSAGES.get(bytes).copied() {
+            return Some(kind);
+        }
+        match bytes.split_first() {
+            Some((b'p' | b's', base)) => match SUBSCRIPTION_PUSH_MESSAGES.get(base).copied() {
+                Some(kind @ (Self::Subscribe | Self::Unsubscribe)) => Some(kind),
+                Some(Self::Message) => Some(Self::PatternMessage),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// Pattern (`p`-prefixed) and sharded (`s`-prefixed) variants of the
-    /// `Subscribe`/`Unsubscribe` push kinds; the unprefixed kinds are matched by
-    /// `from_bytes` before this is consulted.
+    /// `Subscribe`/`Unsubscribe` push kinds.
     #[inline]
     pub fn is_reply_kind(kind: &[u8]) -> bool {
         match kind.split_first() {

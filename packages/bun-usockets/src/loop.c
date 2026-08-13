@@ -208,10 +208,10 @@ int us_loop_close_all_groups(struct us_loop_t *loop) {
     int any = 0;
     while (g) {
         struct us_socket_group_t *next = g->next;
-        /* Only connecting/connected sockets are stranded — listen sockets are
-         * 1:1 owned by a Zig Listener / uWS App that holds a raw pointer and
-         * closes them in finalize(). Closing them here turns that into a UAF
-         * after drainClosedSockets(). */
+        /* Only connecting/connected sockets are stranded here. Listen sockets are
+         * 1:1 owned by a Listener / uWS App that holds a raw pointer to them; the
+         * runtime's stop phase has already stopped those owners before this sweep,
+         * and closing a listen socket from under one that was not would be a UAF. */
         if (g->head_sockets || g->head_connecting_sockets || g->low_prio_count) {
             us_socket_group_close_all_ex(g, /* also_listeners */ 0);
             any = 1;
@@ -490,7 +490,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 if (error || eof) {
                     connect_error = us_socket_get_error((struct us_socket_t *) p);
                     if (connect_error == 0) {
+#ifdef _WIN32
+                        connect_error = WSAECONNRESET;
+#else
                         connect_error = ECONNRESET;
+#endif
                     }
                 }
                 us_internal_socket_after_open((struct us_socket_t *) p, connect_error);
@@ -536,6 +540,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.adopted = 0;
                         s->flags.last_write_failed = 0;
                         s->unclassified_send_failures = 0;
+                        s->read_eof = 0;
+                        s->fin_deferred = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -549,9 +555,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             us_dispatch_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
                         }
                         /* After socket adoption, track the new socket; the old one becomes invalid */
-                        if(s && s->flags.adopted && s->prev) {
-                            s = s->prev;
-                        }
+                        s = us_internal_socket_follow_adopted(s);
 
                         /* When the kernel deferred the accept until data arrived (TCP_DEFER_ACCEPT
                          * on Linux, SO_ACCEPTFILTER on FreeBSD), the request/ClientHello is already
@@ -577,9 +581,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             /* We should only use s, no p after this point */
             struct us_socket_t *s = (struct us_socket_t *) p;
             /* After socket adoption, track the new socket; the old one becomes invalid */
-            if(s && s->flags.adopted && s->prev) {
-                s = s->prev;
-            }
+            s = us_internal_socket_follow_adopted(s);
             /* The group can change after calling a callback but the loop is always the same */
             struct us_loop_t* loop = s->group->loop;
             if (events & LIBUS_SOCKET_WRITABLE && !error) {
@@ -595,9 +597,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                 s = s->ssl ? us_internal_ssl_on_writable(s) : us_dispatch_writable(s);
                 /* After socket adoption, track the new socket; the old one becomes invalid */
-                if(s && s->flags.adopted && s->prev) {
-                    s = s->prev;
-                }
+                s = us_internal_socket_follow_adopted(s);
 
                 if (!s || us_socket_is_closed(s)) {
                     return;
@@ -718,9 +718,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s = s->ssl ? us_internal_ssl_on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length)
                                    : us_dispatch_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
                         /* After socket adoption, track the new socket; the old one becomes invalid */
-                        if(s && s->flags.adopted && s->prev) {
-                            s = s->prev;
-                        }
+                        s = us_internal_socket_follow_adopted(s);
                         read_any = 1;
                         // loop->num_ready_polls isn't accessible on Windows.
                         #ifndef WIN32
@@ -847,7 +845,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }
-                if(s->flags.allow_half_open) {
+                if (s->flags.allow_half_open && s->read_eof) {
+                    /* on_end already delivered (libuv UV_HANDLE_READ_EOF): just drop the readable interest that re-surfaced it. */
+                    us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
+                } else if(s->flags.allow_half_open) {
+                    s->read_eof = 1;
                     /* EOF with half-open allowed: stop polling readable but KEEP
                      * polling writable. Masking with the current events dropped
                      * writable when the EOF landed before the poll had been
@@ -859,6 +861,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                      * writable dispatch disables writable polling again once
                      * the buffer is drained, so this does not busy-poll. */
                     us_poll_change(&s->p, loop, LIBUS_SOCKET_WRITABLE);
+#ifdef LIBUS_USE_KQUEUE
+                    /* The change above deleted the read filter; without a sentinel
+                     * the peer's later RST is never reported (the one-shot write
+                     * filter may already be consumed) and the socket strands. */
+                    us_internal_kqueue_socket_arm_read_sentinel(s);
+#endif
                     s = s->ssl ? us_internal_ssl_on_end(s) : us_dispatch_end(s);
                 } else {
                     /* We dont allow half open just emit end and close the socket */
@@ -945,7 +953,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 do {
                     struct udp_recvbuf recvbuf;
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
-                    int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT);
+                    int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT, u->shared_fd ? 1 : LIBUS_UDP_RECV_COUNT);
                     if (npackets > 0) {
                         u->on_data(u, &recvbuf, npackets);
                     } else {

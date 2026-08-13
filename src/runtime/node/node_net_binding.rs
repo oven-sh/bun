@@ -11,7 +11,7 @@ use bun_uws as uws;
 use crate::node::util::validators;
 use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags, TCPSocket, TLSSocket};
 
-pub(crate) static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
+static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
 
 // This is only used to provide the getDefaultAutoSelectFamilyAttemptTimeout and
 // setDefaultAutoSelectFamilyAttemptTimeout functions, not currently read by any other code. It's
@@ -110,19 +110,19 @@ pub(crate) fn set_default_auto_select_family_attempt_timeout(global: &JSGlobalOb
 
 // codegen (`generated_js2native.rs`) snake-cases the symbol; alias the
 // PascalCase fns so both spellings resolve.
-pub use self::{BlockList as block_list, SocketAddress as socket_address};
+pub(crate) use self::{BlockList as block_list, SocketAddress as socket_address};
 
 // Forward to the codegen'd `js_${Type}::get_constructor` wrappers — they go through
 // `jsc_abi_extern!` so the extern uses `extern "sysv64"` on win-x64 (matching
 // C++ `JSC_CALLCONV`). A bare `extern "C"` redecl here would be the wrong ABI on
 // Windows and trips `clashing_extern_declarations`.
 #[allow(non_snake_case)]
-pub fn SocketAddress(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn SocketAddress(global: &JSGlobalObject) -> JSValue {
     crate::generated_classes::js_SocketAddress::get_constructor(global)
 }
 
 #[allow(non_snake_case)]
-pub fn BlockList(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn BlockList(global: &JSGlobalObject) -> JSValue {
     crate::generated_classes::js_BlockList::get_constructor(global)
 }
 

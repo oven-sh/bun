@@ -24,7 +24,7 @@ use crate::hir_vec;
 /// Outline JSX expressions in inner functions into separate outlined components.
 ///
 /// Ported from TS `outlineJSX` in `Optimization/OutlineJsx.ts`.
-pub fn outline_jsx(func: &mut HirFunction, env: &mut Environment) {
+pub(crate) fn outline_jsx(func: &mut HirFunction, env: &mut Environment) {
     let mut outlined_fns: Vec<HirFunction> = Vec::new();
     outline_jsx_impl(func, env, &mut outlined_fns);
 

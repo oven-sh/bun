@@ -1,9 +1,6 @@
 use core::marker::PhantomData;
 
-// The methods used below (`get() -> Option`, `has()`, `try_swap()`) live on
-// the Optional wrapper, so import it under the local name `Strong`.
-use crate::strong::Optional as Strong;
-use crate::{JSGlobalObject, JSValue};
+use crate::{JSGlobalObject, JSValue, Strong};
 
 /// Holds a reference to a JSValue with lifecycle management.
 ///
@@ -65,8 +62,9 @@ use crate::{JSGlobalObject, JSValue};
 ///   The JSValue may become invalid if the object is collected.
 ///   Use `try_get()` to safely check if the value is still alive.
 ///
-/// - **Strong**: Holds a Strong reference that prevents garbage collection.
-///   The JavaScript object will stay alive as long as this reference exists.
+/// - **Strong**: Holds a [`Strong`] reference that prevents garbage collection.
+///   The JavaScript object will stay alive as long as this reference exists, and a
+///   `Strong` always holds a value, so this state is never empty (`try_get()` is `Some`).
 ///   Released by dropping/overwriting the `JsRef`, or by `finalize()`.
 ///
 /// - **Finalized**: The reference has been finalized (object was GC'd or explicitly cleaned up).
@@ -96,8 +94,8 @@ use crate::{JSGlobalObject, JSValue};
 /// See ServerWebSocket, UDPSocket, MySQLConnection, and ValkeyClient for examples.
 ///
 /// `JsRef` is `!Send + !Sync` (transitively via `JSValue` and `Strong`): the
-/// `HandleSlot` backing `Strong` is owned by the VM's `HandleSet` and must be
-/// dropped on the JS thread.
+/// `StrongRootBlock` slot backing `Strong` hangs off the per-VM JSVMClientData
+/// and must be dropped on the JS thread.
 pub enum JsRef {
     Weak(JSValue),
     Strong(Strong),
@@ -133,7 +131,7 @@ impl JsRef {
                     Some(*weak)
                 }
             }
-            JsRef::Strong(strong) => strong.get(),
+            JsRef::Strong(strong) => Some(strong.get()),
             JsRef::Finalized => None,
         }
     }
@@ -151,7 +149,7 @@ impl JsRef {
         match self {
             JsRef::Weak(_) => {}
             JsRef::Strong(_) => {
-                // `Strong`'s `Drop` deallocates the HandleSlot when `*self` is
+                // `Strong`'s `Drop` releases the block slot when `*self` is
                 // overwritten below, so no explicit deinit is needed.
             }
             JsRef::Finalized => {
@@ -188,7 +186,7 @@ impl JsRef {
         match self {
             JsRef::Weak(_) => {}
             JsRef::Strong(strong) => {
-                let value = strong.try_swap().unwrap_or(JSValue::UNDEFINED);
+                let value = strong.get();
                 value.ensure_still_alive();
                 // The old `Strong` is dropped by the assignment below; the
                 // `strong` borrow ends at its last use above, permitting
@@ -202,7 +200,7 @@ impl JsRef {
     pub fn is_empty(&self) -> bool {
         match self {
             JsRef::Weak(weak) => weak.is_empty_or_undefined_or_null(),
-            JsRef::Strong(strong) => !strong.has(),
+            JsRef::Strong(_) => false,
             JsRef::Finalized => true,
         }
     }
@@ -210,7 +208,7 @@ impl JsRef {
     pub fn is_not_empty(&self) -> bool {
         match self {
             JsRef::Weak(weak) => !weak.is_empty_or_undefined_or_null(),
-            JsRef::Strong(strong) => strong.has(),
+            JsRef::Strong(_) => true,
             JsRef::Finalized => false,
         }
     }
@@ -222,7 +220,7 @@ impl JsRef {
 
     pub fn finalize(&mut self) {
         // Overwriting `*self` drops the prior variant (releasing the `Strong`
-        // HandleSlot via its `Drop`), so no explicit deinit step is needed.
+        // block slot via its `Drop`), so no explicit deinit step is needed.
         // External `jsref.deinit()` callers become `*jsref = JsRef::empty()`.
         *self = JsRef::Finalized;
     }
@@ -234,7 +232,7 @@ impl JsRef {
                 *weak = value;
             }
             JsRef::Strong(strong) => {
-                if strong.get() != Some(value) {
+                if strong.get() != value {
                     strong.set(global, value);
                 }
             }

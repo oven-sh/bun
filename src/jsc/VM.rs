@@ -12,8 +12,7 @@ use crate::{JSGlobalObject, JSValue, JsError};
 // `holdAPILock` keeps a raw `*mut c_void` ctx (opaque round-trip; C++ never
 // dereferences it as Rust data) so it stays `unsafe fn`.
 unsafe extern "C" {
-    safe fn JSC__VM__deinit(vm: &VM, global_object: &JSGlobalObject);
-    safe fn JSC__VM__setControlFlowProfiler(vm: &VM, enabled: bool);
+    safe fn JSC__VM__enableControlFlowProfiler(vm: &VM);
     safe fn JSC__VM__hasExecutionTimeLimit(vm: &VM) -> bool;
     // safe: `VM` is an opaque `UnsafeCell`-backed ZST handle (`&` is ABI-identical
     // to non-null `*const`); `ctx` is an opaque round-trip pointer C++ only forwards
@@ -50,12 +49,9 @@ impl VM {
     // its VM via `Zig::GlobalObject::create` → `WebWorker__createVM` instead).
 
     // Note: not `impl Drop` — takes a `global_object` param and `VM` is an opaque FFI handle.
-    pub fn deinit(&self, global_object: &JSGlobalObject) {
-        JSC__VM__deinit(self, global_object)
-    }
 
-    pub fn set_control_flow_profiler(&self, enabled: bool) {
-        JSC__VM__setControlFlowProfiler(self, enabled)
+    pub fn enable_control_flow_profiler(&self) {
+        JSC__VM__enableControlFlowProfiler(self)
     }
 
     pub fn has_execution_time_limit(&self) -> bool {
@@ -98,11 +94,11 @@ impl VM {
         JSC__VM__runGC(self, sync)
     }
 
-    pub fn heap_size(&self) -> usize {
+    pub(crate) fn heap_size(&self) -> usize {
         JSC__VM__heapSize(self)
     }
 
-    pub fn collect_async(&self) {
+    pub(crate) fn collect_async(&self) {
         JSC__VM__collectAsync(self)
     }
 
@@ -118,12 +114,23 @@ impl VM {
     // These may be called concurrently from another thread.
 
     /// Fires NeedTermination Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
-    pub fn notify_need_termination(&self) {
+    pub(crate) fn notify_need_termination(&self) {
         JSC__VM__notifyNeedTermination(self)
     }
 
-    pub fn clear_has_termination_request(&self) {
-        crate::cpp::JSC__VM__clearHasTerminationRequest(self)
+    /// Has termination been requested on this VM (worker.terminate(), or
+    /// teardown's forbidExecution)? JS thread.
+    pub fn has_termination_request(&self) -> bool {
+        crate::cpp::JSC__VM__hasTerminationRequest(self)
+    }
+
+    /// JS thread: make this VM's stop concrete here — afterwards a
+    /// TerminationException is pending (what the next exception check would
+    /// have done with the requester's trap). For code that learns of the stop
+    /// from the gate rather than from a thrown termination and must return
+    /// `Err(JsError::Terminated)`, which always means "exception pending".
+    pub fn ensure_termination_exception_pending(&self) {
+        crate::cpp::JSC__VM__ensureTerminationExceptionPending(self)
     }
 
     #[track_caller]
@@ -145,7 +152,7 @@ impl VM {
 
     /// `RESOURCE_USAGE` build option in JavaScriptCore is required for this function
     /// This is faster than checking the heap size
-    pub fn block_bytes_allocated(&self) -> usize {
+    pub(crate) fn block_bytes_allocated(&self) -> usize {
         JSC__VM__blockBytesAllocated(self)
     }
 }
@@ -153,12 +160,6 @@ impl VM {
 /// RAII JSLockHolder returned by [`VM::get_api_lock`]. Released on `Drop`.
 pub struct Lock<'a> {
     vm: &'a VM,
-}
-
-impl<'a> Lock<'a> {
-    /// Explicit release. Equivalent to `drop(self)`.
-    #[inline]
-    pub fn release(self) {}
 }
 
 impl Drop for Lock<'_> {

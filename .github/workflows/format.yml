@@ -9,7 +9,7 @@ on:
   pull_request:
   merge_group:
 env:
-  BUN_VERSION: "1.3.2"
+  BUN_VERSION: "1.3.14"
   LLVM_VERSION: "21.1.8"
   LLVM_VERSION_MAJOR: "21"
 
@@ -22,7 +22,9 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Configure Git
         run: |
           git config --global core.autocrlf true
@@ -54,13 +56,13 @@ jobs:
           # Start clang-format installation and formatting in background with prefixed output
           echo "::group::Clang-format"
           (
-            echo "[clang-format] Installing clang-format-${{ env.LLVM_VERSION_MAJOR }}..."
+            echo "[clang-format] Installing clang-format-${LLVM_VERSION_MAJOR}..."
             wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
-            echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{ env.LLVM_VERSION_MAJOR }} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+            echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${LLVM_VERSION_MAJOR} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
             sudo apt-get update -qq
-            sudo apt-get install -y -qq --no-install-recommends --no-install-suggests -o=Dpkg::Use-Pty=0 clang-format-${{ env.LLVM_VERSION_MAJOR }}
+            sudo apt-get install -y -qq --no-install-recommends --no-install-suggests -o=Dpkg::Use-Pty=0 clang-format-${LLVM_VERSION_MAJOR}
             echo "[clang-format] Running clang-format..."
-            LLVM_VERSION_MAJOR=${{ env.LLVM_VERSION_MAJOR }} ./scripts/run-clang-format.sh format 2>&1 | sed 's/^/[clang-format] /'
+            ./scripts/run-clang-format.sh format 2>&1 | sed 's/^/[clang-format] /'
           ) &
           CLANG_PID=$!
 
@@ -113,4 +115,4 @@ jobs:
         # CI rather than as a confusing behaviour diff later.
         run: |
           bun run codegen:verify
-      - uses: autofix-ci/action@635ffb0c9798bd160680f18fd73371e355b85f27
+      - uses: autofix-ci/action@c5b2d67aa2274e7b5a18224e8171550871fc7e4a # v1.3.4

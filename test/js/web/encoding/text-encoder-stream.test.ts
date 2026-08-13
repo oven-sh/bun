@@ -163,3 +163,107 @@ test("cancelling the readable inside the chunk's toString() rejects the write in
   await expect(writePromise).rejects.toBeInstanceOf(TypeError);
   await writer.abort("bye"); // must settle
 });
+
+// Native-sink output path: when the readable is consumed by a native JSSink
+// (here HTTPResponseSink via Bun.serve), the encoder writes into a reusable
+// scratch buffer and straight to the sink's m_sinkPtr instead of wrapping each
+// chunk in a JSUint8Array.
+test("TextEncoderStream -> native HTTP response sink round-trips (incl. split surrogate)", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      const body = new ReadableStream({
+        start(c) {
+          c.enqueue("I \u{1F499} ");
+          c.enqueue(leading);
+          c.enqueue(trailing + " streams");
+          c.close();
+        },
+      });
+      return new Response(body.pipeThrough(new TextEncoderStream()));
+    },
+  });
+  const text = await (await fetch(server.url)).text();
+  expect(text).toBe("I \u{1F499} \u{1F499} streams");
+});
+
+test("TextEncoderStream -> native HTTP response sink: flush emits FFFD for a dangling lead surrogate", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      const body = new ReadableStream({
+        start(c) {
+          c.enqueue("a");
+          c.enqueue(leading);
+          c.close();
+        },
+      });
+      return new Response(body.pipeThrough(new TextEncoderStream()));
+    },
+  });
+  const text = await (await fetch(server.url)).text();
+  expect(text).toBe("a\uFFFD");
+});
+
+// Each encoder/decoder owns its own reusable scratch buffer; a chain of them
+// must not let one stage observe another's buffer before the bytes are copied.
+test("TextEncoderStream -> TextDecoderStream -> TextEncoderStream round-trips many chunks without corruption", async () => {
+  const chunks = [
+    "ascii-only-1",
+    "mañana café ", // latin-1 non-ascii
+    "\u{1F499}".repeat(50), // surrogate pairs (BMP-out)
+    "x".repeat(8000), // larger than one internal CHUNK span
+    leading, // split surrogate across chunk boundary
+    trailing + "tail",
+    "\u{1F1EE}\u{1F1F3}zz", // regional indicators
+    Buffer.alloc(3000, "日").toString(), // 3-byte utf8
+    "",
+    "end",
+  ];
+  const expected = new TextEncoder().encode(chunks.join(""));
+
+  const src = new ReadableStream<string>({
+    start(c) {
+      for (const s of chunks) c.enqueue(s);
+      c.close();
+    },
+  });
+
+  const out = Buffer.from(
+    await new Response(
+      src
+        .pipeThrough(new TextEncoderStream())
+        .pipeThrough(new TextDecoderStream())
+        .pipeThrough(new TextEncoderStream()),
+    ).arrayBuffer(),
+  );
+
+  expect(out.byteLength).toBe(expected.byteLength);
+  expect(Buffer.compare(out, Buffer.from(expected))).toBe(0);
+});
+
+test("TextEncoderStream -> TextDecoderStream -> TextEncoderStream -> native HTTP sink round-trips", async () => {
+  const chunks = ["hello ", "\u{1F499}".repeat(200), leading, trailing, " world"];
+  const expected = new TextEncoder().encode(chunks.join(""));
+
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      const body = new ReadableStream<string>({
+        start(c) {
+          for (const s of chunks) c.enqueue(s);
+          c.close();
+        },
+      });
+      return new Response(
+        body
+          .pipeThrough(new TextEncoderStream())
+          .pipeThrough(new TextDecoderStream())
+          .pipeThrough(new TextEncoderStream()),
+      );
+    },
+  });
+  const out = Buffer.from(await (await fetch(server.url)).arrayBuffer());
+  expect(out.byteLength).toBe(expected.byteLength);
+  expect(Buffer.compare(out, Buffer.from(expected))).toBe(0);
+});

@@ -110,8 +110,8 @@ impl RendererImpl for ImageUrlCollector {
 
 // Drop is automatic for `Vec<Box<[u8]>>`.
 
-pub struct AnsiRenderer<'a> {
-    pub out: OutputBuffer,
+struct AnsiRenderer<'a> {
+    pub(crate) out: OutputBuffer,
     src_text: &'a [u8],
     theme: Theme<'a>,
     /// Stack of active block contexts (li/quote) for indentation.
@@ -261,7 +261,7 @@ impl InlineStyle {
 }
 
 impl<'a> AnsiRenderer<'a> {
-    pub fn init(src_text: &'a [u8], theme: Theme<'a>) -> AnsiRenderer<'a> {
+    pub(crate) fn init(src_text: &'a [u8], theme: Theme<'a>) -> AnsiRenderer<'a> {
         let mut r = AnsiRenderer {
             out: OutputBuffer {
                 list: Vec::new(),
@@ -302,7 +302,7 @@ impl<'a> AnsiRenderer<'a> {
         r
     }
 
-    pub fn renderer(&mut self) -> Renderer<'_> {
+    pub(crate) fn renderer(&mut self) -> Renderer<'_> {
         Renderer { ptr: self }
     }
 
@@ -310,7 +310,7 @@ impl<'a> AnsiRenderer<'a> {
     // Block rendering
     // ========================================
 
-    pub fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) {
+    pub(crate) fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) {
         match block_type {
             BlockType::Doc => {}
             BlockType::Quote => {
@@ -487,7 +487,7 @@ impl<'a> AnsiRenderer<'a> {
         }
     }
 
-    pub fn leave_block(&mut self, block_type: BlockType, _data: u32) {
+    pub(crate) fn leave_block(&mut self, block_type: BlockType, _data: u32) {
         match block_type {
             BlockType::Doc => {}
             BlockType::Quote | BlockType::Ul | BlockType::Ol | BlockType::Li => {
@@ -551,7 +551,7 @@ impl<'a> AnsiRenderer<'a> {
     // Span rendering
     // ========================================
 
-    pub fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail) {
+    pub(crate) fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail) {
         match span_type {
             SpanType::Em | SpanType::Strong | SpanType::U | SpanType::Del => {
                 let s = InlineStyle::of(span_type).unwrap();
@@ -607,7 +607,7 @@ impl<'a> AnsiRenderer<'a> {
         }
     }
 
-    pub fn leave_span(&mut self, span_type: SpanType) {
+    pub(crate) fn leave_span(&mut self, span_type: SpanType) {
         match span_type {
             SpanType::Em | SpanType::Strong | SpanType::U | SpanType::Del => {
                 let s = InlineStyle::of(span_type).unwrap();
@@ -686,7 +686,7 @@ impl<'a> AnsiRenderer<'a> {
     // Text rendering
     // ========================================
 
-    pub fn text(&mut self, text_type: TextType, content: &[u8]) {
+    pub(crate) fn text(&mut self, text_type: TextType, content: &[u8]) {
         let mut sanitized: Vec<u8> = Vec::new();
         let content = sanitize_source_text(content, &mut sanitized);
         match text_type {
@@ -2170,7 +2170,7 @@ impl<'s> CellAnsiState<'s> {
         // Stateful parse: 38/48 consume 2 extra params for `5;N` or
         // 4 extra for `2;R;G;B`. Snapshot the whole seq for fg/bg
         // since we don't need to recompute it — just replay it.
-        let mut iter = params.split(|b| *b == b';');
+        let mut iter = strings::split(params, b";");
         while let Some(p) = iter.next() {
             let n = match bun_core::fmt::parse_int::<u32>(p, 10).ok() {
                 Some(n) => n,
@@ -2445,7 +2445,7 @@ pub fn detect_light_background() -> bool {
         // (bright white) are light terminal backgrounds. Bright colors
         // 9-14 are high-intensity foreground codes, not light backgrounds.
         let mut last: &[u8] = b"";
-        for part in value.split(|b| *b == b';') {
+        for part in strings::split(value, b";") {
             last = part;
         }
         if !last.is_empty() {
@@ -2535,10 +2535,18 @@ fn probe_kitty_graphics() -> bool {
             Err(_) => return false,
         };
         let mut tty_state = bun_core::tty::State::new();
-        let _ = tty_state.set_mode(0, bun_core::tty::Mode::Raw);
+        let _ = tty_state.set_mode(
+            0,
+            bun_core::tty::Mode::Raw,
+            bun_core::tty::SetAttrWhen::Drain,
+        );
         let _restore = scopeguard::guard((saved_termios, tty_state), |(saved, mut state)| {
             if bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Now, &saved).is_err() {
-                let _ = state.set_mode(0, bun_core::tty::Mode::Normal);
+                let _ = state.set_mode(
+                    0,
+                    bun_core::tty::Mode::Normal,
+                    bun_core::tty::SetAttrWhen::Drain,
+                );
             }
         });
 

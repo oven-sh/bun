@@ -33,7 +33,7 @@ pub struct JsonCache {
 }
 
 impl JsonCache {
-    pub fn init() -> JsonCache {
+    pub(crate) fn init() -> JsonCache {
         JsonCache { bump: None }
     }
 
@@ -73,7 +73,7 @@ impl JsonCache {
 
     /// Parses tsconfig.json/jsconfig.json source as JSONC into the immutable row AST.
     #[inline]
-    pub fn parse_tsconfig(
+    pub(crate) fn parse_tsconfig(
         &mut self,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
@@ -83,7 +83,7 @@ impl JsonCache {
 
     /// Parses package.json source into the immutable row AST.
     #[inline]
-    pub fn parse_package_json(
+    pub(crate) fn parse_package_json(
         &mut self,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
@@ -133,18 +133,18 @@ pub(crate) enum JsxField {
 pub(crate) type JsxFieldSet = EnumSet<JsxField>;
 
 pub struct TSConfigJSON {
-    pub abs_path: Box<[u8]>,
+    pub(crate) abs_path: Box<[u8]>,
 
     /// The absolute path of "compilerOptions.baseUrl"
-    pub base_url: Box<[u8]>,
+    pub(crate) base_url: Box<[u8]>,
 
     /// This is used if "Paths" is non-nil. It's equal to "BaseURL" except if
     /// "BaseURL" is missing, in which case it is as if "BaseURL" was ".". This
     /// is to implement the "paths without baseUrl" feature from TypeScript 4.1.
     /// More info: https://github.com/microsoft/TypeScript/issues/31869
-    pub base_url_for_paths: Box<[u8]>,
+    pub(crate) base_url_for_paths: Box<[u8]>,
 
-    pub extends: Box<[u8]>,
+    pub(crate) extends: Box<[u8]>,
     /// The verbatim values of "compilerOptions.paths". The keys are patterns to
     /// match and the values are arrays of fallback paths to search. Each key and
     /// each fallback path can optionally have a single "*" wildcard character.
@@ -152,15 +152,17 @@ pub struct TSConfigJSON {
     /// the wildcard is substituted into the fallback path. The keys represent
     /// module-style path names and the fallback paths are relative to the
     /// "baseUrl" value in the "tsconfig.json" file.
-    pub paths: PathsMap,
+    pub(crate) paths: PathsMap,
 
     pub jsx: options::jsx::Pragma,
-    pub jsx_flags: JsxFieldSet,
+    pub(crate) jsx_flags: JsxFieldSet,
 
-    pub preserve_imports_not_used_as_values: Option<bool>,
+    pub(crate) preserve_imports_not_used_as_values: Option<bool>,
 
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
+    /// `None` = unset (keeps native [[Define]] class-field semantics).
+    pub use_define_for_class_fields: Option<bool>,
 }
 
 impl Default for TSConfigJSON {
@@ -176,6 +178,7 @@ impl Default for TSConfigJSON {
             preserve_imports_not_used_as_values: Some(false),
             emit_decorator_metadata: false,
             experimental_decorators: false,
+            use_define_for_class_fields: None,
         }
     }
 }
@@ -202,7 +205,7 @@ bun_core::declare_scope!(alloc, hidden);
 
 impl TSConfigJSON {
     #[inline]
-    pub fn new(v: Self) -> Box<Self> {
+    pub(crate) fn new(v: Self) -> Box<Self> {
         let boxed = Box::new(v);
         if cfg!(debug_assertions) {
             bun_core::scoped_log!(alloc, "new(TSConfigJSON) = {:p}", boxed.as_ref());
@@ -212,14 +215,14 @@ impl TSConfigJSON {
 
     // Logs under `.alloc` then frees.
     #[inline]
-    pub fn destroy(boxed: Box<Self>) {
+    pub(crate) fn destroy(boxed: Box<Self>) {
         if cfg!(debug_assertions) {
             bun_core::scoped_log!(alloc, "destroy(TSConfigJSON) = {:p}", boxed.as_ref());
         }
         drop(boxed);
     }
 
-    pub fn has_base_url(&self) -> bool {
+    pub(crate) fn has_base_url(&self) -> bool {
         !self.base_url.is_empty()
     }
 
@@ -371,6 +374,7 @@ impl TSConfigJSON {
             let mut base_url_v: Option<&bun_ast::E::JsonValue> = None;
             let mut emit_decorator_metadata_v: Option<&bun_ast::E::JsonValue> = None;
             let mut experimental_decorators_v: Option<&bun_ast::E::JsonValue> = None;
+            let mut use_define_for_class_fields_v: Option<&bun_ast::E::JsonValue> = None;
             let mut jsx_factory_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
             let mut jsx_fragment_factory_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
             let mut jsx_v: Option<&bun_ast::E::JsonValue> = None;
@@ -390,6 +394,9 @@ impl TSConfigJSON {
                         }
                         b"experimentalDecorators" if experimental_decorators_v.is_none() => {
                             experimental_decorators_v = Some(value)
+                        }
+                        b"useDefineForClassFields" if use_define_for_class_fields_v.is_none() => {
+                            use_define_for_class_fields_v = Some(value)
                         }
                         b"jsxFactory" if jsx_factory_v.is_none() => {
                             jsx_factory_v = Some((value, loc))
@@ -433,6 +440,11 @@ impl TSConfigJSON {
             // Parse "experimentalDecorators"
             if let Some(&bun_ast::E::JsonValue::Boolean(val)) = experimental_decorators_v {
                 result.experimental_decorators = val;
+            }
+
+            // Parse "useDefineForClassFields"
+            if let Some(&bun_ast::E::JsonValue::Boolean(val)) = use_define_for_class_fields_v {
+                result.use_define_for_class_fields = Some(val);
             }
 
             // Parse "jsxFactory"
@@ -657,7 +669,7 @@ impl TSConfigJSON {
         Ok(Some(TSConfigJSON::new(result)))
     }
 
-    pub fn is_valid_tsconfig_path_pattern(
+    pub(crate) fn is_valid_tsconfig_path_pattern(
         text: &[u8],
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
@@ -685,7 +697,7 @@ impl TSConfigJSON {
         true
     }
 
-    pub fn parse_member_expression_for_jsx(
+    pub(crate) fn parse_member_expression_for_jsx(
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         loc: bun_ast::Loc,
@@ -700,7 +712,7 @@ impl TSConfigJSON {
         // foo.bar.baz == 3
         // foo.bar.baz.bun == 4
         let parts_count =
-            text.iter().filter(|&&b| b == b'.').count() + usize::from(text[text.len() - 1] != b'.');
+            strings::count_char(text, b'.') + usize::from(text[text.len() - 1] != b'.');
         let mut parts: Vec<Box<[u8]>> = Vec::with_capacity(parts_count);
 
         if parts_count == 1 {
@@ -721,7 +733,7 @@ impl TSConfigJSON {
             return Ok(parts.into_boxed_slice());
         }
 
-        let iter = text.split(|b| *b == b'.').filter(|s| !s.is_empty());
+        let iter = strings::tokenize(text, b".");
 
         for part in iter {
             if !js_lexer::is_identifier(part) {
@@ -742,7 +754,7 @@ impl TSConfigJSON {
         Ok(parts.into_boxed_slice())
     }
 
-    pub fn is_valid_tsconfig_path_no_base_url_pattern(
+    pub(crate) fn is_valid_tsconfig_path_no_base_url_pattern(
         text: &[u8],
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,

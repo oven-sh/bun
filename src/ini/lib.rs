@@ -8,22 +8,6 @@ use bun_ast::{Loc, Log, Source};
 type OOM<T> = Result<T, AllocError>;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Options
-// ──────────────────────────────────────────────────────────────────────────
-
-pub struct Options {
-    pub bracked_array: bool,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            bracked_array: true,
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // Pure-byte helpers. They touch no parser state; exposed as free fns so
 // they are unit-testable without the Expr-carrying struct.
 // ──────────────────────────────────────────────────────────────────────────
@@ -57,20 +41,20 @@ pub(crate) fn is_quoted(val: &[u8]) -> bool {
 
 #[inline]
 pub(crate) fn next_dot(key: &[u8]) -> Option<usize> {
-    key.iter().position(|&b| b == b'.')
+    bun_core::strings::index_of_char_usize(key, b'.')
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // IniOption — tri-state used by iterators (None != end-of-iteration)
 // ──────────────────────────────────────────────────────────────────────────
 
-pub enum IniOption<T> {
+pub(crate) enum IniOption<T> {
     Some(T),
     None,
 }
 
 impl<T> IniOption<T> {
-    pub(crate) fn get(self) -> Option<T> {
+    fn get(self) -> Option<T> {
         match self {
             IniOption::Some(v) => Some(v),
             IniOption::None => None,
@@ -112,7 +96,7 @@ pub enum ConfigOpt {
 }
 
 impl ConfigOpt {
-    pub fn is_base64_encoded(self) -> bool {
+    pub(crate) fn is_base64_encoded(self) -> bool {
         matches!(self, ConfigOpt::_Auth | ConfigOpt::_Password)
     }
 }
@@ -122,15 +106,15 @@ impl ConfigOpt {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct ConfigItem {
-    pub registry_url: Box<[u8]>,
-    pub optname: ConfigOpt,
-    pub value: Box<[u8]>,
-    pub loc: Loc,
+    pub(crate) registry_url: Box<[u8]>,
+    pub(crate) optname: ConfigOpt,
+    pub(crate) value: Box<[u8]>,
+    pub(crate) loc: Loc,
 }
 
 impl ConfigItem {
     /// Duplicate ConfigIterator.Item
-    pub fn dupe(&self) -> OOM<Option<ConfigItem>> {
+    pub(crate) fn dupe(&self) -> OOM<Option<ConfigItem>> {
         Ok(Some(ConfigItem {
             registry_url: Box::<[u8]>::from(&*self.registry_url),
             optname: self.optname,
@@ -140,7 +124,11 @@ impl ConfigItem {
     }
 
     /// Duplicate the value, decoding it if it is base64 encoded.
-    pub fn dupe_value_decoded(&self, log: &mut Log, source: &Source) -> OOM<Option<Box<[u8]>>> {
+    pub(crate) fn dupe_value_decoded(
+        &self,
+        log: &mut Log,
+        source: &Source,
+    ) -> OOM<Option<Box<[u8]>>> {
         if self.optname.is_base64_encoded() {
             if self.value.is_empty() {
                 return Ok(Some(Box::default()));
@@ -154,6 +142,7 @@ impl ConfigItem {
                     bun_ast::AddErrorOptions {
                         source: Some(source),
                         loc: self.loc,
+                        redact_sensitive_information: true,
                         ..Default::default()
                     },
                 );
@@ -201,7 +190,7 @@ pub use draft::{
     load_npmrc_config,
 };
 pub mod config_iterator {
-    pub use super::{ConfigItem as Item, ConfigIterator as Iter, ConfigOpt as Opt};
+    pub use super::ConfigItem as Item;
 }
 
 mod draft {
@@ -221,8 +210,8 @@ mod draft {
     use bun_url::URL;
 
     use super::{
-        ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, Options, is_quoted,
-        next_dot, should_skip_line,
+        ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, is_quoted, next_dot,
+        should_skip_line,
     };
 
     type OOM<T> = Result<T, AllocError>;
@@ -239,12 +228,10 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct Parser<'a> {
-        pub opts: Options,
-        pub source: &'a Source,
-        pub src: &'a [u8],
+        pub(crate) source: &'a Source,
+        pub(crate) src: &'a [u8],
         pub out: Expr,
-        pub logger: Log,
-        pub env: &'a DotEnvLoader,
+        pub(crate) env: &'a DotEnvLoader,
     }
 
     // The result type depends on the usage (`.section -> *Rope`, `.key ->
@@ -277,8 +264,6 @@ mod draft {
     impl<'a> Parser<'a> {
         pub fn init(source: &'a Source, env: &'a DotEnvLoader) -> Parser<'a> {
             Parser {
-                opts: Options::default(),
-                logger: Log::init(),
                 src: source.contents.as_ref(),
                 out: Expr::init(E::Object::default(), Loc::EMPTY),
                 source,
@@ -292,7 +277,7 @@ mod draft {
             let src = self.src;
             let env = self.env;
             let source_path = self.source.path.text;
-            let mut iter = src.split(|&b| b == b'\n');
+            let mut iter = bun_core::strings::split(src, b"\n");
             // `StoreRef` is the arena-backed handle `ExprData` already stores;
             // it is `Copy`, so keeping the root and the current-section head as
             // separate values is a split borrow, not an alias.
@@ -320,7 +305,9 @@ mod draft {
                     let mut treat_as_key = false;
                     'treat_as_key: {
                         skip_until_next_section = false;
-                        let Some(close_bracket_idx) = line.iter().position(|&b| b == b']') else {
+                        let Some(close_bracket_idx) =
+                            bun_core::strings::index_of_char_usize(line, b']')
+                        else {
                             // Skip the whole line: treat_as_key stays false and
                             // we fall through to `continue` below.
                             break 'treat_as_key;
@@ -406,7 +393,7 @@ mod draft {
                 let line_offset = i32::try_from(line.as_ptr() as usize - src.as_ptr() as usize)
                     .expect("int cast");
 
-                let maybe_eq_sign_idx = line.iter().position(|&b| b == b'=');
+                let maybe_eq_sign_idx = bun_core::strings::index_of_char_usize(line, b'=');
 
                 let key_raw: &[u8] = Self::prepare_str(
                     env,
@@ -1051,7 +1038,7 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct ToStringFormatter<'a> {
-        pub d: &'a ExprData,
+        pub(crate) d: &'a ExprData,
     }
 
     impl fmt::Display for ToStringFormatter<'_> {
@@ -1099,15 +1086,14 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct ConfigIterator<'a> {
-        pub config: &'a E::Object,
-        pub source: &'a Source,
-        pub log: &'a mut Log,
+        pub(crate) config: &'a E::Object,
+        pub(crate) log: &'a mut Log,
 
-        pub prop_idx: usize,
+        pub(crate) prop_idx: usize,
     }
 
     impl<'a> ConfigIterator<'a> {
-        pub fn next(&mut self) -> Option<IniOption<ConfigItem>> {
+        pub(crate) fn next(&mut self) -> Option<IniOption<ConfigItem>> {
             if self.prop_idx >= self.config.properties.len_u32() as usize {
                 return None;
             }
@@ -1165,21 +1151,21 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct ScopeIterator<'a> {
-        pub config: &'a E::Object,
-        pub source: &'a Source,
-        pub log: &'a mut Log,
+        pub(crate) config: &'a E::Object,
+        pub(crate) source: &'a Source,
+        pub(crate) log: &'a mut Log,
 
-        pub prop_idx: usize,
-        pub count: bool,
+        pub(crate) prop_idx: usize,
+        pub(crate) count: bool,
     }
 
     pub struct ScopeItem {
-        pub scope: Box<[u8]>,
-        pub registry: NpmRegistry,
+        pub(crate) scope: Box<[u8]>,
+        pub(crate) registry: NpmRegistry,
     }
 
     impl<'a> ScopeIterator<'a> {
-        pub fn next(&mut self) -> OOM<Option<IniOption<ScopeItem>>> {
+        pub(crate) fn next(&mut self) -> OOM<Option<IniOption<ScopeItem>>> {
             if self.prop_idx >= self.config.properties.len_u32() as usize {
                 return Ok(None);
             }
@@ -1465,6 +1451,12 @@ mod draft {
                 };
         }
 
+        if let Some(hoist_expr) = out.get(b"hoist") {
+            if let Some(hoist) = hoist_expr.as_bool() {
+                install.hoist = Some(hoist);
+            }
+        }
+
         let mut registry_map = install.scoped.take().unwrap_or_default();
 
         let out_ref = parser
@@ -1504,7 +1496,7 @@ mod draft {
 
             while let Some(val) = iter.next()? {
                 if let Some(result) = val.get() {
-                    let registry = result.registry.dupe();
+                    let registry = result.registry.clone();
                     registry_map.scopes.put(&*result.scope, registry)?;
                 }
             }
@@ -1581,7 +1573,6 @@ mod draft {
 
             let mut iter = ConfigIterator {
                 config: out_obj,
-                source,
                 log,
                 prop_idx: 0,
             };
@@ -1896,7 +1887,8 @@ mod draft {
             return Ok(());
         }
         let username_password = &decoded[..result.count];
-        let Some(colon_idx) = username_password.iter().position(|&b| b == b':') else {
+        let Some(colon_idx) = bun_core::strings::index_of_char_usize(username_password, b':')
+        else {
             log.add_error_opts(
                 b"invalid _auth value, expected base64 encoded \"<username>:<password>\"",
                 bun_ast::AddErrorOptions {

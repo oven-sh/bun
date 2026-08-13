@@ -49,6 +49,10 @@ class DOMFormData : public RefCounted<DOMFormData>, public ContextDestructionObs
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(DOMFormData, DOMFormData);
 
 public:
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     using FormDataEntryValue = std::variant<String, RefPtr<Blob>>;
 
     struct Item {
@@ -71,7 +75,6 @@ public:
     bool has(const StringView name);
     void set(const String& name, const String& value);
     void set(const String& name, RefPtr<Blob>, const String& filename = {});
-    Ref<DOMFormData> clone() const;
 
     size_t count() const { return m_items.size(); }
     size_t memoryCost() const;

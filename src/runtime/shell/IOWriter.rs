@@ -39,15 +39,15 @@ use crate::shell::yield_::Yield;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ChildPtr {
     pub node: NodeId,
-    pub tag: WriterTag,
+    pub(crate) tag: WriterTag,
     /// Only meaningful when `tag == Subproc` — `*mut subproc::CapturedWriter`.
     /// `core::ptr::null_mut()` otherwise. Stored untyped to keep this header
     /// free of a `subproc` dependency.
-    pub raw: *mut core::ffi::c_void,
+    pub(crate) raw: *mut core::ffi::c_void,
 }
 
 impl ChildPtr {
-    pub(crate) const NULL: ChildPtr = ChildPtr {
+    const NULL: ChildPtr = ChildPtr {
         node: NodeId::NONE,
         tag: WriterTag::Cmd,
         raw: core::ptr::null_mut(),
@@ -74,7 +74,7 @@ impl ChildPtr {
     }
 
     #[inline]
-    pub(crate) fn is_null(&self) -> bool {
+    fn is_null(&self) -> bool {
         self.node == NodeId::NONE && self.raw.is_null()
     }
 }
@@ -85,10 +85,7 @@ pub enum WriterTag {
     /// Builtin running inside a Cmd — dispatch via `Builtin::on_io_writer_chunk`.
     Builtin,
     Cmd,
-    Pipeline,
-    Subshell,
     CondExpr,
-    If,
     /// `subproc::PipeReader::CapturedWriter` — heap-allocated, addressed via
     /// `ChildPtr::raw` rather than `node`.
     Subproc,
@@ -100,10 +97,10 @@ pub enum WriterTag {
 
 #[derive(Clone, Copy, Default)]
 pub struct Flags {
-    pub pollable: bool,
-    pub nonblock: bool,
-    pub is_socket: bool,
-    pub broken_pipe: bool,
+    pub(crate) pollable: bool,
+    pub(crate) nonblock: bool,
+    pub(crate) is_socket: bool,
+    pub(crate) broken_pipe: bool,
 }
 
 /// One queued chunk: which child enqueued it, how many bytes (in `buf`), how
@@ -170,7 +167,7 @@ pub(crate) type Poll = WriterImpl;
 /// can drop the last external ref without freeing `self` while PipeWriter is
 /// still on the stack.
 #[cfg(not(windows))]
-pub fn on_poll(writer: &mut Poll, size_hint: isize, hup: bool) {
+pub(crate) fn on_poll(writer: &mut Poll, size_hint: isize, hup: bool) {
     use bun_io::pipe_writer::PosixPipeWriter;
     let parent = writer.parent.expect("IOWriter writer.parent unset");
     // `parent` is the backref stashed via `set_parent` in `IOWriter::init`;
@@ -178,28 +175,6 @@ pub fn on_poll(writer: &mut Poll, size_hint: isize, hup: bool) {
     // `&self` (UnsafeCell aliasing model). `ParentRef::Deref → &IOWriter`.
     let _keepalive = parent.keepalive();
     writer.on_poll(size_hint, hup);
-}
-
-impl IOWriter {
-    /// Explicitly a no-op. Kept only because `task_tag::ShellIOWriter`
-    /// exists in the task-tag dispatch table. No code path enqueues this tag.
-    pub fn run_from_main_thread(_this: *mut IOWriter) {
-        // intentionally empty. No unsafe operations; the pointer is never
-        // dereferenced.
-    }
-
-    /// Tears down the underlying `WriterImpl` and drops the last strong ref.
-    ///
-    /// # Safety
-    /// `this` must be the `Arc::as_ptr` of a live `Arc<IOWriter>` whose strong
-    /// count is held by the async-deinit task; this call drops that ref.
-    // Forwards `this` to `Arc::decrement_strong_count` without dereferencing it
-    // here; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn deinit_on_main_thread(this: *mut IOWriter) {
-        // SAFETY: caller contract above.
-        unsafe { std::sync::Arc::decrement_strong_count(this) };
-    }
 }
 
 /// Mutable state. Wrapped in `UnsafeCell` so `Arc<IOWriter>`-shared callers can
@@ -272,11 +247,12 @@ impl IOWriter {
     /// Read-only accessor for the `is_socket` flag (used by
     /// `ShellSubprocess::spawn` to decide `no_sigpipe`).
     #[inline]
-    pub fn is_socket(&self) -> bool {
+    #[cfg(not(windows))]
+    pub(crate) fn is_socket(&self) -> bool {
         self.state().flags.is_socket
     }
 
-    pub fn init(fd: Fd, flags: Flags, evtloop: EventLoopHandle) -> std::sync::Arc<IOWriter> {
+    pub(crate) fn init(fd: Fd, flags: Flags, evtloop: EventLoopHandle) -> std::sync::Arc<IOWriter> {
         let mut writer = WriterImpl::default();
         // Tell the PipeWriter impl to *not* close the file descriptor.
         #[cfg(not(windows))]
@@ -325,26 +301,28 @@ impl IOWriter {
     /// # Safety
     /// `interp` must be null or point to the live owning `Interpreter` (which
     /// owns the IO struct holding this `Arc`) and outlive it; single-threaded.
-    // Forwards `interp` to `ParentRef::from_nullable_mut` without dereferencing
-    // it here; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    // Forwards `interp` to `ParentRef::from_nullable` (shared provenance)
+    // without dereferencing it here; not_unsafe_ptr_arg_deref is a false
+    // positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
-    pub fn set_interp(&self, interp: *mut Interpreter) {
+    pub(crate) fn set_interp(&self, interp: *mut Interpreter) {
         // SAFETY: caller contract above.
-        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
+        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable(interp) };
     }
 
     #[inline]
-    pub fn fd(&self) -> Fd {
+    pub(crate) fn fd(&self) -> Fd {
         self.state().fd
     }
 
     #[inline]
-    pub fn evtloop(&self) -> EventLoopHandle {
+    #[cfg(windows)]
+    pub(crate) fn evtloop(&self) -> EventLoopHandle {
         self.state().evtloop
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         let s = self.state();
         let mut cost = core::mem::size_of::<IOWriter>();
         cost += s.buf.capacity();
@@ -548,7 +526,7 @@ impl IOWriter {
     // ── queue management ────────────────────────────────────────────────
 
     /// Cancel the chunks enqueued by the given child by marking them as dead.
-    pub fn cancel_chunks(&self, ptr: ChildPtr) {
+    pub(crate) fn cancel_chunks(&self, ptr: ChildPtr) {
         let s = self.state();
         if s.writers.is_empty() {
             return;
@@ -1026,7 +1004,12 @@ impl IOWriter {
 
     /// Queue `buf` for writing; when the chunk completes (or errors),
     /// `child`'s `on_io_writer_chunk` fires.
-    pub fn enqueue(&self, child: ChildPtr, bytelist: Option<*mut Vec<u8>>, buf: &[u8]) -> Yield {
+    pub(crate) fn enqueue(
+        &self,
+        child: ChildPtr,
+        bytelist: Option<*mut Vec<u8>>,
+        buf: &[u8],
+    ) -> Yield {
         if let Some(y) = self.handle_dead_writer(child) {
             return y;
         }
@@ -1049,7 +1032,7 @@ impl IOWriter {
     }
 
     /// Prefix `"{kind}: "` then format.
-    pub fn enqueue_fmt_bltn(
+    pub(crate) fn enqueue_fmt_bltn(
         &self,
         child: ChildPtr,
         bytelist: Option<*mut Vec<u8>>,
@@ -1242,22 +1225,12 @@ pub(crate) fn on_io_writer_chunk(
     err: Option<sys::SystemError>,
 ) -> Yield {
     use crate::shell::builtin::Builtin;
-    use crate::shell::states::{cmd, cond_expr, pipeline, subshell};
+    use crate::shell::states::{cmd, cond_expr};
     match child.tag {
         WriterTag::Builtin => Builtin::on_io_writer_chunk(interp, child.node, written, err),
         WriterTag::Cmd => cmd::Cmd::on_io_writer_chunk(interp, child.node, written, err),
-        WriterTag::Pipeline => {
-            pipeline::Pipeline::on_io_writer_chunk(interp, child.node, written, err)
-        }
-        WriterTag::Subshell => {
-            subshell::Subshell::on_io_writer_chunk(interp, child.node, written, err)
-        }
         WriterTag::CondExpr => {
             cond_expr::CondExpr::on_io_writer_chunk(interp, child.node, written, err)
-        }
-        // `Interpreter.If` never enqueues to an IOWriter.
-        WriterTag::If => {
-            crate::shell::interpreter::unreachable_state("IOWriter.onIOWriterChunk", "If")
         }
         // The target is the subprocess PipeReader's `CapturedWriter`; it
         // lives outside the NodeId arena (heap-allocated PipeReader), so it

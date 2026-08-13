@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
@@ -252,6 +252,59 @@ describe("bundler", () => {
         "/mod-b.ts": `export const value = "b";`,
       },
       stdout: "a b",
+    },
+    {
+      // When the re-exporting file is inlined into the chunk, `export * as ns from`
+      // and `export { x } from` an external module are rewritten into imports. The
+      // chunk's module record is built by the bundler (JSC does not parse bytecode
+      // modules), so it must list these imports too; otherwise `fs` hits a TDZ
+      // ReferenceError and `rfs` is undefined.
+      name: "ReExportExternalFromInlinedModule",
+      files: {
+        "/entry.ts": `
+          import { fs, rfs } from "./reexports.ts";
+          console.log(typeof fs.readFileSync, typeof rfs);
+        `,
+        "/reexports.ts": `
+          export * as fs from "node:fs";
+          export { readFileSync as rfs } from "node:fs";
+        `,
+      },
+      stdout: "function function",
+    },
+    {
+      // Same re-exports on the entry point itself: `export * from` is printed
+      // verbatim and needs a star export entry, the other two become imports that
+      // the entry's `export { ... }` tail must resolve back to. The debug build
+      // cross-checks the record against JSC's parser and refuses to start the
+      // binary when they differ.
+      name: "ReExportExternalFromEntryPoint",
+      files: {
+        "/entry.ts": `
+          export * from "node:path";
+          export * as fs from "node:fs";
+          export { readFileSync as rfs } from "node:fs";
+          console.log("entry ran");
+        `,
+      },
+      stdout: "entry ran",
+    },
+    {
+      // A file mixing `import` with `module.exports` is wrapped in __commonJS();
+      // its external imports are hoisted out of the wrapper and still have to be
+      // in the module record, otherwise `join` is not defined at runtime.
+      name: "ExternalImportInCommonJSWrapper",
+      files: {
+        "/entry.ts": `
+          import mixed from "./mixed.js";
+          console.log(typeof mixed.join);
+        `,
+        "/mixed.js": `
+          import { join } from "node:path";
+          module.exports = { join };
+        `,
+      },
+      stdout: "function",
     },
   ];
 
@@ -957,7 +1010,7 @@ error: Hello World`,
   });
 
   test("does not crash", async () => {
-    const dir = tempDirWithFiles("bundler-compile-shadcn", {
+    await using dir = tempDir("bundler-compile-shadcn", {
       "frontend.tsx": `console.log("Hello, world!");`,
       "index.html": `<!doctype html>
 <html lang="en">
@@ -1072,7 +1125,7 @@ const server = serve({
 
   // When compiling with 8+ entry points, the main entry point should still run correctly.
   test("compile with 8+ entry points runs main entry correctly", async () => {
-    const dir = tempDirWithFiles("compile-many-entries", {
+    await using dir = tempDir("compile-many-entries", {
       "app.js": `console.log("IT WORKS");`,
       "assets/file-1": "",
       "assets/file-2": "",

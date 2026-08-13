@@ -1034,6 +1034,17 @@ impl SourceHandle {
 // type level; all dispatch happens at runtime through `any_res()` / `uws::AnyResponse`.
 type UwsResponse<const SSL: bool, const HTTP3: bool> = c_void;
 
+/// `Done` and `Aborted` are both "done" (no further sends); `Aborted`
+/// additionally records that the peer went away. `start()` moves `Done` back
+/// to `Writing` (a `type: "direct"` stream's controller exposes `start()`),
+/// but nothing leaves `Aborted`.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub(crate) enum HTTPServerWritableState {
+    Writing,
+    Done,
+    Aborted,
+}
+
 pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub(crate) res: Option<*mut UwsResponse<SSL, HTTP3>>,
     pub(crate) buffer: Vec<u8>,
@@ -1043,7 +1054,7 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub(crate) wrote: BlobSizeType,
 
     // allocator field dropped — global mimalloc per §Allocators
-    pub(crate) done: bool,
+    pub(crate) state: HTTPServerWritableState,
     pub(crate) source: SourceHandle,
     pub(crate) pending_flush: Option<*mut JSPromise>,
     /// Backpressure promise returned from `write()` to a JS controller (direct
@@ -1066,7 +1077,6 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     /// `FileSink::source_pending_pull`.
     pub(crate) source_pending_pull: bool,
     pub(crate) end_len: usize,
-    pub(crate) aborted: bool,
     /// This sink fully ended the uWS response (`res.end()` / a completed
     /// `res.try_end()`). On HTTP/1 uWS `markDone()` drops `onAborted` at that
     /// point, so the owning `RequestContext` is never told if the peer closes
@@ -1093,7 +1103,7 @@ impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTT
             pooled_buffer: None,
             offset: 0,
             wrote: 0,
-            done: false,
+            state: HTTPServerWritableState::Writing,
             source: SourceHandle::default(),
             pending_flush: None,
             pending: WritablePending::default(),
@@ -1104,7 +1114,6 @@ impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTT
             has_backpressure: false,
             source_pending_pull: false,
             end_len: 0,
-            aborted: false,
             ended_response: false,
             on_first_write: None,
             ctx: None,
@@ -1238,6 +1247,22 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
     }
 
+    pub(crate) fn is_done(&self) -> bool {
+        self.state != HTTPServerWritableState::Writing
+    }
+
+    pub(crate) fn is_aborted(&self) -> bool {
+        self.state == HTTPServerWritableState::Aborted
+    }
+
+    /// `Aborted` is already done and stays `Aborted`; callers still read
+    /// `is_aborted()` afterwards.
+    pub(crate) fn set_done(&mut self) {
+        if self.state == HTTPServerWritableState::Writing {
+            self.state = HTTPServerWritableState::Done;
+        }
+    }
+
     fn has_backpressure(&self) -> bool {
         self.has_backpressure
     }
@@ -1255,7 +1280,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     /// drains via `flush_promise()` → `pending.run()` and `source.ready()`.
     #[inline]
     fn writable_result(&mut self, len: BlobSizeType) -> Writable {
-        if self.has_backpressure && !self.done && !self.requested_end {
+        if self.has_backpressure && !self.is_done() && !self.requested_end {
             self.source_pending_pull = true;
             if matches!(
                 self.source,
@@ -1271,7 +1296,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     fn send_without_auto_flusher(&mut self, buf: &[u8]) -> bool {
-        debug_assert!(!self.done);
+        debug_assert!(!self.is_done());
 
         let Some(res) = self.any_res() else {
             bun_core::scoped_log!(
@@ -1347,7 +1372,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     fn send_readable_without_auto_flusher(&mut self, from: usize) -> bool {
-        debug_assert!(!self.done);
+        debug_assert!(!self.is_done());
         let base = self.offset as usize + from;
 
         let Some(res) = self.any_res() else {
@@ -1418,7 +1443,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         bun_core::scoped_log!(HTTPServerWritableLog, "onWritable ({})", write_offset);
         // onWritable reset backpressure state to allow flushing
         self.has_backpressure = false;
-        if self.aborted {
+        if self.is_aborted() {
             self.source.close(None);
             let _ = self.flush_promise(); // TODO: properly propagate exception upwards
             self.finalize();
@@ -1436,7 +1461,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // before the try_end resend bookkeeping below, which assumes a
         // non-empty buffer.
         if self.readable_slice().is_empty() {
-            if self.done {
+            if self.is_done() {
                 self.source_pending_pull = false;
                 self.source.close(None);
                 let _ = self.flush_promise(); // TODO: properly propagate exception upwards
@@ -1447,7 +1472,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             let _ = self.flush_promise(); // TODO: properly propagate exception upwards
             if core::mem::take(&mut self.source_pending_pull)
                 && !had_flush_waiter
-                && !self.done
+                && !self.is_done()
                 && !self.requested_end
                 && !self.has_backpressure()
             {
@@ -1479,7 +1504,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         let chunk_len = self.readable_slice().len().saturating_sub(chunk_start);
         // if we have nothing to write, we are done
         if chunk_len == 0 {
-            if self.done {
+            if self.is_done() {
                 self.source.close(None);
                 let _ = self.flush_promise(); // TODO: properly propagate exception upwards
                 self.finalize();
@@ -1515,7 +1540,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // pending_flush or callback could have caused another send()
         // so we check again if we should report readiness
         let had_pending_pull = core::mem::take(&mut self.source_pending_pull);
-        if !self.done && !self.requested_end && !self.has_backpressure() {
+        if !self.is_done() && !self.requested_end && !self.has_backpressure() {
             if (total_written > 0 || (had_pending_pull && !had_flush_waiter))
                 && self.readable_slice().is_empty()
             {
@@ -1527,7 +1552,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     pub(crate) fn start(&mut self, stream_start: &Start) -> bun_sys::Result<()> {
-        if self.aborted || self.res.is_none() || self.any_res().unwrap().has_responded() {
+        if self.is_aborted() || self.res.is_none() || self.any_res().unwrap().has_responded() {
             self.mark_done();
             self.source.close(None);
             return bun_sys::Result::Ok(());
@@ -1570,7 +1595,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             return Err(SysError::oom());
         }
 
-        self.done = false;
+        if self.state == HTTPServerWritableState::Done {
+            self.state = HTTPServerWritableState::Writing;
+        }
         self.source.start();
         bun_core::scoped_log!(HTTPServerWritableLog, "start({})", self.high_water_mark);
         bun_sys::Result::Ok(())
@@ -1582,7 +1609,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     pub(crate) fn flush_no_wait(&mut self) -> usize {
-        if self.has_backpressure_and_is_try_end() || self.done {
+        if self.has_backpressure_and_is_try_end() || self.is_done() {
             return 0;
         }
 
@@ -1621,7 +1648,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             return bun_sys::Result::Ok(JSPromise::opaque_ref(prom).to_js());
         }
 
-        if self.done {
+        if self.is_done() {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
                 global_this,
                 JSValue::from(0i32),
@@ -1656,7 +1683,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         bun_core::scoped_log!(HTTPServerWritableLog, "flush()");
         self.unregister_auto_flusher();
 
-        if !self.has_backpressure() || self.done {
+        if !self.has_backpressure() || self.is_done() {
             return bun_sys::Result::Ok(());
         }
 
@@ -1669,7 +1696,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     pub fn write(&mut self, data: &StreamResult) -> Writable {
-        if self.done || self.requested_end {
+        if self.is_done() || self.requested_end {
             return Writable::Owned(0);
         }
 
@@ -1709,7 +1736,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     pub(crate) fn write_latin1(&mut self, data: &StreamResult) -> Writable {
-        if self.done || self.requested_end {
+        if self.is_done() || self.requested_end {
             return Writable::Owned(0);
         }
 
@@ -1767,7 +1794,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     pub(crate) fn write_utf16(&mut self, data: &StreamResult) -> Writable {
-        if self.done || self.requested_end {
+        if self.is_done() || self.requested_end {
             return Writable::Owned(0);
         }
 
@@ -1802,7 +1829,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     pub(crate) fn mark_done(&mut self) {
-        self.done = true;
+        self.set_done();
         self.unregister_auto_flusher();
     }
 
@@ -1814,7 +1841,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             return bun_sys::Result::Ok(());
         }
 
-        if self.done || self.res.is_none() || self.any_res().unwrap().has_responded() {
+        if self.is_done() || self.res.is_none() || self.any_res().unwrap().has_responded() {
             self.source.close(err);
             self.mark_done();
             self.finalize();
@@ -1843,7 +1870,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             return bun_sys::Result::Ok(JSValue::from(0i32));
         }
 
-        if self.done || self.res.is_none() || self.any_res().unwrap().has_responded() {
+        if self.is_done() || self.res.is_none() || self.any_res().unwrap().has_responded() {
             self.requested_end = true;
             self.source.close(None);
             self.mark_done();
@@ -1896,10 +1923,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // SAFETY: caller contract — `this` is live, and every access here is scoped
         // so no borrow spans the signal close below, which may free `*this`.
         unsafe {
-            (*this).done = true;
+            (*this).state = HTTPServerWritableState::Aborted;
             (*this).res = None;
             (*this).unregister_auto_flusher();
-            (*this).aborted = true;
         }
 
         // Only JsTerminated escapes flush_promise; there is no JS caller to
@@ -1938,7 +1964,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     pub(crate) fn on_auto_flush(&mut self) -> bool {
         bun_core::scoped_log!(HTTPServerWritableLog, "onAutoFlush()");
-        if self.done {
+        if self.is_done() {
             self.auto_flusher.registered.set(false);
             return false;
         }
@@ -2002,7 +2028,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     /// so it must zero out state instead of make it
     pub fn finalize(&mut self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "finalize()");
-        if !self.done {
+        if !self.is_done() {
             self.unregister_auto_flusher();
             if let Some(res) = self.any_res() {
                 // The body is finished; drop the drain callback so the owning
@@ -2013,7 +2039,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 res.clear_on_writable();
             }
             let _ = self.flush_no_wait();
-            self.done = true;
+            self.set_done();
 
             // When the sink already ended the response through uWS
             // (`res.end()`/`try_end` drained, which wrote the terminating
@@ -2129,7 +2155,7 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
         Some(&mut self.source)
     }
     fn done(&self) -> bool {
-        self.done
+        self.is_done()
     }
 }
 

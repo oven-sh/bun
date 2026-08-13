@@ -2146,6 +2146,42 @@ describe("bundler", () => {
       api.expectFile("/out.js").toMatch(/[^\.:]module/); // `.module` and `node:module` are not ok.
     },
   });
+  // In iife output `import.meta.main` is lowered to a comparison against the
+  // runtime's `__require`, so the runtime part defining it has to be kept. The
+  // iife is loaded as a CommonJS script, so the host's `module` is the thing
+  // to compare against (as in cjs output), not the `__require.module` form the
+  // esm lowering uses for node.
+  const importMetaMainIIFEFiles = {
+    "/entry.ts": /* js */ `
+      import {other} from './other';
+      console.log(capture(import.meta.main), capture(require.main === module), ...other);
+    `,
+    "/other.ts": /* js */ `
+      globalThis['ca' + 'pture'] = x => x;
+
+      export const other = [capture(require.main === module), capture(import.meta.main)];
+    `,
+  };
+  itBundled("edgecase/ImportMetaMainIIFE", {
+    files: importMetaMainIIFEFiles,
+    format: "iife",
+    capture: ["false", "false", "__require.main == module", "__require.main == module"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatch(/var __require = /);
+    },
+    run: [{ stdout: "true true false false" }, { runtime: "node", stdout: "true true false false" }],
+  });
+  itBundled("edgecase/ImportMetaMainIIFETargetNode", {
+    files: importMetaMainIIFEFiles,
+    target: "node",
+    format: "iife",
+    capture: ["false", "false", "__require.main == module", "__require.main == module"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatch(/var __require = /);
+      api.expectFile("/out.js").not.toContain("createRequire");
+    },
+    run: [{ stdout: "true true false false" }, { runtime: "node", stdout: "true true false false" }],
+  });
   itBundled("edgecase/IdentifierInEnum#13081", {
     files: {
       "/entry.ts": `

@@ -3031,12 +3031,18 @@ pub(crate) mod __gated_printer {
                         }
 
                         if self.options.target == bun_ast::Target::Node {
-                            // "__require.module"
-                            if let Some(require) = self.options.require_ref {
-                                self.print_symbol(require);
-                                self.print(b".module");
-                            } else {
-                                self.print(b"module");
+                            match self.options.require_ref {
+                                // "__require.module": ESM output has no `module` binding,
+                                // so this compares against the createRequire() function's
+                                // own (undefined) `.module`. cjs and iife output are loaded
+                                // as CommonJS scripts, where the host's `module` exists.
+                                Some(require)
+                                    if self.options.module_type == bundle_opts::Format::Esm =>
+                                {
+                                    self.print_symbol(require);
+                                    self.print(b".module");
+                                }
+                                _ => self.print(b"module"),
                             }
                         } else if self.options.commonjs_module_ref.is_valid() {
                             self.print_symbol(self.options.commonjs_module_ref);

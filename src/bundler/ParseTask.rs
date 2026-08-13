@@ -298,8 +298,11 @@ impl ParseTask {
     /// Re-export of `parse_worker::get_runtime_source` as an associated fn so
     /// callers can spell it `ParseTask::get_runtime_source`.
     #[inline]
-    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource {
-        parse_worker::get_runtime_source(target)
+    pub(crate) fn get_runtime_source(
+        target: options::Target,
+        output_format: options::Format,
+    ) -> RuntimeSource {
+        parse_worker::get_runtime_source(target, output_format)
     }
 }
 
@@ -392,6 +395,9 @@ pub(crate) struct RuntimeSource {
 // Previously, Bun inlined `import.meta.require` at all usages. This broke
 // code that called `fn.toString()` and parsed the code outside a module
 // context.
+//
+// This is also right for iife output: Bun loads the `// @bun` output as an ES
+// module, where `import.meta.require` is the only `require` there is.
 const RUNTIME_REQUIRE_BUN: &str = "export var __require = import.meta.require;";
 
 const RUNTIME_REQUIRE_NODE: &str = "\
@@ -410,6 +416,10 @@ export var __require = /* @__PURE__ */ createRequire(import.meta.url);
 //
 // When bundling to node, esbuild picks this code path as well, but `globalThis.require`
 // is not always defined there. The `createRequire` call approach is more reliable.
+//
+// iife output for node uses this too (like esbuild): a script can neither `import`
+// node:module nor read `import.meta.url`, and node loads the iife as CommonJS, where
+// `require` is in scope for this shim to forward to.
 const RUNTIME_REQUIRE_OTHER: &str = "\
 export var __require = /* @__PURE__ */ (x =>
   typeof require !== 'undefined' ? require :
@@ -505,7 +515,10 @@ export var __callDispose = (stack, error, hasError) => {
 pub mod parse_worker {
     use super::*;
 
-    fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
+    fn get_runtime_source_comptime(
+        target: options::Target,
+        output_format: options::Format,
+    ) -> RuntimeSource {
         // The runtime module is the shared `runtime.js` body plus a per-target
         // `__require`/`__using` tail. Concatenating at compile time would embed
         // four copies of the 13 KB body, so each variant is assembled once on
@@ -520,7 +533,8 @@ pub mod parse_worker {
         let variant = match target {
             options::Target::Bun => Variant::Bun,
             options::Target::BunMacro => Variant::BunMacro,
-            options::Target::Node => Variant::Node,
+            // node iife output uses the ambient-require shim (see RUNTIME_REQUIRE_OTHER).
+            options::Target::Node if output_format != options::Format::Iife => Variant::Node,
             _ => Variant::Other,
         };
         static SOURCES: [bun_core::Once<Box<[u8]>>; 4] = [
@@ -595,8 +609,11 @@ pub mod parse_worker {
         RuntimeSource { parse_task, source }
     }
 
-    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource {
-        get_runtime_source_comptime(target)
+    pub(crate) fn get_runtime_source(
+        target: options::Target,
+        output_format: options::Format,
+    ) -> RuntimeSource {
+        get_runtime_source_comptime(target, output_format)
     }
 
     // ───────────────────────────────────────────────────────────────────────────
@@ -2494,8 +2511,12 @@ pub mod parse_worker {
         opts.features.lower_using = !target.is_bun();
         opts.features.hot_module_reloading =
             output_format == options::Format::InternalBakeDev && !task.source_index.is_runtime();
+        // The printer emits the runtime's `__require` for every output format except cjs
+        // (see `runtime_require_ref` in the linker); this is what makes a file that uses it
+        // import the part defining it.
         opts.features.auto_polyfill_require =
-            output_format == options::Format::Esm && !opts.features.hot_module_reloading;
+            matches!(output_format, options::Format::Esm | options::Format::Iife)
+                && !opts.features.hot_module_reloading;
         opts.features.react_fast_refresh =
             topts.react_fast_refresh && loader.is_jsx() && !source.path.is_node_module();
         opts.features.react_compiler = if topts.react_compiler.is_enabled()

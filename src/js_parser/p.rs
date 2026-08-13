@@ -5272,7 +5272,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //
         // The printer can handle this for us, but we need to reference
         // a handle to the `__require` function.
-        if self.options.lower_import_meta_main_for_node_js {
+        //
+        // The non-ESM lowering is `__require.main == module`, so iife output needs
+        // `__require` as well (for cjs output this is a no-op and `require` is printed).
+        if self.options.lower_import_meta_main_for_node_js || !self.options.output_format.is_esm() {
             self.record_usage_of_runtime_require();
         }
         Expr {

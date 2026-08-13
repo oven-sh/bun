@@ -6335,7 +6335,7 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
   // completes, whether the link was created or the operation failed. The
   // pending operation keeps the process alive, so "exited" is printed after
   // it completed and anything it reported would precede it.
-  describe("ignores a non-callable 4-argument symlink callback, like node", () => {
+  describe.concurrent("ignores a non-callable 4-argument symlink callback, like node", () => {
     function symlinkIgnoringCallback(link: string, callbackLiteral: string) {
       return runScript(`
         process.on("uncaughtException", e => console.log("UNCAUGHT:" + e.code));
@@ -6359,6 +6359,17 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
       expect(stdout).toBe("exited");
       expect(existsSync(link)).toBe(false);
       expect(exitCode).toBe(0);
+    });
+
+    // An undefined callback selects the 3-argument overload, whose callback
+    // (here the string "file") node does validate.
+    it("still throws when the callback is undefined", () => {
+      const link = join(dir, "lnc-undefined");
+      expect(() => fs.symlink(join(dir, "file.txt"), link, "file", undefined as any)).toThrowWithCode(
+        TypeError,
+        "ERR_INVALID_ARG_TYPE",
+      );
+      expect(existsSync(link)).toBe(false);
     });
   });
 });

@@ -444,16 +444,19 @@ describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
 });
 
 describe("Valkey: Recovering After fail()", () => {
-  function helloServer(onConnection?: (socket: net.Socket, connection: number) => void) {
+  // Answers the chunk carrying HELLO with `+OK` and the one carrying PING with
+  // `+PONG` unless `replies` says otherwise for that connection.
+  function helloServer(replies: Partial<Record<"HELLO" | "PING", (connection: number) => string>> = {}) {
     let connections = 0;
     const server = net.createServer(socket => {
       connections += 1;
-      onConnection?.(socket, connections);
+      const connection = connections;
       socket.on("data", chunk => {
         const text = chunk.toString("latin1");
-        if (text.includes("HELLO")) socket.write("+OK\r\n");
-        if (text.includes("PING")) socket.write("+PONG\r\n");
+        if (text.includes("HELLO")) socket.write(replies.HELLO?.(connection) ?? "+OK\r\n");
+        if (text.includes("PING")) socket.write(replies.PING?.(connection) ?? "+PONG\r\n");
       });
+      socket.on("error", () => {});
     });
     return {
       server,
@@ -467,44 +470,140 @@ describe("Valkey: Recovering After fail()", () => {
     };
   }
 
-  test("an idle timeout while connected closes the socket, fires onclose, and connect() reconnects", async () => {
-    const closed = Promise.withResolvers<Error>();
-    const fake = helloServer();
+  // Calls connect() from the first onclose and reports how that attempt ended.
+  function connectFromOnclose(client: RedisClient): Promise<string> {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    client.onclose = () => {
+      client.onclose = () => {};
+      resolve(
+        client.connect().then(
+          () => "connected",
+          (err: Error) => `rejected: ${err.message}`,
+        ),
+      );
+    };
+    return promise;
+  }
+
+  test("a failure while connected closes the socket, fires onclose, and connect() reconnects", async () => {
+    // 0x01 is not a RESP type byte, so the first connection fails after the
+    // handshake, on the same path as an idle timeout or any other protocol error.
+    const fake = helloServer({ PING: connection => (connection === 1 ? "\x01\r\n" : "+PONG\r\n") });
     const port = await fake.listen();
+    const closed = Promise.withResolvers<Error>();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
     try {
-      const client = new RedisClient(`redis://127.0.0.1:${port}`, {
-        // The timer armed by connect() is only re-armed by send(), so on an idle
-        // connection the idle timeout fires once connectionTimeout elapses.
-        connectionTimeout: 100,
-        idleTimeout: 50,
-        autoReconnect: false,
-      });
       client.onclose = err => closed.resolve(err);
       await client.connect();
       expect(client.connected).toBe(true);
-      const err = await closed.promise;
-      expect(err).toBeInstanceOf(Error);
+      await expect(client.ping()).rejects.toMatchObject({ code: "ERR_REDIS_INVALID_RESPONSE_TYPE" });
+      expect(await closed.promise).toBeInstanceOf(Error);
       expect(client.connected).toBe(false);
       await client.connect();
       expect(await client.ping()).toBe("PONG");
       expect(fake.connections).toBe(2);
-      client.close();
     } finally {
+      client.close();
       fake.server.close();
     }
   });
 
-  test("connect() rejects again after a failed attempt instead of hanging", async () => {
+  test("a connect() issued from onclose after a refused connection rejects instead of hanging", async () => {
     // Nothing listens on the port a just-closed listener used.
     const fake = helloServer();
     const port = await fake.listen();
     await new Promise(resolve => fake.server.close(resolve));
     const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
-    expect(client.connect()).rejects.toThrow();
-    await client.connect().catch(() => {});
-    expect(client.connect()).rejects.toThrow();
-    await client.connect().catch(() => {});
-    client.close();
+    try {
+      const secondConnect = connectFromOnclose(client);
+      await expect(client.connect()).rejects.toThrow();
+      expect(await secondConnect).toBe("rejected: Connection closed");
+    } finally {
+      client.close();
+    }
+  });
+
+  test("a connect() issued from onclose is not fed the replies left over from the failed connection", async () => {
+    // With a database in the URL, HELLO and SELECT are written together, so a
+    // server that rejects HELLO delivers both error replies in one read.
+    const fake = helloServer({
+      HELLO: connection =>
+        connection === 1 ? "-WRONGPASS invalid password\r\n-NOAUTH Authentication required.\r\n" : "+OK\r\n+OK\r\n",
+    });
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}/1`, { autoReconnect: false });
+    try {
+      const secondConnect = connectFromOnclose(client);
+      await expect(client.connect()).rejects.toThrow();
+      expect(await secondConnect).toBe("connected");
+      expect(await client.ping()).toBe("PONG");
+      expect(fake.connections).toBe(2);
+    } finally {
+      client.close();
+      fake.server.close();
+    }
+  });
+
+  test("a connect() issued from onclose after a failed TLS handshake gets to dial again", async () => {
+    let handshakes = 0;
+    const server = net.createServer(socket => {
+      // The first bytes are the ClientHello; dropping the connection there
+      // fails the client's handshake.
+      socket.once("data", () => {
+        handshakes += 1;
+        socket.destroy();
+      });
+      socket.on("error", () => {});
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as net.AddressInfo;
+    const client = new RedisClient(`rediss://127.0.0.1:${port}`, { autoReconnect: false });
+    try {
+      const secondConnect = connectFromOnclose(client);
+      await expect(client.connect()).rejects.toThrow();
+      expect({ secondConnect: await secondConnect, handshakes }).toEqual({
+        secondConnect: "rejected: Connection closed",
+        handshakes: 2,
+      });
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
+  test("close() discards a half-received reply instead of letting it keep the process alive", async () => {
+    // Announces a 4 byte bulk string and stops halfway through it.
+    const fake = helloServer({ PING: () => "$4\r\nPO" });
+    const port = await fake.listen();
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const client = new Bun.RedisClient("redis://127.0.0.1:${port}", { autoReconnect: false });
+          await client.connect();
+          const ping = client.ping().catch(err => console.log("ping rejected", err.code));
+          while (client.bufferedAmount === 0) await Bun.sleep(1);
+          console.log("buffered before close", client.bufferedAmount);
+          client.close();
+          await ping;
+          console.log("buffered after close", client.bufferedAmount);
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "buffered before close 6\nping rejected ERR_REDIS_CONNECTION_CLOSED\nbuffered after close 0\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    } finally {
+      fake.server.close();
+    }
   });
 
   test("the process exits once auto-reconnect gives up", async () => {
@@ -525,8 +624,11 @@ describe("Valkey: Recovering After fail()", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toContain("connect rejected");
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "onclose ERR_REDIS_CONNECTION_CLOSED\nconnect rejected ERR_REDIS_CONNECTION_CLOSED\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

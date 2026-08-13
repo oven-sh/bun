@@ -1909,9 +1909,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
         err_value: JSValue,
     ) -> JsTerminatedResult<()> {
         let _exit = this.vm().enter_event_loop_scope();
-        this.client_mut().flags.is_manually_closed = true;
-        let this_br = BackRef::new(this);
-        let _close = scopeguard::guard(this_br, |p| p.client_mut().close());
         narrow_terminated(
             this.client_mut()
                 .fail_with_js_value(&this.global_object, err_value),

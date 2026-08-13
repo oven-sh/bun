@@ -651,6 +651,10 @@ impl ValkeyClient {
     pub fn on_close(&mut self) -> JsTerminated<()> {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();
+        // A partial reply can never complete now; left in place it counts as
+        // pending activity in `update_poll_ref` and keeps the event loop alive.
+        self.read_buffer.clear_and_free();
+        self.reply_scanner.reset();
 
         // If manually closing, don't attempt to reconnect
         if self.flags.is_manually_closed {
@@ -742,6 +746,10 @@ impl ValkeyClient {
             data.len(),
             bstr::BStr::new(data)
         );
+        // Handling a reply can close this socket and, from `onclose` or a
+        // rejection handler, dial the next one; the remaining replies came from
+        // the closed connection and must not reach the new one.
+        let socket = *self.socket.socket();
         // Path 1: Buffer already has data, append and process from buffer
         if !self.read_buffer.remaining().is_empty() {
             self.read_buffer
@@ -809,7 +817,7 @@ impl ValkeyClient {
                 let mut value_to_handle = value; // Use temp var for defer
                 self.handle_response(&mut value_to_handle)?;
 
-                if self.status == Status::Disconnected || self.flags.failed {
+                if *self.socket.socket() != socket {
                     return Ok(());
                 }
                 self.send_next_command();
@@ -868,8 +876,7 @@ impl ValkeyClient {
             let mut value_to_handle = value; // Use temp var for defer
             self.handle_response(&mut value_to_handle)?;
 
-            // Check connection status after handling
-            if self.status == Status::Disconnected || self.flags.failed {
+            if *self.socket.socket() != socket {
                 return Ok(());
             }
 

@@ -706,8 +706,6 @@ impl BunTest {
                 active_scope: self.collection.active_scope,
             },
             Phase::Execution => 'blk: {
-                // The innermost synchronously-executing callback wins; this
-                // disambiguates concurrent groups with several sequences in flight.
                 if let Some(top) = self.current_callback_stack.last() {
                     if matches!(top, RefDataValue::Execution { .. }) {
                         break 'blk top.clone();

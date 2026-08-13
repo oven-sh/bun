@@ -51,11 +51,17 @@ test("indirect eval and vm.Script: colliding sources each run their own code", (
   // file; it is used here because its source reaches JSC verbatim, whereas the
   // CommonJS function wrapper the runtime prints around a file is not visible
   // to the test, so a colliding pair of files cannot be mined.
-  const source = (tag: string) => `"${tag}"`;
+  //
+  // The source is a template literal rather than a string literal: indirect
+  // eval hands JSON-shaped sources to LiteralParser and never compiles (or
+  // caches) them, so a plain "..." would pass with or without the fix.
+  const source = (tag: string) => "`" + tag + "`";
   const tags = mineCollidingTags(source);
   const sources = tags.map(source);
-  expect(sources.map(src => (0, eval)(src))).toEqual(tags);
-  expect(sources.map(src => new vm.Script(src).runInThisContext())).toEqual(tags);
+  expect({
+    eval: sources.map(src => (0, eval)(src)),
+    script: sources.map(src => new vm.Script(src).runInThisContext()),
+  }).toEqual({ eval: tags, script: tags });
 });
 
 test("import: colliding ES modules each export their own value", async () => {

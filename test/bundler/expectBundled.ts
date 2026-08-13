@@ -254,7 +254,7 @@ export interface BundlerTestInput {
   publicPath?: string;
   keepNames?: boolean;
   legalComments?: "none" | "inline" | "eof" | "linked" | "external";
-  loader?: Record<`.${string}`, Loader | "sqlite_embedded">;
+  loader?: Record<`.${string}`, Loader>;
   mangleProps?: RegExp;
   mangleQuoted?: boolean;
   mainFields?: string[];

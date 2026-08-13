@@ -63,11 +63,7 @@ Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
 {
 }
 
-// On Windows, WTF::URL::fileSystemPath handles UNC paths
-// (`file://server/share/etc` -> `\\server\share\etc`), so the host check
-// only runs on posix systems. This matches `Bun.fileURLToPath` and throws
-// Node's `ERR_INVALID_FILE_URL_HOST` when the host is neither empty nor
-// `"localhost"`.
+// Posix-only like Bun.fileURLToPath: on Windows a file:// host is a UNC server name.
 ExceptionOr<void> validateFileURLHost(JSC::JSGlobalObject* globalObject, const WTF::URL& urlObject)
 {
 #if !OS(WINDOWS)

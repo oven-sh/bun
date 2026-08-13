@@ -146,13 +146,18 @@ export function verifyBaselineStaticInvocation(cfg: Config): VerifyBaselineStati
     const ucrt = ucrtServicingLibDir(cfg);
     if (ucrt !== undefined) rustflags.push(`-Clink-arg=/libpath:${ucrt}`);
     if (cfg.winsysroot !== undefined) rustflags.push(`-Clink-arg=/winsysroot:${cfg.winsysroot}`);
+    // rustc passes /DEBUG to the msvc linker regardless of the crate's
+    // `strip = true`, and lld-link then warns LNK4099 for every libcmt
+    // member whose PDB the splat does not carry (~60 lines per build) and
+    // writes a .pdb nobody uploads. Link args come after rustc's own, and
+    // the last /DEBUG option wins.
+    rustflags.push("-Clink-arg=/DEBUG:NONE");
   }
   if (cfg.ci) rustflags.push(`--remap-path-prefix=${cfg.cwd}=.`);
-  // Always set, even though the flags above would be enough reason: setting
-  // CARGO_ENCODED_RUSTFLAGS is what stops cargo from applying the
-  // `rustflags` of the generated `.cargo/config.toml` — those are
-  // `-Clink-arg=-fuse-ld=lld`-style clang driver flags, which lld rejects
-  // when it is invoked directly as it is here.
+  // Setting CARGO_ENCODED_RUSTFLAGS (never empty here) is also what stops
+  // cargo from applying the `rustflags` of the generated `.cargo/config.toml`:
+  // those are `-Clink-arg=-fuse-ld=lld`-style clang driver flags, which lld
+  // rejects when invoked directly as it is here.
   env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
 
   return { args, env, triple, exe };

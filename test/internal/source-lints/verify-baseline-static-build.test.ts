@@ -26,6 +26,7 @@ import {
   verifyBaselineStaticInvocation,
   verifyBaselineStaticTriple,
 } from "../../../scripts/build/verify-baseline-static.ts";
+import { ucrtServicingLibDir } from "../../../scripts/build/winsysroot.ts";
 import { globAllSources, type Sources } from "../../../scripts/glob-sources.ts";
 
 const repoRoot = resolve(import.meta.dir, "..", "..", "..");
@@ -232,16 +233,19 @@ describe("cargo invocation", () => {
     const cfg = windowsCi();
     const { env } = verifyBaselineStaticInvocation(cfg);
     expect(env.CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER).toBe("/fake/llvm/bin/lld-link");
-    const flags = rustflagsOf(cfg);
-    expect(flags[0]).toBe("-Ctarget-feature=+crt-static");
-    // Overlay first: an explicit /libpath: is searched before the
-    // /winsysroot-derived directories (same ordering as linkFlags in flags.ts).
-    const libpath = flags.findIndex(f => f.startsWith("-Clink-arg=/libpath:"));
-    const winsysroot = flags.indexOf("-Clink-arg=/winsysroot:/fake/winsysroot");
-    expect(libpath).toBeGreaterThan(0);
-    expect(winsysroot).toBeGreaterThan(libpath);
-    expect(flags[libpath]).toContain("ucrt-servicing-");
-    expect(flags).toContain(`--remap-path-prefix=${cfg.cwd}=.`);
+    const ucrtOverlay = ucrtServicingLibDir(cfg)!;
+    expect(ucrtOverlay).toContain("ucrt-servicing-");
+    // The overlay's explicit /libpath: is searched before the directories
+    // /winsysroot: derives (same ordering as linkFlags in flags.ts), and
+    // /DEBUG:NONE has to come after the /DEBUG rustc itself passes, which
+    // it does because rustc appends link args after its own.
+    expect(rustflagsOf(cfg)).toEqual([
+      "-Ctarget-feature=+crt-static",
+      `-Clink-arg=/libpath:${ucrtOverlay}`,
+      "-Clink-arg=/winsysroot:/fake/winsysroot",
+      "-Clink-arg=/DEBUG:NONE",
+      `--remap-path-prefix=${cfg.cwd}=.`,
+    ]);
   });
 
   test.skipIf(isWindows)("windows keeps the host lld-link when cfg.ld was swapped to rustc's gcc-ld/lld-link", () => {

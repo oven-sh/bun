@@ -108,8 +108,7 @@ pub(crate) struct StartOptions {
     /// Byte offset into the file to begin reading from.
     pub offset: u64,
     /// Maximum bytes to send; `None` reads to EOF. For regular files this
-    /// should be `stat.size - offset` (after Range/slice clamping), already
-    /// written by the caller as the Content-Length.
+    /// should be `stat.size - offset` (after Range/slice clamping).
     pub length: Option<u64>,
     pub idle_timeout: u8,
     pub ctx: *mut c_void,

@@ -93,6 +93,42 @@ describe("destroying tls.connect({ socket }) destroys the wrapped net.Socket", (
       "secure close hadError=false plain.destroyed=true",
     ]);
   });
+
+  test.concurrent("destroy() right after wrapping a connected socket destroys it and the connection", async () => {
+    // The socket was adopted synchronously, so the TLS socket owns the fd by
+    // now: destroying it has to release the plain socket and close the
+    // connection the peer is holding.
+    const peerClosed = Promise.withResolvers<void>();
+    await using server = net.createServer(peer => {
+      peer.on("error", () => {});
+      peer.on("close", () => peerClosed.resolve());
+      peer.resume();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+
+    const plain = net.connect({ host: "127.0.0.1", port: (server.address() as net.AddressInfo).port });
+    await once(plain, "connect");
+    const secure = tls.connect({ socket: plain, servername: "localhost" });
+    const events = observe(plain, secure);
+    secure.destroy();
+    expect(await events).toEqual(["plain close hadError=false", "secure close hadError=false plain.destroyed=true"]);
+    await peerClosed.promise;
+  });
+
+  test.concurrent("a graceful shutdown after the handshake destroys the wrapped socket", async () => {
+    // No error involved: the TLS socket ends, the peer ends back and the TLS
+    // socket's own destroy takes the plain socket down.
+    await using server = tls.createServer(certs, socket => socket.on("error", () => {}));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+
+    const plain = net.connect({ host: "127.0.0.1", port: (server.address() as net.AddressInfo).port });
+    await once(plain, "connect");
+    const secure = tls.connect({ socket: plain, servername: "localhost", ca: certs.cert });
+    const events = observe(plain, secure);
+    await once(secure, "secureConnect");
+    secure.end();
+    expect(await events).toEqual(["plain close hadError=false", "secure close hadError=false plain.destroyed=true"]);
+  });
 });
 
 test("should be able to upgrade a paused socket and also have backpressure on it #15438", async () => {

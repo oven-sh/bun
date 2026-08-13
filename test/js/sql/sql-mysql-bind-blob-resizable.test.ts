@@ -54,7 +54,10 @@ describe("mysql blob bind vs resizable ArrayBuffer", () => {
       // Without the fix the borrowed slice reads memory resize(0) decommitted,
       // which segfaults: no JSON line and a non-zero exit.
       expect(stdout).toContain("CONNECTED");
-      const jsonLine = stdout.trim().split(/\r?\n/).find(l => l.startsWith("{"));
+      const jsonLine = stdout
+        .trim()
+        .split(/\r?\n/)
+        .find(l => l.startsWith("{"));
       const payload = jsonLine ? JSON.parse(jsonLine) : null;
       expect(payload).toEqual({
         calls: expect.any(Number),

@@ -1308,9 +1308,11 @@ it("SNICallback runs even when the requested servername matches the bind hostnam
   });
   server.listen(0, "localhost");
   await once(server, "listening");
-  const port = (server.address() as AddressInfo).port;
-  // host: "localhost" defaults servername to "localhost" - the bind hostname.
-  const client = connect({ port, host: "localhost", rejectUnauthorized: false });
+  const { port, address } = server.address() as AddressInfo;
+  // Connect to the literal bound address ("localhost" may resolve to a
+  // different family than the one the server picked) and request the bind
+  // hostname via SNI.
+  const client = connect({ port, host: address, servername: "localhost", rejectUnauthorized: false });
   await once(client, "secureConnect");
   expect(sniCalls).toBe(1);
   // The peer certificate must be the SNICallback's RSA cert, not COMMON_CERT.

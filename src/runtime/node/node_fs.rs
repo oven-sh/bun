@@ -4343,11 +4343,9 @@ pub mod args {
         pub(crate) recursive: bool,
         pub(crate) error_on_exist: bool,
         pub(crate) force: bool,
-        /// A symlink source is followed and the file it points at is copied,
-        /// the way `cp` without `-R` treats its operands. Off, a symlink is
-        /// recreated (`fs.cp` handles `dereference` itself and never sets
-        /// this). Only consulted by `copy_single_file_sync`; directories are
-        /// still classified without following links.
+        /// Copy the file a symlink source points at instead of recreating the
+        /// link (`cp` without `-R`). Read by `copy_single_file_sync` only;
+        /// `fs.cp` never sets it.
         pub(crate) dereference: bool,
     }
 
@@ -8546,9 +8544,8 @@ impl NodeFS {
         Syscall::symlink(ZStr::from_buf(&resolved_buf[..], resolved_len), dest)
     }
 
-    /// The stat `copy_single_file_sync` classifies its source by. Callers pass
-    /// the `lstat` they already took as `reuse_stat`; when dereferencing, a
-    /// symlink is stat'd again so the copy is described by its target.
+    /// `reuse_stat` is the caller's `lstat`, so when dereferencing a symlink
+    /// is stat'd again to describe its target.
     #[cfg(not(windows))]
     fn cp_source_stat(
         src: &ZStr,
@@ -8567,8 +8564,7 @@ impl NodeFS {
         }
     }
 
-    /// Opens the file a dereferenced source resolves to. The kind is checked
-    /// from the stat first: `open(2)` on a FIFO blocks until a writer shows up.
+    /// The kind is checked before the open: `open(2)` on a FIFO blocks.
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     fn cp_open_dereferenced_source(src: &ZStr, reuse_stat: Option<&sys::Stat>) -> Maybe<FD> {
         let stat_ = Self::cp_source_stat(src, reuse_stat, true)?;

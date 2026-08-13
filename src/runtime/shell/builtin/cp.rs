@@ -582,9 +582,8 @@ impl ShellCpTask {
         }
     }
 
-    /// Is `tgt` the file `src_stat` describes? `follow` says whether a symlink
-    /// at `tgt` is looked through, and must match how `src_stat` was taken.
-    /// An inode number of 0 means the filesystem reports no identity.
+    /// `follow` must match how `src_stat` was taken. An inode number of 0
+    /// means the filesystem reports no identity.
     fn is_same_file(src_stat: &bun_sys::Stat, tgt: &bun_core::ZStr, follow: bool) -> bool {
         let tgt_stat = if follow {
             bun_sys::stat(tgt)
@@ -728,10 +727,9 @@ impl ShellCpTask {
             _copying_many = true;
         }
 
-        // Copying a file onto itself (through a link, a hard link or a path
-        // going through a directory symlink, which the path comparison above
-        // misses) is refused, as cp(1) does. Reading and writing one file would
-        // otherwise go ahead, and the macOS copy unlinks the destination first.
+        // A link, hard link or directory symlink can name `src` again; copying
+        // a file onto itself is refused like cp(1) does (on macOS the copy
+        // would unlink it first).
         if !src_is_dir && Self::is_same_file(&src_stat, tgt, follow_src) {
             let shown_tgt = match dest_basename {
                 Some(basename) => bun_paths::join_sep_maybe_z::<false>(&[&self.tgt, basename]),

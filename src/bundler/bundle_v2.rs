@@ -3728,10 +3728,7 @@ pub mod bv2_impl {
             Ok(source_index.get())
         }
 
-        /// Copies a "use client" module's export names into the bundle arena
-        /// for the `ReferenceProxy` generated in its place. The proxy is built
-        /// on a worker thread, so it cannot read the module's `named_exports`
-        /// out of `graph.ast`, which this thread keeps appending to.
+        /// Workers may not read `graph.ast` while this thread appends to it, hence the copies.
         fn copy_export_names_for_reference_proxy(
             &self,
             named_exports: &crate::bundled_ast::NamedExports,
@@ -3775,9 +3772,7 @@ pub mod bv2_impl {
             })?;
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
-            // Handed to the worker pool; `ServerComponentParseTask`'s pool
-            // callback takes the box back and frees it once the file has been
-            // generated.
+            // Freed by the pool callback (`task_callback_wrap`).
             let task = bun_core::heap::into_raw(Box::new(ServerComponentParseTask {
                 data,
                 // SAFETY: `from_mut(self)` is the live bundle (write provenance for

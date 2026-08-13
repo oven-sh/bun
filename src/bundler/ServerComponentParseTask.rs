@@ -24,10 +24,7 @@ use crate::cache::ExternalFreeFunction;
 use crate::options::{Loader, Target};
 use crate::parse_task::{self, ResultValue, Success, WatcherData, on_complete};
 
-/// Boxed by `BundleV2::enqueue_server_component_generated_file`, which hands
-/// it to the worker pool; [`task_callback_wrap`] takes the box back and frees
-/// it once the file has been generated. Everything the generated AST may
-/// point at (`Data`) lives in the bundle arena, never in the task itself.
+/// One box per generated file; [`task_callback_wrap`] takes it back and frees it.
 pub(crate) struct ServerComponentParseTask {
     pub task: ThreadPoolTask,
     pub data: Data,
@@ -48,13 +45,10 @@ pub enum Data {
 }
 
 pub struct ReferenceProxy {
-    /// Path of the "use client" module the proxy stands in for.
+    /// The "use client" module the proxy stands in for.
     pub(crate) client_path: FsPath<'static>,
-    /// Source index of that module; production builds refer to its chunk
-    /// through a `UniqueKey` built from it.
     pub(crate) client_source_index: Index,
-    /// That module's export names, in export order. Bundle-arena copies made
-    /// by `BundleV2::copy_export_names_for_reference_proxy`.
+    /// In export order; bundle-arena copies (`BundleV2::copy_export_names_for_reference_proxy`).
     pub(crate) export_names: &'static [&'static [u8]],
 }
 
@@ -63,18 +57,14 @@ pub struct ClientEntryWrapper {
     pub(crate) path: &'static [u8],
 }
 
-/// Raw thread-pool callback. Takes back the `Box<ServerComponentParseTask>`
-/// that `BundleV2::enqueue_server_component_generated_file` handed to the
-/// pool, generates the file, frees the task, then posts the result back to the
-/// owning event loop.
+/// Thread-pool callback: takes the task box back, generates the file, frees it, posts the result.
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // `ServerComponentParseTask` (heap-allocated, scheduled exactly once). Writes:
 // own fields + `Log` (local) + result is posted via
 // `ctx.loop_.enqueue_task_concurrent` (MPSC). Reads `ctx: &BundleV2` shared.
-// `ServerComponentParseTask` is `Send` (built on the bundle thread, used and
-// freed here) because `ctx: *mut BundleV2` is a backref to a `Send` type,
-// `Data` is `Copy` data plus bundle-arena slices, and `Source` owns at most
-// global-heap buffers.
+// `ServerComponentParseTask` is `Send` because `ctx: *mut BundleV2` is a
+// backref to a `Send` type and `Source`/`Data` payloads are bundle-arena
+// slices.
 fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     // SAFETY: `thread_pool_task` is the `task` field of the
     // `ServerComponentParseTask` that `enqueue_server_component_generated_file`
@@ -106,8 +96,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         // Only possible error is OOM; abort like `bun.outOfMemory()`.
         Err(_oom) => bun_core::out_of_memory(),
     };
-    // `task_callback` moved `source` into `value` and nothing else in the
-    // result refers to the task, so it is gone before the result is posted.
+    // Nothing in `value` refers to the task, so it is freed before the result is posted.
     drop(task);
 
     let result = Box::new(parse_task::Result {

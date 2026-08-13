@@ -1386,12 +1386,16 @@ const NS_PER_US: i64 = bun_core::time::NS_PER_US as i64;
 /// # Safety
 /// `vm` is the erased per-thread `*mut VirtualMachine`.
 #[inline]
-unsafe fn fold_timer(vm: *mut (), fired: bun_event_loop::JsResult<()>) -> Result<(), bun_jsc::Stopped> {
+unsafe fn fold_timer(
+    vm: *mut (),
+    fired: bun_event_loop::JsResult<()>,
+) -> Result<(), bun_jsc::Stopped> {
     match fired {
         Ok(()) => Ok(()),
         Err(err) => {
             // SAFETY: fn contract.
-            let global = unsafe { (*vm.cast::<bun_jsc::virtual_machine::VirtualMachine>()).global() };
+            let global =
+                unsafe { (*vm.cast::<bun_jsc::virtual_machine::VirtualMachine>()).global() };
             bun_jsc::task::report_error_or_terminate(global, err.into())
         }
     }

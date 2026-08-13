@@ -33,7 +33,11 @@ unsafe extern "Rust" {
     /// derefs `t`/`now`, recovers the tier-6 container via `container_of`
     /// keyed on `(*t).tag`, and may free that container. Caller must pass a
     /// live timer just popped from `All.timers` and must not touch `t` after.
-    fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const timespec, vm: *mut ()) -> crate::JsResult<()>;
+    fn __bun_fire_timer(
+        t: *mut EventLoopTimer,
+        now: *const timespec,
+        vm: *mut (),
+    ) -> crate::JsResult<()>;
     /// Returns the JS-timer epoch (TimerObjectInternals.flags.epoch) for
     /// TimeoutObject/ImmediateObject/AbortSignalTimeout, else `None`.
     /// Defined in `bun_runtime::dispatch`.

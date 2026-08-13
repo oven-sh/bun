@@ -45,6 +45,16 @@ pub mod options {
         pub(crate) const fn is_esm(self) -> bool {
             matches!(self, Format::Esm)
         }
+
+        /// The `--format` spelling, for diagnostics.
+        pub(crate) const fn name(self) -> &'static str {
+            match self {
+                Format::Esm => "esm",
+                Format::Iife => "iife",
+                Format::Cjs => "cjs",
+                Format::InternalBakeDev => "internal_bake_dev",
+            }
+        }
     }
     /// Canonical home is here (the parser is the consumer
     /// — `P::should_allow_unresolved_dynamic_specifier`). `bun_bundler::options`

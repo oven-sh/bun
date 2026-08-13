@@ -532,13 +532,13 @@ pub fn is_registry_package_spec(spec: &[u8]) -> bool {
     }
 
     match Tag::infer(selector) {
-        Tag::Npm | Tag::DistTag => {
-            is_valid_registry_dist_tag(selector)
-                || (!selector.starts_with(b"npm:")
-                    && !selector.starts_with(b"patch:")
-                    && Semver::query::is_valid(selector, SlicedString::init(selector, selector))
-                        .unwrap_or_else(|_| bun_core::out_of_memory()))
+        Tag::Npm => {
+            !selector.starts_with(b"npm:")
+                && !selector.starts_with(b"patch:")
+                && Semver::query::is_valid(selector, SlicedString::init(selector, selector))
+                    .unwrap_or_else(|_| bun_core::out_of_memory())
         }
+        Tag::DistTag => is_valid_registry_dist_tag(selector),
         _ => false,
     }
 }

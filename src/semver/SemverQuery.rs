@@ -943,7 +943,7 @@ fn parse_with_validity(input: &[u8], sliced: SlicedString) -> Result<(Group, boo
 
         if !skip_round {
             let parse_result = Version::parse(sliced.sub(&input[i..]));
-            valid &= parse_result.valid && parse_result.has_version;
+            valid &= parse_result.strict_valid;
             let version = parse_result.version.min();
             if version.tag.has_build() {
                 list.flags.set(Flags::BUILD);
@@ -996,7 +996,7 @@ fn parse_with_validity(input: &[u8], sliced: SlicedString) -> Result<(Group, boo
 
             if hyphenate {
                 let second_parsed = Version::parse(sliced.sub(&input[i..]));
-                valid &= second_parsed.valid && second_parsed.has_version;
+                valid &= second_parsed.strict_valid;
                 let mut second_version = second_parsed.version.min();
                 if second_version.tag.has_build() {
                     list.flags.set(Flags::BUILD);

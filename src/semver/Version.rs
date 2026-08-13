@@ -467,6 +467,7 @@ impl<T: VersionInt> VersionType<T> {
 
         if input.is_empty() {
             result.valid = false;
+            result.strict_valid = false;
             return result;
         }
         let mut is_done = false;
@@ -495,6 +496,7 @@ impl<T: VersionInt> VersionType<T> {
 
         if i == input.len() {
             result.valid = false;
+            result.strict_valid = false;
             result.wildcard = Wildcard::Major;
             result.len = u32::try_from(i).expect("int cast");
             return result;
@@ -528,18 +530,24 @@ impl<T: VersionInt> VersionType<T> {
 
                     match part_i {
                         0 => {
-                            result.version.major =
-                                Self::parse_version_number(&input[part_start_i..last_char_i]);
+                            result.version.major = Self::parse_version_number(
+                                &input[part_start_i..last_char_i],
+                                &mut result.strict_valid,
+                            );
                             part_i = 1;
                         }
                         1 => {
-                            result.version.minor =
-                                Self::parse_version_number(&input[part_start_i..last_char_i]);
+                            result.version.minor = Self::parse_version_number(
+                                &input[part_start_i..last_char_i],
+                                &mut result.strict_valid,
+                            );
                             part_i = 2;
                         }
                         2 => {
-                            result.version.patch =
-                                Self::parse_version_number(&input[part_start_i..last_char_i]);
+                            result.version.patch = Self::parse_version_number(
+                                &input[part_start_i..last_char_i],
+                                &mut result.strict_valid,
+                            );
                             part_i = 3;
                         }
                         _ => {}
@@ -553,6 +561,8 @@ impl<T: VersionInt> VersionType<T> {
                         }
                     {
                         i += 1;
+                        result.strict_valid &=
+                            i < input.len() && matches!(input[i], b'0'..=b'9' | b'x' | b'X' | b'*');
                     }
                 }
                 b'.' => {
@@ -645,17 +655,19 @@ impl<T: VersionInt> VersionType<T> {
             }
         }
 
-        result.has_version = part_i > 0;
+        result.strict_valid &= result.valid && part_i > 0;
         result.len = u32::try_from(i).expect("int cast");
 
         result
     }
 
-    fn parse_version_number(input: &[u8]) -> Option<T> {
+    fn parse_version_number(input: &[u8], strict_valid: &mut bool) -> Option<T> {
         // Callers slice `input` from the first digit to the first non-digit,
         // so every byte is already `b'0'..=b'9'` and the slice is non-empty.
         debug_assert!(!input.is_empty() && input.iter().all(u8::is_ascii_digit));
-        Some(T::parse_ascii(input).unwrap_or(T::ZERO))
+        let parsed = T::parse_ascii(input);
+        *strict_valid &= parsed.is_some();
+        Some(parsed.unwrap_or(T::ZERO))
     }
 }
 
@@ -1198,7 +1210,7 @@ pub struct TagResult {
 pub struct ParseResult<T: VersionInt> {
     pub wildcard: Wildcard,
     pub valid: bool,
-    pub has_version: bool,
+    pub strict_valid: bool,
     pub version: Partial<T>,
     pub(crate) len: u32,
 }
@@ -1208,7 +1220,7 @@ impl<T: VersionInt> Default for ParseResult<T> {
         Self {
             wildcard: Wildcard::None,
             valid: true,
-            has_version: false,
+            strict_valid: true,
             version: Partial::default(),
             len: 0,
         }

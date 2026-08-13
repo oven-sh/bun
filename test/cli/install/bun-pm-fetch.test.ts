@@ -80,6 +80,14 @@ it("should fetch dependencies into the cache without installing", async () => {
   expect(
     await Promise.all(["node_modules", "bun.lock", "bun.lockb"].map(name => exists(join(package_dir, name)))),
   ).toEqual([false, false, false]);
+
+  // The point of the command: a following install is served entirely from the cache.
+  urls.length = 0;
+  const install = await runBun(["install"], { BUN_INSTALL_CACHE_DIR: cacheDir() });
+  expect(install.stderr).toContain("Saved lockfile");
+  expect(install.exitCode).toBe(0);
+  expect(urls).toEqual([]);
+  expect(await exists(join(package_dir, "node_modules", "bar", "package.json"))).toBe(true);
 }, 30_000);
 
 it("should fetch packages missing from cache when lockfile exists", async () => {

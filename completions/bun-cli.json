@@ -3456,6 +3456,12 @@
             }
           }
         },
+        "fetch": {
+          "name": "fetch",
+          "description": "fetch all dependencies into the cache without installing",
+          "flags": [],
+          "positionalArgs": []
+        },
         "migrate": {
           "name": "migrate",
           "description": "migrate another package manager's lockfile without installing anything",

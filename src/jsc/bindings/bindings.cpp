@@ -5591,8 +5591,13 @@ restart:
                 return true;
             }
             auto* prop = entry.key();
-            if (entry.attributes() & PropertyAttribute::DontEnum)
+            if (entry.attributes() & PropertyAttribute::DontEnum) {
+                // Mark visited so a same-named prototype property (visited
+                // when this recurses into the prototype's structure) doesn't
+                // leak through the shadow.
+                visitedProperties.append(Identifier::fromUid(vm, prop));
                 return true;
+            }
 
             if (prop == propertyNames->constructor
                 || prop == propertyNames->underscoreProto
@@ -5703,6 +5708,7 @@ restart:
                     continue;
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
+                    visitedProperties.append(property);
                     continue;
                 }
 

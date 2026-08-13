@@ -249,3 +249,6 @@ Hello %i 5 6
   a: 1,
   c: [Getter],
 }
+ShadowBase {
+  y: 1,
+}

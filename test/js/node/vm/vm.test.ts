@@ -1569,6 +1569,23 @@ describe("node:vm SourceTextModule identifier and lineOffset/columnOffset", () =
     expect(error.stack).toContain("broken.mjs:7");
   });
 
+  test("a throwing Error.prepareStackTrace does not escape the constructor's SyntaxError", () => {
+    // Building the SyntaxError materializes its stack, which runs the user's
+    // prepareStackTrace; the SyntaxError must still be what comes out, as with
+    // new Script() (and Node).
+    const previous = Error.prepareStackTrace;
+    Error.prepareStackTrace = () => {
+      throw new Error("boom-from-prepareStackTrace");
+    };
+    try {
+      const error = thrownBy(() => new SourceTextModule("%%", { identifier: "broken.mjs" })) as Error;
+      expect(error).toBeInstanceOf(SyntaxError);
+      expect(error.message).toBe("Unexpected token '%'");
+    } finally {
+      Error.prepareStackTrace = previous;
+    }
+  });
+
   test("cachedData is accepted regardless of identifier and offsets, which then apply to the consumer", async () => {
     const plain = await evaluated(source, { identifier: "plain.mjs" });
     const { column } = topFrame(thrownBy(() => plain.namespace.onLine1()));

@@ -179,7 +179,14 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         parserError);
 
     if (parserError.isValid()) {
-        throwException(globalObject, scope, parserError.toErrorObject(globalObject, m_sourceCode));
+        JSObject* exception = parserError.toErrorObject(globalObject, m_sourceCode);
+        // Building the error materializes its stack, which runs a user
+        // Error.prepareStackTrace that may throw; Node throws the SyntaxError
+        // anyway. tryClearException leaves a termination for the check below.
+        if (exception)
+            (void)scope.tryClearException();
+        RETURN_IF_EXCEPTION(scope, {});
+        throwException(globalObject, scope, exception);
         return {};
     }
 

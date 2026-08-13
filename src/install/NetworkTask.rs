@@ -60,9 +60,8 @@ pub struct NetworkTask {
     // `tarball.url` in the latter would be a self-reference
     // into `callback`; owning avoids that at the cost of one copy per tarball download.
     pub(crate) url_buf: Box<[u8]>,
-    /// Normalized href of the proxy this request goes through; empty when it
-    /// connects directly. Owned here like `url_buf`: the `AsyncHTTP` borrows it
-    /// for as long as the request (including retries) is in flight.
+    /// Proxy href the request goes through (empty: direct); borrowed by the
+    /// `AsyncHTTP` like `url_buf`.
     pub(crate) http_proxy_buf: Box<[u8]>,
     pub(crate) retried: u16,
     pub(crate) response_buffer: MutableString,
@@ -174,8 +173,7 @@ impl NetworkTask {
         unsafe { self.package_manager.assume_mut() }
     }
 
-    /// Store the proxy `url` should go through in `http_proxy_buf` and return
-    /// the view of it that the `AsyncHTTP` built by the caller keeps.
+    /// Stores the proxy for `url` in `http_proxy_buf` and returns the view the `AsyncHTTP` keeps.
     fn http_proxy_for(&mut self, pm: &PackageManager, url: &URL<'_>) -> Option<URL<'static>> {
         self.http_proxy_buf = pm
             .http_proxy(url)
@@ -183,11 +181,9 @@ impl NetworkTask {
         if self.http_proxy_buf.is_empty() {
             return None;
         }
-        // SAFETY: lifetime extension — `http_proxy_buf` is a heap allocation
-        // owned by `*self`, which outlives the HTTP request: `run_tasks` drops
-        // `unsafe_http_client` before returning the slot (and with it this
-        // buffer) to the pool. Same pattern as `url_buf` in `for_manifest` /
-        // `for_tarball`.
+        // SAFETY: lifetime extension, same as `url_buf` in `for_manifest` /
+        // `for_tarball` — `run_tasks` drops `unsafe_http_client` before the slot
+        // (and this buffer) goes back to the pool.
         Some(URL::parse(unsafe {
             bun_ptr::detach_lifetime(&self.http_proxy_buf)
         }))

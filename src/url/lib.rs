@@ -600,16 +600,12 @@ impl<'a> URL<'a> {
                     // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
                     if offset > 0 {
                         let rest = &base[offset as usize..];
-                        // Only an `@` inside the authority (before the path, query or
-                        // hash, see https://github.com/oven-sh/bun/issues/1390) delimits
-                        // userinfo. `user@host:port` has its first colon after the `@`,
-                        // so the colon position says nothing about whether userinfo exists.
+                        // An `@` is userinfo only inside the authority (#1390 had one in the path).
                         let authority_len =
                             strings::index_of_any(rest, b"/?#").unwrap_or(rest.len());
                         if strings::contains_char(&rest[..authority_len], b'@') {
                             offset += url.parse_username(rest).unwrap_or(0);
-                            // `parse_username` stops at either `:` or `@`; a password only
-                            // follows the former.
+                            // The username ended at `:` (password follows) or at `@` (none).
                             if base[offset as usize - 1] == b':' {
                                 offset += url.parse_password(&base[offset as usize..]).unwrap_or(0);
                             }

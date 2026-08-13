@@ -2038,8 +2038,7 @@ impl Example {
             *URL_.get() = Some(api_url.erase_lifetime());
         }
 
-        // `async_http` below is `cli_arena()`-backed (so its type parameter is
-        // `'static`); park the proxy href in the same arena.
+        // `async_http` below lives in `cli_arena()` and is `'static`, so its proxy must be too.
         fn arena_http_proxy(env_loader: &DotEnv::Loader, url: &URL<'_>) -> Option<URL<'static>> {
             let proxy = env_loader.get_http_proxy_for(url)?;
             Some(URL::parse(crate::cli::cli_dupe(proxy.href())))

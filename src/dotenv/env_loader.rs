@@ -337,11 +337,8 @@ impl Loader {
     /// `hostname` is the host without port (e.g., "localhost")
     /// `host` is the host with port if present (e.g., "localhost:3000")
     ///
-    /// The env value is normalized by the WHATWG parser first, exactly like
-    /// the `proxy` option of `fetch()`, so both ways of configuring a proxy
-    /// resolve to the same URL (https://github.com/oven-sh/bun/issues/16182).
-    /// A value the WHATWG parser rejects (e.g. a scheme-less `host:port`) is
-    /// kept as written and still gets the lenient `URL::parse` treatment.
+    /// The value is WHATWG-normalized like `fetch()`'s `proxy` option (#16182);
+    /// one the WHATWG parser rejects (e.g. a scheme-less `host:port`) is used as written.
     pub fn get_http_proxy(
         &self,
         is_http: bool,

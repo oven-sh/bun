@@ -662,8 +662,7 @@ pub struct ProxySettings {
 }
 
 impl ProxySettings {
-    /// An empty href means "no proxy for that scheme". Returns `None` when
-    /// neither proxy is set: no re-evaluation is needed.
+    /// An empty href is "no proxy for that scheme"; `None` when neither is set.
     fn new(
         http_proxy: Box<[u8]>,
         https_proxy: Box<[u8]>,
@@ -680,8 +679,6 @@ impl ProxySettings {
     }
 
     /// Capture `http_proxy` / `https_proxy` / `no_proxy` from the process env.
-    /// The env loader hands back the proxies already normalized, so every hop
-    /// parses the same href an explicit `proxy` option would have produced.
     pub fn from_env(env: &bun_dotenv::Loader) -> Option<Box<Self>> {
         let proxy_href = |is_http: bool| -> Box<[u8]> {
             env.get_http_proxy(is_http, None, None)

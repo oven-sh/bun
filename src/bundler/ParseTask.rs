@@ -2598,9 +2598,9 @@ pub mod parse_worker {
         // Only the Bun-runtime chunks of a `--compile` build should emit the
         // `var __dirname = import.meta.dir` lowering. HTML-imported client
         // sources are bundled for the browser via the lazily-created client
-        // transpiler, which inherits `options.compile` from the server build;
+        // transpiler, which inherits `compile_mode` from the server build;
         // `import.meta.dir`/`.path` are Bun-only and would be `undefined` there.
-        opts.compile = topts.compile && target.is_bun();
+        opts.compile = topts.compile_mode.is_executable() && target.is_bun();
 
         // For files that are not user-specified entrypoints, set `import.meta.main` to `false`.
         // Entrypoints will have `import.meta.main` set as "unknown", unless we use `--compile`,

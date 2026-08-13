@@ -325,30 +325,46 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
     expect(exitCode).toBe(0);
   });
 
-  test("writev → zero (once) on a ≥16 KB server frame: client receives full payload", async () => {
-    // The Bun.serve WS plain-TCP fast path (≥16 KB, no backpressure) uses
-    // us_socket_write2 → bsd_write2/writev — keyed US_FAULT_WRITEV. This is
-    // the only test exercising that hook.
+  test("writev → zero (once) on a ≥16 KB server frame: send() reports backpressure, client receives full payload", async () => {
+    // The Bun.serve WS plain-TCP fast path (WebSocket.h send(): ≥16 KB frame,
+    // nothing buffered, empty cork buffer) writes header + payload with
+    // us_socket_write2 → bsd_write2, which is the writev hook; nothing else in
+    // this file reaches it.
+    //
+    // The send cannot be issued from open(): upgrade() keeps the 101 response
+    // corked so it can batch with the first frames, so inside open() the cork
+    // buffer is non-empty, send() takes the ordinary send path and a writev
+    // rule is never consumed. By the time the client's first frame reaches
+    // message() the handshake has been flushed.
+    //
+    // With writev returning 0 the fast path buffers the whole frame, a 4-byte
+    // header (FIN|binary, 126 marker, 16-bit length) plus the 20000 payload
+    // bytes, returns -1, and drains it on the next writable event.
     const fixture = /* js */ `
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const payload = Buffer.alloc(20000, 0x57);
+      let sent;
       const s = Bun.serve({ port: 0, hostname: "127.0.0.1",
         fetch(req, server) { if (server.upgrade(req)) return; return new Response("no", {status:426}); },
         websocket: {
-          open(ws) {
+          open() {},
+          message(ws) {
             fault.set({ syscall: "writev", action: "zero", repeat: 1 });
-            ws.send(Buffer.alloc(20000, 0x57));
+            const status = ws.send(payload);
+            fault.clear();
+            sent = { status, buffered: ws.getBufferedAmount() };
           },
-          message() {},
           close() {},
         } });
       const ws = new WebSocket("ws://127.0.0.1:" + s.port);
       ws.binaryType = "arraybuffer";
+      ws.onopen = () => ws.send("go");
       ws.onmessage = (e) => {
-        console.log(JSON.stringify({ len: e.data.byteLength }));
+        console.log(JSON.stringify({ ...sent, len: e.data.byteLength, intact: Buffer.from(e.data).equals(payload) }));
         ws.close();
       };
-      ws.onclose = () => { fault.clear(); s.stop(true); process.exit(0); };
-      ws.onerror = () => { console.log(JSON.stringify({ err: true })); process.exit(1); };
+      ws.onclose = () => { s.stop(true); process.exit(0); };
+      ws.onerror = () => { console.log(JSON.stringify({ ...sent, err: true })); process.exit(1); };
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
@@ -358,7 +374,7 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ out: JSON.parse(stdout.trim() || "{}"), signal: proc.signalCode, stderr }).toEqual({
-      out: { len: 20000 },
+      out: { status: -1, buffered: 20004, len: 20000, intact: true },
       signal: null,
       stderr: expect.any(String),
     });

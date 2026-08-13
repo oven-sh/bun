@@ -20,6 +20,10 @@ export class Child extends Base {
   }
 }
 
+// A plain function used as a constructor; nothing reads its `prototype`
+// before the mock, so it stays lazily unreified until the walker runs.
+export function LegacyCtor() {}
+
 export class Client {
   connect() {
     return "connected";

@@ -420,6 +420,11 @@ public:
 
     mutable WriteBarrier<JSObject> callbackFunctionOrCachedResult;
     bool hasCalledModuleMock = false;
+    // Auto-mocks of object-shaped exports already match what require() of the
+    // real module returned, so CJS consumers must not apply the
+    // `{ __esModule, default }` interop unwrap to them. Factory mocks and the
+    // primitive auto-mock carrier keep the interop.
+    bool suppressESModuleInterop = false;
 
     static JSModuleMock* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback);
     static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
@@ -633,6 +638,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
     // mock from its exports, bypassing any leftover mock in virtualModules
     // and any mock-patched requireMap entry so the real exports are seen.
     JSC::JSObject* callback = nullptr;
+    bool suppressESModuleInterop = false;
     if (isAutoMock) {
         JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
         WTF::String fromPath;
@@ -736,6 +742,10 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
             && realExports.getObject()->type() == JSC::ModuleNamespaceObjectType;
 
         JSC::JSObject* mockObject = mockValue.isObject() ? mockValue.getObject() : nullptr;
+        // The walker mock already matches what require() of the real module
+        // returned, so CJS consumers must not unwrap `{ __esModule, default }`
+        // out of it; only the primitive carrier below needs that interop.
+        suppressESModuleInterop = mockObject != nullptr;
         if (!mockObject) {
             // Primitive exports need an object carrier; `{ default, __esModule }`
             // is the shape Bun's interop unwraps back to the raw value for
@@ -778,6 +788,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         // Pre-cache the result so `executeOnce` returns it directly instead
         // of trying to call the mock object as a factory.
         mock->hasCalledModuleMock = true;
+        mock->suppressESModuleInterop = suppressESModuleInterop;
     }
 
     auto getJSValue = [&]() -> JSValue {
@@ -882,8 +893,10 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
             RETURN_IF_EXCEPTION(scope, {});
 
             // Same interop unwrap a fresh require() of this mock would do.
-            exportsValue = unwrapESModuleDefaultForCJS(globalObject, exportsValue);
-            RETURN_IF_EXCEPTION(scope, {});
+            if (!mock->suppressESModuleInterop) {
+                exportsValue = unwrapESModuleDefaultForCJS(globalObject, exportsValue);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
 
             moduleObject->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), exportsValue, 0);
             moduleObject->hasEvaluated = true;
@@ -976,8 +989,10 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsRequireMock, (JSC::JSGlobalObject 
                     }
                     // Match what `require()` returns for this mock, so the
                     // shape doesn't depend on which call came first.
-                    resultValue = unwrapESModuleDefaultForCJS(globalObject, resultValue);
-                    RETURN_IF_EXCEPTION(scope, {});
+                    if (!moduleMock->suppressESModuleInterop) {
+                        resultValue = unwrapESModuleDefaultForCJS(globalObject, resultValue);
+                        RETURN_IF_EXCEPTION(scope, {});
+                    }
                     return JSValue::encode(resultValue);
                 }
             }
@@ -1241,7 +1256,7 @@ Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObj
     return Zig::JSModuleMock::createStructure(vm, globalObject, prototype);
 }
 
-JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specifier, bool& wasModuleMock)
+JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specifier, bool& wasModuleMock, bool& suppressESModuleInterop)
 {
     auto fallback = [&]() -> JSC::JSValue {
         return JSValue::decode(Bun__runVirtualModule(globalObject, specifier));
@@ -1262,6 +1277,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
 
         if (Zig::JSModuleMock* moduleMock = dynamicDowncast<Zig::JSModuleMock>(function)) {
             wasModuleMock = true;
+            suppressESModuleInterop = moduleMock->suppressESModuleInterop;
             // module mock
             result = moduleMock->executeOnce(globalObject);
         } else {

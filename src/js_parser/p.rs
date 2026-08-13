@@ -1973,7 +1973,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // it "for side effects" pulls in React for code the user never asked
         // to run. See mark_file_live_step for the matching JsxImport skip.
         let is_jsx = tag == bun_ast::PartTag::JsxImport;
-        parts.push(js_ast::Part {
+        let part = js_ast::Part {
             stmts: stmts.into(),
             declared_symbols,
             import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_i),
@@ -1981,7 +1981,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             can_be_removed_if_unused: is_jsx,
             force_tree_shaking: is_jsx,
             ..Default::default()
-        });
+        };
+        if as_require {
+            // Classes hoisted to the top of the module are already in `parts`; unlike an import, this binding is not hoisted above them.
+            parts.insert(0, part);
+        } else {
+            parts.push(part);
+        }
         Ok(())
     }
 

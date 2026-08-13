@@ -8961,9 +8961,7 @@ impl LowerUsingDeclarationsContext {
     ) -> ListManaged<'a, Stmt> {
         let mut result = BumpVec::new_in(p.arena);
         let mut exports = BumpVec::<js_ast::ClauseItem>::new_in(p.arena);
-        // The linker hoists a wrapped module's declarations out of its `__esm`
-        // closure by scanning the top-level statements only, so the `var`s that
-        // move into the try block below must stay declared at the top level.
+        // The linker's `__esm` wrapper hoists declarations by scanning top-level statements only.
         let relocate_vars = p.options.bundle && p.current_scope == p.module_scope;
         let mut end: u32 = 0;
         for i in 0..stmts.len() {

@@ -255,6 +255,16 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
         expect.objectContaining({ code: "ERR_INVALID_URL", message: "Invalid URL: file://[" }),
       );
       expect(() => findPackageJSON("dep", "file://[")).toThrow(expect.objectContaining({ code: "ERR_INVALID_URL" }));
+      // Any other URL scheme is rejected, like fileURLToPath() does, instead of
+      // being treated as a path or a package name.
+      const notFile = expect.objectContaining({
+        code: "ERR_INVALID_URL_SCHEME",
+        message: "The URL must be of scheme file",
+      });
+      expect(() => findPackageJSON("dep", new URL("https://example.com/app.js"))).toThrow(notFile);
+      expect(() => findPackageJSON("dep", "https://example.com/app.js")).toThrow(notFile);
+      expect(() => findPackageJSON("node:fs", import.meta.path)).toThrow(notFile);
+      expect(() => findPackageJSON("data:text/javascript,export{}")).toThrow(notFile);
       // Longer than any path the OS accepts (including Windows' ~96 KiB limit).
       const tooLong = path.join(import.meta.dir, Buffer.alloc(100_000, "a").toString());
       expect(() => findPackageJSON("dep", tooLong)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));

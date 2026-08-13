@@ -2574,12 +2574,16 @@ impl ThreadSafeFunction {
                     // The callback threw: hand the exception to the tick loop and
                     // drain the rest of the queue from a fresh dispatch, so the
                     // uncaught-exception path runs before the next queued call.
+                    // If that call was the last one and queued the finalizer, the
+                    // finalizer task frees `this`: nothing else may be scheduled.
                     // SAFETY: as above.
                     unsafe {
-                        (*this)
-                            .dispatch_state
-                            .store(DispatchState::Idle as u8, Ordering::SeqCst);
-                        (*this).schedule_dispatch();
+                        if !(*this).has_queued_finalizer {
+                            (*this)
+                                .dispatch_state
+                                .store(DispatchState::Idle as u8, Ordering::SeqCst);
+                            (*this).schedule_dispatch();
+                        }
                     }
                     return Err(err);
                 }

@@ -857,6 +857,9 @@ impl FSWatcher {
                     } else {
                         err
                     },
+                    // `fromAbort`: the JS side offers the reason to an 'error'
+                    // listener but does not treat its absence as unhandled.
+                    JSValue::TRUE,
                 ];
                 // Reported here rather than returned: the watcher still closes
                 // (and emits 'close') below whatever the listener did.

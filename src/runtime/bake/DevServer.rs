@@ -5193,9 +5193,9 @@ impl DevServer {
         match ensure_route_is_bundled(self, rbi, &mut ctx) {
             Ok(()) => {}
             Err(jsc::JsError::Thrown) => {
-                // TODO(one-fold): reached from Bun.serve's HTML-bundle route
-                // (uWS request trampoline via StaticRouteLike); reported here
-                // until that path carries JsResult.
+                // This is the dev server's entry from Bun.serve's static-route
+                // trampoline (`StaticRouteLike`, which otherwise never enters
+                // JS): what bundling left pending is folded at this boundary.
                 let _ = bun_jsc::task::fold_at_loop_entry(self.vm().global(), jsc::JsError::Thrown);
             }
             Err(jsc::JsError::OutOfMemory) => return Err(AllocError),

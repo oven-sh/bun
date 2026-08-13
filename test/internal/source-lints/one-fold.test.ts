@@ -48,7 +48,7 @@ const DISPATCHERS = new Set([
   "src/uws_sys/WebSocket.rs", // uWS websocket/upgrade trampolines
   "src/runtime/node/quic/fold.rs", // node:quic's event drain and lsquic/UDP callback boundaries
   "src/runtime/ipc/fold.rs", // the IPC message drain
-  "src/runtime/bake/DevServer.rs", // dev_route_tramp: the dev server's uWS route trampoline (+ the HTML-bundle route TODO)
+  "src/runtime/bake/DevServer.rs", // the dev server's uWS route trampoline and its static-route (HTML bundle) entry
 ]);
 
 // Foreign completion boundaries with no Rust trampoline layer to fold in.

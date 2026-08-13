@@ -175,7 +175,7 @@ class FSWatcher extends EventEmitter {
     this._handle = new FSEvent(this);
   }
 
-  #onEvent(eventType, filenameOrError) {
+  #onEvent(eventType, filenameOrError, fromAbort = false) {
     if (eventType === "close") {
       if (this.#silentClose) return;
       // close on next microtask tick to avoid long-running function calls when
@@ -189,6 +189,11 @@ class FSWatcher extends EventEmitter {
       // which surfaces here as EACCES errors. Rewriting the code to EPERM
       // makes watchpack's error handling ignore the error instead of failing.
       if (filenameOrError.code === "EACCES") filenameOrError.code = "EPERM";
+
+      // An aborted signal closes the watcher; its reason is offered to an
+      // 'error' listener if there is one, but is not an unhandled error
+      // without one (node emits only 'close' for an abort).
+      if (fromAbort && this.listenerCount("error") === 0) return;
 
       this.emit(eventType, filenameOrError);
     } else {

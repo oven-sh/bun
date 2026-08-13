@@ -536,6 +536,125 @@ describe("request body arriving after the response was ended", () => {
     }
   });
 
+  // A request that forbids connection reuse makes the server close the
+  // connection right after the response. Node still parses everything it has
+  // already read first: a body that came in with the headers is delivered (or
+  // dumped) and completes the request before the socket is closed.
+  describe("on a connection the response closes", () => {
+    const requestHeads = [
+      ["Connection: close", "POST / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n"],
+      ["HTTP/1.0", "POST / HTTP/1.0\r\nHost: x\r\n"],
+    ] as const;
+
+    // Resolves with the request's state as observed when the server-side socket
+    // closed; the closing is what the early response triggers, so by then the
+    // request must already be in its final state.
+    function observeUntilSocketClose(server: Server, onRequest: (req: IncomingMessage) => object) {
+      const { promise, resolve } = Promise.withResolvers<object>();
+      server.on("request", req => {
+        (req.socket as Socket).once("close", () => resolve(onRequest(req)));
+      });
+      return promise;
+    }
+
+    test.each(requestHeads)(
+      "a consumer attached before the synchronous res.end() receives a body sent with the headers (%s)",
+      async (_, head) => {
+        const events: string[] = [];
+        const chunks: Buffer[] = [];
+        const server = createServer((req, res) => {
+          req.on("data", chunk => chunks.push(chunk));
+          req.on("end", () => events.push("end"));
+          req.on("close", () => events.push("close"));
+          req.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+          req.on("aborted", () => events.push("aborted"));
+          res.end("first");
+        });
+        const observed = observeUntilSocketClose(server, req => ({
+          body: Buffer.concat(chunks).toString(),
+          events: [...events],
+          ...reqState(req),
+        }));
+        try {
+          const client = await rawClient(await listen(server));
+          await client.write(`${head}Content-Length: 5\r\n\r\nhello`);
+          expect(await observed).toEqual({
+            body: "hello",
+            events: ["end", "close"],
+            complete: true,
+            readableEnded: true,
+            destroyed: true,
+            aborted: false,
+          });
+          // The server closed the connection, as the request asked, and the
+          // response made it out before that.
+          await once(client.socket, "close");
+          expect(await client.response("first")).toStartWith("HTTP/1.1 200 OK");
+          await closeServer(server);
+        } finally {
+          server.closeAllConnections();
+          server.close();
+        }
+      },
+    );
+
+    test("an unread body sent with the headers is dumped and still completes the request", async () => {
+      const events: string[] = [];
+      const server = createServer((req, res) => {
+        req.on("end", () => events.push("end"));
+        req.on("close", () => events.push("close"));
+        res.end("first");
+      });
+      const observed = observeUntilSocketClose(server, req => ({ events: [...events], ...reqState(req) }));
+      try {
+        const client = await rawClient(await listen(server));
+        await client.write("POST / HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 5\r\n\r\nhello");
+        expect(await observed).toEqual({
+          events: ["end", "close"],
+          complete: true,
+          readableEnded: true,
+          destroyed: true,
+          aborted: false,
+        });
+        await once(client.socket, "close");
+        await closeServer(server);
+      } finally {
+        server.closeAllConnections();
+        server.close();
+      }
+    });
+
+    test("the part of the body that had arrived is delivered and the request is left incomplete", async () => {
+      const events: string[] = [];
+      const server = createServer((req, res) => {
+        req.on("data", chunk => events.push(`data:${chunk}`));
+        for (const name of ["end", "close", "aborted", "error"]) req.on(name, () => events.push(name));
+        res.end("first");
+      });
+      const observed = observeUntilSocketClose(server, req => ({ events: [...events], ...reqState(req) }));
+      try {
+        const client = await rawClient(await listen(server));
+        // The rest of the body never comes; the server closes the connection
+        // after the response regardless, like Node's destroySoon().
+        await client.write("POST / HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 100\r\n\r\nabc");
+        expect(await observed).toEqual({
+          events: ["data:abc"],
+          complete: false,
+          readableEnded: false,
+          destroyed: false,
+          aborted: false,
+        });
+        await once(client.socket, "close");
+        expect(await client.response("first")).toStartWith("HTTP/1.1 200 OK");
+        // The request was released even though its body never completed.
+        await closeServer(server);
+      } finally {
+        server.closeAllConnections();
+        server.close();
+      }
+    });
+  });
+
   // The body outliving the response must not leave anything holding the event
   // loop open: the process has to exit on its own both when the body does
   // arrive later (with the connection then reused, so the early request is no

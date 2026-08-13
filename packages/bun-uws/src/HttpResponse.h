@@ -851,6 +851,22 @@ public:
         return !(httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING);
     }
 
+    /* node:http compat: the response is complete, but the read that carried its
+     * request is still being parsed and a body handler was (re-)armed after the
+     * response ended, i.e. the request body is still being delivered out of the
+     * current buffer. A shutdown issued now makes the parser stop right after
+     * the request head (HttpContext's request hook bails on a shut-down socket)
+     * and drops that body; onData's post-parse close gate is the place to close
+     * such a connection, once the buffer has been consumed. */
+    bool isDeliveringBodyAfterResponse() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        return hasResponded()
+            && !httpResponseData->isConnectRequest
+            && httpResponseData->inStream != nullptr
+            && HttpContext<SSL>::fromSocket((us_socket_t *) this)->getSocketContextData()->parsingSocket == (us_socket_t *) this;
+    }
+
      /* Corks the response if possible. Leaves already corked socket be. */
     HttpResponse *cork(MoveOnlyFunction<void()> &&handler) {
         if (!Super::isCorked()) {

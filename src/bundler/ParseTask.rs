@@ -990,8 +990,7 @@ pub mod parse_worker {
                     Loc { start: 0 },
                 );
 
-                // In cjs output `import.meta` is a SyntaxError inside the `@bun-cjs`
-                // wrapper, so call the wrapper's `require` parameter instead.
+                // `import.meta` is a SyntaxError inside the cjs `@bun-cjs` wrapper.
                 let require_target = if opts.output_format == js_parser::options::Format::Cjs {
                     Expr {
                         data: ast::ExprData::ERequireCallTarget,

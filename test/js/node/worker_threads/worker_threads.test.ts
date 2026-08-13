@@ -519,36 +519,39 @@ describe("stdio is flushed when the worker exits synchronously", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe(Array.from({ length: N }, (_, i) => "W" + i + "\n").join(""));
-    expect(stderr).toContain(`[exit ${expectedWorkerCode}]`);
+    expect(stderr).toBe(`[exit ${expectedWorkerCode}]\n`);
     expect(exitCode).toBe(0);
   });
 
-  // Every write from an 'exit' handler is its own message (process._exiting makes
-  // writev complete synchronously); all of them must be delivered, in order,
-  // before the parent ends worker.stdout and emits 'exit'.
-  test("worker 'exit' handler output all arrives, in order, before the parent's 'exit'", async () => {
-    const LINES = 5000;
+  // Output buffered behind the parked batch is flushed first, then each write
+  // from the user's 'exit' handler goes through synchronously; all of it arrives,
+  // in order, before the parent's 'exit', and the exitCode the handler sets wins.
+  test("buffered output, then 'exit' handler output, arrive in order; handler exitCode wins", async () => {
+    const M = 200;
     const worker = new Worker(
-      `process.on("exit", () => {
-         for (let i = 0; i < ${LINES}; i++) process.stdout.write("L" + i + "\\n");
-       });`,
+      `process.on("exit", code => {
+         for (let i = 0; i < ${M}; i++) process.stdout.write("L" + i + " " + code + " " + process._exiting + "\\n");
+         process.exitCode = 42;
+       });
+       for (let i = 0; i < ${N}; i++) console.log("W" + i);
+       process.exit(7);`,
       { eval: true, stdout: true },
     );
     let out = "";
     worker.stdout.setEncoding("utf8").on("data", d => (out += d));
     const [code] = await once(worker, "exit");
-    const lines = out.split("\n");
-    expect(lines.length).toBe(LINES + 1);
-    expect(lines).toEqual([...Array.from({ length: LINES }, (_, i) => "L" + i), ""]);
-    expect(code).toBe(0);
+    expect(out).toBe(
+      Array.from({ length: N }, (_, i) => "W" + i + "\n").join("") +
+        Array.from({ length: M }, (_, i) => "L" + i + " 7 true\n").join(""),
+    );
+    expect(code).toBe(42);
   });
 
-  // The stdio bootstrap's own 'exit' listener must not disturb the user's: on an
-  // uncaught exception the user's handler still sees code 1 with _exiting set, its
-  // buffered + exit-time output arrives, and the exitCode it assigns wins (as in node).
+  // Same on an uncaught exception: the user's handler sees code 1 with _exiting
+  // set, buffered + exit-time output arrives, and its exitCode wins (as in node).
   // Spawned so the test runner's unhandled-error hook doesn't intercept the
   // worker's uncaught exception.
-  test("user 'exit' handler on uncaught exception: output flushed and exitCode honored", async () => {
+  test.concurrent("user 'exit' handler on uncaught exception: output flushed and exitCode honored", async () => {
     const workerSrc = `process.on("exit", code => {
         process.stdout.write("exit handler " + code + " " + process._exiting + "\\n");
         process.exitCode = 42;

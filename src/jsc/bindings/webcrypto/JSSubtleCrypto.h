@@ -22,7 +22,6 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "JSDOMConvertEnumeration.h"
 #include "JSDOMWrapper.h"
 #include "SubtleCrypto.h"
 #include <wtf/NeverDestroyed.h>
@@ -41,7 +40,6 @@ public:
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static SubtleCrypto* toWrapped(JSC::VM&, JSC::JSValue);
     static void destroy(JSC::JSCell*);
 
     DECLARE_INFO;
@@ -93,11 +91,6 @@ template<> struct JSDOMWrapperConverterTraits<SubtleCrypto> {
     using WrapperClass = JSSubtleCrypto;
     using ToWrappedReturnType = SubtleCrypto*;
 };
-String convertEnumerationToString(SubtleCrypto::KeyFormat);
-template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, SubtleCrypto::KeyFormat);
-
-template<> std::optional<SubtleCrypto::KeyFormat> parseEnumeration<SubtleCrypto::KeyFormat>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> ASCIILiteral expectedEnumerationValues<SubtleCrypto::KeyFormat>();
 
 } // namespace WebCore
 

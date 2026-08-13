@@ -47,11 +47,12 @@ it.each(["bun.lockb", "bun.lock"])("should not download tarballs with --lockfile
     // default behaviour
     await writeFile(
       join(package_dir, "bunfig.toml"),
-      `
-      [install]
-      cache = false
-      registry = "${root_url}/"
-      `,
+      Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: `${root_url}/`,
+        },
+      }),
     );
   }
 

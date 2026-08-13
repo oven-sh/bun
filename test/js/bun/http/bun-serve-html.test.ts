@@ -1,6 +1,6 @@
 import type { Server, Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 function replaceHash(html: string) {
@@ -21,7 +21,7 @@ function extractHash(html: string, file_kind: "css" | "js") {
 }
 
 test("serve html", async () => {
-  const dir = tempDirWithFiles("html-css-js", {
+  await using dir = tempDir("html-css-js", {
     "dashboard.html": /*html*/ `
       <!DOCTYPE html>
       <html>
@@ -359,7 +359,7 @@ export default p;
   });
 
   test("serve html with failing plugin", async () => {
-    const dir = tempDirWithFiles("html-css-js-failing-plugin", {
+    await using dir = tempDir("html-css-js-failing-plugin", {
       "bunfig.toml": /* toml */ `
 [serve.static]
 plugins = ["./plugin.ts"]
@@ -417,7 +417,7 @@ export default p;
   });
 
   test("empty plugin array", async () => {
-    const dir = tempDirWithFiles("html-css-js-empty-plugins", {
+    await using dir = tempDir("html-css-js-empty-plugins", {
       "index.html": /*html*/ `
       <!DOCTYPE html>
       <html>
@@ -495,7 +495,7 @@ plugins = []`,
       </html>
     `;
 
-    const dir = tempDirWithFiles("html-css-js-concurrent-plugins", {
+    await using dir = tempDir("html-css-js-concurrent-plugins", {
       "index.html": createHtmlFile("Home Page", "index.js"),
       "about.html": createHtmlFile("About Page", "about.js"),
       "contact.html": createHtmlFile("Contact Page", "contact.js"),
@@ -622,7 +622,7 @@ async function waitForServer(
 }
 
 test("serve html error handling", async () => {
-  const dir = tempDirWithFiles("bun-serve-html-error-handling", {
+  await using dir = tempDir("bun-serve-html-error-handling", {
     "index.html": /*html*/ `
       <!DOCTYPE html>
       <html>
@@ -679,7 +679,7 @@ test("serve html error handling", async () => {
 });
 
 test("wildcard static routes", async () => {
-  const dir = tempDirWithFiles("bun-serve-html-error-handling", {
+  await using dir = tempDir("bun-serve-html-error-handling", {
     "index.html": /*html*/ `
       <!DOCTYPE html>
       <html>
@@ -822,7 +822,11 @@ test("you can have HTML imports apply to only specific methods outside of the de
 });
 
 for (let development of [true, false, { hmr: false }]) {
-  test(`mixed api and html routes with non-* false routes`, async () => {
+  // `{ hmr: false }` does a full React production bundle for every route
+  // fetch; under the debug build that is slow enough to exceed the default
+  // per-test timeout. The hmr-off path is covered by the release lanes.
+  const maybeTest = isDebug && typeof development === "object" ? test.skip : test;
+  maybeTest(`mixed api and html routes with non-* false routes`, async () => {
     const dir = join(import.meta.dir, "jsx-runtime");
     const { default: html } = await import(join(dir, "index.html"));
 
@@ -865,7 +869,7 @@ for (let development of [true, false, { hmr: false }]) {
     }
   });
 
-  test(`mixed api and html routes with development: ${JSON.stringify(development)}`, async () => {
+  maybeTest(`mixed api and html routes with development: ${JSON.stringify(development)}`, async () => {
     const dir = join(import.meta.dir, "jsx-runtime");
     const { default: html } = await import(join(dir, "index.html"));
 
@@ -948,6 +952,8 @@ describe("production headers and import.meta.env", () => {
         catch (e) { evalError = String(e); }
         console.log(JSON.stringify({
           jsContainsImportMetaEnv: js.includes("import.meta.env"),
+          jsHasSourceMapURL: js.includes("sourceMappingURL"),
+          jsHasDebugId: js.includes("debugId"),
           evalError,
           result: globalThis.result ?? null,
           htmlETag,
@@ -981,6 +987,8 @@ describe("production headers and import.meta.env", () => {
     }
     return JSON.parse(stdout) as {
       jsContainsImportMetaEnv: boolean;
+      jsHasSourceMapURL: boolean;
+      jsHasDebugId: boolean;
       evalError: string | null;
       result: Record<string, unknown> | null;
       htmlETag: string | null;
@@ -1016,10 +1024,12 @@ describe("production headers and import.meta.env", () => {
     expect(out.jsETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.cssETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.svgETag).toMatch(/^"[0-9a-f]{16}"$/);
-    expect(out.mapStatus).toBe(200);
-    expect(out.mapETag).toMatch(/^"[0-9a-f]{16}"$/);
-    expect(out.mapETag).not.toBe('"0000000000000000"');
-    expect(out.mapETag).not.toBe(out.jsETag);
+
+    // Production must not emit sourcemap comments or serve .map files;
+    // they contain the original source code.
+    expect(out.jsHasSourceMapURL).toBe(false);
+    expect(out.jsHasDebugId).toBe(false);
+    expect(out.mapStatus).toBe(404);
 
     // Production: HTML revalidates via ETag; content-hashed assets cache forever.
     expect({
@@ -1027,13 +1037,11 @@ describe("production headers and import.meta.env", () => {
       js: out.jsCacheControl,
       css: out.cssCacheControl,
       svg: out.svgCacheControl,
-      map: out.mapCacheControl,
     }).toEqual({
       html: "no-cache",
       js: "public, max-age=31536000, immutable",
       css: "public, max-age=31536000, immutable",
       svg: "public, max-age=31536000, immutable",
-      map: "public, max-age=31536000, immutable",
     });
 
     // A conditional request with the HTML ETag returns 304.
@@ -1049,8 +1057,12 @@ describe("production headers and import.meta.env", () => {
 
     expect(out.htmlETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.jsETag).toMatch(/^"[0-9a-f]{16}"$/);
+    expect(out.jsHasSourceMapURL).toBe(true);
+    expect(out.jsHasDebugId).toBe(true);
+    expect(out.mapStatus).toBe(200);
     expect(out.mapETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.mapETag).not.toBe('"0000000000000000"');
+    expect(out.mapETag).not.toBe(out.jsETag);
 
     // Dev mode should not set aggressive Cache-Control.
     expect(out.htmlCacheControl).toBeNull();
@@ -1073,6 +1085,8 @@ describe("production headers and import.meta.env", () => {
         "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
         "app.ts": appBody,
         "serve.ts": serveTs,
+        // Production serves no sourcemaps by default; opt in to exercise map ETags.
+        "bunfig.toml": `[serve.static]\nsourcemap = "linked"`,
       });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "serve.ts"],
@@ -1091,5 +1105,61 @@ describe("production headers and import.meta.env", () => {
     expect(a).toMatch(/^"[0-9a-f]{16}"$/);
     expect(b).toMatch(/^"[0-9a-f]{16}"$/);
     expect(a).not.toBe(b);
+  });
+
+  test("bunfig [serve.static] sourcemap overrides the per-mode default", async () => {
+    const run = async (development: string, bunfig: string) => {
+      const dir = tempDirWithFiles("html-sourcemap-override", {
+        "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
+        "app.ts": `console.log("hello" as string);`,
+        "bunfig.toml": bunfig,
+        "serve.ts": /*js*/ `
+          import index from "./index.html";
+          const server = Bun.serve({ port: 0, development: ${development}, routes: { "/": index } });
+          const base = server.url.href;
+          const html = await (await fetch(base)).text();
+          const jsPath = html.match(/src="([^"]+\\.js)"/)[1];
+          const js = await (await fetch(new URL(jsPath, base))).text();
+          const mapRes = await fetch(new URL(jsPath + ".map", base));
+          console.log(JSON.stringify({
+            hasLinkedMapComment: /sourceMappingURL=\\/chunk-[a-z0-9]+\\.js\\.map/.test(js),
+            hasInlineMapComment: js.includes("sourceMappingURL=data:application/json"),
+            mapStatus: mapRes.status,
+          }));
+          await server.stop(true);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "serve.ts"],
+        env: { ...bunEnv, NODE_ENV: undefined },
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) throw new Error(stdout + "\n" + stderr);
+      return JSON.parse(stdout) as {
+        hasLinkedMapComment: boolean;
+        hasInlineMapComment: boolean;
+        mapStatus: number;
+      };
+    };
+
+    const cases: [development: string, bunfigValue: string, expected: Awaited<ReturnType<typeof run>>][] = [
+      // Opt back into sourcemaps in production.
+      ["false", `"linked"`, { hasLinkedMapComment: true, hasInlineMapComment: false, mapStatus: 200 }],
+      ["false", `true`, { hasLinkedMapComment: true, hasInlineMapComment: false, mapStatus: 200 }],
+      ["false", `"inline"`, { hasLinkedMapComment: false, hasInlineMapComment: true, mapStatus: 404 }],
+      // External emits .map files without a sourceMappingURL comment.
+      ["false", `"external"`, { hasLinkedMapComment: false, hasInlineMapComment: false, mapStatus: 200 }],
+      // "none" matches the production default.
+      ["false", `"none"`, { hasLinkedMapComment: false, hasInlineMapComment: false, mapStatus: 404 }],
+      // Opt out of sourcemaps in development.
+      ["{ hmr: false }", `false`, { hasLinkedMapComment: false, hasInlineMapComment: false, mapStatus: 404 }],
+    ];
+    const results = await Promise.all(
+      cases.map(([development, value]) => run(development, `[serve.static]\nsourcemap = ${value}`)),
+    );
+    expect(results).toEqual(cases.map(([, , expected]) => expected));
   });
 });

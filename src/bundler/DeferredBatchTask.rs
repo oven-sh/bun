@@ -10,11 +10,6 @@ use crate::BundleV2;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{Task, task_tag};
 
-/// Re-export for callers that previously named
-/// `crate::DeferredBatchTask::CompletionDispatch` — the struct now lives in
-/// `bundle_v2::dispatch` alongside the other §Dispatch vtables.
-pub use crate::bundle_v2::dispatch::CompletionDispatch;
-
 #[derive(Default)]
 pub struct DeferredBatchTask {
     // Debug-only flag; zero-sized in release.
@@ -22,8 +17,15 @@ pub struct DeferredBatchTask {
     running: bool,
 }
 
+impl bun_event_loop::Taskable for DeferredBatchTask {
+    const TAG: bun_event_loop::TaskTag = task_tag::BundleV2DeferredBatchTask;
+    /// Embedded in its `BundleV2`, which outlives the queue entry and owns
+    /// everything the drain would have touched; nothing to free.
+    unsafe fn release_unrun(_: *mut Self) {}
+}
+
 impl DeferredBatchTask {
-    pub fn init(&mut self) {
+    pub(crate) fn init(&mut self) {
         // Kept as `&mut self` (not `-> Self`) — this struct is embedded
         // by value in BundleV2 (recovered via container_of in `get_bundle_v2`), so
         // it is reset in place, never separately constructed.
@@ -33,7 +35,7 @@ impl DeferredBatchTask {
         let _ = core::mem::take(self);
     }
 
-    pub fn get_bundle_v2(&mut self) -> &mut BundleV2<'static> {
+    pub(crate) fn get_bundle_v2(&mut self) -> &mut BundleV2<'static> {
         // SAFETY: `self` is always the `drain_defer_task` field of a live `BundleV2`;
         // this struct is never instantiated standalone. Lifetime erased to 'static;
         // callers must not outlive the owning bundle.
@@ -46,18 +48,13 @@ impl DeferredBatchTask {
         }
     }
 
-    pub fn schedule(&mut self) {
+    pub(crate) fn schedule(&mut self) {
         #[cfg(debug_assertions)]
         {
             debug_assert!(!self.running);
             self.running = false;
         }
-        // PORTING.md §Dispatch: tag+ptr, not TaggedPointer. Tag constant lives in
-        // `bun_event_loop::task_tag::BundleV2DeferredBatchTask`.
-        let task = ConcurrentTask::create(Task::new(
-            task_tag::BundleV2DeferredBatchTask,
-            std::ptr::from_mut::<Self>(self).cast::<()>(),
-        ));
+        let task = ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(self)));
 
         self.get_bundle_v2().enqueue_on_js_loop_for_plugins(task);
     }

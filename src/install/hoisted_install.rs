@@ -493,7 +493,7 @@ pub(crate) fn install_hoisted_packages(
             }
 
             impl<'a, 'b> Closure<'a, 'b> {
-                pub(crate) fn is_done(closure: &mut Self) -> bool {
+                fn is_done(closure: &mut Self) -> bool {
                     // SAFETY: `closure.manager` is the raw provenance root set
                     // below; `sleep_until`/`tick_raw` hold no `&mut` across
                     // this callback, so this is the unique live borrow.
@@ -541,9 +541,9 @@ pub(crate) fn install_hoisted_packages(
                 manager: mgr,
             };
 
-            // Whenever the event loop wakes up, we need to call `runTasks`
-            // If we call sleep() instead of sleepUntil(), it will wait forever until there are no more lifecycle scripts
-            // which means it will not call runTasks until _all_ current lifecycle scripts have finished running
+            // Whenever the event loop wakes up, we need to call `run_tasks`
+            // If we call sleep() instead of sleep_until(), it will wait forever until there are no more lifecycle scripts
+            // which means it will not call run_tasks until _all_ current lifecycle scripts have finished running
             // SAFETY: `mgr` is derived from the live exclusive `this` borrow;
             // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
             // `Closure::is_done`, so the callback's `&mut *closure.manager`
@@ -560,9 +560,7 @@ pub(crate) fn install_hoisted_packages(
         // Index instead of `.iter()` so the immutable borrow of
         // `installer.trees` doesn't overlap `&mut self`.
         for tree_idx in 0..installer.trees.len() {
-            if cfg!(debug_assertions) {
-                debug_assert!(installer.trees[tree_idx].pending_installs.len() == 0);
-            }
+            debug_assert!(installer.trees[tree_idx].pending_installs.len() == 0);
             // force = true
             installer.install_available_packages::<true>(log_level);
         }

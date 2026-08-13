@@ -1,7 +1,7 @@
 import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { rm } from "fs/promises";
-import { VerdaccioRegistry, bunExe, bunEnv as env, stderrForInstall, tempDir } from "harness";
+import { VerdaccioRegistry, bunExe, bunEnv as env, tempDir } from "harness";
 import { join } from "path";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
@@ -40,7 +40,7 @@ describe("npmrc", async () => {
     env.BUN_INSTALL_CACHE_DIR = originalCacheDir;
 
     const out = await stdout.text();
-    const err = stderrForInstall(await stderr.text());
+    const err = await stderr.text();
     console.log({ out, err });
     expect(err).toBeEmpty();
     expect(out.endsWith("hi!")).toBeTrue();
@@ -166,6 +166,62 @@ registry = http://localhost:${registry.port}/
       })
       .cwd(packageDir)
       .throws(true);
+  });
+
+  describe("user .npmrc lookup", () => {
+    const npmrc = (port: number) => `registry=http://localhost:${port}/\n//localhost:${port}/:_authToken=token\n`;
+    const pkg = { "pkg/package.json": JSON.stringify({ name: "npmrc-lookup", version: "0.0.1" }) };
+
+    // `publish --dry-run` never contacts the registry, but it still requires a token
+    // for it and prints which registry it picked up, so it shows which .npmrc was read.
+    // bunEnv spreads process.env and CI runners commonly export XDG_CONFIG_HOME, so it
+    // is removed here and each case passes back exactly the value it is testing.
+    async function publishDryRun(dir: string, envOverride: Record<string, string>) {
+      const spawnEnv = { ...env, HOME: join(dir, "home"), USERPROFILE: join(dir, "home") };
+      delete spawnEnv.XDG_CONFIG_HOME;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "publish", "--dry-run"],
+        cwd: join(dir, "pkg"),
+        env: { ...spawnEnv, ...envOverride },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    const usesRegistry = (port: number) => ({
+      stdout: expect.stringContaining(`Registry: http://localhost:${port}/\n`),
+      stderr: expect.not.stringContaining("missing authentication"),
+      exitCode: 0,
+    });
+
+    it.concurrent("uses $XDG_CONFIG_HOME/.npmrc when it exists", async () => {
+      using dir = tempDir("npmrc-xdg", { ...pkg, "home/.npmrc": npmrc(1), "xdg/.npmrc": npmrc(2) });
+      const result = await publishDryRun(String(dir), { XDG_CONFIG_HOME: join(String(dir), "xdg") });
+      expect(result).toEqual(usesRegistry(2));
+    });
+
+    // https://github.com/oven-sh/bun/issues/24124: GitHub Actions exports
+    // XDG_CONFIG_HOME=~/.config, while `npm login` writes ~/.npmrc.
+    it.concurrent("falls back to $HOME/.npmrc when $XDG_CONFIG_HOME has no .npmrc", async () => {
+      using dir = tempDir("npmrc-xdg-without-npmrc", { ...pkg, "home/.npmrc": npmrc(1), "xdg/.keep": "" });
+      const result = await publishDryRun(String(dir), { XDG_CONFIG_HOME: join(String(dir), "xdg") });
+      expect(result).toEqual(usesRegistry(1));
+    });
+
+    it.concurrent("uses $HOME/.npmrc when $XDG_CONFIG_HOME is unset", async () => {
+      using dir = tempDir("npmrc-xdg-unset", { ...pkg, "home/.npmrc": npmrc(1) });
+      const result = await publishDryRun(String(dir), {});
+      expect(result).toEqual(usesRegistry(1));
+    });
+
+    it.concurrent("uses $HOME/.npmrc when $XDG_CONFIG_HOME is empty", async () => {
+      using dir = tempDir("npmrc-xdg-empty", { ...pkg, "home/.npmrc": npmrc(1) });
+      const result = await publishDryRun(String(dir), { XDG_CONFIG_HOME: "" });
+      expect(result).toEqual(usesRegistry(1));
+    });
   });
 
   it("package config overrides home config", async () => {
@@ -493,6 +549,28 @@ registry=https://somehost.com/org1/npm/registry/
     // Should be empty since there's no matching token for /org1/npm/registry/
     expect(result.default_registry_token).toBe("");
   });
+
+  it("does not print an undecodable _password value", async () => {
+    const secret = "s!ecret!pass";
+    using dir = tempDir("npmrc-password-decode", {
+      ".npmrc": `//registry.npmjs.org/:_password=${secret}\n`,
+      "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("_password is not valid base64");
+    expect(stderr).toContain("_password=" + Buffer.alloc(secret.length, "*").toString());
+    expect(stderr).not.toContain(secret);
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("scoped registry routing", () => {
@@ -571,5 +649,73 @@ describe("scoped registry routing", () => {
     expect(reqsB).toEqual([]);
     // The request must have been attempted against scopeA's own registry.
     expect(reqsA.some(r => r.path.includes("probe"))).toBe(true);
+  });
+});
+
+describe("--registry override", () => {
+  test("does not send the token configured for the previous registry host to the --registry host", async () => {
+    const tgz = join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
+
+    type Req = { path: string; auth: string | null };
+    const reqsA: Req[] = [];
+    const reqsB: Req[] = [];
+
+    await using serverA = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        reqsA.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
+        return new Response("not found", { status: 404 });
+      },
+    });
+    await using serverB = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const url = new URL(req.url);
+        reqsB.push({ path: url.pathname, auth: req.headers.get("authorization") });
+        if (url.pathname.endsWith(".tgz")) return new Response(Bun.file(tgz));
+        if (url.pathname === "/no-deps") {
+          return Response.json({
+            name: "no-deps",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "no-deps",
+                version: "1.0.0",
+                dist: { tarball: `http://127.0.0.1:${serverB.port}/no-deps/-/no-deps-1.0.0.tgz` },
+              },
+            },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    using dir = tempDir("npmrc-registry-override", {
+      ".npmrc":
+        `registry=http://127.0.0.1:${serverA.port}/\n` +
+        `//127.0.0.1:${serverA.port}/:_authToken=first-host-SECRET-token\n`,
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--registry", `http://127.0.0.1:${serverB.port}/`],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(reqsA).toEqual([]);
+    expect(reqsB.length).toBeGreaterThan(0);
+    expect(reqsB.map(r => r.auth)).toEqual(reqsB.map(() => null));
+    expect(stdout).toContain("+ no-deps@1.0.0");
+    expect(exitCode).toBe(0);
   });
 });

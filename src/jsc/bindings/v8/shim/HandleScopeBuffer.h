@@ -53,8 +53,16 @@ public:
     // HandleScopeData::limit value V8's inline ~HandleScope just restored). Called from
     // HandleScope::DeleteExtensions so per-iteration inline v8::HandleScopes inside a single
     // native call reclaim their handles instead of accumulating until the enclosing Bun scope
-    // closes.
-    void deleteGrantsBack(const uintptr_t* limit);
+    // closes. Handles that a live callback return-value slot points at are copied into the
+    // surviving region first (see activeReturnValueSlots()).
+    void deleteGrantsBack(Isolate* isolate, const uintptr_t* limit);
+
+    // Copy any handle of this buffer that a live callback return-value slot still points at
+    // into `target`, repointing the slot at the copy. Called right before this buffer clears:
+    // V8's inline ReturnValue::Set stores a Local's Address into the callback frame, and the
+    // frame outlives scopes that pop while the callback is still on the stack (old-ABI addon
+    // scopes, Bun-internal scopes like Array::Iterate's).
+    void evacuateActiveReturnValues(Isolate* isolate, HandleScopeBuffer* target);
 
     // Reserve an empty handle for an EscapableHandleScope's escape slot.
     // Called from the scope's constructor so the slot's storage index is below
@@ -104,6 +112,14 @@ private:
     uintptr_t* m_savedLimit { nullptr };
 
     Handle& createEmptyHandle();
+
+    // Requires m_gcLock. Return `value`'s target if it is the ObjectLayout of a handle at
+    // index >= begin, else null.
+    const ObjectLayout* findLayoutInRangeLocked(TaggedPointer value, size_t begin) const;
+
+    // Append an owning copy of `layout` and return the tagged pointer a frame slot should hold
+    // to reference it. Takes m_gcLock itself (do not call while holding it).
+    TaggedPointer appendRescuedLayout(const ObjectLayout& layout);
 
     HandleScopeBuffer(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)

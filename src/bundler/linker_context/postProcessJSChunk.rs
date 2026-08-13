@@ -1,6 +1,5 @@
-use crate::DeclInfoKind;
 use crate::LinkerContext;
-use crate::analyze_transpiled_module::{self, ModuleInfo};
+use crate::analyze_transpiled_module::ModuleInfo;
 use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::mal_prelude::*;
@@ -11,9 +10,7 @@ use crate::{
     ThreadPool,
 };
 use bun_alloc::Arena;
-use bun_ast::{
-    self as js_ast, B, Binding, E, Expr, G, Part, Ref, S, Scope, Stmt, StmtData, StmtOrExpr,
-};
+use bun_ast::{self as js_ast, B, Binding, E, Expr, G, Part, Ref, S, Scope, Stmt, StmtOrExpr};
 use bun_ast::{ImportRecord, ImportRecordFlags, ImportRecordTag};
 use bun_collections::MultiArrayList;
 use bun_collections::VecExt;
@@ -40,7 +37,7 @@ fn print_result_take_code(r: &mut PrintResult) -> Box<[u8]> {
 }
 
 /// This runs after we've already populated the compile results
-pub fn post_process_js_chunk(
+pub(crate) fn post_process_js_chunk(
     ctx: GenerateChunkCtx,
     worker: &mut ThreadPool::Worker,
     chunk: &mut Chunk,
@@ -96,19 +93,16 @@ pub fn post_process_js_chunk(
         )
     };
 
-    // Create ModuleInfo for ESM bytecode in --compile builds
-    let generate_module_info = c.options.generate_bytecode_cache
-        && c.options.output_format == options::OutputFormat::Esm
-        && c.options.compile;
-    let loader =
-        c.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize];
-    let is_typescript = loader.is_type_script();
+    // The chunk's module record, assembled in output order: the printer records
+    // the cross-chunk prefix imports below, then the per-part-range results
+    // (printed in parallel into their own ModuleInfo) are appended, then the
+    // cross-chunk suffix and entry point tail exports are printed into it.
     // Stored on chunk.content.javascript.module_info — owned `Box<ModuleInfo>`.
-    let mut module_info: Option<Box<ModuleInfo>> = if generate_module_info {
-        Some(ModuleInfo::create(is_typescript))
-    } else {
-        None
-    };
+    let mut module_info: Option<Box<ModuleInfo>> = c.options.generates_module_info().then(|| {
+        let loader =
+            c.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize];
+        ModuleInfo::create(loader.is_type_script())
+    });
 
     // SAFETY: worker.arena is set in Worker::init() before any task runs.
     let worker_arena: &Arena = worker.arena();
@@ -202,6 +196,18 @@ pub fn post_process_js_chunk(
             }],
             chunk.renamer.as_renamer(),
         );
+        if let Some(mi) = module_info.as_deref_mut() {
+            // One result per entry of `parts_in_chunk_in_order`, in that order.
+            for compile_result in chunk.compile_results_for_chunk.iter() {
+                if let CompileResult::Javascript {
+                    module_info: Some(part_module_info),
+                    ..
+                } = compile_result
+                {
+                    mi.append(part_module_info);
+                }
+            }
+        }
         cross_chunk_suffix = js_printer::print::<false>(
             worker_arena,
             target,
@@ -220,199 +226,27 @@ pub fn post_process_js_chunk(
         );
     }
 
-    // Populate ModuleInfo with declarations collected during parallel printing,
-    // external import records from the original AST, and wrapper refs.
+    // The printer does not know about top-level await, so derive that flag from
+    // the AST. The JSC module loader decides sync vs async evaluation from
+    // JSModuleRecord::hasTLA(), which is set from this bit when the record is
+    // constructed from module_info (BunAnalyzeTranspiledModule). Without it, a
+    // bytecode-compiled module that contains TLA gets evaluated on the sync path
+    // and the suspended generator is dropped — the entry promise resolves
+    // immediately and the process exits before the awaited value lands.
     if let Some(mi) = module_info.as_deref_mut() {
-        // 1. Add declarations collected by DeclCollector during parallel part printing.
-        // These come from the CONVERTED statements (after convertStmtsForChunk transforms
-        // export default → var, strips exports, etc.), so they match what's actually printed.
-        for cr in chunk.compile_results_for_chunk.iter() {
-            let decls = match cr {
-                CompileResult::Javascript { decls, .. } => decls,
-                _ => continue,
-            };
-            for decl in decls.iter() {
-                let var_kind: analyze_transpiled_module::VarKind = match decl.kind {
-                    DeclInfoKind::Declared => analyze_transpiled_module::VarKind::Declared,
-                    DeclInfoKind::Lexical => analyze_transpiled_module::VarKind::Lexical,
-                };
-                let string_id = mi.str(&decl.name);
-                mi.add_var(string_id, var_kind);
-            }
-        }
-
-        // 1b. Check if any source in this chunk uses import.meta. The per-part
-        // parallel printer does not have module_info, so the printer cannot set
-        // this flag during per-part printing. We derive it from the AST instead.
-        // Note: the runtime source (index 0) also uses import.meta (e.g.
-        // `import.meta.require`), so we must not skip it.
-        {
-            let all_ast_flags = c.graph.ast.items_flags();
-            for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
-                if all_ast_flags[part_range.source_index.get() as usize]
-                    .contains(crate::bundled_ast::Flags::HAS_IMPORT_META)
-                {
-                    mi.flags.contains_import_meta = true;
-                    break;
-                }
-            }
-        }
-
-        // 1c. Same idea for top-level await. The new JSC module loader decides
-        // sync vs async evaluation from JSModuleRecord::hasTLA(), which we set
-        // from this bit when constructing the record from cached module_info
-        // (BunAnalyzeTranspiledModule). Without it, a bytecode-compiled module
-        // that contains TLA gets evaluated on the sync path and the suspended
-        // generator is dropped — the entry promise resolves immediately and the
-        // process exits before the awaited value lands.
-        {
-            let tla_keywords = c.parse_graph().ast.items_top_level_await_keyword();
-            let wraps = c.graph.meta.items_flags();
-            for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
-                let idx = part_range.source_index.get() as usize;
-                if idx >= tla_keywords.len() {
-                    continue;
-                }
-                if wraps[idx].wrap != crate::WrapKind::None {
-                    continue;
-                }
-                if !tla_keywords[idx].is_empty() {
-                    mi.flags.has_tla = true;
-                    break;
-                }
-            }
-        }
-
-        // 2. Collect truly-external imports from the original AST. Bundled imports
-        // (where source_index is valid) are removed by convertStmtsForChunk and
-        // re-created as cross-chunk imports — those are already captured by the
-        // printer when it prints cross_chunk_prefix_stmts above. Only truly-external
-        // imports (node built-ins, etc.) survive as s_import in per-file parts and
-        // need recording here.
-        let all_parts = c.graph.ast.items_parts();
-        let all_flags = c.graph.meta.items_flags();
-        let all_import_records = c.graph.ast.items_import_records();
+        let tla_keywords = c.parse_graph().ast.items_top_level_await_keyword();
+        let wraps = c.graph.meta.items_flags();
         for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
-            if all_flags[part_range.source_index.get() as usize].wrap == crate::WrapKind::Cjs {
+            let idx = part_range.source_index.get() as usize;
+            if idx >= tla_keywords.len() {
                 continue;
             }
-            let source_parts = all_parts[part_range.source_index.get() as usize].as_slice();
-            let source_import_records =
-                all_import_records[part_range.source_index.get() as usize].as_slice();
-            let mut part_i = part_range.part_index_begin;
-            while part_i < part_range.part_index_end {
-                // `Part.stmts: StoreSlice<Stmt>` — arena-backed, safe `Deref`.
-                for stmt in source_parts[part_i as usize].stmts.iter() {
-                    match &stmt.data {
-                        StmtData::SImport(s) => {
-                            let record = &source_import_records[s.import_record_index as usize];
-                            if record.path.is_disabled {
-                                continue;
-                            }
-                            if record.tag == ImportRecordTag::Bun {
-                                continue;
-                            }
-                            // Skip bundled imports — these are converted to cross-chunk
-                            // imports by the linker. The printer already recorded them
-                            // when printing cross_chunk_prefix_stmts.
-                            if record.source_index.is_valid() {
-                                continue;
-                            }
-                            // Skip barrel-optimized-away imports — marked is_unused by
-                            // `barrel_imports`. Never resolved (source_index invalid),
-                            // and removed by convertStmtsForChunk. Not in emitted code.
-                            if record.flags.contains(ImportRecordFlags::IS_UNUSED) {
-                                continue;
-                            }
-
-                            let import_path = record.path.text;
-                            let irp_id = mi.str(import_path);
-                            mi.request_module(
-                                irp_id,
-                                analyze_transpiled_module::ImportAttributes::None,
-                            );
-
-                            if let Some(name) = &s.default_name {
-                                if let Some(name_ref) = name.ref_.to_nullable() {
-                                    let local_name_id = {
-                                        let local_name = chunk.renamer.name_for_symbol(name_ref);
-                                        mi.str(local_name)
-                                    };
-                                    mi.add_var(
-                                        local_name_id,
-                                        analyze_transpiled_module::VarKind::Lexical,
-                                    );
-                                    let default_id = mi.str(b"default");
-                                    mi.add_import_info_single(
-                                        irp_id,
-                                        default_id,
-                                        local_name_id,
-                                        false,
-                                    );
-                                }
-                            }
-
-                            // `S::Import.items: StoreSlice<ClauseItem>` — safe `Deref`.
-                            for item in s.items.iter() {
-                                if let Some(name_ref) = item.name.ref_.to_nullable() {
-                                    let local_name_id = {
-                                        let local_name = chunk.renamer.name_for_symbol(name_ref);
-                                        mi.str(local_name)
-                                    };
-                                    mi.add_var(
-                                        local_name_id,
-                                        analyze_transpiled_module::VarKind::Lexical,
-                                    );
-                                    // SAFETY: ClauseItem.alias is an arena `*const [u8]`; never null.
-                                    let alias_id = mi.str(item.alias.slice());
-                                    mi.add_import_info_single(
-                                        irp_id,
-                                        alias_id,
-                                        local_name_id,
-                                        false,
-                                    );
-                                }
-                            }
-
-                            if record
-                                .flags
-                                .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
-                            {
-                                let local_name_id = {
-                                    let local_name = chunk.renamer.name_for_symbol(s.namespace_ref);
-                                    mi.str(local_name)
-                                };
-                                mi.add_var(
-                                    local_name_id,
-                                    analyze_transpiled_module::VarKind::Lexical,
-                                );
-                                mi.add_import_info_namespace(irp_id, local_name_id);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                part_i += 1;
+            if wraps[idx].wrap != crate::WrapKind::None {
+                continue;
             }
-        }
-
-        // 3. Add wrapper-generated declarations (init_xxx, require_xxx) that are
-        // not in any part statement.
-        let all_wrapper_refs = c.graph.ast.items_wrapper_ref();
-        for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
-            let source_index = part_range.source_index.get() as usize;
-            if all_flags[source_index].wrap != crate::WrapKind::None {
-                let wrapper_ref = all_wrapper_refs[source_index];
-                if !wrapper_ref.is_empty() {
-                    let string_id = {
-                        let name = chunk.renamer.name_for_symbol(wrapper_ref);
-                        if name.is_empty() {
-                            continue;
-                        }
-                        mi.str(name)
-                    };
-                    mi.add_var(string_id, analyze_transpiled_module::VarKind::Declared);
-                }
+            if !tla_keywords[idx].is_empty() {
+                mi.flags.has_tla = true;
+                break;
             }
         }
     }
@@ -440,7 +274,7 @@ pub fn post_process_js_chunk(
                 code: Box::default(),
                 source_map: None,
             }),
-            decls: Box::default(),
+            module_info: None,
         };
     };
 
@@ -877,50 +711,19 @@ pub fn post_process_js_chunk(
     Ok(())
 }
 
-/// Recursively walk a binding and add all declared names to `ModuleInfo`.
-/// Handles `b_identifier`, `b_array`, `b_object`, and `b_missing`.
-fn add_binding_vars_to_module_info(
-    mi: &mut ModuleInfo,
-    binding: Binding,
-    var_kind: analyze_transpiled_module::VarKind,
-    r: &mut js_printer::renamer::Renamer<'_, '_>,
-    symbols: &bun_ast::symbol::Map,
-) {
-    match binding.data {
-        B::B::BIdentifier(b) => {
-            let name = r.name_for_symbol(symbols.follow(b.r#ref));
-            if !name.is_empty() {
-                let str_id = mi.str(name);
-                mi.add_var(str_id, var_kind);
-            }
-        }
-        B::B::BArray(b) => {
-            for item in b.items() {
-                add_binding_vars_to_module_info(mi, item.binding, var_kind, r, symbols);
-            }
-        }
-        B::B::BObject(b) => {
-            for prop in b.properties() {
-                add_binding_vars_to_module_info(mi, prop.value, var_kind, r, symbols);
-            }
-        }
-        B::B::BMissing(_) => {}
-    }
-}
-
 // `js_printer::print` ties bump/Options/import_records/renamer to a
 // single `'a`, and `Renamer<'r, 'src>` is invariant in `'src` — so the caller's
 // renamer lifetime fixes `'a`. All by-ref params that flow into `print` must
 // share that lifetime.
-pub fn generate_entry_point_tail_js<'a>(
+pub(crate) fn generate_entry_point_tail_js<'a>(
     c: &'a mut LinkerContext,
     to_common_js_ref: Ref,
     to_esm_ref: Ref,
     source_index: IndexInt,
     arena: &'a Arena,
     temp_arena: &Arena,
-    mut r: js_printer::renamer::Renamer<'a, 'a>,
-    mut module_info: Option<&'a mut ModuleInfo>,
+    r: js_printer::renamer::Renamer<'a, 'a>,
+    module_info: Option<&'a mut ModuleInfo>,
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
     let mut stmts: Vec<Stmt> = Vec::new();
@@ -1306,35 +1109,6 @@ pub fn generate_entry_point_tail_js<'a>(
         }
     }
 
-    // Add generated local declarations from entry point tail to module_info.
-    // This captures vars like `var export_foo = cjs.foo` for CJS export copies.
-    // Reshaped for borrowck — reborrow via as_deref_mut so module_info
-    // remains usable for print_options below.
-    if let Some(mi) = module_info.as_mut() {
-        let mi: &mut ModuleInfo = &mut **mi;
-        for stmt in stmts.iter() {
-            match &stmt.data {
-                StmtData::SLocal(s) => {
-                    let var_kind: analyze_transpiled_module::VarKind = if s.kind == S::Kind::KVar {
-                        analyze_transpiled_module::VarKind::Declared
-                    } else {
-                        analyze_transpiled_module::VarKind::Lexical
-                    };
-                    for decl in s.decls.slice() {
-                        add_binding_vars_to_module_info(
-                            mi,
-                            decl.binding,
-                            var_kind,
-                            &mut r,
-                            &c.graph.symbols,
-                        );
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
     if stmts.is_empty() {
         return CompileResult::Javascript {
             source_index,
@@ -1342,7 +1116,7 @@ pub fn generate_entry_point_tail_js<'a>(
                 code: Box::default(),
                 source_map: None,
             }),
-            decls: Box::default(),
+            module_info: None,
         };
     }
 
@@ -1388,6 +1162,7 @@ pub fn generate_entry_point_tail_js<'a>(
             r,
         ),
         source_index,
-        decls: Box::default(),
+        // The exports were recorded straight into the chunk's ModuleInfo above.
+        module_info: None,
     }
 }

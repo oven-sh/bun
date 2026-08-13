@@ -1,14 +1,14 @@
 #![warn(unused_must_use)]
 pub mod parse_entry;
-pub mod parse_fn;
-pub mod parse_import_export;
-pub mod parse_jsx;
-pub mod parse_prefix;
-pub mod parse_property;
-pub mod parse_skip_typescript;
-pub mod parse_stmt;
+pub(crate) mod parse_fn;
+pub(crate) mod parse_import_export;
+pub(crate) mod parse_jsx;
+pub(crate) mod parse_prefix;
+pub(crate) mod parse_property;
+pub(crate) mod parse_skip_typescript;
+pub(crate) mod parse_stmt;
 pub mod parse_suffix;
-pub mod parse_typescript;
+pub(crate) mod parse_typescript;
 
 use bun_collections::VecExt;
 
@@ -38,7 +38,7 @@ use bun_ast::{B, Binding, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     #[inline]
-    pub fn parse_expr_or_bindings(
+    pub(crate) fn parse_expr_or_bindings(
         &mut self,
         level: Level,
         errors: Option<&mut DeferredErrors>,
@@ -53,7 +53,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(expr)
     }
     #[inline]
-    pub fn parse_expr_with_flags(
+    pub(crate) fn parse_expr_with_flags(
         &mut self,
         level: Level,
         flags: EFlags,
@@ -61,7 +61,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         self.parse_expr_common(level, None, flags, expr)
     }
-    pub fn parse_expr_common(
+    pub(crate) fn parse_expr_common(
         &mut self,
         level: Level,
         mut errors: Option<&mut DeferredErrors>,
@@ -99,7 +99,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn parse_yield_expr(&mut self, loc: bun_ast::Loc) -> Result<Expr, Error> {
+    pub(crate) fn parse_yield_expr(&mut self, loc: bun_ast::Loc) -> Result<Expr, Error> {
         let p = self;
         // Parse a yield-from expression, which yields from an iterator
         let is_star = p.lexer.token == T::TAsterisk;
@@ -132,7 +132,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // By the time we call this, the identifier and type parameters have already
     // been parsed. We need to start parsing from the "extends" clause.
-    pub fn parse_class(
+    pub(crate) fn parse_class(
         &mut self,
         class_keyword: bun_ast::Range,
         name: Option<js_ast::LocRef>,
@@ -278,7 +278,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    pub fn parse_template_parts(
+    pub(crate) fn parse_template_parts(
         &mut self,
         include_raw: bool,
     ) -> Result<(bun_ast::StoreSlice<E::TemplatePart>, bun_ast::Loc), Error> {
@@ -313,9 +313,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 break 'parse_template_part;
             }
-            if cfg!(debug_assertions) {
-                debug_assert!(p.lexer.token != T::TEndOfFile);
-            }
+            debug_assert!(p.lexer.token != T::TEndOfFile);
         }
 
         p.allow_in = old_allow_in;
@@ -326,7 +324,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // This assumes the caller has already checked for TStringLiteral or TNoSubstitutionTemplateLiteral
-    pub fn parse_string_literal(&mut self) -> Result<Expr, Error> {
+    pub(crate) fn parse_string_literal(&mut self) -> Result<Expr, Error> {
         let p = self;
         let loc = p.lexer.loc();
         let mut str_ = p.lexer.to_e_string()?;
@@ -337,7 +335,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(expr)
     }
 
-    pub fn parse_call_args(&mut self) -> Result<ExprListLoc, Error> {
+    pub(crate) fn parse_call_args(&mut self) -> Result<ExprListLoc, Error> {
         // Allow "in" inside call arguments; restored on every exit path
         let old_allow_in = self.allow_in;
         self.allow_in = true;
@@ -376,7 +374,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    pub fn parse_jsx_prop_value_identifier(
+    pub(crate) fn parse_jsx_prop_value_identifier(
         &mut self,
         previous_string_with_backslash_loc: &mut bun_ast::Loc,
     ) -> Result<Expr, Error> {
@@ -405,7 +403,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// This assumes that the open parenthesis has already been parsed by the caller
-    pub fn parse_paren_expr(
+    pub(crate) fn parse_paren_expr(
         &mut self,
         loc: bun_ast::Loc,
         level: Level,
@@ -596,7 +594,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Are these arguments for a call to a function named "async"?
         if opts.is_async {
             p.log_expr_errors(&mut errors);
-            let async_ref = p.store_name_in_ref(b"async")?;
+            let async_ref = p.store_name_in_ref(b"async");
             let async_expr = p.new_expr(
                 E::Identifier {
                     ref_: async_ref,
@@ -633,7 +631,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Err(crate::Error::SyntaxError)
     }
 
-    pub fn parse_label_name(&mut self) -> Result<Option<js_ast::LocRef>, Error> {
+    pub(crate) fn parse_label_name(&mut self) -> Result<Option<js_ast::LocRef>, Error> {
         let p = self;
         if p.lexer.token != T::TIdentifier || p.lexer.has_newline_before {
             return Ok(None);
@@ -641,13 +639,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let name = LocRef {
             loc: p.lexer.loc(),
-            ref_: p.store_name_in_ref(p.lexer.identifier)?,
+            ref_: p.store_name_in_ref(p.lexer.identifier),
         };
         p.lexer.next()?;
         Ok(Some(name))
     }
 
-    pub fn parse_class_stmt(
+    pub(crate) fn parse_class_stmt(
         &mut self,
         loc: bun_ast::Loc,
         opts: &mut ParseStatementOptions<'a>,
@@ -725,7 +723,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if Self::IS_TYPESCRIPT_ENABLED {
             if opts.is_typescript_declare {
                 p.pop_and_discard_scope(scope_index);
-                if opts.is_namespace_scope && opts.is_export {
+                if opts.scope.is_namespace() && opts.is_export {
                     p.has_non_local_export_declare_inside_namespace = true;
                 }
 
@@ -743,7 +741,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn parse_clause_alias(&mut self, _kind: &[u8]) -> Result<&'a [u8], Error> {
+    pub(crate) fn parse_clause_alias(&mut self, _kind: &[u8]) -> Result<&'a [u8], Error> {
         let p = self;
         let loc = p.lexer.loc();
 
@@ -772,7 +770,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(alias)
     }
 
-    pub fn parse_expr_or_let_stmt(
+    pub(crate) fn parse_expr_or_let_stmt(
         &mut self,
         opts: &mut ParseStatementOptions<'a>,
     ) -> Result<ExprOrLetStmt, Error> {
@@ -797,7 +795,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         || p.lexer.token == T::TOpenBracket
                     {
                         if opts.lexical_decl != LexicalDecl::AllowAll {
-                            p.forbid_lexical_decl(token_range.loc)?;
+                            p.forbid_lexical_decl(token_range.loc);
                         }
 
                         let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Other, opts)?;
@@ -832,7 +830,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
                 if opts.lexical_decl != LexicalDecl::AllowAll {
-                    p.forbid_lexical_decl(token_range.loc)?;
+                    p.forbid_lexical_decl(token_range.loc);
                 }
                 // p.markSyntaxFeature(.using, token_range.loc);
                 opts.is_using_statement = true;
@@ -891,7 +889,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
                         // It's an "await using" declaration if we get here
                         if opts.lexical_decl != LexicalDecl::AllowAll {
-                            p.forbid_lexical_decl(using_range.loc)?;
+                            p.forbid_lexical_decl(using_range.loc);
                         }
                         // p.markSyntaxFeature(.using, using_range.loc);
                         opts.is_using_statement = true;
@@ -920,7 +918,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             decls: decls_slice,
                         });
                     }
-                    let r = p.store_name_in_ref(raw2)?;
+                    let r = p.store_name_in_ref(raw2);
                     break 'value p.new_expr(
                         E::Identifier {
                             ref_: r,
@@ -952,7 +950,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Parse the remainder of this expression that starts with an identifier
-        let ref_ = p.store_name_in_ref(raw)?;
+        let ref_ = p.store_name_in_ref(raw);
         let mut result = ExprOrLetStmt {
             stmt_or_expr: js_ast::StmtOrExpr::Expr(p.new_expr(
                 E::Identifier {
@@ -969,7 +967,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(result)
     }
 
-    pub fn parse_binding(&mut self, opts: ParseBindingOptions) -> Result<Binding, Error> {
+    pub(crate) fn parse_binding(&mut self, opts: ParseBindingOptions) -> Result<Binding, Error> {
         let p = self;
         if !p.stack_check.is_safe_to_recurse() {
             return Err(crate::Error::StackOverflow);
@@ -992,7 +990,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     );
                 }
 
-                let ref_ = p.store_name_in_ref(name).expect("unreachable");
+                let ref_ = p.store_name_in_ref(name);
                 p.lexer.next()?;
                 return Ok(p.b(B::Identifier { r#ref: ref_ }, loc));
             }
@@ -1148,7 +1146,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    pub fn parse_property_binding(&mut self) -> Result<B::Property, Error> {
+    pub(crate) fn parse_property_binding(&mut self) -> Result<B::Property, Error> {
         let p = self;
         // Every match arm below assigns `key` (or `return`s) before any read.
         let key: Expr;
@@ -1157,9 +1155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match p.lexer.token {
             T::TDotDotDot => {
                 p.lexer.next()?;
-                let ident_ref = p
-                    .store_name_in_ref(p.lexer.identifier)
-                    .expect("unreachable");
+                let ident_ref = p.store_name_in_ref(p.lexer.identifier);
                 let value = p.b(B::Identifier { r#ref: ident_ref }, p.lexer.loc());
                 p.lexer.expect(T::TIdentifier)?;
                 return Ok(B::Property {
@@ -1212,7 +1208,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
 
                 if p.lexer.token != T::TColon && p.lexer.token != T::TOpenParen {
-                    let ref_ = p.store_name_in_ref(name).expect("unreachable");
+                    let ref_ = p.store_name_in_ref(name);
                     let value = p.b(B::Identifier { r#ref: ref_ }, loc);
                     let mut default_value: Option<Expr> = None;
                     if p.lexer.token == T::TEquals {
@@ -1251,7 +1247,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    pub fn parse_and_declare_decls(
+    pub(crate) fn parse_and_declare_decls(
         &mut self,
         kind: js_ast::symbol::Kind,
         opts: &mut ParseStatementOptions<'a>,
@@ -1313,7 +1309,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(G::DeclList::from_arena_slice(&decls))
     }
 
-    pub fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {
+    pub(crate) fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {
         let p = self;
         let path_text = p.lexer.to_utf8_e_string()?;
         let mut path = ParsedPath {
@@ -1441,7 +1437,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(path)
     }
 
-    pub fn parse_stmts_up_to(
+    pub(crate) fn parse_stmts_up_to(
         &mut self,
         eend: T,
         _opts: &mut ParseStatementOptions<'a>,
@@ -1492,7 +1488,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 if p.current_scope == p.module_scope {
                                     p.module_scope_directive_loc = stmt.loc;
                                 }
-                            } else if str_.eql_comptime(b"use asm") {
+                            } else if str_.eql_comptime(b"use asm") && !p.options.repl_mode {
+                                // In the REPL the directive stays a string
+                                // statement so it evaluates as the result,
+                                // like node ('use asm' prints 'use asm').
                                 skip = true;
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
                             } else {
@@ -1544,7 +1543,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// One-token lookahead: advance past the current token, evaluate `pred`,
     /// then unconditionally restore the lexer (including `is_log_disabled`).
     #[inline]
-    pub(crate) fn next_token_matches(&mut self, pred: impl FnOnce(&Self) -> bool) -> bool {
+    fn next_token_matches(&mut self, pred: impl FnOnce(&Self) -> bool) -> bool {
         let old_lexer = self.lexer.snapshot();
         self.lexer.is_log_disabled = true;
         let result = matches!(self.lexer.next(), Ok(())) && pred(self);
@@ -1559,7 +1558,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// This parses an expression. This assumes we've already parsed the "async"
     /// keyword and are currently looking at the following token.
-    pub fn parse_async_prefix_expr(
+    pub(crate) fn parse_async_prefix_expr(
         &mut self,
         async_range: bun_ast::Range,
         level: Level,
@@ -1567,7 +1566,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         // "async function() {}"
         if !p.lexer.has_newline_before && p.lexer.token == T::TFunction {
-            return p.parse_fn_expr(async_range.loc, true, async_range);
+            return p.parse_fn_expr(async_range.loc, true);
         }
 
         // Check the precedence level to avoid parsing an arrow function in
@@ -1578,7 +1577,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "async => {}"
                 T::TEqualsGreaterThan => {
                     if level.lte(Level::Assign) {
-                        let async_ref = p.store_name_in_ref(b"async")?;
+                        let async_ref = p.store_name_in_ref(b"async");
                         let arg_binding = p.b(B::Identifier { r#ref: async_ref }, async_range.loc);
                         let args: &'a mut [G::Arg] = p.arena.alloc_slice_fill_with(1, |_| G::Arg {
                             binding: arg_binding,
@@ -1611,7 +1610,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             || p.check_for_arrow_after_the_current_token();
 
                         if is_arrow_fn {
-                            let ref_ = p.store_name_in_ref(p.lexer.identifier)?;
+                            let ref_ = p.store_name_in_ref(p.lexer.identifier);
                             let arg_loc = p.lexer.loc();
                             let arg_binding = p.b(B::Identifier { r#ref: ref_ }, arg_loc);
                             let args: &'a mut [G::Arg] =
@@ -1655,7 +1654,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         level,
                         ParenExprOpts {
                             is_async: true,
-                            async_range,
                             ..Default::default()
                         },
                     );
@@ -1678,7 +1676,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     level,
                                     ParenExprOpts {
                                         is_async: true,
-                                        async_range,
                                         force_arrow_fn: result
                                             == SkipTypeParameterResult::DefinitelyTypeParameters,
                                         ..Default::default()
@@ -1695,7 +1692,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // "async"
         // "async + 1"
-        let async_ref = p.store_name_in_ref(b"async")?;
+        let async_ref = p.store_name_in_ref(b"async");
         Ok(p.new_expr(
             E::Identifier {
                 ref_: async_ref,

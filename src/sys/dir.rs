@@ -25,7 +25,7 @@ impl Drop for Dir {
 pub struct CopyFileOptions {
     /// When set, the destination is created with this mode instead of the
     /// source file's mode.
-    pub override_mode: Option<Mode>,
+    pub(crate) override_mode: Option<Mode>,
 }
 
 /// Options for `Dir::make_open_path`.
@@ -52,12 +52,6 @@ impl Dir {
     #[inline]
     pub fn open(path: &[u8]) -> Maybe<Self> {
         open_dir_at(Fd::cwd(), path).map(Self::from_fd)
-    }
-    /// Open `path` relative to cwd with explicit flags. `O_DIRECTORY` is
-    /// always added.
-    #[inline]
-    pub fn open_with(path: &[u8], flags: i32) -> Maybe<Self> {
-        openat_a(Fd::cwd(), path, flags | O::DIRECTORY, 0).map(Self::from_fd)
     }
     /// Open `sub_path` relative to this dir.
     #[inline]

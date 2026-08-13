@@ -25,6 +25,14 @@ test("no assertion failures", () => {
   assert.match(util.inspect(e2), /\[cause\]: Error: cause\n/);
 });
 
+test("boxed BigInt/Symbol with no prototype are still formatted as boxed primitives", () => {
+  assert.strictEqual(util.inspect(Object.setPrototypeOf(Object(55n), null)), "[BigInt (null prototype): 55n]");
+  assert.strictEqual(
+    util.inspect(Object.setPrototypeOf(Object(Symbol("x")), null)),
+    "[Symbol (null prototype): Symbol(x)]",
+  );
+});
+
 //! non-standard property, should this be kept?
 test.skip("util.stylizeWithHTML", () => {
   assert.strictEqual(

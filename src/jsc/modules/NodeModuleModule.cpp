@@ -772,8 +772,7 @@ static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
     return prototype;
 }
 
-// `Module._load(request, parent, isMain)`: the default a patched `_load` forwards to.
-// `isMain` is not honored; `require.main` stays keyed off the entry point (see nodejs-compat docs).
+// Default `Module._load(request, parent, isMain)`; `isMain` is ignored (documented in nodejs-compat).
 JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -792,8 +791,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * lexicalGlobalObject, 
             args.append(callFrame->uncheckedArgument(3));
         }
     } else {
-        // Non-module parent (`{ filename }`, null, absent): a throwaway module anchors resolution,
-        // and `parent` itself is what the loaded module records as `module.parent`, as in Node.
+        // A throwaway module anchors resolution; `parent` itself is recorded as `module.parent`, as in Node.
         WTF::String from;
         if (parent.isObject()) {
             auto* parentObject = parent.getObject();

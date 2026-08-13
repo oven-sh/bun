@@ -476,7 +476,9 @@ describe("a request pipelined behind a Connection: close request", () => {
   });
 });
 
-describe("WebSocket upgrade", () => {
+// upgrade() is instantiated once per socket flavor, like the parking code; the
+// unix transport shares the plain instantiation.
+describe.each(transports.filter(t => t.name !== "unix"))("WebSocket upgrade over $name", transport => {
   const upgradeRequest = request(
     "/ws",
     "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
@@ -502,7 +504,7 @@ describe("WebSocket upgrade", () => {
     const entered = Promise.withResolvers<void>();
     const released = Promise.withResolvers<void>();
     const server = Bun.serve({
-      ...tcp,
+      ...transport.listen(""),
       fetch(req, server) {
         if (new URL(req.url).pathname !== "/ws") return handler.fetch(req);
         handler.hits.push("/ws");
@@ -529,11 +531,11 @@ describe("WebSocket upgrade", () => {
   it("pipelined behind an async handler is performed once the response ahead of it is out", async () => {
     const handler = holdingHandler();
     using server = serveWithUpgrade(handler, { held: false }).server;
-    using client = await RawClient.connect(tcpOnly.target(server, ""));
+    using client = await RawClient.connect(transport.target(server, ""));
 
     client.write(request("/hold") + upgradeRequest);
     await Promise.race([handler.entered("/hold"), client.until(c => c.closed)]);
-    await probe(tcpOnly, server, "");
+    await probe(transport, server, "");
     expect({ hits: handler.hits, closed: client.closed }).toEqual({ hits: ["/hold", "/probe"], closed: false });
 
     handler.release("/hold");
@@ -556,11 +558,11 @@ describe("WebSocket upgrade", () => {
     const handler = holdingHandler();
     const { upgradeEntered, releaseUpgrade, ...serving } = serveWithUpgrade(handler, { held: true });
     using server = serving.server;
-    using client = await RawClient.connect(tcpOnly.target(server, ""));
+    using client = await RawClient.connect(transport.target(server, ""));
 
     client.write(upgradeRequest + request("/never"));
     await Promise.race([upgradeEntered, client.until(c => c.closed)]);
-    await probe(tcpOnly, server, "");
+    await probe(transport, server, "");
     expect({ hits: handler.hits, closed: client.closed }).toEqual({ hits: ["/ws", "/probe"], closed: false });
 
     releaseUpgrade();
@@ -573,7 +575,7 @@ describe("WebSocket upgrade", () => {
     await expectEcho(client);
     // The echo round trip above means the server has long since processed
     // everything it received before the frame; /never was not part of it.
-    await probe(tcpOnly, server, "");
+    await probe(transport, server, "");
     expect({ hits: handler.hits, responses: client.responses.length }).toEqual({
       hits: ["/ws", "/probe", "/probe"],
       responses: 1,

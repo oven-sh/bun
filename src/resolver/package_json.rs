@@ -125,8 +125,7 @@ pub struct PackageJSON {
     pub(crate) exports: Option<ExportsMap>,
     pub(crate) imports: Option<ExportsMap>,
 
-    /// Package names listed in `peerDependenciesMeta` with `"optional": true`.
-    /// Read by the bundler via [`PackageJSON::is_optional_peer_dependency`].
+    /// `peerDependenciesMeta` entries with `"optional": true`.
     pub(crate) optional_peer_dependencies: Box<[Box<[u8]>]>,
 }
 
@@ -214,9 +213,7 @@ impl PackageJSON {
         Ok(normalized)
     }
 
-    /// Is the package named by `specifier` (a bare specifier such as `"pkg"`,
-    /// `"pkg/sub"` or `"@scope/pkg/sub"`) listed in this package.json's
-    /// `peerDependenciesMeta` with `"optional": true`?
+    /// `specifier` is a bare specifier; its subpath, if any, is ignored.
     pub fn is_optional_peer_dependency(&self, specifier: &[u8]) -> bool {
         if self.optional_peer_dependencies.is_empty() {
             return false;

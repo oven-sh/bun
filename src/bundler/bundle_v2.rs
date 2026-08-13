@@ -1515,17 +1515,10 @@ pub mod bv2_impl {
         unsafe { (*p).into_static() }
     }
 
-    /// Whether an unresolvable `specifier` imported from `source_dir` is a
-    /// package the importer's own package.json declares under
-    /// `peerDependenciesMeta` with `"optional": true`.
-    ///
-    /// Packages reference such peers through helpers like NestJS's
-    /// `optionalRequire(name, () => require(name))`, which catch the
-    /// `MODULE_NOT_FOUND` at runtime but hide the `require` from the parser's
-    /// try/catch detection. When this returns true the caller treats the record
-    /// as if it were inside a try/catch: the bundle succeeds and the call is
-    /// printed as a runtime throw. Static `import` statements are excluded
-    /// because they cannot be deferred to runtime.
+    /// An unresolvable `require()` / `require.resolve()` / `import()` of a package
+    /// that the importer's own package.json marks optional in `peerDependenciesMeta`
+    /// is downgraded to a runtime throw, like a `require()` inside `try/catch`.
+    /// Static `import` cannot be deferred to runtime, so it is not included.
     fn is_missing_optional_peer(
         resolver: &mut _resolver::Resolver<'_>,
         source_dir: &[u8],

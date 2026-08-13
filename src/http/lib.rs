@@ -106,16 +106,14 @@ pub enum Protocol {
     Http3,
 }
 
-/// Which redirects the request's credential headers (`Authorization`,
-/// `Proxy-Authorization`, `Cookie`) survive.
+/// Which redirects the request's credential headers survive.
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum RedirectCredentialsPolicy {
     /// fetch(): https://fetch.spec.whatwg.org/#concept-http-redirect-fetch
     #[default]
     SameOrigin,
-    /// npm's rule (make-fetch-happen), used by `bun install`: a port or scheme
-    /// change alone keeps them, except an https -> http downgrade.
+    /// npm's rule, used by `bun install`: port and scheme changes keep them, except https -> http.
     SameHostname,
 }
 
@@ -1090,8 +1088,7 @@ bun_core::comptime_string_map! {
 enum StrippedOnRedirect {
     /// Per `Flags::redirect_credentials`.
     Credential,
-    /// Names the previous origin and would suppress the default Host header
-    /// derived from the new URL.
+    /// Would suppress the default Host header derived from the new URL.
     Host,
 }
 

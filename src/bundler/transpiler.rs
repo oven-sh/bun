@@ -2090,13 +2090,9 @@ fn parse_data_loader<'a>(
     });
 }
 
-/// The `text` and `md` loaders expose the file to JS as a string, so they decode
-/// it the way `Bun.file().text()` / `TextDecoder` do: ill-formed UTF-8 becomes
-/// U+FFFD. The printer requires `E::String` bytes to be well-formed WTF-8; fed
-/// raw file bytes it drops the bytes after a bad lead byte and passes stray
-/// continuation bytes through as Latin-1 (or verbatim into `bun build` output).
-/// Well-formed files are returned as-is; a repaired copy is built in `arena`,
-/// which owns the rest of the AST.
+/// The printer requires `E::String` data to be well-formed WTF-8, so the `text`
+/// and `md` loaders decode the file like `Bun.file().text()` does (U+FFFD for
+/// ill-formed bytes) instead of wrapping the raw file contents.
 pub(crate) fn decode_utf8_file_contents<'a>(contents: &'a [u8], arena: &'a Arena) -> &'a [u8] {
     strings::to_well_formed_utf8_in(contents, arena).unwrap_or(contents)
 }

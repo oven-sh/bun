@@ -2644,12 +2644,9 @@ pub fn to_utf16_alloc(
     Ok(Some(out))
 }
 
-/// Decode `bytes` as UTF-8 and re-encode it into `arena`: each ill-formed
-/// subsequence becomes one U+FFFD, well-formed sequences are copied through byte
-/// for byte. Uses the same WebKit decoder as [`to_utf16_alloc`] / `TextDecoder`,
-/// so the replacement characters land where `Bun.file().text()` would put them.
-/// Returns `None` without allocating when `bytes` is already well-formed UTF-8,
-/// so callers can keep using the input.
+/// Copy of `bytes` in `arena` with every ill-formed UTF-8 subsequence replaced by
+/// U+FFFD, decoded the same way `TextDecoder` / [`to_utf16_alloc`] decode it.
+/// `None` (nothing allocated) when `bytes` is already well-formed.
 pub fn to_well_formed_utf8_in<'a>(bytes: &[u8], arena: &'a Arena) -> Option<&'a [u8]> {
     if is_valid_utf8(bytes) {
         return None;
@@ -2802,26 +2799,25 @@ mod tests {
         let fixed = |input: &[u8]| super::to_well_formed_utf8_in(input, &arena).unwrap();
         let cat = |parts: &[&[u8]]| parts.concat();
 
-        // A bad lead byte must not swallow the ASCII that follows it.
+        // bad lead byte, then ASCII
         assert_eq!(fixed(b"\xE2AB"), cat(&[R, b"AB"]));
         assert_eq!(fixed(b"\xF5A\xFFB"), cat(&[R, b"A", R, b"B"]));
-        // Lone continuation byte and invalid lead bytes: one U+FFFD per byte.
+        // lone continuation byte, invalid lead bytes
         assert_eq!(fixed(b"\x80A"), cat(&[R, b"A"]));
         assert_eq!(fixed(b"\xC0\xAFA"), cat(&[R, R, b"A"]));
         assert_eq!(fixed(b"\xC1\xBFA"), cat(&[R, R, b"A"]));
-        // Surrogates, overlongs and > U+10FFFF reject at the second byte, so the
-        // lead byte and each continuation byte are replaced separately.
+        // surrogate, overlong, above U+10FFFF: every byte replaced separately
         assert_eq!(fixed(b"\xED\xA0\x80A"), cat(&[R, R, R, b"A"]));
         assert_eq!(fixed(b"\xE0\x80\x80A"), cat(&[R, R, R, b"A"]));
         assert_eq!(fixed(b"\xF0\x80\x80\x80A"), cat(&[R, R, R, R, b"A"]));
         assert_eq!(fixed(b"\xF4\x90\x80\x80A"), cat(&[R, R, R, R, b"A"]));
-        // A well-formed prefix of a longer sequence is one maximal subpart.
+        // truncated sequence: one replacement for the whole prefix
         assert_eq!(fixed(b"\xE2\x82A"), cat(&[R, b"A"]));
         assert_eq!(fixed(b"\xF0\x9FA"), cat(&[R, b"A"]));
         assert_eq!(fixed(b"\xF0\x9F\x98A"), cat(&[R, b"A"]));
         assert_eq!(fixed(b"A\xE2"), cat(&[b"A", R]));
         assert_eq!(fixed(b"A\xE2\x82"), cat(&[b"A", R]));
-        // Well-formed sequences next to the bad one are copied through unchanged.
+        // well-formed neighbours are copied through
         assert_eq!(
             fixed(b"a\xC3\xA9\xFF\xF0\x9F\x98\x80z"),
             cat(&[b"a\xC3\xA9", R, b"\xF0\x9F\x98\x80z"])

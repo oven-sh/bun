@@ -1,6 +1,7 @@
 // https://github.com/oven-sh/bun/issues/15734
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { rmSync } from "node:fs";
 import { join, sep } from "path";
 
 // `bun build --compile` copies + rewrites the whole bun binary (~1GB under
@@ -187,6 +188,41 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
       expect(r.client.recursive.join("\n")).not.toContain(sep === "/" ? "\\" : "/");
       // data.txt + config.json + 5 under client/
       expect(r.client.embeddedFileCount).toBeGreaterThanOrEqual(7);
+      expect(code).toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  // --asset embeds files under the same /$bunfs/root/ directory the entry
+  // chunk lives in, so the usual CommonJS idiom for locating files shipped
+  // next to the code has to see that directory as __dirname. The source tree
+  // is deleted before the binary runs so a build-machine path cannot satisfy
+  // the read.
+  test(
+    "--asset files are reachable through __dirname after the build tree is gone",
+    async () => {
+      using dir = tempDir("bunfs-asset-dirname", {
+        "index.ts": /* ts */ `
+          const fs = require("node:fs");
+          const path = require("node:path");
+          console.log(JSON.stringify({
+            dirnameIsImportMetaDir: __dirname === import.meta.dir,
+            filenameIsImportMetaPath: __filename === import.meta.path,
+            greeting: fs.readFileSync(path.join(__dirname, "data", "greeting.txt"), "utf8"),
+          }));
+        `,
+        "data/greeting.txt": "hello from an embedded asset",
+      });
+      await compile(String(dir), ["--asset", "./data"]);
+      rmSync(join(String(dir), "data"), { recursive: true });
+
+      const { stdout, stderr, code } = await run(String(dir));
+      expect(stderr.trim()).toBe("");
+      expect(JSON.parse(stdout.trim())).toEqual({
+        dirnameIsImportMetaDir: true,
+        filenameIsImportMetaPath: true,
+        greeting: "hello from an embedded asset",
+      });
       expect(code).toBe(0);
     },
     TIMEOUT,

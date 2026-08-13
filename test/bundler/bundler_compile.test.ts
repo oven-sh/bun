@@ -662,117 +662,81 @@ describe("bundler", () => {
   // absolute file path when producing a standalone executable. They should
   // resolve to the same virtual `/$bunfs/root/...` path that `import.meta.dir`
   // and `import.meta.path` return at runtime.
-  itBundled("compile/DirnameFilenameUsesVirtualPath", {
-    compile: true,
-    files: {
-      "/entry.ts": /* js */ `
-        import "./nested.cjs";
-        console.log("entry __dirname:", __dirname);
-        console.log("entry __filename:", __filename);
-        if (__dirname !== import.meta.dir) throw new Error("__dirname !== import.meta.dir");
-        if (__filename !== import.meta.path) throw new Error("__filename !== import.meta.path");
-      `,
-      "/nested.cjs": /* js */ `
-        console.log("nested __dirname:", __dirname);
-        console.log("nested __filename:", __filename);
-        module.exports = 1;
-      `,
-    },
-    run: {
-      stdout:
-        process.platform !== "win32"
-          ? [
-              "nested __dirname: /$bunfs/root",
-              "nested __filename: /$bunfs/root/out",
-              "entry __dirname: /$bunfs/root",
-              "entry __filename: /$bunfs/root/out",
-            ].join("\n")
-          : [
-              "nested __dirname: B:\\~BUN\\root",
-              "nested __filename: B:\\~BUN\\root\\out",
-              "entry __dirname: B:\\~BUN\\root",
-              "entry __filename: B:\\~BUN\\root\\out",
-            ].join("\n"),
-    },
-  });
-  itBundled("compile/DirnameFilenameUsesVirtualPathCJS", {
-    compile: true,
-    format: "cjs",
-    files: {
-      "/entry.ts": /* js */ `
-        require("./nested.cjs");
-        console.log("entry __dirname:", __dirname);
-        console.log("entry __filename:", __filename);
-        console.log("entry import.meta.dir:", import.meta.dir);
-        console.log("entry import.meta.path:", import.meta.path);
-        if (__dirname !== import.meta.dir) throw new Error("__dirname !== import.meta.dir");
-        if (__filename !== import.meta.path) throw new Error("__filename !== import.meta.path");
-      `,
-      "/nested.cjs": /* js */ `
-        console.log("nested __dirname:", __dirname);
-        console.log("nested __filename:", __filename);
-        module.exports = 1;
-      `,
-    },
-    run: {
-      stdout:
-        process.platform !== "win32"
-          ? [
-              "nested __dirname: /$bunfs/root",
-              "nested __filename: /$bunfs/root/out",
-              "entry __dirname: /$bunfs/root",
-              "entry __filename: /$bunfs/root/out",
-              "entry import.meta.dir: /$bunfs/root",
-              "entry import.meta.path: /$bunfs/root/out",
-            ].join("\n")
-          : [
-              "nested __dirname: B:\\~BUN\\root",
-              "nested __filename: B:\\~BUN\\root\\out",
-              "entry __dirname: B:\\~BUN\\root",
-              "entry __filename: B:\\~BUN\\root\\out",
-              "entry import.meta.dir: B:\\~BUN\\root",
-              "entry import.meta.path: B:\\~BUN\\root\\out",
-            ].join("\n"),
-    },
-  });
-  // With `--bytecode`, a module whose only `import.meta` reference is the
-  // synthetic `var __dirname = import.meta.dir` we inject must still be
-  // recorded as containing `import.meta` so the bytecode module record is
-  // created with the ImportMeta feature enabled.
-  itBundled("compile/DirnameFilenameUsesVirtualPathBytecode", {
-    compile: true,
-    bytecode: true,
-    files: {
-      "/entry.ts": /* js */ `
-        const nested = require("./nested.cjs");
-        console.log("entry __dirname:", __dirname);
-        console.log("entry __filename:", __filename);
-        nested.report();
-      `,
-      "/nested.cjs": /* js */ `
-        module.exports.report = function () {
+  //
+  // ESM output reads them from `import.meta`, which uses the platform
+  // separator. CJS output (`--format=cjs`, or `--bytecode`, which implies it)
+  // leaves them to the module wrapper's parameters, which are the standalone
+  // graph key: forward-slashed on every platform, including Windows.
+  const bunfsEsm = isWindows ? ["B:\\~BUN\\root", "B:\\~BUN\\root\\out"] : ["/$bunfs/root", "/$bunfs/root/out"];
+  const bunfsCjs = isWindows ? ["B:/~BUN/root", "B:/~BUN/root/out"] : ["/$bunfs/root", "/$bunfs/root/out"];
+
+  for (const bytecode of [false, true]) {
+    itBundled(`compile/DirnameFilenameUsesVirtualPath${bytecode ? "Bytecode" : ""}`, {
+      compile: true,
+      // With --bytecode, the synthetic `var __dirname = import.meta.dir` may be
+      // a module's only `import.meta` reference; it still has to be recorded so
+      // the bytecode module record is created with import.meta enabled.
+      bytecode,
+      format: "esm",
+      files: {
+        "/entry.ts": /* js */ `
+          import "./nested.cjs";
+          console.log("entry __dirname:", __dirname);
+          console.log("entry __filename:", __filename);
+          if (__dirname !== import.meta.dir) throw new Error("__dirname !== import.meta.dir");
+          if (__filename !== import.meta.path) throw new Error("__filename !== import.meta.path");
+        `,
+        "/nested.cjs": /* js */ `
           console.log("nested __dirname:", __dirname);
           console.log("nested __filename:", __filename);
-        };
-      `,
-    },
-    run: {
-      stdout:
-        process.platform !== "win32"
-          ? [
-              "entry __dirname: /$bunfs/root",
-              "entry __filename: /$bunfs/root/out",
-              "nested __dirname: /$bunfs/root",
-              "nested __filename: /$bunfs/root/out",
-            ].join("\n")
-          : [
-              "entry __dirname: B:\\~BUN\\root",
-              "entry __filename: B:\\~BUN\\root\\out",
-              "nested __dirname: B:\\~BUN\\root",
-              "nested __filename: B:\\~BUN\\root\\out",
-            ].join("\n"),
-    },
-  });
+          module.exports = 1;
+        `,
+      },
+      run: {
+        stdout: [
+          `nested __dirname: ${bunfsEsm[0]}`,
+          `nested __filename: ${bunfsEsm[1]}`,
+          `entry __dirname: ${bunfsEsm[0]}`,
+          `entry __filename: ${bunfsEsm[1]}`,
+        ].join("\n"),
+      },
+    });
+  }
+  for (const bytecode of [false, true]) {
+    itBundled(`compile/DirnameFilenameUsesVirtualPathCJS${bytecode ? "Bytecode" : ""}`, {
+      compile: true,
+      bytecode,
+      format: "cjs",
+      files: {
+        "/entry.ts": /* js */ `
+          const nested = require("./nested.cjs");
+          console.log("entry __dirname:", __dirname);
+          console.log("entry __filename:", __filename);
+          console.log("entry import.meta.dir:", import.meta.dir);
+          console.log("entry import.meta.path:", import.meta.path);
+          if (__dirname !== import.meta.dir) throw new Error("__dirname !== import.meta.dir");
+          if (__filename !== import.meta.path) throw new Error("__filename !== import.meta.path");
+          nested.report();
+        `,
+        "/nested.cjs": /* js */ `
+          module.exports.report = function () {
+            console.log("nested __dirname:", __dirname);
+            console.log("nested __filename:", __filename);
+          };
+        `,
+      },
+      run: {
+        stdout: [
+          `entry __dirname: ${bunfsCjs[0]}`,
+          `entry __filename: ${bunfsCjs[1]}`,
+          `entry import.meta.dir: ${bunfsCjs[0]}`,
+          `entry import.meta.path: ${bunfsCjs[1]}`,
+          `nested __dirname: ${bunfsCjs[0]}`,
+          `nested __filename: ${bunfsCjs[1]}`,
+        ].join("\n"),
+      },
+    });
+  }
   // Browser-side chunks produced by the client transpiler for HTML imports
   // must keep the string-literal lowering for `__dirname`/`__filename`;
   // `import.meta.dir`/`.path` are Bun-only and undefined in a real browser.

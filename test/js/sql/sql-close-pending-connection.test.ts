@@ -18,7 +18,21 @@
 
 import { SQL } from "bun";
 import { expect, mock, test } from "bun:test";
-import { listeningServer, neverAnsweringServer, pgAuthenticationOk, pgReadyForQuery } from "./wire-frames";
+import type { Server, Socket } from "node:net";
+import {
+  listeningServer,
+  mysqlHandshakeV10,
+  mysqlOkPacket,
+  mysqlReadPackets,
+  mysqlTextResultSet,
+  neverAnsweringServer,
+  pgAuthenticationOk,
+  pgCommandComplete,
+  pgDataRow,
+  pgReadFrontendMessages,
+  pgReadyForQuery,
+  pgRowDescription,
+} from "./wire-frames";
 
 const drivers = [
   ["postgres", "postgres://postgres@", "ERR_POSTGRES_CONNECTION_CLOSED"],
@@ -179,3 +193,125 @@ test("pool scans tolerate unassigned connection slots during pool start", async 
     server.close();
   }
 });
+
+// https://github.com/oven-sh/bun/issues/32038
+//
+// close({ timeout }) used to be gated on `if (timeout)`, so the documented
+// `close({ timeout: 0 })` ("close now") fell into the graceful-drain branch and
+// waited for in-flight queries forever. The tests above sidestep that with the
+// truthy string "0"; these use the number. `timeout: null` must still mean
+// "no timeout" (drain), not "timeout of 0".
+//
+// Each mock completes the handshake and hands the first command it receives to
+// `onCommand`; by default it never answers, leaving the query in flight.
+
+type CommandMock = { port: number; server: Server; commandReceived: Promise<void> };
+
+async function pgReadyServer(onCommand?: (socket: Socket, type: number) => void): Promise<CommandMock> {
+  const received = Promise.withResolvers<void>();
+  const { port, server } = await listeningServer(socket => {
+    let startup = true;
+    let buffered = Buffer.alloc(0);
+    socket.on("data", chunk => {
+      if (startup) {
+        startup = false;
+        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+        return;
+      }
+      buffered = pgReadFrontendMessages(Buffer.concat([buffered, chunk]), type => {
+        onCommand?.(socket, type);
+        received.resolve();
+      });
+    });
+    socket.on("error", () => {});
+  });
+  return { port, server, commandReceived: received.promise };
+}
+
+async function mysqlReadyServer(
+  onCommand?: (socket: Socket, seq: number, payload: Buffer) => void,
+): Promise<CommandMock> {
+  const received = Promise.withResolvers<void>();
+  const { port, server } = await listeningServer(socket => {
+    let buffered = Buffer.alloc(0);
+    let authed = false;
+    socket.write(mysqlHandshakeV10());
+    socket.on("data", chunk => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+        if (!authed) {
+          authed = true;
+          socket.write(mysqlOkPacket(seq + 1));
+          return;
+        }
+        onCommand?.(socket, seq, payload);
+        received.resolve();
+      });
+    });
+    socket.on("error", () => {});
+  });
+  return { port, server, commandReceived: received.promise };
+}
+
+// Answers a simple-protocol `select 1 as x` with one text row once `respond()` is called.
+const drainableMocks = {
+  async postgres() {
+    let respond!: () => void;
+    const mock = await pgReadyServer((socket, type) => {
+      if (type !== 0x51 /* Query */) return;
+      respond = () =>
+        socket.write(
+          Buffer.concat([
+            pgRowDescription([{ name: "x", typeOid: 25 }]),
+            pgDataRow([Buffer.from("1")]),
+            pgCommandComplete("SELECT 1"),
+            pgReadyForQuery(),
+          ]),
+        );
+    });
+    return { ...mock, respond: () => respond() };
+  },
+  async mysql() {
+    let respond!: () => void;
+    const mock = await mysqlReadyServer((socket, seq, payload) => {
+      if (payload[0] !== 0x03 /* COM_QUERY */) return;
+      respond = () => socket.write(mysqlTextResultSet(seq + 1, [{ name: "x", type: 0xfd }], [["1"]]));
+    });
+    return { ...mock, respond: () => respond() };
+  },
+} as const;
+
+const silentMocks = {
+  postgres: () => pgReadyServer(),
+  mysql: () => mysqlReadyServer(),
+} as const;
+
+for (const [name, scheme, closedCode] of drivers) {
+  test(`${name}: close({ timeout: 0 }) force-closes with a query in flight`, async () => {
+    const { port, server, commandReceived } = await silentMocks[name]();
+    try {
+      const sql = new SQL({ url: `${scheme}127.0.0.1:${port}/db`, max: 1 });
+      const queryError = sql`SELECT 1`.catch(e => e);
+      // the server has the query and will never answer it
+      await commandReceived;
+      await sql.close({ timeout: 0 });
+      expect((await queryError).code).toBe(closedCode);
+    } finally {
+      server.close();
+    }
+  });
+
+  test(`${name}: close({ timeout: null }) still waits for the query in flight`, async () => {
+    const { port, server, commandReceived, respond } = await drainableMocks[name]();
+    try {
+      const sql = new SQL({ url: `${scheme}127.0.0.1:${port}/db`, max: 1 });
+      const rows = sql`select 1 as x`.simple().then(r => r);
+      await commandReceived;
+      const closing = sql.close({ timeout: null });
+      respond();
+      expect(await rows).toEqual([{ x: "1" }]);
+      await closing;
+    } finally {
+      server.close();
+    }
+  });
+}

@@ -3052,10 +3052,15 @@ impl Lockfile {
         Ok(digest)
     }
 
+    /// `version_buf` is the buffer `version`'s strings (prerelease/build tags)
+    /// were parsed against. The auto-install resolver passes versions parsed
+    /// from a project's package.json here, so it is not always this lockfile's
+    /// string buffer.
     pub(crate) fn resolve_package_from_name_and_version(
         &self,
         package_name: &[u8],
         version: &DependencyVersion,
+        version_buf: &[u8],
     ) -> Option<PackageID> {
         let name_hash = SemverStringBuilder::string_hash(package_name);
         let entry = self.package_index.get(&name_hash)?;
@@ -3071,7 +3076,7 @@ impl Lockfile {
                 // folder/symlink deps share the name index with other variants.
                 let satisfies = |resolution: &Resolution| -> bool {
                     resolution.tag == ResolutionTag::Npm
-                        && npm_group.satisfies(resolution.npm().version, buf, buf)
+                        && npm_group.satisfies(resolution.npm().version, version_buf, buf)
                 };
                 match entry {
                     PackageIndexEntry::Id(id) => {

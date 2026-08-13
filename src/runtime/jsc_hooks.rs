@@ -465,6 +465,8 @@ unsafe fn init_runtime_state(
                     let t = &mut (*vm).transpiler;
                     t.options.emit_dce_annotations = false;
                     t.resolver.store_fd = opts.store_fd;
+                    t.options.global_cache = opts.global_cache;
+                    t.resolver.opts.global_cache = opts.global_cache;
                     t.resolver.prefer_module_field = false;
                     // Propagate `--preserve-symlinks`
                     // from CLI args to the resolver so symlinked node_modules

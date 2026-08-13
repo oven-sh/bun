@@ -98,6 +98,13 @@ pub struct InitOptions {
     /// `transpiler.resolver.store_fd` BEFORE `configure_linker()` reads
     /// `top_level_dir`, so it threads through `init_runtime_state`.
     pub store_fd: bool,
+    /// Auto-install mode (`--install=...`). Like `store_fd`, it must be on the
+    /// resolver BEFORE `configure_linker()` reads `top_level_dir`: that read
+    /// caches the project's package.json, and its dependency ranges are only
+    /// recorded (for auto-install to resolve against) when the resolver has
+    /// auto-install enabled at the time it is cached. Defaults to `disable`,
+    /// matching `BundleOptions::from_api`.
+    pub global_cache: bun_options_types::global_cache::GlobalCache,
     pub smol: bool,
     pub eval_mode: bool,
     pub is_main_thread: bool,
@@ -123,6 +130,7 @@ impl Default for InitOptions {
             env_loader: None,
             graph: None,
             store_fd: false,
+            global_cache: bun_options_types::global_cache::GlobalCache::disable,
             smol: false,
             eval_mode: false,
             is_main_thread: false,

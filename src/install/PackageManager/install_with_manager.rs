@@ -801,38 +801,44 @@ pub fn install_with_manager(
     if manager.options.enable.frozen_lockfile()
         && !matches!(load_result, lockfile::LoadResult::NotFound)
     {
-        'frozen_lockfile: {
-            let changed_section = frozen_changed_section(manager, root_package_json_path);
-            if changed_section.is_none() {
-                if load_result.loaded_from_text_lockfile() {
-                    if bun_core::handle_oom(Lockfile::eql(
-                        &manager.lockfile,
-                        &lockfile_before_clean,
-                        lockfile_before_clean.loaded_package_count as usize,
-                    )) {
-                        break 'frozen_lockfile;
-                    }
-                } else if !(manager
-                    .lockfile
-                    .has_meta_hash_changed(
-                        PackageManager::verbose_install()
-                            || manager.options.do_.print_meta_hash_string(),
-                        packages_len_before_install,
-                    )
-                    .unwrap_or(false))
-                {
-                    break 'frozen_lockfile;
-                }
-            }
+        // `eql`/`has_meta_hash_changed` compare resolved packages only; a
+        // manifest change that resolves to packages already in the lockfile
+        // only shows up in the differ. trustedDependencies and
+        // patchedDependencies are applied from package.json either way and are
+        // dropped from bun.lock by tools like `turbo prune`, so they are not
+        // part of the comparison.
+        let manifests_changed = manager.summary.changes_dependencies();
+        let resolutions_changed = if load_result.loaded_from_text_lockfile() {
+            !bun_core::handle_oom(Lockfile::eql(
+                &manager.lockfile,
+                &lockfile_before_clean,
+                lockfile_before_clean.loaded_package_count as usize,
+            ))
+        } else {
+            manager
+                .lockfile
+                .has_meta_hash_changed(
+                    PackageManager::verbose_install()
+                        || manager.options.do_.print_meta_hash_string(),
+                    packages_len_before_install,
+                )
+                .unwrap_or(false)
+        };
 
+        if manifests_changed || resolutions_changed {
             if log_level != Options::LogLevel::Silent {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
                 );
-                if let Some(section) = changed_section {
+                if manifests_changed {
+                    print_frozen_lockfile_manifest_changes(
+                        manager,
+                        root_package_json_path,
+                        loaded_lockfile_name(&load_result),
+                    );
+                } else {
                     bun_core::note!(
-                        "{} in package.json changed since {} was saved",
-                        section,
+                        "the packages resolved from the manifests differ from {}",
                         loaded_lockfile_name(&load_result)
                     );
                 }
@@ -1423,19 +1429,6 @@ pub(crate) fn get_workspace_filters(
     Ok((filters, install_root_dependencies))
 }
 
-fn frozen_changed_section(
-    manager: &mut PackageManager,
-    root_package_json_path: &ZStr,
-) -> Option<&'static str> {
-    if manager.summary.overrides_changed {
-        Some(overrides_field_name(manager, root_package_json_path))
-    } else if manager.summary.catalogs_changed {
-        Some("the catalog")
-    } else {
-        None
-    }
-}
-
 /// Brings the loaded lockfile's `patchedDependencies` in line with the ones
 /// just parsed from package.json (`lockfile`); `builder` must already have
 /// room for their paths. The entries only the loaded lockfile has are queued
@@ -1563,6 +1556,53 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
 // hot verify-and-exit path during fat-LTO emission, so a no-op
 // `bun install` / `bun install --frozen-lockfile` (node_modules already up to
 // date) faults in far fewer distinct `.text` pages.
+
+#[cold]
+#[inline(never)]
+fn print_frozen_lockfile_manifest_changes(
+    manager: &mut PackageManager,
+    root_package_json_path: &ZStr,
+    lockfile_name: &str,
+) {
+    let summary = &manager.summary;
+    if summary.add > 0 || summary.root_remove > 0 || summary.update > 0 {
+        bun_core::note!(
+            "dependencies in package.json changed since {} was saved (<green>{}<r> added, <red>{}<r> removed, <cyan>{}<r> updated)",
+            lockfile_name,
+            summary.add,
+            summary.root_remove,
+            summary.update,
+        );
+    }
+    for workspace in summary
+        .changed_workspaces
+        .iter()
+        .filter(|workspace| workspace.dependencies_changed)
+    {
+        bun_core::note!(
+            "dependencies in {}/package.json changed since {} was saved (<green>{}<r> added, <red>{}<r> removed, <cyan>{}<r> updated)",
+            bstr::BStr::new(&workspace.path),
+            lockfile_name,
+            workspace.add,
+            workspace.remove,
+            workspace.update,
+        );
+    }
+    let catalogs_changed = summary.catalogs_changed;
+    if summary.overrides_changed {
+        bun_core::note!(
+            "{} in package.json changed since {} was saved",
+            overrides_field_name(manager, root_package_json_path),
+            lockfile_name
+        );
+    }
+    if catalogs_changed {
+        bun_core::note!(
+            "the catalog in package.json changed since {} was saved",
+            lockfile_name
+        );
+    }
+}
 
 #[cold]
 #[inline(never)]

@@ -164,12 +164,10 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
         const std::span<const Latin1Character> bytes = sourceString.span8();
         const unsigned length = sourceString.length();
 
-        // The divot of an expression may be its end offset: one past its last character, which
-        // for the last expression in the source is `length`, and otherwise is often the '\n'
-        // terminating its line. Both belong to the line the expression is on.
+        // JSC may position an expression one past its end: on the '\n' ending its line, or at `length`.
         const unsigned divot = std::min(static_cast<unsigned>(std::max(location.byte_position, 0)), length);
 
-        // Offset of the first character of the line whose terminating '\n' (or end of source) is at `end`.
+        // `end` is the offset of a line's terminating '\n', or `length` for the last line.
         auto startOfLineEndingAt = [&](unsigned end) -> unsigned {
             unsigned start = end;
             while (start > 0 && bytes[start - 1] != '\n') {
@@ -202,9 +200,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
         source_lines[0] = lineText(lineStart, lineEnd);
         source_line_numbers[0] = location.line();
 
-        // Most of the time, when you look at a stack trace, you want a couple lines above.
-        // While `lineStart` is not the start of the source, `bytes[lineStart - 1]` is the '\n'
-        // terminating the line above the one most recently collected.
+        // Lines above: `bytes[lineStart - 1]` is the '\n' ending the line above the one just collected.
         for (uint8_t i = 1; i < source_lines_count && lineStart > 0; i++) {
             const unsigned aboveEnd = lineStart - 1;
             const unsigned aboveStart = startOfLineEndingAt(aboveEnd);

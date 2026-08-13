@@ -287,11 +287,10 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             ..Default::default()
         });
 
-        // Same as the `exports` symbol js_parser gives every file: the linker
-        // declares it in the namespace export part and binds `import * as ns`
-        // to it. Created after `symbol_uses` above so the code part does not
-        // depend on the namespace export part and keep it from being tree shaken.
+        // Declared by the linker's namespace export part, like js_parser's `exports` symbol.
         let exports_ref = self.push_symbol(SymbolKind::Other, b"exports");
+        // The code part must not use it, or the namespace object could never be tree shaken.
+        debug_assert!(!parts[1].symbol_uses.contains(&exports_ref));
 
         let mut top_level_symbols_to_parts = TopLevelSymbolToParts::default();
         // SAFETY: module_scope is a live arena allocation (set in init, scopes stack is empty)

@@ -550,11 +550,8 @@ pub fn CreateHardLinkW(
     rc
 }
 
-/// `CopyFileW` with an empty destination made safe: kernel32 reads the unit
-/// before an empty destination name (its "last" unit), so one is passed as the
-/// tail of a NUL pair, libuv's layout, rather than at the start of the
-/// caller's buffer, which may start a mapping. kernel32's own error reporting
-/// is unchanged.
+/// `CopyFileW`, passing an empty destination as the tail of a NUL pair:
+/// kernel32 reads the unit before an empty destination name.
 ///
 /// # Safety
 /// `source` and `dest` must point at NUL-terminated wide strings that stay

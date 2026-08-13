@@ -215,19 +215,13 @@ describe("Bun.Terminal platform behaviour", () => {
 
   test("SAME: output LF is translated to CRLF", async () => {
     // POSIX ONLCR and ConPTY both render \n as \r\n on the master/read side.
-    // POSIX and Windows 11 emit exactly "READY\r\nLINE2". Server 2019's ConPTY
-    // pads before the \r\n: a space when it paints just the dirty cells
-    // ("READY \r\n"), erase-character + cursor-forward when it repaints the
-    // whole 80-column screen ("READY\x1b[75X\x1b[75C\r\n"). conhost 17763
-    // repaints everything when the exiting child turns VT processing back off
-    // (bun restores the console mode at exit), so a child that writes and exits
-    // within one render frame yields only the second form. Every row of a full
-    // repaint ends in \r\n, so anchor on LINE2: the markers must be on
-    // consecutive rows.
+    // Server 2019's ConPTY pads the row before the \r\n with spaces or, on a
+    // full repaint, ESC[nX ESC[nC (#38054): strip the escapes and anchor on
+    // LINE2 so the \r\n has to be the row break between the two markers.
     const { output } = await runInTerminal(`process.stdout.write('READY\\nLINE2')`, {
       done: o => o.includes("LINE2"),
     });
-    expect(output).toMatch(/READY(?: |\x1b\[\d+[XC])*\r\nLINE2/);
+    expect(Bun.stripANSI(output)).toMatch(/READY *\r\nLINE2/);
     if (!isWindows) expect(output).toContain("READY\r\nLINE2");
   });
 

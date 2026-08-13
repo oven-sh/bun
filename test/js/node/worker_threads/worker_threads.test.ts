@@ -2025,6 +2025,35 @@ describe("a port whose peer closed is closed too", () => {
     });
   });
 
+  // start() turns a paused port back on as well (node's Start() always sets receiving), whether
+  // it is called before the peer closes or only after the close was already put on hold.
+  test.each([
+    ["before the peer closes", true],
+    ["after the peer closed", false],
+  ])("start() on a paused port resumes it (%s), so the port is closed", async (_name, startFirst) => {
+    const { port1, port2 } = new MessageChannel();
+    port1.ref();
+    const handler = () => {};
+    port1.on("message", handler);
+    port1.off("message", handler);
+    let closes = 0;
+    port1.on("close", () => closes++);
+    if (startFirst) port1.start();
+    port2.postMessage("dropped");
+    port2.close();
+    if (!startFirst) {
+      for (let i = 0; i < 4; i++) await tick();
+      expect({ closes, rejected: isRejectedAsDetached(port1) }).toEqual({ closes: 0, rejected: false });
+      port1.start();
+    }
+    for (let i = 0; i < 20 && closes === 0; i++) await tick();
+    expect({ closes, rejected: isRejectedAsDetached(port1), hasRef: port1.hasRef() }).toEqual({
+      closes: 1,
+      rejected: true,
+      hasRef: false,
+    });
+  });
+
   test("a port left open that way is still a valid transferable; the receiver gets the queue and the close", async () => {
     const { port1, port2 } = new MessageChannel();
     const carrier = new MessageChannel();

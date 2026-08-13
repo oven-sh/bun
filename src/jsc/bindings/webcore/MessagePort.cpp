@@ -158,20 +158,24 @@ void MessagePort::entrySettled()
 
 void MessagePort::start()
 {
-    if (m_started || !isEntangled())
+    if (!isEntangled())
         return;
-    // A node worker's parentPort delivers nothing until the entry module has evaluated; keep the
-    // request and let entrySettled() perform it. Messages stay buffered in the pipe meanwhile.
-    if (auto* context = scriptExecutionContext()) {
-        if (auto* jsGlobal = context->globalObject()) {
-            auto* globalObject = defaultGlobalObject(jsGlobal);
-            if (globalObject->nodeParentPort() == this && !globalObject->nodeWorkerEntrySettled()) {
-                m_startDeferredUntilEntrySettled = true;
-                return;
+    if (!m_started) {
+        // A node worker's parentPort delivers nothing until the entry module has evaluated; keep the
+        // request and let entrySettled() perform it. Messages stay buffered in the pipe meanwhile.
+        if (auto* context = scriptExecutionContext()) {
+            if (auto* jsGlobal = context->globalObject()) {
+                auto* globalObject = defaultGlobalObject(jsGlobal);
+                if (globalObject->nodeParentPort() == this && !globalObject->nodeWorkerEntrySettled()) {
+                    m_startDeferredUntilEntrySettled = true;
+                    return;
+                }
             }
         }
+        m_started = true;
     }
-    m_started = true;
+    // Every call turns delivery (back) on, as node's Start() does for a port whose last 'message'
+    // listener was removed. attach() re-schedules the drain and re-reports a peer that has closed.
     m_receiving = true;
 
     auto* context = scriptExecutionContext();
@@ -538,15 +542,9 @@ void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& e
 bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)
 {
     if (eventType == eventNames().messageEvent) {
+        // Also resumes a port paused by removing its listeners (see start()).
         start();
         m_hasMessageEventListener = true;
-        // start() no-ops after the first call; re-attach so a listener re-added after a
-        // pause resumes receiving and re-schedules the drain for messages buffered meanwhile.
-        if (m_started && isEntangled()) {
-            m_receiving = true;
-            if (auto* context = scriptExecutionContext())
-                m_pipe->attach(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
-        }
     } else if (eventType == eventNames().closeEvent) {
         m_hasCloseEventListener.store(true, std::memory_order_release);
         // Reports a peer that went away while this port had no listener (see peerClosed()).

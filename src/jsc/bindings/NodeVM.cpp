@@ -385,11 +385,9 @@ struct EmbeddedFunctionBody {
     StringView rest;
 };
 
-// A hashbang comment is only valid at offset 0 of a source text, but the body
-// lands after the "(function (...) {\n" prefix. V8's CompileFunction accepts it
-// (Node's CommonJS loader relies on that), and it ends where a "//" comment
-// would, so embed it as one. Swapping those two characters in place keeps every
-// offset into the body unchanged. The view borrows from `body`.
+// "#!" is only a comment at offset 0 of a source text, and the body is embedded
+// after the "(function (...) {\n" prefix, so emit it as the equivalent "//"
+// comment. Swapped in place, so body offsets are unchanged.
 static EmbeddedFunctionBody embedFunctionBody(const String& body)
 {
     if (body.startsWith("#!"_s))

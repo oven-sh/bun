@@ -271,10 +271,9 @@ impl Binding {
         Ok(async_::Readdir::create(global, this, rd_args, vm))
     }
 
-    /// `callAsync(.open)`. On Windows `async_::Open` is a libuv request, and
-    /// libuv cannot see the embedded `/$bunfs/` files, so those go to the
-    /// thread pool where `NodeFS::open` serves them the same way `openSync`
-    /// does. On POSIX `async_::Open` already is the thread-pool task.
+    /// `callAsync(.open)`. On Windows `async_::Open` is a libuv request, which
+    /// cannot see embedded `/$bunfs/` files; those take the thread-pool task
+    /// (`NodeFS::open`) that POSIX uses for every open.
     pub(crate) fn open(
         this: &Self,
         global: &JSGlobalObject,
@@ -440,8 +439,7 @@ impl Binding {
     // pub const statfsSync = callSync(.statfs);
 }
 
-/// Whether `path` is inside a compiled executable's embedded `/$bunfs/` tree,
-/// which `NodeFS` serves from memory instead of the real filesystem.
+/// `path` is under a compiled executable's embedded `/$bunfs/` tree.
 fn is_standalone_path(path: &[u8]) -> bool {
     bun_standalone_graph::Graph::get().is_some()
         && bun_standalone_graph::is_bun_standalone_file_path(path)

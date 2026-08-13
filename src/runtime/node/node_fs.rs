@@ -318,17 +318,12 @@ fn standalone_module_graph() -> Option<&'static bun_standalone_graph::Graph> {
     bun_standalone_graph::Graph::get_ref()
 }
 
-/// Backs `fs.open()` of an embedded file: copies `contents` into an anonymous
-/// file and returns a descriptor for it with the offset at 0, so `read`,
-/// `pread`, `fstat` and `close` behave as they would on a regular file holding
-/// those bytes. On Linux that is a memfd; elsewhere (or without memfd support) a
-/// temp file that is unlinked before the descriptor is handed out, so closing
-/// the descriptor is all the cleanup there is.
+/// `fs.open()` of an embedded file: a descriptor (memfd on Linux, otherwise an
+/// already-unlinked temp file) holding a copy of `contents`, positioned at 0.
+/// Closing it is the only cleanup.
 fn embedded_file_fd(contents: &[u8]) -> Maybe<FD> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     if sys::can_use_memfd() {
-        // `memfd_create` latches `can_use_memfd()` off when the kernel or a
-        // seccomp policy refuses it; the temp file below is the fallback.
         if let Ok(fd) = sys::memfd_create(c"bunfs", sys::MemfdFlags::NonExecutable) {
             let file = sys::File::from_fd(fd);
             file.pwrite_all(contents, 0)?;
@@ -351,8 +346,7 @@ fn embedded_file_fd(contents: &[u8]) -> Maybe<FD> {
         0o600,
     )?;
     let written = file.pwrite_all(contents, 0);
-    // The name only existed to get a descriptor; if unlinking it fails the
-    // descriptor is still good and the stray temp file is the only casualty.
+    // A failed unlink only leaves a stray temp file; the descriptor is still good.
     let _ = Syscall::unlink(path);
     written?;
     Ok(file.into_raw())
@@ -569,9 +563,7 @@ mod _async_tasks {
         pub(crate) type Mkdtemp =
             AsyncFSTask<ret::Mkdtemp, args::MkdirTemp, { NodeFSFunctionEnum::Mkdtemp }>;
         pub(crate) type Open = UVFSRequest<ret::Open, args::Open, { NodeFSFunctionEnum::Open }>;
-        /// `fs.open()` of an embedded `/$bunfs/` path: `NodeFS::open` serves it
-        /// from the thread pool, since `uv_fs_open` cannot see those files.
-        /// On POSIX `Open` already is this type.
+        /// Embedded `/$bunfs/` paths, which libuv cannot open; see `Binding::open`.
         #[cfg(windows)]
         pub(crate) type OpenStandalone =
             AsyncFSTask<ret::Open, args::Open, { NodeFSFunctionEnum::Open }>;
@@ -6018,13 +6010,9 @@ impl NodeFS {
         }
     }
 
-    /// `open()` of a path inside a compiled executable's `/$bunfs/` tree.
-    /// `None` when the path is not embedded, so the caller falls through to the
-    /// real filesystem (same as `readFile`/`stat`/`readdir` above).
-    ///
-    /// Embedded files are read-only; a descriptor for one is a private copy of
-    /// its bytes (see [`embedded_file_fd`]), so any flag asking for write access
-    /// is refused up front instead of handing out a copy whose writes vanish.
+    /// `None` unless `args.path` is embedded in this compiled executable.
+    /// Embedded files are read-only, so write access is refused with EROFS
+    /// rather than served by the private copy [`embedded_file_fd`] hands out.
     fn open_standalone(args: &args::Open) -> Option<Maybe<ret::Open>> {
         let graph = standalone_module_graph()?;
         let path = args.path.slice();

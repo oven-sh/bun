@@ -2274,10 +2274,7 @@ describe("bundler", () => {
       );
     `,
   };
-  const importMetaMainInvertedMemberCapture = [
-    "(!import.meta.main).toString().length",
-    "(!import.meta.main) ** 2",
-  ];
+  const importMetaMainInvertedMemberCapture = ["(!import.meta.main).toString().length", "(!import.meta.main) ** 2"];
   itBundled("edgecase/ImportMetaMainInvertedMemberTarget", {
     files: importMetaMainInvertedMemberFiles,
     capture: importMetaMainInvertedMemberCapture,

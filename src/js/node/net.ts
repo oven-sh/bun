@@ -142,7 +142,6 @@ const kSyncWriteFd = Symbol("kSyncWriteFd");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
-const kCloseRawConnection = Symbol("kCloseRawConnection");
 const kupgraded = Symbol("kupgraded");
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
 const ksocket = Symbol("ksocket");
@@ -248,6 +247,24 @@ function closeAdoptedTLSRawNT(handle, self, isException) {
 function closeAdoptedTLSRawNowNT(handle, self, isException) {
   handle.close(onSocketHandleClosed);
   setImmediate(emitCloseNT, self, isException);
+}
+// The transport a TLS socket was layered over (tls.connect({ socket }),
+// new TLSSocket(socket)) goes down with it, like the parent wrap of node's
+// TLSWrap: it emits 'close' and, if it was accepted, leaves its server's
+// connection count. Keyed on destroy rather than 'end' because a handshake
+// failure destroys the TLS socket without ever emitting 'end'. A net.Socket
+// holding the raw twin of this socket's TLS handle shares the fd that this
+// socket's own handle close tears down, so it is only detached; anything else
+// (a generic duplex, or a socket still driving its own fd under the
+// stream-level TLS engine) owns its transport and closes it itself, so a late
+// RST on it can't surface as an error after this socket is gone.
+function destroyUpgradedTransport(self) {
+  const upgraded = self[kupgraded];
+  if (!upgraded || upgraded.destroyed) return;
+  if (upgraded._handle?.[kAdoptedTLSRaw]) {
+    upgraded._handle = null;
+  }
+  upgraded.destroy();
 }
 function detachSocket(self) {
   if (!self) self = this;
@@ -1863,14 +1880,6 @@ Socket.prototype[kAttach] = function (port, socket) {
   SocketHandlers.drain(socket);
 };
 
-Socket.prototype[kCloseRawConnection] = function () {
-  const connection = this[kupgraded];
-  connection.connecting = false;
-  connection._handle = null;
-  connection.unref();
-  connection.destroy();
-};
-
 Socket.prototype.connect = function connect(...args) {
   $debug("Socket.prototype.connect");
   {
@@ -2018,7 +2027,6 @@ Socket.prototype.connect = function connect(...args) {
               // replace socket
               connection._handle = raw;
               raw[kAdoptedTLSRaw] = true;
-              this.once("end", this[kCloseRawConnection]);
               raw.connecting = false;
               this._handle = tls;
             } else {
@@ -2065,7 +2073,6 @@ Socket.prototype.connect = function connect(...args) {
                   // replace socket
                   connection._handle = raw;
                   raw[kAdoptedTLSRaw] = true;
-                  this.once("end", this[kCloseRawConnection]);
                   raw.connecting = false;
                   this._handle = tls;
                 } else {
@@ -2141,14 +2148,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
-  // Tear down a wrapped generic duplex with this socket: the native handle's
-  // close only flushes close_notify and lets the wrapper drain; without an
-  // explicit destroy here a late RST on the underlying transport can surface
-  // as an unhandled error after this socket is gone.
-  const upgraded = this[kupgraded];
-  if (upgraded && !(upgraded instanceof Socket) && !upgraded.destroyed) {
-    upgraded.destroy?.();
-  }
+  destroyUpgradedTransport(this);
 
   // Close an fd adopted for synchronous writes (node closes the wrapping
   // libuv handle here). Leave stdio fds 0-2 open: process.stdout/stderr and
@@ -2418,7 +2418,6 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     const [raw, tlsHandle] = result;
     connection._handle = raw;
     raw[kAdoptedTLSRaw] = true;
-    this.once("end", this[kCloseRawConnection]);
     raw.connecting = false;
     this._handle = tlsHandle;
     this.emit(kUpgradeAttached);

@@ -2019,6 +2019,130 @@ it("destroys a server wrap whose socket was destroyed before the deferred upgrad
   }
 });
 
+// The converse of the test above: destroying the wrap has to take the wrapped
+// net.Socket down with it (node's TLSWrap close() destroys its parent wrap).
+// Otherwise the accepted socket never emits 'close', stays in the net.Server's
+// connection count and server.close(cb) never calls back. Releasing it from the
+// wrap's 'end' only covered a graceful shutdown: a handshake failure destroys
+// the wrap without ever emitting 'end'.
+describe("destroying a server-side TLSSocket wrap destroys the wrapped net.Socket", () => {
+  // events.once() rejects on 'error', which several of these sockets emit
+  // before 'close'; resolves with the 'close' event's hadError argument.
+  const closed = (emitter: net.Socket | TLSSocket) => new Promise<boolean>(resolve => emitter.once("close", resolve));
+
+  type Accepted = { raw: net.Socket; rawClosed: Promise<boolean>; wrapClosed: Promise<unknown> };
+
+  async function listenRaw(onConnection: (raw: net.Socket) => Accepted) {
+    const accepted = Promise.withResolvers<Accepted>();
+    const rawServer = net.createServer(raw => accepted.resolve(onConnection(raw)));
+    rawServer.on("error", accepted.reject);
+    rawServer.listen(0, "127.0.0.1");
+    await once(rawServer, "listening");
+    return { rawServer, port: (rawServer.address() as AddressInfo).port, accepted: accepted.promise };
+  }
+
+  async function expectReleased(rawServer: net.Server, { raw, rawClosed, wrapClosed }: Accepted) {
+    await wrapClosed;
+    // The wrap's _destroy destroys the wrapped socket synchronously, so it is
+    // already destroyed once the wrap has closed, and it emits 'close' itself.
+    expect(raw.destroyed).toBe(true);
+    expect(await rawClosed).toBe(false);
+    const connections = Promise.withResolvers<number>();
+    rawServer.getConnections((err, count) => (err ? connections.reject(err) : connections.resolve(count)));
+    expect(await connections.promise).toBe(0);
+    // With the connection released, close() completes.
+    const serverClosed = once(rawServer, "close");
+    rawServer.close();
+    await serverClosed;
+  }
+
+  it("when the handshake fails", async () => {
+    const failure = Promise.withResolvers<{ code: string | undefined; hadError: boolean }>();
+    const { rawServer, port, accepted } = await listenRaw(raw => {
+      const wrap = new TLSSocket(raw, { isServer: true, ...COMMON_CERT });
+      let code: string | undefined;
+      wrap.on("error", (err: Error & { code?: string }) => (code = err.code));
+      const wrapClosed = closed(wrap).then(hadError => failure.resolve({ code, hadError }));
+      return { raw, rawClosed: closed(raw), wrapClosed };
+    });
+    // A plain TCP peer whose first bytes are not a ClientHello.
+    const client = net.connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    try {
+      const conn = await accepted;
+      client.write("this is not a TLS ClientHello\r\n");
+      expect(await failure.promise).toEqual({ code: "ERR_SSL_WRONG_VERSION_NUMBER", hadError: true });
+      await expectReleased(rawServer, conn);
+    } finally {
+      client.destroy();
+      rawServer.close();
+    }
+  });
+
+  it("when the wrap is destroyed in the tick it was created, before the socket was adopted", async () => {
+    const { rawServer, port, accepted } = await listenRaw(raw => {
+      const wrap = new TLSSocket(raw, { isServer: true, ...COMMON_CERT });
+      const wrapClosed = closed(wrap);
+      wrap.destroy();
+      return { raw, rawClosed: closed(raw), wrapClosed };
+    });
+    const client = net.connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    const clientClosed = closed(client);
+    try {
+      await expectReleased(rawServer, await accepted);
+      // The raw socket still owned the fd, so destroying it is what closes the
+      // connection the peer is holding.
+      await clientClosed;
+    } finally {
+      client.destroy();
+      rawServer.close();
+    }
+  });
+
+  it("when the wrap runs the TLS engine over a socket that has no handle", async () => {
+    const raw = new net.Socket();
+    const rawClosed = closed(raw);
+    const wrap = new TLSSocket(raw, { isServer: true, ...COMMON_CERT });
+    const wrapClosed = closed(wrap);
+    wrap.destroy();
+    await wrapClosed;
+    expect(raw.destroyed).toBe(true);
+    expect(await rawClosed).toBe(false);
+  });
+
+  it("when a tls.Server rejects the client certificate of a connection handed to it via emit('connection')", async () => {
+    // STARTTLS-style: a plain net.Server accepts the connection and hands it to
+    // a tls.Server, which wraps it. The rejected handshake has to release the
+    // connection from the net.Server that accepted it.
+    const tlsServer = createServer({ ...COMMON_CERT, requestCert: true, rejectUnauthorized: true });
+    tlsServer.on("secureConnection", s => s.destroy(new Error("unexpected secureConnection")));
+    const rejected = Promise.withResolvers<{ code: unknown; wrapClosed: Promise<boolean> }>();
+    // Emitted before the wrap is destroyed, so this is where its 'close' can be
+    // awaited from.
+    tlsServer.on("tlsClientError", (err: Error & { code?: string }, wrap) =>
+      rejected.resolve({ code: err.code, wrapClosed: closed(wrap) }),
+    );
+    const { rawServer, port, accepted } = await listenRaw(raw => {
+      const rawClosed = closed(raw);
+      tlsServer.emit("connection", raw);
+      return { raw, rawClosed, wrapClosed: rejected.promise.then(r => r.wrapClosed) };
+    });
+    // The client presents a self-signed certificate the server has no CA for.
+    const client = connect({ port, host: "127.0.0.1", ...COMMON_CERT, rejectUnauthorized: false });
+    client.on("error", () => {});
+    try {
+      const conn = await accepted;
+      expect((await rejected.promise).code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+      await expectReleased(rawServer, conn);
+    } finally {
+      client.destroy();
+      rawServer.close();
+      tlsServer.close();
+    }
+  });
+});
+
 it("exposes the server-side peer verification result via socket.ssl.verifyError()", async () => {
   // Node's server path consults the same TLSWrap.verifyError() that clients
   // use, so the shim must be populated for server sockets too:

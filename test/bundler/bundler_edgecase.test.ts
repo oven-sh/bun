@@ -2261,26 +2261,34 @@ describe("bundler", () => {
     },
     run: [{ stdout: "true entry sibling" }, { runtime: "node", stdout: "true entry sibling" }],
   });
-  // A kept inverted import.meta.main prints a `!` prefix, so as a member
-  // expression target it needs parentheses: `(!import.meta.main).toString()`,
-  // not `!import.meta.main.toString()`.
+  // A kept inverted import.meta.main prints a `!` prefix, so it needs
+  // parentheses as a member expression target (`(!import.meta.main).toString()`,
+  // not `!import.meta.main.toString()`) and as the left operand of `**`
+  // (`!x ** 2` is a SyntaxError).
   const importMetaMainInvertedMemberFiles = {
     "/entry.ts": /* js */ `
       globalThis['ca' + 'pture'] = x => x;
-      console.log(capture((require.main !== module).toString().length));
+      console.log(
+        capture((require.main !== module).toString().length),
+        capture((require.main !== module) ** 2),
+      );
     `,
   };
+  const importMetaMainInvertedMemberCapture = [
+    "(!import.meta.main).toString().length",
+    "(!import.meta.main) ** 2",
+  ];
   itBundled("edgecase/ImportMetaMainInvertedMemberTarget", {
     files: importMetaMainInvertedMemberFiles,
-    capture: ["(!import.meta.main).toString().length"],
-    run: { stdout: "5" },
+    capture: importMetaMainInvertedMemberCapture,
+    run: { stdout: "5 0" },
   });
   itBundled("edgecase/ImportMetaMainInvertedMemberTargetIIFEBun", {
     files: importMetaMainInvertedMemberFiles,
     format: "iife",
     target: "bun",
-    capture: ["(!import.meta.main).toString().length"],
-    run: { stdout: "5" },
+    capture: importMetaMainInvertedMemberCapture,
+    run: { stdout: "5 0" },
   });
   itBundled("edgecase/IdentifierInEnum#13081", {
     files: {

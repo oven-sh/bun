@@ -352,6 +352,15 @@ pub struct VirtualMachine {
     pub channel_ref: Async::KeepAlive,
     pub channel_ref_overridden: bool,
     pub channel_ref_should_ignore_one_disconnect_event_listener: bool,
+    /// Node's `Control#refs` for `process.channel`: one per counted
+    /// `message`/`disconnect` listener on `process` plus the balance of
+    /// `channel.refCounted()`/`unrefCounted()` calls. `channel_ref` is taken
+    /// when this becomes 1 and released when it returns to 0, unless
+    /// `channel_ref_overridden`. Zero-valid; see `node_cluster_binding.rs`.
+    pub channel_ref_count: i32,
+    /// The listener share of `channel_ref_count`, so a new listener total can
+    /// be applied as a delta.
+    pub channel_listener_refs: u32,
 
     /// A set of extensions that exist in the require.extensions map.
     pub commonjs_custom_extensions:

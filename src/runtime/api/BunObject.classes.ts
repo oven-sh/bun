@@ -100,9 +100,12 @@ export default [
         fn: "disconnect",
         length: 0,
       },
+      // Reached as `subprocess.$setChannelRef()` from node:child_process only;
+      // not part of Bun.spawn's public surface.
       setChannelRef: {
         fn: "setChannelRef",
         length: 1,
+        privateSymbol: "setChannelRef",
       },
       connected: {
         getter: "getConnected",

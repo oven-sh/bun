@@ -5,6 +5,7 @@
 // - We should not be creating JSFunction's in process.nextTick.
 
 use crate::ipc::{IsInternal, SerializeAndSendResult};
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional};
 
 use crate::api::bun::subprocess::Subprocess;
@@ -286,19 +287,62 @@ pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     Ok(JSValue::UNDEFINED)
 }
 
-// HOST_EXPORT(Bun__refChannelUnlessOverridden, c)
-pub fn ref_channel_unless_overridden(global: &JSGlobalObject) {
-    let vm = global.bun_vm().as_mut();
-    if !vm.channel_ref_overridden {
-        vm.channel_ref.ref_(bun_io::js_vm_ctx());
+/// One `refCounted()` (+1) or `unrefCounted()` (-1) step of node's `Control`:
+/// the channel is ref'd when the count becomes exactly 1 and released when it
+/// returns to exactly 0, and neither happens once `ref()`/`unref()` has been
+/// called explicitly. Returns whether this step released the channel, which is
+/// when node emits `"unref"` on the control object.
+fn step_channel_ref_count(vm: &mut VirtualMachine, delta: i32) -> bool {
+    vm.channel_ref_count = vm.channel_ref_count.saturating_add(delta);
+    if vm.channel_ref_overridden {
+        return false;
+    }
+    match (delta > 0, vm.channel_ref_count) {
+        (true, 1) => {
+            vm.channel_ref.ref_(bun_io::js_vm_ctx());
+            false
+        }
+        (false, 0) => {
+            vm.channel_ref.unref(bun_io::js_vm_ctx());
+            true
+        }
+        _ => false,
     }
 }
 
-// HOST_EXPORT(Bun__unrefChannelUnlessOverridden, c)
-pub fn unref_channel_unless_overridden(global: &JSGlobalObject) {
+/// `process.channel.refCounted()` / `.unrefCounted()`. Returns `true` when an
+/// `unrefCounted()` released the channel.
+#[bun_jsc::host_fn]
+pub(crate) fn set_ref_counted(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let arguments = frame.arguments_as_array::<1>();
+
+    if arguments.len() == 0 {
+        return Err(global.throw_missing_arguments_value(&["enabled"]));
+    }
+    if !arguments[0].is_boolean() {
+        return Err(global.throw_invalid_argument_type_value("enabled", "boolean", arguments[0]));
+    }
+
+    let delta = if arguments[0].to_boolean() { 1 } else { -1 };
+    let released = step_channel_ref_count(global.bun_vm().as_mut(), delta);
+    Ok(JSValue::from(released))
+}
+
+/// Called from `process`'s listener hook (`BunProcess.cpp`) with the number of
+/// `message`/`disconnect` listeners that count towards the channel, every time
+/// it changes. Node's `_forkChild` does a `refCounted()`/`unrefCounted()` per
+/// listener; applying the new total as a delta is the same thing and also
+/// covers `removeAllListeners()`, which reports once for any number removed.
+// HOST_EXPORT(Bun__setChannelListenerCount, c)
+pub fn set_channel_listener_count(global: &JSGlobalObject, count: u32) {
     let vm = global.bun_vm().as_mut();
-    if !vm.channel_ref_overridden {
-        vm.channel_ref.unref(bun_io::js_vm_ctx());
+    while vm.channel_listener_refs < count {
+        vm.channel_listener_refs += 1;
+        step_channel_ref_count(vm, 1);
+    }
+    while vm.channel_listener_refs > count {
+        vm.channel_listener_refs -= 1;
+        step_channel_ref_count(vm, -1);
     }
 }
 

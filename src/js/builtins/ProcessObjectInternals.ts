@@ -602,9 +602,24 @@ export function windowsEnv(
 export function getChannel() {
   const EventEmitter = require("node:events");
   const setRef = $newRustFunction("node_cluster_binding.rs", "setRef", 1);
+  const setRefCounted = $newRustFunction("node_cluster_binding.rs", "setRefCounted", 1);
+  // Mirrors node's internal Control. The reference count itself lives in native
+  // code because the "message"/"disconnect" listeners on `process` count towards
+  // it too (node does the same from _forkChild); refCounted()/unrefCounted()
+  // adjust that shared count, while ref()/unref() override it for good.
   return new (class Control extends EventEmitter {
     constructor() {
       super();
+    }
+
+    refCounted() {
+      setRefCounted(true);
+    }
+
+    unrefCounted() {
+      if (setRefCounted(false)) {
+        this.emit("unref");
+      }
     }
 
     ref() {

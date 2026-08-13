@@ -14,6 +14,8 @@ async function run({ closeActiveConnections = false, sendAnyRequests = true, web
     globalThis.pluginLoaded = undefined;
 
     const server = Bun.serve({
+      // The HTML route is only served by a DevServer (whose deinit this counts) in development mode.
+      development: true,
       routes: {
         "/": html,
       },
@@ -131,16 +133,16 @@ async function drainServerWrappers(target: number) {
 }
 
 // `objectTypeCounts` includes the (lazily created) prototype object once the
-// first server has been constructed. Create-and-stop one trivial server here
-// so the prototype is materialized but the instance is freed; the afterAll
-// check then asserts every dev-server case returns to this baseline (i.e. zero
-// live wrapper instances and the native boxes were actually freed). Captured
-// in beforeAll so the baseline exists even when a name filter skips the
-// baseline test.
+// first server has been constructed. Create-and-stop one trivial server here,
+// in the same (development) mode as the cases so the same prototype is
+// materialized but the instance is freed; the afterAll check then asserts
+// every dev-server case returns to this baseline (i.e. zero live wrapper
+// instances and the native boxes were actually freed). Captured in beforeAll
+// so the baseline exists even when a name filter skips the baseline test.
 let serverWrapperBaseline = 0;
 beforeAll(async () => {
   await (async () => {
-    const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    const server = Bun.serve({ port: 0, development: true, fetch: () => new Response("ok") });
     server.stop(true);
   })();
   await drainServerWrappers(1);

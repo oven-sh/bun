@@ -1309,6 +1309,7 @@ impl Tag {
     pub const fstatat: Tag = Tag(17);
     pub const fsync: Tag = Tag(18);
     pub(crate) const ftruncate: Tag = Tag(19);
+    #[cfg(not(windows))]
     pub(crate) const futimens: Tag = Tag(20);
     pub const getdents64: Tag = Tag(21);
     pub const getdirentries64: Tag = Tag(22);

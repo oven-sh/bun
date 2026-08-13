@@ -1717,6 +1717,69 @@ describe("bundler", () => {
       stdout: '[{"Y":{"0":"A","1":"B","A":0,"B":1,"Z":1}},0,1]',
     },
   });
+  // experimentalDecorators lowering evaluates each decorated computed key into a temporary.
+  // A decorated field reads its temporary from the constructor, so the temporaries of every
+  // class in the chunk (other modules, sibling blocks in the same module) have to stay distinct.
+  itBundled("edgecase/TypeScriptDecoratorComputedKeyTemporaries", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { A } from "./a";
+        import { B } from "./b";
+        import { dec, key, decorated } from "./shared";
+        let C, D;
+        {
+          class Block { @dec [key("cField")] = 1 }
+          C = Block;
+        }
+        {
+          class Block { @dec [key("dField")] = 1 }
+          D = Block;
+        }
+        console.log(JSON.stringify({
+          decorated,
+          a: Object.keys(new A()),
+          aPrototype: Object.getOwnPropertyNames(A.prototype),
+          b: Object.keys(new B()),
+          bPrototype: Object.getOwnPropertyNames(B.prototype),
+          c: Object.keys(new C()),
+          d: Object.keys(new D()),
+        }));
+      `,
+      "/a.ts": /* ts */ `
+        import { dec, key } from "./shared";
+        export class A {
+          @dec [key("aField")] = 1;
+          @dec [key("aMethod")]() {}
+        }
+      `,
+      "/b.ts": /* ts */ `
+        import { dec, key } from "./shared";
+        export class B {
+          @dec [key("bField")] = 1;
+          @dec [key("bMethod")]() {}
+        }
+      `,
+      "/shared.ts": /* ts */ `
+        let evaluations = 0;
+        export const decorated: string[] = [];
+        // Returns a different key every time it is evaluated.
+        export const key = (name: string) => name + ++evaluations;
+        export const dec = (_target: unknown, propertyKey: string) => { decorated.push(propertyKey); };
+      `,
+      "/tsconfig.json": /* json */ `{ "compilerOptions": { "experimentalDecorators": true } }`,
+    },
+    run: {
+      stdout: JSON.stringify({
+        decorated: ["aField1", "aMethod2", "bField3", "bMethod4", "cField5", "dField6"],
+        a: ["aField1"],
+        aPrototype: ["constructor", "aMethod2"],
+        b: ["bField3"],
+        bPrototype: ["constructor", "bMethod4"],
+        c: ["cField5"],
+        d: ["dField6"],
+      }),
+    },
+  });
   itBundled("edgecase/TypeScriptNamespaceSiblingVariable", {
     files: {
       "/entry.ts": `

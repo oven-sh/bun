@@ -6501,6 +6501,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut instance_members = BumpVec::<Stmt>::new_in(self.arena);
                 let mut static_members = BumpVec::<Stmt>::new_in(self.arena);
                 let mut class_properties = BumpVec::<G::Property>::new_in(self.arena);
+                // Emitted as one `var` statement before the class.
+                let mut computed_key_decls = BumpVec::<Decl>::new_in(self.arena);
 
                 for prop in s_class.class.properties.slice_mut().iter_mut() {
                     // merge parameter decorators with method decorators
@@ -6550,8 +6552,45 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // TODO: prop.kind == .declare and prop.value == null
 
                     if prop.ts_decorators.len_u32() > 0 {
-                        let descriptor_key = prop.key.expect("infallible: prop has key");
-                        let loc = descriptor_key.loc;
+                        let key = prop.key.expect("infallible: prop has key");
+                        let loc = key.loc;
+
+                        // The key is used both to define the member and as the
+                        // `__legacyDecorateClassTS` argument. Printing a computed key in both
+                        // places evaluates it twice, so an impure key would decorate a different
+                        // property than the one defined. Evaluate it once into a temporary
+                        // instead. Methods do that in place, like tsc: `[_computedKey = expr]() {}`.
+                        // Fields are moved out of the body below, and the constructor that
+                        // receives them can already run while the class is being defined (a
+                        // static initializer constructing the class), so their key is evaluated
+                        // before the class: `var _computedKey = expr;`.
+                        let key_is_evaluated = prop.flags.contains(Flags::Property::IsComputed)
+                            && !key.unwrap_inlined().is_primitive_literal();
+                        let descriptor_key: Expr = if key_is_evaluated {
+                            let key_ref = self.declare_var_temp_ref(b"_computedKey");
+                            let binding = self.b(B::Identifier { r#ref: key_ref }, loc);
+                            self.record_usage(key_ref);
+                            let key_temp = self.new_expr(E::Identifier::init(key_ref), loc);
+                            if prop.flags.contains(Flags::Property::IsMethod) {
+                                computed_key_decls.push(Decl {
+                                    binding,
+                                    value: None,
+                                });
+                                prop.key = Some(Expr::assign(key_temp, key));
+                            } else {
+                                computed_key_decls.push(Decl {
+                                    binding,
+                                    value: Some(key),
+                                });
+                                // Becomes the `this[_computedKey]` of the relocated initializer.
+                                prop.key = Some(key_temp);
+                            }
+
+                            self.record_usage(key_ref);
+                            self.new_expr(E::Identifier::init(key_ref), loc)
+                        } else {
+                            key
+                        };
 
                         // TODO: when we have the `accessor` modifier, add `and !prop.flags.contains(.has_accessor_modifier)` to
                         // the if statement.
@@ -6609,11 +6648,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ]);
                         let args = ExprNodeList::from_arena_slice(args_slice);
 
-                        let decorator = self.call_runtime(
-                            prop.key.expect("infallible: prop has key").loc,
-                            b"__legacyDecorateClassTS",
-                            args,
-                        );
+                        let decorator = self.call_runtime(loc, b"__legacyDecorateClassTS", args);
                         let decorator_stmt = self.s(
                             S::SExpr {
                                 value: decorator,
@@ -6806,12 +6841,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // https://github.com/evanw/esbuild/blob/e9413cc4f7ab87263ea244a999c6fa1f1e34dc65/internal/js_parser/js_parser_lower.go#L2742
                 }
 
-                let mut stmts_count: usize =
-                    1 + static_members.len() + instance_decorators.len() + static_decorators.len();
+                let mut stmts_count: usize = 1
+                    + usize::from(!computed_key_decls.is_empty())
+                    + static_members.len()
+                    + instance_decorators.len()
+                    + static_decorators.len();
                 if s_class.class.ts_decorators.len_u32() > 0 {
                     stmts_count += 1;
                 }
                 let mut stmts = BumpVec::<Stmt>::with_capacity_in(stmts_count, self.arena);
+                if !computed_key_decls.is_empty() {
+                    stmts.push(self.s(
+                        S::Local {
+                            decls: G::DeclList::from_bump_vec(computed_key_decls),
+                            ..Default::default()
+                        },
+                        stmt.loc,
+                    ));
+                }
                 stmts.push(stmt);
                 stmts.extend_from_slice(&static_members);
                 stmts.extend_from_slice(&instance_decorators);
@@ -7457,6 +7504,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         VecExt::append(&mut scope.generated, r#ref);
 
+        r#ref
+    }
+
+    /// A temporary for a `var` statement emitted next to the statement being visited. The
+    /// symbol is registered in the scope the `var` hoists to, so the renamer keeps it distinct
+    /// from the temporaries of sibling blocks sharing that binding, and as a declared symbol
+    /// of the current part, which is what the bundler's renamer reads for top-level names
+    /// (see `declare_generated_symbol`). Without the renamer, `generate_temp_ref_with_scope`
+    /// gives it a file-unique name instead.
+    fn declare_var_temp_ref(&mut self, default_name: &'a [u8]) -> Ref {
+        let mut scope = self.current_scope_ref();
+        while !scope.kind_stops_hoisting() {
+            scope = scope
+                .parent
+                .expect("infallible: the module scope stops hoisting");
+        }
+        let r#ref = self.generate_temp_ref_with_scope(Some(default_name), scope);
+        self.declared_symbols
+            .append(DeclaredSymbol {
+                ref_: r#ref,
+                is_top_level: scope == self.module_scope,
+            })
+            .expect("oom");
         r#ref
     }
 

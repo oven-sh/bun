@@ -1513,4 +1513,14 @@ describe("TLSSocket.resetAndDestroy()", () => {
       server.close();
     }
   });
+
+  it("throws for a new TLSSocket(stream) that has not started its handshake", () => {
+    // Until connect() attaches a native handle, the wrapped stream itself sits
+    // in _handle. Before this was rejected, the reset went through and failed
+    // inside _destroy ("this._handle.terminate is not a function") instead.
+    // Like the _requestCert test above, the never-started wrap is not torn down.
+    const wrap = new TLSSocket(new stream.PassThrough());
+    wrap.on("error", () => {});
+    expect(tryReset(wrap)).toEqual(rejected);
+  });
 });

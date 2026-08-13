@@ -27,11 +27,24 @@ const packageJson = JSON.stringify({ name: "foo", version: "0.0.1", dependencies
 const bunfigPath = () => join(package_dir, "bunfig.toml");
 const cacheDir = () => join(package_dir, ".bun-cache");
 
-async function writeProject() {
-  // The default dummy.registry bunfig disables the global cache; override it
-  // so `bun pm fetch` uses BUN_INSTALL_CACHE_DIR.
-  await writeFile(bunfigPath(), `[install]\nregistry = "${root_url}/"\nsaveTextLockfile = false\n`);
+const binaryLockfile = "saveTextLockfile = false\n";
+const textLockfile = "saveTextLockfile = true\n";
+const defaultLockfileFormat = "";
+
+// The default dummy.registry bunfig disables the global cache; override it
+// so `bun pm fetch` uses BUN_INSTALL_CACHE_DIR.
+async function writeBunfig(lockfileSetting: string) {
+  await writeFile(bunfigPath(), `[install]\nregistry = "${root_url}/"\n${lockfileSetting}`);
+}
+
+async function writeProject(lockfileSetting = binaryLockfile) {
+  await writeBunfig(lockfileSetting);
   await writeFile(join(package_dir, "package.json"), packageJson);
+}
+
+/** Everything in the project directory except the cache the test points BUN_INSTALL_CACHE_DIR at. */
+async function projectFiles() {
+  return (await readdir(package_dir)).filter(name => name !== ".bun-cache").sort();
 }
 
 async function runBun(args: string[], extraEnv: Record<string, string> = {}) {
@@ -120,6 +133,67 @@ it("should fetch packages missing from cache when lockfile exists", async () => 
   expect(urls).toEqual([`${root_url}/bar-0.0.2.tgz`]);
   expect(await cachedPackages(cacheDir())).toBe(1);
   expect(await exists(join(package_dir, "node_modules"))).toBe(false);
+}, 30_000);
+
+it("should not write bun.lock when the lockfile comes from package-lock.json", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeProject(defaultLockfileFormat);
+  await writeFile(
+    join(package_dir, "package-lock.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": { name: "foo", version: "0.0.1", dependencies: { bar: "^0.0.2" } },
+        "node_modules/bar": { version: "0.0.2", resolved: `${root_url}/bar-0.0.2.tgz` },
+      },
+    }),
+  );
+  const before = await projectFiles();
+
+  const { stdout, stderr, exitCode } = await fetchIntoCache(cacheDir());
+  expect(stdout).toMatchInlineSnapshot(`
+    "bun pm fetch <version> (<revision>)
+
+    Fetched 1 package into cache
+    Cache: <cache>"
+  `);
+  expect(stderr).not.toContain("Saved lockfile");
+  expect(exitCode).toBe(0);
+
+  // Resolved from package-lock.json, so only the tarball was requested.
+  expect(urls).toEqual([`${root_url}/bar-0.0.2.tgz`]);
+  expect(await cachedPackages(cacheDir())).toBe(1);
+  expect(await projectFiles()).toEqual(before);
+}, 30_000);
+
+it("should not migrate bun.lockb to bun.lock even when saveTextLockfile is set", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeProject(binaryLockfile);
+  {
+    const { stderr, exitCode } = await runBun(["install"], { BUN_INSTALL_CACHE_DIR: cacheDir() });
+    expect(stderr).toContain("Saved lockfile");
+    expect(exitCode).toBe(0);
+  }
+  await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+  await writeBunfig(textLockfile);
+  const before = await projectFiles();
+  expect(before).toContain("bun.lockb");
+
+  const { stdout, stderr, exitCode } = await fetchIntoCache(cacheDir());
+  expect(stdout).toMatchInlineSnapshot(`
+    "bun pm fetch <version> (<revision>)
+
+    Done! 1 package already in cache
+    Cache: <cache>"
+  `);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  expect(await projectFiles()).toEqual(before);
 }, 30_000);
 
 it("should report when all packages are already cached", async () => {

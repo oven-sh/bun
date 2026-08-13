@@ -36,6 +36,8 @@ impl PmFetchCommand {
                 | Do::SAVE_YARN_LOCK
                 | Do::SUMMARY,
         );
+        // Also stops the lockfile format migration, which `Do::SAVE_LOCKFILE` alone does not.
+        pm.options.dry_run = true;
         // SAFETY: `ROOT_PACKAGE_JSON_PATH` is written exactly once inside `PackageManager::init`
         // (already called by `bun pm` dispatch) on this thread; only read thereafter.
         let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };

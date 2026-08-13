@@ -217,6 +217,12 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
 ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags);
 #if !defined(_WIN32)
 ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags);
+/* bsd_recv() for an IPC socket (the us_socket_ipc_write_fd peer). When the bytes
+ * returned came with SCM_RIGHTS descriptors, the first one is stored in
+ * *received_fd, made close-on-exec, and every other one is closed: the protocol
+ * attaches at most one descriptor per message. *received_fd is LIBUS_SOCKET_ERROR
+ * when no descriptor was received. */
+ssize_t bsd_recv_ipc(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags, LIBUS_SOCKET_DESCRIPTOR *received_fd);
 #endif
 ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length);
 #if !defined(_WIN32)

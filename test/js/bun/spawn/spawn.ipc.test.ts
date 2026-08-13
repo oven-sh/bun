@@ -1,6 +1,7 @@
 import { spawn } from "bun";
+import { dlopen } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, libcPathForDlopen, tempDir } from "harness";
 import path from "path";
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -260,3 +261,132 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
   expect(JSON.parse(stdout.trim())).toEqual([1, 2, 0, 0, 0]);
   expect(exitCode).toBe(0);
 });
+
+// The peer hand-rolls the sendmsg(2) so it can attach three descriptors to one
+// NODE_HANDLE message, which neither Bun nor libuv ever do. The receiver (this
+// test process) has to use the first one and close the others. The peer keeps
+// the far ends of the two extras, so EOF on those proves we closed our copies;
+// that part can only fail on macOS, where descriptors that do not fit the
+// receiver's control buffer are installed anyway and leak (Linux drops them in
+// the kernel). The close-on-exec check covers both platforms.
+const scmRightsPeerSource = `
+const { dlopen, FFIType, ptr } = require("bun:ffi");
+const isDarwin = process.platform === "darwin";
+const libc = dlopen(process.env.LIBC_PATH, {
+  socket: { args: [FFIType.int, FFIType.int, FFIType.int], returns: FFIType.int },
+  socketpair: { args: [FFIType.int, FFIType.int, FFIType.int, FFIType.ptr], returns: FFIType.int },
+  sendmsg: { args: [FFIType.int, FFIType.ptr, FFIType.int], returns: FFIType.i64_fast },
+  recv: { args: [FFIType.int, FFIType.ptr, FFIType.u64, FFIType.int], returns: FFIType.i64_fast },
+  close: { args: [FFIType.int], returns: FFIType.int },
+});
+const AF_UNIX = 1, AF_INET = 2, SOCK_STREAM = 1, SOCK_DGRAM = 2;
+const SOL_SOCKET = isDarwin ? 0xffff : 1;
+const SCM_RIGHTS = 1;
+const MSG_DONTWAIT = isDarwin ? 0x80 : 0x40;
+
+function socketpair() {
+  const fds = new Int32Array(2);
+  if (libc.symbols.socketpair(AF_UNIX, SOCK_STREAM, 0, fds) !== 0) throw new Error("socketpair() failed");
+  return fds;
+}
+
+// fds[0] is the handle the message describes; the receiver must close the rest.
+const udp = libc.symbols.socket(AF_INET, SOCK_DGRAM, 0);
+if (udp < 0) throw new Error("socket() failed");
+const [extraA, keptA] = socketpair();
+const [extraB, keptB] = socketpair();
+const fds = [udp, extraA, extraB];
+
+const payload = Buffer.from(JSON.stringify({ cmd: "NODE_HANDLE", type: "dgram.Native", message: { hello: "handle" } }) + "\\n");
+
+// struct cmsghdr: Linux { size_t len; int level; int type; } (data 8-aligned),
+// Darwin { socklen_t len; int level; int type; } (data 4-aligned). Both are
+// little-endian, so 32-bit writes into a zeroed buffer fill the wider fields too.
+const cmsgHeader = isDarwin ? 12 : 16;
+const cmsgAlign = isDarwin ? 4 : 8;
+const cmsgLen = cmsgHeader + 4 * fds.length;
+const cmsgSpace = cmsgHeader + Math.ceil((4 * fds.length) / cmsgAlign) * cmsgAlign;
+const control = new Uint8Array(cmsgSpace);
+const controlView = new DataView(control.buffer);
+controlView.setUint32(0, cmsgLen, true);
+controlView.setInt32(isDarwin ? 4 : 8, SOL_SOCKET, true);
+controlView.setInt32(isDarwin ? 8 : 12, SCM_RIGHTS, true);
+fds.forEach((fd, i) => controlView.setInt32(cmsgHeader + 4 * i, fd, true));
+
+// struct iovec { void *base; size_t len; } is the same on both.
+const iov = new Uint8Array(16);
+const iovView = new DataView(iov.buffer);
+iovView.setBigUint64(0, BigInt(ptr(payload)), true);
+iovView.setUint32(8, payload.byteLength, true);
+
+// struct msghdr: name @0, namelen @8, iov @16, iovlen @24 (size_t on Linux, int
+// on Darwin), control @32, controllen @40 (size_t on Linux, socklen_t on Darwin
+// followed by flags @44), flags @48 on Linux. Zeroed buffer, so the narrower
+// Darwin fields and the padding come out right from the same 32-bit writes.
+const msg = new Uint8Array(56);
+const msgView = new DataView(msg.buffer);
+msgView.setBigUint64(16, BigInt(ptr(iov)), true);
+msgView.setUint32(24, 1, true);
+msgView.setBigUint64(32, BigInt(ptr(control)), true);
+msgView.setUint32(40, control.byteLength, true);
+
+// Bun put the IPC channel on fd 3 (no other extra stdio).
+const sent = libc.symbols.sendmsg(3, msg, 0);
+if (sent !== payload.byteLength) throw new Error("sendmsg() returned " + sent);
+// Drop our copies: from here on only the receiver keeps extraA/extraB open, so
+// EOF on keptA/keptB means the receiver closed them.
+for (const fd of fds) libc.symbols.close(fd);
+
+// Nothing is ever written on these pairs, so recv() is 0 (EOF) once every copy
+// of the far end is closed and -1 (EAGAIN) while the receiver still holds one.
+process.on("message", () => {
+  const probe = new Uint8Array(1);
+  const state = fd => (libc.symbols.recv(fd, probe, 1, MSG_DONTWAIT) === 0 ? "closed" : "open");
+  process.send({ extras: [state(keptA), state(keptB)] });
+});
+`;
+
+it.skipIf(isWindows)(
+  "a NODE_HANDLE message carrying several descriptors delivers the first and closes the rest",
+  async () => {
+    using dir = tempDir("ipc-scm-rights", { "peer.js": scmRightsPeerSource });
+    const { promise, resolve, reject } = Promise.withResolvers<{ message: unknown; handle: any; peer: unknown }>();
+    let first: { message: unknown; handle: any } | undefined;
+    await using child = spawn({
+      cmd: [bunExe(), "peer.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, LIBC_PATH: libcPathForDlopen() },
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: "json",
+      ipc(message, subprocess, handle) {
+        if (!first) {
+          first = { message, handle };
+          // By the time the handle reaches us the receive path has already dealt
+          // with the other descriptors, so the peer can check its ends now.
+          subprocess.send("probe");
+        } else {
+          resolve({ ...first, peer: message });
+        }
+      },
+      onExit(_subprocess, exitCode, signalCode) {
+        reject(new Error(`peer exited (${exitCode}, ${signalCode}) before reporting`));
+      },
+    });
+    const { message, handle, peer } = await promise;
+
+    // `handle` is the dgram wrap Bun built around the first descriptor, so
+    // handle.fd is that descriptor as received into this process.
+    const F_GETFD = 1;
+    const FD_CLOEXEC = 1;
+    const libc = dlopen(libcPathForDlopen(), { fcntl: { args: ["int", "int"], returns: "int" } });
+    const fdFlags = libc.symbols.fcntl(handle.fd, F_GETFD);
+    libc.close();
+    handle.close();
+
+    expect({ message, peer, cloexec: fdFlags & FD_CLOEXEC }).toEqual({
+      message: { hello: "handle" },
+      peer: { extras: ["closed", "closed"] },
+      cloexec: FD_CLOEXEC,
+    });
+  },
+);

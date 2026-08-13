@@ -192,23 +192,48 @@ impl FSWatchTaskPosix {
         self.count += 1;
     }
 
-    pub(crate) fn run(&mut self) {
-        // this runs on JS Context Thread
-
+    /// JS thread: deliver each batched event to the listener. A listener that
+    /// throws ends this task — the events after it are re-queued as their own
+    /// task so each is still delivered once the exception has been reported.
+    pub(crate) fn run(&mut self) -> JsResult<()> {
+        let ctx: *const FSWatcher = self.ctx();
+        // SAFETY: BACKREF — the FSWatcher outlives its tasks.
+        let _unref = scopeguard::guard((), |()| unsafe { (*ctx).unref_task() });
         for i in 0..self.count as usize {
             // SAFETY: entries [0..count) were written by `append`.
             let entry = unsafe { self.entries[i].assume_init_ref() };
-            match &entry.event {
+            let emitted = match &entry.event {
                 Event::Rename(file_path) => self.ctx().emit::<{ EventType::Rename }>(file_path),
                 Event::Change(file_path) => self.ctx().emit::<{ EventType::Change }>(file_path),
-                Event::Error { err, close } => self.ctx().emit_error(err, *close),
+                Event::Error { err, close } => Ok(self.ctx().emit_error(err, *close)),
                 Event::NoFilename(event_type) => self.ctx().emit_null_filename(*event_type),
-                Event::Abort => self.ctx().emit_if_aborted(),
+                Event::Abort => Ok(self.ctx().emit_if_aborted()),
                 Event::Close => self.ctx().emit::<{ EventType::Close }>(b""),
+            };
+            if let Err(err) = emitted {
+                if i + 1 < self.count as usize {
+                    let mut rest = FSWatchTaskPosix {
+                        ctx: self.ctx,
+                        count: 0,
+                        entries: [const { MaybeUninit::uninit() }; 8],
+                        concurrent_task: ConcurrentTask::default(),
+                    };
+                    for j in i + 1..self.count as usize {
+                        // SAFETY: as above; each entry moves out exactly once and
+                        // `count` is trimmed below so `deinit` does not drop it again.
+                        rest.entries[usize::from(rest.count)]
+                            .write(unsafe { self.entries[j].assume_init_read() });
+                        rest.count += 1;
+                    }
+                    self.count = (i + 1) as u8;
+                    rest.enqueue();
+                    // A closed watcher takes no more tasks; free what it declined.
+                    rest.clean_entries();
+                }
+                return Err(err);
             }
         }
-
-        self.ctx().unref_task();
+        Ok(())
     }
 
     pub(crate) fn append_abort(&mut self) {
@@ -456,26 +481,28 @@ impl FSWatchTaskWindows {
     }
 
     /// this runs on JS Context Thread
-    pub(crate) fn run(&mut self) {
+    pub(crate) fn run(&mut self) -> JsResult<()> {
         // BACKREF — `self.ctx` is the live owning FSWatcher (set at
         // construction), outliving every task it enqueues. R-2: all FSWatcher
         // methods below take `&self`, so a single `&FSWatcher` held across the
         // match is sound (aliased shared borrows are fine; the old `*mut Self`
         // re-derive dance is no longer needed). `ParentRef` Derefs to `&T`.
         let ctx: &FSWatcher = &self.ctx.expect("FSWatchTask.ctx unset");
+        let _unref = scopeguard::guard((), |()| ctx.unref_task());
         match &mut self.event {
             Event::Rename(path) => Self::run_path::<{ EventType::Rename }>(ctx, path),
             Event::Change(path) => Self::run_path::<{ EventType::Change }>(ctx, path),
-            Event::Error { err, close } => ctx.emit_error(err, *close),
+            Event::Error { err, close } => Ok(ctx.emit_error(err, *close)),
             Event::NoFilename(event_type) => ctx.emit_null_filename(*event_type),
-            Event::Abort => ctx.emit_if_aborted(),
+            Event::Abort => Ok(ctx.emit_if_aborted()),
             Event::Close => ctx.emit::<{ EventType::Close }>(b""),
         }
-
-        ctx.unref_task();
     }
 
-    fn run_path<const EVENT_TYPE: EventType>(ctx: &FSWatcher, path: &mut StringOrBytesToDecode) {
+    fn run_path<const EVENT_TYPE: EventType>(
+        ctx: &FSWatcher,
+        path: &mut StringOrBytesToDecode,
+    ) -> JsResult<()> {
         use bun_jsc::StringJsc;
         if ctx.encoding == Encoding::Utf8 {
             let StringOrBytesToDecode::String(s) = path else {
@@ -484,20 +511,14 @@ impl FSWatchTaskWindows {
                 // variant, and `encoding` is immutable after init.
                 unreachable!()
             };
-            // Returning from this helper on `transferToJS` failure lets
-            // `run()` fall through to `unref_task()`, so
-            // `pending_activity_count` is never left permanently elevated.
-            let Ok(js) = s.transfer_to_js(&ctx.global_this) else {
-                return;
-            };
-            ctx.emit_with_filename::<EVENT_TYPE>(js);
+            let js = s.transfer_to_js(&ctx.global_this)?;
+            ctx.emit_with_filename::<EVENT_TYPE>(js)
         } else {
             let StringOrBytesToDecode::BytesToFree(bytes_ref) = path else {
                 unreachable!()
             };
             let bytes = core::mem::take(bytes_ref);
-            ctx.emit::<EVENT_TYPE>(&bytes);
-            drop(bytes);
+            ctx.emit::<EVENT_TYPE>(&bytes)
         }
     }
 
@@ -831,9 +852,14 @@ impl FSWatcher {
                         err
                     },
                 ];
-                if listener.call_with_global_this(&global_this, &args).is_err() {
-                    global_this.clear_exception();
-                }
+                // Reported here rather than returned: the watcher still closes
+                // (and emits 'close') below whatever the listener did.
+                global_this.bun_vm().event_loop_mut().run_callback(
+                    listener,
+                    &global_this,
+                    global_this.to_js_value(),
+                    &args,
+                );
             }
         }
 
@@ -857,9 +883,13 @@ impl FSWatcher {
                 let global_object = self.global_this;
                 let err_js = err.to_js(&global_object);
                 let args = [EventType::Error.to_js(&global_object), err_js];
-                if let Err(e) = listener.call_with_global_this(&global_object, &args) {
-                    global_object.report_active_exception_as_unhandled(e);
-                }
+                // As `emit_abort`: reported here so the close below still runs.
+                global_object.bun_vm().event_loop_mut().run_callback(
+                    listener,
+                    &global_object,
+                    global_object.to_js_value(),
+                    &args,
+                );
             }
         }
 
@@ -868,56 +898,53 @@ impl FSWatcher {
         }
     }
 
-    pub(crate) fn emit_with_filename<const EVENT_TYPE: EventType>(&self, file_name: JSValue) {
+    pub(crate) fn emit_with_filename<const EVENT_TYPE: EventType>(
+        &self,
+        file_name: JSValue,
+    ) -> JsResult<()> {
         let Some(js_this) = self.js_this.try_get() else {
-            return;
+            return Ok(());
         };
         let Some(listener) = js::listener_get_cached(js_this) else {
-            return;
+            return Ok(());
         };
-        emit_js::<EVENT_TYPE>(listener, &self.global_this, file_name);
+        emit_js::<EVENT_TYPE>(listener, &self.global_this, file_name)
     }
 
     /// `Event::NoFilename`: deliver `(event, null)` regardless of encoding.
-    fn emit_null_filename(&self, event_type: WatchEventKind) {
+    fn emit_null_filename(&self, event_type: WatchEventKind) -> JsResult<()> {
         match event_type {
             WatchEventKind::Rename => {
-                self.emit_with_filename::<{ EventType::Rename }>(JSValue::NULL);
+                self.emit_with_filename::<{ EventType::Rename }>(JSValue::NULL)
             }
             WatchEventKind::Change => {
-                self.emit_with_filename::<{ EventType::Change }>(JSValue::NULL);
+                self.emit_with_filename::<{ EventType::Change }>(JSValue::NULL)
             }
         }
     }
 
-    pub(crate) fn emit<const EVENT_TYPE: EventType>(&self, file_name: &[u8]) {
+    pub(crate) fn emit<const EVENT_TYPE: EventType>(&self, file_name: &[u8]) -> JsResult<()> {
         debug_assert!(EVENT_TYPE != EventType::Error);
         let Some(js_this) = self.js_this.try_get() else {
-            return;
+            return Ok(());
         };
         let Some(listener) = js::listener_get_cached(js_this) else {
-            return;
+            return Ok(());
         };
         let global_object = self.global_this;
         let mut filename: JSValue = JSValue::UNDEFINED;
         if !file_name.is_empty() {
             if self.encoding == Encoding::Buffer {
-                filename = match jsc::ArrayBuffer::create_buffer(&global_object, file_name) {
-                    Ok(v) => v,
-                    Err(_) => return, // TODO: properly propagate exception upwards
-                };
+                filename = jsc::ArrayBuffer::create_buffer(&global_object, file_name)?;
             } else if self.encoding == Encoding::Utf8 {
                 filename = ZigString::from_utf8(file_name).to_js(&global_object);
             } else {
                 // convert to desired encoding
-                filename = match Encoder::to_string(file_name, &global_object, self.encoding) {
-                    Ok(v) => v,
-                    Err(_) => return,
-                };
+                filename = Encoder::to_string(file_name, &global_object, self.encoding)?;
             }
         }
 
-        emit_js::<EVENT_TYPE>(listener, &global_object, filename);
+        emit_js::<EVENT_TYPE>(listener, &global_object, filename)
     }
 }
 
@@ -925,12 +952,10 @@ fn emit_js<const EVENT_TYPE: EventType>(
     listener: JSValue,
     global_object: &JSGlobalObject,
     filename: JSValue,
-) {
+) -> JsResult<()> {
     let args = [EVENT_TYPE.to_js(global_object), filename];
-
-    if let Err(err) = listener.call_with_global_this(global_object, &args) {
-        global_object.report_active_exception_as_unhandled(err);
-    }
+    listener.call_with_global_this(global_object, &args)?;
+    Ok(())
 }
 
 impl FSWatcher {
@@ -1014,10 +1039,16 @@ impl FSWatcher {
                     // balanced and the count stays > 0 while the close event is emitted.
                     self.pending_activity_count.fetch_add(1, Ordering::Relaxed);
                     bun_output::scoped_log!(fs_watch, "emit('close')");
-                    emit_js::<{ EventType::Close }>(
+                    // Reported here rather than returned: `close()` runs from
+                    // host functions and error paths that must finish releasing
+                    // the watcher, and a throwing 'close' listener is uncaught in
+                    // Node too (it emits on the next tick).
+                    let global = self.global_this;
+                    global.bun_vm().event_loop_mut().run_callback(
                         listener,
-                        &self.global_this,
-                        JSValue::UNDEFINED,
+                        &global,
+                        global.to_js_value(),
+                        &[EventType::Close.to_js(&global), JSValue::UNDEFINED],
                     );
                     self.unref_task();
                 }

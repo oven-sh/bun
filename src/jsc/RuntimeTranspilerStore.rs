@@ -257,44 +257,45 @@ impl RuntimeTranspilerStore {
         }
     }
 
+    /// Fulfil every completed job's module promise. A fulfilment that throws
+    /// ends this run: the rest of the batch goes back on the queue (each still
+    /// has its own posted task) and the exception is the tick loop's to fold.
     pub fn run_from_js_thread(
         &mut self,
         event_loop: NonNull<EventLoop>,
         global: &JSGlobalObject,
         vm: NonNull<VirtualMachine>,
-    ) {
+    ) -> JsResult<()> {
         let batch = self.queue.pop_batch();
         // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
         let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
         let mut iter = batch.iterator();
-        let first = iter.next();
-        if first.is_null() {
-            return;
-        }
-        // we run just one job first to see if there are more
-        // SAFETY: `first` is a live job popped from the intrusive queue.
-        if let Err(err) = unsafe { (*first).run_from_js_thread() } {
-            global.report_uncaught_exception_from_error(err);
-        }
-        loop {
-            let job = iter.next();
-            if job.is_null() {
-                break;
+        let mut job = iter.next();
+        let mut first = true;
+        while !job.is_null() {
+            if !first {
+                // if there are more, we need to drain the microtasks from the previous run
+                // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
+                if let Err(stopped) =
+                    unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) }
+                {
+                    return Err(stopped.throw(global));
+                }
             }
-            // if there are more, we need to drain the microtasks from the previous run
-            // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
-            if unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) }
-                .is_err()
-            {
-                return;
-            }
+            first = false;
             // SAFETY: `job` is a live job popped from the intrusive queue.
-            if let Err(err) = unsafe { (*job).run_from_js_thread() } {
-                global.report_uncaught_exception_from_error(err);
+            let fulfilled = unsafe { (*job).run_from_js_thread() };
+            job = iter.next();
+            if let Err(err) = fulfilled {
+                while let Some(rest) = NonNull::new(job) {
+                    job = iter.next();
+                    self.queue.push(rest);
+                }
+                return Err(err);
             }
         }
-
         // immediately after this is called, the microtasks will be drained again.
+        Ok(())
     }
 
     pub fn transpile(

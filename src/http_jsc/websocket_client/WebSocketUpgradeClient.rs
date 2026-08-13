@@ -651,12 +651,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // `connect_group`; single-threaded (JS thread), no other `&mut`
             // to it is live.
             .is_some_and(|ext| unsafe { (*ext).take().is_some() });
-        // no need to be .failure we still wanna to send pending SSL buffer + close_notify
-        if SSL {
-            tcp.close(uws::CloseCode::Normal);
-        } else {
-            tcp.close(uws::CloseCode::Failure);
-        }
+        tcp.close(uws::CloseCode::Failure);
         if had_socket_ref {
             // SAFETY: short-lived `&mut` for the field detach.
             unsafe { (*this.as_ptr()).tcp.detach() };

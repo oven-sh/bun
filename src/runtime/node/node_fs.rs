@@ -437,8 +437,7 @@ fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> May
     sys::openat_windows(dirfd, path.as_slice(), flags, mode)
 }
 
-/// `sys::exists_at_type` dispatched on path element width: on Windows `OSPathSliceZ`
-/// is already `&WStr`, so forward to the wide overload instead of re-widening.
+/// `sys::exists_at_type` for an `OSPathSliceZ`, which is already wide on Windows.
 #[inline]
 fn exists_at_type_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<sys::ExistsAtType> {
     #[cfg(not(windows))]

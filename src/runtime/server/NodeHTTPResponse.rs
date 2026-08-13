@@ -2683,11 +2683,6 @@ impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
         // SAFETY: caller contract — `this` is live.
         debug_assert_eq!(unsafe { (*this).ref_count.get() }, 0);
     }
-    #[cfg(debug_assertions)]
-    #[inline]
-    unsafe fn rc_debug_data(_this: *mut Self) -> *mut dyn bun_ptr::ref_count::DebugDataOps {
-        bun_ptr::ref_count::noop_debug_data()
-    }
 }
 
 /// # Safety

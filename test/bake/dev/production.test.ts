@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
 
@@ -593,5 +593,72 @@ export default function IndexPage() {
 
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
+  });
+
+  // `bun build --app` sets up one transpiler per graph of the framework and
+  // used to exit without freeing them, so LeakSanitizer reported their
+  // options, define tables and resolver state after every build. An app
+  // without a pages directory finishes right after bundling, which is the
+  // earliest point the transpilers are done with; a leak report makes the
+  // process exit non-zero and shows up in stderr.
+  describe.concurrent.skipIf(!isASAN)("frees its transpilers before exiting", () => {
+    async function buildApp(cwd: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--app", "./app.ts"],
+        cwd,
+        env: {
+          ...bunEnv,
+          // Silences the "Bun Bake is highly experimental" banner.
+          BUN_DEV_SERVER_TEST_RUNNER: "1",
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dir, "../../leaksan.supp")}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    const cleanBuild = {
+      stdout: "done\n",
+      stderr: "Loading configuration\nBundling routes\n",
+      exitCode: 0,
+    };
+
+    // LSan symbolizes its report against the debug binary when it does find
+    // something, which takes well over the default timeout.
+    const timeout = 30_000;
+
+    test(
+      "react framework: server, client and ssr graphs",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-transpiler-leak-react", {
+          "app.ts": `export default { app: { framework: "react" } };`,
+        });
+
+        expect(await buildApp(dir)).toEqual(cleanBuild);
+      },
+      timeout,
+    );
+
+    test(
+      "framework without server components: server and client graphs only",
+      async () => {
+        using dir = tempDir("bake-production-transpiler-leak-two-graphs", {
+          "app.ts": `export default {
+            app: {
+              framework: {
+                fileSystemRouterTypes: [{ root: "pages", serverEntryPoint: "./server.ts", style: "nextjs-pages" }],
+              },
+            },
+          };`,
+          "server.ts": `export function prerender() {}`,
+        });
+
+        expect(await buildApp(String(dir))).toEqual(cleanBuild);
+      },
+      timeout,
+    );
   });
 });

@@ -5,6 +5,7 @@
 #![allow(unexpected_cfgs)] // `bun_codegen_embed` is set via RUSTFLAGS (scripts/build/rust.ts) for release/CI builds.
 
 use bun_alloc::ArenaVecExt as _;
+use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 
 use bun_alloc::Arena; // = bumpalo::Bump
@@ -1135,27 +1136,30 @@ impl Framework {
         )
     }
 
-    pub fn init_transpiler_with_options<'a>(
-        &mut self,
+    /// Builds the transpiler for one graph of a production build into `out`
+    /// and returns it. `framework_view` is the projection of `self` the
+    /// transpiler (and the workers cloned from it) read while bundling; it
+    /// must outlive `out`. On `Err` after the transpiler was constructed, the
+    /// partially configured transpiler stays in `out` and is released with it.
+    pub(crate) fn init_transpiler_with_options<'a, 'slot>(
+        &self,
         arena: &'a Arena,
         log: &mut bun_ast::Log,
         mode: Mode,
         renderer: Graph,
-        out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
+        out: &'slot mut TranspilerSlot<'a>,
+        framework_view: &'a bun_bundler::bake_types::Framework,
         bundler_options: &BuildConfigSubset,
         source_map: bun_bundler::options::SourceMapOption,
         minify_whitespace: Option<bool>,
         minify_syntax: Option<bool>,
         minify_identifiers: Option<bool>,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<&'slot mut bun_bundler::Transpiler<'a>> {
         // `ASTMemoryAllocator::enter` returns an RAII `Scope` whose `Drop`
         // runs `exit()` at end-of-fn.
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        // The caller (`DevServer::init`) hands us an uninitialized slot, so
-        // use `MaybeUninit::write` (no drop of prior bytes) then reborrow as
-        // `&mut Transpiler` for the field assignments below.
         let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
             arena,
             log,
@@ -1217,13 +1221,7 @@ impl Framework {
         out.options.minify_identifiers = minify_identifiers.unwrap_or(mode != Mode::Development);
         out.options.minify_whitespace = minify_whitespace.unwrap_or(mode != Mode::Development);
         out.options.css_chunking = true;
-        // The bundler crate (lower tier) carries a TYPE_ONLY projection
-        // (`bake_types::Framework`); construct it here and give it arena
-        // lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
-        // NOTE: interior `Box<[u8]>` in the projection are not dropped by
-        // bumpalo — bounded per-session, revisit when `bake_types::BuiltInModule`
-        // is reshaped to `&'a [u8]`.
-        out.options.framework = Some(&*arena.alloc(self.as_bundler_view()));
+        out.options.framework = Some(framework_view);
         out.options.inline_entrypoint_import_meta_main = true;
         if let Some(ignore) = bundler_options.ignore_dce_annotations {
             out.options.ignore_dce_annotations = ignore;
@@ -1290,7 +1288,46 @@ impl Framework {
         // Re-sync after define/naming mutations so the resolver sees the
         // final option set.
         out.sync_resolver_opts();
-        Ok(())
+        Ok(out)
+    }
+}
+
+/// Stack home of one production-build transpiler. A configured `Transpiler`
+/// points back into its own fields (`configure_linker`), so
+/// [`Framework::init_transpiler_with_options`] builds it in place here instead
+/// of returning it by value, and the slot must stay where it is afterwards.
+/// The transpiler built into the slot is dropped with it.
+pub(crate) struct TranspilerSlot<'a> {
+    transpiler: MaybeUninit<bun_bundler::Transpiler<'a>>,
+    initialized: bool,
+}
+
+impl<'a> TranspilerSlot<'a> {
+    pub(crate) fn uninit() -> Self {
+        Self {
+            transpiler: MaybeUninit::uninit(),
+            initialized: false,
+        }
+    }
+
+    fn write(
+        &mut self,
+        transpiler: bun_bundler::Transpiler<'a>,
+    ) -> &mut bun_bundler::Transpiler<'a> {
+        debug_assert!(!self.initialized, "TranspilerSlot is written once");
+        let transpiler = self.transpiler.write(transpiler);
+        self.initialized = true;
+        transpiler
+    }
+}
+
+impl Drop for TranspilerSlot<'_> {
+    fn drop(&mut self) {
+        if self.initialized {
+            // SAFETY: `initialized` is only set by `write`, after it stored a
+            // transpiler here, and the slot itself is dropped exactly once.
+            unsafe { self.transpiler.assume_init_drop() };
+        }
     }
 }
 

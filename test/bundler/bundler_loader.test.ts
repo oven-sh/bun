@@ -322,6 +322,33 @@ describe("bundler", async () => {
     run: { stdout: "[true,true,true]" },
   });
 
+  // The namespace object of a CSS file is built with the runtime's `__export`
+  // helper. No other module in this bundle uses the runtime, so the CSS file's
+  // JS side is the only thing pulling it into the output.
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`bun/loader-css-namespace-import-${target}`, {
+      target,
+      outdir: "/out",
+      files: {
+        "/entry.ts": /* js */ `
+          import * as plain from "./plain.css";
+          import * as styles from "./styles.module.css";
+          console.log(
+            JSON.stringify([
+              Object.keys(plain),
+              plain.default,
+              Object.keys(styles).sort(),
+              styles.foo === styles.default.foo && typeof styles.foo === "string",
+            ]),
+          );
+        `,
+        "/plain.css": `.plain { color: red; }`,
+        "/styles.module.css": `.foo { color: blue; }`,
+      },
+      run: { stdout: '[["default"],{},["default","foo"],true]' },
+    });
+  }
+
   itBundled("bun/wasm-is-copied-to-outdir", {
     target: "bun",
     outdir: "/out",

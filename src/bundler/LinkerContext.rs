@@ -926,7 +926,6 @@ impl<'a> LinkerContext<'a> {
                 parts,
                 import_records,
                 file_entry_bits,
-                css_reprs,
                 queue: std::collections::VecDeque::new(),
             };
 
@@ -2597,7 +2596,6 @@ pub(crate) struct CodeSplitCtx<'a, 'r> {
     pub(crate) parts: &'r [bun_ast::PartList<'a>],
     pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
     pub(crate) file_entry_bits: &'r mut [AutoBitSet],
-    pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol],
     pub(crate) queue: std::collections::VecDeque<(crate::IndexInt, u32)>,
 }
 
@@ -2650,11 +2648,10 @@ impl<'a> LinkerContext<'a> {
                 }
             }
 
-            // CSS files only follow their import records.
-            if ctx.css_reprs[source_index as usize].is_some() {
-                continue;
-            }
-
+            // CSS files are not skipped here: unlike esbuild, the JS side of a
+            // CSS file (namespace object, default export, require() wrapper)
+            // lives in this same source index, and its parts depend on runtime
+            // helpers such as `__export` that the chunk has to pull in.
             for part in ctx.parts[source_index as usize].as_slice() {
                 for dependency in part.dependencies.iter() {
                     let dep = dependency.source_index.get();

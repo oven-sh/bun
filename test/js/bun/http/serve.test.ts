@@ -4370,6 +4370,231 @@ describe("a client half-close after the request does not truncate a large respon
   });
 });
 
+// A malformed request pipelined behind a response whose tail uWS still holds in
+// its own buffer (the client has not read anything yet) gets its canned 4xx/5xx
+// written through that same buffer, and the connection is shut down only once
+// everything has flushed: the client sees the complete first response, then
+// exactly the error response, then FIN. An error response written straight to
+// the socket would overtake the buffered tail, which the close then discards.
+describe("a malformed pipelined request does not truncate the buffered response ahead of it", () => {
+  const CHUNK = Buffer.alloc(1024 * 1024, "a");
+  const MAX_CHUNKS = 64;
+  const REQUEST = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  const MALFORMED = {
+    "400 from a malformed request-line": ["GARBAGE\r\n\r\n", "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"],
+    "431 from an oversized header": [
+      `GET / HTTP/1.1\r\nHost: localhost\r\nX-Big: ${Buffer.alloc(32 * 1024, "b").toString()}\r\n\r\n`,
+      "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n",
+    ],
+    "505 from an unsupported HTTP version": [
+      "GET / HTTP/9.9\r\nHost: localhost\r\n\r\n",
+      "HTTP/1.1 505 HTTP Version Not Supported\r\nConnection: close\r\n\r\n",
+    ],
+  } as const;
+
+  // The handler streams CHUNKs synchronously until uWS reports backpressure
+  // (controller.write() returns a pending promise once the kernel stops taking
+  // bytes, so the rest of that chunk already sits in uWS's buffer), adds one
+  // more CHUNK to make that buffered tail about a megabyte, and ends the
+  // response, which queues the terminating chunk behind it. `queued` resolves
+  // with the body length once all of that has been handed to uWS, which is
+  // before the test sends anything else on the connection. Any other path is
+  // answered with a plain "ok"; `served` lists the paths dispatched so far.
+  function streamingServer(options: { tls?: typeof tls } = {}) {
+    const queued = Promise.withResolvers<number>();
+    const served: string[] = [];
+    const server = serve({
+      port: 0,
+      ...options,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        served.push(pathname);
+        if (pathname !== "/") return new Response("ok");
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            pull(controller) {
+              let written = 0;
+              let backpressure = false;
+              while (!backpressure && written < MAX_CHUNKS) {
+                backpressure = controller.write(CHUNK) instanceof Promise;
+                written++;
+              }
+              if (!backpressure) {
+                controller.end();
+                queued.reject(new Error(`no backpressure after ${written} MiB: the client is reading`));
+                return;
+              }
+              controller.write(CHUNK);
+              written++;
+              controller.end();
+              queued.resolve(written * CHUNK.length);
+            },
+          }),
+        );
+      },
+    });
+    return { server, queued: queued.promise, served };
+  }
+
+  function receiveUntilClose(socket: net.Socket | nodeTls.TLSSocket) {
+    const received: Buffer[] = [];
+    let ended = false;
+    const closed = Promise.withResolvers<{ raw: Buffer; ended: boolean }>();
+    socket.on("data", chunk => received.push(chunk));
+    socket.on("end", () => (ended = true));
+    socket.on("error", closed.reject);
+    socket.on("close", () => closed.resolve({ raw: Buffer.concat(received), ended }));
+    return closed.promise;
+  }
+
+  // Decodes the first (chunked) response out of everything the client received
+  // and reports what followed its terminating chunk.
+  function decode(raw: Buffer, ended: boolean) {
+    const headEnd = raw.indexOf("\r\n\r\n");
+    const statusLine = raw.subarray(0, Math.max(headEnd, 0)).toString("latin1").split("\r\n")[0];
+    const body: Buffer[] = [];
+    let terminated = false;
+    let offset = headEnd + 4;
+    while (headEnd >= 0) {
+      const sizeEnd = raw.indexOf("\r\n", offset);
+      if (sizeEnd < 0) break;
+      const size = parseInt(raw.subarray(offset, sizeEnd).toString("latin1"), 16);
+      if (!(size >= 0) || sizeEnd + 2 + size + 2 > raw.length) break;
+      offset = sizeEnd + 2;
+      if (size === 0) {
+        terminated = raw.subarray(offset, offset + 2).toString("latin1") === "\r\n";
+        offset += 2;
+        break;
+      }
+      body.push(raw.subarray(offset, offset + size));
+      offset += size + 2;
+    }
+    const bodyBytes = Buffer.concat(body);
+    const afterBody = raw.subarray(offset).toString("latin1");
+    return {
+      statusLine,
+      bodyLength: bodyBytes.length,
+      bodyIsChunkData: bodyBytes.equals(Buffer.alloc(bodyBytes.length, "a")),
+      terminated,
+      // Keep a failure's diff readable when a truncated body ends up here.
+      afterBody: afterBody.length > 256 ? `${afterBody.slice(0, 64)}... (${afterBody.length} bytes)` : afterBody,
+      ended,
+    };
+  }
+
+  function expected(bodyLength: number, errorResponse: string) {
+    return {
+      statusLine: "HTTP/1.1 200 OK",
+      bodyLength,
+      bodyIsChunkData: true,
+      terminated: true,
+      afterBody: errorResponse,
+      ended: true,
+    };
+  }
+
+  // `socket` is connected and paused, so the server's bytes stay unread until
+  // `pipeline` has put the malformed request (and whatever else) on the wire.
+  async function exchange(
+    socket: net.Socket | nodeTls.TLSSocket,
+    queued: Promise<number>,
+    pipeline: () => Promise<void> | void,
+  ) {
+    const closed = receiveUntilClose(socket);
+    try {
+      socket.write(REQUEST);
+      const bodyLength = await queued;
+      await pipeline();
+      socket.resume();
+      const { raw, ended } = await closed;
+      return { received: decode(raw, ended), bodyLength };
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  it.each(Object.entries(MALFORMED))("%s", async (_, [malformedRequest, errorResponse]) => {
+    const { server, queued } = streamingServer();
+    using _server = server;
+    const socket = connect(server.port, "127.0.0.1");
+    socket.pause();
+    await new Promise<void>(r => socket.once("connect", () => r()));
+    const { received, bodyLength } = await exchange(socket, queued, () => {
+      socket.write(malformedRequest);
+    });
+    expect(received).toEqual(expected(bodyLength, errorResponse));
+  });
+
+  it("over TLS", async () => {
+    const [malformedRequest, errorResponse] = MALFORMED["400 from a malformed request-line"];
+    const { server, queued } = streamingServer({ tls });
+    using _server = server;
+    const socket = nodeTls.connect({ port: server.port, host: "127.0.0.1", rejectUnauthorized: false });
+    await new Promise<void>(r => socket.once("secureConnect", () => r()));
+    socket.pause();
+    const { received, bodyLength } = await exchange(socket, queued, () => {
+      socket.write(malformedRequest);
+    });
+    expect(received).toEqual(expected(bodyLength, errorResponse));
+  });
+
+  // Once the error response is queued, the connection is done with HTTP: a
+  // well-formed request that arrives while it is still draining is neither
+  // dispatched nor answered.
+  it("ignores a request that arrives while the error response is still draining", async () => {
+    const [malformedRequest, errorResponse] = MALFORMED["400 from a malformed request-line"];
+    const { server, queued, served } = streamingServer();
+    using _server = server;
+    const socket = connect(server.port, "127.0.0.1");
+    socket.pause();
+    await new Promise<void>(r => socket.once("connect", () => r()));
+    const { received, bodyLength } = await exchange(socket, queued, async () => {
+      socket.write(malformedRequest);
+      // The well-formed request has to reach the server in a read of its own
+      // (arriving together with the malformed line, it would be dropped along
+      // with it by the failed parse). A request on another connection, opened
+      // only now, cannot be answered before the server has taken the read that
+      // was already pending on this connection, so once it is answered the
+      // malformed line has been parsed by itself.
+      const barrier = await fetch(new URL("/barrier", server.url));
+      expect(await barrier.text()).toBe("ok");
+      socket.write(REQUEST);
+    });
+    expect({ ...received, served }).toEqual({ ...expected(bodyLength, errorResponse), served: ["/", "/barrier"] });
+  });
+
+  // Control: with nothing buffered ahead of it, the error response is answered
+  // and the connection closed right away, on both transports.
+  it.each([
+    ["http", false],
+    ["https", true],
+  ])("%s: nothing buffered ahead of the malformed request", async (_, secure) => {
+    const [malformedRequest, errorResponse] = MALFORMED["400 from a malformed request-line"];
+    let requests = 0;
+    using server = serve({
+      port: 0,
+      ...(secure ? { tls } : {}),
+      fetch() {
+        requests++;
+        return new Response("unreachable");
+      },
+    });
+    const socket = secure
+      ? nodeTls.connect({ port: server.port, host: "127.0.0.1", rejectUnauthorized: false })
+      : connect(server.port, "127.0.0.1");
+    await new Promise<void>(r => socket.once(secure ? "secureConnect" : "connect", () => r()));
+    const closed = receiveUntilClose(socket);
+    socket.write(malformedRequest);
+    const { raw, ended } = await closed;
+    expect({ response: raw.toString("latin1"), ended, requests }).toEqual({
+      response: errorResponse,
+      ended: true,
+      requests: 0,
+    });
+  });
+});
+
 // The node:http compat parser tolerates empty lines (and a bare CR/LF) before the
 // request-line like llhttp's s_start state. That leniency must stay behind the
 // node-http flag: Bun.serve still rejects a request that does not begin with the

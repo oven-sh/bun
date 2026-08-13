@@ -155,6 +155,39 @@ public:
     }
 
 private:
+    /* Answers a parse error on a Bun.serve connection (node:http routes these
+     * through 'clientError'). The canned response is written through the
+     * AsyncSocket layer so it queues behind whatever the previous response on
+     * this keep-alive connection still has in AsyncSocketData::buffer; a raw
+     * us_socket_write() would overtake those bytes and the close would discard
+     * them. While anything is buffered, onWritable's shouldCloseConnection()
+     * gate closes the socket once it has flushed (the idle timeout bounds a peer
+     * that stops reading) and HTTP_PARSING_STOPPED discards whatever the peer
+     * sends until then. A response still in flight can no longer complete, so
+     * that connection is torn down right away (firing its onAborted), as when a
+     * pipelined request arrives mid-response. */
+    static void writeHttpErrorAndClose(us_socket_t *s, unsigned int httpErrorStatusCode) {
+        if (us_socket_is_closed(s)) {
+            return;
+        }
+        auto *asyncSocket = (AsyncSocket<SSL> *) s;
+        auto *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
+        std::string_view response = httpErrorResponses[httpErrorStatusCode];
+        asyncSocket->write(response.data(), (int) response.length());
+        /* Corked since the top of onData: the cork buffer has to reach the socket
+         * before hasFullyDrained() is meaningful, and before shutdown() would
+         * make the socket refuse it. */
+        asyncSocket->uncork();
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) && !asyncSocket->hasFullyDrained()) {
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE | HttpResponseData<SSL>::HTTP_PARSING_STOPPED;
+            ((HttpResponse<SSL> *) s)->resetTimeout();
+            return;
+        }
+        asyncSocket->shutdown();
+        /* Force close after the FIN so the peer cannot keep sending. */
+        asyncSocket->close();
+    }
+
     /* ── vtable handlers ─────────────────────────────────────────────────── */
 
     static void onHandshake(us_socket_t *s, int success, struct us_bun_verify_error_t verify_error, void * /*custom_data*/) {
@@ -314,12 +347,13 @@ private:
 
         HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
 
-        /* node:http compat: HTTP parsing stopped on this connection (a parse error
-         * was already delivered to 'clientError', or the JS layer freed the
-         * parser); ignore further request bytes. CONNECT/Upgrade tunnels are not
+        /* HTTP parsing stopped on this connection (HTTP_PARSING_STOPPED); ignore
+         * further request bytes. node:http's CONNECT/Upgrade tunnels are not
          * parsed as HTTP and keep flowing below. */
-        if constexpr (IsNodeHttp) {
-            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED) && !httpResponseData->isConnectRequest) {
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_PARSING_STOPPED) [[unlikely]] {
+            bool isTunnel = false;
+            if constexpr (IsNodeHttp) isTunnel = httpResponseData->isConnectRequest;
+            if (!isTunnel) {
                 us_socket_unref(s);
                 return s;
             }
@@ -372,7 +406,7 @@ private:
              * connection (the user emitted 'close' on the socket - Node frees
              * the parser there); abandon the rest of the buffer. */
             if constexpr (IsNodeHttp) {
-                if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED) {
+                if (httpResponseData->state & HttpResponseData<SSL>::HTTP_PARSING_STOPPED) {
                     return nullptr;
                 }
             }
@@ -594,7 +628,7 @@ private:
              * connection down, exactly like Node. The native layer only stops
              * parsing further requests on this connection. */
             if (IsNodeHttp && httpContextData->onClientError) {
-                httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_PARSING_STOPPED;
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
                 if (!us_socket_is_closed(s)) {
                     /* Balance the parsing ref taken at the top of onData (the
@@ -609,11 +643,12 @@ private:
             if(httpContextData->onClientError) {
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
             }
-            /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
-            us_socket_write(s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length());
-            us_socket_shutdown(s);
-            /* Close any socket on HTTP errors */
-            us_socket_close(s, 0, nullptr);
+            writeHttpErrorAndClose(s, httpErrorStatusCode);
+            if (!us_socket_is_closed(s)) {
+                /* Still draining the error response behind buffered response
+                 * bytes: balance the parsing ref as above. */
+                us_socket_unref(s);
+            }
         }
 
         auto returnedData = result.returnedData;
@@ -833,10 +868,10 @@ private:
                 return s;
             }
 
-            if (httpContextData->onClientError && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED)
+            if (httpContextData->onClientError && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_PARSING_STOPPED)
                 && (httpResponseData->hasBufferedPartialRequestHeaders()
                     || httpResponseData->hasIncompleteRequestBody())) {
-                httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_PARSING_STOPPED;
                 httpContextData->onClientError(SSL, s, HTTP_PARSER_ERROR_INVALID_EOF, nullptr, 0);
                 if (us_socket_is_closed(s)) {
                     return s;

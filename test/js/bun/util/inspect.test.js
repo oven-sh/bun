@@ -842,8 +842,10 @@ it.concurrent("custom inspect falls back while node:util cannot load and recover
     console.log("colors:", colored.includes("custom!") ? "hook ran" : colored !== strip(colored) ? "fell back with colors" : "fell back without colors");
     console.log("plain again:", Bun.inspect(o).includes("custom!") ? "hook ran" : "fell back");
     globalThis.Symbol = RealSymbol;
-    console.log("restored:", Bun.inspect(o));
+    // Colors first: the first successful load and the color stylize setup
+    // then happen inside a single custom inspect call.
     console.log("restored colors:", Bun.inspect(o, { colors: true }));
+    console.log("restored:", Bun.inspect(o));
     console.log("after-inspect");
   `;
   await using proc = Bun.spawn({
@@ -857,8 +859,8 @@ it.concurrent("custom inspect falls back while node:util cannot load and recover
     "plain: fell back
     colors: fell back with colors
     plain again: fell back
-    restored: custom!
     restored colors: custom!
+    restored: custom!
     after-inspect
     "
   `);

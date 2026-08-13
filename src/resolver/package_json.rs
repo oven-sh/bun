@@ -1278,9 +1278,11 @@ pub(crate) struct ESModule<'a> {
     pub(crate) conditions: &'a ConditionsMap,
     // allocator dropped — global mimalloc
     pub(crate) module_type: &'a mut ModuleType,
-    /// Input: ignore the "bun" condition on a retry when its target was absent on disk (#7142).
+    /// Input: skip the "bun" key. Set on the retry pass after a resolution that went through
+    /// the "bun" condition failed to load (#7142).
     pub(crate) skip_bun_condition: bool,
-    /// Output: set to true iff the returned resolution came from matching the "bun" condition.
+    /// Output: set when the "bun" key matched and produced a target; the caller uses it to decide
+    /// whether a failed load is worth retrying with `skip_bun_condition`.
     pub(crate) matched_bun_condition: &'a mut bool,
 }
 
@@ -2117,7 +2119,7 @@ impl<'a> ESModule<'a> {
                     if self.skip_bun_condition && key == b"bun" {
                         if let Some(log) = self.debug_logs.as_deref_mut() {
                             log.add_note_fmt(format_args!(
-                                "The key \"bun\" is being skipped because its target does not exist on disk"
+                                "The key \"bun\" is being skipped on this retry"
                             ));
                         }
                         continue;

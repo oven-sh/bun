@@ -245,6 +245,36 @@ describe("'bun' export condition falls through when its target file is missing",
     expect(exitCode).toBe(0);
   });
 
+  it.concurrent("falls through when the subpath only resolves after stripping '.js'", async () => {
+    // Exercises the retry around the existing "./foo.js" -> "./foo" exports fallback.
+    using cwd = tempDir("bun-cond-fallback-strip-js", {
+      "index.mjs": `import { tag } from "pkg/foo.js"; console.log(tag);`,
+      "node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        type: "module",
+        exports: {
+          "./foo": {
+            bun: "./dist/foo-bun.mjs",
+            node: "./dist/foo-node.mjs",
+          },
+        },
+      }),
+      "node_modules/pkg/dist/foo-node.mjs": `export const tag = "node-variant";`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(cwd),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("node-variant\n");
+    expect(exitCode).toBe(0);
+  });
+
   it.concurrent("falls through for subpath '#imports' entries", async () => {
     using cwd = tempDir("bun-cond-fallback-imports", {
       "node_modules/pkg/package.json": JSON.stringify({

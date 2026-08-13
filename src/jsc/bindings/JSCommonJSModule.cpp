@@ -1396,28 +1396,36 @@ void RequireResolveFunctionPrototype::finishCreation(JSC::VM& vm)
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
-// Matches the wrapper emitted by js_parser (WrapMode::BunCommonjs) and by `bun build --format=cjs --target=bun`; null String when the source is not shaped like that.
-static WTF::String commonJSModuleBodyWithoutWrapper(const WTF::String& source)
+struct UnwrappedCommonJSModule {
+    // One "\n" per line the wrapper header occupied, then the text between the wrapper's braces, so line numbers survive re-wrapping.
+    WTF::String body;
+    // What followed the closing "})": ";", newlines and "//" comments such as sourceMappingURL.
+    WTF::String trailer;
+};
+
+// Undoes the wrapper emitted by js_parser (WrapMode::BunCommonjs) and by `bun build --format=cjs --target=bun`; nullopt when the source is not shaped like that.
+static std::optional<UnwrappedCommonJSModule> unwrapCommonJSModule(const WTF::String& source)
 {
     unsigned headerStart = 0;
     while (source.hasInfixStartingAt("//"_s, headerStart) || source.hasInfixStartingAt("#!"_s, headerStart)) {
         auto lineEnd = source.find('\n', headerStart);
         if (lineEnd == WTF::notFound)
-            return String();
+            return std::nullopt;
         headerStart = lineEnd + 1;
     }
     if (!source.hasInfixStartingAt("(function("_s, headerStart))
-        return String();
+        return std::nullopt;
 
     auto bodyStart = source.find('{', headerStart);
     auto bodyEnd = source.reverseFind("})"_s);
     if (bodyStart == WTF::notFound || bodyEnd == WTF::notFound || bodyEnd <= bodyStart)
-        return String();
+        return std::nullopt;
     bodyStart += 1;
     if (bodyEnd != bodyStart && source[bodyEnd - 1] != '\n')
-        return String();
+        return std::nullopt;
 
-    for (unsigned i = bodyEnd + 2; i < source.length();) {
+    auto trailerStart = bodyEnd + 2;
+    for (unsigned i = trailerStart; i < source.length();) {
         if (source.hasInfixStartingAt("//"_s, i)) {
             auto lineEnd = source.find('\n', i);
             if (lineEnd == WTF::notFound)
@@ -1427,11 +1435,20 @@ static WTF::String commonJSModuleBodyWithoutWrapper(const WTF::String& source)
         }
         auto c = source[i];
         if (c != ';' && !isASCIIWhitespace(c))
-            return String();
+            return std::nullopt;
         i++;
     }
 
-    return source.substring(bodyStart, bodyEnd - bodyStart);
+    unsigned headerLines = 0;
+    for (unsigned i = 0; i < bodyStart; i++) {
+        if (source[i] == '\n')
+            headerLines++;
+    }
+
+    return UnwrappedCommonJSModule {
+        makeString(pad('\n', headerLines, ""_s), StringView(source).substring(bodyStart, bodyEnd - bodyStart)),
+        source.substring(trailerStart),
+    };
 }
 
 // Replaces the transpiler's wrapper with the one assigned to require("node:module").wrapper.
@@ -1444,9 +1461,8 @@ static void applyOverriddenModuleWrapper(Zig::GlobalObject* globalObject, JSValu
     if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename)))
         return;
 
-    auto transpiled = source.source_code.toWTFString(BunString::ZeroCopy);
-    auto body = commonJSModuleBodyWithoutWrapper(transpiled);
-    if (body.isNull())
+    auto unwrapped = unwrapCommonJSModule(source.source_code.toWTFString(BunString::ZeroCopy));
+    if (!unwrapped)
         return;
 
     // Zig::SourceProvider::create derefs the replacement under the same condition.
@@ -1456,8 +1472,9 @@ static void applyOverriddenModuleWrapper(Zig::GlobalObject* globalObject, JSValu
     }
     source.source_code = Bun::toStringRef(makeString(
         globalObject->m_moduleWrapperStart,
-        body,
-        globalObject->m_moduleWrapperEnd));
+        unwrapped->body,
+        globalObject->m_moduleWrapperEnd,
+        unwrapped->trailer));
     source.needsDeref = true;
 }
 
@@ -1517,17 +1534,21 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
         }
         WTF::String sourceString = source.source_code.toWTFString(BunString::ZeroCopy);
         RETURN_IF_EXCEPTION(scope, );
+        auto unwrapped = unwrapCommonJSModule(sourceString);
+        if (!unwrapped) {
+            // _compile would wrap the wrapper; run the source as it is instead.
+            scope.release();
+            this->evaluate(globalObject, key, source, false);
+            return;
+        }
         if (source.needsDeref) {
             source.needsDeref = false;
             source.source_code.deref();
         }
-        WTF::String sourceStringWithoutWrapper = commonJSModuleBodyWithoutWrapper(sourceString);
-        if (sourceStringWithoutWrapper.isNull())
-            sourceStringWithoutWrapper = sourceString;
 
         // _compile(source, filename)
         MarkedArgumentBuffer arguments;
-        arguments.append(jsString(vm, sourceStringWithoutWrapper));
+        arguments.append(jsString(vm, unwrapped->body));
         arguments.append(keyJSString);
         JSC::profiledCall(globalObject, ProfilingReason::API, compileFunction, callData, this, arguments);
         RETURN_IF_EXCEPTION(scope, );

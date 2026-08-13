@@ -191,3 +191,32 @@ test("mutating extensions is banned by some files", () => {
     expect(globalThis.pass).toBe(n);
   }
 });
+test("already wrapped files reach a mutated compile function unwrapped, or are evaluated as they are", () => {
+  // The shape `bun build --target=bun --format=cjs` emits. footer.js has code
+  // after the wrapper, so it cannot be unwrapped; it is evaluated as it is,
+  // bypassing _compile, instead of being wrapped a second time.
+  const wrapped =
+    '// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {\nmodule.exports = "%s";\n})\n';
+  using dir = tempDir("require-extensions-wrapped", {
+    "wrapped.js": wrapped.replace("%s", "wrapped"),
+    "footer.js": wrapped.replace("%s", "footer") + "var footer = 1;\n",
+  });
+  const original = require.extensions[".js"]!;
+  const compiled: string[] = [];
+  try {
+    require.extensions[".js"] = function (module: any, filename: string) {
+      const originalCompile = module._compile;
+      module._compile = function (code: string, compiledFilename: string) {
+        compiled.push(code);
+        return originalCompile.call(this, code, compiledFilename);
+      };
+      original(module, filename);
+    };
+    expect(require(path.join(String(dir), "wrapped.js"))).toBe("wrapped");
+    expect(require(path.join(String(dir), "footer.js"))).toBe("footer");
+  } finally {
+    require.extensions[".js"] = original;
+  }
+  // The pragma line is replaced by a newline so that line numbers are unchanged.
+  expect(compiled).toEqual(['\n\nmodule.exports = "wrapped";\n']);
+});

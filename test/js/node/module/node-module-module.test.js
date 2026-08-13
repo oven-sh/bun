@@ -588,49 +588,73 @@ console.log("survived", require("./late.js"));`,
     test("applies to bun build --format=cjs output (pragma line before the wrapper)", async () => {
       using dir = tempDir("module-wrapper-prebundled", {
         "set-wrapper.cjs": setWrapper,
-        "src/dep.cjs": `#!/usr/bin/env bun\nmodule.exports = { bundled: true };`,
+        // fail() throws on line 2 of this file; the bundle's header takes up
+        // three lines in front of it.
+        "src/dep.cjs": `#!/usr/bin/env bun\nmodule.exports = { bundled: true, fail: () => { throw new Error("boom"); } };`,
         "main.mjs": /* js */ `
           import { createRequire } from "node:module";
           const require = createRequire(import.meta.url);
-          async function build(outdir, footer) {
+          async function build(outdir, options) {
             const { success, logs } = await Bun.build({
               entrypoints: ["./src/dep.cjs"],
               outdir,
               target: "bun",
               format: "cjs",
-              footer,
+              ...options,
             });
             if (!success) throw new AggregateError(logs);
             return outdir + "/dep.js";
           }
-          const plain = await build("./out/plain");
-          const commentFooter = await build("./out/comment-footer", "// comment after the wrapper");
-          const codeFooter = await build("./out/code-footer", "var afterTheWrapper = 1;");
-          const header = (await Bun.file(plain).text()).split("\\n", 3);
+          const files = {
+            plain: await build("./out/plain"),
+            commentFooter: await build("./out/comment-footer", { footer: "// comment after the wrapper" }),
+            codeFooter: await build("./out/code-footer", { footer: "var afterTheWrapper = 1;" }),
+            inlineSourceMap: await build("./out/inline", { sourcemap: "inline" }),
+            linkedSourceMap: await build("./out/linked", { sourcemap: "linked" }),
+          };
+          const header = (await Bun.file(files.plain).text()).split("\\n", 3);
+          function throwsAt(exports) {
+            try {
+              exports.fail();
+            } catch (error) {
+              const [, file, line] = /dep\\.(c?js):(\\d+):/.exec(error.stack);
+              return "dep." + file + ":" + line;
+            }
+          }
 
           require("./set-wrapper.cjs");
           const results = {};
-          for (const [name, file] of Object.entries({ plain, commentFooter, codeFooter })) {
+          for (const [name, file] of Object.entries(files)) {
             const viaRequire = require(file);
             delete require.cache[require.resolve(file)];
             const viaImport = (await import(file)).default;
-            results[name] = { viaRequire, viaImport, wrapped: globalThis.wrapped.splice(0) };
+            results[name] = {
+              viaRequire,
+              viaImport,
+              throwsAt: [throwsAt(viaRequire), throwsAt(viaImport)],
+              wrapped: globalThis.wrapped.splice(0),
+            };
           }
           console.log(JSON.stringify({ header, ...results }));
         `,
       });
       const loaded = { viaRequire: { bundled: true }, viaImport: { bundled: true } };
+      const bundledLine = expect.stringMatching(/^dep\.js:\d+$/);
       expect(await runFixture(dir, ["main.mjs"])).toEqual({
         header: [
           "#!/usr/bin/env bun",
           "// @bun @bun-cjs",
           expect.stringContaining("(function(exports, require, module, __filename, __dirname) {"),
         ],
-        plain: { ...loaded, wrapped: ["dep.js", "dep.js"] },
-        commentFooter: { ...loaded, wrapped: ["dep.js", "dep.js"] },
+        plain: { ...loaded, throwsAt: [bundledLine, bundledLine], wrapped: ["dep.js", "dep.js"] },
+        commentFooter: { ...loaded, throwsAt: [bundledLine, bundledLine], wrapped: ["dep.js", "dep.js"] },
         // Code after the wrapper is not something the wrapper swap can
         // understand, so the file keeps its own wrapper instead of breaking.
-        codeFooter: { ...loaded, wrapped: [] },
+        codeFooter: { ...loaded, throwsAt: [bundledLine, bundledLine], wrapped: [] },
+        // Re-wrapping keeps every line where it was and keeps the
+        // sourceMappingURL comment, so stack traces still map back to the source.
+        inlineSourceMap: { ...loaded, throwsAt: ["dep.cjs:2", "dep.cjs:2"], wrapped: ["dep.js", "dep.js"] },
+        linkedSourceMap: { ...loaded, throwsAt: ["dep.cjs:2", "dep.cjs:2"], wrapped: ["dep.js", "dep.js"] },
       });
     });
   });

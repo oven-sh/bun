@@ -2070,6 +2070,8 @@ impl Function {
         }
 
         CompilerRT::define(state);
+        // Only the wrapper uses these; `CompilerRT::define` is also run for the user's own C.
+        state.define_symbols(ABIType::POINTER_TAG_DEFINES);
 
         // SAFETY: source_code was NUL-terminated above
         if state
@@ -2595,7 +2597,6 @@ impl CompilerRT {
                 jsc::JSType::MAX_TYPED_ARRAY.0 as i64,
             ),
         ]);
-        state.define_symbols(ABIType::POINTER_TAG_DEFINES);
     }
 
     pub(crate) fn inject(state: &mut TCC::State) {

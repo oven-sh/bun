@@ -1142,6 +1142,9 @@ describe.concurrent("pointer-typed arguments (function, ptr, cstring, buffer)", 
   it("accepts what dlopen accepts and throws a TypeError for the rest", async () => {
     using dir = tempDir("bun-ffi-cc-pointer-args", {
       "pointers.c": /* c */ `
+        /* The tags the generated wrappers are compiled with must not be defined in the user's C. */
+        enum { ABI_TYPE_PTR, ABI_TYPE_CSTRING, ABI_TYPE_FUNCTION, ABI_TYPE_BUFFER };
+
         typedef int (*callback_t)(int);
         int call_callback(callback_t callback) { return callback(21) * 2; }
         void* echo_ptr(void* p) { return p; }

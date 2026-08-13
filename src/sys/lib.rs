@@ -6678,11 +6678,8 @@ fn is_nt_object_name(p: &[u16]) -> bool {
 
 /// `OBJECT_ATTRIBUTES.RootDirectory` for an NT call naming `path`: none for
 /// an absolute NT object name, otherwise `dir` (the cwd when `dir` is the
-/// "invalid_fd" sentinel).
-///
-/// An empty name is refused with ENOENT, as POSIX `*at()` calls refuse it: NT
-/// resolves it to `RootDirectory` itself, which made `readdir("")` list and
-/// `rm -r ""` empty the directory the name was relative to.
+/// "invalid_fd" sentinel). An empty name fails with ENOENT as POSIX `*at()`
+/// calls do; NT would resolve it to `RootDirectory` itself.
 #[cfg(windows)]
 fn nt_root_directory(
     dir: Fd,

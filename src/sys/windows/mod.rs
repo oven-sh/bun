@@ -1016,8 +1016,7 @@ const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: ULONG = 0x00000010;
 
 // Copy-paste of the standard library function except without unreachable.
 pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys::Result<()> {
-    // Same rule as `nt_root_directory` in lib.rs: NT would resolve an empty
-    // name to `options.dir` itself and delete that directory.
+    // Empty name: ENOENT, as in `nt_root_directory` (NT would delete `options.dir` itself).
     if sub_path_w.is_empty() {
         return bun_sys::Result::errno(E::NOENT, bun_sys::Tag::open);
     }
@@ -1830,8 +1829,7 @@ pub fn move_opened_file_at(
 
     debug_assert!(!new_file_name.contains(&(b'/' as u16))); // Call moveOpenedFileAtLoose
 
-    // POSIX renameat() refuses an empty destination name with ENOENT; NT only
-    // refuses it as an INFO_LENGTH_MISMATCH, which has no errno.
+    // Empty destination: ENOENT as POSIX renameat(); NT's INFO_LENGTH_MISMATCH has no errno.
     if new_file_name.is_empty() {
         return bun_sys::Result::errno(E::NOENT, bun_sys::Tag::NtSetInformationFile);
     }

@@ -135,8 +135,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     SourceCode source = makeSource(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, TextPosition(options.lineOffset, options.columnOffset));
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Node throws SyntaxError from the constructor (the REPL relies on it). Unlike checkSyntax(),
-    // compiling through the CodeCache lets the first run and produceCachedData reuse this parse.
+    // Compiled eagerly (Node throws SyntaxError here), via the CodeCache so the first run reuses it.
     JSC::ParserError parseError;
     vm.codeCache()->getUnlinkedProgramCodeBlock(vm, JSC::ProgramExecutable::create(globalObject, source), source, globalObject->defaultCodeGenerationMode(), parseError);
     if (parseError.isValid()) {

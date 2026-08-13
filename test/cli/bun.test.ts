@@ -176,6 +176,132 @@ describe("bun", () => {
     });
   });
 
+  describe("--loader help text", () => {
+    // The names the -l/--loader help text in src/runtime/cli/Arguments.rs advertises. The same
+    // list is repeated in docs/snippets/cli/run.mdx, docs/runtime/bunfig.mdx and completions/bun.{zsh,bash}.
+    const advertisedLoaders = [
+      "js",
+      "jsx",
+      "ts",
+      "tsx",
+      "json",
+      "toml",
+      "yaml",
+      "json5",
+      "xml",
+      "text",
+      "md",
+      "css",
+      "html",
+      "wasm",
+      "napi",
+      "sqlite",
+      "file",
+    ];
+
+    test.concurrent.each([
+      ["bun --help", ["--help"]],
+      ["bun run --help", ["run", "--help"]],
+    ])("%s lists the loaders --loader accepts", async (_, args) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const loaderLine = stdout.split(/\r?\n/).find(line => line.includes("--loader"));
+      expect(loaderLine).toBeDefined();
+      const [, listed] = loaderLine!.split("Valid loaders:");
+      expect(listed?.split(",").map(name => name.trim())).toEqual(advertisedLoaders);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent(
+      "every advertised loader name is accepted by --loader and applied to the mapped extension",
+      async () => {
+        using dir = tempDir("loader-help-names", {
+          "m.l_js": `export default "js";`,
+          "m.l_jsx": `export default "jsx";`,
+          "m.l_ts": `export default "ts" as string;`,
+          "m.l_tsx": `export default "tsx" as string;`,
+          "m.l_json": `{ "kind": "json" }`,
+          "m.l_toml": `kind = "toml"`,
+          "m.l_yaml": `kind: yaml`,
+          "m.l_json5": `{ kind: "json5", /* json5 allows this */ }`,
+          "m.l_xml": `<kind>xml</kind>`,
+          "m.l_text": `plain text`,
+          "m.l_md": `# md`,
+          "m.l_css": `a { color: red }`,
+          "m.l_html": `<!doctype html><p>html</p>`,
+          "m.l_sqlite": "",
+          "m.l_file": `not a module`,
+          "main.ts": `
+          import { Database } from "bun:sqlite";
+          import { basename } from "node:path";
+          import js from "./m.l_js";
+          import jsx from "./m.l_jsx";
+          import ts from "./m.l_ts";
+          import tsx from "./m.l_tsx";
+          import json from "./m.l_json";
+          import toml from "./m.l_toml";
+          import yaml from "./m.l_yaml";
+          import json5 from "./m.l_json5";
+          import xml from "./m.l_xml";
+          import text from "./m.l_text";
+          import md from "./m.l_md";
+          import css from "./m.l_css";
+          import html from "./m.l_html";
+          import db from "./m.l_sqlite";
+          import file from "./m.l_file";
+          console.log(
+            JSON.stringify({
+              js, jsx, ts, tsx, json, toml, yaml, json5, xml, text, md,
+              css: typeof css,
+              html: Object.prototype.toString.call(html),
+              sqlite: db instanceof Database,
+              file: basename(file),
+            }),
+          );
+        `,
+        });
+
+        await using proc = Bun.spawn({
+          // Without these flags every fixture falls back to the file loader and imports as a path.
+          // wasm and napi have no fixture: an unknown name fails argument parsing, so mapping
+          // them is what the test checks for those two.
+          cmd: [bunExe(), ...advertisedLoaders.flatMap(name => ["--loader", `.l_${name}:${name}`]), "main.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual({
+          js: "js",
+          jsx: "jsx",
+          ts: "ts",
+          tsx: "tsx",
+          json: { kind: "json" },
+          toml: { kind: "toml" },
+          yaml: { kind: "yaml" },
+          json5: { kind: "json5" },
+          xml: { kind: "xml" },
+          text: "plain text",
+          md: "<h1>md</h1>\n",
+          css: "object",
+          html: "[object HTMLBundle]",
+          sqlite: true,
+          file: "m.l_file",
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
   describe("test command line arguments", () => {
     test("test --config, issue #4128", () => {
       const path = `${tmpdir()}/bunfig-${Date.now()}.toml`;

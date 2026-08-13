@@ -1931,6 +1931,7 @@ impl<'a> Parser<'a> {
                     b"import_",
                     true,
                     js_ast::PartTag::Runtime,
+                    wrap_mode,
                 )
                 .expect("unreachable");
             }
@@ -1964,6 +1965,7 @@ impl<'a> Parser<'a> {
                     b"",
                     false,
                     js_ast::PartTag::JsxImport,
+                    wrap_mode,
                 )
                 .expect("unreachable");
             }
@@ -1979,6 +1981,7 @@ impl<'a> Parser<'a> {
                     b"",
                     false,
                     js_ast::PartTag::JsxImport,
+                    wrap_mode,
                 )
                 .expect("unreachable");
             }

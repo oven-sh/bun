@@ -1774,6 +1774,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
+    /// Binds generated helper symbols (runtime helpers, the JSX runtime) to
+    /// `import_path`. This is an `import` statement, except when the module is
+    /// about to be wrapped in Bun's CommonJS function wrapper
+    /// (`wrap_mode == BunCommonjs`): an `import` inside that function body is a
+    /// syntax error, so the helpers are bound with
+    /// `const { a, b } = require(import_path)` instead, like the `bun:test`
+    /// globals are.
     pub(crate) fn generate_import_stmt<I, Sym>(
         &mut self,
         import_path: &'a [u8],
@@ -1784,6 +1791,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         prefix: &'static [u8],
         is_internal: bool,
         tag: bun_ast::PartTag,
+        wrap_mode: WrapMode,
     ) -> Result<(), crate::Error>
     where
         I: AsRef<[<Sym as GenerateImportSymbols>::Key]>,
@@ -1791,8 +1799,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     {
         let arena = self.arena;
         let imports = imports.as_ref();
-        let import_record_i =
-            self.add_import_record_by_range(ImportKind::Stmt, bun_ast::Range::NONE, import_path);
+        let as_require = wrap_mode == WrapMode::BunCommonjs;
+        let import_record_i = self.add_import_record_by_range(
+            if as_require {
+                ImportKind::Require
+            } else {
+                ImportKind::Stmt
+            },
+            bun_ast::Range::NONE,
+            import_path,
+        );
         {
             let import_record = &mut self.import_records.items_mut()[import_record_i as usize];
             if is_internal {
@@ -1802,100 +1818,148 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .flags
                 .set(bun_ast::ImportRecordFlags::IS_INTERNAL, is_internal);
         }
-        // Render the sanitized-identifier formatter into the bump arena (same
-        // pattern as `transpose_require` above).
-        let import_path_identifier: &'a [u8] = {
-            use core::fmt::Write as _;
-            let base = self.import_records.items()[import_record_i as usize]
-                .path
-                .name()
-                .non_unique_name_string_base();
-            let mut buf = bun_alloc::ArenaString::new_in(arena);
-            write!(&mut buf, "{}", bun_core::fmt::fmt_identifier(base)).expect("unreachable");
-            buf.into_bump_str().as_bytes()
-        };
-        let mut namespace_identifier =
-            BumpVec::with_capacity_in(import_path_identifier.len() + prefix.len(), arena);
-        namespace_identifier.extend_from_slice(prefix);
-        namespace_identifier.extend_from_slice(import_path_identifier);
-        let namespace_identifier = namespace_identifier.into_bump_slice();
 
-        let clause_items =
-            arena.alloc_slice_fill_with::<js_ast::ClauseItem, _>(imports.len(), |_| {
-                js_ast::ClauseItem {
-                    alias: js_ast::StoreStr::new(b""),
-                    original_name: js_ast::StoreStr::new(b""),
-                    alias_loc: bun_ast::Loc::default(),
-                    name: LocRef::default(),
-                }
-            });
         let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
         declared_symbols.ensure_total_capacity(imports.len() + 1)?;
 
-        let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, namespace_identifier);
-        declared_symbols.append_assume_capacity(DeclaredSymbol {
-            ref_: namespace_ref,
-            is_top_level: true,
-        });
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        VecExt::append(&mut self.module_scope_mut().generated, namespace_ref);
-        for (alias, clause_item) in imports.iter().zip(clause_items.iter_mut()) {
-            let ref_ = symbols.get(alias).expect("unreachable");
-            let alias_name: &'static [u8] = symbols.alias_name(alias);
-            *clause_item = js_ast::ClauseItem {
-                alias: js_ast::StoreStr::new(alias_name),
-                original_name: js_ast::StoreStr::new(alias_name),
-                alias_loc: bun_ast::Loc::default(),
-                name: LocRef {
+        let import_stmt = if as_require {
+            let mut properties = BumpVec::<B::Property>::with_capacity_in(imports.len(), arena);
+            for alias in imports {
+                let ref_ = symbols.get(alias).expect("unreachable");
+                let alias_name: &'static [u8] = symbols.alias_name(alias);
+                let key = self.new_expr(E::String::init(alias_name), bun_ast::Loc::EMPTY);
+                let value = self.b(B::Identifier { r#ref: ref_ }, bun_ast::Loc::EMPTY);
+                properties.push(B::Property {
+                    flags: Default::default(),
+                    key,
+                    value,
+                    default_value: None,
+                });
+                declared_symbols.append_assume_capacity(DeclaredSymbol {
                     ref_,
-                    loc: bun_ast::Loc::default(),
-                },
-            };
-            declared_symbols.append_assume_capacity(DeclaredSymbol {
-                ref_,
-                is_top_level: true,
-            });
-
-            // ensure every e_import_identifier holds the namespace
-            if self.options.features.hot_module_reloading {
-                let symbol = &mut self.symbols[ref_.inner_index() as usize];
-                if symbol.namespace_alias.is_none() {
-                    symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
-                        namespace_ref,
-                        alias: js_ast::StoreStr::new(alias_name),
-                        import_record_index: import_record_i,
-                        was_originally_property_access: false,
-                    }));
-                }
+                    is_top_level: true,
+                });
             }
 
-            self.is_import_item.insert(ref_, ());
-            self.named_imports.put(
-                ref_,
-                js_ast::NamedImport {
-                    alias: Some(js_ast::StoreStr::new(alias_name)),
-                    alias_loc: bun_ast::Loc::default(),
-                    namespace_ref,
-                    import_record_index: import_record_i,
-                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
-                    alias_is_star: false,
-                    is_exported: false,
+            let binding = self.b(
+                B::Object {
+                    properties: bun_ast::StoreSlice::from_bump(properties),
+                    is_single_line: false,
                 },
-            )?;
-        }
+                bun_ast::Loc::EMPTY,
+            );
+            let value = self.new_expr(
+                E::RequireString {
+                    import_record_index: import_record_i,
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            );
+            self.s(
+                S::Local {
+                    kind: js_ast::s::Kind::KConst,
+                    decls: G::DeclList::from_slice(&[Decl {
+                        binding,
+                        value: Some(value),
+                    }]),
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            )
+        } else {
+            // Render the sanitized-identifier formatter into the bump arena (same
+            // pattern as `transpose_require` above).
+            let import_path_identifier: &'a [u8] = {
+                use core::fmt::Write as _;
+                let base = self.import_records.items()[import_record_i as usize]
+                    .path
+                    .name()
+                    .non_unique_name_string_base();
+                let mut buf = bun_alloc::ArenaString::new_in(arena);
+                write!(&mut buf, "{}", bun_core::fmt::fmt_identifier(base)).expect("unreachable");
+                buf.into_bump_str().as_bytes()
+            };
+            let mut namespace_identifier =
+                BumpVec::with_capacity_in(import_path_identifier.len() + prefix.len(), arena);
+            namespace_identifier.extend_from_slice(prefix);
+            namespace_identifier.extend_from_slice(import_path_identifier);
+            let namespace_identifier = namespace_identifier.into_bump_slice();
 
-        let import_stmt = self.s(
-            S::Import {
-                namespace_ref,
-                items: clause_items.into(),
-                import_record_index: import_record_i,
-                is_single_line: true,
-                default_name: None,
-                star_name_loc: bun_ast::Loc::EMPTY,
-                phase_defer: false,
-            },
-            bun_ast::Loc::default(),
-        );
+            let clause_items =
+                arena.alloc_slice_fill_with::<js_ast::ClauseItem, _>(imports.len(), |_| {
+                    js_ast::ClauseItem {
+                        alias: js_ast::StoreStr::new(b""),
+                        original_name: js_ast::StoreStr::new(b""),
+                        alias_loc: bun_ast::Loc::default(),
+                        name: LocRef::default(),
+                    }
+                });
+
+            let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, namespace_identifier);
+            declared_symbols.append_assume_capacity(DeclaredSymbol {
+                ref_: namespace_ref,
+                is_top_level: true,
+            });
+            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
+            VecExt::append(&mut self.module_scope_mut().generated, namespace_ref);
+            for (alias, clause_item) in imports.iter().zip(clause_items.iter_mut()) {
+                let ref_ = symbols.get(alias).expect("unreachable");
+                let alias_name: &'static [u8] = symbols.alias_name(alias);
+                *clause_item = js_ast::ClauseItem {
+                    alias: js_ast::StoreStr::new(alias_name),
+                    original_name: js_ast::StoreStr::new(alias_name),
+                    alias_loc: bun_ast::Loc::default(),
+                    name: LocRef {
+                        ref_,
+                        loc: bun_ast::Loc::default(),
+                    },
+                };
+                declared_symbols.append_assume_capacity(DeclaredSymbol {
+                    ref_,
+                    is_top_level: true,
+                });
+
+                // ensure every e_import_identifier holds the namespace
+                if self.options.features.hot_module_reloading {
+                    let symbol = &mut self.symbols[ref_.inner_index() as usize];
+                    if symbol.namespace_alias.is_none() {
+                        symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
+                            namespace_ref,
+                            alias: js_ast::StoreStr::new(alias_name),
+                            import_record_index: import_record_i,
+                            was_originally_property_access: false,
+                        }));
+                    }
+                }
+
+                self.is_import_item.insert(ref_, ());
+                self.named_imports.put(
+                    ref_,
+                    js_ast::NamedImport {
+                        alias: Some(js_ast::StoreStr::new(alias_name)),
+                        alias_loc: bun_ast::Loc::default(),
+                        namespace_ref,
+                        import_record_index: import_record_i,
+                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                        alias_is_star: false,
+                        is_exported: false,
+                    },
+                )?;
+            }
+
+            self.s(
+                S::Import {
+                    namespace_ref,
+                    items: clause_items.into(),
+                    import_record_index: import_record_i,
+                    is_single_line: true,
+                    default_name: None,
+                    star_name_loc: bun_ast::Loc::EMPTY,
+                    phase_defer: false,
+                },
+                bun_ast::Loc::default(),
+            )
+        };
         let stmts = arena
             .alloc_slice_fill_with::<Stmt, _>(1 + usize::from(additional_stmt.is_some()), |_| {
                 import_stmt

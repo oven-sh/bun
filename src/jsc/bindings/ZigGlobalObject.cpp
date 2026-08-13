@@ -3475,14 +3475,9 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         }
     }
 
-    // Validate that no unsupported import attributes are present.
-    // Only "type" is supported for dynamic imports per the TC39 import
-    // attributes proposal. Other keys (like `embed`, `bunBakeGraph`) are
-    // static-only parser attributes handled at parse time.
-    //
-    // This must run AFTER NodeVM dispatch so vm.Script/SourceTextModule
-    // with a user importModuleDynamically callback still receives all
-    // attributes (Node.js forwards them to the user hook).
+    // Only "type" is supported for dynamic imports. Runs after the NodeVM
+    // dispatch above so user importModuleDynamically hooks still receive
+    // every attribute, as in Node.js.
     if (parameters) {
         const auto& attributes = parameters->attributes();
         if (!attributes.isEmpty()) {

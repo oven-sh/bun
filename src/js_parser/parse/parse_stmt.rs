@@ -1214,9 +1214,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     });
                     p.lexer.next()?;
                     p.lexer.expect_contextual_keyword(b"from")?;
-                    // `declare module "x" { export * as n from "p" with { ... } }`
-                    // gets erased to `S::TypeScript{}` — suppress the
-                    // unsupported-attribute error in that case.
                     path = if opts.is_typescript_declare {
                         p.parse_type_only_path()?
                     } else {
@@ -1291,11 +1288,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let export_clause = p.parse_export_clause()?;
                 if p.lexer.is_contextual_keyword(b"from") {
                     p.lexer.expect_contextual_keyword(b"from")?;
-                    // If this whole `export { type ... } from` gets erased
-                    // (all clauses are type-only, or we're inside `declare
-                    // module` which erases the entire block), allow arbitrary
-                    // attribute keys for TypeScript's `resolution-mode`
-                    // support.
+                    // Erased when every clause is type-only or inside `declare module`.
                     let parsed_path = if (Self::IS_TYPESCRIPT_ENABLED
                         && export_clause.clauses.is_empty()
                         && export_clause.had_type_only_exports)
@@ -1557,9 +1550,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.expect(T::TIdentifier)?;
                     p.lexer.expect_contextual_keyword(b"from")?;
 
-                    // Inside a `declare module` body the whole block is erased,
-                    // so suppress the unsupported-attribute error (matches the
-                    // other import/export sites in this function).
                     let path = if opts.is_typescript_declare {
                         p.parse_type_only_path()?
                     } else {
@@ -1672,10 +1662,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // `declare module "x" { import X from "p" with { ... } }` gets erased
-        // to `S::TypeScript{}` in `parse_type_script_namespace_stmt` — so
-        // suppress the unsupported-attribute error here (matches how erased
-        // `import type ...` is routed through `parse_type_only_path`).
         let path = if opts.is_typescript_declare {
             p.parse_type_only_path()?
         } else {

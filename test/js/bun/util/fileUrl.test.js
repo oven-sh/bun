@@ -41,13 +41,19 @@ describe("pathToFileURL", () => {
       relativeWithDotDot: pathToFileURL("x\\..\\y").href,
       dotSlash: pathToFileURL("./q\\r").href,
       nonAscii: pathToFileURL("日本\\語").href,
+      trailing: pathToFileURL("a\\").href,
+      onlyBackslash: pathToFileURL("\\").href,
       absolute: pathToFileURL("/abs\\b").href,
+      absoluteTrailing: pathToFileURL("/abs\\").href,
     }).toEqual({
       relative: `${cwd}/a%5Cb`,
       relativeWithDotDot: `${cwd}/x%5C..%5Cy`,
       dotSlash: `${cwd}/q%5Cr`,
       nonAscii: `${cwd}/%E6%97%A5%E6%9C%AC%5C%E8%AA%9E`,
+      trailing: `${cwd}/a%5C`,
+      onlyBackslash: `${cwd}/%5C`,
       absolute: "file:///abs%5Cb",
+      absoluteTrailing: "file:///abs%5C",
     });
   });
 
@@ -86,6 +92,32 @@ describe("pathToFileURL", () => {
     });
   });
 
+  // `\\server\share` is handed to the URL layer as-is (the server becomes the
+  // host); `//server/share` goes through path.win32.resolve(), which gives the
+  // share a trailing separator. Both match node's pathToFileURL().
+  it.skipIf(!isWindows)("should keep the drive root, UNC host and a trailing backslash on Windows", () => {
+    const cwd = pathToFileURL(process.cwd()).href;
+    expect({
+      driveRoot: pathToFileURL("C:\\").href,
+      driveRootForwardSlash: pathToFileURL("C:/").href,
+      trailingDotDot: pathToFileURL("C:\\a\\b\\..").href,
+      relativeTrailingBackslash: pathToFileURL("dir\\").href,
+      dotDotTrailingBackslash: pathToFileURL("dir\\sub\\..\\").href,
+      unc: pathToFileURL("\\\\server\\share").href,
+      uncTrailingBackslash: pathToFileURL("\\\\server\\share\\dir\\").href,
+      uncForwardSlashes: pathToFileURL("//server/share").href,
+    }).toEqual({
+      driveRoot: "file:///C:/",
+      driveRootForwardSlash: "file:///C:/",
+      trailingDotDot: "file:///C:/a",
+      relativeTrailingBackslash: `${cwd}/dir/`,
+      dotDotTrailingBackslash: `${cwd}/dir/`,
+      unc: "file://server/share",
+      uncTrailingBackslash: "file://server/share/dir/",
+      uncForwardSlashes: "file://server/share/",
+    });
+  });
+
   it("should match node:url's pathToFileURL", () => {
     const inputs = [
       "",
@@ -98,6 +130,7 @@ describe("pathToFileURL", () => {
       "dir/sub/../",
       "dir//sub",
       "a\\b",
+      "a\\",
       "x\\..\\y",
       "日本\\語",
       "a b#c?d%e[f]^g|h~i",
@@ -106,6 +139,20 @@ describe("pathToFileURL", () => {
       `${process.cwd()}/`,
       `${process.cwd()}/child/..`,
       `${process.cwd()}//child/./sub`,
+      ...(isWindows
+        ? [
+            "C:\\",
+            "C:/",
+            "C:",
+            "C:dir",
+            "C:\\a\\b\\..",
+            "C:\\a\\b\\",
+            "dir\\sub\\..\\",
+            "\\\\server\\share",
+            "\\\\server\\share\\dir\\",
+            "//server/share",
+          ]
+        : []),
     ];
     expect(inputs.map(input => pathToFileURL(input).href)).toEqual(inputs.map(input => nodePathToFileURL(input).href));
   });

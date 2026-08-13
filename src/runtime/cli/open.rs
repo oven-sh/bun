@@ -173,9 +173,8 @@ impl Editor {
             }};
         }
 
-        // `open <editor> --args ...` gives a terminal editor its own Terminal.app
-        // window. `xdg-open` and `start` accept a single file, so elsewhere
-        // terminal editors are run directly, like every other editor.
+        // Opens the editor in a new Terminal.app window; xdg-open and start have
+        // no equivalent, so elsewhere terminal editors are run directly.
         #[cfg(target_os = "macos")]
         if matches!(self, Editor::Vim | Editor::Emacs | Editor::Neovim) {
             push_arg!(OPENER);

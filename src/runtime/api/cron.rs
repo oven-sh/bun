@@ -251,8 +251,6 @@ enum RegisterState {
     BootingOut,
     #[cfg(target_os = "macos")]
     Bootstrapping,
-    Done,
-    Failed,
 }
 
 // Forward as raw ptr — `maybe_finished` (via `CronJobBase`) may free `this`.
@@ -422,11 +420,6 @@ impl CronJobBase for CronRegisterJob {
     unsafe fn finish(this: *mut Self) {
         // SAFETY: caller transfers the unique Box<Self> leaked in cron_register.
         let mut job = unsafe { bun_core::heap::take(this) };
-        job.state = if job.err_msg.is_some() {
-            RegisterState::Failed
-        } else {
-            RegisterState::Done
-        };
         job.poll.unref(bun_io::js_vm_ctx());
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
@@ -1084,8 +1077,6 @@ enum RemoveState {
     ReadingCrontab,
     InstallingCrontab,
     BootingOut,
-    Done,
-    Failed,
 }
 
 // Forward as raw ptr — `maybe_finished` (via `CronJobBase`) may free `this`.
@@ -1233,11 +1224,6 @@ impl CronJobBase for CronRemoveJob {
     unsafe fn finish(this: *mut Self) {
         // SAFETY: caller transfers the unique Box<Self> leaked in cron_remove.
         let mut job = unsafe { bun_core::heap::take(this) };
-        job.state = if job.err_msg.is_some() {
-            RemoveState::Failed
-        } else {
-            RemoveState::Done
-        };
         job.poll.unref(bun_io::js_vm_ctx());
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
@@ -1652,6 +1638,17 @@ impl CronJob {
     fn finish_deferred_stop(this: *mut Self, vm: &VirtualMachine) {
         Self::from_ctx_ptr(this).stop_internal(vm);
         Self::remove_from_list(this, vm);
+    }
+
+    /// The fake heap dropped this job's timer (`useRealTimers()` /
+    /// `clearAllTimers()`): stop the job as `stop()` would, so it does not
+    /// keep the event loop alive for a timer that can no longer fire.
+    ///
+    /// # Safety
+    /// `this` was recovered from a node just popped off the fake heap and no
+    /// JS has run since; a scheduled job's wrapper keeps it alive.
+    pub(crate) unsafe fn stop_dropped_from_fake_heap(this: *mut Self) {
+        Self::self_stop(this, VirtualMachine::get());
     }
 
     fn self_stop(this: *mut Self, vm: &VirtualMachine) {

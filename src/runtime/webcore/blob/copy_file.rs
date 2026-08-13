@@ -313,6 +313,40 @@ impl CopyFile {
         Ok(())
     }
 
+    /// Copies the rest of the file with [`read_write_fallback`] when
+    /// `copy_file_range`/`sendfile`/`splice` is unavailable or unusable,
+    /// recording a failure in `system_error` the same way the syscall paths do.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn fallback_read_write(
+        &mut self,
+        remain: usize,
+        unknown_size: bool,
+        total_written: &mut u64,
+    ) -> Result<(), crate::Error> {
+        let bun_opened_dest = matches!(
+            self.destination_file_store.pathlike,
+            PathOrFileDescriptor::Path(_)
+        );
+        let cap = if unknown_size {
+            MAX_SIZE
+        } else {
+            remain as SizeType
+        };
+        match read_write_fallback(
+            self.source_fd,
+            self.destination_fd,
+            bun_opened_dest,
+            cap,
+            total_written,
+        ) {
+            bun_sys::Result::Err(err) => {
+                self.system_error = Some(err.to_system_error());
+                Err(bun_errno::from_errno(err.errno as i32).into())
+            }
+            bun_sys::Result::Ok(()) => Ok(()),
+        }
+    }
+
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn do_copy_file_range<const USE: TryWith, const CLEAR_APPEND_IF_INVALID: bool>(
         &mut self,
@@ -334,17 +368,6 @@ impl CopyFile {
         let mut total_written: u64 = 0;
         let src_fd = self.source_fd;
         let dest_fd = self.destination_fd;
-        let bun_opened_dest = matches!(
-            self.destination_file_store.pathlike,
-            PathOrFileDescriptor::Path(_)
-        );
-        let fallback_cap = |remain: usize| -> SizeType {
-            if unknown_size {
-                MAX_SIZE
-            } else {
-                remain as SizeType
-            }
-        };
 
         // defer { this.read_len = @truncate(total_written); }
         let read_len_slot: *mut SizeType = &raw mut self.read_len;
@@ -360,19 +383,7 @@ impl CopyFile {
         // If they can't use copy_file_range, they probably also can't
         // use sendfile() or splice()
         if !bun_sys::copy_file::can_use_copy_file_range_syscall() {
-            match read_write_fallback(
-                src_fd,
-                dest_fd,
-                bun_opened_dest,
-                fallback_cap(remain),
-                &mut total_written,
-            ) {
-                bun_sys::Result::Err(err) => {
-                    self.system_error = Some(err.to_system_error());
-                    return Err(bun_errno::from_errno(err.errno as i32).into());
-                }
-                bun_sys::Result::Ok(()) => return Ok(()),
-            }
+            return self.fallback_read_write(remain, unknown_size, &mut total_written);
         }
 
         loop {
@@ -425,19 +436,7 @@ impl CopyFile {
                 // OPNOTSUPP: filesystem doesn't support this operation
                 bun_sys::E::ENOSYS | bun_sys::E::EXDEV | bun_sys::E::ENOTSUP => {
                     // TODO: this should use non-blocking I/O.
-                    match read_write_fallback(
-                        src_fd,
-                        dest_fd,
-                        bun_opened_dest,
-                        fallback_cap(remain),
-                        &mut total_written,
-                    ) {
-                        bun_sys::Result::Err(err) => {
-                            self.system_error = Some(err.to_system_error());
-                            return Err(bun_errno::from_errno(err.errno as i32).into());
-                        }
-                        bun_sys::Result::Ok(()) => return Ok(()),
-                    }
+                    return self.fallback_read_write(remain, unknown_size, &mut total_written);
                 }
 
                 // EINVAL: eCryptfs and other filesystems may not support copy_file_range.
@@ -472,19 +471,7 @@ impl CopyFile {
                     // to a read/write loop
                     if total_written == 0 {
                         // TODO: this should use non-blocking I/O.
-                        match read_write_fallback(
-                            src_fd,
-                            dest_fd,
-                            bun_opened_dest,
-                            fallback_cap(remain),
-                            &mut total_written,
-                        ) {
-                            bun_sys::Result::Err(err) => {
-                                self.system_error = Some(err.to_system_error());
-                                return Err(bun_errno::from_errno(err.errno as i32).into());
-                            }
-                            bun_sys::Result::Ok(()) => return Ok(()),
-                        }
+                        return self.fallback_read_write(remain, unknown_size, &mut total_written);
                     }
 
                     self.system_error = Some(

@@ -54,6 +54,7 @@ struct State {
     /// without unsafe Arc-pointer reconstruction. Set via `Arc::new_cyclic` in
     /// `init()` (the sole constructor).
     self_weak: std::sync::Weak<IOReader>,
+    read_guards: Vec<std::sync::Arc<IOReader>>,
     /// Backref so async read callbacks can drive `Yield::run`. See
     /// `IOWriter::interp`.
     interp: Option<bun_ptr::ParentRef<Interpreter>>,
@@ -109,6 +110,15 @@ impl IOReader {
             .expect("IOReader::keepalive after last Arc dropped")
     }
 
+    fn push_read_guard(&self) {
+        let guard = self.keepalive();
+        self.state().read_guards.push(guard);
+    }
+
+    fn pop_read_guard(&self) -> Option<std::sync::Arc<IOReader>> {
+        self.state().read_guards.pop()
+    }
+
     pub(crate) fn init(fd: Fd, evtloop: EventLoopHandle) -> std::sync::Arc<IOReader> {
         let mut reader = ReaderImpl::init::<IOReader>();
         #[cfg(not(windows))]
@@ -132,6 +142,7 @@ impl IOReader {
                 #[cfg(windows)]
                 is_reading: false,
                 self_weak: std::sync::Weak::clone(w),
+                read_guards: Vec::new(),
                 interp: None,
             }),
         });
@@ -359,6 +370,8 @@ bun_io::impl_buffered_reader_parent! {
     on_reader_error = |this, err| (*this).on_reader_error(&err);
     loop_           = |this| (*this).io_evtloop().native_loop();
     event_loop      = |this| (*this).io_evtloop();
+    ref_            = |this| (*this).push_read_guard();
+    deref           = |this| drop((*this).pop_read_guard());
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -367,12 +380,9 @@ bun_io::impl_buffered_reader_parent! {
 
 impl Drop for IOReader {
     fn drop(&mut self) {
-        // With `Arc` the last ref drops after the callback returns, so this
-        // does not run from inside a read callback while BufferedReader is
-        // still iterating.
-        // TODO: revisit if a child callback can drop the last Arc while
-        // BufferedReader is still on the stack — would need the
-        // EventLoopTask hop once the shell EventLoopHandle shim is real.
+        // The bun_io read loop brackets every event-loop entry with the
+        // parent `ref_`/`deref` hooks (`read_guards`), so the last ref never
+        // drops while BufferedReader is still iterating.
         let s = self.state.get_mut();
         let r = self.reader.get_mut();
         if s.fd != Fd::INVALID {

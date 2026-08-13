@@ -7,7 +7,6 @@ use bun_sys::{self, Fd, FdExt};
 
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::node::types::FdJsc;
-use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::file_sink::{self, FileSink};
 use crate::webcore::sink;
 use crate::webcore::streams::SourceHandle;
@@ -166,7 +165,6 @@ impl<'a> Writable<'a> {
         // act, so this must be the final access.
         process.on_stdin_destroyed();
     }
-    pub fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
 
     pub(crate) fn init(
         stdio: &mut Stdio,

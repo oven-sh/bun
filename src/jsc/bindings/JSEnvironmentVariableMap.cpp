@@ -107,6 +107,8 @@ static JSC::JSString* coerceEnvValue(JSGlobalObject* globalObject, JSC::ThrowSco
 }
 
 static void applyTZFromString(JSGlobalObject*, const String&);
+static void applyTLSRejectFromString(JSGlobalObject*, const String&);
+static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
 static bool shouldApplyTZSideEffect(JSGlobalObject*);
 
 // TZ side effect for put() and jsProcessEnvCoerceForWrite, so delete-then-set
@@ -118,6 +120,14 @@ static void applyTimeZoneEnvValue(JSGlobalObject* globalObject, JSC::JSString* s
     if (view->isNull())
         return;
     applyTZFromString(globalObject, view->toString());
+}
+
+static void applyTLSRejectEnvValue(JSGlobalObject* globalObject, JSC::JSString* string)
+{
+    auto view = string->view(globalObject);
+    if (view->isNull())
+        return;
+    applyTLSRejectFromString(globalObject, view->toString());
 }
 
 bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
@@ -143,6 +153,12 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
     // updates Date caches. putDirect bypasses the accessor so the side effect fires once.
     if (uid && WTF::equal(uid, "TZ"_s)) [[unlikely]] {
         applyTimeZoneEnvValue(globalObject, string);
+        RETURN_IF_EXCEPTION(scope, false);
+        static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);
+        return true;
+    }
+    if (uid && WTF::equal(uid, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) [[unlikely]] {
+        applyTLSRejectEnvValue(globalObject, string);
         RETURN_IF_EXCEPTION(scope, false);
         static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);
         return true;
@@ -298,12 +314,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
     return JSValue::encode(out);
 }
 
-// Parse-and-apply for NODE_TLS_REJECT_UNAUTHORIZED / BUN_CONFIG_VERBOSE_FETCH,
-// used by both the CustomSetters below and applySharedEnvSideEffects.
-// (applyTZFromString is forward-declared above applyTimeZoneEnvValue.)
-static void applyTLSRejectFromString(JSGlobalObject*, const String&);
-static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
-
 // Store-only: the TZ side effect fires from put() / jsProcessEnvCoerceForWrite on every
 // write. Firing here too would double-apply on Windows (writeEnvVar already ran it).
 JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
@@ -334,6 +344,8 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
         DeletePropertySlot dataSlot;
         Base::deleteProperty(cell, globalObject, clientData->builtinNames().dataPrivateName(), dataSlot);
         RETURN_IF_EXCEPTION(scope, false);
+    } else if (uid && WTF::equal(uid, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) {
+        applyTLSRejectFromString(globalObject, String());
     }
 
     RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
@@ -477,19 +489,32 @@ JSC_DEFINE_HOST_FUNCTION(jsProcessEnvCoerceForWrite, (JSGlobalObject * globalObj
         if (WTF::equal(keyView, "TZ"_s)) {
             applyTimeZoneEnvValue(globalObject, string);
             RETURN_IF_EXCEPTION(scope, {});
+        } else if (WTF::equal(keyView, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) {
+            applyTLSRejectEnvValue(globalObject, string);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
     return JSValue::encode(string);
 }
 
-// `delete process.env.TZ` on Windows: reset the timezone override (POSIX handles this in
+// `delete process.env.X` on Windows: undo X's native side effect (POSIX handles this in
 // JSEnvironmentVariableMap::deleteProperty; the Windows internalEnv is a plain object).
-JSC_DEFINE_HOST_FUNCTION(jsProcessEnvResetTZ, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsProcessEnvResetForDelete, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
-    if (shouldApplyTZSideEffect(globalObject)) {
-        WTF::setTimeZoneOverride(String());
-        resetDateCachesAfterTimeZoneChange(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue key = callFrame->argument(0);
+    if (!key.isString())
+        return JSValue::encode(jsUndefined());
+    auto keyView = asString(key)->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (WTF::equal(keyView, "TZ"_s)) {
+        if (shouldApplyTZSideEffect(globalObject)) {
+            WTF::setTimeZoneOverride(String());
+            resetDateCachesAfterTimeZoneChange(vm);
+        }
+    } else if (WTF::equal(keyView, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) {
+        applyTLSRejectFromString(globalObject, String());
     }
     return JSValue::encode(jsUndefined());
 }
@@ -772,9 +797,12 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
     // side effect via applySharedEnvSideEffects, so delete has to undo it or
     // existing Date instances keep the deleted zone's offset.
     String key(uid);
-    if (SharedEnvStore::normalizeKey(key) == "TZ"_s && shouldApplyTZSideEffect(globalObject)) {
+    String normalizedKey = SharedEnvStore::normalizeKey(key);
+    if (normalizedKey == "TZ"_s && shouldApplyTZSideEffect(globalObject)) {
         WTF::setTimeZoneOverride(String());
         resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
+    } else if (normalizedKey == "NODE_TLS_REJECT_UNAUTHORIZED"_s) {
+        applyTLSRejectFromString(globalObject, String());
     }
 
     syncWindowsEnv(store, key, nullptr);
@@ -1113,7 +1141,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     args.append(keyArray);
     args.append(editWindowsEnvVar);
     args.append(JSC::JSFunction::create(vm, globalObject, 2, "coerceForWrite"_s, jsProcessEnvCoerceForWrite, ImplementationVisibility::Private));
-    args.append(JSC::JSFunction::create(vm, globalObject, 0, "resetTZ"_s, jsProcessEnvResetTZ, ImplementationVisibility::Private));
+    args.append(JSC::JSFunction::create(vm, globalObject, 1, "resetForDelete"_s, jsProcessEnvResetForDelete, ImplementationVisibility::Private));
     auto clientData = WebCore::clientData(vm);
     JSC::CallData callData = JSC::getCallData(getSourceEvent);
     NakedPtr<JSC::Exception> returnedException = nullptr;

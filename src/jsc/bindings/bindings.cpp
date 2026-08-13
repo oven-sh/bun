@@ -5304,6 +5304,9 @@ enum class BuiltinNamesMap : uint8_t {
     type,
     signal,
     cmd,
+    // Private names below: set by builtins via $putByIdDirectPrivate, unreachable from user code.
+    internal,
+    sharedFd,
 };
 
 static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char name)
@@ -5382,6 +5385,12 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     }
     case BuiltinNamesMap::cmd: {
         return clientData->builtinNames().cmdPublicName();
+    }
+    case BuiltinNamesMap::internal: {
+        return clientData->builtinNames().internalPrivateName();
+    }
+    case BuiltinNamesMap::sharedFd: {
+        return clientData->builtinNames().sharedFdPrivateName();
     }
     default: {
         ASSERT_NOT_REACHED();
@@ -5992,6 +6001,11 @@ extern "C" WebCore::AbortSignalTimeout WebCore__AbortSignal__getTimeout(WebCore:
         return nullptr;
     }
     return abortSignal->getTimeout();
+}
+
+extern "C" void WebCore__AbortSignal__cancelTimer(WebCore::AbortSignal* abortSignal)
+{
+    abortSignal->cancelTimer();
 }
 
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__ref(WebCore::AbortSignal* abortSignal)

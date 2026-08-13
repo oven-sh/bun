@@ -606,14 +606,19 @@ impl Package<u64> {
             .zip(resolutions.iter_mut())
             .enumerate()
         {
-            // Optional-peer slots are re-derived by `hoist` (Cloner::flush), not carried over.
-            if old_dependencies[i].behavior.is_optional_peer() {
+            if *old_resolution >= max_package_id {
                 *resolution = invalid_package_id;
                 continue;
             }
 
-            if *old_resolution >= max_package_id {
-                *resolution = invalid_package_id;
+            let pending = PendingResolution {
+                old_resolution: *old_resolution,
+                resolve_id: new_package.resolutions.off + PackageID::try_from(i).expect("int cast"),
+            };
+
+            // Peer slots must not keep their target alive; bound in `Cloner::flush`.
+            if old_dependencies[i].behavior.is_optional_peer() {
+                cloner.optional_peers.push(pending);
                 continue;
             }
 
@@ -621,11 +626,7 @@ impl Package<u64> {
             if mapped < max_package_id {
                 *resolution = mapped;
             } else {
-                cloner.clone_queue.push(PendingResolution {
-                    old_resolution: *old_resolution,
-                    resolve_id: new_package.resolutions.off
-                        + PackageID::try_from(i).expect("int cast"),
-                });
+                cloner.clone_queue.push(pending);
             }
         }
 
@@ -1351,14 +1352,13 @@ impl Diff {
             ) {
                 if let Some(updates) = update_requests {
                     if updates.is_empty()
-                        || 'brk: {
-                            for request in updates {
-                                if from_dep.name_hash == request.name_hash {
-                                    break 'brk true;
-                                }
-                            }
-                            false
-                        }
+                        || UpdateRequest::contains_name(
+                            updates,
+                            from_dep.name_hash,
+                            from_dep
+                                .name
+                                .slice(from_lockfile.buffers.string_bytes.as_slice()),
+                        )
                     {
                         // Listed as to be updated
                         summary.update += 1;
@@ -1491,8 +1491,12 @@ impl Diff {
             // preserved. Same gate as the `Dependency::eql == true` branch
             // above.
             let is_explicit_update_target = matches!(update_requests, Some(updates)
-                if updates.is_empty()
-                    || updates.iter().any(|r| r.name_hash == from_dep.name_hash));
+            if updates.is_empty()
+                || UpdateRequest::contains_name(
+                    updates,
+                    from_dep.name_hash,
+                    from_dep.name.slice(from_lockfile.buffers.string_bytes.as_slice()),
+                ));
             if !is_explicit_update_target {
                 if let Some(mapping) = id_mapping.as_deref_mut() {
                     let from_res_id = from_resolutions[i];
@@ -1829,7 +1833,7 @@ impl Package<u64> {
                     }
 
                     dependency_version.value.workspace = path;
-                } else {
+                } else if features.is_main || features.is_workspace {
                     // SAFETY: tag == Workspace selects the `workspace` union member.
                     // Bind the (Copy) union field first so `slice()`'s `&self`
                     // borrow has a named place to point at.

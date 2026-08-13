@@ -587,6 +587,10 @@ impl MySQLConnection {
             reader
                 .ensure_capacity(packet_length)
                 .map_err(|_| AnyMySQLError::ShortRead)?;
+            if header_length as usize == PacketHeader::MAX_PAYLOAD_LENGTH {
+                self.process_split_packet(reader)?;
+                continue;
+            }
             // `NewReader<C>: Copy` so the scopeguard captures by copy; the inner
             // `C` writes through a raw pointer so the offset update still lands.
             // Always skip the full packet, we dont care about padding or unread bytes.
@@ -1128,6 +1132,65 @@ impl MySQLConnection {
                 connection: std::ptr::from_mut::<Self>(self),
             },
         }
+    }
+
+    fn process_split_packet<C: ReaderContext>(
+        &mut self,
+        reader: NewReader<C>,
+    ) -> Result<(), AnyMySQLError> {
+        if self.status != ConnectionState::Connected {
+            return Err(AnyMySQLError::UnexpectedPacket);
+        }
+        let buffered = reader.peek();
+        let mut sequence_id = PacketHeader::decode(buffered)
+            .ok_or(AnyMySQLError::ShortRead)?
+            .sequence_id;
+        let mut wire_length: usize = 0;
+        let mut payload_length: usize = 0;
+        loop {
+            let header =
+                PacketHeader::decode(&buffered[wire_length..]).ok_or(AnyMySQLError::ShortRead)?;
+            if header.sequence_id != sequence_id {
+                return Err(AnyMySQLError::UnexpectedPacket);
+            }
+            sequence_id = sequence_id.wrapping_add(1);
+            wire_length += PacketHeader::SIZE + header.length as usize;
+            payload_length += header.length as usize;
+            u32::try_from(wire_length).map_err(|_| AnyMySQLError::Overflow)?;
+            if buffered.len() < wire_length {
+                return Err(AnyMySQLError::ShortRead);
+            }
+            if (header.length as usize) < PacketHeader::MAX_PAYLOAD_LENGTH {
+                break;
+            }
+        }
+
+        let mut payload: Vec<u8> = Vec::new();
+        payload
+            .try_reserve_exact(payload_length)
+            .map_err(|_| AnyMySQLError::OutOfMemory)?;
+        let mut offset = PacketHeader::SIZE;
+        while offset < wire_length {
+            let end = (offset + PacketHeader::MAX_PAYLOAD_LENGTH).min(wire_length);
+            payload.extend_from_slice(&buffered[offset..end]);
+            offset = end + PacketHeader::SIZE;
+        }
+
+        reader.set_offset_from_start(wire_length);
+        self.sequence_id = sequence_id;
+        let payload_length = u32::try_from(payload_length).map_err(|_| AnyMySQLError::Overflow)?;
+        let mut cursor: usize = 0;
+        let mut message_start: usize = 0;
+        let assembled: NewReader<StackReader<'_>> =
+            StackReader::init(&payload, &mut cursor, &mut message_start);
+        self.handle_command(assembled, payload_length)
+            .map_err(|err| {
+                if err == AnyMySQLError::ShortRead {
+                    AnyMySQLError::UnexpectedPacket
+                } else {
+                    err
+                }
+            })
     }
 
     fn check_if_prepared_statement_is_done(&mut self, statement: &mut MySQLStatement) {

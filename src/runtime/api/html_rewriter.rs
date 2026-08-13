@@ -694,6 +694,7 @@ pub type HTMLRewriterTransform = RewriterPipe;
 /// when a content handler returns a pending Promise), and emits output either
 /// into a pre-stream buffer or — once JS reads `.body` — a [`ByteStream`]
 /// whose `producer` is [`SourceHandle::HTMLRewriter`].
+#[derive(bun_ptr::CellRefCounted)]
 pub struct RewriterPipe {
     pub(crate) global: GlobalRef,
     /// The owning `JSHTMLRewriterTransform` wrapper cell (whose `m_ctx` is this
@@ -762,56 +763,34 @@ pub struct RewriterPipe {
     /// `m_sinkPtr` (releases via `__controllerDetached`), and a parked
     /// suspension's reaction/abandon task. GC sweeps cells in unspecified
     /// order within a cycle, so whichever owner releases last frees the Box.
-    claims: Cell<u8>,
-    /// `claims` includes a JS-pump controller entry; consumed exactly once by
-    /// [`Self::release_pump_claim`].
+    ref_count: Cell<u32>,
+    /// `ref_count` includes a JS-pump controller entry; consumed exactly once
+    /// by [`Self::release_pump_ref`].
     pump_controller_attached: Cell<bool>,
 }
 
 impl RewriterPipe {
     /// `JSHTMLRewriterTransform` finalizer. Runs during GC sweep: nothing
-    /// here may touch other GC cells, and the other `claims` holders may
-    /// still dispatch into the pipe after this cell is swept. So only
-    /// release the cell's claim; the last holder frees the Box. At VM
-    /// shutdown deferred releases never run, so a still-claimed pipe leaks
-    /// instead of being freed under a live claim.
+    /// here may touch other GC cells, and the other ref holders may still
+    /// dispatch into the pipe after this cell is swept. So only release the
+    /// cell's ref; the last holder frees the Box. At VM shutdown deferred
+    /// releases never run, so a pipe with refs outstanding leaks instead of
+    /// being freed under a live ref.
     pub fn finalize(this: Box<Self>) {
-        this.cell.set(JSValue::ZERO);
-        if this.release_claim() {
-            let _ = Box::into_raw(this);
-            return;
-        }
-        drop(this);
-    }
-
-    #[inline]
-    fn acquire_claim(&self) {
-        self.claims.set(self.claims.get() + 1);
-    }
-
-    /// Releases one claim; `true` while other owners remain (the caller must
-    /// not free the pipe).
-    #[inline]
-    fn release_claim(&self) -> bool {
-        let n = self
-            .claims
-            .get()
-            .checked_sub(1)
-            .expect("RewriterPipe claims underflow");
-        self.claims.set(n);
-        n > 0
+        bun_ptr::finalize_js_box(this, |pipe| pipe.cell.set(JSValue::ZERO));
     }
 
     /// The JS-pump controller detached and can never dispatch into the pipe
-    /// again: release its claim. A last-owner free is deferred to the event
-    /// loop because the C++ caller keeps using the allocation in the same
-    /// frame (the destructor's trailing `__finalize`, the close/end host
+    /// again: release its ref. Releasing the last ref is deferred to the
+    /// event loop because the C++ caller keeps using the allocation in the
+    /// same frame (the destructor's trailing `__finalize`, the close/end host
     /// fns' `__close`/`__endWithSink` on the saved pointer).
-    fn release_pump_claim(&self) {
+    fn release_pump_ref(&self) {
         if !self.pump_controller_attached.replace(false) {
             return;
         }
-        if self.release_claim() {
+        if self.ref_count.get() > 1 {
+            Self::deref_nn(NonNull::from(self));
             return;
         }
         native_promise_context::DeferredDerefTask::schedule(
@@ -823,7 +802,7 @@ impl RewriterPipe {
     /// Queued by the `NativePromiseContext` destructor (via
     /// `DeferredDerefTask`) when the handler's promise was collected without
     /// settling: it will never resume this pipe. Runs on the JS thread,
-    /// outside GC sweep; the suspension's claim keeps `pipe` live until here.
+    /// outside GC sweep; the suspension's ref keeps `pipe` live until here.
     ///
     /// If the Transform cell is still alive (its `cell` backref is set) —
     /// a reader or the output Response keeps the rewrite reachable — fail
@@ -843,11 +822,7 @@ impl RewriterPipe {
         this.fail(webcore::body::ValueError::Message(BunString::static_(
             "HTMLRewriter content handler returned a Promise that will never settle",
         )));
-        if !this.release_claim() {
-            // SAFETY: last owner; no cell, controller, or task points at the
-            // allocation any more.
-            unsafe { bun_core::heap::destroy(pipe.as_const_ptr().cast_mut()) };
-        }
+        Self::deref_nn(pipe.into());
     }
 
     /// Record a handler's exception for the enclosing lol-html call to pick
@@ -964,7 +939,7 @@ impl RewriterPipe {
             driving: Cell::new(false),
             pending: JsCell::new(WritablePending::default()),
             done: Cell::new(false),
-            claims: Cell::new(1),
+            ref_count: Cell::new(1),
             pump_controller_attached: Cell::new(false),
         });
         // Every field is `Cell`/`JsCell`, so a shared `&RewriterPipe` via
@@ -1044,9 +1019,8 @@ impl RewriterPipe {
         // so it survives as long as user code can reach the output.
         let cell = js_HTMLRewriterTransform::to_js(pipe.as_ptr(), global);
         if !cell.is_cell() {
-            // Ownership was not transferred (allocation of the wrapper failed);
-            // reclaim and drop the Box allocation.
-            bun_ptr::destroy_box_with(pipe.as_ptr(), |_| {});
+            // No wrapper exists to own the initial ref, so drop it here.
+            Self::deref_nn(pipe);
             return Err(global.throw_out_of_memory());
         }
         this.cell.set(cell);
@@ -1167,10 +1141,10 @@ impl RewriterPipe {
         // JS-pump fallback: `assign_to_stream` installs a JS sink wrapper that
         // forwards to `JsSinkType for RewriterPipe`. The controller cell it
         // creates holds `pipe` raw as `m_sinkPtr` and dispatches
-        // `__controllerDetached` from wherever it detaches — including its
-        // GC destructor — so it owns a claim until `release_pump_claim`.
+        // `__controllerDetached` from wherever it detaches (including its
+        // GC destructor), so it owns a ref until `release_pump_ref`.
         this.pump_controller_attached.set(true);
-        this.acquire_claim();
+        this.ref_();
         let assignment_result =
             JSSink::<RewriterPipe>::assign_to_stream(global, stream.value, pipe.into());
         assignment_result.ensure_still_alive();
@@ -1562,9 +1536,9 @@ impl RewriterPipe {
         let pipe = core::ptr::from_ref(self).cast_mut();
         let context = native_promise_context::create(&self.global, pipe, cell);
         // The context destructor (promise GC'd unsettled) queues
-        // `abandon_suspension`; this claim keeps the pipe alive until that
+        // `abandon_suspension`; this ref keeps the pipe alive until that
         // task or the settle reaction releases it.
-        self.acquire_claim();
+        self.ref_();
         promise.then_with_value(
             &self.global,
             context,
@@ -1681,12 +1655,12 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     fn memory_cost(&self) -> usize {
         self.pending_input.get().capacity() + self.output_buffer.get().capacity()
     }
-    // Unlike other sinks, the controller does not own the pipe: its claim is
+    // Unlike other sinks, the controller does not own the pipe: its ref is
     // released by `controller_detached` below, and the free happens wherever
-    // the last claim drops.
-    fn finalize(&mut self) {}
+    // the last ref drops.
+    unsafe fn finalize(_this: *mut Self) {}
     fn controller_detached(&mut self) {
-        RewriterPipe::release_pump_claim(self);
+        RewriterPipe::release_pump_ref(self);
     }
     fn write_bytes(&mut self, data: &StreamResult) -> Writable {
         RewriterPipe::write(self, data)
@@ -1780,13 +1754,8 @@ fn on_handler_resolve(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     let pipe = BackRef::from(pipe);
     pipe.release_suspended_wrapper();
     pipe.resume_rewrite();
-    // Balances the `acquire_claim` in `begin_suspension`. Never the last
-    // claim in practice: the context cell roots the Transform cell, so the
-    // cell's own claim is still held while this reaction runs.
-    if !pipe.release_claim() {
-        // SAFETY: last owner (see above; defensive).
-        unsafe { bun_core::heap::destroy(pipe.as_const_ptr().cast_mut()) };
-    }
+    // Balances the `ref_()` in `begin_suspension`.
+    RewriterPipe::deref_nn(pipe.into());
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1801,12 +1770,8 @@ fn on_handler_reject(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
     pipe.fail(webcore::body::ValueError::JSValue(
         jsc::strong::Optional::create(reason, global),
     ));
-    // Balances the `acquire_claim` in `begin_suspension` (see
-    // `on_handler_resolve`).
-    if !pipe.release_claim() {
-        // SAFETY: last owner (defensive; the context cell roots the Transform cell).
-        unsafe { bun_core::heap::destroy(pipe.as_const_ptr().cast_mut()) };
-    }
+    // Balances the `ref_()` in `begin_suspension`.
+    RewriterPipe::deref_nn(pipe.into());
     Ok(JSValue::UNDEFINED)
 }
 

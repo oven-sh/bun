@@ -516,7 +516,7 @@ impl Config {
                             // `Vec` would silently grow instead, so check the
                             // bound explicitly to preserve the overflow throw.
                             let start = buf.len();
-                            write!(&mut buf, "{}", str).ok();
+                            let _ = write!(&mut buf, "{}", str);
                             if buf.len() > total_name_buf_len as usize {
                                 return Err(global.throw_invalid_arguments(format_args!(
                                     "Error reading exports.eliminate. TODO: utf-16",

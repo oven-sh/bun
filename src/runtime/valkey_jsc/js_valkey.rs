@@ -387,7 +387,7 @@ impl RefCountedTimer {
             return;
         }
         let now = bun_core::Timespec::ms_from_now(
-            bun_core::TimespecMockMode::AllowMockedTime,
+            bun_core::TimespecMockMode::ForceRealTime,
             i64::from(ms),
         );
         self.event_loop_timer.with_mut(|t| {
@@ -773,7 +773,7 @@ impl JSValkeyClient {
                 password,
                 in_flight: command::promise_pair::Queue::init(),
                 queue: command::entry::Queue::init(),
-                status: valkey::Status::Disconnected,
+                status: valkey::Status::NeverConnected,
                 connection_strings,
                 socket: Socket::SocketTcp(uws::SocketTCP {
                     socket: uws::InternalSocket::Detached,
@@ -882,7 +882,7 @@ impl JSValkeyClient {
                 password,
                 in_flight: command::promise_pair::Queue::init(),
                 queue: command::entry::Queue::init(),
-                status: valkey::Status::Disconnected,
+                status: valkey::Status::NeverConnected,
                 connection_strings: connection_strings_copy,
                 socket: Socket::SocketTcp(uws::SocketTCP {
                     socket: uws::InternalSocket::Detached,
@@ -890,8 +890,6 @@ impl JSValkeyClient {
                 tls,
                 database: client.database,
                 flags: valkey::ConnectionFlags {
-                    // Because this starts in the disconnected state, we need to reset some flags.
-                    is_authenticated: false,
                     // If the user manually closed the connection, then duplicating a closed client
                     // means the new client remains finalized.
                     is_manually_closed: client.flags.is_manually_closed,
@@ -900,7 +898,6 @@ impl JSValkeyClient {
                     } else {
                         client.flags.enable_offline_queue
                     },
-                    needs_to_open_socket: true,
                     enable_auto_reconnect: client.flags.enable_auto_reconnect,
                     is_reconnecting: false,
                     enable_auto_pipelining: if sub_ctx.is_subscriber {
@@ -1038,12 +1035,12 @@ impl JSValkeyClient {
         let self_br = BackRef::new(self);
         let _update = scopeguard::guard(self_br, |p| p.update_poll_ref());
 
-        if self.client.get().flags.needs_to_open_socket {
+        if self.client.get().status == valkey::Status::NeverConnected {
             self.poll_ref.with_mut(|r| r.ref_(vm_event_loop_ctx()));
 
             if let Err(err) = self.connect() {
                 self.poll_ref.with_mut(|r| r.unref(vm_event_loop_ctx()));
-                self.client_mut().flags.needs_to_open_socket = true;
+                self.client_mut().status = valkey::Status::NeverConnected;
                 let err_value = global_object
                     .err(
                         jsc::ErrorCode::SOCKET_CLOSED_BEFORE_CONNECTION,
@@ -1090,7 +1087,10 @@ impl JSValkeyClient {
         // which derefs. Hold a ref so `&self` stays live across the call.
         let _guard = self.ref_scope();
 
-        if self.client.get().status == valkey::Status::Disconnected {
+        if matches!(
+            self.client.get().status,
+            valkey::Status::NeverConnected | valkey::Status::Disconnected
+        ) {
             return Ok(JSValue::UNDEFINED);
         }
         self.client_mut().disconnect();
@@ -1145,7 +1145,9 @@ impl JSValkeyClient {
                 let _ = self.client_fail(msg, protocol::RedisError::IdleTimeout);
                 // TODO: properly propagate exception upwards
             }
-            valkey::Status::Disconnected | valkey::Status::Connecting => {
+            valkey::Status::NeverConnected
+            | valkey::Status::Disconnected
+            | valkey::Status::Connecting => {
                 use std::io::Write;
                 let mut cur = &mut buf[..];
                 let start = cur.len();
@@ -1251,7 +1253,6 @@ impl JSValkeyClient {
                     }
                     let client = self.client_mut();
                     client.flags.connection_promise_returns_client = false;
-                    client.flags.is_authenticated = false;
                     client.flags.is_manually_closed = true;
                     let _close = scopeguard::guard(BackRef::new(self), |p| p.client_mut().close());
                     return self.client_mut().fail_with_js_value(&global_object, error);
@@ -1473,7 +1474,9 @@ impl JSValkeyClient {
     }
 
     fn connect(&self) -> Result<(), crate::Error> {
-        self.client_mut().flags.needs_to_open_socket = false;
+        if self.client.get().status == valkey::Status::NeverConnected {
+            self.client_mut().status = valkey::Status::Disconnected;
+        }
 
         let _guard = self.ref_scope();
 
@@ -1576,11 +1579,11 @@ impl JSValkeyClient {
         // the host-fn shim passes a bare `&self` with no ref of its own.
         let _guard = self.ref_scope();
 
-        if self.client.get().flags.needs_to_open_socket {
+        if self.client.get().status == valkey::Status::NeverConnected {
             bun_core::hint::cold();
 
             if let Err(err) = self.connect() {
-                self.client_mut().flags.needs_to_open_socket = true;
+                self.client_mut().status = valkey::Status::NeverConnected;
                 let err_value = global_this
                     .err(
                         jsc::ErrorCode::SOCKET_CLOSED_BEFORE_CONNECTION,
@@ -1712,7 +1715,7 @@ impl JSValkeyClient {
                 debug!("upgrading this_value since we are connected/connecting");
                 self.this_value.with_mut(|t| t.upgrade(&self.global_object));
             }
-            valkey::Status::Disconnected => {
+            valkey::Status::NeverConnected | valkey::Status::Disconnected => {
                 // If we're disconnected, we need to check if we have any pending activity.
                 if has_activity {
                     debug!("upgrading this_value since there is pending activity");
@@ -1877,7 +1880,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
                     // through to the authenticated state after a rejected
                     // handshake.
                     this.global_object.clear_exception();
-                    this.client_mut().flags.is_authenticated = false;
                     this.client_mut().flags.is_manually_closed = true;
                     this.client_mut().close();
                     return Ok(());
@@ -1891,7 +1893,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
         _vm: &VirtualMachine,
         err_value: JSValue,
     ) -> JsResult<()> {
-        this.client_mut().flags.is_authenticated = false;
         let _exit = this.vm().enter_event_loop_scope();
         this.client_mut().flags.is_manually_closed = true;
         let this_br = BackRef::new(this);

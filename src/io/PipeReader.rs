@@ -83,6 +83,12 @@ pub trait BufferedReaderParent {
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error);
     unsafe fn loop_(this: *mut Self) -> *mut Loop;
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
+    unsafe fn ref_(this: *mut Self) {
+        let _ = this;
+    }
+    unsafe fn deref(this: *mut Self) {
+        let _ = this;
+    }
 }
 
 impl BufferedReaderVTable {
@@ -125,6 +131,20 @@ impl BufferedReaderVTable {
 
     fn on_reader_error(&self, err: sys::Error) {
         self.link().on_reader_error(err)
+    }
+
+    #[must_use]
+    pub(crate) fn ref_parent(self) -> ParentKeepAlive {
+        self.link().ref_();
+        ParentKeepAlive(self)
+    }
+}
+
+pub(crate) struct ParentKeepAlive(BufferedReaderVTable);
+
+impl Drop for ParentKeepAlive {
+    fn drop(&mut self) {
+        self.0.link().deref();
     }
 }
 
@@ -595,17 +615,19 @@ impl PosixBufferedReader {
     /// [`Self::read`] for why the entry is raw.
     pub unsafe fn on_poll(this: *mut PosixBufferedReader, size_hint: isize, received_hup: bool) {
         // SAFETY: caller contract — `this` is live; borrows end at each `;`.
-        let (paused, fd, file_type) = unsafe {
+        let (paused, fd, file_type, vtable) = unsafe {
             (
                 (*this).flags.contains(PosixFlags::IS_PAUSED),
                 (*this).get_fd(),
                 (*this).get_file_type(),
+                (*this).vtable,
             )
         };
         if paused {
             return;
         }
         bun_sys::syslog!("onPoll({}) = {}", fd, size_hint);
+        let _parent = vtable.ref_parent();
 
         match file_type {
             FileType::NonblockingPipe => {
@@ -1730,6 +1752,7 @@ impl WindowsBufferedReader {
         // `set_data`. Invoked from the event loop with no other Rust borrow of
         // the reader live (single-owner).
         let this = unsafe { bun_ptr::callback_ctx::<WindowsBufferedReader>((*stream).data) };
+        let _parent = this.vtable.ref_parent();
 
         let nread_int = nread.int();
 
@@ -1813,6 +1836,7 @@ impl WindowsBufferedReader {
         // (single-owner).
         let this: &mut WindowsBufferedReader =
             unsafe { bun_ptr::callback_ctx::<WindowsBufferedReader>(parent_ptr) };
+        let _parent = this.vtable.ref_parent();
 
         // Mark no longer in flight
         this.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);

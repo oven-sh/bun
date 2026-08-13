@@ -127,7 +127,7 @@ pub struct TestRunner<'a> {
     pub(crate) bail: u32,
     pub(crate) max_concurrency: u32,
 
-    pub(crate) snapshots: Snapshots<'a>,
+    pub(crate) snapshots: Snapshots,
 
     pub(crate) default_timeout_ms: u32,
 

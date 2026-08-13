@@ -500,7 +500,7 @@ describe("stdio is flushed when the worker exits synchronously", () => {
     expect(code).toBe(0);
   });
 
-  test.each([
+  test.concurrent.each([
     ["process.exit", "process.exit(0);", 0],
     ["uncaught exception", 'throw new Error("boom");', 1],
     ["unhandled rejection", 'Promise.reject(new Error("boom"));', 1],

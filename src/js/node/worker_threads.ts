@@ -460,25 +460,23 @@ function makePortWritable(port) {
   return stream;
 }
 
+// The parent always sends stdout and stderr ports; stdin only for { stdin: true }.
 function setupWorkerStdio(stdio) {
   const { stdin, stdout, stderr } = stdio;
-  let stdoutStream, stderrStream;
-  if (stdout) {
-    Object.defineProperty(process, "stdout", {
-      value: (stdoutStream = makePortWritable(stdout)),
-      writable: true,
-      configurable: true,
-      enumerable: true,
-    });
-  }
-  if (stderr) {
-    Object.defineProperty(process, "stderr", {
-      value: (stderrStream = makePortWritable(stderr)),
-      writable: true,
-      configurable: true,
-      enumerable: true,
-    });
-  }
+  const stdoutStream = makePortWritable(stdout);
+  const stderrStream = makePortWritable(stderr);
+  Object.defineProperty(process, "stdout", {
+    value: stdoutStream,
+    writable: true,
+    configurable: true,
+    enumerable: true,
+  });
+  Object.defineProperty(process, "stderr", {
+    value: stderrStream,
+    writable: true,
+    configurable: true,
+    enumerable: true,
+  });
   // node always replaces a worker's process.stdin: port-backed when { stdin: true },
   // otherwise an immediately-EOF'd stream — never the process-wide fd 0, which
   // would race the main thread (and hang on a TTY).
@@ -495,15 +493,13 @@ function setupWorkerStdio(stdio) {
     enumerable: true,
   });
   // node routes console.log through process.stdout/stderr; Bun's global console
-  // writes the fd directly, so rebind it to the captured streams when present.
-  if (stdoutStream || stderrStream) {
-    const { Console } = require("node:console");
-    globalThis.console = new Console(process.stdout, process.stderr);
-    process.on("exit", () => {
-      stdoutStream?.[kFlushSync]();
-      stderrStream?.[kFlushSync]();
-    });
-  }
+  // writes the fd directly, so rebind it to the port-backed streams.
+  const { Console } = require("node:console");
+  globalThis.console = new Console(stdoutStream, stderrStream);
+  process.on("exit", () => {
+    stdoutStream[kFlushSync]();
+    stderrStream[kFlushSync]();
+  });
 }
 
 // Emulation of Node's JSTransferable protocol (kTransfer/kTransferList/kDeserialize) for

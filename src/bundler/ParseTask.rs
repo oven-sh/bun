@@ -2339,10 +2339,7 @@ pub mod parse_worker {
         // disjoint `options` field — never the whole struct — so the raw `resolver`
         // pointer (which targets `(*transpiler).resolver`) remains valid.
         let topts = unsafe { &(*transpiler).options };
-        // `bun build --server-components` bundles the server graph without a
-        // framework, so this is `None` there even though `server_components` is
-        // on. Files carrying a directive are rejected below in that case: there
-        // is no runtime to register the boundary with.
+        // `None` for CLI `--server-components` builds (no framework); directive files error below.
         let framework_server_components = topts
             .framework
             .and_then(|framework| framework.server_components.as_ref());

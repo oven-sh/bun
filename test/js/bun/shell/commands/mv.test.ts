@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isPosix } from "harness";
+import { isPosix, isWindows } from "harness";
 import {
   accessSync,
   chmodSync,
@@ -79,11 +79,13 @@ describe("mv", async () => {
     .doesNotExist("b")
     .runAsTest("empty source fails");
 
+  // The POSIX renameat() wrapper attaches the source path to its errors; the
+  // Windows one does not yet, so the message differs by platform.
   TestBuilder.command`mv a ${""}`
     .ensureTempDir()
     .file("a", "file")
     .exitCode(2 /* ENOENT */)
-    .stderr("mv: a: No such file or directory\n")
+    .stderr(isWindows ? "mv: No such file or directory\n" : "mv: a: No such file or directory\n")
     .fileEquals("a", "file")
     .runAsTest("empty destination fails");
 

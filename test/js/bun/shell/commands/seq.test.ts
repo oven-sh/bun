@@ -166,6 +166,30 @@ describe("seq long output", () => {
     expect(stdout).toBe(expected);
   });
 
+  test.concurrent("redirected to a Buffer that holds the whole sequence", async () => {
+    const target = Buffer.alloc(expected.length);
+    const { stderr, exitCode } = await $`seq -s , -t END 1 ${COUNT} > ${target}`.nothrow().quiet();
+    expect({ stderr: stderr.toString(), exitCode, target: target.toString() }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      target: expected,
+    });
+  });
+
+  // 100 KiB takes the first chunk whole and is filled up by part of the second;
+  // the third is refused. The Buffer must hold exactly that prefix. Like the
+  // other builtins, seq leaves reporting a too-small Buffer to the shared
+  // write_no_io layer, which today makes this a silent truncation with exit 0.
+  test.concurrent("redirected to a Buffer smaller than the sequence", async () => {
+    const target = Buffer.alloc(100 * 1024);
+    const { stderr, exitCode } = await $`seq -s , -t END 1 ${COUNT} > ${target}`.nothrow().quiet();
+    expect({ stderr: stderr.toString(), exitCode, target: target.toString() }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      target: expected.slice(0, target.length),
+    });
+  });
+
   // 8192 four-digit values with a 4-byte separator are exactly 64 KiB. Ending
   // at 9191 the sequence runs out just as the first chunk fills up; ending at
   // 9192 one value and the terminator are left over for a second chunk.
@@ -192,31 +216,36 @@ describe("seq long output", () => {
     });
   });
 
-  // Once the reader is gone the chunks still to come fail with EPIPE; seq has
-  // to give up on the sequence instead of rendering the rest or hanging. The
-  // pipeline's exit code is the reader's.
-  test.concurrent("stops when the reader exits after the first line", async () => {
-    const firstLine =
-      `const { value } = await Bun.stdin.stream().getReader().read();` +
-      `console.log(new TextDecoder().decode(value).split("\\n")[0]);` +
-      `process.exit(0);`;
-    const { stdout, stderr, exitCode } = await $`seq 1 500000 | ${bunExe()} -e ${firstLine}`
-      .env(bunEnv)
-      .nothrow()
-      .quiet();
-    expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
-      stdout: "1\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+  // Once the reader is gone the chunks still to come fail with EPIPE and seq
+  // has to fail instead of hanging. A pipeline only reports the reader's exit
+  // code, so seq's own failure is made visible by chaining an `echo` to stderr
+  // off it; the drained reader shows the marker is not printed otherwise.
+  // 200k lines (~1.3 MB) are far more than a pipe buffers.
+  describe("fails once the reader is gone", () => {
+    const LINES = 200_000;
+    const run = async (pipeline: Promise<{ stdout: Buffer; stderr: Buffer; exitCode: number }>) => {
+      const { stdout, stderr, exitCode } = await pipeline;
+      return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
+    };
 
-  test.concurrent("stops when the reader never reads", async () => {
-    const { stdout, stderr, exitCode } = await $`seq 1 500000 | true`.nothrow().quiet();
-    expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
-      stdout: "",
-      stderr: "",
-      exitCode: 0,
+    test.concurrent("reader exits after the first line", async () => {
+      const firstLine =
+        `const { value } = await Bun.stdin.stream().getReader().read();` +
+        `console.log(new TextDecoder().decode(value).split("\\n")[0]);` +
+        `process.exit(0);`;
+      const pipeline = $`(seq 1 ${LINES} || echo seq-failed 1>&2) | ${bunExe()} -e ${firstLine}`.env(bunEnv);
+      expect(await run(pipeline.nothrow().quiet())).toEqual({ stdout: "1\n", stderr: "seq-failed\n", exitCode: 0 });
+    });
+
+    test.concurrent("reader never reads", async () => {
+      const pipeline = $`(seq 1 ${LINES} || echo seq-failed 1>&2) | true`;
+      expect(await run(pipeline.nothrow().quiet())).toEqual({ stdout: "", stderr: "seq-failed\n", exitCode: 0 });
+    });
+
+    test.concurrent("reader drains the whole sequence", async () => {
+      const drain = "await Bun.stdin.bytes()";
+      const pipeline = $`(seq 1 ${LINES} || echo seq-failed 1>&2) | ${bunExe()} -e ${drain}`.env(bunEnv);
+      expect(await run(pipeline.nothrow().quiet())).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     });
   });
 

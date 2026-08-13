@@ -1,9 +1,8 @@
 use std::io::Write as _;
 
-use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinState, Impl, Kind};
+use crate::shell::builtin::{Builtin, BuiltinState, Kind};
 use crate::shell::interpreter::{Interpreter, NodeId, OutputNeedsIOSafeGuard};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
-use crate::shell::states::cmd::Exec;
 use crate::shell::yield_::Yield;
 
 /// The sequence is rendered and written one chunk at a time, cut at the first
@@ -179,17 +178,11 @@ impl Seq {
             return Self::enqueue_chunk(interp, cmd, safeguard);
         }
         loop {
-            let cmd_node = interp.as_cmd_mut(cmd);
-            let shell = cmd_node.base.shell;
-            let Exec::Builtin(bltn) = &mut cmd_node.exec else {
-                unreachable!()
-            };
-            let (stdout, me) = Self::split_stdout_state(bltn);
+            let (mut stdout, me) = Self::split_stdout_no_io(interp, cmd);
             let last = me.render_chunk();
-            // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd.
-            let written = unsafe { stdout.write_no_io_to(shell, &me.buf) };
-            // The only error here is a full `> ${buffer}` target, which the
-            // remaining chunks would not fit into either.
+            let written = stdout.write(&me.buf);
+            // A chunk that did not fit (a full `> ${buffer}`) means the rest
+            // of the sequence will not fit either.
             if last || written.is_err() {
                 break;
             }
@@ -206,7 +199,7 @@ impl Seq {
         safeguard: OutputNeedsIOSafeGuard,
     ) -> Yield {
         let child = ChildPtr::new(cmd, WriterTag::Builtin);
-        let (stdout, me) = Self::split_stdout_state(Builtin::of_mut(interp, cmd));
+        let (stdout, me) = Self::split_stdout(Builtin::of_mut(interp, cmd));
         me.state = if me.render_chunk() {
             State::Done
         } else {
@@ -273,16 +266,6 @@ impl Seq {
                 crate::shell::interpreter::unreachable_state("Seq.onIOWriterChunk", "idle")
             }
         }
-    }
-
-    /// Split-borrow `&mut Builtin` into `(&mut stdout, &mut Seq)`; the fields
-    /// are disjoint so this is a sound reborrow without `unsafe`.
-    #[inline]
-    fn split_stdout_state(bltn: &mut Builtin) -> (&mut BuiltinIO, &mut Seq) {
-        let Impl::Seq(me) = &mut bltn.impl_ else {
-            unreachable!()
-        };
-        (&mut bltn.stdout, &mut **me)
     }
 }
 

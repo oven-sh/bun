@@ -63,6 +63,25 @@ pub(crate) trait BuiltinState: Sized {
     fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Self {
         Self::extract(&mut Builtin::of_mut(interp, cmd).impl_)
     }
+
+    /// The builtin's stdout and its state borrowed side by side (disjoint
+    /// fields of `Builtin`), so bytes kept on the state can be handed to
+    /// `stdout.enqueue` without copying them out first.
+    #[inline]
+    #[track_caller]
+    fn split_stdout(bltn: &mut Builtin) -> (&mut BuiltinIO, &mut Self) {
+        (&mut bltn.stdout, Self::extract(&mut bltn.impl_))
+    }
+
+    /// [`split_stdout`](Self::split_stdout) for a stdout that does not
+    /// `needs_io()`: the same contract as [`Builtin::write_no_io`], writing
+    /// bytes kept on the state without copying them out first.
+    #[track_caller]
+    fn split_stdout_no_io(interp: &Interpreter, cmd: NodeId) -> (NoIoOutput<'_>, &mut Self) {
+        let (shell, bltn) = Builtin::of_mut_with_shell(interp, cmd);
+        let (io, state) = Self::split_stdout(bltn);
+        (NoIoOutput { io, shell }, state)
+    }
 }
 
 macro_rules! shell_builtins {
@@ -338,16 +357,13 @@ impl BuiltinIO {
         }
     }
 
-    /// Body of [`Builtin::write_no_io`] with the Cmd split-borrow already
-    /// performed by the caller. Exists so builtins whose payload lives in
-    /// `Builtin.impl_` (disjoint from `stdout`/`stderr`) can write a borrowed
-    /// slice without an intermediate heap clone.
+    /// Body of [`NoIoOutput::write`], which pairs the stream with its `shell`.
     ///
     /// # Safety
     /// `shell` must point to the live `ShellExecEnv` owning this builtin
     /// (i.e. `cmd.base.shell`); only dereferenced for the [`BuiltinIO::Buf`]
     /// arm.
-    pub(crate) unsafe fn write_no_io_to(
+    unsafe fn write_no_io_to(
         &mut self,
         shell: *mut crate::shell::interpreter::ShellExecEnv,
         buf: &[u8],
@@ -428,6 +444,26 @@ impl BuiltinIO {
             BuiltinIO::Fd(fd) => fd.writer.enqueue_fmt_bltn(child, fd.captured, kind, args),
             _ => unreachable!("enqueue_fmt() on non-fd output; caller must check needs_io()"),
         }
+    }
+}
+
+/// A builtin output stream written synchronously (see [`Builtin::write_no_io`])
+/// together with the shell env a captured stream appends to. Only this module
+/// constructs one, from a Cmd's own stream and env, which is what makes
+/// [`write`](Self::write) safe to call.
+pub(crate) struct NoIoOutput<'a> {
+    io: &'a mut BuiltinIO,
+    /// Env of the Cmd `io` is borrowed from. The env outlives the Cmd and the
+    /// Cmd stays borrowed through `io`, so it is live for `'a`.
+    shell: *mut crate::shell::interpreter::ShellExecEnv,
+}
+
+impl NoIoOutput<'_> {
+    /// Returns `Err(ENOSPC)` when an ArrayBuffer target is already full.
+    pub(crate) fn write(&mut self, buf: &[u8]) -> bun_sys::Result<usize> {
+        // SAFETY: `shell` is the live env of the Cmd owning `io` (see the
+        // field doc); both were taken from the same Cmd by this module.
+        unsafe { self.io.write_no_io_to(self.shell, buf) }
     }
 }
 
@@ -880,8 +916,23 @@ impl Builtin {
     #[inline]
     #[track_caller]
     pub(crate) fn of_mut<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a mut Builtin {
-        match &mut interp.as_cmd_mut(cmd).exec {
-            crate::shell::states::cmd::Exec::Builtin(b) => b,
+        Self::of_mut_with_shell(interp, cmd).1
+    }
+
+    /// [`of_mut`](Self::of_mut) plus the owning Cmd's shell env, the pair a
+    /// [`NoIoOutput`] is made of. The env outlives the Cmd.
+    #[inline]
+    #[track_caller]
+    fn of_mut_with_shell<'a>(
+        interp: &'a Interpreter,
+        cmd: NodeId,
+    ) -> (
+        *mut crate::shell::interpreter::ShellExecEnv,
+        &'a mut Builtin,
+    ) {
+        let cmd_node = interp.as_cmd_mut(cmd);
+        match &mut cmd_node.exec {
+            crate::shell::states::cmd::Exec::Builtin(b) => (cmd_node.base.shell, &mut **b),
             _ => panic!("Cmd {} is not running a builtin", cmd),
         }
     }
@@ -915,20 +966,13 @@ impl Builtin {
         if buf.is_empty() {
             return Ok(0);
         }
-        // Split-borrow the Cmd so `shell`
-        // and the builtin's stdout/stderr are accessible simultaneously.
-        let cmd_node = interp.as_cmd_mut(cmd);
-        let shell = cmd_node.base.shell;
-        let crate::shell::states::cmd::Exec::Builtin(me) = &mut cmd_node.exec else {
-            panic!("Cmd {} is not running a builtin", cmd);
-        };
-        let out: &mut BuiltinIO = match io_kind {
+        let (shell, me) = Self::of_mut_with_shell(interp, cmd);
+        let io = match io_kind {
             IoKind::Stdout => &mut me.stdout,
             IoKind::Stderr => &mut me.stderr,
             IoKind::Stdin => return Ok(0),
         };
-        // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd's lifetime.
-        unsafe { out.write_no_io_to(shell, buf) }
+        NoIoOutput { io, shell }.write(buf)
     }
 
     /// Shell exec env of the owning Cmd.

@@ -33,6 +33,9 @@ export CC="${CC:-/storage/Users/currentUser/.harmonybrew/bin/cc}"
 # OHOS 平台标志：测试文件用它做平台特判（如 sharp prebuilt 不可用
 # 时 complex-workspace 用 --ignore-scripts，与 Windows 分支同理）
 export BUN_OHOS="${BUN_OHOS:-1}"
+# CI 标志：全量测试即 CI 运行。expectBundled 等依赖 isCI 决定超时
+# （isCI → 无超时；否则 bundler 快照测试 5s 超时，OHOS 慢设备必现）。
+export CI="${CI:-1}"
 # 兼容从根目录或 scripts/ohos/ 下运行：先找同目录，再找 scripts/ohos/
 _OHOS_PATCH_SCRIPT="$(dirname "$0")/patch-node-gyp.sh"
 [ -f "$_OHOS_PATCH_SCRIPT" ] || _OHOS_PATCH_SCRIPT="$(dirname "$0")/scripts/ohos/patch-node-gyp.sh"

@@ -37,6 +37,29 @@ for (const [name, copy] of impls) {
       expect(fs.readFileSync(basename + "/to.txt", "utf8")).toBe("a");
     });
 
+    // Unlike cp(1), fs.cp creates the missing parents of its destination.
+    test("single file into a directory that does not exist yet", async () => {
+      await using basename = tempDir("cp", {
+        "from/a.txt": "a",
+      });
+
+      await copy(basename + "/from/a.txt", basename + "/to/deeper/a.txt");
+
+      assertContent(basename + "/to/deeper/a.txt", "a");
+    });
+
+    // Over 128 KB, macOS copies with copyfile() instead of open()+write().
+    test("large single file into a directory that does not exist yet", async () => {
+      const content = Buffer.alloc(256 * 1024, "x").toString();
+      await using basename = tempDir("cp", {
+        "from/big.txt": content,
+      });
+
+      await copy(basename + "/from/big.txt", basename + "/to/deeper/big.txt");
+
+      assertContent(basename + "/to/deeper/big.txt", content);
+    });
+
     test("refuse to copy directory with 'recursive: false'", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",

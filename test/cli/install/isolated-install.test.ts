@@ -368,9 +368,9 @@ test("can install folder dependencies on root package", async () => {
 });
 
 describe("link: dependencies", () => {
-  async function bunInstall(cwd: string, env: NodeJS.Dict<string>) {
+  async function runBun(args: string[], cwd: string, env: NodeJS.Dict<string>) {
     await using proc = spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), ...args],
       cwd,
       env,
       stdout: "pipe",
@@ -389,10 +389,9 @@ describe("link: dependencies", () => {
       name: "linked-pkg",
       gone: "the package was unlinked",
       async remove(pkgDir: string, env: NodeJS.Dict<string>) {
-        await using proc = spawn({ cmd: [bunExe(), "unlink"], cwd: pkgDir, env, stdout: "pipe", stderr: "pipe" });
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-        expect(stdout).toContain(`success: unlinked package "linked-pkg"`);
-        expect(exitCode).toBe(0);
+        const result = await runBun(["unlink"], pkgDir, env);
+        expect(result.stdout).toContain(`success: unlinked package "linked-pkg"`);
+        expect(result.exitCode).toBe(0);
       },
     },
     {
@@ -413,31 +412,28 @@ describe("link: dependencies", () => {
     // `bun link` registers into $BUN_INSTALL/install/global; keep it private to this test.
     const env = { ...bunEnv, BUN_INSTALL: join(String(dir), "bun-install") };
 
-    {
-      await using proc = spawn({ cmd: [bunExe(), "link"], cwd: pkgDir, env, stdout: "pipe", stderr: "pipe" });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toContain(`Success! Registered "${name}"`);
-      expect(exitCode).toBe(0);
-    }
+    let result = await runBun(["link"], pkgDir, env);
+    expect(result.stdout).toContain(`Success! Registered "${name}"`);
+    expect(result.exitCode).toBe(0);
 
-    let result = await bunInstall(appDir, env);
+    result = await runBun(["install"], appDir, env);
     expect(result.stderr).toContain("Saved lockfile");
     expect(result.exitCode).toBe(0);
     expect(await file(join(appDir, "node_modules", name, "package.json")).json()).toEqual({ name, version: "1.0.0" });
 
     await remove(pkgDir, env);
 
-    // Reinstalling over the existing node_modules...
-    result = await bunInstall(appDir, env);
+    // Both reinstalling over the existing node_modules and installing into a
+    // fresh one (a clone with the lockfile checked in) must report the missing
+    // package instead of leaving a dangling symlink behind.
+    result = await runBun(["install"], appDir, env);
     expect(result.stderr).toContain("ENOENT");
     expect(result.stderr).toContain(`failed to link package: ${name}@link:`);
     expect(result.stdout).toContain("Failed to install 1 package");
     expect(result.exitCode).toBe(1);
 
-    // ...and installing into a fresh one (a clone with the lockfile checked in)
-    // must both report the missing package instead of leaving a dangling symlink.
     await rm(join(appDir, "node_modules"), { recursive: true, force: true });
-    result = await bunInstall(appDir, env);
+    result = await runBun(["install"], appDir, env);
     expect(result.stderr).toContain("ENOENT");
     expect(result.stderr).toContain(`failed to link package: ${name}@link:`);
     expect(result.stdout).toContain("Failed to install 1 package");

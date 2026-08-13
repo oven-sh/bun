@@ -311,8 +311,7 @@ impl JSMySQLConnection {
             return;
         }
 
-        // Don't kill a healthy in-flight query (#30646): reschedule and retry
-        // once the connection is idle, then fail with the lifetime error as before.
+        // Don't kill a healthy in-flight query (#30646): retry once idle.
         if self.connection.get().status == my_sql_connection::Status::Connected
             && !self.connection.get().is_idle()
         {

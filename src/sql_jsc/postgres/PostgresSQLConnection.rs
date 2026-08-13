@@ -376,9 +376,7 @@ impl PostgresSQLConnection {
 
     fn get_timeout_interval(&self) -> u32 {
         match self.status.get() {
-            // The idle timer is only relevant when the connection is actually idle.
-            // While a query is queued or in-flight we must not arm it — otherwise
-            // we'd race a healthy query and kill it when the timer fires (#30646).
+            // Never arm the idle timer while a query is outstanding (#30646).
             Status::Connected if self.has_query_running() => 0,
             Status::Connected => self.idle_timeout_interval_ms,
             Status::Failed => 0,
@@ -555,9 +553,8 @@ impl PostgresSQLConnection {
             return;
         }
 
-        // A busy `.connected` connection never reaches here: `get_timeout_interval()`
-        // returns 0 for it (via `has_query_running()`), so the early return above
-        // fires. Reaching this match with `Connected` therefore implies idle.
+        // `Connected` here implies idle: `get_timeout_interval()` returns 0
+        // for a busy connection, taking the early return above.
         use bun_core::fmt::{ConnTimeoutKind::*, fmt_conn_timeout};
         let (code, kind, ms, sfx): (&[u8], _, _, _) = match self.status.get() {
             Status::Connected => (
@@ -590,9 +587,8 @@ impl PostgresSQLConnection {
             return;
         }
 
-        // Don't kill a healthy in-flight query (#30646): mark the connection
-        // instead and retire it at the next queue-drain boundary (the
-        // ReadyForQuery arm, before advance() dispatches more work).
+        // Don't kill a healthy in-flight query (#30646): retire at the next
+        // queue-drain boundary instead (the ReadyForQuery arm).
         if self.status.get() == Status::Connected && self.has_query_running() {
             self.update_flags(|f| f.insert(ConnectionFlags::LIFETIME_EXCEEDED));
             return;
@@ -2496,9 +2492,8 @@ impl PostgresSQLConnection {
                     }
                 }
 
-                // maxLifetime expired while a query was in flight; the query has
-                // now completed, so retire the connection before advance()
-                // dispatches more work. The on_data loop stops at Status::Failed.
+                // maxLifetime expired mid-query; the query is done, so retire
+                // before advance() dispatches more work.
                 if self
                     .flags
                     .get()

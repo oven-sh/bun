@@ -796,10 +796,8 @@ impl PostgresSQLQuery {
             // For unnamed prepared statements with params, we skip writeQuery+Sync
             // in the enqueue path and let advance() handle it atomically.
             connection.advance_and_flush();
-            // After advance(): it may have discarded the request synchronously
-            // (e.g. serialization failure), and with the idle timer gated on
-            // has_query_running() a reset before advance() would leave an idle
-            // connection with no timer armed.
+            // After advance(): it can discard the request synchronously, and the
+            // idle timer must re-arm for a connection that just became idle.
             connection.reset_connection_timeout();
         }
         Ok(JSValue::UNDEFINED)

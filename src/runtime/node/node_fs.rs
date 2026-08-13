@@ -9970,8 +9970,6 @@ pub(crate) fn zig_delete_tree(
                     }
                 }
             };
-            // We know there is room on the stack since we are just re-adding
-            // the StackItem that we previously popped.
             stack.push(DeleteTreeStackItem {
                 name: top.name,
                 name_is_borrowed: top.name_is_borrowed,

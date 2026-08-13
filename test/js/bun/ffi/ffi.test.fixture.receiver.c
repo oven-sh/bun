@@ -251,23 +251,18 @@ static EncodedJSValue DOUBLE_TO_JSVALUE(double val) {
    return res;
 }
 
-// ECMAScript ToInt32 (truncate, then wrap modulo 2^32), the conversion the
-// engine applies to every char/i8/u8/i16/u16/i32/u32 argument. ToUint32 is the
-// same bit pattern, so unsigned parameters take this value through C's
-// integer conversion. Ported from JSC's toIntImpl<int32_t> (runtime/MathCommon.h).
+// ECMAScript ToInt32, ported from JSC's toIntImpl<int32_t> (MathCommon.h); ToUint32 is the same bits.
 static int32_t JSVALUE_TO_INT32(EncodedJSValue val) {
   if (JSVALUE_IS_INT32(val)) {
     return (int32_t)val.asInt64;
   }
-  // Whether an integral number is int32-tagged or double-encoded is the
-  // engine's choice (out of int32 range, fractional, JIT double speculation,
-  // Math.* provenance), so the double encoding has to be decoded here.
+  if (val.asInt64 == TagValueTrue) {
+    return 1;
+  }
   val.asInt64 -= DoubleEncodeOffset;
   uint64_t bits = (uint64_t)val.asInt64;
   int32_t exp = (int32_t)((bits >> 52) & 0x7ff) - 0x3ff;
-  // exp < 0: |value| < 1. exp > 83: no mantissa bit reaches the low 32 bits.
-  // Zero, NaN, +-Infinity, and the decoded bits of undefined/null/booleans/cells
-  // (NaN patterns) all land here and become 0.
+  // Also 0, NaN, +-Infinity, and false/undefined/null/cells, whose decoded bits are NaNs.
   if (exp < 0 || exp > 83) {
     return 0;
   }
@@ -396,7 +391,8 @@ float not_a_callback(float arg0);
 /* ---- Your Wrapper Function ---- */
 ZIG_REPR_TYPE JSFunctionCall(void* JS_GLOBAL_OBJECT, void* callFrame) {
   LOAD_ARGUMENTS_FROM_CALL_FRAME;
-  EncodedJSValue arg0 = { .asInt64 = *argsPtr };
+  EncodedJSValue arg0;
+  arg0.asInt64 = *argsPtr;
     float return_value = not_a_callback(    JSVALUE_TO_FLOAT(arg0));
 
     return FLOAT_TO_JSVALUE(return_value).asZigRepr;

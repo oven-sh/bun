@@ -2171,7 +2171,11 @@ impl Function {
                     } else {
                         "*argsPtr"
                     };
-                    writeln!(writer, "  EncodedJSValue arg{i} = {{ .asInt64 = {slot} }};")?;
+                    // Not an initializer: TinyCC zero-fills an initialized aggregate with a memset() call.
+                    writeln!(
+                        writer,
+                        "  EncodedJSValue arg{i};\n  arg{i}.asInt64 = {slot};"
+                    )?;
                 }
             }
         }

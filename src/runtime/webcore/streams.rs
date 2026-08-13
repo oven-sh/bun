@@ -1035,9 +1035,9 @@ impl SourceHandle {
 type UwsResponse<const SSL: bool, const HTTP3: bool> = c_void;
 
 /// `Done` and `Aborted` are both "done" (no further sends); `Aborted`
-/// additionally records that the peer went away. `start()` moves `Done` back
-/// to `Writing` (a `type: "direct"` stream's controller exposes `start()`),
-/// but nothing leaves `Aborted`.
+/// additionally records that the peer went away. `start()` (reachable again
+/// through a `type: "direct"` stream's controller) moves `Done` back to
+/// `Writing`; it bails out first on `Aborted`, which nothing leaves.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum HTTPServerWritableState {
     Writing,
@@ -1595,9 +1595,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             return Err(SysError::oom());
         }
 
-        if self.state == HTTPServerWritableState::Done {
-            self.state = HTTPServerWritableState::Writing;
-        }
+        self.state = HTTPServerWritableState::Writing;
         self.source.start();
         bun_core::scoped_log!(HTTPServerWritableLog, "start({})", self.high_water_mark);
         bun_sys::Result::Ok(())

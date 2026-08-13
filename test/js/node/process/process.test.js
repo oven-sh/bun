@@ -1852,6 +1852,84 @@ describe("process.exitCode", () => {
   });
 });
 
+// Node runs a CommonJS entry synchronously, so a throw out of its top level is
+// the uncaught exception right there: the 'uncaughtException' listeners (or the
+// fatal exit) come before anything the entry queued while it ran. The same
+// scripts print the same stdout under Node.
+describe("a CommonJS entry's top-level throw", () => {
+  const queueWork = `
+    process.on("exit", code => console.log("exit", code));
+    process.nextTick(() => console.log("nextTick"));
+    Promise.resolve().then(() => console.log("then"));
+    queueMicrotask(() => console.log("microtask"));
+    setTimeout(() => console.log("timer"), 0);
+  `;
+
+  async function run(files, args) {
+    using dir = tempDir("cjs-entry-throw", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // With --preload, the entry is not the first CommonJS module of the process.
+  it.each([[[]], [["--preload", "./preload.cjs"]]])(
+    "unhandled: nothing queued before it runs (args: %j)",
+    async args => {
+      const { stdout, stderr, exitCode } = await run(
+        {
+          "preload.cjs": `console.log("preload");`,
+          "entry.cjs": `${queueWork} throw new Error("boom");`,
+        },
+        [...args, "entry.cjs"],
+      );
+      expect(stderr).toContain("error: boom");
+      expect(stdout).toBe(args.length ? "preload\nexit 1\n" : "exit 1\n");
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  it("handled: the uncaughtException listener runs before what was queued", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "entry.cjs": `
+          process.on("uncaughtException", (err, origin) => console.log("uncaughtException", err.message, origin));
+          ${queueWork}
+          throw new Error("boom");
+        `,
+      },
+      ["entry.cjs"],
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("uncaughtException boom uncaughtException\nnextTick\nthen\nmicrotask\ntimer\nexit 0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("an ES module entry's throw rejects its evaluation instead, after what it queued (as in Node)", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "entry.mjs": `
+          process.on("uncaughtException", (err, origin) => console.log("uncaughtException", err.message, origin));
+          process.on("exit", code => console.log("exit", code));
+          Promise.resolve().then(() => console.log("then"));
+          queueMicrotask(() => console.log("microtask"));
+          throw new Error("boom");
+        `,
+      },
+      ["entry.mjs"],
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("then\nmicrotask\nuncaughtException boom unhandledRejection\nexit 0\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 it("process._exiting", () => {
   expect(process._exiting).toBe(false);
 });

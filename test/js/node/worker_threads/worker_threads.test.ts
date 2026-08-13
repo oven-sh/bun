@@ -2492,6 +2492,86 @@ test("terminate() while dns lookups keep completing in the worker", async () => 
   expect(exitCode).toBe(0);
 }, 30_000);
 
+// A CommonJS worker entry (eval: true, or a .cjs file) runs synchronously, as in
+// Node, so a throw out of its top level is the worker's uncaught exception right
+// there: the 'uncaughtException' listeners, or else the 'error' event and the
+// 'exit' handlers, come before anything the entry queued while it ran. Each
+// worker records what ran in shared memory its parent reads after 'exit'. The
+// parent is a subprocess because under `bun test` a worker's uncaught error is
+// routed to the test runner instead of the worker's own listeners. Only the
+// order is asserted for the fatal cases: whether the reactions queued before the
+// throw still get to run once the worker has been told to stop is the stop
+// request's business, not the report's (Node: they do not).
+describe("a CommonJS worker entry's top-level throw", () => {
+  const TAG = { exitHandler: 1, then: 2, microtask: 3, uncaughtListener: 4 } as const;
+  const scenarios = {
+    unhandled: "",
+    exitCodeFromExitHandler: `process.on("exit", () => { process.exitCode = 5; });`,
+    handled: `process.on("uncaughtException", () => put(${TAG.uncaughtListener}));`,
+  };
+  const workerSource = (setup: string) => `
+    const { workerData: log } = require("node:worker_threads");
+    const put = tag => { const i = Atomics.add(log, 0, 1) + 1; if (i < log.length) Atomics.store(log, i, tag); };
+    process.on("exit", () => put(${TAG.exitHandler}));
+    Promise.resolve().then(() => put(${TAG.then}));
+    queueMicrotask(() => put(${TAG.microtask}));
+    ${setup}
+    throw new Error("boom");
+  `;
+  const parentSource = `
+    import { Worker } from "node:worker_threads";
+    import { readFileSync } from "node:fs";
+    const [entry, ...names] = process.argv.slice(2);
+    const results = {};
+    await Promise.all(names.map(async name => {
+      const log = new Int32Array(new SharedArrayBuffer(4 * 8));
+      const file = new URL(\`./\${name}.cjs\`, import.meta.url);
+      const w = entry === "eval"
+        ? new Worker(readFileSync(file, "utf8"), { eval: true, workerData: log })
+        : new Worker(file, { workerData: log });
+      const errors = [];
+      w.on("error", e => errors.push(e.message));
+      const code = await new Promise(resolve => w.on("exit", resolve));
+      results[name] = { code, errors, ran: Array.from(log.subarray(1, 1 + log[0])) };
+    }));
+    console.log(JSON.stringify(results));
+  `;
+
+  test.concurrent.each(["eval", ".cjs"] as const)("%s entry", async entry => {
+    using dir = tempDir("cjs-worker-entry-throw", {
+      "parent.mjs": parentSource,
+      ...Object.fromEntries(Object.entries(scenarios).map(([name, setup]) => [`${name}.cjs`, workerSource(setup)])),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.mjs", entry, ...Object.keys(scenarios)],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const { unhandled, exitCodeFromExitHandler, handled } = JSON.parse(stdout);
+
+    // Fatal: the parent's 'error' event, and the 'exit' handlers run first (and
+    // still pick the exit code).
+    expect({ ...unhandled, ran: unhandled.ran[0] }).toEqual({ code: 1, errors: ["boom"], ran: TAG.exitHandler });
+    expect({ ...exitCodeFromExitHandler, ran: exitCodeFromExitHandler.ran[0] }).toEqual({
+      code: 5,
+      errors: ["boom"],
+      ran: TAG.exitHandler,
+    });
+    // Handled: the listener runs before the queued reactions, then the worker
+    // carries on and exits normally.
+    expect(handled).toEqual({
+      code: 0,
+      errors: [],
+      ran: [TAG.uncaughtListener, TAG.then, TAG.microtask, TAG.exitHandler],
+    });
+  });
+});
+
 // What a worker's own handlers may observe of its stop, in what order. Every
 // callback the worker could run appends a tag to a shared log the parent reads
 // after the thread is gone, so ordering is checked from outside the dying VM.

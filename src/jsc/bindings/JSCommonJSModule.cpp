@@ -110,7 +110,7 @@ static bool canPerformFastEnumeration(Structure* s)
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
-extern "C" void Bun__VM__noteCommonJSEvaluation(void*, EncodedJSValue);
+extern "C" void Bun__VM__reportEntryPointThrow(void*, EncodedJSValue);
 
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
 {
@@ -121,16 +121,6 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     if (code.isNull()) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Failed to evaluate module"_s));
         return false;
-    }
-
-    // Node reports a CJS entry's top-level throw as origin "uncaughtException", not
-    // "unhandledRejection"; record the entry mode for the run command. Only the root
-    // module (m_id == ".") can be the entry, so the FFI compare runs at most once.
-    if (auto* id = moduleObject->m_id.get(); id && id->length() == 1) [[unlikely]] {
-        auto view = id->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (view == "."_s)
-            Bun__VM__noteCommonJSEvaluation(globalObject->bunVM(), JSValue::encode(filename));
     }
 
     JSFunction* resolveFunction = nullptr;
@@ -1600,6 +1590,17 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                                 // so that it can be re-evaluated on the next require.
                                 globalObject->requireMap()->remove(globalObject, moduleObject->filename());
                                 RETURN_IF_EXCEPTION(scope, {});
+
+                                // The entry point's own top-level throw is reported right here, as
+                                // Node's synchronous CJS runner reports it: surfacing it as the entry
+                                // promise's rejection would first run the microtasks the entry queued
+                                // before throwing. Does not return when the throw is fatal on the
+                                // main thread.
+                                auto key = Bun::toString(moduleKey.string());
+                                if (Bun__isBunMain(globalObject, &key)) [[unlikely]] {
+                                    Bun__VM__reportEntryPointThrow(globalObject->bunVM(), JSValue::encode(exception->value()));
+                                    RETURN_IF_EXCEPTION(scope, {});
+                                }
 
                                 scope.throwException(globalObject, exception);
                                 return;

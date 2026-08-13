@@ -146,22 +146,34 @@ pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSVal
     false
 }
 
-/// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
-/// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
-// HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
-pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
-    if this.entry_point_result.evaluated_as_cjs || this.main().is_empty() {
+/// Called by JSCommonJSModule.cpp when the entry point, evaluating as CommonJS,
+/// threw out of its top level; the module loader is about to reject the entry
+/// promise with it. Node runs a CommonJS entry synchronously, so its throw is
+/// the uncaught exception right there, ahead of anything the entry queued
+/// before throwing; observing the rejection instead (what the run command and a
+/// worker's `spin` do for an ESM entry) would drain those microtasks first. So
+/// the throw is reported here, `entry_point_failure_reported` tells the code
+/// observing the rejection that it was, and with no handler the main thread
+/// exits here, as it would have on the rejection (a worker's
+/// `on_unhandled_rejection` has requested the worker's stop by the time
+/// `uncaught_exception` returns).
+// HOST_EXPORT(Bun__VM__reportEntryPointThrow, c)
+pub fn report_entry_point_throw(this: &mut VirtualMachine, error: JSValue) {
+    let is_main_thread = this.worker_ref().is_none();
+    // The test runner reports a test file's top-level throw itself, as that
+    // file's failure, when it observes the rejection (test_command.rs). Workers
+    // started by a test file are ordinary workers.
+    if is_main_thread
+        && bun_jsc::virtual_machine::isBunTest.load(core::sync::atomic::Ordering::Relaxed)
+    {
         return;
     }
+    this.mark_entry_point_failure_reported();
     let global = this.global();
-    // A failed conversion just skips the note; must never panic at an FFI
-    // boundary.
-    let Ok(specifier_str) = bun_jsc::bun_string_jsc::from_js(specifier, global) else {
-        return;
-    };
-    let specifier_str = bun_core::OwnedString::new(specifier_str);
-    if specifier_str.eql_utf8(this.main()) {
-        this.entry_point_result.evaluated_as_cjs = true;
+    let handled = this.uncaught_exception(global, error, false);
+    // --hot / --watch keep the process alive on a failed entry and reload it.
+    if !handled && is_main_thread && this.hot_reload == 0 {
+        crate::cli::run_command::exit_with_unhandled_note(this);
     }
 }
 

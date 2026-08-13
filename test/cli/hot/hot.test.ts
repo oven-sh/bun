@@ -332,6 +332,63 @@ it(
   timeout,
 );
 
+// Once a generation's event loop drains ('beforeExit'), or once a generation has
+// failed, the VM is armed to exit outright on the next uncaught error, which is
+// right at the end of a normal run. Under --hot the drain is not the end of the
+// run: later generations' uncaught errors (from a callback, or thrown by the
+// entry itself while it loads) are reported and the process keeps watching, like
+// the first generation's would be.
+it(
+  "should keep watching through uncaught errors in later generations",
+  async () => {
+    const root = hotRunnerRoot;
+    writeFileSync(root, `process.on("beforeExit", () => console.log("[gen0] drained"));\n`);
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", root],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    let output = "";
+    let notify = () => {};
+    const exited = runner.exited.then(() => notify());
+    const collect = async (stream: ReadableStream<Uint8Array>) => {
+      for await (const chunk of stream) {
+        output += new TextDecoder().decode(chunk);
+        notify();
+      }
+    };
+    collect(runner.stdout);
+    collect(runner.stderr);
+    async function waitFor(text: string) {
+      while (!output.includes(text)) {
+        if (runner.exitCode !== null || runner.signalCode !== null) {
+          throw new Error(
+            `--hot process exited (${runner.exitCode}) before printing ${JSON.stringify(text)}:\n${output}`,
+          );
+        }
+        await new Promise<void>(resolve => (notify = resolve));
+      }
+    }
+
+    await waitFor("[gen0] drained");
+    writeFileSync(root, `setTimeout(() => { throw new Error("gen1 callback"); }, 1);\n`);
+    await waitFor("error: gen1 callback");
+    // require() makes this generation CommonJS, so its throw is reported while
+    // the entry is still loading, after the failed gen1 re-armed the exit.
+    writeFileSync(root, `require("node:fs");\nthrow new Error("gen2 entry");\n`);
+    await waitFor("error: gen2 entry");
+    writeFileSync(root, `console.log("[gen3] ok");\n`);
+    await waitFor("[gen3] ok");
+
+    runner.kill();
+    await exited;
+  },
+  timeout,
+);
+
 it(
   "should not hot reload when a random file is written",
   async () => {

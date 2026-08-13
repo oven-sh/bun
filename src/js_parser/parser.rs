@@ -219,6 +219,13 @@ pub mod Runtime {
         /// Allow runtime usage of require(), converting `require` into `__require`
         pub auto_polyfill_require: bool,
 
+        /// Whether `typeof require` may be constant-folded to `"function"`
+        /// without bundling. Only sound when the emitted output is known to
+        /// bind `require` (target bun: the printer binds it from
+        /// `import.meta`). When bundling, `Options.bundle` covers this
+        /// instead (the bundler substitutes its own `require` wrapper).
+        pub typeof_require_is_function: bool,
+
         pub replace_exports: ReplaceableExportMap,
 
         /// Scan for '// @bun' at the top of this file, halting a parse if it is
@@ -300,6 +307,7 @@ pub mod Runtime {
                 set_breakpoint_on_first_line: false,
                 trim_unused_imports: false,
                 auto_polyfill_require: false,
+                typeof_require_is_function: false,
                 replace_exports: ReplaceableExportMap::default(),
                 dont_bundle_twice: false,
                 unwrap_commonjs_packages: &[],
@@ -362,7 +370,7 @@ pub mod Runtime {
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            let bools: [bool; 17] = [
+            let bools: [bool; 18] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
@@ -380,6 +388,7 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
+                self.typeof_require_is_function,
                 // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
             ];
 

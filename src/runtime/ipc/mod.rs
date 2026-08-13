@@ -1,4 +1,6 @@
 use core::cell::Cell;
+mod fold;
+
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 
@@ -2180,7 +2182,7 @@ fn handle_ipc_message(
                 if let Err(e) = res {
                     // ack written already, that's okay.
                     let _ = fd.close_allowing_standard_io(None);
-                    global_this.report_active_exception_as_unhandled(e);
+                    let _ = fold::delivered_message(global_this, e);
                     return;
                 }
                 drop(_scope);

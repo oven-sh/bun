@@ -326,7 +326,7 @@ impl FileSink {
                             );
                             stream.cancel(global);
                         } else {
-                            stream.done(global);
+                            stream.done_from_native(global);
                         }
                     }
                 }
@@ -350,11 +350,7 @@ impl FileSink {
             // `writer.close()` → `onClose` already released this above; kept for
             // paths where `onClose` isn't reached (e.g. writer already closed).
             FileSink::clear_keep_alive_ref(this);
-            // TODO(one-fold): interim fold; the subprocess exit path gains JsResult with the Process poll arm.
-            if let Err(err) = settled {
-                let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
-                bun_jsc::JsResultExt::report_unhandled(Err::<(), _>(err), global);
-            }
+            crate::webcore::streams::settled_from_native(settled);
         }
     }
 
@@ -455,7 +451,7 @@ impl FileSink {
                 && (*this).source_pending_pull.replace(false)
             {
                 let mut src = *(*this).source.get();
-                src.ready(None, None);
+                src.ready(None, None)?;
             }
 
             // `end()`'s Pending flush branch leaves the writer running; finish the
@@ -469,7 +465,7 @@ impl FileSink {
             if status == WriteStatus::EndOfFile {
                 if settled.is_ok() {
                     let mut src = *(*this).source.get();
-                    src.close(None);
+                    src.close(None)?;
                 }
                 FileSink::clear_keep_alive_ref(this);
             }
@@ -516,7 +512,7 @@ impl FileSink {
         unsafe {
             if (*this).source_pending_pull.replace(false) {
                 let mut src = *(*this).source.get();
-                src.ready(None, None);
+                src.ready_from_native(None, None);
             }
         }
     }
@@ -533,13 +529,13 @@ impl FileSink {
             if (*this).readable_stream.get_mut().has() {
                 if let Some(global) = (*this).js_global() {
                     if let Some(stream) = (*this).readable_stream.get().get(global) {
-                        stream.done(global);
+                        stream.done_from_native(global);
                     }
                 }
             }
 
             let mut src = *(*this).source.get();
-            src.close(None);
+            src.close_from_native(None);
 
             // The writer is fully closed; no further callbacks will arrive. Release
             // the ref taken when a write returned `.pending`. This must be the last
@@ -871,7 +867,7 @@ impl FileSink {
                         // `flush()`'s drain bypasses `on_write(Drained)`; resume the parked ByteStream here.
                         if (*this).source_pending_pull.replace(false) {
                             let mut src = *(*this).source.get();
-                            src.ready(None, None);
+                            src.ready_from_native(None, None);
                         }
                     }
                 }
@@ -1494,7 +1490,7 @@ impl FileSink {
     /// Does not ref or unref.
     fn handle_resolve_stream(&self, global_this: &JSGlobalObject) {
         if let Some(stream) = self.readable_stream.get().get(global_this).as_mut() {
-            stream.done(global_this);
+            stream.done_from_native(global_this);
         }
 
         if !self.done.get() {

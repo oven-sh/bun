@@ -1221,11 +1221,10 @@ impl Interpreter {
                                 ],
                             );
                         }
-                        Err(err) => {
-                            // TODO(one-fold): buffer conversion threw before the
-                            // callback ran; reported here for the same reason.
-                            bun_jsc::JsResultExt::report_unhandled(Err::<(), _>(err), global_this);
-                        }
+                        // Building the output buffers failed — allocation
+                        // failure or a terminating VM, never user code — and
+                        // `Yield` has nowhere to hand that: it stays pending.
+                        Err(_) => {}
                     }
                     JSShellInterpreter::resolve_set_cached(
                         this_jsvalue,

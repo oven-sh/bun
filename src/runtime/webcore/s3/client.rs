@@ -723,7 +723,7 @@ impl S3UploadStreamWrapper {
                     // Close the source before propagating so a failed settle
                     // does not leave the upstream pump running.
                     if settled.is_err() {
-                        sink.source.close(None);
+                        sink.source.close(None)?;
                     }
                     settled?;
                     if sink.flush_promise.has_value() {
@@ -732,7 +732,7 @@ impl S3UploadStreamWrapper {
                     if sink.end_promise.has_value() {
                         sink.end_promise.reject(&global, Ok(js_err))?;
                     }
-                    sink.source.close(None);
+                    sink.source.close(None)?;
                 }
                 if is_native {
                     self_.detach_sink();

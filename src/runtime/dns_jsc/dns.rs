@@ -23,7 +23,7 @@ use bun_io::{self as Async, KeepAlive};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult,
-    JsResultExt as _, SystemError, host_fn,
+    SystemError, host_fn,
 };
 use bun_paths::{MAX_PATH_BYTES, PathBuffer};
 #[cfg(windows)]
@@ -1945,14 +1945,16 @@ impl Outcome {
         }
     }
 
+    /// Runs from the resolver backends' completion callbacks (c-ares poll,
+    /// libinfo, libuv), which have no exception channel; see
+    /// `streams::settled_from_native` for what settling can leave pending.
     fn settle(self, promise: &mut JSPromiseStrong, global: &JSGlobalObject) {
         let _guard = VirtualMachine::get().enter_event_loop_scope();
-        match self {
+        crate::webcore::streams::settled_from_native(match self {
             Outcome::Value(v) => promise.resolve(global, v),
             Outcome::Error(e) => promise.reject(global, Ok(e)),
             Outcome::Stopped => return,
-        }
-        .report_unhandled(global);
+        });
     }
 }
 

@@ -29,7 +29,7 @@ const tracked: Set<string> | null = (() => {
 })();
 
 const FOLD = new RegExp(
-  String.raw`\b(?:report_error_or_terminate|fold_at_loop_entry|__bun_fold_loop_js_error|report_uncaught_exception_from_error|report_active_exception_as_unhandled|report_unhandled)\s*\(`,
+  String.raw`\b(?:report_error_or_terminate|fold_at_loop_entry|__bun_fold_loop_js_error)\s*\(`,
   "g",
 );
 
@@ -37,39 +37,25 @@ const FOLD = new RegExp(
 // callbacks it invokes return.
 const DISPATCHERS = new Set([
   "src/jsc/Task.rs", // the fold itself + the bun_io/uws_sys hook
-  "src/jsc/lib.rs", // JsResultExt (definitions)
-  "src/jsc/JSGlobalObject.rs", // definitions
   "src/jsc/event_loop.rs", // run_callback, release_task_unrun
   "src/jsc/VirtualMachine.rs", // cleanup-hook runner
+  "src/jsc/web_worker.rs", // a worker thread's start sequence: its outermost frame
+  "src/runtime/cli/run_command.rs", // the process entry: outermost frame for the preconnect scripts
   "src/runtime/dispatch.rs", // task queue tick
   "src/runtime/timer/mod.rs", // timer drains
   "src/runtime/socket/uws_handlers.rs", // uSockets trampolines
   "src/io/lib.rs", // pipe reader/writer trampolines
   "src/uws_sys/WebSocket.rs", // uWS websocket/upgrade trampolines
   "src/runtime/node/quic/fold.rs", // node:quic's event drain and lsquic/UDP callback boundaries
+  "src/runtime/ipc/fold.rs", // the IPC message drain
+  "src/runtime/bake/DevServer.rs", // dev_route_tramp: the dev server's uWS route trampoline (+ the HTML-bundle route TODO)
 ]);
 
-// Frames not yet returning `JsResult` to a folding dispatcher — each is marked
-// `TODO(one-fold)` or is a foreign completion boundary awaiting its trampoline.
+// Foreign completion boundaries with no Rust trampoline layer to fold in.
 // Ratcheted: this table may only shrink.
 const INTERIM: Record<string, number> = {
-  "src/runtime/cli/run_command.rs": 7, // main entry: is itself the outermost boundary
-  "src/runtime/webcore/streams.rs": 4, // HTTPResponseSink teardown (uWS response callbacks / host fns)
-  "src/runtime/ipc.rs": 1,
-  "src/runtime/api/html_rewriter.rs": 3,
-  "src/runtime/webcore/ByteStream.rs": 2, // SourceContext::on_cancel
-  "src/runtime/bake/DevServer.rs": 2, // dev_route_tramp (a trampoline) + the HTML-bundle route TODO
-  "src/runtime/webcore/fetch/FetchTasklet.rs": 1,
-  "src/runtime/webcore/blob/write_file.rs": 1, // libuv completion (Windows)
-  "src/runtime/webcore/blob/read_file.rs": 1, // libuv completion (Windows)
-  "src/runtime/webcore/FileSink.rs": 1, // subprocess exit path
-  "src/runtime/webcore/Blob.rs": 1, // pool read `cancel` at teardown
-  "src/runtime/test_runner/jest.rs": 1,
-  "src/runtime/socket/udp_socket.rs": 1,
-  "src/runtime/shell/interpreter.rs": 1,
-  "src/runtime/dns_jsc/dns.rs": 1, // c-ares completion
-  "src/runtime/api/BunObject.rs": 1,
-  "src/jsc/web_worker.rs": 1,
+  "src/runtime/webcore/blob/write_file.rs": 1, // libuv fs completion (Windows)
+  "src/runtime/webcore/blob/read_file.rs": 1, // libuv fs completion (Windows)
 };
 
 const counts: Record<string, number> = {};

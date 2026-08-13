@@ -81,7 +81,7 @@ impl readable_stream::SourceContext for ByteStream {
     fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result {
         Self::on_pull(self, buf, view)
     }
-    fn on_cancel(&mut self) {
+    fn on_cancel(&mut self) -> jsc::JsResult<()> {
         Self::on_cancel(self)
     }
     fn deinit_fn(&mut self) {
@@ -209,22 +209,23 @@ impl ByteStream {
     }
 
     /// Sink closed early: detach and drive the NewSource cancel path.
-    pub fn cancel_from_sink(&self, _err: Option<SysError>) {
+    pub fn cancel_from_sink(&self, _err: Option<SysError>) -> jsc::JsResult<()> {
         self.sink.set(SinkHandle::None);
         self.sink_paused.set(false);
         if self.done.get() {
-            return;
+            return Ok(());
         }
         self.has_received_last_chunk.set(true);
-        self.on_cancel();
+        let settled = self.on_cancel();
         let source = self.parent_const();
         let mut p = source.producer.replace(streams::SourceHandle::None);
-        p.close(None);
+        let closed = p.close(None);
+        settled.and(closed)
     }
 
     #[inline]
     pub(crate) fn signal_drained(&self) {
-        self.parent_const().producer.get().ready(None, None);
+        self.parent_const().producer.get().ready_from_native(None, None);
     }
 
     /// Take the buffered bytes without signalling the producer; the caller
@@ -604,7 +605,8 @@ impl ByteStream {
         streams::Result::Pending(self.pending.as_ptr())
     }
 
-    pub(crate) fn on_cancel(&self) {
+    pub(crate) fn on_cancel(&self) -> jsc::JsResult<()> {
+        let mut settled: jsc::JsResult<()> = Ok(());
         bun_jsc::mark_binding!();
         let view = self.value();
         if self.buffer.get().capacity() > 0 {
@@ -622,9 +624,7 @@ impl ByteStream {
                 p.result.release();
                 p.result = streams::Result::Done;
             });
-            let settled = self.pending.with_mut(|p| p.run());
-            // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
-            bun_jsc::JsResultExt::report_unhandled(settled, self.parent_const().global_this());
+            settled = self.pending.with_mut(|p| p.run());
         }
 
         if let Some(mut action) = self.buffer_action.replace(None) {
@@ -633,10 +633,10 @@ impl ByteStream {
                 global,
                 &streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort),
             );
-            // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
-            bun_jsc::JsResultExt::report_unhandled(rejected, global);
             self.buffer_action.set(None);
+            settled = settled.and(rejected);
         }
+        settled
     }
 
     fn memory_cost(&self) -> usize {

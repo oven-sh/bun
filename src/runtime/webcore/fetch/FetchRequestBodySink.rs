@@ -235,7 +235,7 @@ impl FetchRequestBodySink {
             Some(StreamError::Error(e)) => Some(e),
             _ => None,
         };
-        self.source.close(sys_err);
+        self.source.close_from_native(sys_err);
     }
 
     pub fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
@@ -262,7 +262,7 @@ impl FetchRequestBodySink {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "onDrain");
         self.pending_bytes = 0;
         self.pending.run()?;
-        self.source.ready(None, None);
+        self.source.ready(None, None)?;
         Ok(())
     }
 

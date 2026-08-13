@@ -1037,28 +1037,6 @@ impl JSGlobalObject {
         Some(value)
     }
 
-    /// This is for the common scenario you are calling into JavaScript, but there is
-    /// no logical way to handle a thrown exception other than to treat it as unhandled.
-    ///
-    /// The pattern:
-    ///
-    /// ```ignore
-    /// let result = match value.call(...) {
-    ///     Ok(v) => v,
-    ///     Err(err) => return global.report_active_exception_as_unhandled(err),
-    /// };
-    /// ```
-    ///
-    pub fn report_active_exception_as_unhandled(&self, err: JsError) {
-        let exception = self.take_exception(err);
-        if !exception.is_termination_exception() {
-            let _ = self
-                .bun_vm()
-                .as_mut()
-                .uncaught_exception(self, exception, false);
-        }
-    }
-
     pub fn vm(&self) -> &VM {
         // JSC guarantees the VM outlives the global object; `VM` is an opaque
         // ZST handle so the deref is the centralised `opaque_ref` proof.
@@ -1367,11 +1345,6 @@ impl JSGlobalObject {
         console: *mut c_void,
     ) -> *mut JSGlobalObject {
         Zig__GlobalObject__createForTestIsolation(old_global, console)
-    }
-
-    /// [`crate::task::report_error_or_terminate`] where the caller has no loop to stand down.
-    pub fn report_uncaught_exception_from_error(&self, proof: JsError) {
-        let _ = crate::task::report_error_or_terminate(self, proof);
     }
 
     pub fn to_type_error(&self, code: JscError, args: Arguments<'_>) -> JSValue {

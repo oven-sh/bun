@@ -617,8 +617,19 @@ pub(crate) mod on_unhandled_rejection {
                 &current_state_data,
             );
             buntest.add_result(current_state_data);
-            use bun_jsc::JsResultExt as _;
-            bun_test::BunTest::run(&buntest_strong, global_object).report_unhandled(global_object);
+            if let Err(e) = bun_test::BunTest::run(&buntest_strong, global_object) {
+                // As `RunTestsTask::call`: what advancing the runner threw is
+                // recorded against wherever the runner now is.
+                // SAFETY: as above; `run` has returned, this is the only handle.
+                let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+                let phase = buntest.get_current_state_data();
+                buntest.on_uncaught_exception(
+                    global_object,
+                    Some(global_object.take_exception(e)),
+                    true,
+                    &phase,
+                );
+            }
             return;
         }
 

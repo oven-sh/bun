@@ -1873,7 +1873,7 @@ fn get_s3_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     jsc::codegen::js::get_constructor::<crate::webcore::s3_client::S3Client>(global_this)
 }
 
-fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
     // NOTE (layering): `RareData::s3_default_client` body lives in
     // `bun_jsc::rare_data::_accessor_body` and names `bun_runtime::s3` types.
     // That can't compile in `bun_jsc`, so port the body here where the S3
@@ -1888,7 +1888,7 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue 
     let env_ptr = vm.transpiler.env;
     let rare = vm.rare_data();
     if let Some(v) = rare.s3_default_client.get() {
-        return v;
+        return Ok(v);
     }
     // NOTE (layering): `bun_dotenv::Loader::get_s3_credentials` returns the
     // T2 POD mirror; lift it into the refcounted `bun_s3_signing::S3Credentials`
@@ -1908,10 +1908,8 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue 
     ) {
         Ok(v) => v,
         Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
-        Err(err) => {
-            global_this.report_active_exception_as_unhandled(err);
-            return JSValue::UNDEFINED;
-        }
+        // Invalid S3 options in the environment throw from the `Bun.s3` getter.
+        Err(err) => return Err(err),
     };
     let client = S3Client {
         credentials: aws_options.credentials.dupe(),
@@ -1923,7 +1921,7 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue 
     let js_client = <S3Client as bun_jsc::JsClass>::to_js(client, global_this);
     js_client.ensure_still_alive();
     rare.s3_default_client = StrongOptional::create(js_client, global_this);
-    js_client
+    Ok(js_client)
 }
 
 fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

@@ -1138,9 +1138,9 @@ impl WebWorker {
             Ok(pair) => pair,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
             Err(JsError::Thrown) => {
-                // Building an error from log messages threw: report that instead -- unless what is
-                // pending is this worker's termination, which is not an error.
-                global.report_active_exception_as_unhandled(JsError::Thrown);
+                // The worker's start sequence is its outermost frame: building the error from the
+                // log threw, and that is reported here instead (a termination just stands down).
+                let _ = crate::task::report_error_or_terminate(global, JsError::Thrown);
                 return;
             }
         };

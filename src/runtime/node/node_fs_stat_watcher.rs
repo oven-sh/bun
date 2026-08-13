@@ -868,11 +868,8 @@ impl StatWatcher {
         };
         let global_this = this_ref.global_this();
 
-        // Propagate to the dispatcher rather than swallowing: a termination
-        // exception is not cleared by `report_active_exception_as_unhandled`,
-        // so swallowing it here leaves the VM with an exception pending and
-        // the next queued task re-enters JS under a
-        // `scope.assertNoException()` RELEASE_ASSERT.
+        // Propagated to the task fold: reporting here would leave a
+        // termination pending for the next queued task's JS entry.
         let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
             .map_err(Into::<bun_core::JsError>::into)?;
         js::gc::prev_stat::set(js_this, global_this, jsvalue);

@@ -562,15 +562,10 @@ impl BlobExt for Blob {
                         syscall: BunString::static_("read").into(),
                         ..Default::default()
                     };
-                    // The read's thread stopped and this runs at teardown with no loop to return to: an
-                    // exception the handler leaves pending is reported (a termination stands down).
+                    // The read's thread stopped; this runs from the unrun job's release, whose
+                    // runner (`EventLoop::release_task_unrun`) folds what the handler leaves pending.
                     // SAFETY: as for `call`.
-                    if let Err(err) =
-                        unsafe { H::on_read_bytes(c, ReadBytesResult::Err(Box::new(err))) }
-                    {
-                        let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
-                        let _ = bun_jsc::task::report_error_or_terminate(global, err);
-                    }
+                    let _ = unsafe { H::on_read_bytes(c, ReadBytesResult::Err(Box::new(err))) };
                 }
             }
             self.do_read_file_internal::<H, Adapter<H>>(ctx, global);
@@ -1649,7 +1644,7 @@ impl BlobExt for Blob {
                     jsc::js_promise::Status::Fulfilled => {
                         // SAFETY: release our +1 ref on the sink.
                         unsafe { webcore::FileSink::deref(file_sink) };
-                        readable_stream.done(global_this);
+                        readable_stream.done(global_this)?;
                         return Ok(JSPromise::resolved_promise_value(
                             global_this,
                             JSValue::js_number(0.0),
@@ -5900,7 +5895,7 @@ pub(crate) fn on_file_stream_resolve_request_stream(
     };
     let strong = core::mem::take(&mut this.readable_stream_ref);
     if let Some(stream) = strong.get(global_this) {
-        stream.done(global_this);
+        stream.done(global_this)?;
     }
     this.promise.resolve(global_this, JSValue::js_number(0.0))?;
     Ok(JSValue::UNDEFINED)

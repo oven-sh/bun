@@ -1046,14 +1046,6 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `dns_error` is the raw `getaddrinfo(3)` return code when the name
     /// lookup itself failed; 0 for a connect failure past name resolution
     /// (then `errno` carries the connect error).
-    /// Infallible by design: a failed promise settle below means a JS
-    /// exception is pending, and it must be dealt with *here*, before the
-    /// scope guards drop — `ScopeExit` → `exit_event_loop()` runs a microtask
-    /// checkpoint, which must not be entered with a non-termination exception
-    /// pending (and the event-loop dispatch callers have no JS frame to
-    /// propagate into anyway). `report_active_exception_as_unhandled` reports
-    /// and clears a real throw; a termination exception stays pending, as the
-    /// event loop expects.
     /// `Err` is what the `connectError`/`error` handler or a promise
     /// rejection left pending; the socket is released either way (guards).
     pub(crate) fn handle_connect_error(

@@ -482,8 +482,8 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
                 let parent = self.parent();
                 self.handle.close_impl(
                     Some(parent.cast()),
-                    // SAFETY: parent was set via set_parent with a *mut Parent.
                     Some(|ctx: *mut c_void| {
+                        // SAFETY: parent was set via set_parent with a *mut Parent.
                         crate::fold_parent(unsafe { Parent::on_close(ctx.cast::<Parent>()) })
                     }),
                     self.close_fd,
@@ -1035,8 +1035,8 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         let parent = self.parent;
         self.handle.close(
             Some(parent.cast()),
-            // SAFETY: parent was set via set_parent with a *mut Parent.
             Some(|ctx: *mut c_void| {
+                // SAFETY: parent was set via set_parent with a *mut Parent.
                 crate::fold_parent(unsafe { Parent::on_close(ctx.cast::<Parent>()) })
             }),
         );

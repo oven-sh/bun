@@ -437,7 +437,9 @@ impl EventLoop {
         // process-lifetime `VirtualMachine`); short-lived `&mut` only.
         unsafe { (*this).enter() };
         if let Err(err) = callback.call(global_object, this_value, arguments) {
-            global_object.report_active_exception_as_unhandled(err);
+            // A top-level call: reported here; a stop stays pending for the
+            // caller's gates and its dispatcher's fold.
+            let _ = crate::task::report_error_or_terminate(global_object, err);
         }
         // Force a re-escape between the JS call and the post-call `exit()` so
         // LLVM cannot forward any `*this` field across `call()`.
@@ -465,7 +467,7 @@ impl EventLoop {
         let result = match callback.call(global_object, this_value, arguments) {
             Ok(v) => v,
             Err(err) => {
-                global_object.report_active_exception_as_unhandled(err);
+                let _ = crate::task::report_error_or_terminate(global_object, err);
                 JSValue::ZERO
             }
         };

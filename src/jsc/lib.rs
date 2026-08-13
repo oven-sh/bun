@@ -571,9 +571,11 @@ pub enum JsError {
     /// Allocation failure; caller must throw an `OutOfMemoryError`.
     OutOfMemory,
 }
-/// `bun.JSError!T`. Dropping a `JsResult` swallows a pending JS exception —
-/// always `?`-propagate, [`JsResultExt::report_unhandled`], or `let _ =` with a
-/// comment justifying the swallow.
+/// `bun.JSError!T`. Dropping a `JsResult` leaves a JS exception pending on the
+/// VM: `?`-propagate it to the frame's dispatcher (which folds it —
+/// [`task::report_error_or_terminate`]), run further JS through
+/// `EventLoop::run_callback`, or `let _ =` with a comment saying whose fold
+/// takes it.
 ///
 /// Note: `#[must_use]` cannot be applied to type aliases; `Result` already
 /// carries it. We instead `#![warn(unused_must_use)]` in every crate that
@@ -614,36 +616,6 @@ pub fn js_error_to_write_error(e: JsError) -> core::fmt::Error {
         // `bun.handleOom(error.OutOfMemory)` — panic-on-OOM wrapper fed a literal OOM,
         // i.e. unconditionally abort.
         JsError::OutOfMemory => bun_alloc::out_of_memory(),
-    }
-}
-
-/// Extension surface for [`JsResult`]. Gives every `JsResult` a terminal sink
-/// so the `unused_must_use` lint can be satisfied without `let _ =` at call
-/// sites that legitimately cannot `?`-propagate (FFI thunks, drop glue,
-/// fire-and-forget callbacks).
-pub trait JsResultExt {
-    /// Consume the result; if `Err`, take the pending exception off `global`
-    /// and route it through the VM's uncaught-exception handler. Returns the
-    /// `Ok` payload (or its `Default`) so callers can chain.
-    ///
-    /// Use this when an error has nowhere left to bubble — never to paper over
-    /// a missing `?`.
-    fn report_unhandled(self, global: &JSGlobalObject);
-    /// The fold for loop-level code that entered JS (settled a promise, ran a callback): report the
-    /// pending exception as uncaught, or -- if it is the VM's termination -- stand down with `Stopped`.
-    fn report_error_or_terminate(self, global: &JSGlobalObject) -> Result<(), Stopped>;
-}
-
-impl<T> JsResultExt for JsResult<T> {
-    #[inline]
-    fn report_unhandled(self, global: &JSGlobalObject) {
-        let _ = self.report_error_or_terminate(global);
-    }
-    fn report_error_or_terminate(self, global: &JSGlobalObject) -> Result<(), Stopped> {
-        match self {
-            Ok(_) => Ok(()),
-            Err(e) => task::report_error_or_terminate(global, e),
-        }
     }
 }
 

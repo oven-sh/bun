@@ -216,7 +216,7 @@ impl ReadableStream {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                 let blobby = unsafe { &mut *blobby };
                 if let Some(blob) = blobby.to_any_blob(global_this) {
-                    self.done(global_this);
+                    self.done_from_native(global_this);
                     return Some(blob);
                 }
             }
@@ -228,7 +228,7 @@ impl ReadableStream {
                     let blob = Blob::init_with_store(store.clone(), global_this);
                     // it should be lazy, file shouldn't have opened yet.
                     debug_assert!(!blobby.started.get());
-                    self.done(global_this);
+                    self.done_from_native(global_this);
                     return Some(webcore::blob::Any::Blob(blob));
                 }
             }
@@ -238,7 +238,7 @@ impl ReadableStream {
                 // If we've received the complete body by the time this function is called
                 // we can avoid streaming it and convert it to a Blob
                 if let Some(blob) = bytes.to_any_blob() {
-                    self.done(global_this);
+                    self.done_from_native(global_this);
                     return Some(blob);
                 }
                 return None;
@@ -249,20 +249,28 @@ impl ReadableStream {
         None
     }
 
-    pub fn done(&self, global_this: &JSGlobalObject) {
+    /// [`done`](Self::done) for native frames with no exception channel; see
+    /// `SourceHandle::close_from_native` for what can be left pending and why.
+    #[inline]
+    pub fn done_from_native(&self, global_this: &JSGlobalObject) {
+        let _ = self.done(global_this);
+    }
+
+    pub fn done(&self, global_this: &JSGlobalObject) -> JsResult<()> {
         // done is called when we are done consuming the stream
         // cancel actually mark the stream source as done
         // this will resolve any pending promises to done: true
-        match self.ptr {
+        let cancelled = match self.ptr {
             // SAFETY: ptrs came from ReadableStreamTag__tagged; valid while stream alive.
             Source::Blob(source) => unsafe { (*(*source).parent()).cancel() },
             // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
             Source::File(source) => unsafe { (*(*source).parent()).cancel() },
             // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
             Source::Bytes(source) => unsafe { (*(*source).parent()).cancel() },
-            _ => {}
-        }
+            _ => Ok(()),
+        };
         self.detach_if_possible(global_this);
+        cancelled
     }
 
     pub fn cancel(&self, global_this: &JSGlobalObject) {
@@ -270,7 +278,7 @@ impl ReadableStream {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__cancel(self.value, global_this);
         // mark the stream source as done
-        self.done(global_this);
+        self.done_from_native(global_this);
     }
 
     /// Cancel the stream and forward `reason` verbatim to the underlying source's
@@ -280,7 +288,7 @@ impl ReadableStream {
     pub fn cancel_with_reason(&self, global_this: &JSGlobalObject, reason: JSValue) {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__cancelWithReason(self.value, global_this, reason);
-        self.done(global_this);
+        self.done_from_native(global_this);
     }
 
     pub fn abort(&self, global_this: &JSGlobalObject) {
@@ -291,7 +299,7 @@ impl ReadableStream {
     /// Like [`Self::cancel`] but pending reads reject with `reason` instead of resolving `{done: true}`.
     pub(crate) fn error(&self, global_this: &JSGlobalObject, reason: JSValue) {
         ReadableStream__error(self.value, global_this, reason);
-        self.done(global_this);
+        self.done_from_native(global_this);
     }
 
     pub(crate) fn force_detach(&self, global_object: &JSGlobalObject) {
@@ -764,7 +772,8 @@ pub trait SourceContext: Sized {
 
     fn on_start(&mut self) -> streams::Start;
     fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result;
-    fn on_cancel(&mut self);
+    /// What settling the parked read left pending.
+    fn on_cancel(&mut self) -> JsResult<()>;
     /// Per-context teardown side-effects (unref pollers, flush pending callbacks,
     /// release handles). **Must NOT free the enclosing `NewSource<Self>` allocation** —
     /// that is done by the caller ([`NewSource::decrement_count`]) *after* this
@@ -1066,14 +1075,15 @@ impl<C: SourceContext> NewSource<C> {
         self.context.on_start()
     }
 
-    pub fn cancel(&mut self) {
+    pub fn cancel(&mut self) -> JsResult<()> {
         if self.cancelled {
-            return;
+            return Ok(());
         }
         self.cancelled = true;
-        self.context.on_cancel();
+        let settled = self.context.on_cancel();
         let mut p = self.producer.replace(streams::SourceHandle::None);
-        p.close(None);
+        let closed = p.close(None);
+        settled.and(closed)
     }
 
     pub fn on_close(&mut self) {
@@ -1313,7 +1323,7 @@ impl<C: SourceContext> NewSource<C> {
         _global_object: &JSGlobalObject,
         _call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.cancel();
+        self.cancel()?;
         Ok(JSValue::UNDEFINED)
     }
 

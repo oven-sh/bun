@@ -2337,17 +2337,14 @@ impl FetchTasklet {
             self.abort_reason.set(&global_this, reason);
         }
         self.abort_task();
-        // Re-borrow after the `&mut self` calls above.
-        let global_this = self.global_this;
         if let Some(sink) = self.sink_mut() {
             sink.pending.result = Writable::Done;
             let settled = sink.pending.run();
-            sink.source.close(None);
+            sink.source.close_from_native(None);
             if is_native {
                 sink.task = None;
             }
-            // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
-            bun_jsc::JsResultExt::report_unhandled(settled, &global_this);
+            crate::webcore::streams::settled_from_native(settled);
         }
         if is_native {
             // No pump promise exists to balance the `+1` from

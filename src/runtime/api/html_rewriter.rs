@@ -819,7 +819,9 @@ impl RewriterPipe {
             this.input_source.set(SourceHandle::None);
             this.output.set(None);
         }
-        this.fail(webcore::body::ValueError::Message(BunString::static_(
+        // Settle-only result; this runs from the wrapper's finalizer, so it
+        // stays pending.
+        let _ = this.fail(webcore::body::ValueError::Message(BunString::static_(
             "HTMLRewriter content handler returned a Promise that will never settle",
         )));
         Self::deref_nn(pipe.into());
@@ -872,7 +874,7 @@ impl RewriterPipe {
         if cancel_upstream {
             match upstream {
                 SourceHandle::ByteStream(_) | SourceHandle::FileReader(_) => {
-                    upstream.close(None);
+                    upstream.close_from_native(None);
                 }
                 _ => {}
             }
@@ -1311,7 +1313,8 @@ impl RewriterPipe {
                 }
                 StreamError::AbortReason(r) => webcore::body::ValueError::AbortReason(r),
             };
-            self.fail(value_error);
+            // Settle-only result; `end_from_stream` is a sink signal, left pending.
+            let _ = self.fail(value_error);
             return;
         }
         if self.driving.get() || self.is_suspended() || !self.pending_input.get().is_empty() {
@@ -1331,11 +1334,13 @@ impl RewriterPipe {
         {
             return;
         }
-        self.drain_pending_input();
+        // Settle-only result (allocation failure / terminating VM); `resume`
+        // is a source-handle signal with nowhere to hand it, so it stays pending.
+        let _ = self.drain_pending_input();
     }
 
     /// `SourceHandle::on_close` entry — the output reader cancelled.
-    pub fn cancel_from_output(&self, _err: Option<SysError>) {
+    pub fn cancel_from_output(&self, _err: Option<SysError>) -> JsResult<()> {
         self.detach_output();
         self.detach_input_source(true);
         js_HTMLRewriterTransform::input_stream_set_cached(
@@ -1345,12 +1350,10 @@ impl RewriterPipe {
         );
         self.phase.set(RewritePhase::Done);
         self.done.set(true);
-        let settled = self.pending.with_mut(|p| {
+        self.pending.with_mut(|p| {
             p.result = Writable::Done;
             p.run()
-        });
-        // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
-        bun_jsc::JsResultExt::report_unhandled(settled, &self.global);
+        })
     }
 
     /// Run one lol-html `write`/`end_mut`/`resume` call under the
@@ -1431,32 +1434,33 @@ impl RewriterPipe {
 
     /// Feed the accumulated `pending_input` once unblocked, then maybe end,
     /// then signal the upstream source to resume.
-    fn drain_pending_input(&self) {
+    /// What waking the source / settling the pump promise left pending
+    /// (settle-only: allocation failure or a terminating VM).
+    fn drain_pending_input(&self) -> JsResult<()> {
         let pending = self.pending_input.replace(Vec::new());
         if !pending.is_empty() && !self.feed(&pending) {
-            return;
+            return Ok(());
         }
         // `feed` ran user JS; re-check the terminal state before `end_rewrite`
         // would overwrite `phase = Done` set by `cancel_from_output`/`fail`.
         if self.done.get() || self.phase.get() == RewritePhase::Done {
-            return;
+            return Ok(());
         }
         if self.is_suspended() || self.output_backpressured() {
-            return;
+            return Ok(());
         }
         if self.input_ended.get() {
             self.end_rewrite();
-            return;
+            return Ok(());
         }
         // `ready()` may re-enter and write `input_source` (sink → feed →
         // fail/end_from_stream), so copy the handle out instead of holding a
         // `with_mut` borrow across the call.
         let mut src = self.input_source.get();
-        src.ready(None, None);
+        let ready = src.ready(None, None);
         // Wake a JS pump's pending `write()`/`flush(true)` promise.
         let settled = self.pending.with_mut(|p| p.run());
-        // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
-        bun_jsc::JsResultExt::report_unhandled(settled, &self.global);
+        ready.and(settled)
     }
 
     /// A content handler's promise resolved: continue the rewrite from
@@ -1471,7 +1475,10 @@ impl RewriterPipe {
             return self.on_rewriting_error(&e);
         }
         match self.phase.get() {
-            RewritePhase::WritePending => self.drain_pending_input(),
+            RewritePhase::WritePending => {
+                // As in `resume`: settle-only, left pending.
+                let _ = self.drain_pending_input();
+            }
             RewritePhase::EndPending => self.finish(),
             RewritePhase::Done => {}
         }
@@ -1510,7 +1517,8 @@ impl RewriterPipe {
             }
             None => webcore::body::ValueError::Message(lol_err_string(e)),
         };
-        self.fail(value_error);
+        // Settle-only result; reached from lol-html's write/end, left pending.
+        let _ = self.fail(value_error);
     }
 
     fn begin_suspension(&self) {
@@ -1566,7 +1574,9 @@ impl RewriterPipe {
     }
 
     /// Put `err` on the output `Response`'s body / ByteStream.
-    fn fail(&self, err: webcore::body::ValueError) {
+    /// Returns what settling the pump promise / erroring the output stream
+    /// left pending.
+    fn fail(&self, err: webcore::body::ValueError) -> JsResult<()> {
         self.phase.set(RewritePhase::Done);
         self.done.set(true);
         self.detach_input_source(true);
@@ -1585,17 +1595,15 @@ impl RewriterPipe {
             p.result = Writable::Done;
             p.run()
         });
-        // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
-        bun_jsc::JsResultExt::report_unhandled(settled, &self.global);
 
         if let Some(out) = self.output.get() {
             let mut err = err;
-            let _ = out.on_data(StreamResult::Err(err.to_stream_error(&self.global)));
+            let errored = out.on_data(StreamResult::Err(err.to_stream_error(&self.global)));
             self.detach_output();
-            return;
+            return settled.and(errored);
         }
         let Some(response) = self.response.get() else {
-            return;
+            return settled;
         };
         let body_value = response.get_body_value();
         let has_readable = match body_value {
@@ -1609,6 +1617,7 @@ impl RewriterPipe {
             *body_value = webcore::body::Value::Empty;
         }
         let _ = body_value.to_error_instance(err, &self.global);
+        settled
     }
 }
 
@@ -1773,11 +1782,12 @@ fn on_handler_reject(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
     };
     let pipe = BackRef::from(pipe);
     pipe.release_suspended_wrapper();
-    pipe.fail(webcore::body::ValueError::JSValue(
+    let failed = pipe.fail(webcore::body::ValueError::JSValue(
         jsc::strong::Optional::create(reason, global),
     ));
     // Balances the `ref_()` in `begin_suspension`.
     RewriterPipe::deref_nn(pipe.into());
+    failed?;
     Ok(JSValue::UNDEFINED)
 }
 

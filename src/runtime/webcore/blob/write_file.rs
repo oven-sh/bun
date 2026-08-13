@@ -591,7 +591,7 @@ mod windows_impl {
     bun_io::intrusive_uv_fs!(WriteFileWindows, io_request);
 
     #[derive(thiserror::Error, Debug)]
-    pub enum WriteFileWindowsError {
+    pub(crate) enum WriteFileWindowsError {
         #[error("WriteFileWindowsDeinitialized")]
         WriteFileWindowsDeinitialized,
         /// Delivering the result entered JS (settled the promise) and an exception is pending.

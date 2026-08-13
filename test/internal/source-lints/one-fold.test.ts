@@ -46,15 +46,13 @@ const DISPATCHERS = new Set([
   "src/runtime/socket/uws_handlers.rs", // uSockets trampolines
   "src/io/lib.rs", // pipe reader/writer trampolines
   "src/uws_sys/WebSocket.rs", // uWS websocket/upgrade trampolines
+  "src/runtime/node/quic/fold.rs", // node:quic's event drain and lsquic/UDP callback boundaries
 ]);
 
 // Frames not yet returning `JsResult` to a folding dispatcher — each is marked
 // `TODO(one-fold)` or is a foreign completion boundary awaiting its trampoline.
 // Ratcheted: this table may only shrink.
 const INTERIM: Record<string, number> = {
-  "src/runtime/node/quic/session.rs": 13, // lsquic event drain
-  "src/runtime/node/quic/endpoint.rs": 3,
-  "src/runtime/node/quic/mod.rs": 1,
   "src/runtime/cli/run_command.rs": 7, // main entry: is itself the outermost boundary
   "src/runtime/webcore/streams.rs": 4, // HTTPResponseSink teardown (uWS response callbacks / host fns)
   "src/runtime/ipc.rs": 1,

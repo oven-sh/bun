@@ -34,6 +34,7 @@
 #include <span>
 #include <array>
 #include <mutex>
+#include <utility>
 
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
@@ -117,11 +118,20 @@ private:
     static unsigned char socketKind() { return SSL ? US_SOCKET_KIND_UWS_HTTP_TLS : US_SOCKET_KIND_UWS_HTTP; }
 
 public:
-    /* node:http flood prevention: re-feed parked request bytes through the same
-     * parse path fresh socket data takes. The caller guarantees the buffer has
-     * LIBUS_RECV_BUFFER_PADDING of writable slack past `length`. */
-    static us_socket_t *feedNodeHttpData(us_socket_t *s, char *data, int length) {
-        return onData<true>(s, data, length);
+    /* Re-feed the bytes HttpParser parked (parkedRequestBytes) through the same
+     * parse path fresh socket data takes. Takes the parked bytes, so a dispatch
+     * during the replay that parks again starts a fresh batch behind them. The
+     * caller has already decided what to do about the paused read side. Returns
+     * what onData returns: the socket, closed, or the WebSocket it was upgraded
+     * into. */
+    template <bool IsNodeHttp>
+    static us_socket_t *replayParkedRequestBytes(us_socket_t *s) {
+        auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(s));
+        WTF::Vector<char> parked = std::exchange(httpResponseData->parkedRequestBytes, {});
+        size_t length = parked.size();
+        /* The parser fences the buffer by writing past its logical end. */
+        parked.grow(length + LIBUS_RECV_BUFFER_PADDING);
+        return onData<IsNodeHttp>(s, parked.mutableSpan().data(), static_cast<int>(length));
     }
 
     us_socket_group_t *getSocketGroup() {
@@ -299,6 +309,19 @@ private:
         return us_socket_close(s, 0, nullptr);
     }
 
+    /* Bun.serve: whether the next request head on this connection must be parked
+     * instead of parsed (HttpParser::parkAtNextBoundary). Either the connection's
+     * one response slot is still taken, or the response in it is going to close
+     * the connection (Connection: close or HTTP/1.0 request, close requested by
+     * the app): nothing received behind such a request may be processed
+     * (RFC 9112 9.6), and parking it lets the close-after-drain gates discard it
+     * with the socket. Such bytes are never replayed: the only replay site runs
+     * behind onWritable's close gate, which fires on exactly the conditions the
+     * replay needs. */
+    static bool cannotDispatchAnotherRequest(HttpResponseData<SSL> *httpResponseData) {
+        return (httpResponseData->state & (HttpResponseData<SSL>::HTTP_RESPONSE_PENDING | HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE)) != 0;
+    }
+
     template <bool IsNodeHttp>
     static us_socket_t *onData(us_socket_t *s, char *data, int length) {
         // ref the socket to make sure we process it entirely before it is closed
@@ -392,6 +415,16 @@ private:
         httpContextData->parsingSocket = s;
         httpResponseData->isIdle = false;
 
+        /* Bun.serve: requests pipelined behind a response that is still pending
+         * (async handler, or a body the socket is still draining) are parked at
+         * the next request boundary and replayed from onWritable once it has
+         * completed. Re-derived on every read: a keep-alive request arriving
+         * after the response completed takes the ordinary path. Body bytes of the
+         * pending request itself never reach a boundary, so they are unaffected. */
+        if constexpr (!IsNodeHttp) {
+            httpResponseData->parkAtNextBoundary = cannotDispatchAnotherRequest(httpResponseData);
+        }
+
         /* node:http compat: maintain the headers/request timeout window (see
          * the requestHandler/dataHandler hooks and the post-parse check). */
         const bool trackNodeHttpTimings = IsNodeHttp && !httpResponseData->isConnectRequest;
@@ -440,13 +473,17 @@ private:
                 nodeHttpResponseData->headersCompleted = true;
             }
 
-            /* Are we not ready for another request yet? Terminate the connection.
-             * Important for denying async pipelining until, if ever, we want to support it.
-             * Otherwise requests can get mixed up on the same connection. We still support sync pipelining. */
+            /* Is the previous response on this connection still in flight? */
             bool hasQueuedPipelinedResponses = false;
             if constexpr (IsNodeHttp) hasQueuedPipelinedResponses = httpResponseData->nodeHttpQueuedPipelinedCount > 0;
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || hasQueuedPipelinedResponses) {
                 if constexpr (!IsNodeHttp) {
+                    /* Bun.serve has one response slot per connection, so the parser
+                     * parks a head that arrives while it is taken (parkAtNextBoundary,
+                     * maintained by onData) instead of getting here. Dispatching onto
+                     * the in-flight response would interleave the two responses on the
+                     * wire; closing is the backstop. */
+                    ASSERT_NOT_REACHED();
                     us_socket_close((us_socket_t *) s, 0, nullptr);
                     return nullptr;
                 } else {
@@ -470,7 +507,7 @@ private:
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
                     /* Also stop the request loop over the buffer being parsed
                      * right now — pausing the socket alone cannot bound it. */
-                    httpResponseData->nodeHttpParkAtNextBoundary = true;
+                    httpResponseData->parkAtNextBoundary = true;
                     ((HttpResponse<SSL> *) s)->pause();
                 }
                 }
@@ -503,7 +540,7 @@ private:
                      * and park already-received requests. No already-paused guard (replay clears the park flag only). */
                     if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0) {
                         httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
-                        httpResponseData->nodeHttpParkAtNextBoundary = true;
+                        httpResponseData->parkAtNextBoundary = true;
                         ((HttpResponse<SSL> *) s)->pause();
                     }
                 }
@@ -629,6 +666,18 @@ private:
                     httpResponseData->inStream = nullptr;
                 }
             }
+
+            /* Bun.serve: the request message is complete (a bodiless request gets an
+             * empty fin right after dispatch), so the next request boundary is what
+             * the parser reaches next. The handler may have completed the response
+             * anywhere up to here, synchronously or from inside this body callback,
+             * which is why the decision to parse or park what follows is taken now
+             * and not at dispatch. */
+            if constexpr (!IsNodeHttp) {
+                if (fin) {
+                    httpResponseData->parkAtNextBoundary = cannotDispatchAnotherRequest(httpResponseData);
+                }
+            }
             return user;
         });
 
@@ -691,6 +740,23 @@ private:
             if (written > 0 || failed) {
                 /* All Http sockets timeout by this, and this behavior match the one in HttpResponse::cork */
                 ((HttpResponse<SSL> *) s)->resetTimeout();
+            }
+
+            /* Bun.serve: requests are parked on this connection. Invariant kept
+             * here and in markDone(): reads are paused while anything is parked
+             * (bounding it to one recv), and a replaying writable dispatch
+             * (onWritable) is armed as soon as the response ahead of them is
+             * complete, whichever of the two happened last. AsyncSocket::pause
+             * rather than HttpResponse::pause: the in-flight response's timeout
+             * must stay armed against a peer that pipelines and then stops
+             * reading. */
+            if constexpr (!IsNodeHttp) {
+                if (!httpResponseData->parkedRequestBytes.isEmpty()) [[unlikely]] {
+                    ((AsyncSocket<SSL> *) s)->pause();
+                    if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
+                        us_socket_request_writable(s);
+                    }
+                }
             }
 
             /* We need to check if we should close this socket here now */
@@ -856,7 +922,34 @@ private:
         /* Expect another writable event, or another request within the timeout */
         reinterpret_cast<HttpResponse<SSL> *>(s)->resetTimeout();
 
+        if constexpr (!IsNodeHttp) {
+            return replayParkedRequestsIfResponseComplete(s);
+        }
         return s;
+    }
+
+    /* Bun.serve pipelining, replay half; the tail of every writable dispatch.
+     * Gets here either because the response the parked requests were waiting on
+     * completed inside callOnWritable above (a tryEnd tail draining), or via the
+     * dispatch markDone() / onData arm when it completed anywhere else. Nothing
+     * of the completed response is on the stack at this point, so the replayed
+     * request can take over the connection's response slot. Waits for the
+     * completed response's bytes to leave the buffer: the next dispatch is
+     * already owed while any are left. */
+    static us_socket_t *replayParkedRequestsIfResponseComplete(us_socket_t *s) {
+        if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
+            return s;
+        }
+        auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(s));
+        if (httpResponseData->parkedRequestBytes.isEmpty()
+            || (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)
+            || !reinterpret_cast<AsyncSocket<SSL> *>(s)->hasFullyDrained()) {
+            return s;
+        }
+        /* Paused by onData when it parked them; it pauses again if the replayed
+         * dispatch leaves a response pending with more requests behind it. */
+        reinterpret_cast<AsyncSocket<SSL> *>(s)->resume();
+        return replayParkedRequestBytes<false>(s);
     }
 
     template <bool IsNodeHttp>

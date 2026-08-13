@@ -428,7 +428,8 @@ impl<const SSL: bool> Response<SSL> {
     #[inline]
     pub(crate) fn mark_needs_more(&mut self) {
         if !SSL {
-            c::us_socket_mark_needs_more_not_ssl(self.as_raw())
+            // S008: `us_socket_t` is an `opaque_ffi!` ZST, so the deref is safe.
+            us_socket_t::opaque_mut(self.downcast_socket()).request_writable();
         }
     }
 
@@ -1163,7 +1164,6 @@ pub mod c {
         pub(crate) safe fn uws_res_mark_wrote_content_length_header(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_mark_wrote_date_header(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_write_mark(ssl: i32, res: &mut uws_res);
-        pub(crate) safe fn us_socket_mark_needs_more_not_ssl(socket: &mut uws_res);
         pub(crate) safe fn uws_res_state(ssl: c_int, res: &uws_res) -> State;
         pub(crate) safe fn uws_res_is_connect_request(ssl: i32, res: &mut uws_res) -> bool;
         // Out-params are `&mut` (non-null, valid for write); the C shim only

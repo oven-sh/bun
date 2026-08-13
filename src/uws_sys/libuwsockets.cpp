@@ -1525,18 +1525,6 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     }
   }
 
-  void us_socket_mark_needs_more_not_ssl(uws_res_r res)
-  {
-    us_socket_r s = (us_socket_t *)res;
-    if(us_socket_is_closed(s)) return;
-    s->flags.last_write_failed = 1;
-    /* Same gate as us_internal_rearm_writable (socket.c): re-adding READABLE
-     * would undo a pause mid-backpressure and re-surface a consumed EOF on a
-     * half-open socket. */
-    us_poll_change(&s->p, s->group->loop,
-                   LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
-  }
-
 __attribute__((callback (corker, ctx)))
   void uws_res_cork(int ssl, uws_res_r res, void *ctx,
                     void (*corker)(void *ctx)) nonnull_fn_decl;
@@ -1678,16 +1666,6 @@ __attribute__((callback (corker, ctx)))
     } else {
       return ((TCPWebSocket*)ws)->memoryCost();
     }
-  }
-
-  void us_socket_sendfile_needs_more(us_socket_r s) {
-    if(us_socket_is_closed(s)) return;
-    s->flags.last_write_failed = 1;
-    /* Same gate as us_internal_rearm_writable (socket.c): re-adding READABLE
-     * would undo a pause mid-backpressure and re-surface a consumed EOF on a
-     * half-open socket. */
-    us_poll_change(&s->p, s->group->loop,
-                   LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
   }
 
   LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) {

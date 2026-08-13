@@ -696,7 +696,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     pub fn mark_needs_more_for_sendfile(&self) {
         const { assert!(!IS_SSL, "SSL sockets do not support sendfile yet") };
         if let InternalSocket::Connected(s) = self.socket {
-            sock(s).send_file_needs_more();
+            sock(s).request_writable();
         }
     }
 

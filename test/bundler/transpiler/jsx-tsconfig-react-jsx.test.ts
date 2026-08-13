@@ -232,6 +232,9 @@ describe("tsconfig jsxImportSource selects the createElement fallback import too
   const keyAfterSpread = `const p = {};\nglobalThis.a = <div {...p} key="k" />;\nglobalThis.b = <span />;\n`;
   const tsconfig = JSON.stringify({ compilerOptions: { jsxImportSource: "shim" } });
   const shimImports = ["shim", "shim/jsx-dev-runtime"];
+  // The in-process cases below share this test process's env loader, where NODE_ENV/BUN_ENV pick
+  // the runtime entry; the load-bearing import here is the "shim" createElement fallback.
+  const shimImportsAnyEnv = ["shim", expect.stringMatching(/^shim\/jsx(-dev)?-runtime$/)];
 
   // [name, entry point, files]. `bun run` only applies the project root's tsconfig.json, so the
   // layout whose tsconfig.json lives next to the entry point is exercised by the build paths only.
@@ -269,7 +272,7 @@ describe("tsconfig jsxImportSource selects the createElement fallback import too
   test.concurrent.each(layouts)("Bun.build(), %s", async (_, entry, files) => {
     using dir = tempDir("jsx-import-source-api", files);
     const result = await Bun.build({ entrypoints: [join(String(dir), entry)], external: ["*"] });
-    expect(importsOf(await result.outputs[0].text())).toEqual(shimImports);
+    expect(importsOf(await result.outputs[0].text())).toEqual(shimImportsAnyEnv);
   });
 
   test.concurrent.each(rootLayouts)("bun run, %s", async (_, entry, files) => {
@@ -293,7 +296,7 @@ describe("tsconfig jsxImportSource selects the createElement fallback import too
       logLevel: "error",
       tsconfig: { compilerOptions: { jsxImportSource: "shim" } },
     });
-    expect(importsOf(transpiler.transformSync(keyAfterSpread))).toEqual(shimImports);
-    expect(importsOf(await transpiler.transform(keyAfterSpread))).toEqual(shimImports);
+    expect(importsOf(transpiler.transformSync(keyAfterSpread))).toEqual(shimImportsAnyEnv);
+    expect(importsOf(await transpiler.transform(keyAfterSpread))).toEqual(shimImportsAnyEnv);
   });
 });

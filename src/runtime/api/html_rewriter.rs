@@ -1662,8 +1662,7 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
         let _ = buf.write_latin1(bytes);
         RewriterPipe::write(self, &StreamResult::Temporary(RawSlice::new(&buf)))
     }
-    // Not terminal: the controller's `close(error)` arrives without its error,
-    // so the pump's result (`wire_input` / the `.then()` reactions) ends the rewrite.
+    // Not terminal: `close(error)` arrives without its error; the pump's result ends the rewrite.
     fn end(&mut self, _err: Option<SysError>) -> bun_sys::Result<()> {
         bun_sys::Result::Ok(())
     }

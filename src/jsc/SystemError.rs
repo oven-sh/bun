@@ -66,8 +66,7 @@ impl From<bun_sys::SystemError> for SystemError {
     }
 }
 
-/// `SystemError__toErrorInstance` only defines the property for a string whose tag
-/// is not `Empty`, so an operand of "" crosses as a zero-length string of another tag.
+/// C++ takes the `Empty` tag as "no property", so a present "" has to cross under another tag.
 fn operand_to_c(operand: Option<OwnedString>) -> OwnedString {
     match operand {
         None => OwnedString::default(),

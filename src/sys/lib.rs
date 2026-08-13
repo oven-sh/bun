@@ -3621,8 +3621,7 @@ mod windows_impl {
         if fd.kind() == FdKind::Uv {
             return sys_uv::read(fd, buf);
         }
-        // A console delivers UTF-16; `ReadFile` would run it through conhost's
-        // broken CP_UTF8 conversion. Only stdin is ever a console here.
+        // Stdin is the only fd that can be a console here.
         if fd == Fd::stdin()
             && let Some(result) = w::console_stdin::read(fd, buf)
         {

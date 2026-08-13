@@ -172,3 +172,28 @@ Headers {
   "append": Any<Function>,
 }
 `;
+
+exports[`snapshot records the matchers that were checked 7`] = `Event 
+Event {
+  "isTrusted": false,
+  "timeStamp": Any<Number>,
+}
+`;
+
+exports[`snapshot records the matchers that were checked 8`] = `MessageEvent 
+MessageEvent {
+  "data": Any<String>,
+  "isTrusted": false,
+}
+`;
+
+exports[`a matcher checked through a getter is recorded under the getter and on the object behind it 1`] = `
+Wrapper {
+  "_user": {
+    "name": Any<String>,
+  },
+  "user": {
+    "name": Any<String>,
+  },
+}
+`;

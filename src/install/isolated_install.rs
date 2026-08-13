@@ -764,10 +764,7 @@ pub(crate) fn install_isolated_packages(
 
                             let res = &pkg_resolutions[ids.pkg_id as usize];
 
-                            // `catalog:` peer dependencies only carry the catalog
-                            // name; resolve to the underlying version so the
-                            // satisfies check below behaves the same as if the
-                            // npm range had been written directly.
+                            // A `catalog:` peer is compared by the range the catalog resolves to.
                             let catalog_resolved;
                             let peer_version = if peer_dep.version.tag == VersionTag::Catalog {
                                 catalog_resolved = lockfile.resolve_catalog_dependency(peer_dep);

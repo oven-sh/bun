@@ -1065,9 +1065,7 @@ impl Tree {
                     }
                 };
 
-                // `catalog:` peer dependencies only carry the catalog name, not the
-                // resolved npm version range. Look it up so a catalog peer hoists
-                // the same way the equivalent npm range would.
+                // A `catalog:` peer is compared by the range the catalog resolves to.
                 let catalog_resolved;
                 let peer_version = if dependency.version.tag
                     == crate::dependency::VersionTag::Catalog

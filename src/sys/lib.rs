@@ -7333,12 +7333,13 @@ pub enum ExistsAtType {
     Directory,
 }
 /// Windows tail — `NtQueryAttributesFile` against an
-/// OBJECT_ATTRIBUTES built from an already NT-prefixed wide path. Shared by the
-/// UTF-8 (`exists_at_type`) and UTF-16 (`exists_at_type_w`) entry points so the
-/// width dispatch does not
-/// duplicate the syscall body.
+/// OBJECT_ATTRIBUTES built from an already NT-prefixed wide path, returning the
+/// entry's `FileAttributes`. Shared by the UTF-8 (`exists_at_type`) and UTF-16
+/// (`exists_at_type_w`) entry points so the width dispatch does not duplicate
+/// the syscall body. Like `GetFileAttributesW`, this describes a reparse point
+/// (symlink, junction) itself, not what it points at.
 #[cfg(windows)]
-fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
+fn query_attributes_nt(dir: Fd, mut path: &[u16]) -> Maybe<u32> {
     use bun_windows_sys::externs as w;
     // Trim leading `.\` — NtQueryAttributesFile expects relative paths
     // without it.
@@ -7379,18 +7380,22 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
             Tag::access,
         ));
     }
-    // `FILE_ATTRIBUTE_READONLY` on a directory is a folder-customization
-    // marker (OneDrive sets it) and does not affect directory-ness; only
-    // `FILE_ATTRIBUTE_DIRECTORY` decides the type.
-    Ok(
-        if (basic_info.FileAttributes & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
-            ExistsAtType::Directory
-        } else {
-            ExistsAtType::File
-        },
-    )
+    Ok(basic_info.FileAttributes)
 }
-/// `fstatat` then `S_ISDIR`.
+/// `FILE_ATTRIBUTE_READONLY` on a directory is a folder-customization
+/// marker (OneDrive sets it) and does not affect directory-ness; only
+/// `FILE_ATTRIBUTE_DIRECTORY` decides the type.
+#[cfg(windows)]
+fn exists_at_type_from_attributes(attributes: u32) -> ExistsAtType {
+    if (attributes & bun_windows_sys::FILE_ATTRIBUTE_DIRECTORY) != 0 {
+        ExistsAtType::Directory
+    } else {
+        ExistsAtType::File
+    }
+}
+/// `fstatat` then `S_ISDIR`. The Windows arm answers from the entry's own
+/// attributes, so unlike `fstatat` it does not follow a symlink or junction;
+/// `exists_at_type_w` is the arm that does.
 pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
     #[cfg(unix)]
     {
@@ -7407,33 +7412,50 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
         // built from the (optionally NT-prefixed) wide path.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let path = bun_paths::string_paths::to_nt_path(&mut wbuf.0[..], sub.as_bytes()).as_slice();
-        exists_at_type_nt(dir, path)
+        query_attributes_nt(dir, path).map(exists_at_type_from_attributes)
     }
 }
-/// Wide-path arm of `exists_at_type`. Takes an already-wide path (Windows
-/// `OSPathSliceZ`) and routes through
-/// `toNTPath16` instead of re-widening from UTF-8.
+/// Wide-path arm of `exists_at_type` for node:fs' recursive mkdir, which asks
+/// about a path `mkdir` just reported as existing. It follows a symlink or
+/// junction the way the POSIX arm's `fstatat` does: a directory-type link
+/// carries `FILE_ATTRIBUTE_DIRECTORY` itself whether or not its target exists,
+/// so answering from the link's own attributes would let `mkdir -p` accept a
+/// link to nowhere as an existing directory. A link that cannot be followed
+/// fails with the open error (ENOENT when it points nowhere).
 #[cfg(windows)]
-pub(crate) fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
-    let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let path = bun_paths::string_paths::to_nt_path16(&mut wbuf.0[..], sub).as_slice();
-    exists_at_type_nt(dir, path)
+pub fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
+    use bun_windows_sys::externs as w;
+    let attributes = {
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
+        let path = bun_paths::string_paths::to_nt_path16(&mut wbuf.0[..], sub);
+        query_attributes_nt(dir, path.as_slice())?
+    };
+    if (attributes & w::FILE_ATTRIBUTE_REPARSE_POINT) == 0 {
+        return Ok(exists_at_type_from_attributes(attributes));
+    }
+    // No `FILE_OPEN_REPARSE_POINT`, so this opens whatever the link resolves to.
+    let fd = open_file_at_windows(
+        dir,
+        sub,
+        NtCreateFileOptions {
+            access_mask: w::FILE_READ_ATTRIBUTES | w::SYNCHRONIZE,
+            disposition: w::FILE_OPEN,
+            options: w::FILE_SYNCHRONOUS_IO_NONALERT,
+            ..Default::default()
+        },
+    )?;
+    let _close = CloseOnDrop::new(fd);
+    let st = fstat(fd)?;
+    Ok(if S::ISDIR(st.st_mode as _) {
+        ExistsAtType::Directory
+    } else {
+        ExistsAtType::File
+    })
 }
 /// `directoryExistsAt(dir, sub)`. ENOENT → `Ok(false)`.
 pub fn directory_exists_at(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {
     let dir = dir.as_fd();
     match exists_at_type(dir, sub) {
-        Ok(t) => Ok(t == ExistsAtType::Directory),
-        Err(e) if e.get_errno() == E::ENOENT => Ok(false),
-        Err(e) => Err(e),
-    }
-}
-/// `directoryExistsAt` — wide-path (`u16`) overload for Windows
-/// `OSPathSliceZ` callers (mkdir-recursive, cpSync auto-detect). Avoids
-/// a UTF-16 → UTF-8 → UTF-16 round-trip.
-#[cfg(windows)]
-pub fn directory_exists_at_w(dir: Fd, sub: &[u16]) -> Maybe<bool> {
-    match exists_at_type_w(dir, sub) {
         Ok(t) => Ok(t == ExistsAtType::Directory),
         Err(e) if e.get_errno() == E::ENOENT => Ok(false),
         Err(e) => Err(e),

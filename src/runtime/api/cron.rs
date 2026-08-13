@@ -1640,6 +1640,17 @@ impl CronJob {
         Self::remove_from_list(this, vm);
     }
 
+    /// The fake heap dropped this job's timer (`useRealTimers()` /
+    /// `clearAllTimers()`): stop the job as `stop()` would, so it does not
+    /// keep the event loop alive for a timer that can no longer fire.
+    ///
+    /// # Safety
+    /// `this` was recovered from a node just popped off the fake heap and no
+    /// JS has run since; a scheduled job's wrapper keeps it alive.
+    pub(crate) unsafe fn stop_dropped_from_fake_heap(this: *mut Self) {
+        Self::self_stop(this, VirtualMachine::get());
+    }
+
     fn self_stop(this: *mut Self, vm: &VirtualMachine) {
         let this_ref = Self::from_ctx_ptr(this);
         // While the callback is on the stack or its promise is pending, defer

@@ -133,13 +133,16 @@ typedef void* JSContext;
 // slot indices are defined by the runtime from JSC::CallFrameSlot when it
 // compiles this file (src/jsc/bindings/ffi.cpp).
 #define LOAD_ARGUMENTS_FROM_CALL_FRAME \
-  EncodedJSValue *argsPtr = (EncodedJSValue*)((size_t*)callFrame + Bun_FFI_PointerOffsetToArgumentsList); \
+  int64_t *argsPtr = (int64_t*)((size_t*)callFrame + Bun_FFI_PointerOffsetToArgumentsList); \
   int32_t argsCount = ((EncodedJSValue*)((size_t*)callFrame + Bun_FFI_PointerOffsetToArgumentCountIncludingThis))->asBits.payload - 1
 
-// JSC::CallFrame::argument(i): slots past argsCount are not arguments (they are
-// whatever the caller's stack holds there), so a missing argument is undefined,
-// like it is for a JS function and for the dlopen()/linkSymbols() FFI.
-#define ARGUMENT(i) ((i) < argsCount ? argsPtr[i] : ValueUndefined)
+// JSC::CallFrame::argument(i) as encoded bits: slots past argsCount are not
+// arguments (they are whatever the caller's stack holds there), so a missing
+// argument is undefined, like it is for a JS function and for the
+// dlopen()/linkSymbols() FFI. Yields an int64_t rather than an EncodedJSValue
+// because this file is linked with -nostdlib and, on every target but x86_64,
+// TinyCC compiles a struct/union copy into a call to memmove.
+#define ARGUMENT(i) ((i) < argsCount ? argsPtr[i] : TagValueUndefined)
 
 
 

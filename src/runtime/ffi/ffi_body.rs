@@ -2160,7 +2160,10 @@ impl Function {
             writer.write_all(b"  LOAD_ARGUMENTS_FROM_CALL_FRAME;\n")?;
             for (i, arg) in self.arg_types.iter().enumerate() {
                 if *arg != ABIType::NapiEnv {
-                    writeln!(writer, "  EncodedJSValue arg{i} = ARGUMENT({i});")?;
+                    writeln!(
+                        writer,
+                        "  EncodedJSValue arg{i} = {{ .asInt64 = ARGUMENT({i}) }};"
+                    )?;
                 }
             }
         }

@@ -774,6 +774,12 @@ describe("buffered bytes are sent when the controller finishes", () => {
   type Framing = { body: string; contentLength: string | null; transferEncoding: string | null };
   const unflushed: Framing = { body: "helloworld", contentLength: "10", transferEncoding: null };
   const flushedMidway: Framing = { body: "helloworld", contentLength: null, transferEncoding: "chunked" };
+  const nothingWritten: Framing = { body: "", contentLength: "0", transferEncoding: null };
+  // A write of at least the sink's high-water mark (2048 bytes by default)
+  // goes straight to the socket instead of the buffer, so close() finds
+  // nothing left to send and only has to terminate the chunked response.
+  const highWaterMarkBody = Buffer.alloc(2048, "x").toString();
+  const sentByWrite: Framing = { body: highWaterMarkBody, contentLength: null, transferEncoding: "chunked" };
 
   // The writes stay below the sink's high-water mark, so whatever follows the
   // last flush() is still buffered when the controller is finished.
@@ -799,20 +805,39 @@ describe("buffered bytes are sent when the controller finishes", () => {
       },
       unflushed,
     ],
+    // Nothing is buffered in these two, so close() takes its empty-buffer
+    // path; they pin down that it still ends the response.
+    ["sync pull, close() without writing", c => c.close(), nothingWritten],
+    [
+      "sync pull, write at the high-water mark, close()",
+      c => {
+        c.write(highWaterMarkBody);
+        c.close();
+      },
+      sentByWrite,
+    ],
   ];
 
-  test.concurrent.each(cases)("%s", async (_name, pull, expected) => {
-    using server = Bun.serve({
-      port: 0,
-      fetch: () => new Response(new ReadableStream({ type: "direct", pull } as any)),
-    });
+  // The TLS server uses a separate instantiation of the sink, so the matrix
+  // runs over both.
+  describe.each([
+    ["http", {}, {}],
+    ["https", { tls }, { tls: { rejectUnauthorized: false } }],
+  ])("over %s", (_protocol, serveOptions, fetchOptions) => {
+    test.concurrent.each(cases)("%s", async (_name, pull, expected) => {
+      using server = Bun.serve({
+        port: 0,
+        ...serveOptions,
+        fetch: () => new Response(new ReadableStream({ type: "direct", pull } as any)),
+      });
 
-    const response = await fetch(server.url);
-    expect({
-      body: await response.text(),
-      contentLength: response.headers.get("content-length"),
-      transferEncoding: response.headers.get("transfer-encoding"),
-    }).toEqual(expected);
-    expect(response.status).toBe(200);
+      const response = await fetch(server.url, fetchOptions);
+      expect({
+        body: await response.text(),
+        contentLength: response.headers.get("content-length"),
+        transferEncoding: response.headers.get("transfer-encoding"),
+      }).toEqual(expected);
+      expect(response.status).toBe(200);
+    });
   });
 });

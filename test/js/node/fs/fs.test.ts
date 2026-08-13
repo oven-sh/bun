@@ -3197,6 +3197,58 @@ describe("rm", () => {
   });
 });
 
+// The empty path names nothing, so node reports ENOENT for every operation on
+// it. On Windows, Bun resolves relative paths against a directory handle with
+// NtCreateFile, which resolves an empty name to that directory itself, so
+// readdir("") listed the cwd, writeFile("") opened it and recursive rm("")
+// deleted everything inside it. Each case therefore runs in a child process
+// whose cwd is a throwaway directory, and the parent checks that directory
+// afterwards.
+describe.concurrent("operations on the empty path", () => {
+  const enoent = { code: "ENOENT" };
+  const ok = { ok: true };
+  const cases: [expression: string, expected: object][] = [
+    [`fs.readdirSync("")`, enoent],
+    [`fs.readdirSync("", { withFileTypes: true })`, enoent],
+    [`fs.readdirSync("", { recursive: true })`, enoent],
+    [`promisify(fs.readdir)("")`, enoent],
+    [`fs.promises.readdir("")`, enoent],
+    [`fs.promises.readdir("", { recursive: true })`, enoent],
+    [`fs.writeFileSync("", "data")`, enoent],
+    [`promisify(fs.writeFile)("", "data")`, enoent],
+    [`fs.promises.writeFile("", "data")`, enoent],
+    [`fs.rmSync("", { recursive: true })`, enoent],
+    [`promisify(fs.rm)("", { recursive: true })`, enoent],
+    [`fs.promises.rm("", { recursive: true })`, enoent],
+    [`fs.rmSync("", { recursive: true, force: true })`, ok],
+    [`fs.promises.rm("", { recursive: true, force: true })`, ok],
+  ];
+
+  it.each(cases)("%s", async (expression, expected) => {
+    using dir = tempDir("fs-empty-path", { "keep.txt": "keep", "sub/inner.txt": "keep" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("node:fs");
+         const { promisify } = require("node:util");
+         Promise.resolve()
+           .then(() => ${expression})
+           .then(() => ({ ok: true }), err => ({ code: err.code }))
+           .then(result => console.log(JSON.stringify(result)));`,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(expected) + "\n", stderr: "", exitCode: 0 });
+    expect(readdirSync(String(dir)).sort()).toEqual(["keep.txt", "sub"]);
+    expect(readdirSync(join(String(dir), "sub"))).toEqual(["inner.txt"]);
+  });
+});
+
 describe("rmdir", () => {
   it("does not remove a file", done => {
     const path = `${tmpdir()}/${Date.now()}.rm.txt`;

@@ -67,6 +67,26 @@ describe("mv", async () => {
     .stderr("mv: a: Not a directory\n")
     .runAsTest("move dir -> file fails");
 
+  // An empty operand names nothing. On Windows it used to resolve to the
+  // shell's cwd itself: as the source, mv tried to rename the cwd; as the
+  // destination, it moved the file "into" the cwd and reported success.
+  TestBuilder.command`mv ${""} b`
+    .ensureTempDir()
+    .file("a", "file")
+    .exitCode(2 /* ENOENT */)
+    .stderr("mv: No such file or directory\n")
+    .fileEquals("a", "file")
+    .doesNotExist("b")
+    .runAsTest("empty source fails");
+
+  TestBuilder.command`mv a ${""}`
+    .ensureTempDir()
+    .file("a", "file")
+    .exitCode(2 /* ENOENT */)
+    .stderr("mv: a: No such file or directory\n")
+    .fileEquals("a", "file")
+    .runAsTest("empty destination fails");
+
   // POSIX `mv` must fall back to copy+unlink when `rename()` returns EXDEV
   // (source and destination on different filesystems). Requires a writable
   // mount on a different device from the harness temp dir.

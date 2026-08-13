@@ -1832,6 +1832,12 @@ pub fn move_opened_file_at(
 
     debug_assert!(!new_file_name.contains(&(b'/' as u16))); // Call moveOpenedFileAtLoose
 
+    // POSIX renameat() refuses an empty destination name with ENOENT; NT only
+    // refuses it as an INFO_LENGTH_MISMATCH, which has no errno.
+    if new_file_name.is_empty() {
+        return bun_sys::Result::errno(E::NOENT, bun_sys::Tag::NtSetInformationFile);
+    }
+
     // The FileName tail here is UTF-16, so the correct cap is
     // `PATH_MAX_WIDE * 2` bytes — sizing against the UTF-8 worst case
     // (PATH_MAX_WIDE*3+1, ≈98 KB) would just waste ~32 KB of stack on a

@@ -506,8 +506,7 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
 
 extern "C" JSC::EncodedJSValue Bun__Jest__onStackCallback();
 
-// `beforeAll(() => mock.module("./dep", f))` is a tail call: the arrow's frame is gone and only the
-// runner's native code is below us, so callerSourceOrigin() is null. The arrow itself still knows its file.
+// `beforeAll(() => mock.module(...))` is a tail call, so callerSourceOrigin() finds no frame; the arrow itself still knows its file.
 static JSC::SourceOrigin onStackTestCallbackSourceOrigin()
 {
     JSC::JSValue callback = JSC::JSValue::decode(Bun__Jest__onStackCallback());

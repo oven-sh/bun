@@ -57,7 +57,6 @@ pub(crate) fn clone_active_strong() -> Option<BunTestPtr> {
     runner.bun_test_root.clone_active_file()
 }
 
-/// [`BunTestRoot::on_stack_callback`] for `mock.module()` (BunPlugin.cpp); `ZERO` outside `bun test`.
 // HOST_EXPORT(Bun__Jest__onStackCallback, c)
 pub fn on_stack_callback() -> JSValue {
     // `runner_ptr()` rather than `runner()` for the same reason as `js_file_generation`.
@@ -441,9 +440,7 @@ pub struct BunTestRoot {
     /// state (node:test root) resets on `--rerun-each` where `Bun.main` is
     /// unchanged across iterations.
     pub(crate) file_generation: u32,
-    /// The describe/hook/test callback `run_test_callback` is synchronously invoking
-    /// (`ZERO` outside of one), for a `mock.module()` tail call whose own frame is gone.
-    /// Rooted by the entry that owns the callback, not by this cell.
+    /// Callback `run_test_callback` is invoking (else `ZERO`), read by `mock.module()` tail-called from it; rooted by its entry.
     pub(crate) on_stack_callback: std::cell::Cell<JSValue>,
 }
 
@@ -1170,9 +1167,9 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
-        // `BackRef` copy, not `&BunTestRoot`: the callback re-enters the runner. Restored rather
-        // than cleared: the microtask drain inside the call can run the next entry.
+        // `BackRef` copy, not `&BunTestRoot`: the callback re-enters the runner.
         let bun_test_root = this_strong.bun_test_root;
+        // Restored below rather than cleared: the microtask drain inside the call can run the next entry.
         let previous_on_stack_callback = bun_test_root.on_stack_callback.replace(cfg_callback);
         let call_result = vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(
             cfg_callback,

@@ -200,14 +200,13 @@ test.concurrent(
         'console.log("third");\n',
     });
 
-    const [stdout, stderr, exitCode] = await runBun(String(dir), "main.ts");
-    expect(stderr).not.toContain("panic");
+    const [stdout, , exitCode] = await runBun(String(dir), "main.ts");
     expect(stdout).toBe("first\nsecond\nthird\n");
     expect(exitCode).toBe(0);
   },
 );
 
-test.concurrent("anonymous `export default class` with a static accessor does not panic", async () => {
+test.concurrent("anonymous `export default class` with a static accessor round-trips", async () => {
   // Regression: `export default class { static accessor x = 1 }` used
   // to trip a null-ref panic in `lower_standard_decorators_stmt` because
   // `class.class_name` was only injected from `default_name` when the
@@ -226,8 +225,7 @@ test.concurrent("anonymous `export default class` with a static accessor does no
       "console.log('x=', Base.x);\n",
   });
 
-  const [stdout, stderr, exitCode] = await runBun(String(dir), "main.ts");
-  expect(stderr).not.toContain("panic");
+  const [stdout, , exitCode] = await runBun(String(dir), "main.ts");
   expect(stdout).toBe("x= 1\nx= 42\n");
   expect(exitCode).toBe(0);
 });

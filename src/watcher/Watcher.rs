@@ -158,8 +158,7 @@ static ACTIVE_WATCHERS: bun_core::Mutex<Vec<usize>> = bun_core::Mutex::new(Vec::
 /// Set by `stop_all_for_exit`. `VirtualMachine::global_exit` stops watchers and
 /// tears the heap down before `Global::exit` sets `IS_EXITING`, so that flag
 /// alone can't gate the exit paths below.
-static STOPPING_FOR_EXIT: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static STOPPING_FOR_EXIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 extern "C" fn stop_all_for_exit_hook() {
     stop_all_for_exit();

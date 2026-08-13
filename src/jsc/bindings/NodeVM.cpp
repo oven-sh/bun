@@ -187,8 +187,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     String code = stringifyAnonymousFunction(globalObject, args, throwScope, &startOffset);
     EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
 
-    // The body is line 2 of the wrapped program, so start the program one line
-    // early; a negative start is honored by Bun::applyNegativeSourceStart.
+    // The body is line 2 of the wrapped program; a negative start is honored by Bun::applyNegativeSourceStart.
     int startLine = position.m_line.zeroBasedInt();
     if (startLine != std::numeric_limits<int>::min())
         startLine--;
@@ -572,8 +571,7 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
         unsigned caretColumn = 0;
         if (JSC::CodeBlock* codeBlock = stack_frame.codeBlock()) {
             if (JSC::SourceProvider* provider = codeBlock->source().provider()) {
-                // line_and_column includes the start position clamped to 1:1 (see
-                // Bun::applyNegativeSourceStart); the header shows the full offset.
+                // line_and_column was counted from the start clamped to 1:1 (see Bun::applyNegativeSourceStart).
                 TextPosition start = provider->startPosition();
                 int startLineZeroBased = start.m_line.zeroBasedInt();
                 int64_t physicalLine = static_cast<int64_t>(line_and_column.line) - std::max(startLineZeroBased, 0);

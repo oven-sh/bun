@@ -1,5 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { checkPrime, checkPrimeSync, randomBytes, randomFill, randomFillSync, randomInt } from "crypto";
+import {
+  checkPrime,
+  checkPrimeSync,
+  generatePrime,
+  generatePrimeSync,
+  randomBytes,
+  randomFill,
+  randomFillSync,
+  randomInt,
+} from "crypto";
 import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";
 
@@ -187,6 +196,230 @@ describe("randomFill default size with multi-byte typed arrays", () => {
       if (bytes.subarray(744, 800).some(b => b !== 0)) tailFilled = true;
     }
     expect(tailFilled).toBe(true);
+  });
+});
+
+describe("generatePrime with add/rem", () => {
+  // BoringSSL's probable_prime_dh() applies the safe-prime trial-division
+  // criterion (rnd mod p <= 1) to the non-safe search and never re-randomizes,
+  // so for any odd prime q dividing `add` a start with rnd mod q == 1 loops
+  // forever. It also doesn't clamp the walk to the requested bit length. Bun
+  // implements OpenSSL's search in BignumPointer::generate() instead.
+
+  const cases: Array<[number, { add: bigint; rem?: bigint }]> = [
+    [16, { add: 3n, rem: 1n }],
+    [64, { add: 30n }],
+    [64, { add: 30n, rem: 7n }],
+    [8, { add: 11n, rem: 4n }],
+    [8, { add: 7n, rem: 3n }],
+    [32, { add: 12n, rem: 5n }],
+    // Cases that already worked previously:
+    [64, { add: 4n, rem: 3n }],
+    [64, { add: 2n }],
+  ];
+  const fixture = `
+    const { generatePrimeSync, checkPrimeSync } = require("crypto");
+    const cases = ${JSON.stringify(cases, (_, v) => (typeof v === "bigint" ? "BIGINT:" + v : v))};
+    const revive = o => Object.fromEntries(
+      Object.entries(o).map(([k, v]) => [k, typeof v === "string" && v.startsWith("BIGINT:") ? BigInt(v.slice(7)) : v]),
+    );
+    const out = [];
+    for (const [bits, rawOpts] of cases) {
+      const opts = revive(rawOpts);
+      const p = generatePrimeSync(bits, { ...opts, bigint: true });
+      out.push({
+        bits,
+        add: String(opts.add),
+        rem: opts.rem !== undefined ? String(opts.rem) : undefined,
+        p: String(p),
+        numBits: p.toString(2).length,
+        mod: String(p % opts.add),
+        isPrime: checkPrimeSync(p),
+      });
+    }
+    process.stdout.write(JSON.stringify(out));
+  `;
+
+  function checkResults(
+    results: Array<{
+      bits: number;
+      add: string;
+      rem?: string;
+      p: string;
+      numBits: number;
+      mod: string;
+      isPrime: boolean;
+    }>,
+  ) {
+    expect(results).toHaveLength(cases.length);
+    for (const r of results) {
+      expect({
+        case: `${r.bits} add=${r.add} rem=${r.rem}`,
+        numBits: r.numBits,
+        mod: r.mod,
+        isPrime: r.isPrime,
+      }).toEqual({
+        case: `${r.bits} add=${r.add} rem=${r.rem}`,
+        numBits: r.bits,
+        mod: r.rem ?? "1",
+        isPrime: true,
+      });
+    }
+  }
+
+  it("generatePrimeSync terminates and honors the requested bit length", async () => {
+    // Run in a subprocess with a kill guard: before the fix these inputs loop
+    // forever at 100% CPU and the sync form wedges the whole process.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 4500,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, signalCode: proc.signalCode }).toEqual({ stderr: "", signalCode: null });
+    expect(exitCode).toBe(0);
+    checkResults(JSON.parse(stdout));
+  });
+
+  it("generatePrime (async) calls back for add/rem inputs that previously hung", async () => {
+    // Run in a subprocess: before the fix each call permanently consumes a
+    // threadpool thread at 100% CPU and the callback never fires, so an
+    // in-process test would leave spinning threads behind for the rest of the
+    // suite even after timing out.
+    const asyncFixture = `
+      const { generatePrime, checkPrimeSync } = require("crypto");
+      const cases = ${JSON.stringify(cases, (_, v) => (typeof v === "bigint" ? "BIGINT:" + v : v))};
+      const revive = o => Object.fromEntries(
+        Object.entries(o).map(([k, v]) => [k, typeof v === "string" && v.startsWith("BIGINT:") ? BigInt(v.slice(7)) : v]),
+      );
+      Promise.all(cases.map(([bits, rawOpts]) => new Promise((resolve, reject) => {
+        const opts = revive(rawOpts);
+        generatePrime(bits, { ...opts, bigint: true }, (err, p) => {
+          if (err) return reject(err);
+          resolve({
+            bits,
+            add: String(opts.add),
+            rem: opts.rem !== undefined ? String(opts.rem) : undefined,
+            p: String(p),
+            numBits: p.toString(2).length,
+            mod: String(p % opts.add),
+            isPrime: checkPrimeSync(p),
+          });
+        });
+      }))).then(out => process.stdout.write(JSON.stringify(out)), err => { console.error(err); process.exit(1); });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", asyncFixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 4500,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, signalCode: proc.signalCode }).toEqual({ stderr: "", signalCode: null });
+    expect(exitCode).toBe(0);
+    checkResults(JSON.parse(stdout));
+  });
+
+  it("generatePrimeSync returns fresh values on repeated calls", async () => {
+    // Before the fix, size=8 add=7 rem=3 returned 7703 (13 bits) on every call
+    // in every process. 8-bit primes that are 3 (mod 7): 17 of them, so 64
+    // independent draws collapsing to one value has probability < 17^-63.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { generatePrimeSync } = require("crypto");
+         const seen = new Set();
+         for (let i = 0; i < 64; i++) {
+           const p = generatePrimeSync(8, { add: 7n, rem: 3n, bigint: true });
+           seen.add(String(p));
+           if (p.toString(2).length !== 8) { console.log("BADBITS:" + p); process.exit(1); }
+         }
+         process.stdout.write(String(seen.size));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 4500,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, stdout, signalCode: proc.signalCode }).toEqual({
+      stderr: "",
+      stdout: expect.stringMatching(/^\d+$/),
+      signalCode: null,
+    });
+    expect(Number(stdout)).toBeGreaterThan(1);
+    expect(exitCode).toBe(0);
+  });
+
+  it("generatePrime without add still works", async () => {
+    const p = generatePrimeSync(64, { bigint: true });
+    expect(p.toString(2).length).toBe(64);
+    expect(checkPrimeSync(p)).toBe(true);
+
+    const q = await new Promise<bigint>((resolve, reject) => {
+      generatePrime(64, { bigint: true }, (err, p) => (err ? reject(err) : resolve(p as bigint)));
+    });
+    expect(q.toString(2).length).toBe(64);
+    expect(checkPrimeSync(q)).toBe(true);
+  });
+});
+
+describe("generatePrime with safe and small sizes", () => {
+  // BN_generate_prime_ex draws safe-prime candidates with the top two bits set,
+  // so below 6 bits the only safe prime it can reach is 7 (size 3): sizes 4 and
+  // 5 used to spin forever (11 and 23 are unreachable), the sync form wedging
+  // the process and the async form never calling back. BoringSSL itself already
+  // rejects size 2 with BN_R_BITS_TOO_SMALL; sizes 4 and 5 must now be rejected
+  // the same way, whatever form the binding surfaces that rejection in.
+  const fixture = `
+    const { generatePrime, generatePrimeSync } = require("crypto");
+    const outcome = fn => {
+      try { return "value:" + String(fn()); } catch (e) { return "error:" + e.code; }
+    };
+    const sync = {};
+    for (const bits of [2, 4, 5]) sync[bits] = outcome(() => generatePrimeSync(bits, { safe: true, bigint: true }));
+    const reachable = {};
+    for (const bits of [3, 6, 7]) reachable[bits] = String(generatePrimeSync(bits, { safe: true, bigint: true }));
+    Promise.all(
+      [2, 4, 5].map(bits => new Promise(resolve => {
+        generatePrime(bits, { safe: true, bigint: true }, (err, p) => resolve(err ? "error:" + err.code : "value:" + String(p)));
+      })),
+    ).then(([two, four, five]) => {
+      process.stdout.write(JSON.stringify({ sync, async: { 2: two, 4: four, 5: five }, reachable }));
+    });
+  `;
+
+  it("rejects sizes 4 and 5 the same way as size 2 instead of looping forever", async () => {
+    // Subprocess with a kill guard: before the fix generatePrimeSync(4) never returns.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 4500,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, signalCode: proc.signalCode }).toEqual({ stderr: "", signalCode: null });
+    expect(exitCode).toBe(0);
+
+    const result: {
+      sync: Record<string, string>;
+      async: Record<string, string>;
+      reachable: Record<string, string>;
+    } = JSON.parse(stdout);
+    expect(result).toEqual({
+      sync: { 2: result.sync[2], 4: result.sync[2], 5: result.sync[2] },
+      async: { 2: result.async[2], 4: result.async[2], 5: result.async[2] },
+      // The only safe prime with the top two bits set at each of these sizes.
+      reachable: { 3: "7", 6: "59", 7: "107" },
+    });
+    // Whatever size 2 produces, it is a rejection, not a prime.
+    expect(result.sync[2]).not.toMatch(/^value:[1-9]/);
+    expect(result.async[2]).not.toMatch(/^value:[1-9]/);
   });
 });
 

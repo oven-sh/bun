@@ -250,9 +250,7 @@ function socketHandshake(
 // Raw socket error forwarding and close cleanup
 // ---------------------------------------------------------------------------
 
-// A wrapped socket's errors belong to the TLS socket over it, as in node:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
-// rawSocket outlives the session (onTlsClose keeps this listener), hence the guard.
+// Node reports a wrapped socket's errors on the TLS socket over it: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
 function onRawSocketError(this: TLSProxySocket, err: Error) {
   if (!this.destroyed) this.destroy(err);
 }
@@ -375,8 +373,7 @@ function upgradeRawSocketToH2(
       data: {},
     });
   } catch (e) {
-    // Credentials are built on first use and can fail here; same surface as
-    // tls.Server's own 'connection' listener (nothing listens on rawSocket).
+    // Same surface as tls.Server's own 'connection' listener when the credentials fail to build.
     rawSocket.destroy();
     tlsSocket.destroy();
     server.emit("error", e);

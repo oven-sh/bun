@@ -170,7 +170,7 @@ describe("https.Server", () => {
       // previous working SNI entry.
       expect(() =>
         server.addContext("a.example.com", { key: agent1Key, cert: "-----BEGIN CERTIFICATE-----\ntruncated" }),
-      ).toThrow();
+      ).toThrow("PEM routines");
       expect(await peerCN(port, "a.example.com")).toBe("agent3");
     } finally {
       server.close();
@@ -232,6 +232,24 @@ describe("https.Server", () => {
       server.setSecureContext({ key: agent3Key, cert: agent3Cert });
       const port = await listen(server);
       expect(await peerCN(port)).toBe("agent3");
+    } finally {
+      server.close();
+    }
+  });
+
+  test("setSecureContext with an invalid option applies nothing", async () => {
+    const server = https.createServer({ key: agent2Key, cert: agent2Cert }, (req, res) => {
+      res.writeHead(200);
+      res.end("ok");
+    });
+    try {
+      // Rejected on `key`, after `cert` was already read: the new cert must not
+      // be left paired with the old key.
+      expect(() => server.setSecureContext({ cert: agent3Cert, key: 123 as any })).toThrow(
+        'The "options.key" property must be of type string or an instance of Buffer, TypedArray, or DataView.',
+      );
+      const port = await listen(server);
+      expect(await peerCN(port)).toBe("agent2");
     } finally {
       server.close();
     }

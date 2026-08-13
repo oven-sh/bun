@@ -655,6 +655,7 @@ Server.prototype.listen = function () {
     onListen = lastArg;
   }
 
+  const previousBunServer = server[serverSymbol];
   try {
     // listenInCluster
 
@@ -686,11 +687,18 @@ Server.prototype.listen = function () {
 
     listenInCluster(server, tls, port, host, socketPath, onListen);
   } catch (err) {
-    setTimeout(() => server.emit("error", err), 1);
+    emitListenError(server, err, previousBunServer);
   }
 
   return this;
 };
+
+// A listen() that failed after Bun.serve() had already returned (while wiring the listener up)
+// must not leave that listener running behind the 'error' it reports.
+function emitListenError(server, err, previousBunServer) {
+  if (server[serverSymbol] !== previousBunServer) server.close();
+  setTimeout(() => server.emit("error", err), 1);
+}
 
 function isBindableByPrimary(port, host, socketPath) {
   if (socketPath) return typeof socketPath === "string";
@@ -731,13 +739,21 @@ function listenInCluster(server, tls, port, host, socketPath, onListen) {
   // index that makes each worker's first listen(0) land on the same handle.
   if (socketPath) {
     queryPrimary(listenArgs, socketPath, -1, -1);
-  } else if (!host) {
+    return;
+  }
+  if (!host) {
     queryPrimary(listenArgs, null, port, 4);
-  } else if (isIP(host) !== 0) {
-    queryPrimary(listenArgs, host, port, isIP(host));
+    return;
+  }
+  // Bun.serve() (the other way a worker binds) takes an IPv6 literal in brackets; the primary's
+  // bind, like isIP, wants it bare. `host` itself still goes to Bun.serve for reporting.
+  const address = host.length > 2 && host.charCodeAt(0) === 0x5b /* [ */ ? host.slice(1, -1) : host;
+  const addressType = isIP(address);
+  if (addressType !== 0) {
+    queryPrimary(listenArgs, address, port, addressType);
   } else {
     // The primary binds an address, not a name; node resolves it in the worker first.
-    require("node:dns").lookup(host, (err, ip, family) => {
+    require("node:dns").lookup(address, (err, ip, family) => {
       if (listeningId !== server[kClusterListeningId]) return;
       if (err) {
         server.emit("error", err);
@@ -772,15 +788,20 @@ function queryPrimary({ server, listeningId, tls, port, host, socketPath, onList
     server[kClusterHandle] = handle;
     // Lets worker.disconnect() close this server along with the worker's other servers.
     handle[kClusterOwner] = server;
-    // Once adopted, the listener owns the descriptor and releasing the handle must not close
-    // it; a failed Bun.serve() never took it, so the release below closes it after all.
+    // Once Bun.serve() returns, its listener owns the descriptor and releasing the handle must
+    // only notify the primary; until then the descriptor is ours to close.
     handle.adopted = true;
+    const previousBunServer = server[serverSymbol];
     try {
       server[kRealListen](tls, port, host, socketPath, false, onListen, sharedFd);
     } catch (err) {
-      handle.adopted = false;
-      releaseClusterHandle(server);
-      setTimeout(() => server.emit("error", err), 1);
+      if (server[serverSymbol] === previousBunServer) {
+        // Bun.serve() itself failed, so the descriptor is still ours. (Otherwise the listener
+        // has it, and the close() in emitListenError releases the handle along with it.)
+        handle.adopted = false;
+        releaseClusterHandle(server);
+      }
+      emitListenError(server, err, previousBunServer);
     }
   });
 }

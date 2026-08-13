@@ -328,6 +328,8 @@ bun_dispatch::link_interface! {
         fn put_or_overwrite_asset(path: *const (), contents: &[u8], content_hash: u64) -> Result<(), crate::Error>;
         fn track_resolution_failure(import_source: &[u8], specifier: &[u8], renderer: bake_types::Graph, loader: bun_ast::Loader) -> Result<(), crate::Error>;
         fn is_file_cached(abs_path: &[u8], side: bake_types::Graph) -> Option<bake_types::CacheEntry>;
+        // The loader `side`'s graph last bundled `abs_path` with; `None` if it never has.
+        fn bundled_loader(abs_path: &[u8], side: bake_types::Graph) -> Option<bun_ast::Loader>;
         fn asset_hash(abs_path: &[u8]) -> Option<u64>;
         fn current_bundle_start_data() -> *mut ();
         fn register_barrel_with_deferrals(path: &[u8]) -> Result<(), crate::Error>;

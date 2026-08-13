@@ -433,6 +433,179 @@ devTest("importing html file with text loader (#18154)", {
     await c.expectMessage("<div>hello world</div>");
   },
 });
+devTest("editing an html file imported with the text loader (#22533, #24893)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+      body: "<p>root document</p>",
+    }),
+    "index.ts": `
+      import html from "./app.html" with { type: "text" };
+      console.log(html);
+    `,
+    "app.html": "<div>first</div>",
+  },
+  htmlFiles: ["index.html"],
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("<div>first</div>");
+
+    // Rebundling app.html used to pick the loader from its extension instead
+    // of the import attribute, so the dev server treated it as an HTML route
+    // and crashed (#22533), or served it as the root document (#24893).
+    await c.expectReload(async () => {
+      await dev.write("app.html", "<div>second</div>");
+    });
+    await c.expectMessage("<div>second</div>");
+    await dev.fetch("/").expect.toInclude("<p>root document</p>");
+
+    await c.expectReload(async () => {
+      await dev.write("app.html", "<div>third</div>");
+    });
+    await c.expectMessage("<div>third</div>");
+    await dev.fetch("/").expect.toInclude("<p>root document</p>");
+  },
+});
+devTest("editing a text-imported html file that an onResolve plugin claims (#22533)", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    // Entry points are resolved by the plugin, so the rebundle of app.html
+    // takes the plugin resolution path instead of the plain entry point path.
+    "plugin.ts": `
+      export default {
+        name: "resolve-html-entry-points",
+        setup(build) {
+          build.onResolve({ filter: /\\.html$/ }, args => (args.importer ? undefined : { path: args.path }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import html from "./app.html" with { type: "text" };
+      console.log(html);
+    `,
+    "app.html": "<div>first</div>",
+  },
+  htmlFiles: ["index.html"],
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("<div>first</div>");
+
+    await c.expectReload(async () => {
+      await dev.write("app.html", "<div>second</div>");
+    });
+    await c.expectMessage("<div>second</div>");
+  },
+});
+devTest("editing a file imported with a loader other than its extension's keeps that loader", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import data from "./data.json" with { type: "text" };
+      console.log(typeof data + ":" + data);
+    `,
+    "data.json": `{"version":1}`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage('string:{"version":1}');
+
+    // Before the fix, the rebundle parsed data.json with the json loader, so
+    // the module's value silently changed from a string into an object.
+    await c.expectReload(async () => {
+      await dev.write("data.json", `{"version":2}`);
+    });
+    await c.expectMessage('string:{"version":2}');
+  },
+});
+devTest("deleting a file imported by a module loaded through an import attribute", {
+  skip: [
+    "win32", // unlinkSync is having weird behavior
+  ],
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import "./app.txt" with { type: "js" };
+    `,
+    "app.txt": `
+      import { value } from "./other";
+      console.log(value);
+    `,
+    "other.ts": `
+      export const value = 123;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(123);
+
+    // Deleting other.ts rebundles its importer. app.txt has to stay a js
+    // module for the unresolved import to be reported; rebundling it with the
+    // text loader would silently turn it into a string.
+    await dev.delete("other.ts", {
+      errors: ['app.txt:1:23: error: Could not resolve: "./other"'],
+    });
+  },
+});
+devTest("editing an html file imported with the text loader on the server (#22533)", {
+  framework: minimalFramework,
+  // Keep template.html from being registered as an HTML route.
+  htmlFiles: [],
+  files: {
+    "template.html": "<p>template</p>",
+    "routes/index.ts": `
+      import template from '../template.html' with { type: 'text' };
+      export default function (req, meta) {
+        return new Response(template);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("<p>template</p>");
+
+    // The rebundle used to crash the dev server the same way it did on the
+    // client; `dev.write` rejects when that happens. The updated text is not
+    // asserted here: propagating a hot update of a text module to its
+    // importers is a separate HMR runtime bug.
+    await dev.write("template.html", "<p>template 2</p>");
+    await dev.write("template.html", "<p>template 3</p>");
+    await dev.fetch("/").expect.toStartWith("<p>template");
+  },
+});
+devTest("editing a server file imported with a loader other than its extension's keeps that loader", {
+  framework: minimalFramework,
+  files: {
+    "message.txt": `export const message = "first";`,
+    "routes/index.ts": `
+      import { message } from '../message.txt' with { type: 'js' };
+      export default function (req, meta) {
+        return new Response(message);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("first");
+    // Before the fix, the rebundle used the text loader, which turned
+    // message.txt into a string module without a "message" export.
+    await dev.write("message.txt", `export const message = "second";`);
+    await dev.fetch("/").equals("second");
+    await dev.write("message.txt", `export const message = "third";`);
+    await dev.fetch("/").equals("third");
+  },
+});
 devTest("importing bun on the client", {
   files: {
     "index.html": emptyHtmlFile({

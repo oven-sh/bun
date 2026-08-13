@@ -2599,10 +2599,15 @@ pub mod bv2_impl {
             }
         }
 
+        /// `loader` is the graph's record of the loader the file was bundled
+        /// with (`None` falls back to the file extension). The caller is the
+        /// graph itself, mid-update, so it passes the record in rather than
+        /// having [`Self::entry_point_loader`] read it back out of the dev server.
         pub fn enqueue_file_from_dev_server_incremental_graph_invalidation(
             &mut self,
             path_slice: &[u8],
             target: options::Target,
+            loader: Option<Loader>,
         ) -> Result<(), Error> {
             // TODO: plugins with non-file namespaces
             // borrowck: get-then-put (instead of a single get-or-put) so the map
@@ -2624,9 +2629,10 @@ pub mod bv2_impl {
             let mut path = result.path_pair.primary;
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
-            let loader = path
-                .loader(&self.transpiler.options.loaders)
-                .unwrap_or(Loader::File);
+            let loader = loader.unwrap_or_else(|| {
+                path.loader(&self.transpiler.options.loaders)
+                    .unwrap_or(Loader::File)
+            });
 
             path = self.path_with_pretty_initialized(&path, target)?;
             path.assert_pretty_is_valid();
@@ -2685,6 +2691,28 @@ pub mod bv2_impl {
             Ok(())
         }
 
+        /// Loader for a file bundled from its path alone (an entry point). The
+        /// dev server rebundles a changed file this way even when an importer
+        /// chose its loader (`import x from "./x.html" with { type: "text" }`),
+        /// so a file the dev server has bundled before keeps that loader instead
+        /// of being re-typed by its extension: with the html loader, that
+        /// `.html` file would come back as a route chunk for a file that is not
+        /// a route.
+        pub(crate) fn entry_point_loader(
+            &self,
+            path: &Fs::Path,
+            target: options::Target,
+        ) -> Loader {
+            self.dev_server_handle()
+                .and_then(|dev| {
+                    dev.bundled_loader(path.key_for_incremental_graph(), target.bake_graph())
+                })
+                .unwrap_or_else(|| {
+                    path.loader(&self.transpiler.options.loaders)
+                        .unwrap_or(Loader::File)
+                })
+        }
+
         pub(crate) fn enqueue_entry_item(
             &mut self,
             resolve: &mut _resolver::Result,
@@ -2711,9 +2739,7 @@ pub mod bv2_impl {
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
 
-            let loader = path
-                .loader(&self.transpiler.options.loaders)
-                .unwrap_or(Loader::File);
+            let loader = self.entry_point_loader(&path, target);
 
             // SAFETY: `path_with_pretty_initialized` allocates into `self.graph.heap`, which
             // outlives the bundle pass; erase the arena lifetime back to the resolver's
@@ -4782,9 +4808,16 @@ pub mod bv2_impl {
                             unsafe { *value_ptr = source_index.get() };
                             out_source_index = Some(source_index);
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
-                            let loader = path
-                                .loader(&this.transpiler.options.loaders)
-                                .unwrap_or(Loader::File);
+                            let loader =
+                                if resolve.import_record.kind == ImportKind::EntryPointBuild {
+                                    this.entry_point_loader(
+                                        &path,
+                                        resolve.import_record.original_target,
+                                    )
+                                } else {
+                                    path.loader(&this.transpiler.options.loaders)
+                                        .unwrap_or(Loader::File)
+                                };
 
                             this.graph
                                 .input_files

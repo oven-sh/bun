@@ -11,6 +11,7 @@
 use core::mem::offset_of;
 use std::io::Write as _;
 
+use bun_ast::Loader;
 use bun_collections::{ArrayHashMap, StringArrayHashMap, bit_set::DynamicBitSetUnmanaged};
 use bun_core::strings;
 
@@ -108,6 +109,11 @@ pub struct File {
     pub(crate) kind: FileKind,
     /// If the file has an error, the failure can be looked up in `dev.bundling_failures`.
     pub(crate) failed: bool,
+    /// The loader this file was last bundled with, `None` until it has been
+    /// bundled once. The loader can come from the importer's `with { type }`
+    /// attribute rather than the file extension, and a rebundle of the file
+    /// (which receives it as a bare path entry point) must use the same one.
+    pub(crate) loader: Option<Loader>,
     // ── server-side ────────────────────────────────────────────────────
     pub(crate) is_rsc: bool,
     pub(crate) is_ssr: bool,
@@ -144,6 +150,7 @@ impl Default for File {
         Self {
             kind: FileKind::Unknown,
             failed: false,
+            loader: None,
             is_rsc: false,
             is_ssr: false,
             is_client_component_boundary: false,
@@ -547,6 +554,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         let path = &ctx.sources[index.get() as usize].path;
         let key = path.key_for_incremental_graph();
+        let loader = ctx.loaders[index.get() as usize];
 
         if cfg!(debug_assertions) {
             if let ReceiveChunkContent::Js { code, .. } = &content {
@@ -622,7 +630,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     }
                     ReceiveChunkContent::Js { code, source_map } => {
                         let len = code.len();
-                        let kind = if ctx.loaders[index.get() as usize].is_javascript_like() {
+                        let kind = if loader.is_javascript_like() {
                             Content::Js(code)
                         } else {
                             Content::Asset(code)
@@ -656,6 +664,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 self.bundled_files.values_mut()[file_index.get() as usize] = File {
                     kind: new_content.kind(),
                     failed: false,
+                    loader: Some(loader),
                     is_rsc: false,
                     is_ssr: false,
                     is_client_component_boundary: false,
@@ -682,6 +691,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     self.bundled_files.values_mut()[file_index.get() as usize] = File {
                         kind: new_kind,
                         failed: false,
+                        loader: Some(loader),
                         is_rsc: !is_ssr_graph,
                         is_ssr: is_ssr_graph,
                         is_client_component_boundary: scb,
@@ -698,6 +708,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     {
                         let f = &mut self.bundled_files.values_mut()[file_index.get() as usize];
                         f.kind = new_kind;
+                        f.loader = Some(loader);
                         if is_ssr_graph {
                             f.is_ssr = true;
                         } else {
@@ -1549,9 +1560,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             let dep = self.edges[edge_index.get() as usize];
             it = dep.next_dependency;
             debug_assert_eq!(dep.imported.get(), index.get());
-            let key = &self.bundled_files.keys()[dep.dependency.get() as usize];
+            let dependency = dep.dependency.get() as usize;
+            let key = &self.bundled_files.keys()[dependency];
+            let loader = self.bundled_files.values()[dependency].loader;
             bun_core::handle_oom(
-                bv2.enqueue_file_from_dev_server_incremental_graph_invalidation(key, target),
+                bv2.enqueue_file_from_dev_server_incremental_graph_invalidation(
+                    key, target, loader,
+                ),
             );
         }
 

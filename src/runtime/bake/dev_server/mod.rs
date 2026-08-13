@@ -1198,6 +1198,7 @@ bun_bundler::link_impl_DevServerHandle! {
                 }
             })
         },
+        bundled_loader(abs_path, side) => (*this).bundled_loader(abs_path, side),
         asset_hash(abs_path) => (*this).assets.get_hash(abs_path),
         current_bundle_start_data() => {
             (*this)

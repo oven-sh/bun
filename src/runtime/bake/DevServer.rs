@@ -5053,6 +5053,19 @@ impl DevServer {
         }
     }
 
+    /// The loader `path` was last bundled with in `side`'s graph (see
+    /// `incremental_graph::File::loader`), so that the bundler rebundles it
+    /// the same way when the dev server queues it as an entry point.
+    pub(crate) fn bundled_loader(&self, path: &[u8], side: bake::Graph) -> Option<Loader> {
+        let _g = self.graph_safety_lock.guard();
+        match side {
+            bake::Graph::Client => self.client_graph.bundled_files.get(path)?.loader,
+            bake::Graph::Server | bake::Graph::Ssr => {
+                self.server_graph.bundled_files.get(path)?.loader
+            }
+        }
+    }
+
     fn append_opaque_entry_point<const SIDE: bake::Side>(
         &self,
         file_names: &[Box<[u8]>],

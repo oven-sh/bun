@@ -691,10 +691,14 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     for (const boundary of failures) {
       const path: Id[] = [];
       let current = registry.get(boundary)!;
-      DEBUG.ASSERT(!boundary.endsWith(".html")); // caller should have already reloaded
       DEBUG.ASSERT(current);
       DEBUG.ASSERT(current.selfAccept === null);
       if (current.importers.size === 0) {
+        // The only root `.html` module is the route's own HTML file, and an
+        // update to it is sent as a route reload, so the caller should have
+        // already reloaded. An `.html` file imported with another loader
+        // (`with { type: "text" }`) has importers and is an ordinary module.
+        DEBUG.ASSERT(!boundary.endsWith(".html"));
         message += `Module "${boundary}" is a root module that does not self-accept.\n`;
         continue;
       }

@@ -149,8 +149,10 @@ pub fn populate_package_cache(manager: &mut PackageManager) -> crate::Result<Sum
         match enqueued {
             Ok(()) => {}
             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
-            // Both were already reported: `InvalidURL` by `for_tarball`, `AlreadyFailed` in pass 1.
-            Err(ForTarballError::InvalidURL | ForTarballError::AlreadyFailed) => {}
+            // `for_tarball` already added the error to `manager.log`.
+            Err(ForTarballError::InvalidURL) => {}
+            // Not expected here: downloads that failed during the resolve phase stay `Extracting`.
+            Err(ForTarballError::AlreadyFailed) => {}
         }
     }
 

@@ -3,8 +3,7 @@ use bstr::BStr;
 use bun_core::{Global, Output};
 use bun_install::package_manager_real::{
     PackageManager, ROOT_PACKAGE_JSON_PATH, get_cache_directory_and_abs_path, install_with_manager,
-    package_manager_options::{Do, LogLevel},
-    populate_package_cache,
+    package_manager_options::Do, populate_package_cache,
 };
 
 use crate::cli::Command;
@@ -17,9 +16,10 @@ impl PmFetchCommand {
         pm: &mut PackageManager,
         original_cwd: &[u8],
     ) -> crate::Result<()> {
-        let log_level = pm.options.log_level;
+        // Off under `--silent` and `--no-summary`; read before the flags are cleared below.
+        let print_summary = pm.options.should_print_command_name();
 
-        if pm.options.should_print_command_name() {
+        if print_summary {
             bun_core::prettyln!(
                 "<r><b>bun pm fetch <r><d>v{}<r>\n\n",
                 Global::package_json_version_with_sha,
@@ -54,7 +54,7 @@ impl PmFetchCommand {
             Global::exit(1);
         }
 
-        if log_level == LogLevel::Silent {
+        if !print_summary {
             return Ok(());
         }
 

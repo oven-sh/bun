@@ -144,6 +144,23 @@ it("should report when all packages are already cached", async () => {
   expect(await exists(join(package_dir, "node_modules"))).toBe(false);
 }, 30_000);
 
+it.each([
+  ["--no-summary", expect.not.stringContaining("error:")],
+  ["--silent", ""],
+])(
+  "should still fetch but print nothing to stdout with %s",
+  async (flag, stderr) => {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeProject();
+
+    expect(await fetchIntoCache(cacheDir(), [flag])).toEqual({ stdout: "", stderr, exitCode: 0 });
+    expect(urls).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+    expect(await cachedPackages(cacheDir())).toBe(1);
+  },
+  30_000,
+);
+
 it("should fetch the global install's dependencies with -g", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

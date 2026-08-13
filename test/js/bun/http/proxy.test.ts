@@ -2453,9 +2453,16 @@ describe("http_proxy/https_proxy env values are normalized like the fetch() prox
     return { port: (server.address() as net.AddressInfo).port, log, [Symbol.dispose]: () => server.close() };
   }
 
-  test.concurrent("credentials survive normalization", async () => {
-    // The WHATWG parser percent-encodes the space in the password and leaves the
-    // %40 alone; Proxy-Authorization must still carry the decoded credentials.
+  const credentialSpellings = [
+    // The WHATWG parser percent-encodes the space and leaves the %40 alone;
+    // Proxy-Authorization must carry the decoded credentials.
+    ["normalized by new URL()", (p: number) => `  http://us%40er:p ss@127.0.0.1:${p}  `, "us@er:p ss"],
+    // new URL() rejects this one (the # starts a fragment, leaving the port "p"),
+    // so it is used as written and has to keep working the way it always did.
+    ["rejected by new URL()", (p: number) => `http://user:p#ss@127.0.0.1:${p}`, "user:p#ss"],
+  ] as const;
+
+  test.concurrent.each(credentialSpellings)("credentials %s reach the proxy", async (_label, spell, decoded) => {
     using proxy = await answeringProxy(lines => {
       const auth = lines
         .find(l => /^proxy-authorization:/i.test(l))
@@ -2466,18 +2473,13 @@ describe("http_proxy/https_proxy env values are normalized like the fetch() prox
     const target = `http://127.0.0.1:${httpServer.port}/env-proxy-auth`;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `console.log(await (await fetch(process.env.TARGET, { keepalive: false })).text());`],
-      env: {
-        ...bunEnv,
-        ...unsetProxyEnv,
-        http_proxy: `  http://us%40er:p ss@127.0.0.1:${proxy.port}  `,
-        TARGET: target,
-      },
+      env: { ...bunEnv, ...unsetProxyEnv, http_proxy: spell(proxy.port), TARGET: target },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode, proxyLog: proxy.log }).toEqual({
-      stdout: `Basic ${btoa("us@er:p ss")}`,
+      stdout: `Basic ${btoa(decoded)}`,
       stderr: "",
       exitCode: 0,
       proxyLog: [`GET ${target} HTTP/1.1`],

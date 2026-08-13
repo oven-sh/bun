@@ -600,9 +600,11 @@ impl<'a> URL<'a> {
                     // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
                     if offset > 0 {
                         let rest = &base[offset as usize..];
-                        // Userinfo ends at the last `@` of the authority (#1390 had one in the path).
+                        // Userinfo ends at the last `@` before the path (#1390 had one in the
+                        // path). As in `parse_host`, `#` does not end the authority: raw
+                        // .npmrc / bunfig / tarball credentials may contain one unencoded.
                         let authority =
-                            &rest[..strings::index_of_any(rest, b"/?#").unwrap_or(rest.len())];
+                            &rest[..strings::index_of_any(rest, b"/?").unwrap_or(rest.len())];
                         if let Some(at) = strings::last_index_of_char(authority, b'@') {
                             let userinfo = &authority[..at];
                             match strings::index_of_char_usize(userinfo, b':') {

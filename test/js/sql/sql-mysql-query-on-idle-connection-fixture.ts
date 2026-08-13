@@ -1,23 +1,30 @@
-// A query handed to a pool connection that is already idle must keep the
-// process alive until the server answers. In every scenario below the second
-// query is issued on a connection that has gone idle:
+// A query handed to a connection that is already idle (one that has unref'd
+// the event loop) must keep the process alive until the server answers.
 //
-//   begin    max: 2. The transaction runs on the first connection; releasing
-//            it appends it to the end of the pool's ready set, so the next
-//            query is routed to the second connection, which has been idle
-//            since its handshake finished.
+// A connection only stays ref'd by accident when the next query is enqueued on
+// it while its previous reply is still being processed, so every scenario makes
+// sure that is not the case:
+//
+//   begin    max: 2. Both connections are established and released up front, so
+//            they are idle before anything runs on them. The transaction's own
+//            BEGIN goes to an idle connection, and the connection it used is
+//            appended to the end of the pool's ready set on release, so the
+//            final query is routed to the other, still untouched, connection.
 //   reserve  Same as begin, via reserve() + release().
-//   turn     max: 1. One event loop turn passes between the two queries, so
-//            the only connection is idle when the second one is issued.
+//   turn     max: 1. An event loop turn passes between the two queries, so the
+//            only connection has unref'd itself by the time the second one is
+//            issued.
+//
+// The final query sleeps server side: before exiting, the runtime polls the
+// sockets once more without blocking, and against a server on the same machine
+// an instant reply can land inside that poll and rescue a build that has the
+// bug. With the delay, a build with the bug always exits before "second query
+// done" is printed, leaving the exit code at 1.
 //
 // This runs as its own process because `bun test` keeps the event loop alive
 // by itself. The work is wrapped in main() on purpose: while an entry module's
-// top-level await is pending the runtime keeps ticking the event loop whether
-// or not anything is ref'd, which would hide the bug.
-//
-// Passes by printing both lines and exiting with code 0. With the bug, the
-// process exits right after "first step done" with the second query still
-// pending, so the exit code stays 1.
+// top-level await is pending the runtime keeps polling regardless of what is
+// ref'd, which would also hide the bug.
 import { SQL } from "bun";
 
 process.exitCode = 1;
@@ -31,14 +38,20 @@ async function main() {
 
   switch (scenario) {
     case "begin":
-      await sql.begin(async tx => {
-        await tx`select 1`;
-      });
-      break;
     case "reserve": {
-      const reserved = await sql.reserve();
-      await reserved`select 1`;
-      await reserved.release();
+      const [first, second] = await Promise.all([sql.reserve(), sql.reserve()]);
+      await first.release();
+      await second.release();
+
+      if (scenario === "begin") {
+        await sql.begin(async tx => {
+          await tx`select 1`;
+        });
+      } else {
+        const reserved = await sql.reserve();
+        await reserved`select 1`;
+        await reserved.release();
+      }
       break;
     }
     case "turn":
@@ -50,12 +63,17 @@ async function main() {
   }
   console.log("first step done");
 
-  const [row] = await sql`select 2 as x`;
+  const [row] = await sql.unsafe("select sleep(0.2) as slept, 2 as x");
   console.log(`second query done: ${row.x}`);
-
-  // Deliberately no sql.close(): once the reply is in, the connections are idle
-  // again and must stop keeping the process alive on their own.
   process.exitCode = 0;
+
+  // Deliberately no sql.close(): the connections are idle again and must stop
+  // keeping the process alive on their own. The timer is unref'd, so it only
+  // ever fires if they don't.
+  setTimeout(() => {
+    console.error("the idle connections kept the process alive");
+    process.exit(3);
+  }, 2_000).unref();
 }
 
 main().catch(err => {

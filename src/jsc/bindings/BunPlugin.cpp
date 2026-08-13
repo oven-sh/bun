@@ -467,14 +467,18 @@ struct ModuleMockUndoLog {
     Vector<CommonJS> commonJSModules;
     Vector<Installed> installed;
 
+    size_t findBindingIndex(JSC::AbstractModuleRecord* record, const JSC::Identifier& localName) const
+    {
+        return bindings.findIf([&](auto& entry) { return entry.record.get() == record && entry.localName == localName; });
+    }
     const Binding* findBinding(JSC::AbstractModuleRecord* record, const JSC::Identifier& localName) const
     {
-        size_t index = bindings.findIf([&](auto& entry) { return entry.record.get() == record && entry.localName == localName; });
+        size_t index = findBindingIndex(record, localName);
         return index == notFound ? nullptr : &bindings[index];
     }
-    bool hasCommonJS(Bun::JSCommonJSModule* module) const
+    size_t findCommonJS(Bun::JSCommonJSModule* module) const
     {
-        return commonJSModules.containsIf([&](auto& entry) { return entry.module.get() == module; });
+        return commonJSModules.findIf([&](auto& entry) { return entry.module.get() == module; });
     }
     size_t findInstalled(const String& specifier) const
     {
@@ -624,16 +628,25 @@ static std::optional<ExportBinding> readExportBinding(JSC::JSGlobalObject* globa
     return ExportBinding { resolution.moduleRecord, resolution.localName, environment->variableAt(offset).get() };
 }
 
-// Records what `exportName` of `ns` binds to right now, unless that binding is already in the log.
-static void recordBindingBeforeOverride(Zig::GlobalObject* globalObject, ModuleMockUndoLog& log, JSC::JSModuleNamespaceObject* ns, const JSC::Identifier& exportName)
+// Before a mock overwrites a binding: a test's mock logs its current value (first write wins), a persistent mock unlogs it (new baseline).
+static void noteBindingBeforeOverride(Zig::GlobalObject* globalObject, ModuleMockUndoLog& log, JSC::JSModuleNamespaceObject* ns, const JSC::Identifier& exportName, bool persistent)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto binding = readExportBinding(globalObject, ns->moduleRecord(), exportName);
     RETURN_IF_EXCEPTION(scope, void());
-    // Not an export of this module (overrideExportValue will not write it either), or logged already.
-    if (!binding || log.findBinding(binding->record, binding->localName))
+    // Not an export of this module; overrideExportValue will not write it either.
+    if (!binding)
+        return;
+
+    size_t logged = log.findBindingIndex(binding->record, binding->localName);
+    if (persistent) {
+        if (logged != notFound)
+            log.bindings.removeAt(logged);
+        return;
+    }
+    if (logged != notFound)
         return;
 
     ModuleMockUndoLog::Binding entry {
@@ -669,9 +682,15 @@ static void recordBindingBeforeOverride(Zig::GlobalObject* globalObject, ModuleM
     log.bindings.append(WTF::move(entry));
 }
 
-static void recordCommonJSBeforeOverride(JSC::VM& vm, ModuleMockUndoLog& log, Bun::JSCommonJSModule* module)
+static void noteCommonJSBeforeOverride(JSC::VM& vm, ModuleMockUndoLog& log, Bun::JSCommonJSModule* module, bool persistent)
 {
-    if (log.hasCommonJS(module))
+    size_t logged = log.findCommonJS(module);
+    if (persistent) {
+        if (logged != notFound)
+            log.commonJSModules.removeAt(logged);
+        return;
+    }
+    if (logged != notFound)
         return;
     // module.exports is always a data property of ours (see JSCommonJSModule::setExportsObject).
     JSValue exports = module->getDirect(vm, Bun::builtinNames(vm).exportsPublicName());
@@ -776,7 +795,8 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), callback);
     mock->persistent = Bun__Jest__moduleMockIsPersistent(globalObject);
-    ModuleMockUndoLog* undoLog = mock->persistent ? nullptr : &ensureUndoLog(globalObject->onLoadPlugins);
+    // A test's mock needs a log to write to; a persistent one only needs to clean up an existing log.
+    ModuleMockUndoLog* undoLog = mock->persistent ? globalObject->onLoadPlugins.moduleMockUndoLog : &ensureUndoLog(globalObject->onLoadPlugins);
 
     auto getJSValue = [&]() -> JSValue {
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -847,7 +867,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                                     value = jsUndefined();
                                 }
                                 if (undoLog) {
-                                    recordBindingBeforeOverride(globalObject, *undoLog, moduleNamespaceObject, name);
+                                    noteBindingBeforeOverride(globalObject, *undoLog, moduleNamespaceObject, name, mock->persistent);
                                     RETURN_IF_EXCEPTION(scope, {});
                                 }
                                 moduleNamespaceObject->overrideExportValue(globalObject, name, value);
@@ -857,7 +877,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                         } else {
                             // if it's not an object, I guess we just set the default export?
                             if (undoLog) {
-                                recordBindingBeforeOverride(globalObject, *undoLog, moduleNamespaceObject, vm.propertyNames->defaultKeyword);
+                                noteBindingBeforeOverride(globalObject, *undoLog, moduleNamespaceObject, vm.propertyNames->defaultKeyword, mock->persistent);
                                 RETURN_IF_EXCEPTION(scope, {});
                             }
                             moduleNamespaceObject->overrideExportValue(globalObject, vm.propertyNames->defaultKeyword, exportsValue);
@@ -879,7 +899,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         removeFromCJS = true;
         if (auto* moduleObject = entryValue ? dynamicDowncast<Bun::JSCommonJSModule>(entryValue) : nullptr) {
             if (undoLog)
-                recordCommonJSBeforeOverride(vm, *undoLog, moduleObject);
+                noteCommonJSBeforeOverride(vm, *undoLog, moduleObject, mock->persistent);
 
             JSValue exportsValue = getJSValue();
             RETURN_IF_EXCEPTION(scope, {});

@@ -323,10 +323,12 @@ pub mod Jest {
         if global_object.bun_vm().is_in_preload {
             return true;
         }
-        let Some(runner) = runner() else {
+        let Some(runner) = runner_ptr() else {
             return false;
         };
-        match runner.bun_test_root.active_file.as_deref() {
+        // SAFETY: JS thread only; raw projection rather than `runner()` for the reason given in js_file_generation.
+        let active_file = unsafe { (*runner.as_ptr()).bun_test_root.active_file.as_deref() };
+        match active_file {
             Some(active_file) => active_file.phase == bun_test::Phase::Collection,
             None => true,
         }

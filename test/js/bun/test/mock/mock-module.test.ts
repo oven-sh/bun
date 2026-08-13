@@ -177,10 +177,10 @@ describe.concurrent("mock.restore() reverts mock.module()", () => {
     export default "original-default";
   `;
 
-  async function runFixture(files: Record<string, string>, entry = "fixture.test.ts") {
+  async function runFixture(files: Record<string, string>, entries: string[] = ["fixture.test.ts"]) {
     using dir = tempDir("mock-module-restore", files);
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", entry],
+      cmd: [bunExe(), "test", ...entries],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -190,8 +190,8 @@ describe.concurrent("mock.restore() reverts mock.module()", () => {
     return { stdout, stderr, exitCode };
   }
 
-  async function expectFixturePasses(files: Record<string, string>, passes: number) {
-    const { stderr, exitCode } = await runFixture(files);
+  async function expectFixturePasses(files: Record<string, string>, passes: number, entries?: string[]) {
+    const { stderr, exitCode } = await runFixture(files, entries);
     expect(stderr).toContain(` ${passes} pass`);
     expect(stderr).not.toContain("fail)");
     expect(exitCode).toBe(0);
@@ -640,6 +640,43 @@ describe.concurrent("mock.restore() reverts mock.module()", () => {
         `,
       },
       1,
+    );
+  });
+  test("a file's top-level mock is not undone by log entries an earlier file's test left behind", async () => {
+    // Without --isolate both files share one process. a.test.ts mocks from a test and never restores (a no-op on
+    // older versions, so existing suites do this); b.test.ts's own setup must still survive its afterEach(restore).
+    await expectFixturePasses(
+      {
+        "dep.ts": depTs,
+        "dep.cjs": `module.exports = { getValue: () => "original-cjs" };`,
+        "a.test.ts": `
+          import { test, expect, mock } from "bun:test";
+          import { getValue } from "./dep";
+          test("mocks without restoring", () => {
+            mock.module("./dep", () => ({ getValue: () => "a's mock" }));
+            mock.module("./dep.cjs", () => ({ getValue: () => "a's cjs mock" }));
+            expect(getValue()).toBe("a's mock");
+            expect(require("./dep.cjs").getValue()).toBe("a's cjs mock");
+          });
+        `,
+        "b.test.ts": `
+          import { test, expect, mock, afterEach } from "bun:test";
+          import { getValue } from "./dep";
+          mock.module("./dep", () => ({ getValue: () => "b's mock" }));
+          mock.module("./dep.cjs", () => ({ getValue: () => "b's cjs mock" }));
+          afterEach(() => mock.restore());
+          test("first", () => {
+            expect(getValue()).toBe("b's mock");
+            expect(require("./dep.cjs").getValue()).toBe("b's cjs mock");
+          });
+          test("second", () => {
+            expect(getValue()).toBe("b's mock");
+            expect(require("./dep.cjs").getValue()).toBe("b's cjs mock");
+          });
+        `,
+      },
+      3,
+      ["a.test.ts", "b.test.ts"],
     );
   });
 });

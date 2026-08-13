@@ -249,22 +249,24 @@ function wrapPostgresError(error: Error | PostgresErrorOptions) {
 
 // prettier-ignore
 const enum Char {
-  DOUBLE_QUOTE = 34,  // "
-  DOLLAR = 36,        // $
-  SINGLE_QUOTE = 39,  // '
-  ASTERISK = 42,      // *
-  MINUS = 45,         // -
-  FORWARD_SLASH = 47, // /
-  ZERO = 48,          // 0
-  NINE = 57,          // 9
-  UPPER_A = 65,       // A
-  UPPER_E = 69,       // E
-  UPPER_Z = 90,       // Z
-  BACKSLASH = 92,     // \
-  UNDERSCORE = 95,    // _
-  LOWER_A = 97,       // a
-  LOWER_E = 101,      // e
-  LOWER_Z = 122,      // z
+  LINE_FEED = 10,       // \n
+  CARRIAGE_RETURN = 13, // \r
+  DOUBLE_QUOTE = 34,    // "
+  DOLLAR = 36,          // $
+  SINGLE_QUOTE = 39,    // '
+  ASTERISK = 42,        // *
+  MINUS = 45,           // -
+  FORWARD_SLASH = 47,   // /
+  ZERO = 48,            // 0
+  NINE = 57,            // 9
+  UPPER_A = 65,         // A
+  UPPER_E = 69,         // E
+  UPPER_Z = 90,         // Z
+  BACKSLASH = 92,       // \
+  UNDERSCORE = 95,      // _
+  LOWER_A = 97,         // a
+  LOWER_E = 101,        // e
+  LOWER_Z = 122,        // z
 }
 
 // The predicates below get NaN once an index runs past the end of the text, so the scanning loops
@@ -309,6 +311,19 @@ function skipQuoted(text: string, i: number, quote: number, backslashEscapes: bo
     }
   }
   return len;
+}
+
+/** `i` is the index right after `--`; returns the index of the line end, which the server takes to be either `\n` or `\r`. */
+function skipLineComment(text: string, i: number): number {
+  const len = text.length;
+  while (i < len) {
+    const c = text.charCodeAt(i);
+    if (c === Char.LINE_FEED || c === Char.CARRIAGE_RETURN) {
+      break;
+    }
+    i++;
+  }
+  return i;
 }
 
 /** `i` is the index right after a comment opener; returns the index right after the closer. Block comments nest. */
@@ -382,8 +397,7 @@ function offsetParameterReferences(fragment: string, offset: number, count: numb
         break;
       case Char.MINUS:
         if (fragment.charCodeAt(i + 1) === Char.MINUS) {
-          const end = fragment.indexOf("\n", i + 2);
-          i = end === -1 ? len : end + 1;
+          i = skipLineComment(fragment, i + 2);
         } else {
           i++;
         }

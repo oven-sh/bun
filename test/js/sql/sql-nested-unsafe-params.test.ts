@@ -99,6 +99,8 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       '$1::text as "$1"',
       "5 as col$1",
       "-- don't rewrite: $1\n      $1::text as after_line_comment",
+      // the server also ends a line comment at a bare carriage return
+      "-- don't rewrite: $1\r$1::text as after_cr_comment",
       "/* don't /* nested $1 */ here */ $1::text as after_block_comment",
     ].join(",\n      ");
 
@@ -112,6 +114,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
         $1: "inner",
         col$1: 5,
         after_line_comment: "inner",
+        after_cr_comment: "inner",
         after_block_comment: "inner",
       },
     ]);

@@ -2090,9 +2090,7 @@ fn parse_data_loader<'a>(
     });
 }
 
-/// The printer requires `E::String` data to be well-formed WTF-8, so the `text`
-/// and `md` loaders decode the file like `Bun.file().text()` does (U+FFFD for
-/// ill-formed bytes) instead of wrapping the raw file contents.
+/// `E::String` must hold well-formed WTF-8, so text/md files are decoded like `Bun.file().text()`.
 pub(crate) fn decode_utf8_file_contents<'a>(contents: &'a [u8], arena: &'a Arena) -> &'a [u8] {
     strings::to_well_formed_utf8_in(contents, arena).unwrap_or(contents)
 }

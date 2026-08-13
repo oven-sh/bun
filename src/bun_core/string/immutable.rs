@@ -2644,9 +2644,7 @@ pub fn to_utf16_alloc(
     Ok(Some(out))
 }
 
-/// Copy of `bytes` in `arena` with every ill-formed UTF-8 subsequence replaced by
-/// U+FFFD, decoded the same way `TextDecoder` / [`to_utf16_alloc`] decode it.
-/// `None` (nothing allocated) when `bytes` is already well-formed.
+/// U+FFFD placement matches `TextDecoder`; `None` means `bytes` is already well-formed (no copy).
 pub fn to_well_formed_utf8_in<'a>(bytes: &[u8], arena: &'a Arena) -> Option<&'a [u8]> {
     if is_valid_utf8(bytes) {
         return None;

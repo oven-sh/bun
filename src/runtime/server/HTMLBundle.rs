@@ -169,6 +169,8 @@ pub struct Route {
 
 pub enum State {
     Pending,
+    /// `None` while the server's plugins are still loading. In either form the
+    /// route holds a pending request on `Route::server` (`schedule_bundle`).
     Building(Option<*mut JSBundleCompletionTask>),
     Err(Log),
     /// Intrusive-refcounted; freed via `StaticRoute::deref_` in `State::deinit`.
@@ -387,20 +389,41 @@ impl Route {
     }
 
     /// Schedule a bundle to be built.
-    /// If success, bumps the ref count and returns true;
-    fn schedule_bundle(&self, server: AnyServer) -> Result<(), crate::Error> {
+    ///
+    /// Entering `State::Building` counts as a pending request on the server:
+    /// the plugin load and the build finish on later event-loop turns and call
+    /// back into it (`on_plugins_resolved`, `on_complete`), so its
+    /// `deinit_if_we_can` must not free it before then. Nothing else holds it
+    /// on the route's behalf; the clients waiting in `pending_responses` only
+    /// count as connections and can disconnect at any time. `finish_building`
+    /// releases the pending request when the route leaves `State::Building`.
+    fn schedule_bundle(&self, mut server: AnyServer) -> Result<(), crate::Error> {
         match server.get_or_load_plugins(ServePluginsCallback::HtmlBundleRoute(self.as_ctx_ptr())) {
             GetOrStartLoadResult::Err => {
                 self.state.set(State::Err(Log::init()));
             }
             GetOrStartLoadResult::Ready(plugins) => {
-                self.on_plugins_resolved(plugins.map(NonNull::from))?;
+                let plugins = plugins.map(NonNull::from);
+                server.on_pending_request();
+                self.on_plugins_resolved(plugins)?;
             }
             GetOrStartLoadResult::Pending => {
+                server.on_pending_request();
                 self.state.set(State::Building(None));
             }
         }
         Ok(())
+    }
+
+    /// Leaves `State::Building`: answers the requests that arrived while the
+    /// route was building, then releases the pending request `schedule_bundle`
+    /// took on the server. The release comes last because it runs the server's
+    /// idle pass (`deinit_if_we_can`), which schedules the server's deinit when
+    /// this build was the only thing still keeping a stopped server alive.
+    fn finish_building(&self) {
+        debug_assert!(matches!(self.state.get(), State::Err(_) | State::Html(_)));
+        self.resume_pending_responses();
+        self.server.get().expect("server set").on_request_complete();
     }
 
     pub(crate) fn on_plugins_resolved(
@@ -530,7 +553,7 @@ impl Route {
             std::ptr::from_ref(self) as usize
         );
         self.state.set(State::Err(Log::init()));
-        self.resume_pending_responses();
+        self.finish_building();
         Ok(())
     }
 
@@ -538,6 +561,10 @@ impl Route {
         // For the build task — matches the ref() taken in on_plugins_resolved.
         // SAFETY: self is IntrusiveRc-managed; `adopt` consumes the prior +1 on Drop.
         let _drop_build_ref = unsafe { bun_ptr::ScopedRef::<Route>::adopt(self.as_ctx_ptr()) };
+        // Still allocated, even if it has been stopped and its JS wrapper
+        // collected since: the route holds a pending request on it until
+        // `finish_building` (see `schedule_bundle`).
+        let server = self.server.get().expect("server set");
 
         match &mut completion_task.result {
             BundleV2Result::Err(err) => {
@@ -546,16 +573,14 @@ impl Route {
                 }
                 let mut log = Log::init();
                 completion_task.log.clone_to_with_recycled(&mut log, true);
-                if let Some(server) = self.server.get() {
-                    if server.config().is_development() {
-                        // `Output.errorWriterBuffered()` → process-global writer;
-                        // `Log::print` accepts it via the `*mut io::Writer`
-                        // `IntoLogWrite` adapter and dispatches on
-                        // `enable_ansi_colors_stderr` internally.
-                        let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
-                        let _ = log.print(writer);
-                        bun_output::flush();
-                    }
+                if server.config().is_development() {
+                    // `Output.errorWriterBuffered()` → process-global writer;
+                    // `Log::print` accepts it via the `*mut io::Writer`
+                    // `IntoLogWrite` adapter and dispatches on
+                    // `enable_ansi_colors_stderr` internally.
+                    let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
+                    let _ = log.print(writer);
+                    bun_output::flush();
                 }
                 self.state.set(State::Err(log));
             }
@@ -564,9 +589,6 @@ impl Route {
                     bun_output::scoped_log!(debug, "onComplete: success");
                 }
                 // Find the HTML entry point and create static routes
-                let Some(server) = self.server.get() else {
-                    return;
-                };
                 // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                 let global_this = bun_opaque::opaque_deref(server.global_this());
                 let output_files = &mut bundle.output_files;
@@ -711,11 +733,10 @@ impl Route {
             BundleV2Result::Pending => unreachable!(),
         }
 
-        // Handle pending responses
-        self.resume_pending_responses();
+        self.finish_building();
     }
 
-    pub(crate) fn resume_pending_responses(&self) {
+    fn resume_pending_responses(&self) {
         // R-2: `JsCell::replace` moves the Vec out so the per-response loop
         // (which writes responses and may run uws callbacks) holds no borrow
         // into `self.pending_responses`.

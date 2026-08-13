@@ -473,7 +473,6 @@ impl NodeHTTPResponse {
         self.request_trailers.with_mut(|v| v.append_slice(bytes));
     }
 
-    #[allow(dead_code)]
     pub(crate) fn pause_socket(&self) {
         scoped_log!(NodeHTTPResponse, "pauseSocket");
         let flags = self.flags.get();
@@ -1404,11 +1403,7 @@ impl NodeHTTPResponse {
             raw.on_data(on_buffer_paused_shim, self.as_ctx_ptr());
         }
 
-        // TODO: figure out why windows is not emitting EOF with UV_DISCONNECT
-        #[cfg(not(windows))]
-        {
-            self.pause_socket();
-        }
+        self.pause_socket();
         Ok(JSValue::TRUE)
     }
 

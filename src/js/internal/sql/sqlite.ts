@@ -213,10 +213,10 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
   private mode = SQLQueryResultMode.objects;
 
   private readonly sql: string;
-  private readonly values: unknown[];
+  private readonly values: unknown[] | Record<string, unknown>;
   private readonly parsedInfo: SQLParsedInfo;
 
-  public constructor(sql: string, values: unknown[]) {
+  public constructor(sql: string, values: unknown[] | Record<string, unknown>) {
     this.sql = sql;
     this.values = values;
     // Parse the SQL query once when creating the handle
@@ -245,12 +245,17 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         const stmt = db.prepare(sql);
         let result: unknown[] | undefined;
 
-        if (mode === SQLQueryResultMode.values) {
-          result = stmt.values.$apply(stmt, values);
-        } else if (mode === SQLQueryResultMode.raw) {
-          result = stmt.raw.$apply(stmt, values);
-        } else {
-          result = stmt.all.$apply(stmt, values);
+        try {
+          // Named-parameter objects need $call: $apply would treat them as an empty array-like.
+          if (mode === SQLQueryResultMode.values) {
+            result = $isArray(values) ? stmt.values.$apply(stmt, values) : stmt.values.$call(stmt, values);
+          } else if (mode === SQLQueryResultMode.raw) {
+            result = $isArray(values) ? stmt.raw.$apply(stmt, values) : stmt.raw.$call(stmt, values);
+          } else {
+            result = $isArray(values) ? stmt.all.$apply(stmt, values) : stmt.all.$call(stmt, values);
+          }
+        } finally {
+          stmt.finalize();
         }
 
         const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
@@ -258,11 +263,10 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         sqlResult.command = commandToString(command, parsedInfo.lastToken);
         sqlResult.count = $isArray(result) ? result.length : 1;
 
-        stmt.finalize();
         query.resolve(sqlResult);
       } else {
         // For INSERT/UPDATE/DELETE/CREATE etc., use db.run() which handles multiple statements natively
-        const changes = db.run.$apply(db, [sql].concat(values));
+        const changes = $isArray(values) ? db.run.$apply(db, [sql].concat(values)) : db.run.$call(db, sql, values);
         const sqlResult = new SQLResultArray();
 
         sqlResult.command = commandToString(command, parsedInfo.lastToken);
@@ -350,7 +354,10 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     }
   }
 
-  createQueryHandle(sql: string, values: unknown[] | undefined | null = []): SQLiteQueryHandle {
+  createQueryHandle(
+    sql: string,
+    values: unknown[] | Record<string, unknown> | undefined | null = [],
+  ): SQLiteQueryHandle {
     return new SQLiteQueryHandle(sql, values ?? []);
   }
   escapeIdentifier(str: string) {

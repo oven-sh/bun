@@ -158,12 +158,16 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(shapeOf(await rejectionOf(Bun.file("").text()))).toEqual(enoent("open"));
     });
 
+    // After open("") fails, Bun.write tries to create the parent directory. POSIX
+    // then reports the open again; Windows reports the failed mkdir instead.
+    const enoentWrite = enoent(isWindows ? "mkdir" : "open");
+
     it("Bun.write('', string)", async () => {
-      expect(shapeOf(await rejectionOf(Bun.write("", "data")))).toEqual(enoent("open"));
+      expect(shapeOf(await rejectionOf(Bun.write("", "data")))).toEqual(enoentWrite);
     });
 
     it("Bun.write(Bun.file(''), string)", async () => {
-      expect(shapeOf(await rejectionOf(Bun.write(Bun.file(""), "data")))).toEqual(enoent("open"));
+      expect(shapeOf(await rejectionOf(Bun.write(Bun.file(""), "data")))).toEqual(enoentWrite);
     });
 
     // File to file copies take a different route on Windows (uv_fs_copyfile),

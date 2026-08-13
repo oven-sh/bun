@@ -4918,8 +4918,7 @@ impl NodeFS {
                     });
                 }
 
-                // The unlink below would remove the only name of a file
-                // copied onto itself; Node treats that copy as a no-op.
+                // A copy onto itself is a Node no-op; the unlink below would delete it.
                 if !args.mode.shouldnt_overwrite()
                     && Self::copy_file_onto_itself(&stat_, &Syscall::stat(dest))
                 {
@@ -5040,9 +5039,7 @@ impl NodeFS {
             };
             let _close_dest = scopeguard::guard(dest_fd, |fd| fd.close());
 
-            // Don't O_TRUNC at open: if src and dest resolve to the same
-            // inode, the ftruncate below would zero the file before the
-            // first read. Node treats that copy as a no-op.
+            // No O_TRUNC at open: a copy onto itself is a Node no-op, not a zeroed file.
             if Self::copy_file_onto_itself(&stat_, &Syscall::fstat(dest_fd)) {
                 return Ok(());
             }
@@ -5136,8 +5133,7 @@ impl NodeFS {
 
             let dest_fd = Syscall::open(dest, flags, stat_.st_mode as Mode)?;
 
-            // Opened without O_TRUNC; a copy onto itself is a no-op in Node,
-            // and the force-clone arm below would unlink the file's only name.
+            // A copy onto itself is a Node no-op; the force-clone arm would unlink it.
             if Self::copy_file_onto_itself(&stat_, &Syscall::fstat(dest_fd)) {
                 dest_fd.close();
                 return Ok(());

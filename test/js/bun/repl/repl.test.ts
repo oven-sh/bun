@@ -1375,6 +1375,33 @@ describe.concurrent("REPL history file", () => {
     // multi-line entry are kept.
     expect(await savedLines(home)).toEqual(["1 + 1", "function h() {\r  return 3\r}", "2 + 2", ""]);
   });
+
+  test("a CRLF file of single-line entries loads and is re-saved without the CRs", async () => {
+    // A history file written on Windows, or edited in a CRLF editor: every '\r'
+    // is part of a line ending, so none of them may end up in an entry, where
+    // it would show in recall and .history and be written back on every save.
+    using dir = tempDir("repl-history-crlf-single-line", {
+      ".bun_repl_history": "old_one\r\nold_two\r\n",
+    });
+    const home = String(dir);
+
+    const session = await runReplWithHome(home, [".history", "2 + 2", ".exit"]);
+    expect(session).not.toContain("\r");
+    expect(session).toMatchInlineSnapshot(`
+      "> 
+
+      Command History:
+           1  old_one
+           2  old_two
+
+      > 
+      4
+      > 
+      "
+    `);
+
+    expect(await savedLines(home)).toEqual(["old_one", "old_two", "2 + 2", ""]);
+  });
 });
 
 // `bun --interactive` boots the full node:repl + readline + acorn stack; on a

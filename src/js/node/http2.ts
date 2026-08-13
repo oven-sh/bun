@@ -4019,7 +4019,7 @@ function stripInvalidWhitespaceFields(rawheaders: string[]): string[] {
 // node validates header constraints in JS before anything reaches the native encoder, so a
 // throwing request leaves no partial state in the shared HPACK table. Mirror the single-value
 // rule here: duplicated single-value fields (across case variants) and multi-element arrays for
-// them throw before encoding starts.
+// them throw before encoding starts. The native encoders apply the same rule.
 function assertSingleValueHeaders(headers) {
   let seen = null;
   const keys = Object.keys(headers);
@@ -4027,7 +4027,9 @@ function assertSingleValueHeaders(headers) {
     const lower = keys[i].toLowerCase();
     if (!kSingleValueHeaders.has(lower)) continue;
     const value = headers[keys[i]];
-    if (($isArray(value) && value.length > 1) || (seen !== null && seen.has(lower))) {
+    const fieldCount = $isArray(value) ? value.length : 1;
+    if (fieldCount === 0) continue;
+    if (fieldCount > 1 || (seen !== null && seen.has(lower))) {
       throw $ERR_HTTP2_HEADER_SINGLE_VALUE(`Header field "${lower}" must only have a single value`);
     }
     if (seen === null) seen = new SafeSet();

@@ -3984,6 +3984,217 @@ it("http2 pushStream reports an unsendable array element through the callback", 
   expect(blocks).toEqual([]);
 });
 
+// In the object header form an array value is sent as one field per element, so an empty array
+// sends nothing, and node (buildNgHeaderString) does not count it as an occurrence of a single-value
+// field: { "content-type": [], "Content-Type": "text/plain" } sends one content-type field. bun
+// applies the single-value rule in a JS pre-check (request, respond, additionalHeaders, pushStream)
+// and again in each native encoder (the only check sendTrailers has), so every entry point gets the
+// same rows. Each outcome is the list of content-type values the peer decoded from the wire, or the
+// error the call threw; the expected values were checked against node v26.3.0.
+describe.concurrent("http2 object-form headers: an empty array is not an occurrence of a single-value field", () => {
+  const singleValue = {
+    name: "TypeError",
+    code: "ERR_HTTP2_HEADER_SINGLE_VALUE",
+    message: 'Header field "content-type" must only have a single value',
+  };
+  const rows = [
+    { headers: { "content-type": [], "Content-Type": "text/plain" }, outcome: ["text/plain"] },
+    { headers: { "Content-Type": "text/plain", "content-type": [] }, outcome: ["text/plain"] },
+    { headers: { "content-type": [], "Content-Type": ["text/plain"] }, outcome: ["text/plain"] },
+    { headers: { "content-type": [], "Content-Type": [] }, outcome: [] },
+    // A one-element array is an occurrence, and a multi-element array is still rejected.
+    { headers: { "content-type": ["text/plain"], "Content-Type": "text/html" }, outcome: singleValue },
+    { headers: { "content-type": [], "Content-Type": ["text/plain", "text/html"] }, outcome: singleValue },
+  ];
+  const expected = rows.map(row => row.outcome);
+
+  const describeError = err => ({ name: err.constructor.name, code: err.code, message: err.message });
+  function contentTypeValues(rawHeaders) {
+    const values = [];
+    for (let i = 0; i < rawHeaders.length; i += 2) {
+      if (rawHeaders[i] === "content-type") values.push(rawHeaders[i + 1]);
+    }
+    return values;
+  }
+
+  // A server and a client for one row: `onStream` serves the request `useClient` makes, and the
+  // result of `useClient` is the row's outcome. Every row gets fresh peers because a block the native
+  // encoder rejects part-way through (the sendTrailers rows that throw) leaves that session's HPACK
+  // encoder ahead of the peer.
+  async function withPeers(onStream, useClient) {
+    const { promise: failure, reject } = Promise.withResolvers();
+    const server = http2.createServer();
+    server.on("error", reject);
+    server.on("sessionError", reject);
+    server.on("stream", onStream);
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", reject);
+    try {
+      return await Promise.race([failure, useClient(client)]);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  }
+
+  // Ends `req` and resolves, once it has closed, with the raw header lists the client received.
+  function exchange(req) {
+    return new Promise((resolve, reject) => {
+      const received = {};
+      req.on("headers", (_headers, _flags, rawHeaders) => (received.informational = rawHeaders));
+      req.on("response", (_headers, _flags, rawHeaders) => (received.response = rawHeaders));
+      req.on("trailers", (_headers, _flags, rawHeaders) => (received.trailers = rawHeaders));
+      req.on("error", reject);
+      req.on("close", () => resolve(received));
+      req.resume();
+      req.end();
+    });
+  }
+
+  it("request()", async () => {
+    const outcomes = [];
+    for (const { headers } of rows) {
+      let requestReceived;
+      outcomes.push(
+        await withPeers(
+          (stream, _headers, _flags, rawHeaders) => {
+            requestReceived = contentTypeValues(rawHeaders);
+            stream.respond({ ":status": 200 });
+            stream.end();
+          },
+          async client => {
+            let req;
+            try {
+              req = client.request({ ":path": "/", ...headers });
+            } catch (err) {
+              return describeError(err);
+            }
+            await exchange(req);
+            return requestReceived;
+          },
+        ),
+      );
+    }
+    expect(outcomes).toEqual(expected);
+  });
+
+  it("respond()", async () => {
+    const outcomes = [];
+    for (const { headers } of rows) {
+      let threw;
+      outcomes.push(
+        await withPeers(
+          stream => {
+            try {
+              stream.respond({ ":status": 200, ...headers });
+            } catch (err) {
+              threw = describeError(err);
+              stream.respond({ ":status": 200 });
+            }
+            stream.end();
+          },
+          async client => {
+            const { response } = await exchange(client.request({ ":path": "/" }));
+            return threw ?? contentTypeValues(response);
+          },
+        ),
+      );
+    }
+    expect(outcomes).toEqual(expected);
+  });
+
+  it("additionalHeaders()", async () => {
+    const outcomes = [];
+    for (const { headers } of rows) {
+      let threw;
+      outcomes.push(
+        await withPeers(
+          stream => {
+            try {
+              stream.additionalHeaders({ ":status": 102, ...headers });
+            } catch (err) {
+              threw = describeError(err);
+            }
+            stream.respond({ ":status": 200 });
+            stream.end();
+          },
+          async client => {
+            const { informational } = await exchange(client.request({ ":path": "/" }));
+            return threw ?? contentTypeValues(informational);
+          },
+        ),
+      );
+    }
+    expect(outcomes).toEqual(expected);
+  });
+
+  it("pushStream()", async () => {
+    const outcomes = [];
+    for (const { headers } of rows) {
+      let threw;
+      outcomes.push(
+        await withPeers(
+          stream => {
+            try {
+              stream.pushStream({ ":path": "/pushed", ...headers }, (err, pushed) => {
+                if (err) {
+                  stream.destroy(err);
+                  return;
+                }
+                pushed.respond({ ":status": 200 });
+                pushed.end();
+              });
+            } catch (err) {
+              threw = describeError(err);
+            }
+            stream.respond({ ":status": 200 });
+            stream.end();
+          },
+          async client => {
+            const { promise: promised, resolve } = Promise.withResolvers();
+            client.on("stream", (pushed, _headers, _flags, rawHeaders) => {
+              pushed.on("close", () => resolve(contentTypeValues(rawHeaders)));
+              pushed.resume();
+            });
+            await exchange(client.request({ ":path": "/" }));
+            return threw ?? (await promised);
+          },
+        ),
+      );
+    }
+    expect(outcomes).toEqual(expected);
+  });
+
+  it("sendTrailers()", async () => {
+    const outcomes = [];
+    for (const { headers } of rows) {
+      let threw;
+      outcomes.push(
+        await withPeers(
+          stream => {
+            stream.respond({ ":status": 200 }, { waitForTrailers: true });
+            stream.on("wantTrailers", () => {
+              try {
+                stream.sendTrailers(headers);
+              } catch (err) {
+                threw = describeError(err);
+                stream.sendTrailers({});
+              }
+            });
+            stream.end();
+          },
+          async client => {
+            const { trailers = [] } = await exchange(client.request({ ":path": "/" }));
+            return threw ?? contentTypeValues(trailers);
+          },
+        ),
+      );
+    }
+    expect(outcomes).toEqual(expected);
+  });
+});
+
 it("http2 option range error messages use the options. prefix", () => {
   for (const opt of ["maxSessionInvalidFrames", "maxSessionRejectedStreams", "unknownProtocolTimeout"]) {
     let error;

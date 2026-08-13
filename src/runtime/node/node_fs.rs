@@ -6313,12 +6313,17 @@ impl NodeFS {
             ),
         };
         match maybe {
-            Err(err) => Err(sys::Error {
-                syscall: sys::Tag::scandir,
-                errno: err.errno,
-                path: args.path.slice().into(),
-                ..Default::default()
-            }),
+            // Node reports every readdir failure as `scandir`, naming the directory
+            // whose listing failed: for a recursive walk that is the subdirectory
+            // the walker attached, not necessarily `args.path`.
+            Err(err) => {
+                let path: &[u8] = if err.path.is_empty() {
+                    args.path.slice()
+                } else {
+                    &err.path
+                };
+                Err(err.with_path_and_syscall(path, sys::Tag::scandir))
+            }
             Ok(result) => Ok(result),
         }
     }
@@ -6627,6 +6632,22 @@ impl NodeFS {
         Ok(())
     }
 
+    /// `err` failed the subdirectory at `relative` (the walker's path relative to
+    /// the root fd). Node reports that directory as `path.join(root, relative)`;
+    /// `readdir_with_entries_recursive_async` attaches the same path.
+    fn readdir_recursive_subdir_error(
+        err: &sys::Error,
+        args: &args::Readdir,
+        relative: &[u8],
+    ) -> sys::Error {
+        let mut spill: Vec<u8> = Vec::new();
+        let joined = paths::resolve_path::join_spill::<paths::platform::Auto>(
+            &mut spill,
+            &[args.path.slice(), relative],
+        );
+        err.with_path(joined)
+    }
+
     fn readdir_with_entries_recursive_sync<T: ReaddirEntry>(
         buf: &mut PathBuffer,
         args: &args::Readdir,
@@ -6698,8 +6719,11 @@ impl NodeFS {
                         // Node doesn't gracefully handle errors like these. It fails the entire operation.
                         E::ENOENT | E::ENOTDIR | E::EPERM => continue,
                         _ => {
-                            // TODO: propagate file path (removed previously because it leaked the path)
-                            return Err(err);
+                            return Err(Self::readdir_recursive_subdir_error(
+                                &err,
+                                args,
+                                basename_bytes,
+                            ));
                         }
                     }
                 }
@@ -6721,7 +6745,14 @@ impl NodeFS {
                 let current = match iterator.next() {
                     Err(err) => {
                         dirent_path_prev.deref();
-                        return Err(err.with_path(args.path.slice()));
+                        if is_root {
+                            return Err(err.with_path(args.path.slice()));
+                        }
+                        return Err(Self::readdir_recursive_subdir_error(
+                            &err,
+                            args,
+                            basename_bytes,
+                        ));
                     }
                     Ok(None) => break,
                     Ok(Some(ent)) => ent,

@@ -1773,6 +1773,95 @@ it.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple 
   });
 });
 
+// When a recursive readdirSync fails while descending, the error used to name the
+// root argument. Node names the directory whose listing failed, joined onto the
+// root the way path.join would, and so do fs.readdir / fs.promises.readdir.
+describe("readdirSync({recursive: true}) error names the directory that failed", () => {
+  const resultKinds = [{}, { withFileTypes: true }, { encoding: "buffer" }] as const;
+
+  function readdirSyncError(root: string, options: object = {}): any {
+    try {
+      readdirSync(root, { recursive: true, ...options });
+    } catch (err) {
+      return err;
+    }
+    throw new Error(`expected readdirSync(${root}, { recursive: true }) to throw`);
+  }
+
+  function expectSubdirectoryError(root: string, failed: string, code: string) {
+    for (const kind of resultKinds) {
+      const err = readdirSyncError(root, kind);
+      expect({ code: err.code, syscall: err.syscall, path: err.path, message: err.message }).toEqual({
+        code,
+        syscall: "scandir",
+        path: failed,
+        message: expect.stringContaining(`, scandir '${failed}'`),
+      });
+    }
+  }
+
+  // A self-referential symlink fails to open with ELOOP for any user, root included.
+  it.skipIf(isWindows)("subdirectory that fails to open", async () => {
+    using dir = tempDir("readdir-recursive-error-path", { "keep.txt": "x", sub: { "inner.txt": "x" } });
+    const root = String(dir);
+    const failed = join(root, "sub", "loop");
+    symlinkSync("loop", failed);
+
+    expectSubdirectoryError(root, failed, "ELOOP");
+    // Joined like path.join, not concatenated: a trailing separator on the root does not leak into the path.
+    expectSubdirectoryError(root + "/", failed, "ELOOP");
+
+    const asyncError = await promises.readdir(root, { recursive: true }).then(
+      () => null,
+      err => err,
+    );
+    expect({ code: asyncError.code, path: asyncError.path }).toEqual({ code: "ELOOP", path: failed });
+  });
+
+  // Root bypasses directory permissions and Windows has no mode bits, so this
+  // variant only runs as an unprivileged user. Expected values match node.
+  it.skipIf(isWindows || process.getuid?.() === 0)("subdirectory that is not readable", async () => {
+    using dir = tempDir("readdir-recursive-error-path-eacces", { "keep.txt": "x", sub: { locked: {} } });
+    const root = String(dir);
+    const failed = join(root, "sub", "locked");
+    fs.chmodSync(failed, 0o000);
+    try {
+      expectSubdirectoryError(root, failed, "EACCES");
+
+      const asyncError = await promises.readdir(root, { recursive: true }).then(
+        () => null,
+        err => err,
+      );
+      expect({ code: asyncError.code, path: asyncError.path }).toEqual({ code: "EACCES", path: failed });
+    } finally {
+      fs.chmodSync(failed, 0o755);
+    }
+  });
+
+  it("root that cannot be listed is still reported as given", () => {
+    using dir = tempDir("readdir-recursive-error-path-root", { "file.txt": "x" });
+    const missing = join(String(dir), "missing");
+    const file = join(String(dir), "file.txt");
+
+    const shape = (err: any) => ({ code: err.code, syscall: err.syscall, path: err.path });
+    expect(shape(readdirSyncError(missing))).toEqual({ code: "ENOENT", syscall: "scandir", path: missing });
+    expect(shape(readdirSyncError(file))).toEqual({ code: "ENOTDIR", syscall: "scandir", path: file });
+    expect(shape(readdirSyncError(missing, { withFileTypes: true }))).toEqual({
+      code: "ENOENT",
+      syscall: "scandir",
+      path: missing,
+    });
+
+    let nonRecursive: any;
+    try {
+      readdirSync(missing);
+    } catch (err) {
+      nonRecursive = err;
+    }
+    expect(shape(nonRecursive)).toEqual({ code: "ENOENT", syscall: "scandir", path: missing });
+  });
+});
+
 describe("readSync", () => {
   it("rejects the read when the length argument detaches the destination buffer during coercion", () => {
     const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");

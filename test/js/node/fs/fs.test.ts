@@ -970,6 +970,11 @@ describe("copyFileSync", () => {
 
     copyFileSync(file, file, fs.constants.COPYFILE_FICLONE_FORCE);
     expect(readFileSync(file).equals(content)).toBe(true);
+
+    expect(() =>
+      copyFileSync(file, file, fs.constants.COPYFILE_EXCL | fs.constants.COPYFILE_FICLONE_FORCE),
+    ).toThrow(expect.objectContaining({ code: "EEXIST" }));
+    expect(readFileSync(file).equals(content)).toBe(true);
   });
 
   if (process.platform === "linux") {

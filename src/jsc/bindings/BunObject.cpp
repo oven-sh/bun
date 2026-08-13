@@ -755,19 +755,58 @@ JSC_DEFINE_HOST_FUNCTION(functionBunNanoseconds, (JSGlobalObject * globalObject,
     return JSValue::encode(jsNumber(time));
 }
 
+// Same steps as node's url.pathToFileURL(): path.resolve() for the host
+// platform, then the trailing slash path.resolve() strips is put back.
+// path.resolve() is used rather than bun's internal path joiner, which treats
+// "\" as a separator on POSIX as well, and the result is fully resolved before
+// it reaches the URL parser, which would serialize "/a/b/.." as "/a/".
+static WTF::String resolvePathForFileURL(JSC::JSGlobalObject* globalObject, JSC::JSString* pathJSString, const WTF::String& path)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+#if OS(WINDOWS)
+    constexpr bool isWindows = true;
+    // UNC paths (\\server\share\...) keep the server as the URL host; node
+    // hands them to the URL layer unresolved too.
+    if (path.startsWith("\\\\"_s))
+        return path;
+#else
+    constexpr bool isWindows = false;
+#endif
+
+    EncodedJSValue encodedPath = JSValue::encode(pathJSString);
+    JSValue resolvedValue = JSValue::decode(Bun__Path__resolve(globalObject, isWindows, &encodedPath, 1));
+    RETURN_IF_EXCEPTION(scope, {});
+    WTF::String resolved = resolvedValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (path.isEmpty())
+        return resolved;
+
+    char16_t last = path[path.length() - 1];
+    bool endsWithSeparator = last == POSIX_PATH_SEP || (isWindows && last == WINDOWS_PATH_SEP);
+    if (endsWithSeparator && !resolved.endsWith(PLATFORM_SEP))
+        return makeString(resolved, '/');
+
+    return resolved;
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& globalObject = *defaultGlobalObject(lexicalGlobalObject);
     auto& vm = globalObject.vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto pathValue = callFrame->argument(0);
 
     JSValue jsValue;
 
     {
-        WTF::String pathString = pathValue.toWTFString(lexicalGlobalObject);
+        JSC::JSString* pathJSString = callFrame->argument(0).toString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
-        pathString = pathResolveWTFString(lexicalGlobalObject, pathString);
+        WTF::String pathString = pathJSString->value(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        pathString = resolvePathForFileURL(lexicalGlobalObject, pathJSString, pathString);
+        RETURN_IF_EXCEPTION(throwScope, {});
 
         auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString);
         auto object = WebCore::DOMURL::create(fileURL.string(), String());

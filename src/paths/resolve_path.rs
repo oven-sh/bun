@@ -2342,9 +2342,6 @@ impl PosixToWinNormalizer {
     }
 }
 
-// ResolvePath__joinAbsStringBufCurrentPlatformBunString: see src/jsc/resolve_path_jsc.rs
-// (reaches into the VM for cwd; paths/ is JSC-free).
-
 // ─────────────────────────────────────────────────────────────────────────────
 // In-place separator rewrites.
 //

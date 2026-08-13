@@ -385,9 +385,7 @@ struct EmbeddedFunctionBody {
     StringView rest;
 };
 
-// "#!" is only a comment at offset 0 of a source text, and the body is embedded
-// after the "(function (...) {\n" prefix, so emit it as the equivalent "//"
-// comment. Swapped in place, so body offsets are unchanged.
+// JSC only lexes "#!" as a comment at offset 0 of the source, and the body is embedded after the "(function (...) {\n" prefix.
 static EmbeddedFunctionBody embedFunctionBody(const String& body)
 {
     if (body.startsWith("#!"_s))

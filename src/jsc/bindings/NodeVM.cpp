@@ -1419,122 +1419,6 @@ void NodeVMGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_dynamicImportCallback);
 }
 
-JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSValue code = callFrame->argument(0);
-    if (!code.isString())
-        return ERR::INVALID_ARG_TYPE(scope, globalObject, "code"_s, "string"_s, code);
-
-    JSValue contextArg = callFrame->argument(1);
-    bool notContextified = getContextArg(globalObject, contextArg);
-
-    if (!contextArg.isObject()) {
-        return ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextArg);
-    }
-
-    JSObject* sandbox = asObject(contextArg);
-
-    JSValue contextOptionsArg = callFrame->argument(2);
-    NodeVMContextOptions contextOptions {};
-
-    JSValue globalObjectDynamicImportCallback;
-
-    getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, "contextCodeGeneration", &globalObjectDynamicImportCallback);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    contextOptions.notContextified = notContextified;
-
-    // Create context and run code
-    auto* context = NodeVMGlobalObject::create(vm,
-        defaultGlobalObject(globalObject)->NodeVMGlobalObjectStructure(),
-        contextOptions, globalObjectDynamicImportCallback);
-
-    context->setContextifiedObject(sandbox);
-
-    JSValue optionsArg = callFrame->argument(2);
-    JSValue scriptDynamicImportCallback;
-
-    ScriptOptions options(optionsArg.toWTFString(globalObject), OrdinalNumber::fromZeroBasedInt(0), OrdinalNumber::fromZeroBasedInt(0));
-    if (optionsArg.isString()) {
-        options.filename = optionsArg.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-    } else if (!options.fromJS(globalObject, vm, scope, optionsArg, &scriptDynamicImportCallback)) {
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    RefPtr fetcher(NodeVMScriptFetcher::create(vm, scriptDynamicImportCallback, jsUndefined()));
-
-    SourceCode sourceCode(
-        JSC::StringSourceProvider::create(
-            code.toString(globalObject)->value(globalObject),
-            JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher),
-            options.filename,
-            JSC::SourceTaintedOrigin::Untainted,
-            TextPosition(options.lineOffset, options.columnOffset)),
-        options.lineOffset.zeroBasedInt(),
-        options.columnOffset.zeroBasedInt());
-
-    NakedPtr<JSC::Exception> exception;
-    JSValue result = JSC::evaluate(context, sourceCode, context, exception);
-
-    if (exception) [[unlikely]] {
-        if (handleException(globalObject, vm, exception, scope)) {
-            return {};
-        }
-        JSC::throwException(globalObject, scope, exception.get());
-        return {};
-    }
-
-    return JSValue::encode(result);
-}
-
-JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    VM& vm = JSC::getVM(globalObject);
-    auto sourceStringValue = callFrame->argument(0);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    if (!sourceStringValue.isString()) {
-        return ERR::INVALID_ARG_TYPE(throwScope, globalObject, "code"_s, "string"_s, sourceStringValue);
-    }
-
-    String sourceString = sourceStringValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, encodedJSUndefined());
-
-    JSValue importer;
-
-    JSValue optionsArg = callFrame->argument(1);
-    ScriptOptions options(optionsArg.toWTFString(globalObject), OrdinalNumber::fromZeroBasedInt(0), OrdinalNumber::fromZeroBasedInt(0));
-    if (optionsArg.isString()) {
-        options.filename = optionsArg.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else if (!options.fromJS(globalObject, vm, throwScope, optionsArg, &importer)) {
-        RETURN_IF_EXCEPTION(throwScope, encodedJSUndefined());
-    }
-
-    RefPtr fetcher(NodeVMScriptFetcher::create(vm, importer, jsUndefined()));
-
-    SourceCode source(
-        JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset)),
-        options.lineOffset.zeroBasedInt(), options.columnOffset.zeroBasedInt());
-
-    WTF::NakedPtr<JSC::Exception> exception;
-    JSValue result = JSC::evaluate(globalObject, source, globalObject, exception);
-
-    if (exception) [[unlikely]] {
-        if (handleException(globalObject, vm, exception, throwScope)) {
-            return {};
-        }
-        JSC::throwException(globalObject, throwScope, exception.get());
-        return {};
-    }
-
-    return JSValue::encode(result);
-}
-
 JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -1834,12 +1718,6 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isContext"_s)),
         JSC::JSFunction::create(vm, globalObject, 0, "isContext"_s, vmModule_isContext, ImplementationVisibility::Public), 0);
     obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "runInNewContext"_s)),
-        JSC::JSFunction::create(vm, globalObject, 0, "runInNewContext"_s, vmModuleRunInNewContext, ImplementationVisibility::Public), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "runInThisContext"_s)),
-        JSC::JSFunction::create(vm, globalObject, 0, "runInThisContext"_s, vmModuleRunInThisContext, ImplementationVisibility::Public), 0);
-    obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "compileFunction"_s)),
         JSC::JSFunction::create(vm, globalObject, 0, "compileFunction"_s, vmModuleCompileFunction, ImplementationVisibility::Public), 0);
     obj->putDirect(
@@ -1934,13 +1812,6 @@ void configureNodeVM(JSC::VM& vm, Zig::GlobalObject* globalObject)
 
 BaseVMOptions::BaseVMOptions(String filename)
     : filename(WTF::move(filename))
-{
-}
-
-BaseVMOptions::BaseVMOptions(String filename, OrdinalNumber lineOffset, OrdinalNumber columnOffset)
-    : filename(WTF::move(filename))
-    , lineOffset(lineOffset)
-    , columnOffset(columnOffset)
 {
 }
 

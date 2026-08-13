@@ -61,7 +61,6 @@ public:
 
     BaseVMOptions() = default;
     BaseVMOptions(String filename);
-    BaseVMOptions(String filename, OrdinalNumber lineOffset, OrdinalNumber columnOffset);
 
     bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg);
     bool validateProduceCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, bool& outProduceCachedData);
@@ -178,7 +177,5 @@ void configureNodeVM(JSC::VM&, Zig::GlobalObject*);
 // VM module functions
 JSC_DECLARE_HOST_FUNCTION(vmModule_createContext);
 JSC_DECLARE_HOST_FUNCTION(vmModule_isContext);
-JSC_DECLARE_HOST_FUNCTION(vmModuleRunInNewContext);
-JSC_DECLARE_HOST_FUNCTION(vmModuleRunInThisContext);
 
 } // namespace Bun

@@ -243,6 +243,13 @@ impl<const SSL: bool> Response<SSL> {
         )
     }
 
+    /// Completion gate for end paths that bypass `internalEnd` (the sendfile
+    /// path): closes the socket when the connection is marked to close, the
+    /// response is complete, and every outgoing byte has been flushed.
+    pub(crate) fn close_if_done_and_marked(&mut self) {
+        c::uws_res_close_if_done_and_marked(Self::ssl_flag(), self.as_raw())
+    }
+
     pub fn timeout(&mut self, seconds: u8) {
         c::uws_res_timeout(Self::ssl_flag(), self.as_raw(), seconds)
     }
@@ -726,6 +733,12 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.end_send_file(write_offset, close_connection))
     }
 
+    /// Completion gate for end paths that bypass `internalEnd` (the sendfile
+    /// path); see `Response::close_if_done_and_marked`.
+    pub fn close_if_done_and_marked(self) {
+        any_dispatch!(self, |r| r.close_if_done_and_marked())
+    }
+
     pub fn socket(self) -> *mut c::uws_res {
         match self {
             AnyResponse::H3(_) => panic!("socket() is not available for HTTP/3 responses"),
@@ -1138,6 +1151,7 @@ pub mod c {
         );
         pub(crate) safe fn uws_res_timeout(ssl: i32, res: &mut uws_res, timeout: u8);
         pub(crate) safe fn uws_res_reset_timeout(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_close_if_done_and_marked(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_get_buffered_amount(ssl: i32, res: &mut uws_res) -> u64;
         pub(crate) fn uws_res_write(
             ssl: i32,

@@ -192,7 +192,8 @@ impl State {
                 // SAFETY: `c` was produced by `create_and_schedule_completion_task`
                 // (heap::alloc, refcount ≥ 1) and we hold one of those refs.
                 unsafe {
-                    (*c).cancelled = true;
+                    (*c).cancelled
+                        .store(true, core::sync::atomic::Ordering::Release);
                     RefCount::<JSBundleCompletionTask>::deref(c);
                 }
             }
@@ -336,7 +337,7 @@ impl Route {
                         method,
                         resp,
                         route: this,
-                        is_response_pending: true,
+                        is_response_pending: Cell::new(true),
                     }));
 
                     route.pending_responses.with_mut(|v| v.push(pending));
@@ -496,10 +497,16 @@ impl Route {
             config.force_node_env = bundler_options::ForceNodeEnv::Development;
             config.jsx.development = true;
         }
-        config.source_map = bundler_options::SourceMapOption::Linked;
+        // Production defaults to no sourcemaps so original sources are not served publicly.
+        config.source_map = if let Some(mode) = cli.args.serve_sourcemap {
+            bundler_options::SourceMapOption::from_api(Some(mode))
+        } else if is_development {
+            bundler_options::SourceMapOption::Linked
+        } else {
+            bundler_options::SourceMapOption::None
+        };
 
-        let completion_task =
-            create_and_schedule_completion_task(config, plugins, global, vm.event_loop())?;
+        let completion_task = create_and_schedule_completion_task(config, plugins, global)?;
         // SAFETY: `completion_task` is the freshly-boxed allocation (refcount==1); sole owner.
         unsafe {
             (*completion_task).started_at_ns =
@@ -715,8 +722,9 @@ impl Route {
         let pending = self.pending_responses.replace(Vec::new());
         for pending_response_ptr in pending {
             // SAFETY: every entry was created via heap::alloc in on_any_request and
-            // is removed exactly once (here, or via on_aborted which removes without freeing).
-            let pending_response = unsafe { &mut *pending_response_ptr };
+            // is removed exactly once (here, or via on_aborted which removes without
+            // freeing). Shared — the pending flag is a `Cell`.
+            let pending_response = unsafe { &*pending_response_ptr };
             // `defer pending_response.deinit()` — heap::take + Drop at scope end.
             let _drop = scopeguard::guard(pending_response_ptr, |p| {
                 // SAFETY: see above; reconstitutes the Box and runs `Drop`.
@@ -725,11 +733,11 @@ impl Route {
 
             let resp = pending_response.resp;
             let method = pending_response.method;
-            if !pending_response.is_response_pending {
+            if !pending_response.is_response_pending.get() {
                 // Aborted
                 continue;
             }
-            pending_response.is_response_pending = false;
+            pending_response.is_response_pending.set(false);
             resp.clear_aborted();
 
             match self.state.get() {
@@ -788,7 +796,7 @@ impl Drop for Route {
 pub struct PendingResponse {
     method: Method,
     resp: AnyResponse,
-    is_response_pending: bool,
+    is_response_pending: Cell<bool>,
     // Raw ptr because the route owns the Vec containing this
     // PendingResponse; an `IntrusiveRc<Route>` field would form a cycle through
     // `Drop`. The ref is bumped/dropped manually via `RefCount::<Route>` calls.
@@ -797,7 +805,7 @@ pub struct PendingResponse {
 
 impl Drop for PendingResponse {
     fn drop(&mut self) {
-        if self.is_response_pending {
+        if self.is_response_pending.get() {
             self.resp.clear_aborted();
             self.resp.clear_on_writable();
             self.resp.end_without_body(true);
@@ -815,10 +823,11 @@ impl PendingResponse {
     /// `heap::into_raw` and registered with `resp.on_aborted`; it may be freed
     /// (via `heap::take`) by this call.
     unsafe fn on_aborted(this: *mut PendingResponse, _resp: AnyResponse) {
-        // SAFETY: caller contract.
-        let this_ref = unsafe { &mut *this };
-        debug_assert!(this_ref.is_response_pending);
-        this_ref.is_response_pending = false;
+        // SAFETY: caller contract. Shared — the pending flag is a `Cell`, and
+        // the `heap::take` below goes through `this`, not this borrow.
+        let this_ref = unsafe { &*this };
+        debug_assert!(this_ref.is_response_pending.get());
+        this_ref.is_response_pending.set(false);
 
         // Technically, this could be the final ref count, but we don't want to risk it
         let route_ptr = this_ref.route;

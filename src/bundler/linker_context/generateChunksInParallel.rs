@@ -64,7 +64,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
             // write provenance preserved.
             c: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) },
-            chunks: bun_ptr::BackRef::new_mut(chunks),
+            chunks: bun_ptr::BackRef::new(&*chunks),
         };
         // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for the
         // link step); `pool` is the arena-allocated bundler ThreadPool.
@@ -138,12 +138,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         {
             let mut total_count: usize = 0;
             // `GenerateChunkCtx` fields are raw pointers; capture them
-            // before the `iter_mut()` borrow so the same `*mut [Chunk]` can be
+            // before the `iter_mut()` borrow so the same slice backref can be
             // stored in every ctx.
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step.
             let c_ref =
                 unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
-            let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new_mut(chunks);
+            let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new(&*chunks);
             for chunk in chunks.iter_mut() {
                 chunk_contexts.push(GenerateChunkCtx {
                     c: c_ref,
@@ -267,6 +267,59 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             debug!("  DONE {} source maps (quoted contents)", chunks.len());
         }
 
+        // A part that failed to print (e.g. the recursion guard tripped on a
+        // deeply nested AST) must fail the build instead of joining the chunk
+        // as silently truncated output. Dev server excluded: its callers turn
+        // any `Err` here into an OOM panic (see `finish_from_bake_dev_server`),
+        // so unprintable parts keep the old dropped-code behavior there.
+        if !IS_DEV_SERVER {
+            let mut had_print_error = false;
+            // Without code splitting a failing file is printed once per chunk
+            // that includes it; report each file once.
+            let mut reported_sources = AutoBitSet::init_empty(c.parse_graph().input_files.len())?;
+            for chunk in chunks.iter() {
+                for compile_result in chunk.compile_results_for_chunk.iter() {
+                    let message: Cow<'static, [u8]> = match compile_result {
+                        crate::CompileResult::Javascript {
+                            result: bun_js_printer::PrintResult::Err(err),
+                            ..
+                        } => match err {
+                            bun_js_printer::Error::StackOverflow => Cow::Borrowed(
+                                b"Maximum call stack size exceeded while generating code for this file"
+                                    .as_slice(),
+                            ),
+                            err => Cow::Owned(
+                                format!("Failed to generate code for this file ({})", err.name())
+                                    .into_bytes(),
+                            ),
+                        },
+                        crate::CompileResult::Css {
+                            result: Err(err), ..
+                        } => Cow::Owned(
+                            format!("Failed to generate CSS for this file ({})", err.name())
+                                .into_bytes(),
+                        ),
+                        _ => continue,
+                    };
+                    had_print_error = true;
+                    let source_index = compile_result.source_index();
+                    let source = if source_index != Index::INVALID.get() {
+                        if reported_sources.is_set(source_index as usize) {
+                            continue;
+                        }
+                        reported_sources.set(source_index as usize);
+                        Some(c.get_source(source_index))
+                    } else {
+                        None
+                    };
+                    c.log_mut().add_error(source, bun_ast::Loc::EMPTY, message);
+                }
+            }
+            if had_print_error {
+                return Err(crate::Error::PrintError);
+            }
+        }
+
         // For dev server, only post-process CSS + HTML chunks.
         let chunks_to_do: &mut [Chunk] = if IS_DEV_SERVER {
             &mut chunks[1..]
@@ -344,7 +397,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // runtime bunfs references to out-of-root entrypoints resolve.
             chunk
                 .template
-                .print(&mut rel_path, !c.options.compile)
+                .print(&mut rel_path, !c.options.compile_mode.is_executable())
                 .expect("write to Vec<u8>");
             path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
 
@@ -354,7 +407,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 if !dup.found_existing {
                     *dup.value_ptr = DuplicateEntry::default();
                 }
-                dup.value_ptr.sources.push(bun_ptr::BackRef::new_mut(chunk));
+                dup.value_ptr.sources.push(bun_ptr::BackRef::new(&*chunk));
                 continue;
             }
 
@@ -449,10 +502,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // cross-chunk import specifiers. During printing, cross-chunk imports use
     // unique_key placeholders as paths. Now that final paths are known, replace
     // those placeholders with the resolved paths and serialize.
-    if c.options.generate_bytecode_cache
-        && c.options.output_format == options::Format::Esm
-        && c.options.compile
-    {
+    if c.options.generates_module_info() {
         // Build map from unique_key -> final resolved path
         // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
         let b: &mut BundleV2 =
@@ -551,7 +601,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // disjoint from anything `c` mutates.
     let resolver = c.resolver.expect("resolver set in load()");
     let root_path: &[u8] = &resolver.opts.output_dir;
-    let is_standalone = c.options.compile_to_standalone_html;
+    let is_standalone = c.options.compile_mode.is_standalone_html();
     let more_than_one_output = !is_standalone
         && (c.parse_graph().additional_output_files.len() > 0
             || c.options.generate_bytecode_cache
@@ -734,7 +784,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
 
     // Don't write to disk if compile mode is enabled - we need buffer values for compilation
-    let is_compile = bundler.transpiler.options.compile;
+    let is_compile = bundler.transpiler.options.compile_mode.is_executable();
     if root_path.len() > 0 && !is_compile {
         write_output_files_to_disk(
             c,
@@ -1010,7 +1060,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         // from server builds, and normalize with cheapPrefixNormalizer for consistency
                         // with module_info path fixup.
                         // For non-compile builds, use the normal .jsc extension.
-                        let source_provider_url = if c.options.compile {
+                        let source_provider_url = if c.options.compile_mode.is_executable() {
                             let normalizer =
                                 cheap_prefix_normalizer(public_path, &chunk.final_rel_path);
                             BunString::create_format(format_args!(
@@ -1099,10 +1149,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             // Create module_info output file for ESM bytecode in --compile builds
             let module_info_output_file: Option<options::OutputFile> = 'brk: {
-                if c.options.generate_bytecode_cache
-                    && c.options.output_format == options::Format::Esm
-                    && c.options.compile
-                {
+                if c.options.generates_module_info() {
                     let loader: Loader = if chunk.entry_point.is_entry_point() {
                         c.parse_graph().input_files.items_loader()
                             [chunk.entry_point.source_index() as usize]
@@ -1240,9 +1287,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         if output_kind == options::OutputKind::EntryPoint
                             && side == options::Side::Server
                         {
-                            extra.is_route = true;
-                            extra.fully_static = !static_route_visitor
-                                .has_transitive_use_client(chunk.entry_point.source_index());
+                            extra.route = if static_route_visitor
+                                .has_transitive_use_client(chunk.entry_point.source_index())
+                            {
+                                BakeRouteKind::Route
+                            } else {
+                                BakeRouteKind::FullyStaticRoute
+                            };
                         }
 
                         break 'brk extra;
@@ -1290,4 +1341,4 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
 use crate::EntryPoint;
 use crate::options::SourceMapOption;
-use crate::output_file::BakeExtra;
+use crate::output_file::{BakeExtra, BakeRouteKind};

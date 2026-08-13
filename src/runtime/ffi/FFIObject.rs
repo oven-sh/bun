@@ -834,7 +834,7 @@ mod fields {
         let mut iter = callframe.arguments().iter();
         let name = eat_zig_string(global, &mut iter)?;
         let object = eat_required(global, &mut iter)?;
-        Ok(FfiImpl::open(global, name, object))
+        FfiImpl::open(global, name, object)
     }
 
     // callback → FFI::callback(global, JSValue, JSValue) -> JsResult<JSValue>
@@ -852,7 +852,7 @@ mod fields {
     ) -> JsResult<JSValue> {
         let mut iter = callframe.arguments().iter();
         let object = eat_required(global, &mut iter)?;
-        Ok(FfiImpl::link_symbols(global, object))
+        FfiImpl::link_symbols(global, object)
     }
 
     // toBuffer → to_buffer(global, JSValue, ?JSValue×4) -> JsResult<JSValue>
@@ -886,7 +886,7 @@ mod fields {
     ) -> JsResult<JSValue> {
         let mut iter = callframe.arguments().iter();
         let callback = eat_required(global, &mut iter)?;
-        Ok(FfiImpl::close_jsc_callback(global, callback))
+        FfiImpl::close_jsc_callback(global, callback)
     }
 
     pub(super) fn cfunction(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {

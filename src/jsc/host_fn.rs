@@ -70,6 +70,63 @@ macro_rules! jsc_host_abi {
     };
 }
 
+/// Re-exported for [`jsc_promise_handler!`] expansions so callers need no
+/// direct `bun_opaque` dep. Not public API.
+#[doc(hidden)]
+pub use bun_opaque::opaque_deref as __opaque_deref;
+
+/// Define a `JsHostFn`-shaped promise-reaction shim that forwards to a safe
+/// `fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>` body.
+///
+/// Expands to a [`jsc_host_abi!`] `extern fn` whose signature matches
+/// [`JsHostFn`] (so the fn item coerces to the `JSValue::then`/`then2`
+/// callback slot and to `Zig::GlobalObject::promiseHandlerID`'s address
+/// comparison). The `*mut → &` derefs and `JsResult → JSValue` mapping are
+/// centralised here so the caller spells zero `unsafe`.
+///
+/// Two forms:
+///
+/// ```ignore
+/// // `#[unsafe(export_name = "Link__Symbol")]` on a locally-named shim:
+/// bun_jsc::jsc_promise_handler!(
+///     pub(crate) fn on_resolve_shim = "Link__Symbol" => on_resolve
+/// );
+///
+/// // `#[unsafe(no_mangle)]` — the shim ident IS the link symbol:
+/// bun_jsc::jsc_promise_handler!(
+///     pub fn Link__Symbol => on_resolve
+/// );
+/// ```
+#[macro_export]
+macro_rules! jsc_promise_handler {
+    ($vis:vis fn $shim:ident = $link:literal => $body:path) => {
+        $crate::jsc_host_abi! {
+            #[unsafe(export_name = $link)]
+            $vis unsafe fn $shim(
+                g: *mut $crate::JSGlobalObject,
+                cf: *mut $crate::CallFrame,
+            ) -> $crate::JSValue {
+                let g = $crate::host_fn::__opaque_deref(g);
+                let cf = $crate::host_fn::__opaque_deref(cf);
+                $crate::host_fn::to_js_host_fn_result(g, $body(g, cf))
+            }
+        }
+    };
+    ($vis:vis fn $shim:ident => $body:path) => {
+        $crate::jsc_host_abi! {
+            #[unsafe(no_mangle)]
+            $vis unsafe fn $shim(
+                g: *mut $crate::JSGlobalObject,
+                cf: *mut $crate::CallFrame,
+            ) -> $crate::JSValue {
+                let g = $crate::host_fn::__opaque_deref(g);
+                let cf = $crate::host_fn::__opaque_deref(cf);
+                $crate::host_fn::to_js_host_fn_result(g, $body(g, cf))
+            }
+        }
+    };
+}
+
 // Capitalized re-exports — enough call sites (and the crate-root re-export in
 // lib.rs) use the acronym-caps `JSHostFn*` spelling that both must resolve.
 pub use {JsHostFn as JSHostFn, JsHostFnZig as JSHostFnZig};

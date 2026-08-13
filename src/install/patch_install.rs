@@ -43,7 +43,7 @@ pub struct PatchTask {
     /// Constructed via `BackRef::new_mut` so the underlying pointer carries
     /// write provenance for `PackageManager::wake_raw(*mut Self)`, which
     /// writes the event-loop wake flag.
-    pub(crate) manager: bun_ptr::BackRef<PackageManager>,
+    pub(crate) manager: bun_ptr::BackRef<PackageManager, bun_ptr::Mut>,
     /// Borrowed view of the manager's temp directory fd (see comment at top of file).
     pub(crate) tempdir: Fd,
     pub(crate) project_dir: &'static [u8],
@@ -138,23 +138,6 @@ pub struct InstallContext {
 }
 
 impl PatchTask {
-    /// Destroy a heap-allocated `PatchTask` previously created by
-    /// `new_calc_patch_hash` / `new_apply_patch_hash`.
-    ///
-    /// The owned fields (`Box<[u8]>`, `Vec<u8>`, `Log`, `Option<...>`) drop automatically, so no
-    /// `impl Drop` body is needed. Because `PatchTask` is held via raw pointer through the
-    /// intrusive `next`/thread-pool queue, the named reclaim point is `unsafe fn destroy`.
-    ///
-    /// # Safety
-    /// `this` must have been produced by `heap::alloc` in the `new_*` constructors below and
-    /// ownership must be returned here exactly once.
-    pub(crate) unsafe fn destroy(this: *mut Self) {
-        // TODO: how to deinit `this.callback.calc_hash.network_task`
-        // SAFETY: caller contract — `this` was produced by `heap::into_raw` in
-        // `new_calc_patch_hash`/`new_apply_patch_hash` and is reclaimed exactly once.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
-
     /// # Safety
     /// Only invoked by `ThreadPool` via the `callback` fn-pointer registered in
     /// `new_calc_patch_hash` / `new_apply_patch_hash`. `task` must be live and
@@ -385,9 +368,7 @@ impl PatchTask {
                     );
                     if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::ApplyPatch {
                         manager.set_preinstall_state(pkg_meta_id, PreinstallState::ApplyingPatch);
-                        // SAFETY: `patch_task` is a fresh `heap::alloc` from
-                        // `new_apply_patch_hash`; ownership transfers to the fifo.
-                        unsafe { package_manager::enqueue_patch_task(manager, patch_task) };
+                        package_manager::enqueue_patch_task(manager, patch_task);
                     }
                 }
                 _ => {}
@@ -506,7 +487,6 @@ impl PatchTask {
             progress: None,
             package_name: pkg_name,
             package_version: &resolution_label,
-            file_count: 0,
             // dummy value
             node_modules: &dummy_node_modules,
             lockfile,
@@ -735,7 +715,7 @@ impl PatchTask {
         manager: &mut PackageManager,
         name_and_version_hash: u64,
         state: Option<EnqueueAfterState>,
-    ) -> *mut PatchTask {
+    ) -> Box<PatchTask> {
         let patchdep = manager
             .lockfile
             .patched_dependencies
@@ -747,7 +727,7 @@ impl PatchTask {
         // log formatting), so no trailing NUL is needed.
 
         let tempdir = manager.get_temporary_directory().handle.fd();
-        let pt = Box::new(PatchTask {
+        Box::new(PatchTask {
             tempdir,
             callback: Callback::CalcHash(CalcPatchHash {
                 state,
@@ -764,9 +744,7 @@ impl PatchTask {
             },
             pre: false,
             next: bun_threading::Link::new(),
-        });
-
-        bun_core::heap::into_raw(pt)
+        })
     }
 
     pub(crate) fn new_apply_patch_hash(
@@ -774,7 +752,7 @@ impl PatchTask {
         pkg_id: PackageID,
         patch_hash: u64,
         name_and_version_hash: u64,
-    ) -> *mut PatchTask {
+    ) -> Box<PatchTask> {
         let pkg_name = pkg_manager.lockfile.packages.items_name()[pkg_id as usize];
 
         // Borrowck — `compute_cache_dir_and_subpath` borrows `&mut PackageManager`
@@ -819,7 +797,7 @@ impl PatchTask {
         let cache_dir = stuff.cache_dir;
 
         let tempdir = pkg_manager.get_temporary_directory().handle.fd();
-        let pt = Box::new(PatchTask {
+        Box::new(PatchTask {
             tempdir,
             callback: Callback::Apply(ApplyPatch {
                 pkg_id,
@@ -841,9 +819,7 @@ impl PatchTask {
             },
             pre: false,
             next: bun_threading::Link::new(),
-        });
-
-        bun_core::heap::into_raw(pt)
+        })
     }
 }
 

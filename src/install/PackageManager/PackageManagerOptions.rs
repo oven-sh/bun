@@ -30,7 +30,7 @@ pub struct Options {
     pub enable: Enable,
     pub do_: Do,
     pub positionals: &'static [&'static [u8]],
-    pub(crate) update: Update,
+    pub(crate) update: DependencyGroup,
     pub dry_run: bool,
     pub(crate) link_workspace_packages: bool,
     pub(crate) remote_package_features: Features,
@@ -75,6 +75,10 @@ pub struct Options {
     pub(crate) public_hoist_pattern: Option<Api::PnpmMatcher>,
     pub(crate) hoist_pattern: Option<Api::PnpmMatcher>,
 
+    /// Isolated linker: `false` skips the `node_modules/.bun/node_modules`
+    /// fallback (pnpm's `hoist=false`); takes precedence over `hoist_pattern`.
+    pub(crate) hoist: bool,
+
     // Security scanner module path
     pub security_scanner: Option<&'static [u8]>,
 
@@ -108,7 +112,7 @@ impl Default for Options {
             enable: Enable::default(),
             do_: Do::default(),
             positionals: &[],
-            update: Update::default(),
+            update: DependencyGroup::default(),
             dry_run: false,
             link_workspace_packages: true,
             remote_package_features: Features {
@@ -147,6 +151,7 @@ impl Default for Options {
             node_linker: NodeLinker::Auto,
             public_hoist_pattern: None,
             hoist_pattern: None,
+            hoist: true,
             security_scanner: None,
             minimum_release_age_ms: None,
             minimum_release_age_excludes: None,
@@ -268,20 +273,26 @@ impl LogLevel {
         matches!(self, LogLevel::VerboseNoProgress | LogLevel::Verbose)
     }
     #[inline]
+    pub fn is_silent(self) -> bool {
+        matches!(self, LogLevel::Silent)
+    }
+    #[inline]
     pub fn show_progress(self) -> bool {
         matches!(self, LogLevel::Default | LogLevel::Verbose)
+    }
+    #[inline]
+    pub fn without_progress(self) -> Self {
+        match self {
+            LogLevel::Default => LogLevel::DefaultNoProgress,
+            LogLevel::Verbose => LogLevel::VerboseNoProgress,
+            other => other,
+        }
     }
 }
 
 pub use crate::config_version::ConfigVersion;
+pub use bun_install_types::DependencyGroup;
 pub use bun_install_types::NodeLinker::NodeLinker;
-
-#[derive(Default, Copy, Clone)]
-pub struct Update {
-    pub(crate) development: bool,
-    pub(crate) optional: bool,
-    pub(crate) peer: bool,
-}
 
 // mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
 pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
@@ -454,6 +465,10 @@ impl Options {
 
             if let Some(global_store) = config.global_store {
                 self.enable.set(Enable::GLOBAL_VIRTUAL_STORE, global_store);
+            }
+
+            if let Some(hoist) = config.hoist {
+                self.hoist = hoist;
             }
 
             if let Some(security_scanner) = config.security_scanner.as_deref() {
@@ -711,7 +726,7 @@ impl Options {
                 self.do_.set(Do::SAVE_LOCKFILE, false);
             }
 
-            if cli.no_summary || cli.silent {
+            if cli.no_summary || cli.log_level.is_silent() {
                 self.do_.set(Do::SUMMARY, false);
             }
 
@@ -770,30 +785,13 @@ impl Options {
                 self.node_linker = node_linker;
             }
 
-            let disable_progress_bar = default_disable_progress_bar || cli.no_progress;
-
-            if cli.verbose {
-                self.log_level = if disable_progress_bar {
-                    LogLevel::VerboseNoProgress
-                } else {
-                    LogLevel::Verbose
-                };
-                // SAFETY: main-thread CLI option load — single writer.
-                super::PackageManager::set_verbose_install(true);
-            } else if cli.silent {
-                self.log_level = LogLevel::Silent;
-                super::PackageManager::set_verbose_install(false);
-            } else if cli.quiet {
-                self.log_level = LogLevel::Quiet;
-                super::PackageManager::set_verbose_install(false);
+            self.log_level = if default_disable_progress_bar || cli.no_progress {
+                cli.log_level.without_progress()
             } else {
-                self.log_level = if disable_progress_bar {
-                    LogLevel::DefaultNoProgress
-                } else {
-                    LogLevel::Default
-                };
-                super::PackageManager::set_verbose_install(false);
-            }
+                cli.log_level
+            };
+            // SAFETY: main-thread CLI option load — single writer.
+            super::PackageManager::set_verbose_install(cli.log_level.is_verbose());
 
             if cli.no_verify {
                 self.do_.set(Do::VERIFY_INTEGRITY, false);
@@ -837,13 +835,7 @@ impl Options {
                 self.enable.set(Enable::FORCE_SAVE_LOCKFILE, true);
             }
 
-            if cli.development {
-                self.update.development = cli.development;
-            } else if cli.optional {
-                self.update.optional = cli.optional;
-            } else if cli.peer {
-                self.update.peer = cli.peer;
-            }
+            self.update = cli.dependency_group;
 
             match &cli.patch {
                 command_line_arguments::PatchOpts::Nothing => {}

@@ -208,10 +208,7 @@ pub use enqueue::{
 };
 
 use self::package_manager_lifecycle as lifecycle;
-pub use lifecycle::{
-    LifecycleScriptTimeLog, LifecycleScriptTimeLogEntry, determine_preinstall_state,
-    get_preinstall_state, set_preinstall_state,
-};
+pub use lifecycle::{determine_preinstall_state, get_preinstall_state, set_preinstall_state};
 
 use self::package_manager_resolution as resolution;
 pub use resolution::{assign_root_resolution, resolve_from_disk_cache};
@@ -248,6 +245,13 @@ type PreallocatedNetworkTasks = HiveArrayFallback<NetworkTask, 128>;
 type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
 
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
+/// Resolve-task id (git checkout / tarball extract) -> the package that task
+/// appended during the resolve phase. A task's callback queue is drained
+/// exactly once, so a dependency enqueued after that drain must resolve
+/// through this map instead of queueing a callback that nothing will ever
+/// process.
+type AppendedTaskPackageMap =
+    HashMap<Task::Id, PackageID /* , IdentityContext<Task::Id>, 80 */>;
 pub(crate) type FolderResolutionMap =
     HashMap<u64, FolderResolutionEntry /* , IdentityContext<u64>, 80 */>;
 pub(crate) type NpmAliasMap =
@@ -297,7 +301,7 @@ pub struct PackageManager {
     // Set once in `init()`/`init_with_runtime()` to the process-singleton
     // `DotEnv.Loader` (leaked allocation; outlives the manager). `BackRef`
     // encapsulates the liveness invariant so `env()` is a safe accessor.
-    pub env: Option<bun_ptr::BackRef<dot_env::Loader>>,
+    pub env: Option<bun_ptr::BackRef<dot_env::Loader, bun_ptr::Mut>>,
     pub progress: Progress,
     pub(crate) downloads_node: Option<*mut ProgressNode>, // BORROW_FIELD — points into self.progress
     pub scripts_node: Option<NonNull<ProgressNode>>, // points to a caller stack-local Progress node; only valid while that caller frame is live
@@ -329,6 +333,7 @@ pub struct PackageManager {
     pub manifests: PackageManifestMap,
     pub(crate) folders: FolderResolutionMap,
     pub(crate) git_repositories: RepositoryMap,
+    pub(crate) appended_task_packages: AppendedTaskPackageMap,
 
     pub(crate) network_dedupe_map: crate::network_task::DedupeMap,
     pub(crate) async_network_task_queue: AsyncNetworkTaskQueue,
@@ -348,9 +353,6 @@ pub struct PackageManager {
     pub total_tasks: u32,
     pub(crate) preallocated_network_tasks: PreallocatedNetworkTasks,
     pub(crate) preallocated_resolve_tasks: PreallocatedTaskStore,
-
-    /// items are only inserted into this if they took more than 500ms
-    pub(crate) lifecycle_script_time_log: LifecycleScriptTimeLog,
 
     pub pending_lifecycle_script_tasks: AtomicU32,
     pub(crate) finished_installing: AtomicBool,
@@ -406,6 +408,9 @@ pub struct PackageManager {
     // (catalog name, dependency name) -> original version literal
     pub updating_catalogs: Vec<CatalogUpdateInfo>,
 
+    // `bun update -r`/`--filter`: workspaces whose deps update. None = cwd only.
+    pub(crate) update_target_workspaces: Option<Box<[UpdateTargetWorkspace]>>,
+
     pub(crate) patched_dependencies_to_remove:
         ArrayHashMap<PackageNameAndVersionHash, () /* , ArrayIdentityContext::U64, false */>,
 
@@ -455,7 +460,6 @@ pub enum Subcommand {
     Audit,
     Info,
     Why,
-    Scan,
     // bin,
     // hash,
     // @"hash-print",
@@ -545,6 +549,97 @@ impl WorkspaceFilter {
             WorkspaceFilter::Name(buf)
         })
     }
+
+    /// Every workspace (root included), filtered by `filter_patterns` (empty = all).
+    pub fn select_workspaces(
+        lockfile: &crate::Lockfile,
+        filter_patterns: &[&[u8]],
+        original_cwd: &[u8],
+    ) -> Vec<PackageID> {
+        use crate::lockfile::package::PackageColumns as _;
+
+        let packages = lockfile.packages.slice();
+        let pkg_names = packages.items_name();
+        let pkg_resolutions = packages.items_resolution();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+
+        let mut ids: Vec<PackageID> = Vec::new();
+        for (pkg_id, res) in pkg_resolutions.iter().enumerate() {
+            if res.tag == crate::resolution::Tag::Workspace
+                || res.tag == crate::resolution::Tag::Root
+            {
+                ids.push(pkg_id as PackageID);
+            }
+        }
+
+        if filter_patterns.is_empty() {
+            return ids;
+        }
+
+        let mut path_buf = PathBuffer::uninit();
+        let converted_filters: Vec<WorkspaceFilter> = filter_patterns
+            .iter()
+            .map(|filter| {
+                bun_core::handle_oom(WorkspaceFilter::init(filter, original_cwd, &mut path_buf.0))
+            })
+            .collect();
+
+        let top_level_dir = FileSystem::instance().top_level_dir();
+
+        let has_positive = converted_filters.iter().any(|f| match f {
+            WorkspaceFilter::All => true,
+            WorkspaceFilter::Path(p) | WorkspaceFilter::Name(p) => p.first() != Some(&b'!'),
+        });
+
+        let mut i = 0;
+        while i < ids.len() {
+            let pkg_id = ids[i];
+            let mut matched = !has_positive;
+            for filter in &converted_filters {
+                let (pattern, subject): (&[u8], &[u8]) = match filter {
+                    WorkspaceFilter::All => {
+                        matched = true;
+                        continue;
+                    }
+                    WorkspaceFilter::Path(pattern) => {
+                        if pattern.is_empty() {
+                            continue;
+                        }
+                        let res = &pkg_resolutions[pkg_id as usize];
+                        let res_path: &[u8] = match res.tag {
+                            crate::resolution::Tag::Workspace => res.workspace().slice(string_buf),
+                            crate::resolution::Tag::Root => top_level_dir,
+                            _ => unreachable!(),
+                        };
+                        let abs = resolve_path::join_abs_string_buf::<platform::Posix>(
+                            top_level_dir,
+                            &mut path_buf.0,
+                            &[res_path],
+                        );
+                        (pattern, strings::without_trailing_slash(abs))
+                    }
+                    WorkspaceFilter::Name(pattern) => {
+                        (pattern, pkg_names[pkg_id as usize].slice(string_buf))
+                    }
+                };
+                if pattern.first() == Some(&b'!') {
+                    if bun_glob::r#match(&pattern[1..], subject).matches() {
+                        matched = false;
+                        break;
+                    }
+                } else if bun_glob::r#match(pattern, subject).matches() {
+                    matched = true;
+                }
+            }
+            if matched {
+                i += 1;
+            } else {
+                ids.swap_remove(i);
+            }
+        }
+
+        ids
+    }
 }
 
 // deinit → Drop is automatic for Box<[u8]> variants; no explicit impl needed.
@@ -563,6 +658,22 @@ pub struct CatalogUpdateInfo {
     pub dep_name: Box<[u8]>,
     pub original_version_literal: Box<[u8]>,
     pub is_alias: bool,
+}
+
+pub struct UpdateTargetWorkspace {
+    pub is_root: bool,
+    pub name_hash: PackageNameHash,
+    pub name: Box<[u8]>,
+}
+
+impl UpdateTargetWorkspace {
+    /// Root is unique, so `is_root` alone identifies it; members match by hash then name.
+    pub fn matches(&self, is_root: bool, name_hash: PackageNameHash, name: &[u8]) -> bool {
+        if self.is_root || is_root {
+            return self.is_root && is_root;
+        }
+        self.name_hash == name_hash && &*self.name == name
+    }
 }
 
 #[derive(Default)]
@@ -1736,11 +1847,20 @@ pub fn init(
     };
 
     env.load_process()?;
-    // Reborrow the BSSMap-owned `*DirEntry` for the
-    // call; `env.load` only reads it (`hasComptimeQuery` lookups for `.env*`).
+    // Copy the listing's basenames out under `entries_mutex`; `.data` must
+    // only be probed while the lock is held.
+    let env_probe_keys = {
+        let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+        dot_env::DirEntryKeys(
+            entries_option
+                .data
+                .iter()
+                .map(|(k, _)| Box::from(&**k))
+                .collect(),
+        )
+    };
     env.load(
-        // SAFETY: see `entries_option` above — single-threaded init, BSSMap-owned.
-        unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(entries_option) },
+        &env_probe_keys,
         &[],
         dot_env::DotEnvFileSuffix::Production,
         false,
@@ -1914,6 +2034,7 @@ pub fn init(
         wr!(manifests, PackageManifestMap::default());
         wr!(folders, Default::default());
         wr!(git_repositories, RepositoryMap::default());
+        wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
         wr!(network_tarball_batch, thread_pool::Batch::default());
@@ -1924,7 +2045,6 @@ pub fn init(
         wr!(pending_pre_calc_hashes, AtomicU32::new(0));
         wr!(pending_tasks, AtomicU32::new(0));
         wr!(total_tasks, 0);
-        wr!(lifecycle_script_time_log, LifecycleScriptTimeLog::default());
         wr!(pending_lifecycle_script_tasks, AtomicU32::new(0));
         wr!(finished_installing, AtomicBool::new(false));
         wr!(total_scripts, 0);
@@ -1945,6 +2065,7 @@ pub fn init(
         wr!(any_failed_to_install, false);
         wr!(updating_packages, StringArrayHashMap::default());
         wr!(updating_catalogs, Vec::new());
+        wr!(update_target_workspaces, None);
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
@@ -2346,6 +2467,7 @@ fn init_with_runtime_once(
         wr!(manifests, PackageManifestMap::default());
         wr!(folders, Default::default());
         wr!(git_repositories, RepositoryMap::default());
+        wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
         wr!(network_tarball_batch, thread_pool::Batch::default());
@@ -2357,7 +2479,6 @@ fn init_with_runtime_once(
         wr!(pending_pre_calc_hashes, AtomicU32::new(0));
         wr!(pending_tasks, AtomicU32::new(0));
         wr!(total_tasks, 0);
-        wr!(lifecycle_script_time_log, LifecycleScriptTimeLog::default());
         wr!(pending_lifecycle_script_tasks, AtomicU32::new(0));
         wr!(finished_installing, AtomicBool::new(false));
         wr!(total_scripts, 0);
@@ -2383,6 +2504,7 @@ fn init_with_runtime_once(
         );
         wr!(updating_packages, StringArrayHashMap::default());
         wr!(updating_catalogs, Vec::new());
+        wr!(update_target_workspaces, None);
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
@@ -2454,7 +2576,12 @@ fn init_with_runtime_once(
     // `root_dir` was moved into `*manager` above (the field is
     // an unbounded `&mut DirEntry`, so the local reborrow is for `'static` and the
     // original binding is dead). Read it back through `manager.root_dir`.
-    if manager.root_dir.has_comptime_query(b"bun.lockb") {
+    // `.data` probes must hold `entries_mutex`.
+    let has_lockb = {
+        let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+        manager.root_dir.has_comptime_query(b"bun.lockb")
+    };
+    if has_lockb {
         let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));
         match lockfile.load_from_cwd::<true>(Some(&mut *manager), log) {
             lockfile::LoadResult::Ok(_) => {}

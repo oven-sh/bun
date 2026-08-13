@@ -2,6 +2,7 @@ use crate::webcore::EncodingLabel;
 use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::AllocError;
 use bun_core::{OwnedString, strings};
+use bun_jsc::HostReturn as _;
 use core::cell::Cell;
 use core::ptr::NonNull;
 
@@ -367,7 +368,9 @@ impl TextDecoder {
                                 return Err(global_this
                                     .err(
                                         jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
-                                        format_args!("Invalid byte sequence"),
+                                        format_args!(
+                                            "The encoded data was not valid for encoding utf-8"
+                                        ),
                                     )
                                     .throw());
                             }
@@ -450,11 +453,10 @@ impl TextDecoder {
                     return Err(global_this
                         .err(
                             jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
-                            // "UTF-16LE" / "UTF-16BE" (NOT `get_label()`,
-                            // which is lowercase "utf-16le"/"utf-16be").
+                            // Node formats the message with the lowercase canonical label.
                             format_args!(
-                                "The encoded data was not valid {} data",
-                                if big_endian { "UTF-16BE" } else { "UTF-16LE" }
+                                "The encoded data was not valid for encoding {}",
+                                if big_endian { "utf-16be" } else { "utf-16le" }
                             ),
                         )
                         .throw());
@@ -544,7 +546,7 @@ impl TextDecoder {
                         .err(
                             jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
                             format_args!(
-                                "The encoded data was not valid {} data",
+                                "The encoded data was not valid for encoding {}",
                                 bstr::BStr::new(encoding_name)
                             ),
                         )
@@ -648,4 +650,112 @@ impl TextDecoder {
 
         Ok(bun_core::heap::into_raw(TextDecoder::new(decoder)))
     }
+}
+
+// ─── extern "C" surface (JSTextDecoderStream.cpp) ─────────────────────────
+// The TextDecoderStream cell owns its decoder directly as a `void*` (no JS
+// `TextDecoder` wrapper cell, no `decode` prototype lookup, no per-chunk
+// `{stream: true}` options object) and drives it through these.
+
+/// Validates `label` (WebIDL DOMString coercion — may run user JS) and
+/// returns a fresh decoder configured for the matching encoding. Returns null
+/// with an exception pending on `global` on a bad label.
+///
+/// For the overwhelmingly common `utf-8` + non-fatal case the C++ side uses
+/// the inline `StreamingUTF8DecodeState` instead of this decoder, so no
+/// `TextDecoder` is allocated: `*out_utf8_fast_path` is set and null is
+/// returned with no exception.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn TextDecoder__createForStream(
+    global: &JSGlobalObject,
+    label: JSValue,
+    fatal: bool,
+    ignore_bom: bool,
+    out_utf8_fast_path: *mut bool,
+    out_encoding_label: *mut bun_core::String,
+) -> *mut TextDecoder {
+    // SAFETY: both out-params are stack locals on the caller's frame.
+    unsafe { *out_utf8_fast_path = false };
+    let encoding = if label.is_undefined() {
+        EncodingLabel::Utf8
+    } else {
+        let converted = match bun_core::String::from_js(label, global) {
+            Ok(s) => OwnedString::new(s),
+            Err(_) => return core::ptr::null_mut(),
+        };
+        let str = converted.to_utf8();
+        match EncodingLabel::which(str.slice()) {
+            Some(l) if l != EncodingLabel::Replacement => l,
+            _ => {
+                let _ = global
+                    .err(
+                        jsc::ErrorCode::ERR_ENCODING_NOT_SUPPORTED,
+                        format_args!(
+                            "Unsupported encoding label \"{}\"",
+                            bstr::BStr::new(str.slice())
+                        ),
+                    )
+                    .throw();
+                return core::ptr::null_mut();
+            }
+        }
+    };
+    // SAFETY: as above; the label borrows a 'static byte slice (no refcount).
+    unsafe { *out_encoding_label = bun_core::String::static_(encoding.get_label()) };
+    if matches!(encoding, EncodingLabel::Utf8) && !fatal {
+        // SAFETY: as above.
+        unsafe { *out_utf8_fast_path = true };
+        return core::ptr::null_mut();
+    }
+    let mut decoder = TextDecoder::default();
+    decoder.fatal = fatal;
+    decoder.ignore_bom = ignore_bom;
+    decoder.encoding = encoding;
+    bun_core::heap::into_raw(TextDecoder::new(decoder))
+}
+
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn TextDecoder__destroyForStream(this: *mut TextDecoder) {
+    if !this.is_null() {
+        // SAFETY: `this` was returned by `__createForStream` and has not been
+        // freed (the C++ cell clears its pointer before calling).
+        unsafe { bun_core::heap::destroy(this) };
+    }
+}
+
+/// The TextDecoderStream transform/flush step. `stream = true` for a mid-
+/// stream chunk, `false` for the final flush. `input` may be null iff
+/// `input_len == 0`. Returns a JSString on success, or `JSValue::zero` with
+/// the exception pending on `global`.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn TextDecoder__decodeForStream(
+    this: *mut TextDecoder,
+    global: &JSGlobalObject,
+    input: *const u8,
+    input_len: usize,
+    stream: bool,
+) -> JSValue {
+    // SAFETY: `this` is the live decoder owned by the calling JS cell; driven
+    // only from the JS thread, so `&*this` has no mutable alias.
+    let this = unsafe { &*this };
+    let slice = if input.is_null() {
+        &[][..]
+    } else {
+        // SAFETY: the caller passes a BufferSource's bytes; `slice` does not
+        // escape this call.
+        unsafe { core::slice::from_raw_parts(input, input_len) }
+    };
+    // https://encoding.spec.whatwg.org/#dom-textdecoder-decode steps 1-2.
+    if !this.do_not_flush.replace(stream) {
+        this.bom_seen.set(false);
+    }
+    let result = if stream {
+        this.decode_slice::<false>(global, slice)
+    } else {
+        this.decode_slice::<true>(global, slice)
+    };
+    result.or_pending_exception()
 }

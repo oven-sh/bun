@@ -786,48 +786,78 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_blob, (JSGlobalObject
 }
 
 // Bun private-name accessors ($bunNativePtr / $bunNativeType / $disturbed).
+// JSC brand-checks DOMAttribute getters (PropertySlot::customGetter) but invokes
+// custom setters with any receiver inheriting the accessor, so each one validates
+// thisValue itself.
 
-JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototype_nativePtrGetter, (JSGlobalObject*, JSC::EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototype_nativePtrGetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
-    auto* stream = uncheckedDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    if (!stream) [[unlikely]]
+        return throwVMDOMAttributeGetterTypeError(lexicalGlobalObject, scope, JSReadableStream::info(), propertyName);
     JSValue nativePtr = stream->nativePtrForJS();
     return JSValue::encode(nativePtr.isEmpty() ? jsUndefined() : nativePtr);
 }
 
-JSC_DEFINE_CUSTOM_SETTER(jsReadableStreamPrototype_nativePtrSetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName))
+JSC_DEFINE_CUSTOM_SETTER(jsReadableStreamPrototype_nativePtrSetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName propertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto* stream = uncheckedDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    if (!stream) [[unlikely]] {
+        throwDOMAttributeSetterTypeError(lexicalGlobalObject, scope, JSReadableStream::info(), propertyName);
+        return false;
+    }
     stream->m_nativePtr.set(vm, stream, JSValue::decode(encodedValue));
     return true;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototype_nativeTypeGetter, (JSGlobalObject*, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    const auto* stream = uncheckedDowncast<JSReadableStream>(JSValue::decode(thisValue));
-    return JSValue::encode(jsNumber(stream->m_nativeType));
-}
-
-JSC_DEFINE_CUSTOM_SETTER(jsReadableStreamPrototype_nativeTypeSetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototype_nativeTypeGetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* stream = uncheckedDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    const auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    if (!stream) [[unlikely]]
+        return throwVMDOMAttributeGetterTypeError(lexicalGlobalObject, scope, JSReadableStream::info(), propertyName);
+    return JSValue::encode(jsNumber(stream->m_nativeType));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(jsReadableStreamPrototype_nativeTypeSetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName propertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    if (!stream) [[unlikely]] {
+        throwDOMAttributeSetterTypeError(lexicalGlobalObject, scope, JSReadableStream::info(), propertyName);
+        return false;
+    }
     int32_t nativeType = JSValue::decode(encodedValue).toInt32(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, false);
     stream->m_nativeType = nativeType;
     return true;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototype_disturbedGetter, (JSGlobalObject*, JSC::EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototype_disturbedGetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
-    const auto* stream = uncheckedDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    if (!stream) [[unlikely]]
+        return throwVMDOMAttributeGetterTypeError(lexicalGlobalObject, scope, JSReadableStream::info(), propertyName);
     return JSValue::encode(jsBoolean(stream->m_disturbed));
 }
 
-JSC_DEFINE_CUSTOM_SETTER(jsReadableStreamPrototype_disturbedSetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName))
+JSC_DEFINE_CUSTOM_SETTER(jsReadableStreamPrototype_disturbedSetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName propertyName))
 {
-    auto* stream = uncheckedDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    if (!stream) [[unlikely]] {
+        throwDOMAttributeSetterTypeError(lexicalGlobalObject, scope, JSReadableStream::info(), propertyName);
+        return false;
+    }
     stream->m_disturbed = JSValue::decode(encodedValue).toBoolean(lexicalGlobalObject);
     return true;
 }

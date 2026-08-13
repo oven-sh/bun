@@ -257,7 +257,7 @@ impl CryptoHasher {
             let Some(string_value) = next_eat() else {
                 return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
             };
-            if string_value.is_undefined_or_null() {
+            if !string_value.is_string_literal() {
                 return Err(global.throw_invalid_arguments(format_args!("Expected string")));
             }
             string_value.get_zig_string(global)?
@@ -813,7 +813,7 @@ pub struct CryptoHasherZig {
 
 /// Trait for the non-BoringSSL hash algorithms used by `CryptoHasherZig`.
 /// Implemented for each algo in `zig_crypto_algos` below.
-pub trait ZigHashAlgo: Default + Clone + 'static {
+trait ZigHashAlgo: Default + Clone + 'static {
     const ALGORITHM: evp::Algorithm;
     /// Shake128→16, Shake256→32, else the algorithm's digest length.
     const DIGEST_LENGTH: u8;
@@ -1196,15 +1196,6 @@ pub struct StaticCryptoHasher<H: StaticHasher> {
     pub(crate) digested: Cell<bool>,
 }
 
-impl<H: StaticHasher> Default for StaticCryptoHasher<H> {
-    fn default() -> Self {
-        Self {
-            hashing: JsCell::new(H::init()),
-            digested: Cell::new(false),
-        }
-    }
-}
-
 impl<H: StaticHasher> StaticCryptoHasher<H> {
     /// `pub const digest = host_fn.wrapInstanceMethod(ThisHasher, "digest_", false);`
     ///
@@ -1425,17 +1416,6 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if this.digested.get() {
-            return Err(global
-                .err(
-                    ErrorCode::INVALID_STATE,
-                    format_args!(
-                        "{} hasher already digested, create a new instance to update",
-                        H::NAME
-                    ),
-                )
-                .throw());
-        }
         let this_value = callframe.this();
         let input = callframe.argument(0);
         let buffer = match BlobOrStringOrBuffer::from_js(global, input)? {
@@ -1451,6 +1431,17 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             return Err(global.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
+        }
+        if this.digested.get() {
+            return Err(global
+                .err(
+                    ErrorCode::INVALID_STATE,
+                    format_args!(
+                        "{} hasher already digested, create a new instance to update",
+                        H::NAME
+                    ),
+                )
+                .throw());
         }
         this.hashing.with_mut(|h| h.update(buffer.slice()));
         Ok(this_value)

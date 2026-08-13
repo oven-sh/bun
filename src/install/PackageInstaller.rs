@@ -103,10 +103,7 @@ pub struct PackageInstaller<'a> {
     pub(crate) tree_ids_to_trees_the_id_depends_on: bun_collections::DynamicBitSetList,
     pub(crate) pending_lifecycle_scripts: Vec<PendingLifecycleScript>,
 
-    /// Value is the alias bytes the key hash was computed from; lookups must
-    /// compare it since truncated hashes can collide.
-    pub(crate) trusted_dependencies_from_update_requests:
-        ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>>,
+    pub(crate) trusted_dependencies_from_update_requests: ArrayHashMap<PackageID, ()>,
 
     /// uses same ids as lockfile.trees
     pub(crate) trees: Box<[TreeContext]>,
@@ -412,17 +409,12 @@ impl<'a> LazyPackageDestinationDir<'a> {
 /// components, absolute paths, drive letters, backslashes, NUL bytes, and any
 /// separator other than the single `/` in a scoped name (`@scope/name`).
 pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
-    if alias.is_empty()
-        || alias.len() >= MAX_PATH_BYTES
-        || alias.contains(&b'\\')
-        || alias.contains(&b':')
-        || alias.contains(&0)
-    {
+    if alias.is_empty() || alias.len() >= MAX_PATH_BYTES || strings::contains_any(alias, b"\\:\0") {
         return false;
     }
 
     let mut component_count = 0usize;
-    for component in alias.split(|&c| c == b'/') {
+    for component in strings::split(alias, b"/") {
         component_count += 1;
         if component.is_empty() || component == b"." || component == b".." {
             return false;
@@ -1419,7 +1411,6 @@ impl<'a> PackageInstaller<'a> {
             // site stays safe.
             lockfile: self.lockfile(),
             cache_dir_subpath: ZStr::EMPTY,
-            file_count: 0,
         };
         bun_output::scoped_log!(
             PackageInstaller,
@@ -1745,25 +1736,20 @@ impl<'a> PackageInstaller<'a> {
             // into cache, then install into node_modules
             if let Some(patch_contents_hash) = installer.patch.as_ref().map(|p| p.contents_hash) {
                 if installer.patched_package_missing_from_cache(self.manager_mut(), package_id) {
-                    let task: *mut PatchTask = PatchTask::new_apply_patch_hash(
+                    let mut task = PatchTask::new_apply_patch_hash(
                         self.manager_mut(),
                         package_id,
                         patch_contents_hash,
                         patch_name_and_version_hash.unwrap(),
                     );
-                    // SAFETY: `task` was just `heap::alloc`'d in `new_apply_patch_hash`;
-                    // we hold the only pointer until `enqueue_patch_task` takes ownership.
-                    if let patch_install::Callback::Apply(apply) = unsafe { &mut (*task).callback }
-                    {
+                    if let patch_install::Callback::Apply(apply) = &mut task.callback {
                         apply.install_context = Some(patch_install::InstallContext {
                             dependency_id,
                             tree_id: self.current_tree_id,
                             path: self.node_modules.path.clone(),
                         });
                     }
-                    // SAFETY: `task` was just `heap::alloc`'d in `new_apply_patch_hash`;
-                    // ownership transfers to the patch-task fifo here.
-                    unsafe { package_manager::enqueue_patch_task(self.manager_mut(), task) };
+                    package_manager::enqueue_patch_task(self.manager_mut(), task);
                     return;
                 }
             }
@@ -1934,8 +1920,7 @@ impl<'a> PackageInstaller<'a> {
                     let (is_trusted, is_trusted_through_update_request) = 'brk: {
                         if self
                             .trusted_dependencies_from_update_requests
-                            .get(&truncated_dep_name_hash)
-                            .is_some_and(|n| **n == *alias.slice(string_buf!()))
+                            .contains(&package_id)
                         {
                             break 'brk (true, true);
                         }
@@ -1999,9 +1984,15 @@ impl<'a> PackageInstaller<'a> {
                                 resolution,
                             ) {
                                 if is_trusted_through_update_request {
+                                    let (trusted_name, trusted_name_hash) =
+                                        if resolution.tag == resolution::Tag::Npm {
+                                            (pkg_name, pkg_name_hash as TruncatedPackageNameHash)
+                                        } else {
+                                            (alias, truncated_dep_name_hash)
+                                        };
                                     self.manager_mut()
                                         .trusted_deps_to_add_to_package_json
-                                        .push(Box::<[u8]>::from(alias.slice(string_buf!())));
+                                        .push(Box::<[u8]>::from(trusted_name.slice(string_buf!())));
 
                                     if self.lockfile().trusted_dependencies.is_none() {
                                         self.lockfile_mut().trusted_dependencies =
@@ -2012,8 +2003,8 @@ impl<'a> PackageInstaller<'a> {
                                         .as_mut()
                                         .unwrap()
                                         .put(
-                                            truncated_dep_name_hash,
-                                            Box::<[u8]>::from(alias.slice(string_buf!())),
+                                            trusted_name_hash,
+                                            Box::<[u8]>::from(trusted_name.slice(string_buf!())),
                                         )
                                         .unwrap_or_oom();
                                 }
@@ -2240,8 +2231,7 @@ impl<'a> PackageInstaller<'a> {
                 // trusted through a --trust dependency. need to enqueue scripts, write to package.json, and add to lockfile
                 if self
                     .trusted_dependencies_from_update_requests
-                    .get(&truncated_dep_name_hash)
-                    .is_some_and(|n| **n == *alias.slice(string_buf!()))
+                    .contains(&package_id)
                 {
                     break 'brk (true, true, true);
                 }
@@ -2311,10 +2301,17 @@ impl<'a> PackageInstaller<'a> {
                         dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
                         resolution,
                     ) {
+                        let (trusted_name, trusted_name_hash) =
+                            if resolution.tag == resolution::Tag::Npm {
+                                (pkg_name, pkg_name_hash as TruncatedPackageNameHash)
+                            } else {
+                                (alias, truncated_dep_name_hash)
+                            };
+
                         if is_trusted_through_update_request {
                             self.manager_mut()
                                 .trusted_deps_to_add_to_package_json
-                                .push(Box::<[u8]>::from(alias.slice(string_buf!())));
+                                .push(Box::<[u8]>::from(trusted_name.slice(string_buf!())));
                         }
 
                         if add_to_lockfile {
@@ -2326,8 +2323,8 @@ impl<'a> PackageInstaller<'a> {
                                 .as_mut()
                                 .unwrap()
                                 .put(
-                                    truncated_dep_name_hash,
-                                    Box::<[u8]>::from(alias.slice(string_buf!())),
+                                    trusted_name_hash,
+                                    Box::<[u8]>::from(trusted_name.slice(string_buf!())),
                                 )
                                 .unwrap_or_oom();
                         }

@@ -127,7 +127,7 @@ pub struct TestRunner<'a> {
     pub(crate) bail: u32,
     pub(crate) max_concurrency: u32,
 
-    pub(crate) snapshots: Snapshots<'a>,
+    pub(crate) snapshots: Snapshots,
 
     pub(crate) default_timeout_ms: u32,
 
@@ -710,7 +710,7 @@ pub(crate) fn format_label(
                     } else {
                         let mut formatter = crate::test_runner::expect::make_formatter(global_this);
                         // formatter cleanup handled by Drop.
-                        write!(&mut list, "{}", value.to_fmt(&mut formatter)).unwrap();
+                        formatter.format_value::<false>(value, &mut list)?;
                     }
                     idx = var_end;
                     continue;
@@ -787,8 +787,7 @@ pub(crate) fn format_label(
                 }
                 b'p' => {
                     let mut formatter = crate::test_runner::expect::make_formatter(global_this);
-                    let value_fmt = current_arg.to_fmt(&mut formatter);
-                    write!(&mut list, "{}", value_fmt).unwrap();
+                    formatter.format_value::<false>(current_arg, &mut list)?;
                     idx += 1;
                     args_idx += 1;
                 }

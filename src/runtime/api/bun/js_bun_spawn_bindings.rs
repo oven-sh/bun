@@ -3,13 +3,13 @@ use core::ffi::{CStr, c_char};
 use core::ptr::NonNull;
 use std::io::Write as _;
 
+use crate::ipc as IPC;
 #[cfg(not(windows))]
 use bun_core::StackCheck;
 use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
 use bun_core::{String as BunString, ZStr, strings};
 use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf::MaxBuf;
-use bun_jsc::ipc as IPC;
 use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
     JsResult, SystemError,
@@ -61,7 +61,7 @@ struct TerminalCreateResult {
     /// when this struct was populated; the +1 ref is held until
     /// `Subprocess::finalize` (or the spawn-error scopeguard's
     /// `abandon_from_spawn`) releases it, so the pointee outlives this struct.
-    pub terminal: bun_ptr::BackRef<Terminal>,
+    pub terminal: bun_ptr::BackRef<Terminal, bun_ptr::Mut>,
     pub js_value: JSValue,
 }
 
@@ -74,35 +74,9 @@ impl TerminalCreateResult {
     }
 }
 
-// ── IPC owner trait impl for Subprocess ─────────────────────────────────────
-// Mirrors the `IPCInstance` impl in `bun_jsc::VirtualMachine`; lives here
-// because `Subprocess` is a `bun_runtime` type and `bun_jsc::ipc` (tier-5)
-// sees only the `dyn SendQueueOwner` trait object.
-impl IPC::SendQueueOwner for SubprocessT<'static> {
-    fn global_this(&self) -> *const JSGlobalObject {
-        self.global_this.as_ptr()
-    }
-    fn handle_ipc_close(&mut self) {
-        SubprocessT::handle_ipc_close(self)
-    }
-    fn handle_ipc_message(&mut self, msg: IPC::DecodedIPCMessage, handle: JSValue) {
-        SubprocessT::handle_ipc_message(self, &msg, handle)
-    }
-    fn this_jsvalue(&self) -> JSValue {
-        self.this_value.get().try_get().unwrap_or(JSValue::ZERO)
-    }
-    fn kind(&self) -> IPC::SendQueueOwnerKind {
-        IPC::SendQueueOwnerKind::Subprocess
-    }
-}
-
 #[inline]
-fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> *mut dyn IPC::SendQueueOwner {
-    // `SendQueue.owner` is a BACKREF — the SendQueue is stored inline in
-    // `Subprocess.ipc_data` and dropped before the Subprocess is freed.
-    // Erase the borrowed `'a` (raw-pointer lifetimes are not enforced) so the
-    // unsizing coercion to `dyn SendQueueOwner + 'static` is well-formed.
-    ptr.cast::<SubprocessT<'static>>() as *mut dyn IPC::SendQueueOwner
+fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> Option<IPC::SendQueueOwner> {
+    core::ptr::NonNull::new(ptr.cast::<SubprocessT<'static>>()).map(IPC::SendQueueOwner::Subprocess)
 }
 
 bun_output::declare_scope!(Subprocess, hidden);
@@ -386,6 +360,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut gid: Option<u32> = None;
     let mut kill_signal: SignalCode = SignalCode::DEFAULT;
     let mut max_buffer: Option<i64> = None;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let mut cgroup: Option<CgroupTarget> = None;
 
     #[cfg(windows)]
     let mut windows_hide: bool = false;
@@ -393,7 +369,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut windows_verbatim_arguments: bool = false;
     let mut abort_signal: Option<*mut WebCore::AbortSignal> = None;
     let mut terminal_info: Option<TerminalCreateResult> = None;
-    let mut existing_terminal: Option<bun_ptr::BackRef<Terminal>> = None; // Existing terminal passed by user
+    let mut existing_terminal: Option<bun_ptr::BackRef<Terminal, bun_ptr::Mut>> = None; // Existing terminal passed by user
     let mut terminal_js_value: JSValue = JSValue::ZERO;
     let mut defer_guard = scopeguard::guard(
         (&mut abort_signal, &mut terminal_info),
@@ -433,7 +409,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         let args_type = args.js_type();
         if args_type.is_array() {
             cmd_value = args;
-            args = secondary_args_value.unwrap_or(JSValue::ZERO);
+            args = secondary_args_value.unwrap_or_default();
         } else if !args.is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!("cmd must be an array")));
         } else if let Some(cmd_value_) = args.get_truthy(global_this, "cmd")? {
@@ -717,6 +693,14 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 }
             }
 
+            // Ignored where cgroups don't exist, like `windowsHide` on POSIX.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if let Some(value) = args.get(global_this, "cgroup")? {
+                if !value.is_undefined_or_null() {
+                    cgroup = Some(CgroupTarget::from_js(global_this, value)?);
+                }
+            }
+
             #[cfg(windows)]
             {
                 if let Some(val) = args.get(global_this, "windowsHide")? {
@@ -806,7 +790,9 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                         // `terminal_val` is reachable (kept alive below via
                         // `terminal_js_value`), so the `BackRef` invariant
                         // (pointee outlives holder) holds for this scope.
-                        let term = bun_ptr::BackRef::from(terminal);
+                        // SAFETY: `terminal` is the wrapper's live `m_ctx` heap pointer
+                        // (write provenance from its original allocation).
+                        let term = unsafe { bun_ptr::BackRef::from_raw_mut(terminal.as_ptr()) };
                         if term.is_closed() {
                             return Err(global_this
                                 .throw_invalid_arguments(format_args!("terminal is closed")));
@@ -841,10 +827,11 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                                     // in `Subprocess::finalize`); the scopeguard's
                                     // `abandon_from_spawn` path covers the error case.
                                     // `IntrusiveRc::into_raw` is never null (NonNull-backed).
-                                    terminal: bun_ptr::BackRef::from(
-                                        core::ptr::NonNull::new(created.terminal.into_raw())
-                                            .expect("IntrusiveRc non-null"),
-                                    ),
+                                    // SAFETY: `into_raw()` yields the live heap pointer
+                                    // (write provenance, non-null); ref released later.
+                                    terminal: unsafe {
+                                        bun_ptr::BackRef::from_raw_mut(created.terminal.into_raw())
+                                    },
                                     js_value: created.js_value,
                                 });
                             }
@@ -1119,6 +1106,12 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let cgroup_dir = match &cgroup {
+        Some(target) => Some(target.open(global_this)?),
+        None => None,
+    };
+
     let mut spawn_options = SpawnOptions {
         // Empty means "inherit the parent's working directory". Only chdir
         // when the user asked for it: the stored cwd path string can be stale
@@ -1179,6 +1172,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             verbatim_arguments: windows_verbatim_arguments,
             loop_: loop_handle,
         },
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        cgroup_fd: cgroup_dir.as_ref().map(|c| c.dir.handle()),
         ..Default::default()
     };
 
@@ -1232,6 +1227,12 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             sys::Result::Err(err) => {
                 // See EMFILE arm above.
                 spawn_options.deinit();
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                if let Some(c) = &cgroup_dir
+                    && err.syscall == sys::Tag::clone3
+                {
+                    return Err(global_this.throw_value(c.target.blame(&err).to_js(global_this)));
+                }
                 match err.get_errno() {
                     errno @ (sys::Errno::EACCES
                     | sys::Errno::ENOENT
@@ -1297,7 +1298,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         global_this: bun_ptr::BackRef::new(global_this),
         // SAFETY: `to_process` returns a non-null `Box::into_raw` pointer; the
         // intrusive ref is released in `Subprocess::finalize`.
-        process: unsafe { bun_ptr::BackRef::from_raw(process) },
+        process: unsafe { bun_ptr::BackRef::from_raw_mut(process) },
         pid_rusage: Cell::new(None),
         // stdin/stdout/stderr are assigned immediately after this literal.
         // `Writable.init()` writes to `subprocess.weak_file_sink_stdin_ptr`,
@@ -1316,7 +1317,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         // (released in Subprocess::on_process_exit; stranded if child outlives VM teardown).
         ref_count: bun_ptr::RefCount::init_exact_refs(2),
         stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
-        ipc_data: JsCell::new(None),
+        ipc_data: Cell::new(None),
         flags: Cell::new(if IS_SYNC {
             Subprocess::Flags::IS_SYNC
         } else {
@@ -1344,6 +1345,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
     let subprocess = unsafe { &mut *subprocess_ptr };
+    #[cfg(windows)]
+    SubprocessT::record_stdio_pipe_ownership(subprocess_ptr);
     // Erase the borrow lifetime to 'static for the intrusive back-pointer
     // (PipeReader stores it as raw NonNull). subprocess_ptr is non-null (just boxed).
     let subprocess_nn: NonNull<SubprocessT<'static>> =
@@ -1366,11 +1369,13 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     #[cfg(windows)]
     if !IS_SYNC {
         if let Some(ipc_mode) = maybe_ipc_mode {
-            subprocess.ipc_data.set(Some(IPC::SendQueue::init(
-                ipc_mode,
-                subprocess_ipc_owner(subprocess_ptr),
-                IPC::SocketUnion::Uninitialized,
-            )));
+            subprocess
+                .ipc_data
+                .set(core::ptr::NonNull::new(IPC::SendQueue::new(
+                    ipc_mode,
+                    subprocess_ipc_owner(subprocess_ptr),
+                    IPC::SocketUnion::Uninitialized,
+                )));
         }
     }
 
@@ -1426,6 +1431,14 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
             subprocess.finalize_streams();
             subprocess.process_mut().detach();
+            if let Some(ipc_data) = subprocess.ipc_data.take() {
+                // SAFETY: owned ref from `SendQueue::new` above; nothing else
+                // holds it yet (no socket wired, no task scheduled).
+                unsafe {
+                    (*ipc_data.as_ptr()).detach();
+                    <IPC::SendQueue as bun_ptr::CellRefCounted>::deref(ipc_data.as_ptr());
+                }
+            }
             // Release the intrusive ref
             // (finalize() won't run on this error path).
             // SAFETY: this error path returns without ever reading `process` again.
@@ -1536,23 +1549,23 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 None,
                 core::mem::size_of::<*mut IPC::SendQueue>() as core::ffi::c_int,
                 posix_ipc_fd.native(),
+                0,
                 true,
             );
             if !raw_socket.is_null() {
                 let socket = raw_socket;
-                subprocess.ipc_data.set(Some(IPC::SendQueue::init(
-                    mode,
-                    subprocess_ipc_owner(subprocess_ptr),
-                    IPC::SocketUnion::Uninitialized,
-                )));
+                subprocess
+                    .ipc_data
+                    .set(core::ptr::NonNull::new(IPC::SendQueue::new(
+                        mode,
+                        subprocess_ipc_owner(subprocess_ptr),
+                        IPC::SocketUnion::Uninitialized,
+                    )));
                 posix_ipc_info = Some(IPC::Socket::from(socket));
             }
         }
     }
 
-    // `Subprocess::ipc()` centralises the single unsafe `JsCell` deref;
-    // `ipc_data` is inline in the freshly-boxed Subprocess and no other borrow
-    // is live (single JS thread).
     if let Some(ipc_data) = subprocess.ipc() {
         #[cfg(unix)]
         {
@@ -1560,8 +1573,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 if let Some(ctx) = posix_ipc_info.ext::<*mut IPC::SendQueue>() {
                     // SAFETY: `ctx` is the live ext-slot pointer returned by uSockets;
                     // it stays valid for the socket's lifetime.
-                    unsafe { *ctx = std::ptr::from_mut(ipc_data) };
-                    ipc_data.socket = IPC::SocketUnion::Open(posix_ipc_info);
+                    unsafe { *ctx = ipc_data.as_ctx_ptr() };
+                    ipc_data.socket.set(IPC::SocketUnion::Open(posix_ipc_info));
                 }
             }
             // uws owns the fd now (owns_fd=1); neutralize the slot so finalizeStreams doesn't double-close.
@@ -1593,18 +1606,13 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                     }
                 }
             });
-            // PROVENANCE: `windows_configure_server` STORES the `*mut SendQueue`
-            // in `uv_handle_t.data` for the pipe's lifetime, so it takes a raw
-            // pointer (not `&mut self`) — see its safety doc. NOTE: this still
-            // derives from the `ipc_data` reborrow (same as the unix branch's
-            // `ptr::from_mut(ipc_data)` above); a true root-raw projection
-            // through `Option<SendQueue>` is tracked separately.
-            // SAFETY: `ipc_data` points at the live SendQueue inline in
-            // `*subprocess_ptr`; no other `&mut` to it is live in this scope.
-            if let Some(err) = unsafe {
-                IPC::SendQueue::windows_configure_server(core::ptr::from_mut(ipc_data), ipc_pipe)
-            }
-            .as_err()
+            // `windows_configure_server` stores the pointer in `uv_handle_t.data`
+            // for the pipe's lifetime, so it must be the allocation root
+            // (write provenance), never one re-derived from `&SendQueue`.
+            // SAFETY: `ipc_data` is the live SendQueue owned by `subprocess`.
+            if let Some(err) =
+                unsafe { IPC::SendQueue::windows_configure_server(ipc_data.as_ctx_ptr(), ipc_pipe) }
+                    .as_err()
             {
                 let err_js = err.to_js(global_this);
                 subprocess.deref();
@@ -1668,7 +1676,9 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             unsafe {
                 jsc::VirtualMachineRef::timer_insert(
                     jsc_vm_ptr,
-                    subprocess.event_loop_timer.as_ptr(),
+                    core::ptr::addr_of!(subprocess.event_loop_timer)
+                        .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                        .cast_mut(),
                 );
             }
             subprocess.set_event_loop_timer_refd(true);
@@ -2164,10 +2174,7 @@ fn append_envp_from_js(
         // object carrying `Path` (the usual casing there) must still drive
         // the executable lookup, like libuv's spawn does.
         let line_bytes = line.as_bytes();
-        let key_end = line_bytes
-            .iter()
-            .position(|&b| b == b'=')
-            .unwrap_or(line_bytes.len());
+        let key_end = strings::index_of_char_usize(line_bytes, b'=').unwrap_or(line_bytes.len());
         let is_path_key = if cfg!(windows) {
             strings::eql_case_insensitive_ascii(&line_bytes[..key_end], b"PATH", true)
         } else {
@@ -2184,4 +2191,113 @@ fn append_envp_from_js(
         storage.push(line);
     }
     Ok(())
+}
+
+/// `cgroup` option: a cgroup directory the child starts inside.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+enum CgroupTarget {
+    Path(ZBox),
+    DirFd(Fd),
+}
+
+/// The directory fd handed to `posix_spawn_bun`, plus what to blame on error.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+struct OpenCgroup<'a> {
+    /// Always ours and `O_CLOEXEC` (a caller's fd is dup'd), so it can neither
+    /// leak into the child nor be closed under us mid-spawn.
+    dir: sys::File,
+    target: &'a CgroupTarget,
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl CgroupTarget {
+    /// Attach whichever of path / fd the caller gave us.
+    fn blame(&self, err: &sys::Error) -> sys::Error {
+        match self {
+            Self::Path(path) => err.with_path(path.as_bytes()),
+            Self::DirFd(fd) => err.with_fd(*fd),
+        }
+    }
+
+    fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
+        if value.is_number() {
+            // `validate_integer_range` maps NaN to the default; there is no default fd.
+            let fd = global.validate_integer_range::<i32>(
+                value,
+                -1,
+                bun_sql_jsc::jsc::IntegerRange {
+                    min: 0,
+                    max: i128::from(i32::MAX),
+                    field_name: b"cgroup",
+                    ..Default::default()
+                },
+            )?;
+            if fd < 0 {
+                return Err(global.throw_range_error(
+                    value.as_number(),
+                    bun_fmt::OutOfRangeOptions {
+                        field_name: b"cgroup",
+                        msg: b"an integer",
+                        ..Default::default()
+                    },
+                ));
+            }
+            return Ok(Self::DirFd(Fd::from_native(fd)));
+        }
+        if value.is_string() {
+            let path = value.to_slice(global)?;
+            if strings::contains_char(path.slice(), 0) {
+                return Err(global
+                    .err(
+                        jsc::ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "The property 'options.cgroup' must be a string without null bytes. Received {}",
+                            bun_fmt::quote(path.slice())
+                        ),
+                    )
+                    .throw());
+            }
+            return Ok(Self::Path(ZBox::from_bytes(path.slice())));
+        }
+        Err(global.throw_invalid_argument_type_value(b"cgroup", b"string or number", value))
+    }
+
+    /// Resolve to a directory fd in the parent so a bad path fails the spawn
+    /// with errno + path rather than an opaque exit 127 from the child.
+    fn open(&self, global: &JSGlobalObject) -> JsResult<OpenCgroup<'_>> {
+        let dir = match self {
+            Self::DirFd(fd) => sys::dup(*fd),
+            Self::Path(path) => sys::open_dir_absolute(path.as_bytes()),
+        };
+        let opened = match dir {
+            Ok(dir) => OpenCgroup {
+                dir: sys::File::from_fd(dir),
+                target: self,
+            },
+            Err(err) => return Err(global.throw_value(self.blame(&err).to_js(global))),
+        };
+
+        // Best-effort: a frozen destination would park the child before exec
+        // and, through vfork, this thread with it. The kernel reports no error.
+        if Self::is_frozen(opened.dir.handle()) {
+            let err = self.blame(&sys::Error::from_code(sys::Errno::EBUSY, sys::Tag::clone3));
+            return Err(global.throw_value(err.to_js(global)));
+        }
+
+        Ok(opened)
+    }
+
+    fn is_frozen(dir: Fd) -> bool {
+        // v2: `cgroup.freeze` is this cgroup's own request (set before freezing
+        // completes); `cgroup.events` `frozen 1` is the effective state,
+        // including a freeze inherited from an ancestor.
+        if let Ok(freeze) = sys::File::read_from(dir, b"cgroup.freeze") {
+            return freeze.starts_with(b"1")
+                || sys::File::read_from(dir, b"cgroup.events")
+                    .is_ok_and(|events| strings::contains(&events, b"frozen 1"));
+        }
+        // v1 only freezes where the freezer controller is co-mounted, and
+        // reports THAWED / FREEZING / FROZEN (effective state).
+        sys::File::read_from(dir, b"freezer.state").is_ok_and(|state| !state.starts_with(b"THAWED"))
+    }
 }

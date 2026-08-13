@@ -1002,8 +1002,6 @@ pub enum FromTextLockfileError {
     OutOfMemory,
     #[error("unexpected resolution")]
     UnexpectedResolution,
-    #[error("invalid semver")]
-    InvalidSemver,
 }
 
 bun_core::oom_from_alloc!(FromTextLockfileError);

@@ -541,6 +541,9 @@ impl Linker {
             .contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS)
         {
             import_record.path.is_disabled = true;
+            import_record
+                .flags
+                .insert(ImportRecordFlags::WAS_UNRESOLVED);
             return Ok(false);
         }
 

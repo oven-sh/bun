@@ -2,7 +2,6 @@
 //! SIMD-accelerated immutable string utilities operating on `&[u8]` (NOT `&str`).
 
 use core::cmp::Ordering;
-use core::ffi::c_int;
 
 use crate::BoundedArray;
 use crate::CrateError as Error;
@@ -279,9 +278,27 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     highway::memmem(haystack, needle)
 }
 
-/// `bun.reinterpretSlice` — `&[T]` → `&[u8]` view (T must be u8/u16 in practice).
-/// Safe via [`crate::cast_slice`]: the `NoUninit` bound proves every byte of
-/// `T` is initialized, and `u8` is `AnyBitPattern` with align 1.
+/// How the width-generic (`_t`) scanners below hand a `&[T]` to highway: as
+/// the 8- or 16-bit lanes the kernels take, or `Wide` for element types they
+/// don't (e.g. diff-match-patch's `usize` line hashes), which keep a scalar
+/// arm. Safe via [`crate::cast_slice`]: `NoUninit` proves every byte of `T` is
+/// initialized; the `u16` view additionally requires `T`'s own alignment.
+enum Lanes<'a> {
+    U8(&'a [u8]),
+    U16(&'a [u16]),
+    Wide,
+}
+
+#[inline(always)]
+fn lanes<T: crate::NoUninit>(s: &[T]) -> Lanes<'_> {
+    match (core::mem::size_of::<T>(), core::mem::align_of::<T>()) {
+        (1, _) => Lanes::U8(crate::cast_slice::<T, u8>(s)),
+        (2, 2) => Lanes::U16(crate::cast_slice::<T, u16>(s)),
+        _ => Lanes::Wide,
+    }
+}
+
+/// `bun.reinterpretSlice` — `&[T]` → `&[u8]` byte view (any width).
 #[inline]
 fn reinterpret_to_u8<T: crate::NoUninit>(s: &[T]) -> &[u8] {
     crate::cast_slice::<T, u8>(s)
@@ -325,13 +342,13 @@ pub fn contains_char(self_: &[u8], char: u8) -> bool {
     index_of_char(self_, char).is_some()
 }
 
+/// `char` is an ASCII byte compared against each (possibly wider) element.
 #[inline]
 pub fn contains_char_t<T: crate::NoUninit + Eq + Into<u32>>(self_: &[T], char: u8) -> bool {
-    // Branch on size_of (const-folded).
-    if core::mem::size_of::<T>() == 1 {
-        contains_char(reinterpret_to_u8(self_), char)
-    } else {
-        self_.iter().any(|c| (*c).into() == char as u32)
+    match lanes(self_) {
+        Lanes::U8(s) => contains_char(s, char),
+        Lanes::U16(s) => highway::memmem16(s, &[u16::from(char)]).is_some(),
+        Lanes::Wide => self_.iter().any(|c| (*c).into() == u32::from(char)),
     }
 }
 
@@ -342,6 +359,9 @@ pub fn contains(self_: &[u8], str: &[u8]) -> bool {
     index_of(self_, str).is_some()
 }
 
+/// The kernels compare against at most this many set bytes per pass.
+const ANY_CHAR_SET_MAX: usize = 16;
+
 /// Index of the first byte in `slice` that appears in `chars` (SIMD via
 /// highway). Returns `usize` (unlike the `u32`-returning single-char
 /// scanners above) so callers can index with the result directly.
@@ -350,39 +370,53 @@ pub fn index_of_any(slice: &[u8], chars: &[u8]) -> Option<usize> {
     match chars.len() {
         0 => None,
         1 => index_of_char_usize(slice, chars[0]),
-        _ => highway::index_of_any_char(slice, chars),
+        2..=ANY_CHAR_SET_MAX => highway::index_of_any_char(slice, chars),
+        // Larger sets (none today): one pass per 16-byte chunk, earliest hit wins.
+        _ => chars
+            .chunks(ANY_CHAR_SET_MAX)
+            .filter_map(|set| index_of_any(slice, set))
+            .min(),
     }
+}
+
+/// [`index_of_any`] starting at `start_index`; the result is absolute.
+pub fn index_of_any_pos(slice: &[u8], chars: &[u8], start_index: usize) -> Option<usize> {
+    if start_index >= slice.len() {
+        return None;
+    }
+    index_of_any(&slice[start_index..], chars).map(|i| i + start_index)
+}
+
+/// Index of the last byte in `slice` that appears in `chars` (SIMD via highway).
+#[inline]
+pub fn last_index_of_any(slice: &[u8], chars: &[u8]) -> Option<usize> {
+    match chars.len() {
+        0 => None,
+        1 => last_index_of_char(slice, chars[0]),
+        2..=ANY_CHAR_SET_MAX => highway::last_index_of_any_char(slice, chars),
+        _ => chars
+            .chunks(ANY_CHAR_SET_MAX)
+            .filter_map(|set| last_index_of_any(slice, set))
+            .max(),
+    }
+}
+
+/// Whether any byte of `slice` appears in `chars` (SIMD via highway).
+#[inline]
+pub fn contains_any(slice: &[u8], chars: &[u8]) -> bool {
+    index_of_any(slice, chars).is_some()
 }
 
 pub fn index_of_any16(self_: &[u16], chars: &[u16]) -> Option<usize> {
     index_of_any_t(self_, chars)
 }
 
-pub fn index_of_any_t<T: Copy + Eq>(str: &[T], chars: &[T]) -> Option<usize> {
-    // Rust cannot dispatch on type identity without specialization;
-    // callers with u8 should call index_of_any directly (highway-accelerated).
-    str.iter().position(|c| chars.contains(c))
-}
-
-#[inline]
-pub fn contains_comptime(self_: &[u8], str: &'static [u8]) -> bool {
-    debug_assert!(!str.is_empty(), "Don't call this with an empty string plz.");
-
-    let Some(start) = self_.iter().position(|&b| b == str[0]) else {
-        return false;
-    };
-    let mut remain = &self_[start..];
-    // PERF: slice equality; LLVM should emit good code for small fixed lengths.
-    while remain.len() >= str.len() {
-        if &remain[..str.len()] == str {
-            return true;
-        }
-        let Some(next_start) = remain[1..].iter().position(|&b| b == str[0]) else {
-            return false;
-        };
-        remain = &remain[1 + next_start..];
+pub fn index_of_any_t<T: crate::NoUninit + Eq>(str: &[T], chars: &[T]) -> Option<usize> {
+    if let (Lanes::U8(s), Lanes::U8(c)) = (lanes(str), lanes(chars)) {
+        return index_of_any(s, c);
     }
-    false
+    // No multi-needle highway kernel for u16; `chars` is a short constant set.
+    str.iter().position(|c| chars.iter().any(|d| d == c))
 }
 
 pub use contains as includes;
@@ -461,17 +495,6 @@ pub(crate) use crate::strings_impl::{
     find_url_password, is_uuid, starts_with_npm_secret, starts_with_secret, starts_with_uuid,
 };
 
-pub fn index_any_comptime(target: &[u8], chars: &'static [u8]) -> Option<usize> {
-    for (i, &parent) in target.iter().enumerate() {
-        for &char in chars {
-            if char == parent {
-                return Some(i);
-            }
-        }
-    }
-    None
-}
-
 pub fn index_equal_any(in_: &[&[u8]], target: &[u8]) -> Option<usize> {
     for (i, str) in in_.iter().enumerate() {
         if eql_long(str, target, true) {
@@ -487,12 +510,10 @@ pub fn repeating_alloc(count: usize, char: u8) -> Result<Box<[u8]>, AllocError> 
 }
 
 pub fn index_of_char_neg(self_: &[u8], char: u8) -> i32 {
-    for (i, &c) in self_.iter().enumerate() {
-        if c == char {
-            return i32::try_from(i).expect("int cast");
-        }
+    match index_of_char_usize(self_, char) {
+        Some(i) => i32::try_from(i).expect("int cast"),
+        None => -1,
     }
-    -1
 }
 
 /// Returns last index of `char` before a character `before`.
@@ -503,39 +524,40 @@ pub fn last_index_before_char(in_: &[u8], char: u8, before: u8) -> Option<usize>
 
 #[inline]
 pub fn last_index_of_char(self_: &[u8], char: u8) -> Option<usize> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        // SAFETY: memrchr scans within [self_.ptr, self_.ptr + self_.len).
-        let start = unsafe { libc::memrchr(self_.as_ptr().cast(), char as c_int, self_.len()) };
-        if start.is_null() {
-            return None;
-        }
-        return Some(start as usize - self_.as_ptr() as usize);
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    {
-        last_index_of_char_t(self_, char)
-    }
+    highway::last_index_of_char(self_, char)
 }
 
+/// Width-generic [`last_index_of_char`].
 #[inline]
-pub fn last_index_of_char_t<T: Copy + Eq>(self_: &[T], char: T) -> Option<usize> {
-    self_.iter().rposition(|c| *c == char)
+pub fn last_index_of_char_t<T: crate::NoUninit + Eq>(self_: &[T], char: T) -> Option<usize> {
+    match (lanes(self_), lanes(core::slice::from_ref(&char))) {
+        (Lanes::U8(s), Lanes::U8(c)) => last_index_of_char(s, c[0]),
+        (Lanes::U16(s), Lanes::U16(c)) => highway::memrmem16(s, c),
+        _ => self_.iter().rposition(|c| *c == char),
+    }
 }
 
+/// Start index of the last occurrence of `str`. Empty needle → `Some(len)`.
 #[inline]
 pub fn last_index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
-    // u8 fast path: bstr → memchr SIMD memmem (rfind). Empty needle → Some(len).
-    bstr::ByteSlice::rfind(self_, str)
+    highway::memrmem(self_, str)
 }
 
-/// Generic reverse substring search (last occurrence of `needle`).
-/// For `T = u8` prefer [`last_index_of`] (SIMD memmem).
-pub fn last_index_of_t<T: Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
-    if needle.is_empty() {
-        return Some(haystack.len());
+/// Width-generic reverse substring search (last occurrence of `needle`).
+/// Empty needle → `Some(len)`.
+pub fn last_index_of_t<T: crate::NoUninit + Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
+    match (lanes(haystack), lanes(needle)) {
+        (Lanes::U8(h), Lanes::U8(n)) => last_index_of(h, n),
+        (Lanes::U16(h), Lanes::U16(n)) => highway::memrmem16(h, n),
+        _ => {
+            if needle.len() > haystack.len() {
+                return None;
+            }
+            (0..=haystack.len() - needle.len())
+                .rev()
+                .find(|&i| haystack[i..i + needle.len()] == *needle)
+        }
     }
-    haystack.windows(needle.len()).rposition(|w| w == needle)
 }
 
 pub fn index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
@@ -558,13 +580,19 @@ pub fn index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
     Some(i)
 }
 
-pub fn index_of_t<T: Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
-    // Callers with u8 should call index_of directly (memmem);
-    // this generic path uses naive search.
-    if needle.is_empty() {
-        return Some(0);
+/// Width-generic substring search. Unlike [`index_of`], an empty needle
+/// matches at `Some(0)`.
+pub fn index_of_t<T: crate::NoUninit + Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
+    match (lanes(haystack), lanes(needle)) {
+        (Lanes::U8(h), Lanes::U8(n)) => memmem(h, n),
+        (Lanes::U16(h), Lanes::U16(n)) => highway::memmem16(h, n),
+        _ => {
+            if needle.len() > haystack.len() {
+                return None;
+            }
+            (0..=haystack.len() - needle.len()).find(|&i| haystack[i..i + needle.len()] == *needle)
+        }
     }
-    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 pub fn split<'a>(self_: &'a [u8], delimiter: &'a [u8]) -> SplitIterator<'a> {
@@ -573,6 +601,39 @@ pub fn split<'a>(self_: &'a [u8], delimiter: &'a [u8]) -> SplitIterator<'a> {
         index: Some(0),
         delimiter,
     }
+}
+
+/// `str::split_once` for bytes: the text before and after the first `delimiter`.
+#[inline]
+pub fn split_once_char(self_: &[u8], delimiter: u8) -> Option<(&[u8], &[u8])> {
+    let i = index_of_char_usize(self_, delimiter)?;
+    Some((&self_[..i], &self_[i + 1..]))
+}
+
+/// `str::rsplit_once` for bytes: the text before and after the last `delimiter`.
+#[inline]
+pub fn rsplit_once_char(self_: &[u8], delimiter: u8) -> Option<(&[u8], &[u8])> {
+    let i = last_index_of_char(self_, delimiter)?;
+    Some((&self_[..i], &self_[i + 1..]))
+}
+
+/// `str::split_once` for bytes with a multi-byte delimiter. An empty
+/// delimiter never matches.
+#[inline]
+pub fn split_once<'a>(self_: &'a [u8], delimiter: &[u8]) -> Option<(&'a [u8], &'a [u8])> {
+    let i = index_of(self_, delimiter)?;
+    Some((&self_[..i], &self_[i + delimiter.len()..]))
+}
+
+/// `str::rsplit_once` for bytes with a multi-byte delimiter. An empty
+/// delimiter never matches.
+#[inline]
+pub fn rsplit_once<'a>(self_: &'a [u8], delimiter: &[u8]) -> Option<(&'a [u8], &'a [u8])> {
+    if delimiter.is_empty() {
+        return None;
+    }
+    let i = last_index_of(self_, delimiter)?;
+    Some((&self_[..i], &self_[i + delimiter.len()..]))
 }
 
 pub struct SplitIterator<'a> {
@@ -602,6 +663,102 @@ impl<'a> SplitIterator<'a> {
         let end = self.buffer.len();
         let start = self.index.unwrap_or(end);
         &self.buffer[start..end]
+    }
+}
+
+impl<'a> Iterator for SplitIterator<'a> {
+    type Item = &'a [u8];
+
+    #[inline]
+    fn next(&mut self) -> Option<&'a [u8]> {
+        SplitIterator::next(self)
+    }
+}
+
+// Concrete (not `impl Iterator`) so the borrow of the input visibly ends at
+// the iterator's last use rather than at end of scope.
+pub type TokenizeIterator<'a> = core::iter::Filter<SplitIterator<'a>, fn(&&'a [u8]) -> bool>;
+pub type TokenizeAnyIterator<'a> = core::iter::Filter<SplitAnyIterator<'a>, fn(&&'a [u8]) -> bool>;
+
+fn is_non_empty_field(s: &&[u8]) -> bool {
+    !s.is_empty()
+}
+
+/// `std.mem.tokenizeSequence` — [`split`] without the empty fields, so runs
+/// of the delimiter and leading/trailing delimiters yield nothing.
+pub fn tokenize<'a>(self_: &'a [u8], delimiter: &'a [u8]) -> TokenizeIterator<'a> {
+    split(self_, delimiter).filter(is_non_empty_field as fn(&&[u8]) -> bool)
+}
+
+/// `std.mem.tokenizeAny` — [`split_any`] without the empty fields.
+pub fn tokenize_any<'a>(self_: &'a [u8], chars: &'a [u8]) -> TokenizeAnyIterator<'a> {
+    split_any(self_, chars).filter(is_non_empty_field as fn(&&[u8]) -> bool)
+}
+
+/// `<[u8]>::split` with a multi-byte predicate — `s.split(|b| b == x || b == y)`
+/// — as a highway scan: every byte that appears in `chars` is a delimiter.
+pub fn split_any<'a>(self_: &'a [u8], chars: &'a [u8]) -> SplitAnyIterator<'a> {
+    SplitAnyIterator {
+        buffer: self_,
+        index: Some(0),
+        chars,
+    }
+}
+
+pub struct SplitAnyIterator<'a> {
+    buffer: &'a [u8],
+    index: Option<usize>,
+    chars: &'a [u8],
+}
+
+impl<'a> Iterator for SplitAnyIterator<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<&'a [u8]> {
+        let start = self.index?;
+        let end = if let Some(i) = index_of_any(&self.buffer[start..], self.chars) {
+            self.index = Some(start + i + 1);
+            start + i
+        } else {
+            self.index = None;
+            self.buffer.len()
+        };
+        Some(&self.buffer[start..end])
+    }
+}
+
+/// `<[u8]>::rsplit` — fields of `self_` separated by `delimiter`, last to first.
+pub fn rsplit<'a>(self_: &'a [u8], delimiter: &'a [u8]) -> RSplitIterator<'a> {
+    RSplitIterator {
+        buffer: self_,
+        end: Some(self_.len()),
+        delimiter,
+    }
+}
+
+pub struct RSplitIterator<'a> {
+    buffer: &'a [u8],
+    end: Option<usize>,
+    delimiter: &'a [u8],
+}
+
+impl<'a> Iterator for RSplitIterator<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<&'a [u8]> {
+        let end = self.end?;
+        if self.delimiter.is_empty() {
+            self.end = None;
+            return Some(&self.buffer[..end]);
+        }
+        let start = if let Some(i) = last_index_of(&self.buffer[..end], self.delimiter) {
+            self.end = Some(i);
+            i + self.delimiter.len()
+        } else {
+            self.end = None;
+            0
+        };
+        Some(&self.buffer[start..end])
     }
 }
 
@@ -886,13 +1043,27 @@ pub fn eql_any_comptime(self_: &[u8], list: &'static [&'static [u8]]) -> bool {
 
 /// Count the occurrences of a character in an ASCII byte array
 /// uses SIMD
+#[inline]
 pub fn count_char(self_: &[u8], char: u8) -> usize {
-    // PERF: scalar count; consider portable_simd or a highway intrinsic if hot.
-    let mut total: usize = 0;
-    for &c in self_ {
-        total += (c == char) as usize;
+    highway::count_char(self_, char)
+}
+
+/// `std.mem.count` — number of non-overlapping occurrences of `needle`.
+/// An empty needle counts as zero occurrences.
+pub fn count(self_: &[u8], needle: &[u8]) -> usize {
+    match needle.len() {
+        0 => 0,
+        1 => count_char(self_, needle[0]),
+        n => {
+            let mut total = 0usize;
+            let mut rest = self_;
+            while let Some(i) = memmem(rest, needle) {
+                total += 1;
+                rest = &rest[i + n..];
+            }
+            total
+        }
     }
-    total
 }
 
 pub fn eql(self_: &[u8], other: &[u8]) -> bool {
@@ -1357,23 +1528,6 @@ pub fn index_of_char_pos(slice: &[u8], char: u8, start_index: usize) -> Option<u
     Some(result + start_index)
 }
 
-pub fn index_of_any_pos_comptime(
-    slice: &[u8],
-    chars: &'static [u8],
-    start_index: usize,
-) -> Option<usize> {
-    if chars.len() == 1 {
-        return index_of_char_pos(slice, chars[0], start_index);
-    }
-    if start_index >= slice.len() {
-        return None;
-    }
-    slice[start_index..]
-        .iter()
-        .position(|b| chars.contains(b))
-        .map(|i| i + start_index)
-}
-
 pub fn index_of_not_char(slice: &[u8], char: u8) -> Option<u32> {
     if slice.is_empty() {
         return None;
@@ -1383,15 +1537,8 @@ pub fn index_of_not_char(slice: &[u8], char: u8) -> Option<u32> {
         return Some(0);
     }
 
-    // PERF: scalar loop; consider a SIMD entry point if hot.
-    for (i, &current) in slice.iter().enumerate() {
-        if current != char {
-            // Wrapping cast.
-            return Some(i as u32);
-        }
-    }
-
-    None
+    // Wrapping cast.
+    highway::index_of_not_char(slice, char).map(|i| i as u32)
 }
 
 use crate::fmt::{HEX_DECODE_TABLE as HEX_TABLE, HEX_INVALID as INVALID_CHAR};
@@ -1843,56 +1990,6 @@ pub use exact_size_matcher::ExactSizeMatcher;
 
 pub const UNICODE_REPLACEMENT: u32 = 0xFFFD;
 
-// Uses `ares_inet_pton`, the vendored
-// c-ares implementation. Do NOT call the system `inet_pton` here: on Windows that
-// resolves into ws2_32.dll and fails with WSANOTINITIALISED whenever it runs before
-// `WSAStartup()`, which URL/host parsing can. c-ares' impl is pure C, no preconditions.
-unsafe extern "C" {
-    pub fn ares_inet_pton(
-        af: c_int,
-        src: *const core::ffi::c_char,
-        dst: *mut core::ffi::c_void,
-    ) -> c_int;
-}
-// dep-graph: bun_string < bun_sys, so cannot import the canonical
-// `bun_sys::posix::AF`. Keep a thin libc/ws2def passthrough instead. The
-// previous hand-rolled cfg ladder hardcoded `10` for the BSD fallback, which
-// is wrong (FreeBSD AF_INET6 == 28); routing through `libc` fixes that.
-const AF_INET: c_int = 2;
-#[cfg(not(windows))]
-const AF_INET6: c_int = libc::AF_INET6 as c_int;
-#[cfg(windows)]
-const AF_INET6: c_int = 23; // ws2def.h
-
-pub fn is_ip_address(input: &[u8]) -> bool {
-    let mut buf = [0u8; 512];
-    if input.len() >= buf.len() {
-        return false;
-    }
-    buf[..input.len()].copy_from_slice(input);
-    let mut dst = [0u8; 28];
-    // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
-    unsafe {
-        ares_inet_pton(AF_INET, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0
-            || ares_inet_pton(AF_INET6, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0
-    }
-}
-
-/// `ares_inet_pton(AF_INET6, …) > 0`.
-/// Must be a strict parse, not a `contains(':')` heuristic: on Windows a
-/// unix-socket path like `C:/Windows/Temp/…` contains a colon and the old
-/// heuristic mis-bracketed it as `unix://[C:/…]`, which fails URL parsing.
-pub fn is_ipv6_address(input: &[u8]) -> bool {
-    let mut buf = [0u8; 512];
-    if input.len() >= buf.len() {
-        return false;
-    }
-    buf[..input.len()].copy_from_slice(input);
-    let mut dst = [0u8; 28];
-    // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
-    unsafe { ares_inet_pton(AF_INET6, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0 }
-}
-
 pub fn left_has_any_in_right(to_check: &[&[u8]], against: &[&[u8]]) -> bool {
     for check in to_check {
         for item in against {
@@ -2026,15 +2123,14 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
     }
 }
 
-/// Generic. Works on &[u8], &[u16], etc
+/// Width-generic [`index_of_char_usize`].
 #[inline]
 pub fn index_of_scalar<T: crate::NoUninit + Eq>(input: &[T], scalar: T) -> Option<usize> {
-    // Branch on size_of (const-folded): byte-sized T → index_of_char_usize (highway).
-    if core::mem::size_of::<T>() == 1 {
-        let scalar_u8 = reinterpret_to_u8(core::slice::from_ref(&scalar))[0];
-        return index_of_char_usize(reinterpret_to_u8(input), scalar_u8);
+    match (lanes(input), lanes(core::slice::from_ref(&scalar))) {
+        (Lanes::U8(s), Lanes::U8(c)) => index_of_char_usize(s, c[0]),
+        (Lanes::U16(s), Lanes::U16(c)) => highway::memmem16(s, c),
+        _ => input.iter().position(|c| *c == scalar),
     }
-    input.iter().position(|c| *c == scalar)
 }
 
 pub fn without_suffix_comptime<'a>(input: &'a [u8], suffix: &'static [u8]) -> &'a [u8] {

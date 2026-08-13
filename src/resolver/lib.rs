@@ -52,8 +52,9 @@ pub use tsconfig_json::TSConfigJSON;
 pub use ::bun_install_types::resolver_hooks as install_types;
 pub use resolver::{AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver};
 pub use result::{
-    DebugLogs, DirEntryResolveQueueItem, FlushMode, LoadResult, MatchResult, MatchStatus, PathPair,
-    PendingResolution, PendingResolutionTag, Result, ResultFlags, ResultUnion,
+    DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
+    MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
+    ResultUnion,
 };
 pub use standalone_module_graph::StandaloneModuleGraph;
 
@@ -630,7 +631,7 @@ pub mod fs {
                 // If `pretty` contains no backslashes it is already POSIX-style.
                 // Short-circuiting preserves the `pretty.ptr == text.ptr` aliasing
                 // optimisation inside `dupe_alloc` and avoids a fresh FilenameStore alloc.
-                if !self.pretty.iter().any(|&b| b == b'\\') {
+                if !bun_core::strings::contains_char(self.pretty, b'\\') {
                     return self.dupe_alloc(alloc);
                 }
                 let mut new = self.clone();
@@ -884,6 +885,41 @@ pub mod fs {
     impl EntriesOption {
         // Payload is `&'static mut DirEntry`; auto-deref coerces to `&DirEntry` / `&mut DirEntry`.
         bun_core::enum_unwrap!(pub EntriesOption, Entries => fn entries / entries_mut -> DirEntry);
+
+        /// Probe the cached listing for `query` and return the lookup plus the
+        /// listing fd, in one `entries_mutex` critical section. A
+        /// stale-generation re-read rewrites the slot's `DirEntry` (and frees
+        /// the old map's buckets) in place under that lock, so the map must
+        /// not be walked after unlock; the returned entry pointer is
+        /// EntryStore-owned and stays valid. The caller must NOT already hold
+        /// `entries_mutex` (it is non-recursive).
+        pub(crate) fn lookup(
+            &self,
+            query: &[u8],
+        ) -> (Option<crate::fs_full::EntryLookup<'static>>, Fd) {
+            let _lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            match self {
+                EntriesOption::Entries(entries) => {
+                    // SAFETY: ARENA — the `DirEntry` is a process-lifetime
+                    // BSSMap slot (see the enum doc), so widening the local
+                    // reborrow to `'static` is sound.
+                    let entries: &'static DirEntry =
+                        unsafe { &*core::ptr::from_ref::<DirEntry>(&**entries) };
+                    (entries.get(query), entries.fd)
+                }
+                EntriesOption::Err(_) => (None, Fd::INVALID),
+            }
+        }
+
+        /// Listing dir + fd snapshot under `entries_mutex` (watch
+        /// registration); `None` when the slot holds a read error.
+        pub(crate) fn dir_and_fd(&self) -> Option<(&'static [u8], Fd)> {
+            let _lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            match self {
+                EntriesOption::Entries(entries) => Some((entries.dir, entries.fd)),
+                EntriesOption::Err(_) => None,
+            }
+        }
     }
 
     // SAFETY: ARENA — `EntriesOption` holds an unbounded `&mut DirEntry` (whose `data`
@@ -1543,26 +1579,11 @@ pub mod fs {
         }
 
         /// Index lookup with generation-check
-        /// re-read (open + readdir + cache replace) when the cached listing is stale.
-        ///
-        /// Takes `entries_mutex` for the whole lookup: the generation-stale branch
-        /// drops the existing `DirEntry` (and the bucket allocation behind its
-        /// `data` map) in place, and the route loaders iterate that map under the
-        /// same lock. Call [`entries_at_locked`](Self::entries_at_locked) instead
-        /// from inside a critical section that already holds `entries_mutex`.
-        pub(crate) fn entries_at(
-            &mut self,
-            index: bun_alloc::IndexType,
-            generation: Generation,
-        ) -> Option<&mut EntriesOption> {
-            // `MutexGuard` stores the mutex by raw pointer (see `EntriesGuard`),
-            // so holding it does not keep `&mut self` borrowed.
-            let _g = self.entries_mutex.lock_guard();
-            self.entries_at_locked(index, generation)
-        }
-
-        /// [`entries_at`](Self::entries_at) for call sites that already hold
-        /// `entries_mutex` (the mutex is non-recursive).
+        /// re-read (open + readdir + cache replace) when the cached listing is
+        /// stale. The generation-stale branch drops the existing `DirEntry`
+        /// (and the bucket allocation behind its `data` map) in place, and
+        /// every `.data` reader holds `entries_mutex` for the probe, so the
+        /// caller must already hold it (the mutex is non-recursive).
         pub(crate) fn entries_at_locked(
             &mut self,
             index: bun_alloc::IndexType,
@@ -1574,7 +1595,7 @@ pub mod fs {
             );
             // erase to raw immediately so re-borrowing `&mut self` for
             // `open_dir`/`readdir`/`read_directory_error` doesn't conflict.
-            // `entries_mutex` held (by `entries_at` or the caller); sole `&mut` to this slot.
+            // `entries_mutex` held by the caller; sole `&mut` to this slot.
             let result_ptr = std::ptr::from_mut::<EntriesOption>(self.entries.at_index(index)?);
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
@@ -1879,14 +1900,17 @@ pub mod dir_entry_accessor {
                     return Ok(None);
                 };
                 // BACKREF: ARENA — `*mut Entry` points into the EntryStore
-                // BSSList singleton ('static lifetime); `RealFS.entries_mutex`
-                // serializes access. `BackRef::from(NonNull)` + `Deref` keeps
-                // the read site safe.
+                // BSSList singleton ('static lifetime). This iterator holds a
+                // live `.data` iterator across calls, which `entries_mutex`
+                // cannot cover; it is only sound on the single-threaded CLI
+                // glob walk (`bun run --filter`), before any concurrent
+                // resolver exists to rewrite the map.
                 let entry = bun_ptr::BackRef::<Entry>::from(
                     core::ptr::NonNull::new(*val).expect("EntryStore slot"),
                 );
                 let fs: *mut Implementation = &raw mut FS::instance().fs;
-                // SAFETY: entries_mutex held; fs points at the process-global RealFS.
+                // SAFETY: fs points at the process-global RealFS; the lazy-stat
+                // rewrite inside `kind()` is serialized on the per-entry mutex.
                 let kind = unsafe { entry.kind(fs, true) };
                 let fskind = match kind {
                     EntryKind::File => bun_sys::FileKind::File,
@@ -2069,17 +2093,6 @@ pub mod cache {
 
         pub use_alternate_source_cache: bool,
         pub(crate) stream: bool,
-    }
-
-    impl Default for Fs {
-        fn default() -> Self {
-            Self {
-                shared_buffer: MutableString::init(0).expect("unreachable"),
-                macro_shared_buffer: MutableString::init(0).expect("unreachable"),
-                use_alternate_source_cache: false,
-                stream: false,
-            }
-        }
     }
 
     /// Optional external destructor (`function(ctx)`) for foreign-owned

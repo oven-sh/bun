@@ -372,6 +372,7 @@ const skipsForLeaksan = (() => {
   }
   return readFileSync(path, "utf-8")
     .split("\n")
+    .map(line => line.trim())
     .filter(line => !line.startsWith("#") && line.length > 0);
 })();
 
@@ -1783,6 +1784,7 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
     FORCE_COLOR: "1",
     BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
     BUN_DEBUG_QUIET_LOGS: "1",
+    BUN_DISABLE_SLOW_FILESYSTEM_WARNING: "1",
     BUN_GARBAGE_COLLECTOR_LEVEL: "1",
     BUN_JSC_randomIntegrityAuditRate: "1.0",
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
@@ -2207,7 +2209,15 @@ async function spawnBunInstall(execPath, options) {
     args: ["install"],
     timeout: testTimeout,
     ...options,
-    env: { ...options.env, ...(cacheDir && { BUN_INSTALL_CACHE_DIR: cacheDir }) },
+    env: {
+      // A puppeteer postinstall reached through these installs would download
+      // Chrome into the agent's shared ~/.cache; a half-extracted download left
+      // there on a persistent agent fails every later job's install. Tests that
+      // need a browser install one into a per-run cache (getPuppeteerInstallEnv).
+      PUPPETEER_SKIP_DOWNLOAD: "1",
+      ...options.env,
+      ...(cacheDir && { BUN_INSTALL_CACHE_DIR: cacheDir }),
+    },
   });
   if (crashes) stdout += crashes;
   const relativePath = relative(cwd, options.cwd);
@@ -2693,7 +2703,8 @@ async function getExecPathFromBuildKite(target, buildId) {
 
   let zipPath;
   downloadLoop: for (let i = 0; i < 10; i++) {
-    const args = ["artifact", "download", "**", releasePath, "--step", target];
+    // build-bun also uploads libbun-*.a / libbun_rust.a / dep libs; only the zips are wanted here.
+    const args = ["artifact", "download", "*.zip", releasePath, "--step", target];
     if (buildId) {
       args.push("--build", buildId);
     }

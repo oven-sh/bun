@@ -1,7 +1,7 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
   files: {
@@ -311,6 +311,105 @@ devTest("import.meta.hot.accept multiple modules", {
     }
 
     await c.expectMessageInAnyOrder("Counter updated: 3", "Name updated: Charlie");
+  },
+});
+// Files handled by the text/json loaders (and hand-written CommonJS) are
+// CommonJS-shaped modules in the HMR runtime. Importers see them through an
+// ESM view that the runtime builds from `module.exports`, which has to be
+// rebuilt every time the module is re-evaluated.
+devTest("self-accepting importer sees hot-updated text and json modules", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import text from "./data.txt";
+      import json from "./data.json";
+      import { value } from "./data.json";
+      console.log(text + " " + json.value + " " + value);
+      import.meta.hot.accept();
+    `,
+    "data.txt": "v1",
+    "data.json": `{ "value": 1 }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("v1 1 1");
+    await dev.write("data.txt", "v2");
+    await c.expectMessage("v2 1 1");
+    await dev.write("data.json", `{ "value": 2 }`);
+    await c.expectMessage("v2 2 2");
+    await dev.write("data.txt", "v3");
+    await c.expectMessage("v3 2 2");
+  },
+});
+devTest("import.meta.hot.accept specifier receives hot-updated CommonJS module", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import dep from "./dep.js";
+      console.log("initial " + dep.value);
+      import.meta.hot.accept("./dep.js", newModule => {
+        // The callback argument and the patched import binding must both
+        // reflect the new contents.
+        console.log("accepted " + newModule.default.value + " " + dep.value);
+      });
+    `,
+    "dep.js": `module.exports = { value: 1 };`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("initial 1");
+    await dev.write("dep.js", `module.exports = { value: 2 };`);
+    await c.expectMessage("accepted 2 2");
+    await dev.write("dep.js", `module.exports = { value: 3 };`);
+    await c.expectMessage("accepted 3 3");
+  },
+});
+devTest("dynamic import sees hot-updated text module", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      globalThis.load = () => import("./data.txt").then(m => m.default);
+      globalThis.load().then(text => console.log("loaded " + text));
+      import.meta.hot.accept();
+    `,
+    "data.txt": "v1",
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("loaded v1");
+    expect(await c.js<string>`load()`).toBe("v1");
+    await dev.write("data.txt", "v2");
+    await c.expectMessage("loaded v2");
+    expect(await c.js<string>`load()`).toBe("v2");
+  },
+});
+devTest("server route sees hot-updated text and json modules", {
+  framework: minimalFramework,
+  files: {
+    "template.txt": "first",
+    "data.json": `{ "n": 1 }`,
+    "routes/index.ts": `
+      import template from "../template.txt";
+      import { n } from "../data.json";
+      export default function (req, meta) {
+        return new Response(template + " " + n);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("first 1");
+    await dev.write("template.txt", "second");
+    await dev.fetch("/").equals("second 1");
+    await dev.write("data.json", `{ "n": 2 }`);
+    await dev.fetch("/").equals("second 2");
+    await dev.write("template.txt", "third");
+    await dev.fetch("/").equals("third 2");
   },
 });
 devTest("import.meta.hot.data persistence", {

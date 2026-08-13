@@ -2986,7 +2986,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // on the next access. So: hoist every config read into a local via a
         // short-lived `&*this` BEFORE the call, drop the borrow, call listen,
         // then re-derive fresh for each post-listen field access.
-        let mut host_buff = [0u8; 1025];
+
+        // Owns the bracket-stripped copy of an IPv6 literal hostname; `host`
+        // points into it, so it has to outlive the listen calls below.
+        let mut stripped_hostname: Option<bun_core::ZBox> = None;
         // Extract (discriminant, raw payload) and drop the `&*this` borrow at `;`.
         // The raw pointers reference `config.address`'s backing storage,
         // which the trampolines never touch (they only write `listener`/
@@ -3004,10 +3007,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         let bytes = existing.as_bytes();
                         if bytes.len() > 2 && bytes[0] == b'[' {
                             // strip "[" and "]" from IPv6 literal
-                            let inner = &bytes[1..bytes.len() - 1];
-                            host_buff[..inner.len()].copy_from_slice(inner);
-                            host_buff[inner.len()] = 0;
-                            host = host_buff.as_ptr().cast::<c_char>();
+                            host = stripped_hostname
+                                .insert(bun_core::ZBox::from_bytes(&bytes[1..bytes.len() - 1]))
+                                .as_ptr();
                         } else {
                             host = existing.as_ptr();
                         }

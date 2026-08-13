@@ -168,6 +168,62 @@ registry = http://localhost:${registry.port}/
       .throws(true);
   });
 
+  describe("user .npmrc lookup", () => {
+    const npmrc = (port: number) => `registry=http://localhost:${port}/\n//localhost:${port}/:_authToken=token\n`;
+    const pkg = { "pkg/package.json": JSON.stringify({ name: "npmrc-lookup", version: "0.0.1" }) };
+
+    // `publish --dry-run` never contacts the registry, but it still requires a token
+    // for it and prints which registry it picked up, so it shows which .npmrc was read.
+    // bunEnv spreads process.env and CI runners commonly export XDG_CONFIG_HOME, so it
+    // is removed here and each case passes back exactly the value it is testing.
+    async function publishDryRun(dir: string, envOverride: Record<string, string>) {
+      const spawnEnv = { ...env, HOME: join(dir, "home"), USERPROFILE: join(dir, "home") };
+      delete spawnEnv.XDG_CONFIG_HOME;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "publish", "--dry-run"],
+        cwd: join(dir, "pkg"),
+        env: { ...spawnEnv, ...envOverride },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    const usesRegistry = (port: number) => ({
+      stdout: expect.stringContaining(`Registry: http://localhost:${port}/\n`),
+      stderr: expect.not.stringContaining("missing authentication"),
+      exitCode: 0,
+    });
+
+    it.concurrent("uses $XDG_CONFIG_HOME/.npmrc when it exists", async () => {
+      using dir = tempDir("npmrc-xdg", { ...pkg, "home/.npmrc": npmrc(1), "xdg/.npmrc": npmrc(2) });
+      const result = await publishDryRun(String(dir), { XDG_CONFIG_HOME: join(String(dir), "xdg") });
+      expect(result).toEqual(usesRegistry(2));
+    });
+
+    // https://github.com/oven-sh/bun/issues/24124: GitHub Actions exports
+    // XDG_CONFIG_HOME=~/.config, while `npm login` writes ~/.npmrc.
+    it.concurrent("falls back to $HOME/.npmrc when $XDG_CONFIG_HOME has no .npmrc", async () => {
+      using dir = tempDir("npmrc-xdg-without-npmrc", { ...pkg, "home/.npmrc": npmrc(1), "xdg/.keep": "" });
+      const result = await publishDryRun(String(dir), { XDG_CONFIG_HOME: join(String(dir), "xdg") });
+      expect(result).toEqual(usesRegistry(1));
+    });
+
+    it.concurrent("uses $HOME/.npmrc when $XDG_CONFIG_HOME is unset", async () => {
+      using dir = tempDir("npmrc-xdg-unset", { ...pkg, "home/.npmrc": npmrc(1) });
+      const result = await publishDryRun(String(dir), {});
+      expect(result).toEqual(usesRegistry(1));
+    });
+
+    it.concurrent("uses $HOME/.npmrc when $XDG_CONFIG_HOME is empty", async () => {
+      using dir = tempDir("npmrc-xdg-empty", { ...pkg, "home/.npmrc": npmrc(1) });
+      const result = await publishDryRun(String(dir), { XDG_CONFIG_HOME: "" });
+      expect(result).toEqual(usesRegistry(1));
+    });
+  });
+
   it("package config overrides home config", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
 

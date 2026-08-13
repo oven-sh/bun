@@ -1868,36 +1868,46 @@ pub fn init(
 
     initialize_store();
 
-    if let Some(data_dir) = bun_core::env_var::XDG_CONFIG_HOME
-        .get()
-        .or_else(|| bun_core::env_var::HOME.get())
     {
+        let install_ref = ctx.install.get_or_insert_with(|| {
+            // `Api::BunInstall` derives `Default` (all fields `None`/empty).
+            // Own via `Box` — never `Box::leak`.
+            Box::new(Api::BunInstall::default())
+        });
+        let npmrc_local = ZBox::from_bytes(b".npmrc");
+
         let mut buf = PathBuffer::uninit();
         let parts = [b"./.npmrc" as &[u8]];
 
-        let install_ref = ctx.install.get_or_insert_with(|| {
-            // `Api::BunInstall` derives `Default` (all fields `None`/empty).
-            // Own via `Box` — never `Box::leak`.
-            Box::new(Api::BunInstall::default())
-        });
-        let npmrc_local = ZBox::from_bytes(b".npmrc");
-        ini::load_npmrc_config(
-            &mut **install_ref,
-            env,
-            true,
-            &[
-                resolve_path::join_abs_string_buf_z::<platform::Auto>(data_dir, &mut buf, &parts),
-                &*npmrc_local,
-            ],
-        );
-    } else {
-        let install_ref = ctx.install.get_or_insert_with(|| {
-            // `Api::BunInstall` derives `Default` (all fields `None`/empty).
-            // Own via `Box` — never `Box::leak`.
-            Box::new(Api::BunInstall::default())
-        });
-        let npmrc_local = ZBox::from_bytes(b".npmrc");
-        ini::load_npmrc_config(&mut **install_ref, env, true, &[&*npmrc_local]);
+        // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
+        // `$XDG_CONFIG_HOME/.npmrc` only when that file actually exists.
+        let mut global_len: usize = 0;
+        if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
+            let p =
+                resolve_path::join_abs_string_buf_z::<platform::Auto>(xdg_dir, &mut buf, &parts);
+            if bun_sys::exists_z(p) {
+                global_len = p.len();
+            }
+        }
+        if global_len == 0 {
+            if let Some(home_dir) = bun_core::env_var::HOME.get_not_empty() {
+                global_len = resolve_path::join_abs_string_buf_z::<platform::Auto>(
+                    home_dir, &mut buf, &parts,
+                )
+                .len();
+            }
+        }
+
+        if global_len > 0 {
+            ini::load_npmrc_config(
+                &mut **install_ref,
+                env,
+                true,
+                &[ZStr::from_buf(&buf[..], global_len), &*npmrc_local],
+            );
+        } else {
+            ini::load_npmrc_config(&mut **install_ref, env, true, &[&*npmrc_local]);
+        }
     }
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());
     // Captured before `cli` is moved into `options.load(Some(cli), ...)` below.
@@ -2098,7 +2108,7 @@ pub fn init(
         // make sure folder packages can find the root package without creating a new one
         // Posix-normalize the
         // separators before hashing; `FolderResolution.hash` is always fed `/`-separated
-        // bytes by every resolver-side caller. On Windows `getFdPath` yields `\`, so
+        // bytes by every resolver-side caller. On Windows `get_fd_path` yields `\`, so
         // hashing the raw bytes would seed a key the resolver never looks up — copy into
         // a stack buffer and convert separators in place.
         // SAFETY: ROOT_PACKAGE_JSON_PATH set above on the main thread.

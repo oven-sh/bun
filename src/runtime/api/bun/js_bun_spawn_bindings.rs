@@ -1194,7 +1194,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             spawn_options.deinit();
             let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                 // SAFETY: argv[0] is non-null and points at a NUL-terminated
-                // string we built above (lives in `arg0_backing`/`arg_backing`).
+                // string we built above (lives in `cstr_storage`).
                 ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
             } else {
                 ZStr::EMPTY
@@ -1241,7 +1241,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                     | sys::Errno::ENOTDIR) => {
                         let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                             // SAFETY: argv[0] is non-null and points at a NUL-terminated
-                            // string we built above (lives in `arg0_backing`/`arg_backing`).
+                            // string we built above (lives in `cstr_storage`).
                             ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
                         } else {
                             ZStr::EMPTY
@@ -1657,8 +1657,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         // This must go before other things happen so that the exit handler is
         // registered before onProcessExit can potentially be called.
         if let Some(timeout_val) = timeout {
-            let ts =
-                Timespec::ms_from_now(TimespecMockMode::AllowMockedTime, i64::from(timeout_val));
+            let ts = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, i64::from(timeout_val));
             // Note: `EventLoopTimer.next` is a local-stub Timespec until
             // `bun_event_loop` switches to `bun_core::Timespec`; copy fieldwise.
             subprocess.event_loop_timer.with_mut(|t| {
@@ -1875,7 +1874,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // This ensures JavaScript timers don't fire and stdin/stdout from the main process aren't affected
     {
         let mut absolute_timespec = Timespec::EPOCH;
-        let mut now = Timespec::now(TimespecMockMode::AllowMockedTime);
+        let mut now = Timespec::now(TimespecMockMode::ForceRealTime);
         let mut user_timespec: Timespec = if let Some(timeout_ms) = timeout {
             now.add_ms(i64::from(timeout_ms))
         } else {
@@ -1889,8 +1888,14 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(abort_signal_timeout) = signal.get_timeout() {
                 // Note: `AbortSignal::Timeout.event_loop_timer` uses the
                 // bun_event_loop-local `Timespec` stub; convert fieldwise.
+                //
+                // A fake-heap deadline is on the mocked clock, which cannot
+                // advance while this call blocks; only a real-heap one is
+                // comparable with `now`.
                 if abort_signal_timeout.event_loop_timer.state
                     == crate::timer::EventLoopTimerState::ACTIVE
+                    && abort_signal_timeout.event_loop_timer.in_heap
+                        == crate::timer::InHeap::Regular
                 {
                     let next = &abort_signal_timeout.event_loop_timer.next;
                     let next_ts = Timespec {
@@ -1959,7 +1964,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             }) {
                 TickState::Completed => {}
                 TickState::Timeout => {
-                    now = Timespec::now(TimespecMockMode::AllowMockedTime);
+                    now = Timespec::now(TimespecMockMode::ForceRealTime);
                     let did_user_timeout = has_user_timespec
                         && (absolute_timespec.eql(&user_timespec)
                             || user_timespec.order(&now) == core::cmp::Ordering::Less);

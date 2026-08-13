@@ -257,7 +257,7 @@ impl JSMySQLConnection {
         }
 
         self.timer.with_mut(|t| {
-            t.next = timespec::ms_from_now(TimespecMockMode::AllowMockedTime, interval.into());
+            t.next = timespec::ms_from_now(TimespecMockMode::ForceRealTime, interval.into());
         });
         // whole-struct provenance: the fire path recovers the container from this pointer.
         let t = core::ptr::addr_of!(self.timer)
@@ -339,7 +339,7 @@ impl JSMySQLConnection {
 
         self.max_lifetime_timer.with_mut(|t| {
             t.next = timespec::ms_from_now(
-                TimespecMockMode::AllowMockedTime,
+                TimespecMockMode::ForceRealTime,
                 self.max_lifetime_interval_ms.into(),
             );
         });

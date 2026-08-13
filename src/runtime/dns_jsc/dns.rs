@@ -6190,22 +6190,26 @@ impl Resolver {
 
         #[cfg(target_os = "android")]
         if let Some(api) = netd {
-            // `get_sockaddr` accepted `addr_s`, so this parses.
-            let (family, addr) = parse_ip(addr_s).expect("validated by get_sockaddr");
-            let mut name = Vec::with_capacity(74);
-            netd::reverse_name(family, &addr, &mut name);
-            if let Err(status) = netd::Query::start(
-                api,
-                resolver,
-                &name,
-                netd::PTR,
-                netd::Completion::NameInfo {
-                    request,
-                    family,
-                    addr,
-                    port,
-                },
-            ) {
+            let started = match parse_ip(addr_s).map(netd::unmap_v4) {
+                Some((family, addr)) => {
+                    let mut name = Vec::with_capacity(74);
+                    netd::reverse_name(family, &addr, &mut name);
+                    netd::Query::start(
+                        api,
+                        resolver,
+                        &name,
+                        netd::PTR,
+                        netd::Completion::NameInfo {
+                            request,
+                            family,
+                            addr,
+                            port,
+                        },
+                    )
+                }
+                None => Err(c_ares::Error::ENOTIMP as c_int),
+            };
+            if let Err(status) = started {
                 // SAFETY: nothing was started; `request` is still ours to complete.
                 unsafe {
                     c_ares::NameinfoHandler::on_nameinfo(

@@ -333,6 +333,17 @@ fn service_name(port: u16, buf: &mut [u8; 32]) -> *mut u8 {
     buf.as_mut_ptr()
 }
 
+/// `getnameinfo` names a v4-mapped IPv6 address by the IPv4 address it embeds.
+pub(crate) fn unmap_v4((family, addr): (c_int, [u8; 16])) -> (c_int, [u8; 16]) {
+    const MAPPED_PREFIX: [u8; 12] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff];
+    if family == libc::AF_INET6 && addr[..12] == MAPPED_PREFIX {
+        let mut v4 = [0u8; 16];
+        v4[..4].copy_from_slice(&addr[12..]);
+        return (libc::AF_INET, v4);
+    }
+    (family, addr)
+}
+
 /// The `in-addr.arpa`/`ip6.arpa` owner name for a binary address.
 pub(crate) fn reverse_name(family: c_int, addr: &[u8; 16], out: &mut Vec<u8>) {
     use std::io::Write;

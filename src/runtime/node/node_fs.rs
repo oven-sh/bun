@@ -5981,7 +5981,7 @@ impl NodeFS {
         if rc < 0 {
             return Err(sys::Error {
                 errno: (-rc) as _,
-                syscall: sys::Tag::open,
+                syscall: sys::Tag::statfs,
                 path: Some(args.path.slice().into()),
                 #[cfg(windows)]
                 from_libuv: true,

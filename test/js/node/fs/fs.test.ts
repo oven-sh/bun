@@ -6462,6 +6462,9 @@ describe("an empty string operand is reported like any other path", () => {
     ["link", "link"],
     ["symlink", "symlink"],
   ];
+  // Only Linux and Windows reject an empty symlink target; Darwin and the other
+  // BSDs create the link, so there is no error to look at there.
+  const twoOperandEmptyFirst = twoOperand.filter(([op]) => op !== "symlink" || isLinux || isWindows);
   // On Windows the async copyFile(src, "") currently segfaults (tracked separately).
   const twoOperandEmptyDest = twoOperand.filter(([op]) => !(isWindows && op === "copyFile"));
 
@@ -6476,7 +6479,7 @@ describe("an empty string operand is reported like any other path", () => {
       });
     });
 
-    it.each(twoOperand)("%s('', other)", async (op, syscall) => {
+    it.each(twoOperandEmptyFirst)("%s('', other)", async (op, syscall) => {
       const other = join(tmp, `${op}-${form}-other`);
       expect(shapeOf(await failureOf(form, op, "", other))).toEqual({
         code: "ENOENT",

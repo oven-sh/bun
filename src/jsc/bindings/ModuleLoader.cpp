@@ -655,10 +655,8 @@ void evaluateCommonJSCustomExtension(
     RETURN_IF_EXCEPTION(scope, );
 }
 
-// Registers source for a synchronous require(esm) load. An entry the
-// surrounding import graph is still fetching on the transpiler thread is
-// settled with this source (provideFetch() would ignore it); the transpiler's
-// own result later lands on a settled promise and is dropped.
+// provideFetch() ignores an entry the import graph is already fetching, so settle that entry's
+// fetch promise directly; the transpiler thread's result later finds it settled and is dropped.
 static void provideFetchForSyncLoad(Zig::GlobalObject* globalObject, const WTF::String& specifier, JSC::JSSourceCode* jsSourceCode)
 {
     auto& vm = JSC::getVM(globalObject);

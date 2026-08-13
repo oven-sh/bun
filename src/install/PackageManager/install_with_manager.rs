@@ -1098,7 +1098,7 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
 fn wait_for_calcing_patch_hashes(this: &mut PackageManager) -> crate::Result<()> {
     RunAndWaitClosure::<false, true>::run_and_wait(this)
 }
-fn wait_for_everything_except_peers(this: &mut PackageManager) -> crate::Result<()> {
+pub(crate) fn wait_for_everything_except_peers(this: &mut PackageManager) -> crate::Result<()> {
     RunAndWaitClosure::<false, false>::run_and_wait(this)
 }
 fn wait_for_peers(this: &mut PackageManager) -> crate::Result<()> {

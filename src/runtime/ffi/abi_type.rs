@@ -161,8 +161,7 @@ impl ABIType {
     /// See [`ABI_TYPE_LABEL`].
     pub(crate) const LABEL: &'static __ComptimeStringMap_ABI_TYPE_LABEL = &ABI_TYPE_LABEL;
 
-    /// Preprocessor definitions every generated wrapper is compiled with: the tags `FFI.h` and the
-    /// `to_c` conversions in [`ABI_TABLE`] hand to `JSVALUE_TO_PTR_SLOW`.
+    /// `#define`d into every generated wrapper; `FFI.h` passes them to `JSVALUE_TO_PTR_SLOW`.
     pub(crate) const POINTER_TAG_DEFINES: &'static [(&'static str, i64)] = &[
         ("ABI_TYPE_PTR", ABIType::Ptr as i64),
         ("ABI_TYPE_CSTRING", ABIType::CString as i64),
@@ -218,8 +217,7 @@ impl ABIType {
         matches!(self, ABIType::Double | ABIType::Float)
     }
 
-    /// Argument conversions that may throw (see `JSVALUE_TO_PTR_SLOW` in `FFI.h`). The generated
-    /// wrapper converts these into locals and stops before the native call if one of them threw.
+    /// Argument conversions that go through `JSVALUE_TO_PTR_SLOW` (`FFI.h`) and so can throw.
     pub(crate) fn arg_conversion_can_throw(self) -> bool {
         matches!(
             self,

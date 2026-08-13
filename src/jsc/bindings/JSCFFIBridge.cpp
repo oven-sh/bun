@@ -123,18 +123,15 @@ extern "C" void Bun__JSCFFICallbackClose(JSC::EncodedJSValue callbackValue)
         callback->close();
 }
 
-// JSVALUE_TO_PTR_SLOW for the wrappers cc() compiles (src/runtime/ffi/FFI.h). The wrapper converts
-// numbers, typed arrays and null inline; everything else (JSCallback, ArrayBuffer, BigInt, an object
-// with a numeric `ptr`, junk) gets the same conversion dlopen()'d symbols get, TypeErrors included.
-// No string arena is passed: nothing would free a transcoded `cstring` after the native call, so a
-// JavaScript string throws here instead.
+// JSVALUE_TO_PTR_SLOW in the wrappers cc() compiles (src/runtime/ffi/FFI.h).
 extern "C" void* Bun__FFI__jsValueToPointerSlow(JSC::JSGlobalObject* globalObject, int32_t abiType, bool* threw, JSC::EncodedJSValue encodedValue)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     uint64_t slot = 0;
-    JSC::FFI::writeSlotFromJSValue(globalObject, globalObject->ffiContext(), static_cast<JSC::FFI::Type>(abiType), JSC::JSValue::decode(encodedValue), slot, nullptr);
+    // No string arena: nothing would free a transcoded cstring after the native call, so JS strings throw.
+    JSC::FFI::writeSlotFromJSValue(globalObject, globalObject->ffiContext(), static_cast<JSC::FFI::Type>(abiType), JSC::JSValue::decode(encodedValue), slot, /* arena */ nullptr);
     if (scope.exception()) [[unlikely]] {
         *threw = true;
         return nullptr;

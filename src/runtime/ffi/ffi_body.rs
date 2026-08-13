@@ -161,8 +161,7 @@ mod exposed_to_ffi {
         pub(super) fn INT64_TO_JSVALUE(global: *mut JSGlobalObject, i: i64) -> JSValue;
         #[link_name = "JSC__JSValue__fromUInt64NoTruncate"]
         pub(super) fn UINT64_TO_JSVALUE(global: *mut JSGlobalObject, i: u64) -> JSValue;
-        /// `JSCFFIBridge.cpp`: converts a `ptr`/`cstring`/`function`/`buffer` argument the inline
-        /// fast paths in `FFI.h` don't handle, using the same conversion as dlopen()'d symbols.
+        /// Slow path of `JSVALUE_TO_PTR`/`JSVALUE_TO_BUFFER` (`FFI.h`); defined in `JSCFFIBridge.cpp`.
         #[link_name = "Bun__FFI__jsValueToPointerSlow"]
         pub(super) fn JSVALUE_TO_PTR_SLOW(
             global: *mut JSGlobalObject,
@@ -2200,8 +2199,7 @@ impl Function {
         let mut arg_buf = [0u8; 512];
         arg_buf[0..3].copy_from_slice(b"arg");
 
-        // Pointer arguments are converted up front because the conversion can run JS (an object's
-        // `ptr` getter) and throw; the native function must not be called once something threw.
+        // Pointer conversions can run JS (a `ptr` getter) and throw, so they come before the call.
         let mut declared_threw = false;
         for (i, arg) in self.arg_types.iter().enumerate() {
             if !arg.arg_conversion_can_throw() {

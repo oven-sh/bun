@@ -163,10 +163,7 @@ static EncodedJSValue FLOAT_TO_JSVALUE(float val) __attribute__((__always_inline
 static EncodedJSValue BOOLEAN_TO_JSVALUE(bool val) __attribute__((__always_inline__));
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) __attribute__((__always_inline__));
 
-// The engine's pointer-argument conversion, shared with dlopen()'d symbols. `abiType` is one of
-// the ABI_TYPE_* tags the runtime defines when it compiles this file. Throws a TypeError for values
-// that cannot become a pointer and sets `*threw`, in which case the generated wrapper returns
-// without calling the native function.
+// The engine's conversion (the one dlopen()'d symbols use); on a non-pointer it throws and sets *threw.
 void* JSVALUE_TO_PTR_SLOW(void* jsGlobalObject, int32_t abiType, bool* threw, int64_t val);
 static void* JSVALUE_TO_PTR(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue val) __attribute__((__always_inline__));
 static void* JSVALUE_TO_BUFFER(void* jsGlobalObject, bool* threw, EncodedJSValue val) __attribute__((__always_inline__));

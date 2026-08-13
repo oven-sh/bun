@@ -43,6 +43,122 @@ describe("bundler", () => {
     },
     run: { stdout: "pass" },
   });
+  // Locals named after identifiers the printer emits as raw text (globalThis, Error, Infinity, NaN,
+  // undefined) must be renamed out of the way by the bundler (#8058).
+  for (const minifyIdentifiers of [false, true]) {
+    const suffix = minifyIdentifiers ? "Minified" : "";
+    itBundled(`bun/RequireBunWithShadowedGlobalThis${suffix}`, {
+      target: "bun",
+      minifyIdentifiers,
+      files: {
+        "/entry.ts": /* js */ `
+          {
+            let globalThis = { Bun: "intercepted" };
+            const b = require("bun");
+            if (b === "intercepted") throw new Error("require('bun') captured local globalThis");
+            if (typeof b.version !== "string") throw new Error("require('bun') did not return Bun");
+            void globalThis;
+          }
+          console.log("PASS");
+        `,
+      },
+      run: { stdout: "PASS" },
+    });
+    itBundled(`bun/DynamicImportBunWithShadowedGlobalThis${suffix}`, {
+      target: "bun",
+      minifyIdentifiers,
+      files: {
+        "/entry.ts": /* js */ `
+          (async () => {
+            let globalThis = { Bun: "intercepted" };
+            const b = await import("bun");
+            if (b === "intercepted") throw new Error("import('bun') captured local globalThis");
+            if (typeof b.version !== "string") throw new Error("import('bun') did not return Bun");
+            void globalThis;
+            console.log("PASS");
+          })();
+        `,
+      },
+      run: { stdout: "PASS" },
+    });
+    itBundled(`bun/ImportBunWithShadowedGlobalThis${suffix}`, {
+      target: "bun",
+      minifyIdentifiers,
+      files: {
+        "/entry.ts": /* js */ `
+          import * as b from "bun";
+          var globalThis = { Bun: "intercepted" };
+          console.log((globalThis as any).Bun);
+          if ((b as any) === "intercepted") throw new Error("import 'bun' captured local globalThis");
+          if (typeof b?.version !== "string") throw new Error("import 'bun' did not return Bun");
+          console.log("PASS");
+        `,
+      },
+      run: { stdout: "intercepted\nPASS" },
+    });
+  }
+  itBundled("bun/InlinedRequireErrorWithShadowedError", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        {
+          let Error = function (this: any, msg: string) { this.intercepted = true; this.message = msg; };
+          let caught: any;
+          try { require("does-not-exist-pkg") } catch (e) { caught = e; }
+          console.log(typeof Error);
+          if (caught.intercepted) throw new globalThis.Error("require shim captured local Error");
+          if (!(caught instanceof globalThis.Error)) throw new globalThis.Error("not a real Error");
+        }
+        console.log("PASS");
+      `,
+    },
+    run: { stdout: "function\nPASS" },
+  });
+  itBundled("bun/InfinityLiteralWithShadowedInfinity", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        {
+          let Infinity = 5;
+          let trap = Infinity;
+          if (1e400 === trap) throw new Error("Infinity literal captured local Infinity");
+          if (1e400 !== globalThis.Infinity) throw new Error("1e400 is not Infinity");
+        }
+        console.log("PASS");
+      `,
+    },
+    run: { stdout: "PASS" },
+  });
+  itBundled("bun/NaNLiteralWithShadowedNaN", {
+    target: "bun",
+    minifySyntax: true,
+    files: {
+      "/entry.ts": /* js */ `
+        function check(NaN: any) {
+          if (!globalThis.Number.isNaN(0/0)) throw new Error("folded NaN captured local NaN");
+          return NaN;
+        }
+        console.log(check(6) === 6 ? "PASS" : "FAIL");
+      `,
+    },
+    run: { stdout: "PASS" },
+  });
+  itBundled("bun/SynthesizedUndefinedWithShadowedUndefined", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        {
+          let undefined = 5;
+          let trap = undefined;
+          const h = import.meta.hot;
+          if (h === trap) throw new Error("synthesized undefined captured local");
+          if (h !== globalThis.undefined) throw new Error("import.meta.hot is not undefined");
+        }
+        console.log("PASS");
+      `,
+    },
+    run: { stdout: "PASS" },
+  });
   // https://github.com/oven-sh/bun/issues/18899
   itBundled("bun/import-bun-format-cjs", {
     target: "bun",

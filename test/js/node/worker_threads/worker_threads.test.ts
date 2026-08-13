@@ -477,6 +477,74 @@ describe("captured stdio backpressure", () => {
   });
 });
 
+// A synchronous worker exit leaves no loop turns for the reader's ack to release
+// the parked writev, so everything buffered behind it must be flushed from the
+// worker's process 'exit' (node's flushSync) and drained by the parent before it
+// ends worker.stdout/stderr.
+describe("stdio is flushed when the worker exits synchronously", () => {
+  const N = 300;
+
+  test.each(["stdout", "stderr"] as const)("captured %s: console + raw write, then process.exit(0)", async name => {
+    const method = name === "stdout" ? "log" : "error";
+    const worker = new Worker(
+      `for (let i = 0; i < ${N}; i++) {
+         if (i % 2) console.${method}("W" + i); else process.${name}.write("W" + i + "\\n");
+       }
+       process.exit(0);`,
+      { eval: true, stdout: true, stderr: true },
+    );
+    let out = "";
+    worker[name].setEncoding("utf8").on("data", d => (out += d));
+    const [code] = await once(worker, "exit");
+    expect(out).toBe(Array.from({ length: N }, (_, i) => "W" + i + "\n").join(""));
+    expect(code).toBe(0);
+  });
+
+  test.each([
+    ["process.exit", "process.exit(0);", 0],
+    ["uncaught exception", 'throw new Error("boom");', 1],
+    ["unhandled rejection", 'Promise.reject(new Error("boom"));', 1],
+  ])("auto-piped stdout survives %s", async (_label, exit, expectedWorkerCode) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker(${JSON.stringify(`for (let i = 0; i < ${N}; i++) console.log("W" + i);\n${exit}`)}, { eval: true });
+         w.on("error", () => {});
+         w.on("exit", c => console.error("[exit " + c + "]"));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(Array.from({ length: N }, (_, i) => "W" + i + "\n").join(""));
+    expect(stderr).toContain(`[exit ${expectedWorkerCode}]`);
+    expect(exitCode).toBe(0);
+  });
+
+  // Every write from an 'exit' handler is its own message (process._exiting makes
+  // writev complete synchronously); all of them must be delivered, in order,
+  // before the parent ends worker.stdout and emits 'exit'.
+  test("worker 'exit' handler output all arrives, in order, before the parent's 'exit'", async () => {
+    const LINES = 5000;
+    const worker = new Worker(
+      `process.on("exit", () => {
+         for (let i = 0; i < ${LINES}; i++) process.stdout.write("L" + i + "\\n");
+       });`,
+      { eval: true, stdout: true },
+    );
+    let out = "";
+    worker.stdout.setEncoding("utf8").on("data", d => (out += d));
+    const [code] = await once(worker, "exit");
+    const lines = out.split("\n");
+    expect(lines.length).toBe(LINES + 1);
+    expect(lines).toEqual([...Array.from({ length: LINES }, (_, i) => "L" + i), ""]);
+    expect(code).toBe(0);
+  });
+});
+
 describe("worker event", () => {
   test("is emitted on the next tick with the right value", () => {
     const { promise, resolve } = Promise.withResolvers();

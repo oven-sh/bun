@@ -302,11 +302,11 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
         return;
 
+    process->putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(true), 0);
     auto event = Identifier::fromString(vm, "exit"_s);
     if (!emitter.hasEventListeners(event)) {
         return;
     }
-    process->putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(true), 0);
 
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(exitCode));

@@ -335,6 +335,8 @@ const BUN_WORKER_PARENT_PORT_KEY = "@@bunWorkerThreadsParentPort";
 // each stream has its own port (node multiplexes one env port), the payload is
 // the bare chunk array, EOF is null, and any other message is the ack.
 
+const kFlushSync = Symbol("kFlushSync");
+
 // Readable fed by a control MessagePort (worker.stdout/stderr on the parent,
 // process.stdin in the worker). The peer posts arrays of Buffers; null signals EOF.
 function makePortReadable(port, incrementsPortRef) {
@@ -379,8 +381,13 @@ function makePortReadable(port, incrementsPortRef) {
       port.unref();
     }
   });
-  // Lets the parent end worker.stdout/stderr when the worker exits abruptly.
+  // Lets the parent end worker.stdout/stderr when the worker exits, delivering
+  // anything still queued on the port first (node's kOnExit drains before EOF).
   stream.endFromOwner = function () {
+    let entry;
+    while (ended === false && (entry = _receiveMessageOnPort(port)) !== undefined) {
+      onMessage(entry.message);
+    }
     if (ended === false) {
       ended = true;
       stream.push(null);
@@ -408,7 +415,7 @@ function makePortWritable(port) {
   }
   port.on("message", onAck);
   port.unref();
-  return new Writable({
+  const stream = new Writable({
     decodeStrings: false,
     writev(chunks, cb) {
       const payload = new Array(chunks.length);
@@ -446,13 +453,19 @@ function makePortWritable(port) {
       cb(err);
     },
   });
+  // On a synchronous exit no ack can arrive; completing the parked writev lets
+  // the Writable clear its buffer through writev, which now completes
+  // synchronously because process._exiting is set (node's flushSync).
+  stream[kFlushSync] = onAck;
+  return stream;
 }
 
 function setupWorkerStdio(stdio) {
   const { stdin, stdout, stderr } = stdio;
+  let stdoutStream, stderrStream;
   if (stdout) {
     Object.defineProperty(process, "stdout", {
-      value: makePortWritable(stdout),
+      value: (stdoutStream = makePortWritable(stdout)),
       writable: true,
       configurable: true,
       enumerable: true,
@@ -460,7 +473,7 @@ function setupWorkerStdio(stdio) {
   }
   if (stderr) {
     Object.defineProperty(process, "stderr", {
-      value: makePortWritable(stderr),
+      value: (stderrStream = makePortWritable(stderr)),
       writable: true,
       configurable: true,
       enumerable: true,
@@ -483,9 +496,13 @@ function setupWorkerStdio(stdio) {
   });
   // node routes console.log through process.stdout/stderr; Bun's global console
   // writes the fd directly, so rebind it to the captured streams when present.
-  if (stdout || stderr) {
+  if (stdoutStream || stderrStream) {
     const { Console } = require("node:console");
     globalThis.console = new Console(process.stdout, process.stderr);
+    process.on("exit", () => {
+      stdoutStream?.[kFlushSync]();
+      stderrStream?.[kFlushSync]();
+    });
   }
 }
 

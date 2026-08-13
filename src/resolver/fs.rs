@@ -1,3 +1,4 @@
+use core::sync::atomic::{AtomicBool, Ordering};
 use std::borrow::Cow;
 use std::io::Write as _;
 
@@ -136,8 +137,11 @@ impl Default for EntryCache {
 // `Entry::symlink` while callers hold a shared
 // `&Entry`. `EntryCache` is `Copy`, so `Cell` gives us safe
 // `.get()/.set()` through `&self` — the per-entry `mutex` serializes every
-// rewrite of these `Cell`s across threads (the `unsafe impl Sync for Entry`
-// below opts back in under that external-locking discipline).
+// rewrite of these fields across threads (the `unsafe impl Sync for Entry`
+// below opts back in under that external-locking discipline). `need_stat`
+// is atomic because the `kind()`/`symlink()` fast path reads it without the
+// mutex: the Release store after the `cache` write paired with the Acquire
+// load is what publishes `cache` to those lock-free readers.
 pub struct Entry {
     pub(crate) cache: core::cell::Cell<EntryCache>,
     pub dir: &'static [u8],
@@ -148,7 +152,7 @@ pub struct Entry {
     pub(crate) base_lowercase_: strings::StringOrTinyString,
 
     pub mutex: Mutex,
-    pub need_stat: core::cell::Cell<bool>,
+    pub need_stat: AtomicBool,
 
     pub abs_path: Interned,
 }
@@ -168,13 +172,6 @@ impl Entry {
     pub fn set_cache_fd(&self, fd: Fd) {
         let mut c = self.cache.get();
         c.fd = fd;
-        self.cache.set(c);
-    }
-
-    #[inline(always)]
-    pub(crate) fn set_cache_kind(&self, kind: EntryKind) {
-        let mut c = self.cache.get();
-        c.kind = kind;
         self.cache.set(c);
     }
 
@@ -226,10 +223,10 @@ impl Entry {
     // Generic over `R: EntryKindResolver` so this block is independent of
     // which `RealFS` copy `fs` points at (see file-top comment).
     pub unsafe fn kind<R: EntryKindResolver>(&self, fs: *mut R, store_fd: bool) -> EntryKind {
-        if self.need_stat.get() {
+        if self.need_stat.load(Ordering::Acquire) {
             let _guard = self.mutex.lock_guard();
-            if self.need_stat.get() {
-                self.need_stat.set(false);
+            // Relaxed: every write happens under `mutex`, which we hold.
+            if self.need_stat.load(Ordering::Relaxed) {
                 // This is technically incorrect, but we are choosing not to handle errors here
                 // SAFETY: `fs` points at the process-global RealFS singleton; `resolve_kind`
                 // only does syscalls + string interning, so the short `&mut` cannot alias.
@@ -240,8 +237,15 @@ impl Entry {
                     store_fd,
                 ) {
                     Ok(c) => self.cache.set(c),
-                    Err(_) => return self.cache().kind,
+                    Err(_) => {
+                        self.need_stat.store(false, Ordering::Release);
+                        return self.cache().kind;
+                    }
                 }
+                // Clear the flag only after the `cache` write: lock-free readers
+                // that observe `false` skip the mutex, so this Release store is
+                // what publishes `cache` to them.
+                self.need_stat.store(false, Ordering::Release);
             }
         }
         self.cache().kind
@@ -256,10 +260,10 @@ impl Entry {
         fs: *mut R,
         store_fd: bool,
     ) -> &'static [u8] {
-        if self.need_stat.get() {
+        if self.need_stat.load(Ordering::Acquire) {
             let _guard = self.mutex.lock_guard();
-            if self.need_stat.get() {
-                self.need_stat.set(false);
+            // Relaxed: every write happens under `mutex`, which we hold.
+            if self.need_stat.load(Ordering::Relaxed) {
                 // This error can happen if the file was deleted between the time the directory
                 // was scanned and the time it was read
                 // SAFETY: see the note on `Entry::kind`.
@@ -270,51 +274,18 @@ impl Entry {
                     store_fd,
                 ) {
                     Ok(c) => self.cache.set(c),
-                    Err(_) => return b"",
+                    Err(_) => {
+                        self.need_stat.store(false, Ordering::Release);
+                        return b"";
+                    }
                 }
+                // See `Entry::kind`: Release-publish `cache` before the flag clear.
+                self.need_stat.store(false, Ordering::Release);
             }
         }
         self.cache().symlink.as_bytes()
     }
 }
-
-// `BSSList::append` requires `ValueType: Clone` (its overflow path
-// retries with a copy). `Mutex`/`StringOrTinyString` aren't `Clone`, but for a
-// freshly-constructed `Entry` (the only thing ever appended) a field-wise copy
-// with a fresh `Mutex` is semantically equivalent to a by-value move.
-impl Clone for Entry {
-    fn clone(&self) -> Self {
-        Self {
-            cache: core::cell::Cell::new(self.cache.get()),
-            dir: self.dir,
-            base_: strings::StringOrTinyString::init(self.base_.slice()),
-            base_lowercase_: strings::StringOrTinyString::init(self.base_lowercase_.slice()),
-            mutex: Mutex::default(),
-            need_stat: core::cell::Cell::new(self.need_stat.get()),
-            abs_path: self.abs_path,
-        }
-    }
-}
-
-impl Default for Entry {
-    fn default() -> Self {
-        Self {
-            cache: core::cell::Cell::new(EntryCache::default()),
-            dir: b"",
-            base_: strings::StringOrTinyString::init(b""),
-            base_lowercase_: strings::StringOrTinyString::init(b""),
-            mutex: Mutex::default(),
-            need_stat: core::cell::Cell::new(true),
-            abs_path: Interned::EMPTY,
-        }
-    }
-}
-
-// lifetime-generic, but resolver storage requires `'static`; in practice all
-// three slices borrow process-lifetime interned data (`dir` → DirnameStore,
-// `query` → FilenameStore copy made in `DirEntry::get`, `actual` → EntryStore).
-#[derive(Clone, Copy)]
-pub struct DifferentCase;
 
 // `entry` is a RAW `*mut Entry`. A safe
 // `&self → &mut Entry` accessor would let two `get()` calls produce coexisting
@@ -322,7 +293,6 @@ pub struct DifferentCase;
 // at each write site under the per-entry `Entry.mutex`.
 pub struct EntryLookup<'a> {
     pub(crate) entry: *mut Entry,
-    pub(crate) diff_case: Option<DifferentCase>,
     // tie the lookup's nominal lifetime to the DirEntry it came from
     _marker: core::marker::PhantomData<&'a Entry>,
 }
@@ -518,18 +488,23 @@ impl DirEntry {
                     let _guard = existing.mutex.lock_guard();
                     existing.dir = self.dir;
 
-                    existing.need_stat.set(
-                        existing.need_stat.get()
+                    // No cache rewrite here, even when the kind changed: a
+                    // lock-free `kind()`/`symlink()` reader that already
+                    // observed `need_stat == false` reads `cache` without the
+                    // per-entry mutex, so overwriting it would race that read
+                    // (a torn 16-byte `Interned` faults in `as_bytes`).
+                    // Publishing `need_stat = true` instead routes every later
+                    // reader through the mutex, where the lazy stat writes the
+                    // fresh cache; a reader that raced the flag sees the old
+                    // cache, stale but untorn.
+                    // Relaxed load: writes are serialized on the per-entry
+                    // mutex held above.
+                    existing.need_stat.store(
+                        existing.need_stat.load(Ordering::Relaxed)
                             || found_kind.is_none()
                             || Some(existing.cache().kind) != found_kind,
+                        Ordering::Release,
                     );
-                    // TODO: is this right?
-                    if Some(existing.cache().kind) != found_kind {
-                        // if found_kind is null, we have set need_stat above, so we
-                        // store an arbitrary kind
-                        existing.set_cache_kind(found_kind.unwrap_or(EntryKind::File));
-                        existing.set_cache_symlink(Interned::EMPTY);
-                    }
                     break 'brk existing_ptr;
                 }
             }
@@ -575,7 +550,7 @@ impl DirEntry {
                 // Call "stat" lazily for performance. The "@material-ui/icons" package
                 // contains a directory with over 11,000 entries in it and running "stat"
                 // for each entry was a big performance issue for that package.
-                addr_of_mut!((*p).need_stat).write(core::cell::Cell::new(found_kind.is_none()));
+                addr_of_mut!((*p).need_stat).write(AtomicBool::new(found_kind.is_none()));
                 addr_of_mut!((*p).cache).write(core::cell::Cell::new(EntryCache {
                     symlink: Interned::EMPTY,
                     // if found_kind is null, we have set need_stat above, so we
@@ -624,17 +599,30 @@ impl DirEntry {
         Ok(())
     }
 
-    // `query_` borrow detached from the returned Entry lifetime so
-    // callers can pass a slice into the same threadlocal buffer they then
-    // mutate; on a case mismatch the query bytes are interned into the
-    // process-lifetime `FilenameStore` so `DifferentCase<'static>` holds a
-    // genuinely `'static` slice. The store does not dedup, so
-    // repeated lookups of the same case-mismatched specifier (e.g. watch-mode
-    // rebuilds with a busted resolution cache) each intern a fresh copy that
-    // is never freed; accepted because the mismatch arm is a warning/error
-    // path and each copy is small. The intern goes through `handle_oom`
-    // (abort).
+    /// Debug-only contract check: every `.data` probe must run under
+    /// `entries_mutex`, because a stale-generation re-read
+    /// (`RealFS::entries_at_locked`) rewrites the `DirEntry` in place under
+    /// that lock and frees the old map's buckets. This assert turns the next
+    /// unlocked probe into a deterministic debug-build failure instead of a
+    /// rare segfault.
+    #[inline]
+    fn debug_assert_entries_mutex_held() {
+        debug_assert!(
+            crate::fs::FileSystem::instance()
+                .fs
+                .entries_mutex
+                .is_held_by_current_thread(),
+            "DirEntry.data probed without entries_mutex; a concurrent \
+             stale-generation re-read frees the map's buckets in place"
+        );
+    }
+
+    // `query_` borrow is detached from the returned `Entry` lifetime so callers
+    // can pass a slice into the same threadlocal buffer they then mutate. The
+    // lookup key is the lowercased basename; a case-mismatched query still
+    // returns the stored entry.
     pub fn get<'a>(&'a self, query_: &[u8]) -> Option<EntryLookup<'a>> {
+        Self::debug_assert_entries_mutex_held();
         if query_.is_empty() || query_.len() > MAX_PATH_BYTES {
             return None;
         }
@@ -642,20 +630,8 @@ impl DirEntry {
 
         let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
         let &result_ptr = self.data.get(query)?;
-        // SAFETY: EntryStore-owned pointer, valid for lifetime of store; read-only
-        // borrow here only to compare basename — never overlaps a writer.
-        let basename = unsafe { &*result_ptr }.base();
-        if !strings::eql_long(basename, query_, true) {
-            return Some(EntryLookup {
-                entry: result_ptr,
-                diff_case: Some(DifferentCase),
-                _marker: core::marker::PhantomData,
-            });
-        }
-
         Some(EntryLookup {
             entry: result_ptr,
-            diff_case: None,
             _marker: core::marker::PhantomData,
         })
     }
@@ -666,49 +642,23 @@ impl DirEntry {
         &'a self,
         query_lower: &'static [u8],
     ) -> Option<EntryLookup<'a>> {
+        Self::debug_assert_entries_mutex_held();
         let &result_ptr = self.data.get(query_lower)?;
-        // SAFETY: EntryStore-owned pointer; read-only basename compare.
-        let basename = unsafe { &*result_ptr }.base();
-
-        if basename != query_lower {
-            return Some(EntryLookup {
-                entry: result_ptr,
-                diff_case: Some(DifferentCase),
-                _marker: core::marker::PhantomData,
-            });
-        }
-
         Some(EntryLookup {
             entry: result_ptr,
-            diff_case: None,
             _marker: core::marker::PhantomData,
         })
     }
 
     /// True if a cached entry exists for the given already-lowercase name.
     pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
+        Self::debug_assert_entries_mutex_held();
         self.data.contains_key(query_lower)
     }
 }
 
 // `data` drops itself and `dir` is interned in DirnameStore (see the comment
 // on `DirEntry::dir`). Body would be empty, so no `impl Drop`.
-
-impl bun_dotenv::DirEntryProbe for DirEntry {
-    #[inline]
-    fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
-        DirEntry::has_comptime_query(self, query_lower)
-    }
-}
-
-// pub fn statBatch(fs: *FileSystemEntry, paths: []string) ![]?Stat {
-// }
-// pub fn stat(fs: *FileSystemEntry, path: string) !Stat {
-// }
-// pub fn readFile(fs: *FileSystemEntry, path: string) ?string {
-// }
-// pub fn readDir(fs: *FileSystemEntry, path: string) ?[]string {
-// }
 
 #[derive(Default, Clone, Copy)]
 pub struct ModKey {
@@ -999,7 +949,7 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
                 }
 
                 if (bytes_read as usize) < new_size {
-                    shared_buffer.grow_by(new_size - size)?;
+                    shared_buffer.grow_by(new_size.saturating_sub(size))?;
                     // SAFETY: u8; `read_all` overwrites the exposed tail before any read.
                     unsafe { shared_buffer.list.expand_to_capacity() };
                     size = new_size;
@@ -1073,7 +1023,8 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         // Allocate UNINITIALIZED (no zero-fill):
         // `extend_from_slice` writes the prefix, `read_all` writes
         // the tail, then `set_len` exposes only the initialized `..total`.
-        let mut buf: Vec<u8> = Vec::with_capacity(size + 1);
+        let cap = size.max(initial_read.len());
+        let mut buf: Vec<u8> = Vec::with_capacity(cap + 1);
         buf.extend_from_slice(initial_read);
 
         if size == 0 {
@@ -1082,7 +1033,7 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
             });
         }
 
-        let tail_len = size + 1 - initial_read.len();
+        let tail_len = cap + 1 - initial_read.len();
         let tail = &mut buf.spare_capacity_mut()[..tail_len];
         // stick a zero at the end
         tail[tail_len - 1].write(0);
@@ -1094,7 +1045,7 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         })?;
         let total = read_count + initial_read.len();
         debug!("read({}, {}) = {}", file.handle(), size, read_count);
-        // SAFETY: capacity ≥ `size + 1` ≥ `total`; bytes `..initial_read.len()`
+        // SAFETY: capacity ≥ `cap + 1` ≥ `total`; bytes `..initial_read.len()`
         // were written by `extend_from_slice` and `initial_read.len()..total` by
         // `read_all` above.
         unsafe { buf.set_len(total) };

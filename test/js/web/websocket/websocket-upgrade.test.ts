@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { createHash } from "node:crypto";
 
 describe("WebSocket upgrade", () => {
   // https://github.com/oven-sh/bun/issues/2896
@@ -73,5 +74,69 @@ describe("WebSocket upgrade", () => {
     });
 
     ws.close();
+  });
+
+  // RFC 6455 §4.1: Sec-WebSocket-Key "MUST be a nonce consisting of a randomly
+  // selected 16-byte value". Sourcing it from a v4 UUID stamps 6 constant bits
+  // (byte[6] high nibble = 4, byte[8] top two bits = 10) into every handshake,
+  // which lets any peer fingerprint a Bun client.
+  test.concurrent("Sec-WebSocket-Key is 16 uniformly random bytes, not a UUIDv4", async () => {
+    const N = 64;
+    const keys: string[] = [];
+    using server = Bun.listen<{ buf: string }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { buf: "" };
+        },
+        data(socket, chunk) {
+          socket.data.buf += chunk.toString("latin1");
+          if (!socket.data.buf.includes("\r\n\r\n")) return;
+          const m = socket.data.buf.match(/^Sec-WebSocket-Key:\s*(\S+)\s*$/im);
+          const key = m?.[1] ?? "";
+          keys.push(key);
+          const accept = createHash("sha1")
+            .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+            .digest("base64");
+          socket.write(
+            "HTTP/1.1 101 Switching Protocols\r\n" +
+              "Upgrade: websocket\r\n" +
+              "Connection: Upgrade\r\n" +
+              `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+          );
+          socket.flush();
+          socket.end();
+        },
+      },
+    });
+
+    let opened = 0;
+    await Promise.all(
+      Array.from({ length: N }, () => {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+        ws.onopen = () => opened++;
+        ws.onerror = () => {};
+        ws.onclose = () => resolve();
+        return promise;
+      }),
+    );
+
+    expect(opened).toBe(N);
+    expect(keys).toHaveLength(N);
+    const decoded = keys.map(k => Buffer.from(k, "base64"));
+    for (const d of decoded) expect(d.length).toBe(16);
+
+    const b6 = new Set(decoded.map(d => d[6] >> 4));
+    const b8 = new Set(decoded.map(d => d[8] >> 6));
+    const uuidShaped = decoded.filter(d => (d[6] & 0xf0) === 0x40 && (d[8] & 0xc0) === 0x80).length;
+
+    // Uniform bytes: P(single-value set) is 16·16⁻ᴺ and 4·4⁻ᴺ respectively;
+    // a UUIDv4 source yields {4} and {2} with certainty.
+    expect(b6.size).toBeGreaterThan(1);
+    expect(b8.size).toBeGreaterThan(1);
+    // E[uuidShaped] = N/64 = 1 for uniform bytes; equals N under the bug.
+    expect(uuidShaped).toBeLessThan(N);
   });
 });

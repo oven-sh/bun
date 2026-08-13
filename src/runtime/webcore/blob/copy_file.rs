@@ -29,7 +29,7 @@ use core::marker::ConstParamTy;
 // CopyFile (POSIX, blocking off-thread)
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct CopyFile<'a> {
+pub struct CopyFile {
     #[cfg(not(windows))]
     pub(crate) destination_file_store: store::File,
     pub(crate) source_file_store: store::File,
@@ -52,17 +52,12 @@ pub struct CopyFile<'a> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) read_off: SizeType,
 
-    // per LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject
-    // TODO(refactor): lifetime — this struct is Box-allocated and crosses threads;
-    // `'a` here is unsound in practice. Likely should be *const JSGlobalObject.
-    pub global_this: &'a JSGlobalObject,
-
     pub(crate) mkdirp_if_not_exists: bool,
     #[cfg(not(windows))]
     pub(crate) destination_mode: Option<Mode>,
 }
 
-impl MkdirpTarget for CopyFile<'_> {
+impl MkdirpTarget for CopyFile {
     fn mkdirp_if_not_exists(&self) -> bool {
         self.mkdirp_if_not_exists
     }
@@ -74,35 +69,48 @@ impl MkdirpTarget for CopyFile<'_> {
     }
 }
 
-impl jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for CopyFile<'_> {
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::CopyFilePromiseTask;
-    fn run(&mut self) {
-        self.run_async();
+// SAFETY: file stores/paths and blob store refs (atomic counts); nothing thread-affine.
+unsafe impl Send for CopyFile {}
+
+impl jsc::JobContext for CopyFile {
+    type OffThread = Self;
+    type Js = jsc::JSPromiseStrong;
+    fn run(
+        this: &mut Self,
+        _vm: &jsc::vm_handle::Borrow,
+        done: bun_jsc::Completion<Self>,
+    ) -> Option<bun_jsc::Completion<Self>> {
+        this.run_async();
+        Some(done)
     }
-    fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
-        CopyFile::then(self, promise)
+    fn then(
+        mut this: Self,
+        mut promise: jsc::JSPromiseStrong,
+        cx: &jsc::JsThread<'_>,
+    ) -> jsc::JsResult<()> {
+        Ok(CopyFile::then(&mut this, promise.swap(), cx.global())?)
     }
 }
 
-impl<'a> CopyFile<'a> {
+impl CopyFile {
+    /// Schedule the copy on the work pool; returns its promise.
     #[cfg(not(windows))]
     pub(crate) fn create(
         store: StoreRef,
         source_store: StoreRef,
         off: SizeType,
         max_len: SizeType,
-        global_this: &'a JSGlobalObject,
+        global_this: &JSGlobalObject,
         mkdirp_if_not_exists: bool,
         destination_mode: Option<Mode>,
-    ) -> Box<CopyFilePromiseTask<'a>> {
-        let read_file = Box::new(CopyFile {
+    ) -> JSValue {
+        let copy = CopyFile {
             destination_file_store: store.data.as_file().clone(),
             source_file_store: source_store.data.as_file().clone(),
             store: Some(store),
             source_store: Some(source_store),
             offset: off,
             max_length: max_len,
-            global_this,
             mkdirp_if_not_exists,
             destination_mode,
             // defaults:
@@ -112,12 +120,19 @@ impl<'a> CopyFile<'a> {
             read_len: 0,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             read_off: 0,
-        });
-        CopyFilePromiseTask::create_on_js_thread(global_this, read_file)
+        };
+        let cx = global_this.js_thread();
+        let promise = jsc::JSPromiseStrong::init(global_this);
+        let value = promise.value();
+        jsc::Job::<CopyFile>::schedule(&cx, copy, promise);
+        value
     }
 
-    pub(crate) fn reject(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
-        let global_this = self.global_this;
+    pub(crate) fn reject(
+        &mut self,
+        promise: &mut JSPromise,
+        global_this: &JSGlobalObject,
+    ) -> Result<(), jsc::JsTerminated> {
         let mut system_error: SystemError = self.system_error.take().unwrap_or_default();
         if matches!(
             self.source_file_store.pathlike,
@@ -133,22 +148,26 @@ impl<'a> CopyFile<'a> {
         }
 
         let instance = jsc::SystemError::from(system_error)
-            .to_error_instance_with_async_stack(self.global_this, promise);
+            .to_error_instance_with_async_stack(global_this, promise);
         if let Some(store) = self.store.take() {
             drop(store); // deref()
         }
         promise.reject(global_this, Ok(instance))
     }
 
-    pub(crate) fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
+    pub(crate) fn then(
+        &mut self,
+        promise: &mut JSPromise,
+        global_this: &JSGlobalObject,
+    ) -> Result<(), jsc::JsTerminated> {
         drop(self.source_store.take()); // source_store.?.deref()
 
         if self.system_error.is_some() {
-            return self.reject(promise);
+            return self.reject(promise, global_this);
         }
 
         promise.resolve(
-            self.global_this,
+            global_this,
             JSValue::js_number_from_uint64(self.read_len as u64),
         )
     }
@@ -294,6 +313,40 @@ impl<'a> CopyFile<'a> {
         Ok(())
     }
 
+    /// Copies the rest of the file with [`read_write_fallback`] when
+    /// `copy_file_range`/`sendfile`/`splice` is unavailable or unusable,
+    /// recording a failure in `system_error` the same way the syscall paths do.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn fallback_read_write(
+        &mut self,
+        remain: usize,
+        unknown_size: bool,
+        total_written: &mut u64,
+    ) -> Result<(), crate::Error> {
+        let bun_opened_dest = matches!(
+            self.destination_file_store.pathlike,
+            PathOrFileDescriptor::Path(_)
+        );
+        let cap = if unknown_size {
+            MAX_SIZE
+        } else {
+            remain as SizeType
+        };
+        match read_write_fallback(
+            self.source_fd,
+            self.destination_fd,
+            bun_opened_dest,
+            cap,
+            total_written,
+        ) {
+            bun_sys::Result::Err(err) => {
+                self.system_error = Some(err.to_system_error());
+                Err(bun_errno::from_errno(err.errno as i32).into())
+            }
+            bun_sys::Result::Ok(()) => Ok(()),
+        }
+    }
+
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn do_copy_file_range<const USE: TryWith, const CLEAR_APPEND_IF_INVALID: bool>(
         &mut self,
@@ -305,9 +358,11 @@ impl<'a> CopyFile<'a> {
         let mut remain: usize = self.max_length as usize;
         let unknown_size = remain == MAX_SIZE as usize || remain == 0;
         if unknown_size {
-            // sometimes stat lies
-            // let's give it 4096 and see how it goes
-            remain = 4096;
+            // fstat on a FIFO / char device / socket legitimately reports
+            // st_size == 0. In that case `remain` is only the per-call chunk
+            // size; the loop below keeps going until the kernel reports EOF
+            // (written == 0). 64 KiB matches the read/write-loop fallback.
+            remain = 64 * 1024;
         }
 
         let mut total_written: u64 = 0;
@@ -328,29 +383,7 @@ impl<'a> CopyFile<'a> {
         // If they can't use copy_file_range, they probably also can't
         // use sendfile() or splice()
         if !bun_sys::copy_file::can_use_copy_file_range_syscall() {
-            match node_fs::NodeFS::copy_file_using_read_write_loop(
-                bun_core::ZStr::EMPTY,
-                bun_core::ZStr::EMPTY,
-                src_fd,
-                dest_fd,
-                if unknown_size { 0 } else { remain },
-                &mut total_written,
-            ) {
-                bun_sys::Result::Err(err) => {
-                    self.system_error = Some(err.to_system_error());
-                    return Err(bun_errno::from_errno(err.errno as i32).into());
-                }
-                bun_sys::Result::Ok(()) => {
-                    // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
-                    let _ = unsafe {
-                        libc::ftruncate(
-                            dest_fd.native(),
-                            i64::try_from(total_written).expect("int cast"),
-                        )
-                    };
-                    return Ok(());
-                }
-            }
+            return self.fallback_read_write(remain, unknown_size, &mut total_written);
         }
 
         loop {
@@ -403,29 +436,7 @@ impl<'a> CopyFile<'a> {
                 // OPNOTSUPP: filesystem doesn't support this operation
                 bun_sys::E::ENOSYS | bun_sys::E::EXDEV | bun_sys::E::ENOTSUP => {
                     // TODO: this should use non-blocking I/O.
-                    match node_fs::NodeFS::copy_file_using_read_write_loop(
-                        bun_core::ZStr::EMPTY,
-                        bun_core::ZStr::EMPTY,
-                        src_fd,
-                        dest_fd,
-                        if unknown_size { 0 } else { remain },
-                        &mut total_written,
-                    ) {
-                        bun_sys::Result::Err(err) => {
-                            self.system_error = Some(err.to_system_error());
-                            return Err(bun_errno::from_errno(err.errno as i32).into());
-                        }
-                        bun_sys::Result::Ok(()) => {
-                            // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
-                            let _ = unsafe {
-                                libc::ftruncate(
-                                    dest_fd.native(),
-                                    i64::try_from(total_written).expect("int cast"),
-                                )
-                            };
-                            return Ok(());
-                        }
-                    }
+                    return self.fallback_read_write(remain, unknown_size, &mut total_written);
                 }
 
                 // EINVAL: eCryptfs and other filesystems may not support copy_file_range.
@@ -460,29 +471,7 @@ impl<'a> CopyFile<'a> {
                     // to a read/write loop
                     if total_written == 0 {
                         // TODO: this should use non-blocking I/O.
-                        match node_fs::NodeFS::copy_file_using_read_write_loop(
-                            bun_core::ZStr::EMPTY,
-                            bun_core::ZStr::EMPTY,
-                            src_fd,
-                            dest_fd,
-                            if unknown_size { 0 } else { remain },
-                            &mut total_written,
-                        ) {
-                            bun_sys::Result::Err(err) => {
-                                self.system_error = Some(err.to_system_error());
-                                return Err(bun_errno::from_errno(err.errno as i32).into());
-                            }
-                            bun_sys::Result::Ok(()) => {
-                                // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
-                                let _ = unsafe {
-                                    libc::ftruncate(
-                                        dest_fd.native(),
-                                        i64::try_from(total_written).expect("int cast"),
-                                    )
-                                };
-                                return Ok(());
-                            }
-                        }
+                        return self.fallback_read_write(remain, unknown_size, &mut total_written);
                     }
 
                     self.system_error = Some(
@@ -511,13 +500,34 @@ impl<'a> CopyFile<'a> {
             }
 
             // wrote zero bytes means EOF
-            remain = remain.saturating_sub(usize::try_from(written).expect("int cast"));
             total_written += u64::try_from(written).expect("int cast");
-            if written == 0 || remain == 0 {
+            if written == 0 {
                 break;
+            }
+            if !unknown_size {
+                remain = remain.saturating_sub(usize::try_from(written).expect("int cast"));
+                if remain == 0 {
+                    break;
+                }
             }
         }
         Ok(())
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    fn do_read_write_loop_capped(&mut self, cap: SizeType) -> Result<(), crate::Error> {
+        let mut total: u64 = 0;
+        match read_write_loop_capped(self.source_fd, self.destination_fd, cap, &mut total) {
+            bun_sys::Result::Ok(()) => {
+                self.read_len = total as SizeType;
+                Ok(())
+            }
+            bun_sys::Result::Err(err) => {
+                self.read_len = total as SizeType;
+                self.system_error = Some(err.to_system_error());
+                Err(bun_errno::from_errno(err.errno as i32).into())
+            }
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -787,7 +797,9 @@ impl<'a> CopyFile<'a> {
                 return;
             }
 
-            if stat.st_size != 0 {
+            // BSD fstat on a pipe reports bytes currently buffered in st_size;
+            // only a regular-file st_size is a length.
+            if stat.st_size != 0 && bun_sys::S::ISREG(stat.st_mode as _) {
                 self.max_length = (SizeType::try_from(stat.st_size)
                     .expect("int cast")
                     .min(self.max_length))
@@ -799,7 +811,10 @@ impl<'a> CopyFile<'a> {
                 }
 
                 if PREALLOCATE_SUPPORTED
-                    && bun_sys::S::ISREG(stat.st_mode as _)
+                    && matches!(
+                        self.destination_file_store.pathlike,
+                        PathOrFileDescriptor::Path(_)
+                    )
                     && self.max_length > PREALLOCATE_LENGTH
                     && self.max_length != MAX_SIZE
                 {
@@ -863,20 +878,27 @@ impl<'a> CopyFile<'a> {
 
             #[cfg(target_os = "macos")]
             {
-                if self.do_fcopy_file_with_read_write_loop_fallback().is_err() {
+                // fcopyfile rewrites dest from offset 0 and the slice trim is
+                // ftruncate; both are only safe for a dest Bun opened O_TRUNC.
+                if matches!(
+                    self.destination_file_store.pathlike,
+                    PathOrFileDescriptor::Path(_)
+                ) {
+                    if self.do_fcopy_file_with_read_write_loop_fallback().is_err() {
+                        self.do_close();
+                        return;
+                    }
+                    if stat.st_size != 0
+                        && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
+                    {
+                        let _ = bun_sys::ftruncate(
+                            self.destination_fd,
+                            i64::try_from(self.max_length).expect("int cast"),
+                        );
+                    }
+                } else if self.do_read_write_loop_capped(self.max_length).is_err() {
                     self.do_close();
                     return;
-                }
-                if stat.st_size != 0
-                    && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
-                {
-                    // SAFETY: `destination_fd` is open; libc ftruncate(2).
-                    let _ = unsafe {
-                        bun_sys::darwin::ftruncate(
-                            self.destination_fd.native(),
-                            i64::try_from(self.max_length).expect("int cast"),
-                        )
-                    };
                 }
 
                 self.do_close();
@@ -885,32 +907,40 @@ impl<'a> CopyFile<'a> {
 
             #[cfg(target_os = "freebsd")]
             {
-                let mut total_written: u64 = 0;
-                match node_fs::NodeFS::copy_file_using_read_write_loop(
-                    bun_core::ZStr::EMPTY,
-                    bun_core::ZStr::EMPTY,
-                    self.source_fd,
-                    self.destination_fd,
-                    0,
-                    &mut total_written,
+                if matches!(
+                    self.destination_file_store.pathlike,
+                    PathOrFileDescriptor::Path(_)
                 ) {
-                    bun_sys::Result::Err(err) => {
-                        self.system_error = Some(err.to_system_error());
-                        self.do_close();
-                        return;
-                    }
-                    bun_sys::Result::Ok(()) => {}
-                }
-                if stat.st_size != 0
-                    && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
-                {
-                    let _ = bun_sys::ftruncate(
+                    let mut total_written: u64 = 0;
+                    match node_fs::NodeFS::copy_file_using_read_write_loop(
+                        bun_core::ZStr::EMPTY,
+                        bun_core::ZStr::EMPTY,
+                        self.source_fd,
                         self.destination_fd,
-                        i64::try_from(self.max_length).expect("int cast"),
-                    );
-                    self.read_len = total_written.min(self.max_length as u64) as SizeType;
-                } else {
-                    self.read_len = total_written as SizeType;
+                        0,
+                        &mut total_written,
+                    ) {
+                        bun_sys::Result::Err(err) => {
+                            self.system_error = Some(err.to_system_error());
+                            self.do_close();
+                            return;
+                        }
+                        bun_sys::Result::Ok(()) => {}
+                    }
+                    if stat.st_size != 0
+                        && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
+                    {
+                        let _ = bun_sys::ftruncate(
+                            self.destination_fd,
+                            i64::try_from(self.max_length).expect("int cast"),
+                        );
+                        self.read_len = total_written.min(self.max_length as u64) as SizeType;
+                    } else {
+                        self.read_len = total_written as SizeType;
+                    }
+                } else if self.do_read_write_loop_capped(self.max_length).is_err() {
+                    self.do_close();
+                    return;
                 }
                 self.do_close();
                 return;
@@ -927,6 +957,62 @@ impl<'a> CopyFile<'a> {
             }
         }
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn read_write_fallback(
+    src_fd: Fd,
+    dest_fd: Fd,
+    bun_opened_dest: bool,
+    cap: SizeType,
+    total: &mut u64,
+) -> bun_sys::Result<()> {
+    if bun_opened_dest {
+        let stat_size = if cap == MAX_SIZE { 0 } else { cap as usize };
+        node_fs::NodeFS::copy_file_using_read_write_loop(
+            bun_core::ZStr::EMPTY,
+            bun_core::ZStr::EMPTY,
+            src_fd,
+            dest_fd,
+            stat_size,
+            total,
+        )?;
+        let _ = bun_sys::ftruncate(dest_fd, i64::try_from(*total).expect("int cast"));
+        Ok(())
+    } else {
+        read_write_loop_capped(src_fd, dest_fd, cap, total)
+    }
+}
+
+#[inline(never)] // 64 KB stack buffer
+#[cfg(not(windows))]
+fn read_write_loop_capped(
+    src_fd: Fd,
+    dest_fd: Fd,
+    cap: SizeType,
+    total: &mut u64,
+) -> bun_sys::Result<()> {
+    let mut buf = [0u8; 64 * 1024];
+    let mut remaining = cap;
+    while remaining > 0 {
+        let want = (buf.len() as SizeType).min(remaining) as usize;
+        let amt = bun_sys::read(src_fd, &mut buf[..want])?;
+        if amt == 0 {
+            break;
+        }
+        remaining -= amt as SizeType;
+        let mut slice = &buf[..amt];
+        while !slice.is_empty() {
+            match bun_sys::write(dest_fd, slice)? {
+                0 => return Ok(()),
+                n => {
+                    *total += n as u64;
+                    slice = &slice[n..];
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 // Ownership is encoded in the types, so cleanup is all field `Drop`:
@@ -985,6 +1071,8 @@ pub struct CopyFileWindows<'a> {
     // TODO(refactor): lifetime — heap-allocated and re-entered from libuv callbacks;
     // likely should be *const jsc::EventLoop.
     pub(crate) event_loop: &'a jsc::event_loop::EventLoop,
+    /// How the mkdirp pool completion gets back to the VM.
+    pub(crate) loop_handle: jsc::LoopHandle,
 
     pub(crate) size: SizeType,
 
@@ -1259,7 +1347,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
 #[cfg(windows)]
 impl<'a> CopyFileWindows<'a> {
     pub(crate) fn on_read_write_loop_complete(&mut self) {
-        self.event_loop.unref_concurrently();
+        self.event_loop.unref_keep_alive();
 
         if let Some(err) = self.err.take() {
             self.throw(err);
@@ -1290,6 +1378,7 @@ impl<'a> CopyFileWindows<'a> {
             promise: jsc::JSPromiseStrong::init(global),
             // SAFETY: all-zero is a valid libuv::fs_t
             io_request: bun_core::ffi::zeroed::<libuv::fs_t>(),
+            loop_handle: jsc::VirtualMachine::VirtualMachine::get().loop_handle(),
             event_loop,
             mkdirp_if_not_exists,
             destination_mode,
@@ -1391,7 +1480,7 @@ impl<'a> CopyFileWindows<'a> {
                 self.throw(err);
             }
             bun_sys::Result::Ok(()) => {
-                self.event_loop.ref_concurrently();
+                self.event_loop.ref_keep_alive();
             }
         }
     }
@@ -1543,7 +1632,7 @@ impl<'a> CopyFileWindows<'a> {
             });
             return;
         }
-        self.event_loop.ref_concurrently();
+        self.event_loop.ref_keep_alive();
     }
 
     pub fn throw(&mut self, err: bun_sys::Error) {
@@ -1627,7 +1716,7 @@ impl<'a> CopyFileWindows<'a> {
                     self.throw(err);
                     return;
                 }
-                self.event_loop.ref_concurrently();
+                self.event_loop.ref_keep_alive();
                 return;
             }
         }
@@ -1705,7 +1794,7 @@ impl<'a> CopyFileWindows<'a> {
                 .unwrap_or(path_slice) as *const [u8]
         };
 
-        self.event_loop.ref_concurrently();
+        self.event_loop.ref_keep_alive();
         node_fs::async_::AsyncMkdirp::schedule(node_fs::async_::AsyncMkdirp {
             completion: on_mkdirp_complete_concurrent,
             completion_ctx: core::ptr::from_mut(self).cast::<()>(),
@@ -1715,7 +1804,7 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn on_mkdirp_complete(&mut self) {
-        self.event_loop.unref_concurrently();
+        self.event_loop.unref_keep_alive();
 
         if let Some(err) = self.err.take() {
             // `bun_sys::Error.path` is an owned `Box<[u8]>` and is dropped with
@@ -1736,7 +1825,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     debug_assert!(core::ptr::addr_of_mut!(this.io_request) == req);
 
     let event_loop = this.event_loop;
-    event_loop.unref_concurrently();
+    event_loop.unref_keep_alive();
     let rc = this.io_request.result;
 
     bun_sys::syslog!("uv_fs_copyfile() = {}", rc);
@@ -1803,7 +1892,7 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
     debug_assert!(core::ptr::addr_of_mut!(this.io_request) == req);
 
     let event_loop = this.event_loop;
-    event_loop.unref_concurrently();
+    event_loop.unref_keep_alive();
 
     let rc = this.io_request.result;
     if let Some(errno) = rc.err_enum_e() {
@@ -1830,7 +1919,6 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         bun_sys::Result::Err(e) => Some(e),
         bun_sys::Result::Ok(()) => None,
     };
-    // `bun_event_loop::JsResult` carries the low-tier `ErasedJsError`; shim the
     // callback signature to match `ManagedTask::new`'s `fn(*mut T) -> JsResult<()>`.
     fn call_erased(this: *mut CopyFileWindows<'_>) -> bun_event_loop::JsResult<()> {
         // SAFETY: `this` is the heap-allocated `CopyFileWindows` passed to
@@ -1839,10 +1927,15 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         unsafe { (*this).on_mkdirp_complete() };
         Ok(())
     }
-    this.event_loop
-        .enqueue_task_concurrent(jsc::ConcurrentTask::create(
-            jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
-        ));
+    let ct = jsc::ConcurrentTask::create(jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(
+        this,
+        call_erased,
+    ));
+    if let jsc::vm_handle::Posted::Refused(ct) = this.loop_handle.post_task(ct) {
+        // VM torn down: nobody will settle the promise; free the hop.
+        // SAFETY: refused ⇒ we own the task box.
+        unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct) };
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1877,6 +1970,3 @@ fn unsupported_non_regular_file_error() -> SystemError {
 }
 // `SystemError` contains `bun_core::String`, which is not const-constructible,
 // so these are constructor fns instead of `const` values.
-
-pub(crate) type CopyFilePromiseTask<'a> =
-    jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, CopyFile<'a>>;

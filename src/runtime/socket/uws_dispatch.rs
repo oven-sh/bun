@@ -252,7 +252,7 @@ pub(crate) unsafe extern "C" fn us_dispatch_session(
     // SAFETY: `data` points to `len` readable bytes owned by the caller for the
     // duration of this call.
     let slice = unsafe { core::slice::from_raw_parts(data, len) };
-    let _ = TLSSocket::on_session(tls, slice);
+    TLSSocket::on_session(tls, slice);
 }
 
 /// Hands an NSS key-log line parked by the keylog callback to the JS
@@ -283,5 +283,5 @@ pub(crate) unsafe extern "C" fn us_dispatch_keylog(
     // SAFETY: `data` points to `len` readable bytes owned by the caller for the
     // duration of this call.
     let slice = unsafe { core::slice::from_raw_parts(data, len) };
-    let _ = TLSSocket::on_keylog(tls, slice);
+    TLSSocket::on_keylog(tls, slice);
 }

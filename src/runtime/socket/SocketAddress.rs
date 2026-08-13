@@ -10,7 +10,7 @@ use core::ffi::{c_int, c_void};
 use core::mem;
 
 use bun_cares_sys::c_ares as ares;
-use bun_core::{OwnedString, String as BunString, ZStr};
+use bun_core::{OwnedString, String as BunString, ZStr, strings};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc, URL};
 
 // The JsClass derive / codegen wires toJS/fromJS/fromJSDirect.
@@ -242,7 +242,7 @@ impl SocketAddress {
         let addr = if paddr[0] == b'[' && paddr[paddr.len() - 1] == b']' {
             let mut inner = &paddr[1..paddr.len() - 1];
             let mut scope_id: u32 = 0;
-            if let Some(pct) = inner.iter().position(|&b| b == b'%') {
+            if let Some(pct) = strings::index_of_char_usize(inner, b'%') {
                 let zone = &inner[pct + 1..];
                 inner = &inner[..pct];
                 // Numeric zone → scope_id directly.
@@ -1036,6 +1036,56 @@ const _: () = {
     assert!(AF::INET as c_int == ares::AF::INET);
     assert!(AF::INET6 as c_int == ares::AF::INET6);
 };
+
+/// Fills `out` with `host`:`port` when `host` is numeric (inet_aton shorthand and `%zone` included) and returns 1, or 0 when it is a name — the one parse behind uSockets' connect paths, so a literal never reaches the resolver; `host` must be NUL-terminated and `out` writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__parseIpAddress(
+    host: *const core::ffi::c_char,
+    port: u16,
+    out: *mut bun_sys::posix::sockaddr_storage,
+) -> c_int {
+    if host.is_null() || out.is_null() {
+        return 0;
+    }
+    // SAFETY: caller contract — `host` is a NUL-terminated C string.
+    let bytes = unsafe { core::ffi::CStr::from_ptr(host) }.to_bytes();
+    let Some(ip) = bun_core::ip_address::to_ip_address(bytes) else {
+        return 0;
+    };
+    let mut addr = bun_sys::net::Address::from_ip(ip, port);
+    if ip.is_ipv6() {
+        if let Some(pct) = strings::index_of_char_usize(bytes, b'%') {
+            addr.set_scope_id(scope_index(&bytes[pct + 1..]));
+        }
+    }
+    // SAFETY: caller contract — `out` is a writable `sockaddr_storage`.
+    unsafe { *out = addr.into_storage() };
+    1
+}
+
+/// A `%zone` is an interface name (`en0`) everywhere but Windows, where it is already the index.
+fn scope_index(zone: &[u8]) -> u32 {
+    #[cfg(not(windows))]
+    {
+        let mut buf = [0u8; 64];
+        if !zone.is_empty() && zone.len() < buf.len() {
+            buf[..zone.len()].copy_from_slice(zone);
+            // SAFETY: FFI; `buf` is NUL-terminated by construction.
+            let idx = unsafe { libc::if_nametoindex(buf.as_ptr().cast::<core::ffi::c_char>()) };
+            if idx != 0 {
+                return idx;
+            }
+        }
+    }
+    let mut idx: u32 = 0;
+    for &b in zone {
+        if !b.is_ascii_digit() {
+            return 0;
+        }
+        idx = idx.wrapping_mul(10).wrapping_add((b - b'0') as u32);
+    }
+    idx
+}
 
 #[cfg(windows)]
 pub mod inet {

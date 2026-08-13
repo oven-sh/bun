@@ -280,9 +280,7 @@ fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
 
         // Translated from the following JS code:
         //   return StringPrototypeSlice(cwd, StringPrototypeIndexOf(cwd, '/'));
-        let index = normalized_cwd
-            .iter()
-            .position(|&b| b == T::from_u8(CHAR_FORWARD_SLASH));
+        let index = strings::index_of_scalar(normalized_cwd, T::from_u8(CHAR_FORWARD_SLASH));
         // Account for the -1 case of String#slice in JS land
         if let Some(_index) = index {
             return Ok(&mut normalized_cwd[_index..len]);
@@ -324,9 +322,6 @@ fn get_cwd_u16(buf: &mut [u16]) -> MaybeBuf<'_, u16> {
 fn get_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
     T::get_cwd(buf)
 }
-
-// Alias for naming consistency.
-pub(crate) use get_cwd_u8 as get_cwd;
 
 /// Based on Node v21.6.1 path.posix.basename:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1309
@@ -1593,6 +1588,33 @@ pub(crate) fn join(
     join_js_t::<u8>(global_object, pool, is_windows, &paths)
 }
 
+/// Handles a `..` segment for `normalize_string_t`: drops the last segment of
+/// `res` and returns `(res.len, lastSegmentLength)`. Kept out of line so the
+/// per-byte loop in the caller stays call-free.
+#[inline(never)]
+fn pop_last_segment_t<T: PathCharCwd>(res: &[T], separator: T) -> (usize, usize) {
+    match strings::last_index_of_char_t(res, separator) {
+        None => (0, 0),
+        Some(idx) => {
+            // Translated from the following JS code:
+            //   lastSegmentLength =
+            //     res.length - 1 - StringPrototypeLastIndexOf(res, separator);
+            let last_segment_length = match strings::last_index_of_char_t(&res[0..idx], separator) {
+                // Yes (>ლ), Node relies on the -1 result of
+                // StringPrototypeLastIndexOf(res, separator).
+                // A - -1 is a positive 1.
+                // So the code becomes
+                //   lastSegmentLength = res.length - 1 + 1;
+                // or
+                //   lastSegmentLength = res.length;
+                None => idx,
+                Some(sep) => idx - 1 - sep,
+            };
+            (idx, last_segment_length)
+        }
+    }
+}
+
 /// Based on Node v21.6.1 private helper normalizeString:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L65C1-L66C77
 ///
@@ -1643,30 +1665,8 @@ fn normalize_string_t<T: PathCharCwd, const PLATFORM: Platform>(
                     || buf[buf_size - 2] != T::from_u8(CHAR_DOT)
                 {
                     if buf_size > 2 {
-                        match buf[0..buf_size].iter().rposition(|&b| b == separator) {
-                            None => {
-                                buf_size = 0;
-                                last_segment_length = 0;
-                            }
-                            Some(idx) => {
-                                buf_size = idx;
-                                // Translated from the following JS code:
-                                //   lastSegmentLength =
-                                //     res.length - 1 - StringPrototypeLastIndexOf(res, separator);
-                                last_segment_length =
-                                    match buf[0..buf_size].iter().rposition(|&b| b == separator) {
-                                        // Yes (>ლ), Node relies on the -1 result of
-                                        // StringPrototypeLastIndexOf(res, separator).
-                                        // A - -1 is a positive 1.
-                                        // So the code becomes
-                                        //   lastSegmentLength = res.length - 1 + 1;
-                                        // or
-                                        //   lastSegmentLength = res.length;
-                                        None => buf_size,
-                                        Some(sep) => buf_size - 1 - sep,
-                                    };
-                            }
-                        }
+                        (buf_size, last_segment_length) =
+                            pop_last_segment_t(&buf[0..buf_size], separator);
                         last_slash = Some(i);
                         dots = Some(0);
                         continue;
@@ -3067,9 +3067,10 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
                 path_ptr = tmp_buf[resolved_device_len..].as_ptr();
                 path_len = ep_len;
             } else {
-                // cwd is limited to MAX_PATH_BYTES.
-                cwd_len = get_cwd_t(&mut tmp_buf[..])?.len();
-                path_ptr = tmp_buf.as_ptr();
+                // cwd is limited to MAX_PATH_BYTES. Store it AFTER the device:
+                // tmp_buf[0..resolved_device_len] backs resolvedDevice.
+                cwd_len = get_cwd_t(&mut tmp_buf[resolved_device_len..])?.len();
+                path_ptr = tmp_buf[resolved_device_len..].as_ptr();
                 path_len = cwd_len;
                 // We must set envPath here so that it doesn't hit the null check just below.
                 env_path_len = Some(cwd_len);
@@ -3084,7 +3085,7 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
             //     StringPrototypeToLowerCase(resolvedDevice) &&
             //     StringPrototypeCharCodeAt(path, 2) === CHAR_BACKWARD_SLASH)) {
             if env_path_len.is_none()
-                || (path!()[2] == T::from_u8(CHAR_BACKWARD_SLASH)
+                || (path!().get(2).copied() == Some(T::from_u8(CHAR_BACKWARD_SLASH))
                     && !eql_ignore_case_t(&path!()[0..2], &tmp_buf[0..resolved_device_len]))
             {
                 // Translated from the following JS code:

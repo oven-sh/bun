@@ -135,7 +135,7 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     let Ok(memory) = bun_sys::windows::GetProcessMemoryInfo(process_pid) else {
         return usage_info;
     };
-    usage_info.maxrss = (memory.PeakWorkingSetSize / 1024) as u64;
+    usage_info.maxrss = memory.PeakWorkingSetSize as u64;
 
     usage_info
 }
@@ -194,9 +194,15 @@ impl RusageFields for libc::rusage {
     fn stime_usec(&self) -> i64 {
         self.ru_stime.tv_usec as i64
     }
+    /// Bytes. `ru_maxrss` is bytes on Apple platforms but kilobytes on
+    /// Linux/BSD.
     #[inline]
     fn maxrss(&self) -> f64 {
-        self.ru_maxrss as f64
+        if cfg!(target_vendor = "apple") {
+            self.ru_maxrss as f64
+        } else {
+            (self.ru_maxrss as f64) * 1024.0
+        }
     }
     #[inline]
     fn ixrss(&self) -> f64 {
@@ -343,6 +349,9 @@ pub struct PosixSpawnOptions {
     /// no-orphans mode is enabled (see `ParentDeathWatchdog`), else 0 (no
     /// PDEATHSIG). Not exposed to JS yet.
     pub linux_pdeathsig: Option<u8>,
+    /// Linux only. Directory fd of a cgroup the child starts inside
+    /// (`CLONE_INTO_CGROUP`, else a pre-exec `cgroup.procs` write). Caller owns the fd.
+    pub cgroup_fd: Option<Fd>,
 }
 
 impl Default for PosixSpawnOptions {
@@ -368,6 +377,7 @@ impl Default for PosixSpawnOptions {
             pty_slave_fd: -1,
             pseudoconsole: (),
             linux_pdeathsig: None,
+            cgroup_fd: None,
         }
     }
 }
@@ -700,6 +710,7 @@ pub unsafe fn spawn_process_posix(
     attr.new_process_group = options.new_process_group;
     attr.uid = options.uid;
     attr.gid = options.gid;
+    attr.cgroup_fd = options.cgroup_fd.map_or(-1, |fd| fd.native());
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
@@ -772,7 +783,12 @@ pub unsafe fn spawn_process_posix(
                 }
             }
             PosixStdio::Inherit => {
-                actions.inherit(fileno)?;
+                // A closed slot would inherit whatever fd is created later at that number (e.g. the ipc socketpair); libuv gives it /dev/null.
+                if bun_sys::get_fcntl_flags(fileno).is_err() {
+                    actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
+                } else {
+                    actions.inherit(fileno)?;
+                }
             }
             PosixStdio::Ipc | PosixStdio::Ignore => {
                 actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;

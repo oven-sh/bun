@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSMessageEvent.h"
 #include <JavaScriptCore/ObjectConstructor.h>
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
@@ -42,9 +41,7 @@
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
 #include "JSMessagePort.h"
-#include "JSServiceWorker.h"
 #include <JavaScriptCore/IteratorOperations.h>
-#include "JSWindowProxy.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 

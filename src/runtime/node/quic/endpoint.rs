@@ -482,15 +482,12 @@ extern "C" fn on_data(
         }
         this.add_stat(IDX_STATS_PACKETS_RECEIVED, 1);
         this.add_stat(IDX_STATS_BYTES_RECEIVED, payload.len() as u64);
-        if let Some(bl) = this.block_list.get() {
-            // SAFETY: the Strong in `block_list_js` keeps the wrapper (and
-            // native object) alive for the endpoint's lifetime; `peer` is
-            // the live sockaddr for this packet.
-            let listed = unsafe { (*bl).check_sockaddr(&*core::ptr::from_ref(peer).cast()) };
-            if listed != this.block_list_allow.get() {
-                this.add_stat(IDX_STATS_PACKETS_BLOCKED, 1);
-                continue;
-            }
+        // SAFETY: `peer` is the live sockaddr for this packet.
+        let peer_sa = unsafe {
+            &*core::ptr::from_ref(peer).cast::<crate::socket::socket_address::sockaddr>()
+        };
+        if this.peer_blocked(peer_sa) {
+            continue;
         }
         // Which of our engines already hashes this DCID, if either. Feeding the
         // other one a packet it cannot match makes it answer with a stateless
@@ -539,6 +536,9 @@ extern "C" fn on_data(
                     // SAFETY: as above; the packet is fed with OUR local
                     // address (the migration target).
                     let other = unsafe { &*owner };
+                    if other.peer_blocked(peer_sa) {
+                        continue;
+                    }
                     // SAFETY: as in the direct feed below.
                     unsafe {
                         lsquic::lsquic_engine_packet_in(
@@ -573,6 +573,9 @@ extern "C" fn on_data(
                         // SAFETY: registered as of the check above, so its
                         // backing storage is live.
                         let other = unsafe { &*other_ptr };
+                        if other.peer_blocked(peer_sa) {
+                            continue;
+                        }
                         for engine in [other.server_engine.get(), other.client_engine.get()] {
                             if engine.is_null() {
                                 continue;
@@ -828,7 +831,7 @@ fn match_sni<'a>(entries: &'a [(Vec<u8>, TlsContext)], host: &[u8]) -> Option<&'
     if let Some((_, ctx)) = entries.iter().find(|(h, _)| eq(h, host)) {
         return Some(ctx);
     }
-    if let Some(dot) = host.iter().position(|&b| b == b'.') {
+    if let Some(dot) = bun_core::strings::index_of_char_usize(host, b'.') {
         let suffix = &host[dot..];
         if let Some((_, ctx)) = entries
             .iter()
@@ -1341,6 +1344,19 @@ impl QuicEndpoint {
         }
     }
 
+    fn peer_blocked(&self, peer: &crate::socket::socket_address::sockaddr) -> bool {
+        let Some(bl) = self.block_list.get() else {
+            return false;
+        };
+        // SAFETY: the Strong in `block_list_js` keeps the wrapper (and
+        // native object) alive for the endpoint's lifetime.
+        let blocked = unsafe { (*bl).check_sockaddr(peer) } != self.block_list_allow.get();
+        if blocked {
+            self.add_stat(IDX_STATS_PACKETS_BLOCKED, 1);
+        }
+        blocked
+    }
+
     /// Returns `Ok(false)` when the bind fails: Node does not throw here.
     fn ensure_bound(&self, global: &JSGlobalObject, this_value: JSValue) -> JsResult<bool> {
         if self.socket.get().is_some() {
@@ -1561,7 +1577,12 @@ impl QuicEndpoint {
         // time-driven state (RTO, ACK delay, idle) and the deferred close.
         self.mark_driver_pending();
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
-        timer_all().update(self.event_loop_timer.as_ptr(), &next);
+        timer_all().update(
+            core::ptr::addr_of!(self.event_loop_timer)
+                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                .cast_mut(),
+            &next,
+        );
     }
 
     fn rearm_timer(&self) {
@@ -1599,7 +1620,12 @@ impl QuicEndpoint {
                 bun_core::TimespecMockMode::ForceRealTime,
                 ms as i64,
             );
-            timer_all().update(self.event_loop_timer.as_ptr(), &next);
+            timer_all().update(
+                core::ptr::addr_of!(self.event_loop_timer)
+                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                    .cast_mut(),
+                &next,
+            );
         }
     }
 
@@ -2099,7 +2125,12 @@ impl QuicEndpoint {
         self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         self.pending_endpoint_close.set(true);
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
-        timer_all().update(self.event_loop_timer.as_ptr(), &next);
+        timer_all().update(
+            core::ptr::addr_of!(self.event_loop_timer)
+                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                .cast_mut(),
+            &next,
+        );
     }
 
     fn apply_server_session_options(&self, global: &JSGlobalObject, session: *mut QuicSession) {

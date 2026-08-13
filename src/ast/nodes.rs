@@ -4,7 +4,6 @@
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
-pub use bun_collections::VecExt as _VecExtReexport;
 use bun_collections::{ArrayHashMap, AutoContext, MultiArrayList, StringHashMap};
 use bun_core::Output;
 
@@ -526,11 +525,10 @@ pub const NAMESPACE_EXPORT_PART_INDEX: u32 = 0;
 /// Slice that stores capacity and length in the same space as a regular slice.
 pub type ExprNodeList = Vec<Expr, bun_alloc::AstAlloc>;
 
-// Arena-owned `[Stmt]` / `[Binding]` views — see `StoreSlice<T>` doc above.
+// Arena-owned `[Stmt]` view — see `StoreSlice<T>` doc above.
 // A `PhantomData<&'arena ()>` can be added to `StoreSlice` later as a
 // one-struct change once `'arena` is threaded through `Expr`/`Stmt`/`Data`.
 pub type StmtNodeList = StoreSlice<Stmt>;
-pub type BindingNodeList = StoreSlice<Binding>;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
@@ -1093,8 +1091,6 @@ pub enum PartTag {
     None,
     JsxImport,
     Runtime,
-    CjsImports,
-    ReactFastRefresh,
     ReactCompiler,
     DirnameFilename,
     BunTest,

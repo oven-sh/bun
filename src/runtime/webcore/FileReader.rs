@@ -11,6 +11,7 @@ use bun_jsc::JsCell;
 use bun_ptr::AsCtxPtr;
 use bun_sys::{self as sys, Fd, FdExt};
 
+use crate::webcore::SinkHandle;
 use crate::webcore::blob;
 use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
 use crate::webcore::jsc::{EnsureStillAlive, strong::Optional as Strong};
@@ -65,6 +66,11 @@ pub struct FileReader {
     /// Read-only after construction.
     pub(crate) highwater_mark: usize,
     pub(crate) flowing: Cell<bool>,
+    /// Native sink attached by a hookup site (e.g. fetch request body). When
+    /// set, `on_read_chunk` writes directly to it instead of the JS `pending`
+    /// path; `pull_into_sink` is the drain-ack resume.
+    pub(crate) sink: JsCell<SinkHandle>,
+    pub(crate) sink_paused: Cell<bool>,
 }
 
 impl Default for FileReader {
@@ -88,12 +94,13 @@ impl Default for FileReader {
             read_inside_on_pull: JsCell::new(ReadDuringJSOnPullResult::None),
             highwater_mark: 16384,
             flowing: Cell::new(true),
+            sink: JsCell::new(SinkHandle::None),
+            sink_paused: Cell::new(false),
         }
     }
 }
 
 pub type IOReader = BufferedReader;
-pub const TAG: readable_stream::Tag = readable_stream::Tag::File;
 
 #[derive(strum::IntoStaticStr)]
 pub enum ReadDuringJSOnPullResult {
@@ -501,7 +508,9 @@ impl FileReader {
                     // A from_pipe() reader may arrive with IS_PAUSED set (lazy
                     // subprocess stdio); clear it so read() does not no-op.
                     self.reader().unpause();
-                    self.reader().read();
+                    // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+                    // the raw re-entrancy-safe entry (its dispatch runs user JS).
+                    unsafe { IOReader::read(self.reader.get()) };
                 }
             }
         }
@@ -522,7 +531,81 @@ impl FileReader {
         unsafe { (*self.parent()).global_this }.expect("NewSource.global_this set before use")
     }
 
+    /// Lazily start the reader for a native-sink hookup. Bun's file-backed
+    /// streams defer `start()` to the first JS `pull()`, so the hookup site
+    /// must drive it itself. Returns `None` if the reader was already started
+    /// (or nothing to do); otherwise the `on_start` result the caller must
+    /// handle (`Err` / `OwnedAndDone`).
+    pub(crate) fn start_for_sink(&self, global: &jsc::JSGlobalObject) -> Option<streams::Start> {
+        if self.started.get() {
+            return None;
+        }
+        // SAFETY: see `parent()` — `self` is the `context` field of a live
+        // heap-allocated `Source`; single-threaded JS, no aliasing `&mut`.
+        unsafe { (*self.parent()).global_this = Some(bun_ptr::BackRef::new(global)) };
+        match self.on_start() {
+            streams::Start::Ready | streams::Start::Empty | streams::Start::ChunkSize(_) => None,
+            other => Some(other),
+        }
+    }
+
+    /// Detach the native sink without running the cancel path. Called by the
+    /// sink's `SourceHandle::close` when the sink closes first.
+    pub(crate) fn unpipe_without_deref(&self) {
+        self.sink.set(SinkHandle::None);
+        self.sink_paused.set(false);
+    }
+
+    /// Sink's drain ack: unpause, push any buffered bytes, then resume reading.
+    pub(crate) fn pull_into_sink(&self) {
+        if !self.sink_paused.replace(false) {
+            return;
+        }
+        let sink = *self.sink.get();
+        if sink.is_none() {
+            return;
+        }
+        let reader_done = self.reader().is_done();
+        let buffered = self.drain();
+        if !buffered.is_empty() {
+            let chunk = if reader_done {
+                streams::Result::OwnedAndDone(buffered)
+            } else {
+                streams::Result::Owned(buffered)
+            };
+            match sink.write(&chunk) {
+                streams::Writable::Backpressure(_) => {
+                    self.sink_paused.set(true);
+                    return;
+                }
+                streams::Writable::Err(e) => {
+                    self.sink.set(SinkHandle::None);
+                    sink.end(Some(streams::StreamError::Error(e)));
+                    return;
+                }
+                streams::Writable::Done => {
+                    self.sink.set(SinkHandle::None);
+                    sink.end(None);
+                    return;
+                }
+                _ => {}
+            }
+        }
+        if reader_done || self.done.get() {
+            self.sink.set(SinkHandle::None);
+            sink.end(None);
+            return;
+        }
+        if !self.reader().has_pending_read() {
+            self.reader().unpause();
+            // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+            // the raw re-entrancy-safe entry (its dispatch runs user JS).
+            unsafe { IOReader::read(self.reader.get()) };
+        }
+    }
+
     pub(crate) fn on_cancel(&self) {
+        self.unpipe_without_deref();
         if self.done.get() {
             return;
         }
@@ -611,6 +694,51 @@ impl FileReader {
         // and deref only at the exact use sites below.
         let reader_buffer: *mut Vec<u8> = self.reader().buffer();
 
+        // Native sink fast-path: bytes go straight to the attached sink,
+        // bypassing the JS `pending` / `read_inside_on_pull` machinery.
+        let sink = *self.sink.get();
+        if sink.is_some() {
+            if !buf.is_empty() {
+                let chunk = if has_more {
+                    streams::Result::Temporary(bun_ptr::RawSlice::new(buf))
+                } else {
+                    streams::Result::TemporaryAndDone(bun_ptr::RawSlice::new(buf))
+                };
+                let wrote = sink.write(&chunk);
+                // SAFETY: see `reader_buffer` decl — tight deref, no `&mut` held.
+                if is_slice_in_vec_capacity(buf, unsafe { &*reader_buffer }) {
+                    // SAFETY: see `reader_buffer` decl.
+                    unsafe { (*reader_buffer).clear() };
+                }
+                match wrote {
+                    streams::Writable::Backpressure(_) => {
+                        self.sink_paused.set(true);
+                        close_if_needed!();
+                        return false;
+                    }
+                    streams::Writable::Err(e) => {
+                        self.sink.set(SinkHandle::None);
+                        sink.end(Some(streams::StreamError::Error(e)));
+                        close_if_needed!();
+                        return false;
+                    }
+                    streams::Writable::Done => {
+                        self.sink.set(SinkHandle::None);
+                        sink.end(None);
+                        close_if_needed!();
+                        return false;
+                    }
+                    _ => {}
+                }
+            }
+            if !has_more && self.sink.get().is_some() {
+                self.sink.set(SinkHandle::None);
+                sink.end(None);
+            }
+            close_if_needed!();
+            return has_more;
+        }
+
         if !self.read_inside_on_pull.get().is_none() {
             // R-2: `with_mut` projects `&mut ReadDuringJSOnPullResult` from
             // `&self`; `self.buffered` is a disjoint `JsCell` so nested access
@@ -674,7 +802,7 @@ impl FileReader {
                             pending_buf[0..buffer.len()].copy_from_slice(&buffer);
                             self.pending.with_mut(|p| {
                                 p.result = streams::Result::IntoArrayAndDone(streams::IntoArray {
-                                    value: self.pending_value.get().get().unwrap_or(JSValue::ZERO),
+                                    value: self.pending_value.get().get().unwrap_or_default(),
                                     len: buffer.len() as u64, // @truncate
                                 })
                             });
@@ -700,7 +828,7 @@ impl FileReader {
                     self.buffered.with_mut(|b| b.clear());
 
                     let into_array = streams::IntoArray {
-                        value: self.pending_value.get().get().unwrap_or(JSValue::ZERO),
+                        value: self.pending_value.get().get().unwrap_or_default(),
                         len: buf.len() as u64, // @truncate
                     };
 
@@ -878,7 +1006,9 @@ impl FileReader {
             let buffer_len = buffer.len();
             self.read_inside_on_pull
                 .set(ReadDuringJSOnPullResult::Js(buffer));
-            self.reader().read();
+            // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+            // the raw re-entrancy-safe entry (its dispatch runs user JS).
+            unsafe { IOReader::read(self.reader.get()) };
 
             // `replace` resets the field before matching, covering all return paths.
             let pulled = self
@@ -996,7 +1126,18 @@ impl FileReader {
         let parent = self.parent();
         // SAFETY: see `parent()`.
         unsafe { (*parent).increment_count() };
-        if !self.is_pulling() {
+        let sink = *self.sink.get();
+        if sink.is_some() {
+            self.consume_reader_buffer();
+            if !self.sink_paused.get() {
+                self.sink.set(SinkHandle::None);
+                let buffered = self.buffered.replace(Vec::new());
+                if !buffered.is_empty() {
+                    let _ = sink.write(&streams::Result::OwnedAndDone(buffered));
+                }
+                sink.end(None);
+            }
+        } else if !self.is_pulling() {
             self.consume_reader_buffer();
             if self.pending.get().state == streams::PendingState::Pending {
                 if !self.buffered.get().is_empty() {
@@ -1035,6 +1176,20 @@ impl FileReader {
         self.consume_reader_buffer();
         if self.buffered.get().capacity() > 0 && self.buffered.get().is_empty() {
             self.buffered.set(Vec::new());
+        }
+
+        let sink = *self.sink.get();
+        if sink.is_some() {
+            self.sink.set(SinkHandle::None);
+            self.sink_paused.set(false);
+            sink.end(Some(streams::StreamError::Error(err)));
+            let parent = self.parent();
+            if self.waiting_for_on_reader_done.get() && !self.done.get() {
+                self.waiting_for_on_reader_done.set(false);
+                // SAFETY: see `parent()`.
+                let _ = unsafe { Source::decrement_count(parent) };
+            }
+            return;
         }
 
         self.pending.with_mut(|p| {
@@ -1090,7 +1245,9 @@ impl FileReader {
             self.reader().unpause();
             if !self.reader().is_done() && !self.reader().has_pending_read() {
                 // Kick off a new read if needed
-                self.reader().read();
+                // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+                // the raw re-entrancy-safe entry (its dispatch runs user JS).
+                unsafe { IOReader::read(self.reader.get()) };
             }
         } else {
             self.reader().pause();
@@ -1112,6 +1269,7 @@ pub type Source = readable_stream::NewSource<FileReader>;
 // `unsafe { (*ptr).method() }` scope and never hold `&mut Source` across other
 // `self.*` accesses.
 bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; }
+bun_core::impl_field_parent! { FileReader => Source.context; pub fn parent_const; }
 
 impl readable_stream::SourceContext for FileReader {
     const NAME: &'static str = "File";

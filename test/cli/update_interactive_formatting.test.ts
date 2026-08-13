@@ -56,42 +56,17 @@ async function updateInteractive(
 
 // Each test owns its own tempDir and subprocesses; the registry is read-only after beforeAll.
 describe.concurrent("bun update --interactive", () => {
-  it("should render the column header and align package names of varying lengths", async () => {
-    await using dir = tempDir("update-interactive-name-lengths", {
+  it("should render the outdated-package table with aligned name/version columns", async () => {
+    await using dir = tempDir("update-interactive-alignment", {
       "bunfig.toml": bunfig(),
       "package.json": JSON.stringify({
         name: "test-project",
         version: "1.0.0",
         dependencies: {
-          "a-dep": "1.0.1",
-          "no-deps": "1.0.0",
-          "normal-dep-and-dev-dep": "1.0.0",
-        },
-      }),
-    });
-
-    await install(dir);
-    const { stdout, exitCode } = await updateInteractive(dir, { args: ["--latest", "--dry-run"], input: "\n" });
-
-    // Widest name is 22 chars; every row pads to the same Current column.
-    expect(stdout).toContain("Current  Target  Latest");
-    expect(stdout).toContain("a-dep                   1.0.1");
-    expect(stdout).toContain("no-deps                 1.0.0");
-    expect(stdout).toContain("normal-dep-and-dev-dep  1.0.0");
-    expect(stdout).toContain("No packages selected");
-    expect(exitCode).toBe(0);
-  });
-
-  it("should render version strings of varying lengths in aligned columns", async () => {
-    await using dir = tempDir("update-interactive-version-lengths", {
-      "bunfig.toml": bunfig(),
-      "package.json": JSON.stringify({
-        name: "test-project",
-        version: "1.0.0",
-        dependencies: {
-          "no-deps": "1.0.0",
           "a-dep": "1.0.1",
           "dep-with-tags": "1.0.0",
+          "no-deps": "1.0.0",
+          "normal-dep-and-dev-dep": "1.0.0",
         },
       }),
     });
@@ -101,44 +76,29 @@ describe.concurrent("bun update --interactive", () => {
 
     // Exact spacing so a regression in name_padding / current_padding /
     // target_padding fails here instead of slipping through a \s+ regex.
-    expect(stdout).toContain("Current  Target  Latest");
-    expect(stdout).toContain("a-dep          1.0.1    1.0.1   1.0.10");
-    expect(stdout).toContain("dep-with-tags  1.0.0    1.0.0   3.0.0");
-    expect(stdout).toContain("no-deps        1.0.0    1.0.0   2.0.0");
-    expect(exitCode).toBe(0);
-  });
-
-  it("should render packages that exceed the default column width without wrapping", async () => {
-    await using dir = tempDir("update-interactive-long-name", {
-      "bunfig.toml": bunfig(),
-      "package.json": JSON.stringify({
-        name: "test-project",
-        version: "1.0.0",
-        dependencies: {
-          "normal-dep-and-dev-dep": "1.0.0",
-        },
-      }),
-    });
-
-    await install(dir);
-    const { stdout, exitCode } = await updateInteractive(dir, { args: ["--latest", "--dry-run"], input: "\n" });
-
-    // The name column grows to fit; Current/Target/Latest stay on the same line.
+    // Covers: short/medium/long names (5..22 chars), short/long latest
+    // versions (2.0.0 vs 1.0.10), and a name wider than the header.
+    expect(stdout).toContain("dependencies                Current  Target  Latest");
+    expect(stdout).toContain("a-dep                   1.0.1    1.0.1   1.0.10");
+    expect(stdout).toContain("dep-with-tags           1.0.0    1.0.0   3.0.0");
+    expect(stdout).toContain("no-deps                 1.0.0    1.0.0   2.0.0");
     expect(stdout).toContain("normal-dep-and-dev-dep  1.0.0    1.0.0   1.0.2");
+    expect(stdout).toContain("No packages selected");
     expect(exitCode).toBe(0);
   });
 
-  it("should list packages from multiple workspaces with --filter", async () => {
-    await using dir = tempDir("update-interactive-workspace-col", {
+  it("should list workspace and catalog dependencies with --filter", async () => {
+    await using dir = tempDir("update-interactive-workspace-catalog-render", {
       "bunfig.toml": bunfig(),
       "package.json": JSON.stringify({
         name: "root",
         version: "1.0.0",
+        catalog: { "no-deps": "1.0.0" },
         workspaces: ["packages/*"],
       }),
       "packages/pkg1/package.json": JSON.stringify({
         name: "pkg1",
-        dependencies: { "no-deps": "1.0.0" },
+        dependencies: { "no-deps": "catalog:" },
       }),
       "packages/pkg2/package.json": JSON.stringify({
         name: "pkg2",
@@ -153,39 +113,9 @@ describe.concurrent("bun update --interactive", () => {
     });
 
     expect(stdout).toContain("Select packages to update");
-    expect(stdout).toContain("no-deps");
-    expect(stdout).toContain("a-dep");
-    expect(exitCode).toBe(0);
-  });
-
-  it("should render catalog dependencies in the interactive table", async () => {
-    await using dir = tempDir("update-interactive-catalog-render", {
-      "bunfig.toml": bunfig(),
-      "package.json": JSON.stringify({
-        name: "root",
-        version: "1.0.0",
-        catalog: { "no-deps": "1.0.0" },
-        workspaces: ["packages/*"],
-      }),
-      "packages/pkg1/package.json": JSON.stringify({
-        name: "pkg1",
-        dependencies: { "no-deps": "catalog:" },
-      }),
-      "packages/pkg2/package.json": JSON.stringify({
-        name: "pkg2",
-        dependencies: { "no-deps": "catalog:" },
-      }),
-    });
-
-    await install(dir);
-    const { stdout, stderr, exitCode } = await updateInteractive(dir, {
-      args: ["--filter=*", "--latest", "--dry-run"],
-      input: "\n",
-    });
-
-    expect(stderr).not.toContain("failed to resolve");
-    expect(stdout).toContain("Select packages to update");
-    expect(stdout).toContain("no-deps");
+    // Catalog-backed dep (pkg1) and direct dep (pkg2) both resolve to a row.
+    expect(stdout).toContain("a-dep    1.0.1    1.0.1   1.0.10");
+    expect(stdout).toContain("no-deps  1.0.0    1.0.0   2.0.0");
     expect(exitCode).toBe(0);
   });
 
@@ -205,13 +135,16 @@ describe.concurrent("bun update --interactive", () => {
     await install(dir);
     const { stdout, exitCode } = await updateInteractive(dir, { args: ["--latest", "--dry-run"], input: "\n" });
 
-    expect(stdout).toContain("devDependencies");
-    expect(stdout).toContain("peerDependencies");
-    expect(stdout).toContain("optionalDependencies");
-    expect(stdout).toContain("no-deps");
-    expect(stdout).toContain("a-dep dev");
-    expect(stdout).toContain("dep-with-tags peer");
-    expect(stdout).toContain("normal-dep-and-dev-dep optional");
+    // name_padding accounts for the " dev"/" peer"/" optional" suffix so every
+    // section's rows line up on the same Current column.
+    expect(stdout).toContain("dependencies                         Current  Target  Latest");
+    expect(stdout).toContain("no-deps                          1.0.0    1.0.0   2.0.0");
+    expect(stdout).toContain("devDependencies                      Current  Target  Latest");
+    expect(stdout).toContain("a-dep dev                        1.0.1    1.0.1   1.0.10");
+    expect(stdout).toContain("peerDependencies                     Current  Target  Latest");
+    expect(stdout).toContain("dep-with-tags peer               1.0.0    1.0.0   3.0.0");
+    expect(stdout).toContain("optionalDependencies                 Current  Target  Latest");
+    expect(stdout).toContain("normal-dep-and-dev-dep optional  1.0.0    1.0.0   1.0.2");
     expect(exitCode).toBe(0);
   });
 
@@ -373,9 +306,8 @@ describe.concurrent("bun update --interactive", () => {
     });
 
     await install(dir);
-    const { stdout, stderr, exitCode } = await updateInteractive(dir, { args: ["-r", "--latest"] });
+    const { stdout, exitCode } = await updateInteractive(dir, { args: ["-r", "--latest"] });
 
-    expect(stderr + stdout).not.toContain("catalog: failed to resolve");
     expect(stdout).toContain("Installing updates...");
     expect(exitCode).toBe(0);
 
@@ -411,14 +343,12 @@ describe.concurrent("bun update --interactive", () => {
     });
 
     await install(dir);
-    const { stdout, stderr, exitCode } = await updateInteractive(dir, {
+    const { stdout, exitCode } = await updateInteractive(dir, {
       args: ["-r", "--latest"],
       cwd: join(dir, "packages/app1"),
     });
-    const combined = stdout + stderr;
 
-    expect(combined).not.toContain("FileNotFound");
-    expect(combined).not.toContain("Failed to update");
+    expect(stdout).toContain("Installing updates...");
     expect(exitCode).toBe(0);
 
     const app1Json = await Bun.file(join(dir, "packages/app1/package.json")).json();
@@ -426,63 +356,6 @@ describe.concurrent("bun update --interactive", () => {
 
     expect(app1Json.dependencies["no-deps"]).toBe("2.0.0");
     expect(app2Json.dependencies["dep-with-tags"]).toBe("3.0.0");
-  });
-
-  it("should handle basic interactive update with select all", async () => {
-    await using dir = tempDir("update-interactive-basic", {
-      "bunfig.toml": bunfig(),
-      "package.json": JSON.stringify({
-        name: "test-project",
-        version: "1.0.0",
-        dependencies: {
-          "no-deps": "1.0.0",
-        },
-      }),
-    });
-
-    await install(dir);
-    const { stdout, exitCode } = await updateInteractive(dir);
-
-    expect(stdout).toContain("Installing updates...");
-    expect(exitCode).toBe(0);
-
-    const packageJson = await Bun.file(join(dir, "package.json")).json();
-    expect(packageJson.dependencies["no-deps"]).toBe("2.0.0");
-  });
-
-  it("should preserve version prefixes for all semver range types in catalogs", async () => {
-    await using dir = tempDir("update-interactive-semver-prefixes", {
-      "bunfig.toml": bunfig(),
-      "package.json": JSON.stringify({
-        name: "root",
-        version: "1.0.0",
-        workspaces: ["packages/*"],
-        catalog: {
-          "no-deps": "^1.0.0",
-          "dep-with-tags": "~1.0.0",
-          "a-dep": ">=1.0.5",
-        },
-      }),
-      "packages/app/package.json": JSON.stringify({
-        name: "@test/app",
-        dependencies: {
-          "no-deps": "catalog:",
-          "dep-with-tags": "catalog:",
-          "a-dep": "catalog:",
-        },
-      }),
-    });
-
-    await install(dir);
-    const { stdout, exitCode } = await updateInteractive(dir, { args: ["-r", "--latest"] });
-
-    expect(stdout).toContain("Installing updates...");
-    expect(exitCode).toBe(0);
-
-    const packageJson = await Bun.file(join(dir, "package.json")).json();
-    expect(packageJson.catalog["no-deps"]).toMatch(/^\^/);
-    expect(packageJson.catalog["dep-with-tags"]).toMatch(/^~/);
-    expect(packageJson.catalog["a-dep"]).toMatch(/^>=/);
   });
 
   it("should handle catalog updates in workspaces.catalogs object", async () => {
@@ -499,7 +372,7 @@ describe.concurrent("bun update --interactive", () => {
               "dep-with-tags": "~1.0.0",
             },
             "frameworks": {
-              "a-dep": "^1.0.5",
+              "a-dep": ">=1.0.5",
               "normal-dep-and-dev-dep": "^1.0.0",
             },
           },
@@ -509,6 +382,7 @@ describe.concurrent("bun update --interactive", () => {
         name: "@test/app",
         dependencies: {
           "no-deps": "catalog:tools",
+          "dep-with-tags": "catalog:tools",
           "a-dep": "catalog:frameworks",
         },
       }),
@@ -521,50 +395,19 @@ describe.concurrent("bun update --interactive", () => {
     expect(exitCode).toBe(0);
 
     const packageJson = await Bun.file(join(dir, "package.json")).json();
-    expect(packageJson.workspaces.catalogs.tools["no-deps"]).toMatch(/^\^/);
-    expect(packageJson.workspaces.catalogs.tools["dep-with-tags"]).toMatch(/^~/);
-  });
-
-  it("should handle mixed workspace and catalog dependencies", async () => {
-    await using dir = tempDir("update-interactive-mixed-deps", {
-      "bunfig.toml": bunfig(),
-      "package.json": JSON.stringify({
-        name: "root",
-        version: "1.0.0",
-        workspaces: ["packages/*"],
-        catalog: {
-          "no-deps": "^1.0.0",
-        },
-      }),
-      "packages/lib/package.json": JSON.stringify({
-        name: "@test/lib",
-        version: "1.0.0",
-        dependencies: {
-          "a-dep": "^1.0.5",
-        },
-      }),
-      "packages/app/package.json": JSON.stringify({
-        name: "@test/app",
-        dependencies: {
-          "@test/lib": "workspace:*",
-          "no-deps": "catalog:",
-          "dep-with-tags": "~1.0.0",
-        },
-      }),
+    expect(packageJson.workspaces.catalogs).toEqual({
+      tools: { "no-deps": "^2.0.0", "dep-with-tags": "~3.0.0" },
+      // a-dep >=1.0.5 already resolves to latest (1.0.10) so it is not listed
+      // as outdated; normal-dep-and-dev-dep is not referenced by any workspace.
+      frameworks: { "a-dep": ">=1.0.5", "normal-dep-and-dev-dep": "^1.0.0" },
     });
 
-    await install(dir);
-    const { stdout, exitCode } = await updateInteractive(dir, { args: ["-r", "--latest"] });
-
-    expect(stdout).toContain("Installing updates...");
-    expect(exitCode).toBe(0);
-
     const appJson = await Bun.file(join(dir, "packages/app/package.json")).json();
-    const libJson = await Bun.file(join(dir, "packages/lib/package.json")).json();
-
-    expect(appJson.dependencies["@test/lib"]).toBe("workspace:*");
-    expect(appJson.dependencies["dep-with-tags"]).toMatch(/^~/);
-    expect(libJson.dependencies["a-dep"]).toMatch(/^\^/);
+    expect(appJson.dependencies).toEqual({
+      "no-deps": "catalog:tools",
+      "dep-with-tags": "catalog:tools",
+      "a-dep": "catalog:frameworks",
+    });
   });
 
   it("should handle selecting specific packages in interactive mode", async () => {
@@ -648,8 +491,8 @@ describe.concurrent("bun update --interactive", () => {
     expect(packageJson.dependencies["no-deps"]).toBe("1.0.0");
   });
 
-  it("should handle packages with pre-release versions correctly", async () => {
-    await using dir = tempDir("update-interactive-prerelease", {
+  it("should preserve version prefixes on direct dependencies", async () => {
+    await using dir = tempDir("update-interactive-direct-prefixes", {
       "bunfig.toml": bunfig(),
       "package.json": JSON.stringify({
         name: "test-project",
@@ -669,8 +512,12 @@ describe.concurrent("bun update --interactive", () => {
     expect(exitCode).toBe(0);
 
     const packageJson = await Bun.file(join(dir, "package.json")).json();
-    expect(packageJson.dependencies["dep-with-tags"]).toMatch(/^\^/);
-    expect(packageJson.dependencies["a-dep"]).toMatch(/^~/);
+    expect(packageJson.dependencies).toEqual({
+      "no-deps": "2.0.0",
+      "dep-with-tags": "^3.0.0",
+      // ~1.0.5 already resolves to latest (1.0.10) so it is not listed as outdated.
+      "a-dep": "~1.0.5",
+    });
   });
 
   it("should update catalog in workspaces object (not workspaces.catalogs)", async () => {
@@ -703,27 +550,26 @@ describe.concurrent("bun update --interactive", () => {
     expect(exitCode).toBe(0);
 
     const packageJson = await Bun.file(join(dir, "package.json")).json();
-    expect(packageJson.workspaces.catalog["no-deps"]).toBe("^2.0.0");
-    expect(packageJson.workspaces.catalog["dep-with-tags"]).toMatch(/^~/);
+    expect(packageJson.workspaces.catalog).toEqual({ "no-deps": "^2.0.0", "dep-with-tags": "~3.0.0" });
   });
 
-  it("should handle scoped packages in catalogs correctly", async () => {
-    await using dir = tempDir("update-interactive-scoped-catalog", {
+  it("should preserve version prefixes on catalog entries, including scoped names", async () => {
+    await using dir = tempDir("update-interactive-catalog-prefixes", {
       "bunfig.toml": bunfig(),
       "package.json": JSON.stringify({
         name: "root",
         version: "1.0.0",
         workspaces: ["packages/*"],
         catalog: {
-          "@scoped/has-bin-entry": "^1.0.0",
-          "no-deps": "~1.0.0",
-          "dep-with-tags": ">=1.0.0",
+          "@types/no-deps": "^1.0.0",
+          "no-deps": ">=1.0.0 <1.1.0",
+          "dep-with-tags": "~1.0.0",
         },
       }),
       "packages/app/package.json": JSON.stringify({
         name: "@test/app",
         dependencies: {
-          "@scoped/has-bin-entry": "catalog:",
+          "@types/no-deps": "catalog:",
           "no-deps": "catalog:",
           "dep-with-tags": "catalog:",
         },
@@ -737,9 +583,11 @@ describe.concurrent("bun update --interactive", () => {
     expect(exitCode).toBe(0);
 
     const packageJson = await Bun.file(join(dir, "package.json")).json();
-    expect(packageJson.catalog["@scoped/has-bin-entry"]).toMatch(/^\^/);
-    expect(packageJson.catalog["no-deps"]).toMatch(/^~/);
-    expect(packageJson.catalog["dep-with-tags"]).toMatch(/^>=/);
+    expect(packageJson.catalog).toEqual({
+      "@types/no-deps": "^2.0.0",
+      "no-deps": ">=2.0.0",
+      "dep-with-tags": "~3.0.0",
+    });
   });
 
   it("should handle catalog updates when running from root with filter", async () => {
@@ -816,8 +664,11 @@ describe.concurrent("bun update --interactive", () => {
     expect(exitCode).toBe(0);
 
     const packageJson = await Bun.file(join(dir, "package.json")).json();
-    expect(packageJson.workspaces.catalogs.dev["no-deps"]).toBe("^2.0.0");
-    expect(packageJson.workspaces.catalogs.prod["no-deps"]).toMatch(/^~/);
+    expect(packageJson.workspaces.catalogs.dev).toEqual({ "no-deps": "^2.0.0" });
+    // group_catalog_dependencies currently keys the interactive list by package
+    // name alone, so the catalog:prod reference is deduped with catalog:dev and
+    // only dev's entry is rewritten. When that is addressed this becomes "~2.0.0".
+    expect(packageJson.workspaces.catalogs.prod).toEqual({ "no-deps": expect.stringMatching(/^~[12]\.0\.0$/) });
   });
 
   it("should handle version ranges with multiple conditions", async () => {
@@ -848,32 +699,10 @@ describe.concurrent("bun update --interactive", () => {
     expect(exitCode).toBe(0);
 
     const packageJson = await Bun.file(join(dir, "package.json")).json();
-    expect(packageJson.catalog["no-deps"]).toBeDefined();
-    expect(packageJson.catalog["dep-with-tags"]).toBeDefined();
-  });
-
-  it("should handle dry-run mode correctly", async () => {
-    await using dir = tempDir("update-interactive-dry-run", {
-      "bunfig.toml": bunfig(),
-      "package.json": JSON.stringify({
-        name: "test-project",
-        version: "1.0.0",
-        dependencies: {
-          "no-deps": "1.0.0",
-          "dep-with-tags": "1.0.0",
-        },
-      }),
+    expect(packageJson.catalog).toEqual({
+      "no-deps": "^1.0.0 || ^2.0.0",
+      "dep-with-tags": ">=3.0.0",
     });
-
-    await install(dir);
-    const { stdout, exitCode } = await updateInteractive(dir, { args: ["--latest", "--dry-run"] });
-
-    expect(stdout).toContain("Selected");
-    expect(exitCode).toBe(0);
-
-    const packageJson = await Bun.file(join(dir, "package.json")).json();
-    expect(packageJson.dependencies["no-deps"]).toBe("1.0.0");
-    expect(packageJson.dependencies["dep-with-tags"]).toBe("1.0.0");
   });
 
   it("should handle keyboard navigation correctly", async () => {
@@ -943,30 +772,29 @@ describe.concurrent("bun update --interactive", () => {
     });
 
     await install(dir);
-    const { stdout, stderr, exitCode } = await updateInteractive(dir, { args: ["-r", "--latest"] });
-    const combined = stdout + stderr;
+    const { stdout, exitCode } = await updateInteractive(dir, { args: ["-r", "--latest"] });
 
-    expect(combined).not.toContain("FileNotFound");
-    expect(combined).not.toContain("Failed to update");
     expect(stdout).toContain("Installing updates...");
     expect(exitCode).toBe(0);
 
     const rootPackageJson = await Bun.file(join(dir, "package.json")).json();
-    expect(rootPackageJson.catalog["no-deps"]).toBe("^2.0.0");
-    expect(rootPackageJson.catalog["dep-with-tags"]).toMatch(/^~/);
-    expect(rootPackageJson.dependencies["a-dep"]).toMatch(/^\^/);
-    expect(rootPackageJson.devDependencies["normal-dep-and-dev-dep"]).toMatch(/^\^/);
+    expect(rootPackageJson.catalog).toEqual({ "no-deps": "^2.0.0", "dep-with-tags": "~3.0.0" });
+    // a-dep ^1.0.5 and normal-dep-and-dev-dep ^1.0.0 already resolve to their
+    // latest versions so they are not listed as outdated.
+    expect(rootPackageJson.dependencies["a-dep"]).toBe("^1.0.5");
+    expect(rootPackageJson.devDependencies["normal-dep-and-dev-dep"]).toBe("^1.0.0");
 
     const app1Json = await Bun.file(join(dir, "packages/app1/package.json")).json();
-    expect(app1Json.dependencies["no-deps"]).toBe("catalog:");
-    expect(app1Json.dependencies["dep-with-tags"]).toBe("catalog:");
-    expect(app1Json.dependencies["a-dep"]).toMatch(/^\^/);
-    expect(app1Json.devDependencies["normal-dep-and-dev-dep"]).toMatch(/^\^/);
+    expect(app1Json.dependencies).toEqual({
+      "no-deps": "catalog:",
+      "dep-with-tags": "catalog:",
+      "a-dep": "^1.0.5",
+    });
+    expect(app1Json.devDependencies["normal-dep-and-dev-dep"]).toBe("^1.0.0");
 
     const app2Json = await Bun.file(join(dir, "packages/app2/package.json")).json();
-    expect(app2Json.dependencies["no-deps"]).toBe("catalog:");
-    expect(app2Json.dependencies["a-dep"]).toMatch(/^\^/);
-    expect(app2Json.devDependencies["dep-with-tags"]).toMatch(/^\^/);
+    expect(app2Json.dependencies).toEqual({ "no-deps": "catalog:", "a-dep": "^1.0.5" });
+    expect(app2Json.devDependencies["dep-with-tags"]).toBe("^3.0.0");
 
     const lockfileExists = await Bun.file(join(dir, "bun.lock")).exists();
     expect(lockfileExists).toBe(true);
@@ -1025,62 +853,14 @@ describe.concurrent("bun update --interactive", () => {
     expect(rootJson.catalog["no-deps"]).toBe("^2.0.0");
 
     const frontendJson = await Bun.file(join(dir, "packages/frontend/package.json")).json();
-    expect(frontendJson.dependencies["a-dep"]).toMatch(/^\^/);
+    expect(frontendJson.dependencies["a-dep"]).toBe("^1.0.5");
 
     const backendJson = await Bun.file(join(dir, "packages/backend/package.json")).json();
     expect(backendJson.dependencies["dep-with-tags"]).toBe("^1.0.0");
   });
 
-  it("interactive update with workspaces.catalogs structure", async () => {
-    await using dir = tempDir("update-interactive-workspaces-catalogs-2", {
-      "bunfig.toml": bunfig(),
-      "package.json": JSON.stringify({
-        name: "root",
-        version: "1.0.0",
-        workspaces: {
-          packages: ["packages/*"],
-          catalogs: {
-            "shared": {
-              "no-deps": "^1.0.0",
-              "dep-with-tags": "~1.0.0",
-            },
-            "tools": {
-              "a-dep": ">=1.0.5",
-            },
-          },
-        },
-      }),
-      "packages/app/package.json": JSON.stringify({
-        name: "@test/app",
-        dependencies: {
-          "no-deps": "catalog:shared",
-          "dep-with-tags": "catalog:shared",
-          "a-dep": "catalog:tools",
-        },
-      }),
-    });
-
-    await install(dir);
-    const { stdout, exitCode } = await updateInteractive(dir, { args: ["-r", "--latest"] });
-
-    expect(stdout).toContain("Installing updates...");
-    expect(exitCode).toBe(0);
-
-    const packageJson = await Bun.file(join(dir, "package.json")).json();
-    expect(packageJson.workspaces.catalogs.shared["no-deps"]).not.toBe("^1.0.0");
-    expect(packageJson.workspaces.catalogs.shared["dep-with-tags"]).not.toBe("~1.0.0");
-    expect(packageJson.workspaces.catalogs.shared["no-deps"]).toMatch(/^\^/);
-    expect(packageJson.workspaces.catalogs.shared["dep-with-tags"]).toMatch(/^~/);
-    expect(packageJson.workspaces.catalogs.tools["a-dep"]).toMatch(/^>=/);
-
-    const appJson = await Bun.file(join(dir, "packages/app/package.json")).json();
-    expect(appJson.dependencies["no-deps"]).toBe("catalog:shared");
-    expect(appJson.dependencies["dep-with-tags"]).toBe("catalog:shared");
-    expect(appJson.dependencies["a-dep"]).toBe("catalog:tools");
-  });
-
-  it("interactive update dry run mode", async () => {
-    await using dir = tempDir("update-interactive-dry-run-2", {
+  it("should not modify package.json in dry-run mode", async () => {
+    await using dir = tempDir("update-interactive-dry-run", {
       "bunfig.toml": bunfig(),
       "package.json": JSON.stringify({
         name: "test-project",
@@ -1097,15 +877,12 @@ describe.concurrent("bun update --interactive", () => {
 
     const { stdout, exitCode } = await updateInteractive(dir, { args: ["--latest", "--dry-run"] });
 
+    expect(stdout).toContain("Selected 2 packages to update");
     expect(stdout).toContain("Dry run");
     expect(exitCode).toBe(0);
 
     const afterContent = await Bun.file(join(dir, "package.json")).text();
     expect(afterContent).toBe(originalContent);
-
-    const packageJson = await Bun.file(join(dir, "package.json")).json();
-    expect(packageJson.dependencies["no-deps"]).toBe("1.0.0");
-    expect(packageJson.dependencies["dep-with-tags"]).toBe("1.0.0");
   });
 
   it("should preserve npm: alias prefix when updating packages", async () => {
@@ -1181,16 +958,15 @@ describe.concurrent("bun update --interactive", () => {
     expect(exitCode).toBe(0);
 
     const rootJson = await Bun.file(join(dir, "package.json")).json();
-    expect(rootJson.catalog["a-dep"]).toMatch(/^\^/);
-    expect(rootJson.dependencies["no-deps"]).toMatch(/^\^/);
-    expect(rootJson.devDependencies["dep-with-tags"]).toMatch(/^~/);
-    expect(rootJson.peerDependencies["a-dep"]).toMatch(/^>=/);
-    expect(rootJson.optionalDependencies["normal-dep-and-dev-dep"]).toMatch(/^\^/);
+    expect(rootJson.catalog["a-dep"]).toBe("^1.0.5");
+    expect(rootJson.dependencies["no-deps"]).toBe("^2.0.0");
+    expect(rootJson.devDependencies["dep-with-tags"]).toBe("~3.0.0");
+    expect(rootJson.peerDependencies["a-dep"]).toBe(">=1.0.5");
+    expect(rootJson.optionalDependencies["normal-dep-and-dev-dep"]).toBe("^1.0.0");
 
     const ws1Json = await Bun.file(join(dir, "packages/workspace1/package.json")).json();
-    expect(ws1Json.dependencies["a-dep"]).toBe("catalog:");
-    expect(ws1Json.dependencies["@test/workspace2"]).toBe("workspace:*");
-    expect(ws1Json.devDependencies["no-deps"]).toMatch(/^\^/);
+    expect(ws1Json.dependencies).toEqual({ "a-dep": "catalog:", "@test/workspace2": "workspace:*" });
+    expect(ws1Json.devDependencies["no-deps"]).toBe("^2.0.0");
 
     const ws2Json = await Bun.file(join(dir, "packages/workspace2/package.json")).json();
     expect(ws2Json.dependencies["a-dep"]).toBe("catalog:");

@@ -13,8 +13,6 @@ use bun_install::package_manager::{
     LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
 };
 use bun_install::{CommandLineArguments, DependencyID, PackageID, PackageManager, resolution};
-use bun_paths::{self as path, PathBuffer};
-use bun_resolver::fs::FileSystem;
 use bun_wyhash::hash;
 
 use crate::Command;
@@ -63,7 +61,7 @@ impl OutdatedCommand {
         Output::flush();
 
         let cli = CommandLineArguments::parse(Subcommand::Outdated)?;
-        let silent = cli.silent;
+        let silent = cli.log_level.is_silent();
 
         let (manager, original_cwd) =
             match PackageManager::init(&mut *ctx, cli, Subcommand::Outdated) {
@@ -163,21 +161,17 @@ impl OutdatedCommand {
         original_cwd: &[u8],
         manager: &mut PackageManager,
     ) -> crate::Result<()> {
-        if !manager.options.filter_patterns.is_empty() {
-            let filters = manager.options.filter_patterns;
-            let workspace_pkg_ids = Self::find_matching_workspaces(original_cwd, manager, filters);
+        if !manager.options.filter_patterns.is_empty() || manager.options.do_.recursive() {
+            let workspace_pkg_ids = WorkspaceFilter::select_workspaces(
+                &manager.lockfile,
+                manager.options.filter_patterns,
+                original_cwd,
+            );
             populate_manifest_cache::populate_manifest_cache(
                 manager,
                 populate_manifest_cache::Packages::Ids(&workspace_pkg_ids),
             )?;
             Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &workspace_pkg_ids, true)
-        } else if manager.options.do_.recursive() {
-            let all_workspaces = Self::get_all_workspaces(manager);
-            populate_manifest_cache::populate_manifest_cache(
-                manager,
-                populate_manifest_cache::Packages::Ids(&all_workspaces),
-            )?;
-            Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &all_workspaces, true)
         } else {
             let root_pkg_id = manager
                 .root_package_id
@@ -192,118 +186,6 @@ impl OutdatedCommand {
             )?;
             Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &ids, false)
         }
-    }
-
-    fn get_all_workspaces(manager: &PackageManager) -> Vec<PackageID> {
-        let lockfile = &manager.lockfile;
-        let packages = lockfile.packages.slice();
-        let pkg_resolutions = packages.items_resolution();
-
-        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != resolution::Tag::Workspace
-                && resolution.tag != resolution::Tag::Root
-            {
-                continue;
-            }
-            workspace_pkg_ids.push(pkg_id as PackageID);
-        }
-        workspace_pkg_ids
-    }
-
-    fn find_matching_workspaces(
-        original_cwd: &[u8],
-        manager: &PackageManager,
-        filters: &[&[u8]],
-    ) -> Vec<PackageID> {
-        let lockfile = &manager.lockfile;
-        let packages = lockfile.packages.slice();
-        let pkg_names = packages.items_name();
-        let pkg_resolutions = packages.items_resolution();
-        let string_buf = lockfile.buffers.string_bytes.as_slice();
-
-        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != resolution::Tag::Workspace
-                && resolution.tag != resolution::Tag::Root
-            {
-                continue;
-            }
-            workspace_pkg_ids.push(pkg_id as PackageID);
-        }
-
-        let mut path_buf = PathBuffer::uninit();
-
-        let converted_filters: Vec<WorkspaceFilter> = filters
-            .iter()
-            .map(|filter| {
-                bun_core::handle_oom(WorkspaceFilter::init(filter, original_cwd, &mut path_buf.0))
-            })
-            .collect();
-        // `defer { filter.deinit(allocator); allocator.free(...) }` — implicit via Drop.
-
-        // SAFETY: `FileSystem::init` runs during `PackageManager::init` so the
-        // process-singleton is populated.
-        let top_level_dir = FileSystem::get().top_level_dir;
-
-        // move all matched workspaces to front of array
-        let mut i: usize = 0;
-        while i < workspace_pkg_ids.len() {
-            let workspace_pkg_id = workspace_pkg_ids[i];
-
-            let matched = 'matched: {
-                for filter in &converted_filters {
-                    match filter {
-                        WorkspaceFilter::Path(pattern) => {
-                            if pattern.is_empty() {
-                                continue;
-                            }
-                            let res = &pkg_resolutions[workspace_pkg_id as usize];
-                            let res_path: &[u8] = match res.tag {
-                                resolution::Tag::Workspace => {
-                                    // Borrow the field in-place so the returned slice (which may
-                                    // point into the inline small-string storage) stays valid.
-                                    res.workspace().slice(string_buf)
-                                }
-                                resolution::Tag::Root => top_level_dir,
-                                _ => unreachable!(),
-                            };
-
-                            let abs_res_path = path::resolve_path::join_abs_string_buf::<
-                                path::platform::Posix,
-                            >(
-                                top_level_dir, &mut path_buf.0, &[res_path]
-                            );
-
-                            if !glob::r#match(
-                                pattern,
-                                strings::without_trailing_slash(abs_res_path),
-                            )
-                            .matches()
-                            {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::Name(pattern) => {
-                            let name = pkg_names[workspace_pkg_id as usize].slice(string_buf);
-                            if !glob::r#match(pattern, name).matches() {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::All => {}
-                    }
-                }
-                true
-            };
-
-            if matched {
-                i += 1;
-            } else {
-                workspace_pkg_ids.swap_remove(i);
-            }
-        }
-
-        workspace_pkg_ids
     }
 
     fn group_catalog_dependencies(

@@ -79,7 +79,7 @@ pub fn decode_lenient(destination: &mut [u8], source: &[u8], is_urlsafe: bool) -
     // that keeps decoding past the '='. Apply the rule up front in that case
     // so both strategies agree.
     let source = if destination.len() < decode_lenient_len(source.len()) {
-        match source.iter().position(|&c| c == b'=') {
+        match bun_core::strings::index_of_char_usize(source, b'=') {
             Some(index) => &source[..index],
             None => source,
         }
@@ -189,7 +189,7 @@ pub const fn url_safe_encode_len(source: &[u8]) -> usize {
 // base64-alphabet bit-packing with zero sourcemap-specific deps; bun_sourcemap
 // re-exports this for its own consumers.
 // ──────────────────────────────────────────────────────────────────────────
-pub use vlq::{VLQ, VLQResult};
+pub use vlq::VLQ;
 
 /// Variable-length quantity encoding, limited to i32 as per source map spec.
 /// https://en.wikipedia.org/wiki/Variable-length_quantity

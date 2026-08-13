@@ -906,18 +906,6 @@ pub fn utf16_codepoint(input: &[u16]) -> UTF16Replacement {
     }
 }
 
-/// `b"..."` for u8, `$crate::w!("...")` for u16.
-/// New callers should use byte/wide literals directly.
-#[macro_export]
-macro_rules! literal {
-    (u8, $s:literal) => {
-        concat!($s, "\0").as_bytes()
-    };
-    (u16, $s:literal) => {
-        $crate::w!($s)
-    };
-}
-
 pub(super) use crate::strings_impl::push_codepoint_utf16;
 
 // `unreachable_pub`: these are re-exported externally via the parent's
@@ -996,14 +984,8 @@ pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
                 written: 0,
             };
         }
-        // `trim::utf16` strips a single trailing lone high surrogate so simdutf's
-        // length estimate never sees invalid input. If that empties the input, it
-        // was exactly one unpaired surrogate: 3 bytes of U+FFFD, not nothing.
-        let trimmed = simdutf::trim::utf16(utf16);
-        let out_len = if trimmed.is_empty() {
-            3
-        } else if buf.len() <= (trimmed.len() * 3 + 2) {
-            simdutf::length::utf8::from::utf16::le(trimmed)
+        let out_len = if buf.len() <= utf16.len().saturating_mul(3) {
+            simdutf::length::utf8::from::utf16::le(utf16)
         } else {
             buf.len()
         };

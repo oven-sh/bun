@@ -23,9 +23,12 @@ unsafe fn deallocator_from_addr(addr: usize) -> jsc::JSTypedArrayBytesDeallocato
     unsafe { core::mem::transmute::<usize, jsc::JSTypedArrayBytesDeallocator>(addr) }
 }
 
+/// Frees nothing. `JSBuffer__bufferFromPointerAndLengthAndDeinit` asserts a non-null
+/// deallocator for `len > 0`, so a borrowed view supplies this instead of `None`.
+unsafe extern "C" fn noop_bytes_deallocator(_ptr: *mut c_void, _ctx: *mut c_void) {}
+
 /// Unlike `JSValue::create_buffer` (which hard-codes `MarkedArrayBuffer_deallocator`),
-/// this variant passes the caller's (possibly null) deallocator through, so FFI-owned
-/// memory is only freed by the user-supplied callback.
+/// this passes the caller's deallocator through so FFI bytes are only freed when asked.
 #[allow(non_snake_case)]
 #[inline]
 fn create_buffer_with_ctx(
@@ -43,8 +46,8 @@ fn create_buffer_with_ctx(
             deallocator: jsc::JSTypedArrayBytesDeallocator,
         ) -> JSValue;
     }
-    // SAFETY: `global` is live; slice describes FFI-owned memory whose
-    // ownership transfers to JSC (freed via `callback`, or never if None).
+    // SAFETY: `global` is live; `slice` stays valid for the Buffer's lifetime.
+    // `callback` controls disposal (a no-op when the storage stays caller-owned).
     unsafe {
         JSBuffer__bufferFromPointerAndLengthAndDeinit(
             global,
@@ -502,15 +505,8 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
     JSValue::from_ptr_address(addr)
 }
 
-/// `union(enum)` → Rust enum.
-/// `Slice` carries a raw (ptr, len) because it points at caller-owned FFI memory
-/// of unknown lifetime.
-// Consumer audit: `new_cstring` copies the bytes into a JS string;
-// `to_array_buffer` wraps the pointer with the caller's optional finalizer and
-// never frees it from Rust; `to_buffer` does the same when a finalizer is
-// given, but WITHOUT one it falls back to `JSValue::create_buffer`, which
-// installs `MarkedArrayBuffer_deallocator` and `mi_free`s the caller-owned
-// slice on GC — free-foreign-memory footgun, see PR #31753.
+/// `Slice` carries a raw (ptr, len) pointing at caller-owned FFI memory; consumers
+/// borrow it (or delegate disposal to a supplied finalizer), never free it from Rust.
 enum ValueOrError {
     Err(JSValue),
     Slice(*mut u8, usize),
@@ -740,20 +736,16 @@ fn to_buffer(
                 }
             }
 
-            // SAFETY: ptr/len came from get_ptr_slice; FFI-owned memory.
+            // SAFETY: ptr/len came from get_ptr_slice; caller-owned FFI memory.
             let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
-            if callback.is_some() || ctx.is_some() {
-                return Ok(create_buffer_with_ctx(
-                    global_this,
-                    slice,
-                    ctx.unwrap_or(core::ptr::null_mut()),
-                    callback,
-                ));
-            }
-
-            // `JSValue::create_buffer` installs `MarkedArrayBuffer_deallocator` so
-            // the slice is `mi_free`d on GC (including the free-foreign-memory footgun).
-            Ok(JSValue::create_buffer(global_this, slice))
+            // No finalizer means borrow: the noop deallocator keeps GC from freeing
+            // caller-owned storage (oven-sh/bun#35405).
+            Ok(create_buffer_with_ctx(
+                global_this,
+                slice,
+                ctx.unwrap_or(core::ptr::null_mut()),
+                callback.or(Some(noop_bytes_deallocator)),
+            ))
         }
     }
 }
@@ -842,7 +834,7 @@ mod fields {
         let mut iter = callframe.arguments().iter();
         let name = eat_zig_string(global, &mut iter)?;
         let object = eat_required(global, &mut iter)?;
-        Ok(FfiImpl::open(global, name, object))
+        FfiImpl::open(global, name, object)
     }
 
     // callback → FFI::callback(global, JSValue, JSValue) -> JsResult<JSValue>
@@ -860,7 +852,7 @@ mod fields {
     ) -> JsResult<JSValue> {
         let mut iter = callframe.arguments().iter();
         let object = eat_required(global, &mut iter)?;
-        Ok(FfiImpl::link_symbols(global, object))
+        FfiImpl::link_symbols(global, object)
     }
 
     // toBuffer → to_buffer(global, JSValue, ?JSValue×4) -> JsResult<JSValue>
@@ -894,7 +886,7 @@ mod fields {
     ) -> JsResult<JSValue> {
         let mut iter = callframe.arguments().iter();
         let callback = eat_required(global, &mut iter)?;
-        Ok(FfiImpl::close_jsc_callback(global, callback))
+        FfiImpl::close_jsc_callback(global, callback)
     }
 
     pub(super) fn cfunction(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {

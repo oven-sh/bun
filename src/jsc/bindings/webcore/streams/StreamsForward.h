@@ -76,9 +76,10 @@ class JSNativeStreamSourceAdapter;
 class JSDirectSinkCloseState;
 class JSAsyncIteratorSourceOperation;
 class JSReadStreamIntoSinkOperation;
-class JSResumableSinkPumpOperation;
 class JSTextEncoderStream;
 class JSTextDecoderStream;
+class JSCompressionStream;
+class JSDecompressionStream;
 
 } // namespace WebCore
 
@@ -136,6 +137,18 @@ enum class TransformerKind : uint8_t {
     Identity, // new TransformStream() with no `transform` member: enqueue the chunk unchanged
     TextEncoder, // TextEncoderStream (context = the JSTextEncoderStream cell)
     TextDecoder, // TextDecoderStream (context = the JSTextDecoderStream cell)
+    Compression, // CompressionStream   (context = the JSCompressionStream cell)
+    Decompression, // DecompressionStream (context = the JSDecompressionStream cell)
+};
+
+// CompressionStream / DecompressionStream format. Matches the `Format` enum in
+// CompressionStreamCoder.rs.
+enum class CompressionFormat : uint8_t {
+    Deflate = 0,
+    DeflateRaw = 1,
+    Gzip = 2,
+    Brotli = 3,
+    Zstd = 4,
 };
 
 // JSReadableStream Bun-mode members
@@ -176,7 +189,6 @@ enum class ReadRequestKind : uint8_t {
     ByteTee, // context = the JSStreamTeeState (byte tee's default-reader read request)
     AsyncIterator, // context = InternalFieldTuple{asyncIterator, the next() result promise}
     ReadStreamIntoSink, // Bun: readStreamIntoSink pump read (context = JSReadStreamIntoSinkOperation)
-    ResumableSinkPump, // Bun: ResumableSink pump read (context = JSResumableSinkPumpOperation)
     TextDecode, // Body.textStream()'s per-pull read: context = the output
                 // JSReadableStreamDefaultController (its algorithmContext is the
                 // source reader; decode state inline on m_algorithms.textDecodeState)

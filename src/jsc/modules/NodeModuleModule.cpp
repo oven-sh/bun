@@ -72,7 +72,6 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "bun:jsc"_s,
     "bun:sqlite"_s,
     "bun:test"_s,
-    "bun:wrap"_s,
     "bun"_s,
     "child_process"_s,
     "cluster"_s,
@@ -731,9 +730,15 @@ JSC_DEFINE_CUSTOM_GETTER(nodeModuleWrapper,
         jsFunctionSetCJSWrapperItem, JSC::ImplementationVisibility::Public,
         JSC::NoIntrinsic));
 
+    auto scope = DECLARE_THROW_SCOPE(vm);
     NakedPtr<JSC::Exception> returnedException = nullptr;
     auto result = JSC::profiledCall(global, JSC::ProfilingReason::API, cb, callData, JSC::jsUndefined(), args, returnedException);
-    ASSERT(!returnedException);
+    if (returnedException) {
+        // The builtin does not throw on its own; what comes back is a
+        // termination (or stack exhaustion) that the getter's caller must see.
+        JSC::throwException(global, scope, returnedException.get());
+        return {};
+    }
     ASSERT(result.isCell());
     return JSC::JSValue::encode(result);
 }
@@ -868,6 +873,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRegister, (JSGlobalObject * globalObject, JSC
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+extern "C" int32_t Bun__NodeCompileCache__enable(const BunString* dir, int32_t portable, BunString* outDirectory, BunString* outMessage);
+extern "C" BunString Bun__NodeCompileCache__getDir();
+extern "C" void Bun__NodeCompileCache__flush();
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEnableCompileCache,
     (JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
@@ -875,34 +884,52 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEnableCompileCache,
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Accepts `string | { directory?: string, portable?: boolean } | undefined`.
-    // When a directory is provided explicitly it must be a string.
-    JSC::JSValue optionsValue = callFrame->argument(0);
-    JSC::JSValue directoryValue = optionsValue;
-    // Matches `typeof options === "object"`, so a callable is not an options bag.
-    if (optionsValue.isObject() && !optionsValue.isCallable()) {
-        auto* options = optionsValue.getObject();
-        directoryValue = options->get(globalObject, JSC::Identifier::fromString(vm, "directory"_s));
+    // Accepts `undefined`, a string, or `{ directory?, portable? }`.
+    JSValue options = callFrame->argument(0);
+    JSValue directoryValue = options;
+    int32_t portable = -1; // -1 = unspecified, Rust falls back to the env var
+    if (options.isObject() && !options.isCallable()) {
+        auto* optionsObject = options.getObject();
+        directoryValue = optionsObject->get(globalObject, JSC::Identifier::fromString(vm, "directory"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        // Node reads `portable` before validating `directory`; the value is unused
-        // here but a throwing getter still propagates.
-        options->get(globalObject, JSC::Identifier::fromString(vm, "portable"_s));
+        JSValue portableValue = optionsObject->get(globalObject, JSC::Identifier::fromString(vm, "portable"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!portableValue.isUndefined()) {
+            portable = portableValue.toBoolean(globalObject) ? 1 : 0;
+        }
+    }
+
+    WTF::String directory;
+    if (!directoryValue.isUndefined()) {
+        if (!directoryValue.isString()) {
+            Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "cacheDir should be a string"_s);
+            return {};
+        }
+        directory = directoryValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    if (!directoryValue.isUndefined() && !directoryValue.isString()) {
-        Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
-            "cacheDir should be a string"_s);
-        return {};
-    }
+    BunString directoryStr = Bun::toString(directory);
+    BunString outDirectory = { BunStringTag::Empty, {} };
+    BunString outMessage = { BunStringTag::Empty, {} };
+    int32_t status = Bun__NodeCompileCache__enable(
+        directory.isNull() ? nullptr : &directoryStr, portable, &outDirectory, &outMessage);
 
-    // There is no on-disk module compile cache, so report failure instead of
-    // silently claiming the cache was enabled.
     auto* result = JSC::constructEmptyObject(globalObject);
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "status"_s),
-        JSC::jsNumber(0)); // constants.compileCacheStatus.FAILED
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "message"_s),
-        JSC::jsString(vm, String("the on-disk module compile cache is not supported"_s)));
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "status"_s), JSC::jsNumber(status));
+    if (!outMessage.isEmpty()) {
+        JSValue message = outMessage.transferToJS(globalObject);
+        if (scope.exception()) [[unlikely]] {
+            outDirectory.deref();
+            return {};
+        }
+        result->putDirect(vm, JSC::Identifier::fromString(vm, "message"_s), message);
+    }
+    if (!outDirectory.isEmpty()) {
+        JSValue dir = outDirectory.transferToJS(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        result->putDirect(vm, JSC::Identifier::fromString(vm, "directory"_s), dir);
+    }
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 
@@ -910,6 +937,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetCompileCacheDir,
     (JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
 {
+    BunString dir = Bun__NodeCompileCache__getDir();
+    if (dir.isEmpty()) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+    return JSC::JSValue::encode(dir.transferToJS(globalObject));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionFlushCompileCache,
+    (JSGlobalObject * globalObject,
+        JSC::CallFrame* callFrame))
+{
+    Bun__NodeCompileCache__flush();
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -937,6 +976,7 @@ constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1
 enableCompileCache      jsFunctionEnableCompileCache      Function 1
 findSourceMap           Bun__JSSourceMap__find           Function 1
+flushCompileCache       jsFunctionFlushCompileCache       Function 0
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0
 globalPaths             getGlobalPathsObject              PropertyCallback
 isBuiltin               jsFunctionIsBuiltinModule         Function 1
@@ -1179,45 +1219,22 @@ JSC::JSValue createStreamIterEnabledFlag(Zig::GlobalObject*)
 } // namespace Bun
 
 namespace Zig {
-void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
+JSC::JSObject* generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
     JSC::Identifier moduleKey,
     Vector<JSC::Identifier, 4>& exportNames,
     JSC::MarkedArgumentBuffer& exportValues)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
-    auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
-    // Don't bulk-reifyAllStaticProperties here. JSObject::reifyAllStaticProperties
-    // walks every PropertyCallbackAttribute back-to-back without an exception
-    // check between them, and several of our callbacks (getBuiltinModulesObject,
-    // getGlobalPathsObject, …) call constructArray/constructEmptyArray which
-    // open a ThrowScope at the same recursion depth as the next callback's
-    // ThrowScope — that trips the exception-check verifier on the synthetic
-    // ESM path (BUN_JSC_validateExceptionChecks=1). The loop below already
-    // does constructor->get(property) per-export, which lazy-reifies one entry
-    // at a time inside JSObject::get's own ThrowScope and is checked
-    // immediately after.
 
-    exportNames.reserveCapacity(Bun::countof(Bun::nodeModuleObjectTableValues) + 1);
-    exportValues.ensureCapacity(Bun::countof(Bun::nodeModuleObjectTableValues) + 1);
+    // The exports are the static table's entries, not the constructor's own properties (`length`, `name`,
+    // whatever user code assigned onto Module).
+    PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    for (const auto& entry : Bun::nodeModuleObjectTableValues)
+        properties.add(Identifier::fromString(vm, entry.m_key));
 
-    exportNames.append(vm.propertyNames->defaultKeyword);
-    exportValues.append(constructor);
-
-    for (unsigned i = 0; i < Bun::countof(Bun::nodeModuleObjectTableValues); ++i) {
-        const auto& entry = Bun::nodeModuleObjectTableValues[i];
-        const auto& property = Identifier::fromString(vm, entry.m_key);
-        JSValue value = constructor->get(globalObject, property);
-
-        if (topExceptionScope.exception()) [[unlikely]] {
-            value = {};
-            (void)topExceptionScope.tryClearException();
-        }
-
-        exportNames.append(property);
-        exportValues.append(value);
-    }
+    return exportObjectProperties(vm, constructor, properties, exportNames, exportValues);
 }
 
 } // namespace Zig

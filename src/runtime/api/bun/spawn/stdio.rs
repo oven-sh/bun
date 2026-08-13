@@ -322,6 +322,10 @@ impl Stdio {
         }
     }
 
+    pub fn borrows_caller_fd(&self) -> bool {
+        matches!(self, Self::Fd(_))
+    }
+
     fn extract_body_value(
         out_stdio: &mut Stdio,
         global: &JSGlobalObject,
@@ -557,6 +561,12 @@ impl Stdio {
             if array_buffer.byte_slice().is_empty() {
                 *out_stdio = Stdio::Ignore;
                 return Ok(());
+            }
+
+            if i == 1 || i == 2 {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "ArrayBufferView cannot be used for stdout/stderr yet"
+                )));
             }
 
             let copied_value =

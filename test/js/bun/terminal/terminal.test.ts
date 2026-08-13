@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // Helper to enable echo on a terminal (echo is disabled by default to avoid duplication)
 function enableEcho(terminal: Bun.Terminal) {
@@ -316,6 +318,72 @@ describe("Bun.Terminal", () => {
         afterSecondRestored: { first: true, second: false },
       });
     });
+
+    // setRawMode used to apply termios with TCSADRAIN on the PTY master.
+    // Draining waits on the slave's write lock, and a child blocked in
+    // write() on a full PTY holds that lock until the master's owner (the
+    // very JS thread calling setRawMode) reads the master, freezing the
+    // whole runtime.
+    test.skipIf(isWindows)(
+      "does not deadlock while the child is blocked writing to a full PTY",
+      async () => {
+        using dir = tempDir("terminal-setrawmode-deadlock", {});
+        const pidFile = join(String(dir), "child.pid");
+        // The child floods the PTY and blocks in write(). The sync spin keeps
+        // the event loop from reading the master, so the PTY buffer is still
+        // full (and the child still blocked) when setRawMode runs.
+        const script = `
+          const fs = require("node:fs");
+          const proc = Bun.spawn(["head", "-c", "200000", "/dev/zero"], {
+            terminal: { cols: 80, rows: 24, data() {} },
+          });
+          fs.writeFileSync(process.env.PID_FILE, String(proc.pid));
+          const t0 = Date.now();
+          while (Date.now() - t0 < 500) {}
+          proc.terminal.setRawMode(true);
+          console.log("RETURNED");
+          proc.kill("SIGKILL");
+          await proc.exited;
+          process.exit(0);
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: { ...bunEnv, PID_FILE: pidFile },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        // Watchdog, not a wait-for-time: on a broken build the spawned bun
+        // never exits on its own, and SIGKILL alone cannot reap it (the
+        // kernel retries the blocked termios ioctl with the signal pending
+        // until the PTY child dies). Kill the child's process group first to
+        // release the ioctl so the process can actually die.
+        let setRawModeDeadlocked = false;
+        const watchdog = setTimeout(() => {
+          setRawModeDeadlocked = true;
+          try {
+            const childPid = parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+            if (childPid > 0) {
+              // The PTY child is a session leader (setsid), so its pid is its
+              // process group id: kill the whole group.
+              process.kill(-childPid, "SIGKILL");
+            }
+          } catch {}
+          proc.kill("SIGKILL");
+        }, 10_000);
+
+        const [stdout, stderr, exitCode] = await Promise.all([
+          proc.stdout.text(),
+          proc.stderr.text(),
+          proc.exited,
+        ]).finally(() => clearTimeout(watchdog));
+
+        expect(setRawModeDeadlocked).toBe(false);
+        expect(stdout).toBe("RETURNED\n");
+        expect(exitCode).toBe(0);
+      },
+      20_000,
+    );
   });
 
   describe("termios flags", () => {
@@ -698,6 +766,66 @@ describe("Bun.Terminal", () => {
 
       expect(drainCount).toBeGreaterThan(0);
     });
+
+    // After PTY EOF the wrapper used to be downgraded to a weak ref while
+    // buffered input the child never read was still flushing, so a GC in that
+    // window collected the wrapper together with the callbacks it roots: the
+    // pending drain dispatch was then lost (or, before a sweep, invoked a
+    // collected function). The wrapper must stay strongly held until the
+    // writer goes idle. Ten fresh processes, sequentially, because collection
+    // under conservative stack scanning is probabilistic per process (roughly
+    // half hit the window on an unfixed build; concurrent children skew the
+    // race uniformly, so sequential keeps the attempts independent). Each
+    // child bounds its wait at 20s and the loop stops at the first loss.
+    // Linux-only: the repro window depends on how the kernel drains PTY input
+    // after exit; the code under test is shared.
+    test.skipIf(!isLinux)(
+      "drain still fires when GC runs while unread input is buffered after the child exits",
+      async () => {
+        const childSrc = [
+          "const sleep = ms => new Promise(r => setTimeout(r, ms));",
+          "let sink;",
+          "function churn() { for (let i = 0; i < 500; i++) sink = { i, a: new Array(32).fill(i) }; }",
+          "let resolveDrain;",
+          "const drained = new Promise(r => (resolveDrain = r));",
+          "let proc = Bun.spawn(['sh', '-c', 'exit 0'], {",
+          "  terminal: { data() {}, exit() {}, drain() { resolveDrain('drain'); } },",
+          "});",
+          "const big = Buffer.alloc(65536, 97);",
+          "for (let i = 0; i < 16; i++) proc.terminal.write(big);",
+          "const exited = proc.exited;",
+          "proc = null;",
+          "await exited;",
+          "for (let i = 0; i < 4; i++) { churn(); await sleep(0); Bun.gc(true); }",
+          "const timer = setTimeout(() => resolveDrain('lost'), 20000);",
+          "const result = await drained;",
+          "clearTimeout(timer);",
+          "console.log(result);",
+        ].join("\n");
+
+        const run = async () => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", childSrc],
+            env: bunEnv,
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return { stdout: stdout.trim(), stderr, exitCode };
+        };
+
+        const results = [];
+        for (let i = 0; i < 10; i++) {
+          const r = await run();
+          results.push(r);
+          if (r.stdout !== "drain") break;
+        }
+        expect(results.map(r => r.stdout)).toEqual(Array(results.length).fill("drain"));
+        expect(results.map(r => r.stderr)).toEqual(Array(results.length).fill(""));
+        expect(results.map(r => r.exitCode)).toEqual(Array(results.length).fill(0));
+        expect(results.length).toBe(10);
+      },
+      90_000,
+    );
   });
 
   describe.concurrent("subprocess interaction", () => {

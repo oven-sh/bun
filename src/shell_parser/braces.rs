@@ -176,7 +176,7 @@ pub struct ShellCharIter<const E: StringEncoding> {
 
 /// Surface trait so callers can name `<ShellCharIter<E> as CharIter>::InputChar` /
 /// `::CodepointType` without inherent associated types.
-pub trait CharIter: Sized {
+trait CharIter: Sized {
     type CodepointType: Copy;
     type InputChar: Copy;
     fn init(bytes: &[u8]) -> Self;
@@ -1193,7 +1193,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             debug_assert!(matches!(first, Token::Open(_)));
         }
 
-        let mut braces: u8 = 0;
+        let mut braces: u32 = 0;
 
         self.replace_token_with_string(starting_idx);
         let mut i: u32 = starting_idx + 1;

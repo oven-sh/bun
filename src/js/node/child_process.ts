@@ -36,7 +36,9 @@ const ArrayPrototypeSplice = Array.prototype.splice;
 var ArrayBufferIsView = ArrayBuffer.isView;
 
 var NumberIsInteger = Number.isInteger;
+var ObjectHasOwn = Object.hasOwn;
 var StringPrototypeIncludes = String.prototype.includes;
+var StringPrototypeStartsWith = String.prototype.startsWith;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
@@ -238,6 +240,7 @@ function execFile(file, args, options, callback) {
     killSignal: options.killSignal,
     uid: options.uid,
     gid: options.gid,
+    cgroup: options.cgroup,
     windowsHide: options.windowsHide,
     windowsVerbatimArguments: options.windowsVerbatimArguments,
     shell: options.shell,
@@ -569,6 +572,7 @@ function spawnSync(file, args, options) {
       detached: options.detached,
       uid: options.uid,
       gid: options.gid,
+      cgroup: options.cgroup,
       windowsVerbatimArguments: options.windowsVerbatimArguments,
       windowsHide: options.windowsHide,
       argv0: options.args[0],
@@ -1410,6 +1414,7 @@ class ChildProcess extends EventEmitter {
         detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
         uid: options.uid,
         gid: options.gid,
+        cgroup: options.cgroup,
         onExit: (handle, exitCode, signalCode, err) => {
           this.#handle = handle;
           this.pid = this.#handle.pid;
@@ -1500,7 +1505,7 @@ class ChildProcess extends EventEmitter {
   }
 
   #emitIpcMessage(message, _, handle) {
-    this.emit("message", message, handle);
+    this.emit(isInternalIpcMessage(message) ? "internalMessage" : "message", message, handle);
   }
 
   #send(message, handle, options, callback) {
@@ -1675,6 +1680,35 @@ const nodeToBunLookup = {
   ipc: "ipc",
 };
 
+const INTERNAL_IPC_PREFIX = "NODE_";
+
+function isInternalIpcMessage(message) {
+  if (message === null || typeof message !== "object") return false;
+  if (!ObjectHasOwn(message, "cmd")) return false;
+  const cmd = message.cmd;
+  if (typeof cmd !== "string" || cmd.length <= INTERNAL_IPC_PREFIX.length) return false;
+  return StringPrototypeStartsWith.$call(cmd, INTERNAL_IPC_PREFIX);
+}
+
+function streamFdOf(item): number | undefined {
+  const itemFd = ObjectHasOwn(item, "fd") ? item.fd : undefined;
+  if (typeof itemFd === "number") return itemFd;
+
+  const handle = item._handle;
+  const handleFd = handle ? handle.fd : undefined;
+  if (typeof handleFd === "number") return handleFd;
+
+  if (item.destroyed) return undefined;
+
+  const sink = item[require("internal/fs/streams").kWriteStreamFastPath];
+  if (sink && sink !== true) {
+    const fd = sink._getFd();
+    if (typeof fd === "number" && fd >= 0) return fd;
+  }
+
+  return undefined;
+}
+
 function nodeToBun(item: string, index: number): string | number | null | NodeJS.TypedArray | ArrayBufferView {
   // If not defined, use the default.
   // For stdin/stdout/stderr, it's pipe. For others, it's ignore.
@@ -1686,21 +1720,13 @@ function nodeToBun(item: string, index: number): string | number | null | NodeJS
   if (typeof item === "number") {
     return item;
   }
-  if (isNodeStreamReadable(item)) {
-    const itemFd = Object.hasOwn(item, "fd") ? item.fd : undefined;
-    if (typeof itemFd === "number") return itemFd;
-    const handle = item._handle;
-    const handleFd = handle ? handle.fd : undefined;
-    if (typeof handleFd === "number") return handleFd;
-    throw new Error(`TODO: stream.Readable stdio @ ${index}`);
-  }
-  if (isNodeStreamWritable(item)) {
-    const itemFd = Object.hasOwn(item, "fd") ? item.fd : undefined;
-    if (typeof itemFd === "number") return itemFd;
-    const handle = item._handle;
-    const handleFd = handle ? handle.fd : undefined;
-    if (typeof handleFd === "number") return handleFd;
-    throw new Error(`TODO: stream.Writable stdio @ ${index}`);
+  if (isNodeStreamReadable(item) || isNodeStreamWritable(item)) {
+    const fd = streamFdOf(item);
+    if (fd !== undefined) return fd;
+    const kind = isNodeStreamReadable(item) ? "Readable" : "Writable";
+    throw new Error(
+      `Passing a stream.${kind} without an underlying file descriptor as stdio[${index}] is not yet implemented in Bun`,
+    );
   }
   const result = nodeToBunLookup[item];
   if (result === undefined) {
@@ -1786,6 +1812,8 @@ function normalizeStdio(stdio): string[] {
         return ["ignore", "ignore", "ignore"];
       case "pipe":
         return ["pipe", "pipe", "pipe"];
+      case "overlapped":
+        return ["overlapped", "overlapped", "overlapped"];
       case "inherit":
         return ["inherit", "inherit", "inherit"];
       default:

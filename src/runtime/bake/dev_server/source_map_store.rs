@@ -257,7 +257,7 @@ impl Entry {
         const HMR_CHUNK_PREFIX: &[u8] = b"self[Symbol.for(\"bun:hmr\")]({\n";
         let runtime_line_count: u32 = match kind {
             ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Client).line_count,
-            ChunkKind::HmrChunk => HMR_CHUNK_PREFIX.iter().filter(|&&b| b == b'\n').count() as u32,
+            ChunkKind::HmrChunk => bun_core::strings::count_char(HMR_CHUNK_PREFIX, b'\n') as u32,
         };
 
         let mut prev_end_state = SourceMapState {

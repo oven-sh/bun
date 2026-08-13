@@ -27,8 +27,6 @@ use bun_options_types::schema::api;
 use bun_options_types::command_tag::Tag as CommandTag;
 use bun_options_types::context::ContextData;
 
-pub use bun_options_types::offline_mode::OfflineMode;
-
 // TODO: replace api.TransformOptions with Bunfig
 pub(crate) struct Bunfig;
 
@@ -1548,6 +1546,9 @@ impl<'a> Parser<'a> {
                     .map_err(remap)?,
             );
         }
+        if let Some(v) = install_obj.get(b"hoist").and_then(|e| e.as_bool()) {
+            install.hoist = Some(v);
+        }
 
         Ok(())
     }
@@ -1610,6 +1611,33 @@ impl<'a> Parser<'a> {
                 }
             } else {
                 self.add_error(minify.loc, b"Expected minify to be boolean or object")?;
+            }
+        }
+
+        if let Some(sourcemap) = serve_obj.get(b"sourcemap") {
+            if let Some(v) = sourcemap.as_bool() {
+                self.ctx.args.serve_sourcemap = Some(if v {
+                    api::SourceMapMode::Linked
+                } else {
+                    api::SourceMapMode::None
+                });
+            } else if let Some(s) = sourcemap.as_string(self.bump) {
+                match s {
+                    b"none" => self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::None),
+                    b"linked" => self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::Linked),
+                    b"inline" => self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::Inline),
+                    b"external" => {
+                        self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::External)
+                    }
+                    _ => {
+                        self.add_error(
+                            sourcemap.loc,
+                            b"Expected sourcemap to be one of 'none', 'linked', 'inline', or 'external'",
+                        )?;
+                    }
+                }
+            } else {
+                self.add_error(sourcemap.loc, b"Expected sourcemap to be boolean or string")?;
             }
         }
 

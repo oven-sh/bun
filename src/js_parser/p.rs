@@ -8979,9 +8979,6 @@ impl LowerUsingDeclarationsContext {
                         continue;
                     }
                 }
-                js_ast::StmtData::SExportDefault(_) => {
-                    continue; // this prevents re-exporting default since we already have it as an .s_export_clause
-                }
                 js_ast::StmtData::SExportClause(data) => {
                     // Merge export clauses together.
                     // ClauseItem isn't `Clone` (POD-only fields, no derive);

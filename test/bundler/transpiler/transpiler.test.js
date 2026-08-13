@@ -4700,6 +4700,169 @@ console.log("boop");
       export var q = r;
     `);
   });
+
+  describe("using top level with a default export", () => {
+    const lowered = code => prepareForSnapshot(parsed(code, false, false));
+
+    it("hoists an exported function declaration out of the try/catch", () => {
+      expect(lowered(`using a = b;\nexport default function foo() {}`)).toMatchInlineSnapshot(`
+        "import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+        function foo() {}
+        let __bun_temp_ref_1$ = [];
+        try {
+          var a = __using(__bun_temp_ref_1$, b, 0);
+        } catch (__bun_temp_ref_2$) {
+          var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+        } finally {
+          __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+        }
+
+        export {
+          foo as default
+        };
+        "
+      `);
+      expect(lowered(`using a = b;\nexport default function () {}`)).toMatchInlineSnapshot(`
+        "import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+        function input_default() {}
+        let __bun_temp_ref_1$ = [];
+        try {
+          var a = __using(__bun_temp_ref_1$, b, 0);
+        } catch (__bun_temp_ref_2$) {
+          var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+        } finally {
+          __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+        }
+
+        export {
+          input_default as default
+        };
+        "
+      `);
+    });
+
+    it("turns an exported class declaration into a var inside the try/catch", () => {
+      expect(lowered(`using a = b;\nexport default class Foo { static self = Foo; }`)).toMatchInlineSnapshot(`
+        "import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+        let __bun_temp_ref_1$ = [];
+        try {
+          var a = __using(__bun_temp_ref_1$, b, 0);
+          var Foo = class Foo {
+            static self = Foo;
+          };
+        } catch (__bun_temp_ref_2$) {
+          var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+        } finally {
+          __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+        }
+
+        export {
+          Foo as default
+        };
+        "
+      `);
+      expect(lowered(`using a = b;\nexport default class { static x = a; }`)).toMatchInlineSnapshot(`
+        "import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+        let __bun_temp_ref_1$ = [];
+        try {
+          var a = __using(__bun_temp_ref_1$, b, 0);
+          var input_default = class {
+            static x = a;
+          };
+        } catch (__bun_temp_ref_2$) {
+          var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+        } finally {
+          __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+        }
+
+        export {
+          input_default as default
+        };
+        "
+      `);
+    });
+
+    it("turns an exported expression into a var inside the try/catch", () => {
+      expect(lowered(`using a = b;\nexport default a.value;`)).toMatchInlineSnapshot(`
+        "import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+        let __bun_temp_ref_1$ = [];
+        try {
+          var a = __using(__bun_temp_ref_1$, b, 0);
+          var input_default = a.value;
+        } catch (__bun_temp_ref_2$) {
+          var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+        } finally {
+          __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+        }
+
+        export {
+          input_default as default
+        };
+        "
+      `);
+    });
+
+    it("scan() still reports the default export", () => {
+      const scan = code => transpiler.scan(code).exports;
+      expect(scan(`using a = b;\nexport default function foo() {}`)).toEqual(["default"]);
+      expect(scan(`using a = b;\nexport default function () {}`)).toEqual(["default"]);
+      expect(scan(`using a = b;\nexport default class Foo {}`)).toEqual(["default"]);
+      expect(scan(`await using a = b;\nexport default class {}`)).toEqual(["default"]);
+      expect(scan(`await using a = b;\nexport default async function* foo() {}`)).toEqual(["default"]);
+    });
+
+    it("exports.eliminate still drops the default export", () => {
+      const eliminate = new Bun.Transpiler({ loader: "js", target: "browser", exports: { eliminate: ["default"] } });
+      for (const code of [
+        `using a = b;\nexport default function foo() {}`,
+        `using a = b;\nexport default class Foo {}`,
+        `using a = b;\nexport default foo;`,
+      ]) {
+        const out = eliminate.transformSync(code);
+        expect(out).toContain("__using");
+        expect(out).not.toContain("export");
+        expect(out).not.toMatch(/foo/i);
+      }
+    });
+
+    it("the lowered modules export the declaration and still dispose", async () => {
+      const js = new Bun.Transpiler({ loader: "js", target: "browser" });
+      using dir = tempDir("using-export-default", {
+        "fn.mjs": js.transformSync(`
+          using a = { [Symbol.dispose]() { console.log("dispose fn"); } };
+          export default function fn() { return "fn"; }
+        `),
+        "klass.mjs": js.transformSync(`
+          using a = { [Symbol.dispose]() { console.log("dispose klass"); }, tag: "klass" };
+          export default class Klass {
+            static tag = a.tag;
+            static describe() { return Klass.tag; }
+          }
+        `),
+        "anonymous.mjs": js.transformSync(`
+          using a = { [Symbol.dispose]() { console.log("dispose anonymous"); } };
+          export default class { static tag = "anonymous"; }
+        `),
+        "main.mjs": `
+          import fn from "./fn.mjs";
+          import Klass from "./klass.mjs";
+          import Anonymous from "./anonymous.mjs";
+          console.log(fn(), Klass.describe(), Anonymous.tag);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("dispose fn\ndispose klass\ndispose anonymous\nfn klass anonymous\n");
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 describe("await can only be used inside an async function message", () => {

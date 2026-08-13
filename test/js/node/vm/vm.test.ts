@@ -360,13 +360,31 @@ describe("vm", () => {
       });
 
       test("only a hashbang at offset 0 of the body is a comment", () => {
-        // Same inputs node rejects: V8 does not strip a BOM or whitespace here
-        // either (node's CommonJS loader strips the BOM before compiling).
-        expect(() => compileFunction(" #!/usr/bin/env node\nreturn 1")).toThrow(SyntaxError);
-        expect(() => compileFunction("\n#!/usr/bin/env node\nreturn 1")).toThrow(SyntaxError);
-        expect(() => compileFunction("\uFEFF#!/usr/bin/env node\nreturn 1")).toThrow(SyntaxError);
-        expect(() => compileFunction("#\nreturn 1")).toThrow(SyntaxError);
-        expect(() => compileFunction("return 1", ["#!p"])).toThrow();
+        const compileError = (code: string, params: string[] = []) => {
+          try {
+            compileFunction(code, params);
+          } catch (e: any) {
+            return `${e.name}: ${e.message}`;
+          }
+          return "compiled";
+        };
+        // Node rejects the body variants too: V8 does not skip whitespace or a
+        // BOM before the hashbang (node's CommonJS loader strips the BOM itself).
+        // A hashbang in a parameter only fails once the wrapper is compiled,
+        // hence the generic error; node aborts on that input.
+        expect([
+          compileError(" #!/usr/bin/env node\nreturn 1"),
+          compileError("\n#!/usr/bin/env node\nreturn 1"),
+          compileError("\uFEFF#!/usr/bin/env node\nreturn 1"),
+          compileError("#\nreturn 1"),
+          compileError("return 1", ["#!p"]),
+        ]).toEqual([
+          "SyntaxError: Invalid character: '#'",
+          "SyntaxError: Invalid character: '#'",
+          "SyntaxError: Invalid character: '#'",
+          "SyntaxError: Invalid character: '#'",
+          "Error: Failed to compile function",
+        ]);
       });
     });
   });

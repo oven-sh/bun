@@ -1,4 +1,6 @@
 import type { Loader } from "bun";
+import markdown from "./README.markdown";
+import html from "./README.md";
 import { expectAssignable, expectType } from "./utilities";
 
 // The bundler implements json5 and md and accepts them by name (`bun build --loader`,
@@ -7,6 +9,10 @@ expectAssignable<Loader>("json5");
 expectAssignable<Bun.Loader>("md");
 // @ts-expect-error
 expectAssignable<Loader>("bogus");
+
+// The md loader's module is the rendered HTML, the way a *.txt module is the file's text.
+expectType(html).is<string>();
+expectType(markdown).is<string>();
 
 Bun.build({
   entrypoints: ["hey"],

@@ -33,6 +33,16 @@ declare module "*.xml" {
   export = contents;
 }
 
+declare module "*.md" {
+  var html: string;
+  export = html;
+}
+
+declare module "*.markdown" {
+  var html: string;
+  export = html;
+}
+
 declare module "*/bun.lock" {
   var contents: import("bun").BunLockFile;
   export = contents;

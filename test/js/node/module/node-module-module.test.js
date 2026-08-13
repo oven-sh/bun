@@ -250,6 +250,20 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
       for (const invalid of [null, {}, [], Symbol(), () => {}, true, false, 1, 0]) {
         expect(() => findPackageJSON("", invalid)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
       }
+      // Longer than any path the OS accepts (including Windows' ~96 KiB limit).
+      const tooLong = path.join(import.meta.dir, Buffer.alloc(100_000, "a").toString());
+      expect(() => findPackageJSON("dep", tooLong)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+      expect(() => findPackageJSON("./x.js", tooLong)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      );
+    });
+
+    test("oversized specifiers throw ERR_MODULE_NOT_FOUND", () => {
+      const notFound = expect.objectContaining({ code: "ERR_MODULE_NOT_FOUND" });
+      const tooLong = Buffer.alloc(100_000, "a").toString();
+      expect(() => findPackageJSON(tooLong, import.meta.path)).toThrow(notFound);
+      expect(() => findPackageJSON("./" + tooLong, import.meta.path)).toThrow(notFound);
+      expect(() => findPackageJSON(path.join(import.meta.dir, tooLong))).toThrow(notFound);
     });
   });
 

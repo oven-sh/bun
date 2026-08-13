@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 const xml2js = require("xml2js");
@@ -387,6 +387,46 @@ describe("junit reporter", () => {
     expect(suite.$.failures).toBe("1");
 
     expect(proc.exitCode).toBe(1);
+  });
+
+  it.skipIf(isWindows)("produces well-formed XML when a value taken from the OS is not valid UTF-8", async () => {
+    await using tmpDir = tempDir("junit-non-utf8", {
+      "package.json": "{}",
+      "ok.test.js": 'import { test } from "bun:test";\ntest("ok", () => {});\n',
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    // The commit property is copied from the environment as raw bytes, like
+    // file paths and the hostname are. A JS string cannot hold such a byte, so
+    // the shell puts it into the variable (on Windows the environment is
+    // UTF-16, so the situation does not exist there).
+    await using proc = spawn(
+      [
+        "sh",
+        "-c",
+        `GITHUB_SHA="$(printf 'abc\\377')" exec "$0" test --reporter=junit --reporter-outfile "$1"`,
+        bunExe(),
+        junitPath,
+      ],
+      {
+        cwd: tmpDir,
+        env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 1 pass");
+
+    // The report declares encoding="UTF-8", so it has to decode as such; the
+    // invalid byte is written as U+FFFD, as the console already prints it.
+    const xmlContent = new TextDecoder("utf-8", { fatal: true }).decode(await file(junitPath).bytes());
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    const properties = result.testsuites.testsuite[0].properties[0].property;
+    expect(properties.find(p => p.$.name === "commit").$.value).toBe("abc\uFFFD");
+    expect(exitCode).toBe(0);
   });
 
   it("produces well-formed XML when test names contain control characters", async () => {

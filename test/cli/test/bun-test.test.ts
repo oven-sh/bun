@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, canCreateNonUtf8FileNames, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -1747,5 +1747,77 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(stdout).not.toContain("RAN other");
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
+  });
+});
+
+// Such a path does not survive becoming a module specifier, so the file cannot
+// be loaded (Node cannot load it either); what is tested here is that this is
+// reported as a failed file and the rest of the run still happens. The names
+// need Buffer paths, so they cannot be part of the tempDir tree.
+describe.concurrent.skipIf(!canCreateNonUtf8FileNames())("files whose path is not valid UTF-8", () => {
+  const invalidByte = Buffer.from([0xff]);
+
+  test("a scanned test file that cannot be loaded fails without stopping the run", async () => {
+    using dir = tempDir("scanner-non-utf8-path", {
+      "a_first.test.ts": `import { test } from "bun:test"; test("a", () => { console.log("RAN a_first"); });`,
+      "z_last.test.ts": `import { test } from "bun:test"; test("z", () => { console.log("RAN z_last"); });`,
+    });
+    const source = `import { test } from "bun:test"; test("t", () => { console.log("RAN unloadable"); });`;
+    const root = Buffer.from(String(dir) + "/");
+    // Once in the file name itself, once in a directory on the way to the file.
+    writeFileSync(Buffer.concat([root, Buffer.from("b"), invalidByte, Buffer.from(".test.ts")]), source);
+    const subdir = Buffer.concat([root, Buffer.from("dir"), invalidByte]);
+    mkdirSync(subdir);
+    writeFileSync(Buffer.concat([subdir, Buffer.from("/inner.test.ts")]), source);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("RAN a_first");
+    expect(stdout).toContain("RAN z_last");
+    expect(stdout).not.toContain("RAN unloadable");
+    // Each unloadable file gets its header and a load error naming it (the
+    // invalid byte prints as U+FFFD), with no "from" since nothing imported it.
+    expect(stderr).toContain("\nb\uFFFD.test.ts:\n");
+    expect(stderr).toMatch(/error: Cannot find module '[^']*\/b\uFFFD\.test\.ts'\n/);
+    expect(stderr).toContain("\ndir\uFFFD/inner.test.ts:\n");
+    expect(stderr).toMatch(/error: Cannot find module '[^']*\/dir\uFFFD\/inner\.test\.ts'\n/);
+    expect(stderr).toContain(" 2 pass");
+    expect(stderr).toContain(" 2 fail");
+    expect(stderr).toContain("Ran 4 tests across 4 files.");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--preload naming a file that cannot be loaded reports the error", async () => {
+    using dir = tempDir("preload-non-utf8-path", {
+      "a.test.ts": `import { test } from "bun:test"; test("a", () => { console.log("RAN a"); });`,
+    });
+    writeFileSync(
+      Buffer.concat([Buffer.from(String(dir) + "/p"), invalidByte, Buffer.from(".ts")]),
+      `console.log("RAN preload");`,
+    );
+
+    await using proc = Bun.spawn({
+      // A JS string cannot carry the raw byte into argv; the shell can.
+      cmd: ["sh", "-c", `exec "$0" test --preload "./$(printf 'p\\377.ts')"`, bunExe()],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).not.toContain("RAN preload");
+    expect(stdout).not.toContain("RAN a");
+    expect(stderr).toMatch(/error: Cannot find module '[^']*\/p\uFFFD\.ts'\n/);
+    expect(stderr).toContain(" 0 pass");
+    expect(stderr).toContain(" 1 fail");
+    expect(exitCode).toBe(1);
   });
 });

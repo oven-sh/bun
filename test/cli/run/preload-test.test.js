@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { mkdirSync, realpathSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, canCreateNonUtf8FileNames, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 const preloadModule = `
@@ -210,4 +210,31 @@ plugin({
       expect(exitCode).toBe(1);
     }
   });
+
+  test.skipIf(!canCreateNonUtf8FileNames())(
+    "throws an error when the preloaded module's path is not valid UTF-8",
+    async () => {
+      // The resolver finds the file, but its path does not survive becoming a
+      // module specifier, so loading it fails; that failure has to be reported.
+      using dir = tempDir("bun-preload-non-utf8", { "main.js": `console.log("RAN main");` });
+      writeFileSync(
+        Buffer.concat([Buffer.from(`${dir}/p`), Buffer.from([0xff]), Buffer.from(".js")]),
+        `console.log("RAN preload");`,
+      );
+
+      await using proc = Bun.spawn({
+        // A JS string cannot carry the raw byte into argv; the shell can.
+        cmd: ["sh", "-c", `exec "$0" --preload "./$(printf 'p\\377.js')" main.js`, bunExe()],
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+        env: bunEnv,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe("");
+      expect(stderr).toMatch(/error: Cannot find module '[^']*\/p\uFFFD\.js'\n/);
+      expect(exitCode).toBe(1);
+    },
+  );
 });

@@ -712,8 +712,10 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
 /// preload promise if any, else null.
 ///
 /// Error mapping: resolver `Failure` returns the resolver error,
-/// `Pending`/`NotFound` returns `error.ModuleNotFound`,
-/// `JSModuleLoader.import` throwing returns `error.JSError`.
+/// `Pending`/`NotFound` returns `error.ModuleNotFound`. A preload the module
+/// loader cannot load comes back as a rejected promise like any other failing
+/// preload; `JSModuleLoader.import` only fails (`error.JSError`) when the VM is
+/// being terminated.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.

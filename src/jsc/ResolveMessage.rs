@@ -186,22 +186,18 @@ impl ResolveMessage {
                     let _ = write!(&mut out, "Module not found '{}'", BStr::new(specifier));
                     return out;
                 }
-                if bun_resolver::is_package_path(specifier)
+                let what = if bun_resolver::is_package_path(specifier)
                     && !strings::contains_char(specifier, b'/')
                 {
-                    let _ = write!(
-                        &mut out,
-                        "Cannot find package '{}' from '{}'",
-                        BStr::new(specifier),
-                        BStr::new(referrer),
-                    );
+                    "package"
                 } else {
-                    let _ = write!(
-                        &mut out,
-                        "Cannot find module '{}' from '{}'",
-                        BStr::new(specifier),
-                        BStr::new(referrer),
-                    );
+                    "module"
+                };
+                let _ = write!(&mut out, "Cannot find {what} '{}'", BStr::new(specifier));
+                // Entry points and preloads are loaded directly, not imported
+                // from anywhere; Node words those the same way.
+                if !referrer.is_empty() {
+                    let _ = write!(&mut out, " from '{}'", BStr::new(referrer));
                 }
                 return out;
             }

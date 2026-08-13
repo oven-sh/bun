@@ -296,12 +296,68 @@ describe.concurrent("bunshell cp of a source onto itself", () => {
     expect(readdirSync(join(String(dir), "d")).sort()).toEqual(["f", "sub", "sublink"]);
   });
 
+  test("a directory into a directory that already holds a copy is merged", async () => {
+    using dir = setup("merge", work => {
+      mkdirSync(join(work, "e/d/old"), { recursive: true });
+    });
+    expect(await cp(String(dir), "cp -R d e")).toEqual(copied);
+    expect(readdirSync(join(String(dir), "e/d")).sort()).toEqual(["f", "old"]);
+    expect(readFileSync(join(String(dir), "e/d/f"), "utf8")).toBe("F\n");
+  });
+
+  test("a directory into a directory where its name is a link back to it is refused", async () => {
+    using dir = setup("dir-link-back", work => {
+      mkdirSync(join(work, "e"));
+      symlinkSync(join(work, "d"), join(work, "e/d"), "junction");
+    });
+    expect(await cp(String(dir), "cp -R d e")).toEqual(refused("d", `e${sep}d`));
+    expect(readdirSync(join(String(dir), "d"))).toEqual(["f"]);
+  });
+
+  // Inside a tree the per-file pairs are only seen by the copy itself.
+  test.skipIf(isWindows)(
+    "a tree whose destination leads back into it through a link is not copied onto itself",
+    async () => {
+      using dir = setup("tree-link-back", work => {
+        mkdirSync(join(work, "p/d"), { recursive: true });
+        writeFileSync(join(work, "p/d/f"), big);
+        mkdirSync(join(work, "e/p"), { recursive: true });
+        symlinkSync(join(work, "p/d"), join(work, "e/p/d"));
+      });
+      expect(await cp(String(dir), "cp -R p e")).toEqual({
+        stdout: expect.stringMatching(/^1\ncp: .*[\\/]p[\\/]d[\\/]f\n$/),
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(readFileSync(join(String(dir), "p/d/f")).equals(big)).toBeTrue();
+    },
+  );
+
   test("onto a hard link to itself is refused", async () => {
     using dir = setup("hard-link", work => {
       writeFileSync(join(work, "d/f"), big);
       linkSync(join(work, "d/f"), join(work, "d/g"));
     });
     expect(await cp(String(dir), "cp d/f d/g")).toEqual(refused("d/f", "d/g"));
+    expect(readFileSync(join(String(dir), "d/f")).equals(big)).toBeTrue();
+  });
+
+  test("a hard link from elsewhere into the directory of its file is refused", async () => {
+    using dir = setup("hard-link-elsewhere", work => {
+      writeFileSync(join(work, "d/f"), big);
+      mkdirSync(join(work, "e"));
+      linkSync(join(work, "d/f"), join(work, "e/f"));
+    });
+    expect(await cp(String(dir), "cp e/f d")).toEqual(refused("e/f", `d${sep}f`));
+    expect(readFileSync(join(String(dir), "d/f")).equals(big)).toBeTrue();
+  });
+
+  test("into a link to its own directory is refused", async () => {
+    using dir = setup("into-dir-link", work => {
+      writeFileSync(join(work, "d/f"), big);
+      symlinkSync(join(work, "d"), join(work, "dj"), "junction");
+    });
+    expect(await cp(String(dir), "cp d/f dj/")).toEqual(refused("d/f", `dj${sep}f`));
     expect(readFileSync(join(String(dir), "d/f")).equals(big)).toBeTrue();
   });
 

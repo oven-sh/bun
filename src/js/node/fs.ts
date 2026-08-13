@@ -59,6 +59,8 @@ function settleCallbackWithNull(promise: Promise<unknown>, callback: Callback) {
   );
 }
 
+function discardResult() {}
+
 function openAsBlob(path, options?) {
   return Promise.$resolve(Bun.file(path, options));
 }
@@ -430,9 +432,12 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
       callback = ensureCallback(type);
       type = undefined;
     } else if ($isCallable(callback)) {
-      // Not ensureCallback: node does not validate the 4-argument overload's
-      // callback, and a non-callable one must stay an ignored `.then` handler.
       callback = wrapFsCallback(callback);
+    } else {
+      // node does not validate the 4-argument overload's callback; a
+      // non-callable one is skipped on completion, on failure as well as on
+      // success.
+      callback = discardResult;
     }
 
     if ($isCallable(callback)) fs.symlinkCb(err => callback(err === null ? undefined : err), target, path, type);

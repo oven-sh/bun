@@ -1122,6 +1122,7 @@ describe("ignoreTrailingSlash", () => {
         "/api/users": req => new Response(new URL(req.url).pathname),
         "/api/static": new Response("static"),
         "/posts/:id": req => new Response(req.params.id),
+        "/registered/": () => new Response("registered with trailing slash"),
       },
     });
     server.unref();
@@ -1134,6 +1135,11 @@ describe("ignoreTrailingSlash", () => {
   it("matches the exact path", async () => {
     const res = await fetch(new URL("/api/users", server.url).href);
     expect(await res.text()).toBe("/api/users");
+  });
+
+  it("normalizes a registered pattern that has a trailing slash", async () => {
+    const res = await fetch(new URL("/registered", server.url).href);
+    expect(await res.text()).toBe("registered with trailing slash");
   });
 
   it("matches a trailing slash and keeps the raw request.url", async () => {
@@ -1172,6 +1178,7 @@ describe("ignoreDuplicateSlashes", () => {
       fetch: () => new Response("fallback"),
       routes: {
         "/api/users": req => new Response(new URL(req.url).pathname),
+        "/registered//path": () => new Response("registered with duplicate slashes"),
       },
     });
     server.unref();
@@ -1184,6 +1191,11 @@ describe("ignoreDuplicateSlashes", () => {
   it("collapses duplicate slashes and keeps the raw request.url", async () => {
     const res = await fetch(`${server.url.origin}//api//users`);
     expect(await res.text()).toBe("/api//users");
+  });
+
+  it("normalizes a registered pattern that has duplicate slashes", async () => {
+    const res = await fetch(new URL("/registered/path", server.url).href);
+    expect(await res.text()).toBe("registered with duplicate slashes");
   });
 
   it("does not trim a trailing slash (that flag is off)", async () => {
@@ -1201,6 +1213,7 @@ describe("lenient slash matching is off by default", () => {
       fetch: () => new Response("fallback"),
       routes: {
         "/api/users": () => new Response("matched"),
+        "/registered/": () => new Response("registered with trailing slash"),
       },
     });
     server.unref();
@@ -1213,6 +1226,13 @@ describe("lenient slash matching is off by default", () => {
   it("still matches the exact path", async () => {
     const res = await fetch(new URL("/api/users", server.url).href);
     expect(await res.text()).toBe("matched");
+  });
+
+  it("keeps a registered trailing slash significant", async () => {
+    expect(await fetch(new URL("/registered/", server.url).href).then(r => r.text())).toBe(
+      "registered with trailing slash",
+    );
+    expect(await fetch(new URL("/registered", server.url).href).then(r => r.text())).toBe("fallback");
   });
 
   it("falls through to fetch on a trailing slash", async () => {
@@ -1237,6 +1257,7 @@ describe("ignoreTrailingSlash + ignoreDuplicateSlashes", () => {
       fetch: () => new Response("fallback"),
       routes: {
         "/api/users": req => new Response(new URL(req.url).pathname),
+        "/registered//path/": () => new Response("registered messy"),
       },
     });
     server.unref();
@@ -1249,6 +1270,11 @@ describe("ignoreTrailingSlash + ignoreDuplicateSlashes", () => {
   it("matches messy duplicate and trailing slashes together and keeps the raw request.url", async () => {
     const res = await fetch(`${server.url.origin}//api//users//`);
     expect(await res.text()).toBe("/api//users//");
+  });
+
+  it("normalizes a registered pattern that has both duplicate and trailing slashes", async () => {
+    const res = await fetch(new URL("/registered/path", server.url).href);
+    expect(await res.text()).toBe("registered messy");
   });
 
   it("persists across server.reload()", async () => {

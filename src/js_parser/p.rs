@@ -1774,9 +1774,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// Binds generated helper symbols to `import_path` with an `import`
-    /// statement, or with `const { .. } = require()` when the module body is
-    /// going into the CommonJS wrapper function, where an `import` cannot appear.
+    /// Emits `import { .. } from path`, or `const { .. } = require(path)` when the module body is going into the CommonJS wrapper.
     pub(crate) fn generate_import_stmt<I, Sym>(
         &mut self,
         import_path: &'a [u8],

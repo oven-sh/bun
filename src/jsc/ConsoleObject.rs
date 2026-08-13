@@ -532,30 +532,20 @@ fn message_with_type_and_level_(
         }
     }
 
-    // `console.assert(false, ...args)` prepends an "Assertion failed" marker
-    // before formatting, matching Node's `Console.prototype.assert`
-    // (lib/internal/console/constructor.js):
-    //   - if the first arg is a string, it becomes `Assertion failed: <str>`
-    //     and is still used as the printf-style format string for the rest;
-    //   - otherwise `Assertion failed` is unshifted as a new first arg
-    //     (space separator, no colon).
-    // The empty-args case is handled by the early return above.
+    // Matches Node: a string first arg joins the marker with ": " and stays the format string.
     let mut assert_args: Vec<JSValue> = Vec::new();
-    // Keeps the freshly-minted prefix string rooted across `format2`, which
-    // can re-enter JSC (a heap `Vec<JSValue>` is invisible to the conservative
-    // stack scan, unlike the caller-owned `vals`).
+    // Roots the minted prefix string across `format2`; a heap `Vec<JSValue>` is
+    // invisible to the conservative stack scan.
     let mut _prefix_guard: Option<jsc::ProtectedJSValue> = None;
     if message_type == MessageType::Assert && print_length > 0 {
         use crate::StringJsc as _;
         let first = vals_slice[0];
         if first.is_string_literal() {
-            // `OwnedString` releases the +1 ref `from_js` hands back (bun_core's
-            // `String` is `Copy` with no `Drop`), so the first arg doesn't leak.
+            // `OwnedString` releases the +1 ref `from_js` hands back (`String` has no `Drop`).
             let first_str = OwnedString::new(BunString::from_js(first, global)?);
             let mut prefixed = b"Assertion failed: ".to_vec();
             prefixed.extend_from_slice(&first_str.to_utf8_bytes());
-            // `transfer_to_js` consumes the +1 from `clone_utf8` into the JS
-            // string (no accompanying `deref`/`OwnedString` needed).
+            // `transfer_to_js` consumes the +1 from `clone_utf8`.
             let prefixed = BunString::clone_utf8(&prefixed).transfer_to_js(global)?;
             _prefix_guard = Some(prefixed.protected());
             assert_args.push(prefixed);

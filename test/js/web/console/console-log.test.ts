@@ -152,12 +152,8 @@ it("console.log with SharedArrayBuffer", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/31714
-// console.assert (and node:console's `assert`, which is the same function) must
-// prepend an "Assertion failed" marker like Node.js does. A string first arg is
-// prefixed with "Assertion failed: " and still used as the printf format string;
-// any other first value has a bare "Assertion failed" unshifted before it
-// (space separator, no colon). Each case is on its own line (no multi-line
-// object output) so the stderr can be compared exactly.
+// Like Node: a string first arg becomes "Assertion failed: <str>" and stays the
+// format string; any other first value gets a bare "Assertion failed" before it.
 it("console.assert prepends the Assertion failed marker", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -169,6 +165,7 @@ it("console.assert prepends the Assertion failed marker", async () => {
         console.assert(false, "plain message");            // string first arg, no specifiers
         console.assert(false, 42);                         // non-string first arg: bare marker, space separator
         console.assert(false, [1, 2], "arr");              // non-string first arg stays data, not "1,2"
+        console.assert(false, { code: "E42", user: "u1" }, "ctx"); // object stays data too
         console.assert(false, "");                         // empty string is still a string -> colon prefix
         console.assert(false);                             // no args -> bare marker
         console.assert(true, "should not print");          // truthy condition prints nothing
@@ -188,6 +185,10 @@ it("console.assert prepends the Assertion failed marker", async () => {
       "Assertion failed: plain message",
       "Assertion failed 42",
       "Assertion failed [ 1, 2 ] arr",
+      "Assertion failed {",
+      '  code: "E42",',
+      '  user: "u1",',
+      "} ctx",
       "Assertion failed: ",
       "Assertion failed",
       "Assertion failed: from node:console works",
@@ -198,10 +199,8 @@ it("console.assert prepends the Assertion failed marker", async () => {
   expect(exitCode).toBe(0);
 });
 
-// A custom `new Console(...)` instance uses the JS builtin assert, which must
-// follow the same Node rules: a non-string first arg survives as data for the
-// formatter (bare marker, space separator) rather than being string-coerced
-// into the prefix as "[object Object]".
+// A custom `new Console(...)` uses the JS builtin assert and must follow the
+// same rules: a non-string first arg survives as data, not "[object Object]".
 it("custom Console.assert prepends the Assertion failed marker like Node", async () => {
   await using proc = Bun.spawn({
     cmd: [

@@ -587,10 +587,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
     assert(expression, ...args) {
       if (!expression) {
-        // Match Node's Console.prototype.assert: a string first arg becomes
-        // "Assertion failed: <str>" (and is still the printf format string);
-        // anything else gets a bare "Assertion failed" unshifted before it
-        // (space separator, no colon).
+        // Matches Node: a string first arg joins the marker with ": " and stays the format string.
         if (args.length && typeof args[0] === "string") {
           args[0] = `Assertion failed: ${args[0]}`;
         } else {

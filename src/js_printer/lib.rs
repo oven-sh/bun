@@ -2821,69 +2821,33 @@ pub(crate) mod __gated_printer {
                 if let Some(loader) = record.loader {
                     use bun_ast::Loader;
                     match loader {
-                        Loader::Jsx => {
-                            self.print_whitespacer(ws!(b" with { type: \"jsx\" }"))
-                        }
-                        Loader::Js => {
-                            self.print_whitespacer(ws!(b" with { type: \"js\" }"))
-                        }
-                        Loader::Ts => {
-                            self.print_whitespacer(ws!(b" with { type: \"ts\" }"))
-                        }
-                        Loader::Tsx => {
-                            self.print_whitespacer(ws!(b" with { type: \"tsx\" }"))
-                        }
-                        Loader::Css => {
-                            self.print_whitespacer(ws!(b" with { type: \"css\" }"))
-                        }
-                        Loader::File => {
-                            self.print_whitespacer(ws!(b" with { type: \"file\" }"))
-                        }
-                        Loader::Json => {
-                            self.print_whitespacer(ws!(b" with { type: \"json\" }"))
-                        }
-                        Loader::Jsonc => {
-                            self.print_whitespacer(ws!(b" with { type: \"jsonc\" }"))
-                        }
-                        Loader::Toml => {
-                            self.print_whitespacer(ws!(b" with { type: \"toml\" }"))
-                        }
-                        Loader::Yaml => {
-                            self.print_whitespacer(ws!(b" with { type: \"yaml\" }"))
-                        }
-                        Loader::Json5 => {
-                            self.print_whitespacer(ws!(b" with { type: \"json5\" }"))
-                        }
-                        Loader::Xml => {
-                            self.print_whitespacer(ws!(b" with { type: \"xml\" }"))
-                        }
-                        Loader::Wasm => {
-                            self.print_whitespacer(ws!(b" with { type: \"wasm\" }"))
-                        }
-                        Loader::Napi => {
-                            self.print_whitespacer(ws!(b" with { type: \"napi\" }"))
-                        }
+                        Loader::Jsx => self.print_whitespacer(ws!(b" with { type: \"jsx\" }")),
+                        Loader::Js => self.print_whitespacer(ws!(b" with { type: \"js\" }")),
+                        Loader::Ts => self.print_whitespacer(ws!(b" with { type: \"ts\" }")),
+                        Loader::Tsx => self.print_whitespacer(ws!(b" with { type: \"tsx\" }")),
+                        Loader::Css => self.print_whitespacer(ws!(b" with { type: \"css\" }")),
+                        Loader::File => self.print_whitespacer(ws!(b" with { type: \"file\" }")),
+                        Loader::Json => self.print_whitespacer(ws!(b" with { type: \"json\" }")),
+                        Loader::Jsonc => self.print_whitespacer(ws!(b" with { type: \"jsonc\" }")),
+                        Loader::Toml => self.print_whitespacer(ws!(b" with { type: \"toml\" }")),
+                        Loader::Yaml => self.print_whitespacer(ws!(b" with { type: \"yaml\" }")),
+                        Loader::Json5 => self.print_whitespacer(ws!(b" with { type: \"json5\" }")),
+                        Loader::Xml => self.print_whitespacer(ws!(b" with { type: \"xml\" }")),
+                        Loader::Wasm => self.print_whitespacer(ws!(b" with { type: \"wasm\" }")),
+                        Loader::Napi => self.print_whitespacer(ws!(b" with { type: \"napi\" }")),
                         Loader::Base64 => {
                             self.print_whitespacer(ws!(b" with { type: \"base64\" }"))
                         }
                         Loader::Dataurl => {
                             self.print_whitespacer(ws!(b" with { type: \"dataurl\" }"))
                         }
-                        Loader::Text => {
-                            self.print_whitespacer(ws!(b" with { type: \"text\" }"))
-                        }
-                        Loader::Bunsh => {
-                            self.print_whitespacer(ws!(b" with { type: \"sh\" }"))
-                        }
+                        Loader::Text => self.print_whitespacer(ws!(b" with { type: \"text\" }")),
+                        Loader::Bunsh => self.print_whitespacer(ws!(b" with { type: \"sh\" }")),
                         Loader::Sqlite | Loader::SqliteEmbedded => {
                             self.print_whitespacer(ws!(b" with { type: \"sqlite\" }"))
                         }
-                        Loader::Html => {
-                            self.print_whitespacer(ws!(b" with { type: \"html\" }"))
-                        }
-                        Loader::Md => {
-                            self.print_whitespacer(ws!(b" with { type: \"md\" }"))
-                        }
+                        Loader::Html => self.print_whitespacer(ws!(b" with { type: \"html\" }")),
+                        Loader::Md => self.print_whitespacer(ws!(b" with { type: \"md\" }")),
                     }
                 }
             }
@@ -6071,7 +6035,8 @@ pub(crate) mod __gated_printer {
                         }
 
                         for item in slice_of(s.items).iter() {
-                            if !self.import_item_prints_in_clause(hide_aliased_items, item.name.ref_)
+                            if !self
+                                .import_item_prints_in_clause(hide_aliased_items, item.name.ref_)
                             {
                                 continue;
                             }

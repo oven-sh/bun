@@ -645,6 +645,7 @@ impl<T: VersionInt> VersionType<T> {
             }
         }
 
+        result.has_version = part_i > 0;
         result.len = u32::try_from(i).expect("int cast");
 
         result
@@ -1197,6 +1198,7 @@ pub struct TagResult {
 pub struct ParseResult<T: VersionInt> {
     pub wildcard: Wildcard,
     pub valid: bool,
+    pub has_version: bool,
     pub version: Partial<T>,
     pub(crate) len: u32,
 }
@@ -1206,6 +1208,7 @@ impl<T: VersionInt> Default for ParseResult<T> {
         Self {
             wildcard: Wildcard::None,
             valid: true,
+            has_version: false,
             version: Partial::default(),
             len: 0,
         }

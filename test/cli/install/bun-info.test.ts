@@ -417,6 +417,18 @@ describe.concurrent("bun info", () => {
         config: "env-empty-selector",
       },
       {
+        name: "bun info with a valid compact union range",
+        args: ["info", "manifestless-range-pkg@1||2", "name"],
+        packageName: "manifestless-range-pkg",
+        config: "env-union-range",
+      },
+      {
+        name: "bun info with a valid prefixed range",
+        args: ["info", "manifestless-range-pkg@~v1", "name"],
+        packageName: "manifestless-range-pkg",
+        config: "env-caret-range",
+      },
+      {
         name: "bun info with --registry before the spec",
         args: ["info", "--registry", "$REGISTRY", "manifestless-option-before-pkg@1.0.0", "name"],
         packageName: "manifestless-option-before-pkg",
@@ -513,6 +525,8 @@ describe.concurrent("bun info", () => {
       { name: "bun info with a named path", args: ["info", "pkg@file:./local"] },
       { name: "bun info with a named URL", args: ["info", "pkg@https://example.com/package.tgz"] },
       { name: "bun info with an unsupported named selector", args: ["info", "pkg@workspace:*"] },
+      { name: "bun info with a malformed named range", args: ["info", "pkg@foo|bar"] },
+      { name: "bun info with a malformed range operand", args: ["info", "pkg@^^1"] },
       { name: "bun info with malformed package syntax", args: ["info", "@"] },
       { name: "bun info with only a valued registry option", args: ["info", "--registry", "$REGISTRY"] },
       { name: "bun pm view", args: ["pm", "view"] },
@@ -525,6 +539,8 @@ describe.concurrent("bun info", () => {
         args: ["pm", "view", "pkg@https://example.com/package.tgz"],
       },
       { name: "bun pm view with an unsupported named selector", args: ["pm", "view", "pkg@foo:bar"] },
+      { name: "bun pm view with a malformed named range", args: ["pm", "view", "pkg@foo|bar"] },
+      { name: "bun pm view with a malformed range operand", args: ["pm", "view", "pkg@^^1"] },
       { name: "bun pm view with malformed package syntax", args: ["pm", "view", "@"] },
     ])("$name still requires project context", async ({ args }) => {
       let requestCount = 0;

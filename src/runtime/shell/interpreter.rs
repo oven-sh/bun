@@ -2224,9 +2224,7 @@ pub(crate) fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<b
     }
 }
 
-/// Syscalls fail on `""` with ENOENT, but the shell's own resolution would turn
-/// it into the cwd: joining it onto the cwd string, or the Windows `*at()`
-/// emulation, for which an empty name is the directory handle itself.
+/// Resolved by the shell (cwd join, or the Windows `*at()` emulation), `""` would name the cwd.
 pub(crate) fn reject_empty_path(path: &[u8], syscall: bun_sys::Tag) -> bun_sys::Result<()> {
     if path.is_empty() {
         return Err(bun_sys::Error::from_code(bun_sys::E::ENOENT, syscall));

@@ -1832,6 +1832,20 @@ export function waitForFileToExist(path: string, interval_ms: number) {
   }
 }
 
+/**
+ * Resolves with the file's contents once they contain `needle` at least
+ * `occurrences` times. Polls without a deadline of its own (the test timeout is
+ * the deadline); race it against a failure signal, such as the exit of the
+ * process expected to write the file.
+ */
+export async function waitForFileToContain(path: string, needle: string, occurrences = 1): Promise<string> {
+  while (true) {
+    const text = fs.existsSync(path) ? fs.readFileSync(path, "utf8") : "";
+    if (text.split(needle).length - 1 >= occurrences) return text;
+    await Bun.sleep(5);
+  }
+}
+
 export function libcPathForDlopen() {
   switch (process.platform) {
     case "linux":

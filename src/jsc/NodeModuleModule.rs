@@ -139,11 +139,15 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
     // resolution starts in its directory; without one it starts in the cwd.
     let (source_dir, referrer): (&[u8], &[u8]) = match &base_utf8 {
         Some(base) => {
-            let base = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+            let joined = resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
                 top_level_dir,
                 &mut base_buf,
                 &[base.slice()],
             );
+            // `None`: longer than any path the OS accepts.
+            let Some(base) = joined else {
+                return Err(global.throw_invalid_argument_value(b"base", base_value));
+            };
             (bun_paths::dirname(base).unwrap_or(base), base)
         }
         None => (top_level_dir, top_level_dir),

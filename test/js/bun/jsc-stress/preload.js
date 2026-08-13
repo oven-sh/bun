@@ -32,3 +32,8 @@ globalThis.fullGC = jsc.fullGC;
 globalThis.edenGC = jsc.edenGC;
 globalThis.numberOfDFGCompiles = jsc.numberOfDFGCompiles;
 globalThis.noDFG = jsc.noFTL;
+
+// transferArrayBuffer: jsc shell helper that detaches an ArrayBuffer.
+globalThis.transferArrayBuffer = buffer => {
+  buffer.transfer();
+};

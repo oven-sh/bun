@@ -154,7 +154,7 @@ Higher values show more nested properties but may produce verbose output for com
 
 #### `debug.editor`
 
-The editor that [`Bun.openInEditor()`](/runtime/utils#bun-openineditor) opens files with when it is called without an `editor` option. This takes precedence over the `$EDITOR` and `$VISUAL` environment variables. Accepts an absolute path to an editor, or the name of a known editor (for example `"code"` or `"subl"`), which is looked up on `PATH`. When a named editor cannot be found, Bun falls back to `$EDITOR` and `$VISUAL`.
+The editor that [`Bun.openInEditor()`](/runtime/utils#bun-openineditor) opens files with when it is called without an `editor` option. Accepts an absolute path to an editor, or the name of an editor Bun knows (for example `"code"` or `"subl"`), which is looked up on `PATH` (and in `/Applications` on macOS). This setting is consulted before the `$EDITOR` and `$VISUAL` environment variables. If the configured editor is not installed, Bun continues with the detection it performs without this setting: `$EDITOR` or `$VISUAL`, then a built-in list of common editors.
 
 ```toml title="bunfig.toml" icon="settings"
 [debug]

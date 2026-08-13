@@ -1,7 +1,9 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, tempDir, tempDirWithFiles } from "harness";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -170,6 +172,55 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .fileEquals(TEST_COPY_TO_FOLDER_NEW_FILE, "Hello, World!")
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
+  });
+});
+
+// The builtin is the default only on Windows; on POSIX it is enabled by an env
+// var that is read once per process, so each of these runs cp in a child bun.
+describe.concurrent("bunshell cp with an empty operand", () => {
+  const builtinEnv = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
+
+  /** Runs `command` through the shell in `cwd`; the child prints cp's exit code, then its stderr. */
+  async function cp(cwd: string, command: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const result = await Bun.$\`\${{ raw: ${JSON.stringify(command)} }}\`.nothrow().quiet();
+         process.stdout.write(result.exitCode + "\\n" + result.stderr.toString() + result.stdout.toString());`,
+      ],
+      cwd,
+      env: builtinEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const ENOENT = "cp: No such file or directory\n";
+
+  // An empty operand used to be joined onto the shell's cwd, which resolved to
+  // the cwd itself: `cp "" out` complained that "" is a directory, `cp -R "" out`
+  // copied the cwd into itself, and `cp f ""` copied f onto itself and exited 0.
+  test.each([
+    ['cp "" out', ENOENT],
+    ['cp -R "" out', ENOENT],
+    ['cp f ""', ENOENT],
+    ['cp -R f ""', ENOENT],
+    ['cp f g ""', ENOENT + ENOENT],
+  ])("%s fails with ENOENT and copies nothing", async (command, stderr) => {
+    using dir = tempDir("shell-cp-empty-operand", { f: "F\n", g: "G\n" });
+
+    expect(await cp(String(dir), command)).toEqual({ stdout: `1\n${stderr}`, stderr: "", exitCode: 0 });
+    expect(readdirSync(String(dir)).sort()).toEqual(["f", "g"]);
+    expect(readFileSync(join(String(dir), "f"), "utf8")).toBe("F\n");
+  });
+
+  test("the other sources are still copied when one of them is empty", async () => {
+    using dir = tempDir("shell-cp-empty-operand-one-of-many", { f: "F\n", out: {} });
+
+    expect(await cp(String(dir), 'cp "" f out')).toEqual({ stdout: `1\n${ENOENT}`, stderr: "", exitCode: 0 });
+    expect(readFileSync(join(String(dir), "out", "f"), "utf8")).toBe("F\n");
   });
 });
 

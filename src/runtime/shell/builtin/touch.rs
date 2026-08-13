@@ -265,6 +265,15 @@ impl ShellTouchTask {
     pub(crate) fn run_from_thread_pool(this: &mut ShellTouchTask) {
         use bun_paths::resolve_path::{self, Platform, platform};
         use bun_sys::FdExt as _;
+        // Joining an empty operand onto the cwd yields the cwd itself, so it
+        // would touch the directory instead of failing like `utimensat("")`.
+        if this.filepath.is_empty() {
+            this.err = Some(bun_sys::Error::from_code(
+                bun_sys::E::ENOENT,
+                bun_sys::Tag::utime,
+            ));
+            return;
+        }
         // We have to give an absolute path.
         let mut buf = bun_paths::PathBuffer::uninit();
         let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {

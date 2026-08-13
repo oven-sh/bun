@@ -588,6 +588,15 @@ impl ShellCpTask {
     fn run_from_thread_pool_impl(&mut self) -> Option<ShellErr> {
         use resolve_path::{Platform, platform};
 
+        // Joining an empty operand onto the cwd yields the cwd itself, so it
+        // would copy the cwd (or into it) instead of failing like `stat("")`.
+        if self.src.is_empty() || self.tgt.is_empty() {
+            return Some(ShellErr::new_sys(&bun_sys::Error::from_code(
+                bun_sys::E::ENOENT,
+                bun_sys::Tag::copyfile,
+            )));
+        }
+
         let mut buf2 = bun_paths::PathBuffer::uninit();
         let mut buf3 = bun_paths::PathBuffer::uninit();
         // We have to give an absolute path to our cp implementation for it to

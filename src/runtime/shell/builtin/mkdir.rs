@@ -296,6 +296,15 @@ impl ShellMkdirTask {
 
     fn run_from_thread_pool(this: &mut ShellMkdirTask) {
         use bun_paths::{Platform, platform, resolve_path};
+        // Joining an empty operand onto the cwd yields the cwd itself, so it
+        // would mkdir the cwd (a no-op under -p) instead of failing like `mkdir("")`.
+        if this.filepath.is_empty() {
+            this.err = Some(bun_sys::Error::from_code(
+                bun_sys::E::ENOENT,
+                bun_sys::Tag::mkdir,
+            ));
+            return;
+        }
         // We have to give an absolute path to our mkdir implementation for it
         // to work with cwd.
         let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {

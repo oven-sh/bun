@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, readdirSorted, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, readdirSorted, tmpdirSync } from "harness";
 import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
@@ -532,7 +532,8 @@ describe("bunx --no-install", () => {
   // with SIGCHLD ignored (inherited from the launcher; bun's own spawn resets
   // it in children, hence perl) the kernel reaps the bin and waitpid() fails
   // with ECHILD. bunx exits 1 either way; the point is that it says why.
-  it.concurrent.skipIf(isWindows || !hasPerl)("reports a bin whose exit status could not be collected", async () => {
+  // Linux only: on macOS bunx execs the bin in place and never waits for it.
+  it.concurrent.skipIf(!isLinux || !hasPerl)("reports a bin whose exit status could not be collected", async () => {
     const { x_dir, env } = setup();
     const name = "bunx-unwaitable-bin-fixture";
     await installLocalBin(x_dir, name, "#!/bin/sh\necho ran\n");

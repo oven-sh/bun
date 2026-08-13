@@ -1,6 +1,6 @@
 import { SQL } from "bun";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { unlinkSync } from "js/node/fs/export-star-from";
 
 declare module "bun" {
@@ -769,4 +769,34 @@ describe("SQL adapter environment variable precedence", () => {
       });
     });
   });
+});
+
+// The sql module tree is evaluated inside the Bun.sql / Bun.SQL / Bun.postgres
+// lazy property initializers. Its module-scope code must not reify other Bun
+// properties (it used to read Bun.env), because if the tree then fails to
+// evaluate, the Bun object has changed shape underneath the lookup that is
+// still in progress, which debug builds catch as a structure assertion.
+// Spawned because the failure mode is a process abort.
+test("a sql module tree that fails to evaluate throws from the Bun lazy properties", async () => {
+  const code = `
+    globalThis.Error = -6;
+    for (const name of ["sql", "SQL", "postgres"]) {
+      try {
+        Bun[name];
+        console.log(name + ": no throw");
+      } catch (e) {
+        console.log(name + ": threw");
+      }
+    }
+    console.log("after");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("sql: threw\nSQL: threw\npostgres: threw\nafter\n");
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });

@@ -49,16 +49,12 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSObject* options = Bun::createInspectOptionsObject(vm, globalObject, max_depth, colors);
-    if (scope.exception() || !options) [[unlikely]] {
-        // node:util failed to evaluate (e.g. a clobbered global). Returning the
-        // receiver makes the formatter fall back to default formatting.
-        (void)scope.tryClearException();
-        return JSValue::encode(thisValue);
-    }
-
     JSFunction* inspectFn = globalObject->utilInspectFunction();
-    if (scope.exception()) [[unlikely]] {
+    JSObject* options = inspectFn ? Bun::createInspectOptionsObject(vm, globalObject, max_depth, colors) : nullptr;
+    if (!options) [[unlikely]] {
+        // node:util failed to evaluate (e.g. a clobbered global). Returning the
+        // receiver makes the formatter fall back to default formatting for this
+        // value; nothing is cached, so a later inspect retries the load.
         (void)scope.tryClearException();
         return JSValue::encode(thisValue);
     }

@@ -1929,16 +1929,6 @@ extern "C" napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* global
     return globalObject->makeNapiEnvForFFI();
 }
 
-// Fallback for m_utilInspectFunction when the node:util module fails to
-// evaluate (e.g. the script clobbered a global it depends on). LazyProperty
-// initializers must always set a value, so this stands in for util.inspect.
-JSC_DEFINE_HOST_FUNCTION(jsFunctionUtilInspectFallback, (JSGlobalObject * globalObject, CallFrame* callframe))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    RELEASE_AND_RETURN(scope, JSValue::encode(callframe->argument(0).toString(globalObject)));
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2313,24 +2303,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(JSFunction::create(init.vm, init.owner, 4, "performMicrotaskVariadic"_s, jsFunctionPerformMicrotaskVariadic, ImplementationVisibility::Public));
         });
 
-    m_utilInspectFunction.initLater(
-        [](const Initializer<JSFunction>& init) {
-            auto scope = DECLARE_THROW_SCOPE(init.vm);
-            JSValue prop;
-            JSValue nodeUtilValue = uncheckedDowncast<Zig::GlobalObject>(init.owner)->internalModuleRegistry()->requireId(init.owner, init.vm, Bun::InternalModuleRegistry::Field::NodeUtil);
-            if (!scope.exception()) [[likely]] {
-                RELEASE_ASSERT(nodeUtilValue.isObject());
-                prop = nodeUtilValue.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s));
-            }
-            // A LazyProperty initializer must set a value even when the module
-            // fails to evaluate; the exception stays pending for the caller.
-            if (scope.exception() || !prop) [[unlikely]] {
-                init.set(JSFunction::create(init.vm, init.owner, 2, String(), jsFunctionUtilInspectFallback, ImplementationVisibility::Private));
-                return;
-            }
-            init.set(uncheckedDowncast<JSFunction>(prop));
-        });
-
     m_utilInspectOptionsStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::createUtilInspectOptionsStructure(init.vm, init.owner));
@@ -2343,31 +2315,6 @@ void GlobalObject::finishCreation(VM& vm)
                 init.owner);
 
             init.set(ErrorCodeCache::create(init.vm, structure));
-        });
-
-    m_utilInspectStylizeColorFunction.initLater(
-        [](const Initializer<JSFunction>& init) {
-            auto scope = DECLARE_THROW_SCOPE(init.vm);
-            JSValue result;
-            JSC::MarkedArgumentBuffer args;
-            args.append(uncheckedDowncast<Zig::GlobalObject>(init.owner)->utilInspectFunction());
-            if (!scope.exception()) [[likely]] {
-                JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, init.owner, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
-
-                JSC::CallData callData = JSC::getCallData(getStylize);
-                NakedPtr<JSC::Exception> returnedException = nullptr;
-                result = JSC::profiledCall(init.owner, ProfilingReason::API, getStylize, callData, jsNull(), args, returnedException);
-                if (returnedException && !scope.exception()) {
-                    throwException(init.owner, scope, returnedException.get());
-                }
-            }
-            // A LazyProperty initializer must set a value even on failure; fall
-            // back to the no-color stylize and leave the exception pending.
-            if (scope.exception() || !result) [[unlikely]] {
-                init.set(JSC::JSFunction::create(init.vm, init.owner, utilInspectStylizeWithNoColorCodeGenerator(init.vm), init.owner));
-                return;
-            }
-            init.set(uncheckedDowncast<JSFunction>(result));
         });
 
     m_utilInspectStylizeNoColorFunction.initLater(
@@ -3096,6 +3043,48 @@ EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
 JSC::JSObject* GlobalObject::navigatorObject()
 {
     return this->m_navigatorObject.get(this);
+}
+
+// Not a LazyProperty: those are set-once, and evaluating node:util can fail
+// transiently (stack overflow, a clobbered global the script restores later).
+// On failure this returns null with the exception pending and nothing is
+// cached, so the next caller retries the load.
+JSC::JSFunction* GlobalObject::utilInspectFunction()
+{
+    if (auto* cached = m_utilInspectFunction.get())
+        return cached;
+
+    auto& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue nodeUtilValue = internalModuleRegistry()->requireId(this, vm, Bun::InternalModuleRegistry::Field::NodeUtil);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_ASSERT(nodeUtilValue.isObject());
+    JSValue inspect = nodeUtilValue.getObject()->getIfPropertyExists(this, Identifier::fromString(vm, "inspect"_s));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    ASSERT(inspect);
+    auto* inspectFunction = uncheckedDowncast<JSFunction>(inspect);
+    m_utilInspectFunction.set(vm, this, inspectFunction);
+    return inspectFunction;
+}
+
+JSC::JSFunction* GlobalObject::utilInspectStylizeColorFunction()
+{
+    if (auto* cached = m_utilInspectStylizeColorFunction.get())
+        return cached;
+
+    auto& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSFunction* inspect = utilInspectFunction();
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    JSFunction* getStylize = JSFunction::create(vm, this, utilInspectGetStylizeWithColorCodeGenerator(vm), this);
+    MarkedArgumentBuffer args;
+    args.append(inspect);
+    JSValue stylize = JSC::profiledCall(this, ProfilingReason::API, getStylize, JSC::getCallData(getStylize), jsNull(), args);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto* stylizeFunction = uncheckedDowncast<JSFunction>(stylize);
+    m_utilInspectStylizeColorFunction.set(vm, this, stylizeFunction);
+    return stylizeFunction;
 }
 
 JSC_DEFINE_CUSTOM_GETTER(functionLazyNavigatorGetter,

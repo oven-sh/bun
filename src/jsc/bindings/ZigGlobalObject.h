@@ -296,8 +296,9 @@ public:
     JSC::JSFunction* performMicrotaskVariadicFunction() const { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
 
     JSC::Structure* utilInspectOptionsStructure() const { return m_utilInspectOptionsStructure.getInitializedOnMainThread(this); }
-    JSC::JSFunction* utilInspectFunction() const { return m_utilInspectFunction.getInitializedOnMainThread(this); }
-    JSC::JSFunction* utilInspectStylizeColorFunction() const { return m_utilInspectStylizeColorFunction.getInitializedOnMainThread(this); }
+    // These two return null with an exception pending if node:util fails to evaluate.
+    JSC::JSFunction* utilInspectFunction();
+    JSC::JSFunction* utilInspectStylizeColorFunction();
     JSC::JSFunction* utilInspectStylizeNoColorFunction() const { return m_utilInspectStylizeNoColorFunction.getInitializedOnMainThread(this); }
 
     JSC::JSFunction* wasmStreamingConsumeStreamFunction() const { return m_wasmStreamingConsumeStreamFunction.getInitializedOnMainThread(this); }
@@ -635,9 +636,9 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketHandlersStructure)                           \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_nativeMicrotaskTrampoline)                          \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskVariadicFunction)                   \
-    V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectFunction)                                \
+    V(private, WriteBarrier<JSFunction>, m_utilInspectFunction)                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_utilInspectOptionsStructure)                         \
-    V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeColorFunction)                    \
+    V(private, WriteBarrier<JSFunction>, m_utilInspectStylizeColorFunction)                                  \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeNoColorFunction)                  \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_wasmStreamingConsumeStreamFunction)                 \
     V(private, WebCore::JSStreamsRuntime, m_streamsRuntime)                                                  \

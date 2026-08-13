@@ -7036,51 +7036,6 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getProperty(
     return JSC::JSValue::encode(result ? result : JSC::jsUndefined());
 }
 
-// Format a value for REPL output using util.inspect style
-extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
-    JSC::JSGlobalObject* globalObject,
-    JSC::EncodedJSValue valueEncoded,
-    int32_t depth,
-    bool colors)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // Get the util.inspect function from the global object
-    auto* bunGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    JSC::JSValue inspectFn = bunGlobal->utilInspectFunction();
-    if (scope.exception()) [[unlikely]] {
-        // node:util failed to evaluate; use the toString fallback below.
-        (void)scope.tryClearException();
-        inspectFn = {};
-    }
-
-    if (!inspectFn || !inspectFn.isCallable()) {
-        // Fallback to toString if util.inspect is not available
-        JSC::JSValue value = JSC::JSValue::decode(valueEncoded);
-        JSString* str = value.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-        return JSC::JSValue::encode(str);
-    }
-
-    // Create options object
-    JSC::JSObject* options = JSC::constructEmptyObject(globalObject);
-    options->putDirect(vm, JSC::Identifier::fromString(vm, "depth"_s), JSC::jsNumber(depth));
-    options->putDirect(vm, JSC::Identifier::fromString(vm, "colors"_s), JSC::jsBoolean(colors));
-    options->putDirect(vm, JSC::Identifier::fromString(vm, "maxArrayLength"_s), JSC::jsNumber(100));
-    options->putDirect(vm, JSC::Identifier::fromString(vm, "maxStringLength"_s), JSC::jsNumber(10000));
-    options->putDirect(vm, JSC::Identifier::fromString(vm, "breakLength"_s), JSC::jsNumber(80));
-
-    JSC::MarkedArgumentBuffer args;
-    args.append(JSC::JSValue::decode(valueEncoded));
-    args.append(options);
-
-    JSC::JSValue result = JSC::call(globalObject, inspectFn, JSC::ArgList(args), "util.inspect"_s);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-
-    return JSC::JSValue::encode(result);
-}
-
 // Collects every ArrayBufferView in a JSArray and the (data, byteLength) span
 // of each. Two passes, mirroring Buffer.concat: the first reads every element
 // into a MarkedArgumentBuffer, so any user code an indexed read can run

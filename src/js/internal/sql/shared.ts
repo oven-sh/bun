@@ -1528,7 +1528,11 @@ function parseSQLiteOptions(
 
 const DEFAULT_PROTOCOL: Bun.SQL.__internal.Adapter = "postgres";
 
-const env = Bun.env;
+// Same object as Bun.env, but reading it through process keeps this module's
+// evaluation from reifying a property on the Bun object: it runs inside the
+// Bun.sql / Bun.SQL lazy initializers, and a structure transition there
+// followed by a throw later in the tree breaks the in-progress lookup.
+const env = process.env;
 
 /**
  * Reads environment variables to try and find a connnection string

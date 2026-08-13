@@ -826,13 +826,24 @@ it.concurrent("console.log(Bun) survives a lazy property initializer throwing", 
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });
 
-// If node:util fails to evaluate (clobbered globals), custom inspect must fall
-// back to default formatting instead of corrupting the lazy util.inspect slot.
-it.concurrent("console.log falls back when node:util cannot load for custom inspect", async () => {
+// If node:util fails to evaluate (clobbered globals), custom inspect falls back
+// to default formatting for that call, with and without colors, and nothing is
+// cached: repeating the call still falls back, and once node:util can load
+// again the custom hook works, so a transient failure does not degrade inspect
+// for the rest of the process.
+it.concurrent("custom inspect falls back while node:util cannot load and recovers afterwards", async () => {
   const code = `
     const o = { [Symbol.for("nodejs.util.inspect.custom")]() { return "custom!"; } };
+    const RealSymbol = Symbol;
+    const strip = s => s.replace(/\\x1b\\[[0-9;]*m/g, "");
     globalThis.Symbol = -6;
-    console.log(o);
+    console.log("plain:", Bun.inspect(o).includes("custom!") ? "hook ran" : "fell back");
+    const colored = Bun.inspect(o, { colors: true });
+    console.log("colors:", colored.includes("custom!") ? "hook ran" : colored !== strip(colored) ? "fell back with colors" : "fell back without colors");
+    console.log("plain again:", Bun.inspect(o).includes("custom!") ? "hook ran" : "fell back");
+    globalThis.Symbol = RealSymbol;
+    console.log("restored:", Bun.inspect(o));
+    console.log("restored colors:", Bun.inspect(o, { colors: true }));
     console.log("after-inspect");
   `;
   await using proc = Bun.spawn({
@@ -842,10 +853,15 @@ it.concurrent("console.log falls back when node:util cannot load for custom insp
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // The custom hook must not run; the object falls back to default rendering.
-  expect(stdout).toContain("Symbol(nodejs.util.inspect.custom)");
-  expect(stdout).not.toContain("custom!");
-  expect(stdout).toContain("after-inspect");
+  expect(stdout).toMatchInlineSnapshot(`
+    "plain: fell back
+    colors: fell back with colors
+    plain again: fell back
+    restored: custom!
+    restored colors: custom!
+    after-inspect
+    "
+  `);
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });
 

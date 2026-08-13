@@ -99,6 +99,12 @@ impl StandaloneModuleGraph {
         INSTANCE.get().map(|cell| cell.0.get())
     }
 
+    /// Read-only lookups. Use `get()` when mutating per-`File` lazy caches.
+    pub fn get_ref() -> Option<&'static StandaloneModuleGraph> {
+        // SAFETY: `Instance` is `Sync`; the `&self` methods touch only the immutable tables.
+        INSTANCE.get().map(|cell| unsafe { &*cell.0.get() })
+    }
+
     pub fn set(instance: StandaloneModuleGraph) -> *mut StandaloneModuleGraph {
         let _ = INSTANCE.set(Instance(core::cell::UnsafeCell::new(instance)));
         INSTANCE.get().unwrap().0.get()
@@ -160,11 +166,32 @@ impl StandaloneModuleGraph {
         self.find_assume_standalone_path(name)
     }
 
-    pub fn stat(&mut self, name: &[u8]) -> Option<Stat> {
+    fn lookup_file(&self, name: &[u8]) -> Option<&File> {
+        #[cfg(windows)]
+        {
+            let mut buf = PathBuffer::uninit();
+            return self.files.get(normalize_file_key(name, &mut buf));
+        }
+        #[cfg(not(windows))]
+        self.files.get(name)
+    }
+
+    pub fn find_ref(&self, name: &[u8]) -> Option<&File> {
         if !is_bun_standalone_file_path(name) {
             return None;
         }
-        if let Some(file) = self.find_assume_standalone_path(name) {
+        self.lookup_file(name)
+    }
+
+    pub fn contains_file(&self, name: &[u8]) -> bool {
+        self.find_ref(name).is_some()
+    }
+
+    pub fn stat(&self, name: &[u8]) -> Option<Stat> {
+        if !is_bun_standalone_file_path(name) {
+            return None;
+        }
+        if let Some(file) = self.lookup_file(name) {
             return Some(file.stat());
         }
         if self.find_dir(name) {
@@ -175,10 +202,7 @@ impl StandaloneModuleGraph {
 
     fn normalize_dir_path<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
         #[cfg(windows)]
-        let name = {
-            let input = strings::paths::without_nt_prefix::<u8>(name);
-            &*path::resolve_path::platform_to_posix_buf::<u8>(input, buf)
-        };
+        let name = normalize_file_key(name, buf);
         #[cfg(not(windows))]
         let _ = buf;
         let mut name = name;
@@ -242,17 +266,18 @@ impl StandaloneModuleGraph {
     pub fn find_assume_standalone_path(&mut self, name: &[u8]) -> Option<&mut File> {
         #[cfg(windows)]
         {
-            let mut normalized_buf = PathBuffer::uninit();
-            let input = strings::paths::without_nt_prefix::<u8>(name);
-            let normalized =
-                path::resolve_path::platform_to_posix_buf::<u8>(input, &mut normalized_buf);
-            return self.files.get_mut(normalized);
+            let mut buf = PathBuffer::uninit();
+            return self.files.get_mut(normalize_file_key(name, &mut buf));
         }
         #[cfg(not(windows))]
-        {
-            self.files.get_mut(name)
-        }
+        self.files.get_mut(name)
     }
+}
+
+#[cfg(windows)]
+fn normalize_file_key<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
+    let input = strings::paths::without_nt_prefix::<u8>(name);
+    path::resolve_path::platform_to_posix_buf::<u8>(input, buf)
 }
 
 // SAFETY: the graph is the process-global INSTANCE singleton (set once at
@@ -277,24 +302,11 @@ unsafe impl Sync for StandaloneModuleGraph {}
 /// blob/sourcemap caching path.
 impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&[u8]> {
-        #[cfg(windows)]
-        let file = {
-            let mut normalized_buf = PathBuffer::uninit();
-            let input = strings::paths::without_nt_prefix::<u8>(name);
-            let normalized =
-                path::resolve_path::platform_to_posix_buf::<u8>(input, &mut normalized_buf);
-            self.files.get(normalized)
-        };
-        #[cfg(not(windows))]
-        let file = self.files.get(name);
-        file.map(|f| f.name)
+        self.lookup_file(name).map(|f| f.name)
     }
 
     fn find(&self, name: &[u8]) -> Option<&[u8]> {
-        if !is_bun_standalone_file_path(name) {
-            return None;
-        }
-        <Self as bun_resolver::StandaloneModuleGraph>::find_assume_standalone_path(self, name)
+        self.find_ref(name).map(|f| f.name)
     }
 
     fn base_public_path_with_default_suffix(&self) -> &'static [u8] {
@@ -471,8 +483,7 @@ impl File {
     }
 
     pub fn stat(&self) -> Stat {
-        // SAFETY: all-zero is a valid `libc::stat` (POD `#[repr(C)]`).
-        let mut result: Stat = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut result: Stat = bun_core::ffi::zeroed();
         result.st_size = self.contents.len() as _;
         // `Stat` is `libc::stat` (POSIX) / `uv_stat_t` (Windows, `st_mode: u64`).
         result.st_mode = (libc::S_IFREG | 0o644) as _;
@@ -503,8 +514,7 @@ impl File {
 }
 
 fn dir_stat() -> Stat {
-    // SAFETY: all-zero is a valid `libc::stat` (POD `#[repr(C)]`).
-    let mut result: Stat = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut result: Stat = bun_core::ffi::zeroed();
     result.st_mode = (libc::S_IFDIR | 0o755) as _;
     result
 }
@@ -1459,7 +1469,7 @@ pub(crate) fn inject(
                 }
             }
             // Always strip authenticode when adding .bun section for --compile
-            if let Err(e) = pe_file.add_bun_section(bytes, bun_pe::StripMode::StripAlways) {
+            if let Err(e) = pe_file.add_bun_section(bytes) {
                 bun_core::pretty_errorln!("Error adding Bun section to PE file: {}", e);
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
@@ -1475,6 +1485,15 @@ pub(crate) fn inject(
             let mut writer = bun_sys::FileWriter(cloned_executable_fd);
             if let Err(e) = pe_file.write(&mut writer) {
                 bun_core::pretty_errorln!("Error writing PE file: {}", bstr::BStr::new(e.name()));
+                cleanup(zname, cloned_executable_fd);
+                return Fd::INVALID;
+            }
+            // Truncate to the in-memory PE size; Authenticode strip can make it shorter than the base.
+            if let Err(err) = Syscall::ftruncate(
+                cloned_executable_fd,
+                i64::try_from(pe_file.len()).expect("int cast"),
+            ) {
+                bun_core::pretty_errorln!("Error truncating PE file: {}", err);
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }
@@ -1528,10 +1547,14 @@ pub(crate) fn inject(
                 return Fd::INVALID;
             }
             // Truncate the file to the exact size of the modified ELF
-            let _ = Syscall::ftruncate(
+            if let Err(err) = Syscall::ftruncate(
                 cloned_executable_fd,
                 i64::try_from(elf_file.data.len()).expect("int cast"),
-            );
+            ) {
+                bun_core::pretty_errorln!("Error truncating ELF file: {}", err);
+                cleanup(zname, cloned_executable_fd);
+                return Fd::INVALID;
+            }
 
             #[cfg(not(windows))]
             {
@@ -1669,7 +1692,6 @@ pub(crate) fn download_to_path(
                 url,
                 Default::default(),
                 b"",
-                &raw mut *compressed_archive_bytes,
                 b"",
                 http_proxy,
                 None,
@@ -1678,7 +1700,7 @@ pub(crate) fn download_to_path(
             async_http.client.progress_node =
                 core::ptr::NonNull::new(core::ptr::from_mut(progress));
             async_http.client.flags.reject_unauthorized = reject_unauthorized;
-            let send_result = async_http.send_sync();
+            let send_result = async_http.send_sync(&mut compressed_archive_bytes);
 
             progress.end();
             let status_code = send_result?.status_code() as u16;
@@ -1867,10 +1889,6 @@ pub fn to_executable(
                     )),
                     crate::Error::ExtractionFailed => CompileResult::fail_fmt(format_args!(
                         "Failed to extract executable for '{}'. The download may be incomplete.",
-                        target
-                    )),
-                    crate::Error::UnsupportedTarget => CompileResult::fail_fmt(format_args!(
-                        "Target '{}' is not supported",
                         target
                     )),
                     _ => CompileResult::fail_fmt(format_args!(
@@ -2175,7 +2193,8 @@ impl StandaloneModuleGraph {
     /// The pages are clean file-backed COW, so any later read (lazy require,
     /// stack-trace source lookup) faults back in transparently from the
     /// executable on disk. Only applies when running as a compiled
-    /// standalone binary.
+    /// standalone binary; `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1`
+    /// skips the hint.
     pub fn hint_source_pages_dont_need() {
         #[cfg(windows)]
         {
@@ -2207,7 +2226,11 @@ impl StandaloneModuleGraph {
 
             #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
             {
-                if len == 0 {
+                if len == 0
+                    || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE
+                        .get()
+                        .unwrap_or(false)
+                {
                     return;
                 }
 

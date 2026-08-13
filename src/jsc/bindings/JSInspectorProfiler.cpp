@@ -59,18 +59,26 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning, (JSGlobalObject*, Call
 
 // Precise code coverage via JSC's control-flow profiler. Unlike V8 (which
 // deopts and instruments already-compiled code), only functions compiled from
-// this point on are instrumented; recompiling would corrupt live TLA modules.
+// this point on are instrumented: JSC's own toggle recompiles everything
+// (deleteAllCode when idle), which would corrupt suspended TLA module bodies.
+//
+// Compiled instrumented code writes through raw BasicBlockLocation pointers the
+// profiler owns (op_profile_control_flow), so without that recompile the
+// profiler can never be freed again once code has been compiled against it: it
+// is enabled once and stays for the VM's lifetime. "stop" is protocol state in
+// node/inspector.ts only.
 JSC_DECLARE_HOST_FUNCTION(jsFunction_startPreciseCoverage);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_startPreciseCoverage, (JSGlobalObject * globalObject, CallFrame*))
 {
-    globalObject->vm().enableControlFlowProfiler();
+    auto& vm = globalObject->vm();
+    if (!vm.controlFlowProfiler())
+        vm.enableControlFlowProfiler();
     return JSValue::encode(jsUndefined());
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_stopPreciseCoverage);
-JSC_DEFINE_HOST_FUNCTION(jsFunction_stopPreciseCoverage, (JSGlobalObject * globalObject, CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_stopPreciseCoverage, (JSGlobalObject*, CallFrame*))
 {
-    globalObject->vm().disableControlFlowProfiler();
     return JSValue::encode(jsUndefined());
 }
 

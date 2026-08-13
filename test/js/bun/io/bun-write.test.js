@@ -1,6 +1,16 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
-import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  exampleHtml,
+  exampleSite,
+  gcTick,
+  isASAN,
+  isWindows,
+  tempDir,
+  withoutAggressiveGC,
+} from "harness";
 import path, { join } from "path";
 
 let i = 0;
@@ -414,6 +424,119 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await Bun.write(Bun.stderr, Bun.file(path.join(import.meta.dir, "hello-world.txt")));
   });
 
+  // macOS fcopyfile(COPYFILE_DATA) rewrites dst from offset 0, and the
+  // slice trim on macOS/FreeBSD (and the Linux read/write fallback) was
+  // ftruncate(dst, N); both destroy bytes in a file the caller already had
+  // open. BUN_CONFIG_DISABLE_COPY_FILE_RANGE=1 routes Linux through the
+  // fallback so the assertion fail-befores on every POSIX lane.
+  describe.skipIf(isWindows)("Bun.write(Bun.file(fd), Bun.file(path)) does not truncate the fd", () => {
+    const fallbackEnv = { ...bunEnv, BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1" };
+
+    it("preserves bytes past the slice window in an r+ fd", async () => {
+      using dir = tempDir("bun-write-fd-slice", {
+        "src.bin": Buffer.alloc(200_000, "S").toString(),
+        "dst.bin": Buffer.alloc(30, "D").toString(),
+      });
+      const src = join(String(dir), "src.bin");
+      const dst = join(String(dir), "dst.bin");
+      const script = `
+        const fs = require("fs");
+        const fd = fs.openSync(${JSON.stringify(dst)}, "r+");
+        try {
+          process.stderr.write(String(await Bun.write(Bun.file(fd).slice(0, 5), Bun.file(${JSON.stringify(src)}))));
+        } finally { fs.closeSync(fd); }
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: fallbackEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, resolved: stderr, content: fs.readFileSync(dst, "utf8") }).toEqual({
+        stdout: "",
+        resolved: "5",
+        content: "SSSSS" + Buffer.alloc(25, "D").toString(),
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it("preserves pre-existing bytes when stdout is redirected with >>", async () => {
+      using dir = tempDir("bun-write-stdout-append", {
+        "src.bin": Buffer.alloc(1000, "S").toString(),
+        "log.txt": "AAAAAAAAAA",
+      });
+      const src = join(String(dir), "src.bin");
+      const log = join(String(dir), "log.txt");
+      const script = `process.stderr.write(String(await Bun.write(Bun.stdout.slice(0, 100), Bun.file(${JSON.stringify(src)}))))`;
+
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", `"$BUN" -e ${JSON.stringify(script)} >> ${JSON.stringify(log)}`],
+        env: { ...fallbackEnv, BUN: bunExe() },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, resolved: stderr, content: fs.readFileSync(log, "utf8") }).toEqual({
+        stdout: "",
+        resolved: "100",
+        content: "AAAAAAAAAA" + Buffer.alloc(100, "S").toString(),
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it("does not fallocate an O_APPEND fd for a source above the preallocate threshold", async () => {
+      const size = 3_000_000;
+      using dir = tempDir("bun-write-fd-preallocate", { "dst.bin": "AAAAAAAAAA" });
+      const src = join(String(dir), "src.bin");
+      const dst = join(String(dir), "dst.bin");
+      fs.writeFileSync(src, Buffer.alloc(size, "S"));
+      const script = `
+        const fs = require("fs");
+        const fd = fs.openSync(${JSON.stringify(dst)}, "a");
+        try {
+          process.stderr.write(String(await Bun.write(Bun.file(fd), Bun.file(${JSON.stringify(src)}))));
+        } finally { fs.closeSync(fd); }
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: fallbackEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({
+        stdout,
+        resolved: stderr,
+        head: fs.readFileSync(dst).subarray(0, 15).toString(),
+        size: fs.statSync(dst).size,
+      }).toEqual({
+        stdout: "",
+        resolved: String(size),
+        head: "AAAAAAAAAASSSSS",
+        size: 10 + size,
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // fstat on a FIFO reports st_size == 0, so the kernel-copy / bounded loop
+  // must terminate on EOF, not on the stat-derived budget.
+  // Bun.spawn({stdin:"pipe"}) hands the child a socketpair, not a FIFO, so
+  // run the pipeline under sh to get real kernel pipes on fd 0/1.
+  it.skipIf(isWindows)("Bun.write(Bun.stdout, Bun.stdin) copies the whole pipe (> 4096 bytes)", async () => {
+    const size = 1024 * 1024;
+    const script = `process.stderr.write(String(await Bun.write(Bun.stdout, Bun.stdin)))`;
+
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `head -c ${size} /dev/zero | "$BUN" -e ${JSON.stringify(script)} | wc -c`],
+      env: { ...bunEnv, BUN: bunExe() },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ piped: stdout.trim(), resolved: stderr.trim() }).toEqual({
+      piped: String(size),
+      resolved: String(size),
+    });
+    expect(exitCode).toBe(0);
+  });
+
   it("Bun.file(0) survives GC", async () => {
     for (let i = 0; i < 10; i++) {
       let f = Bun.file(0);
@@ -708,6 +831,99 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 
     expect(f.name).toBe(filePath);
     expect(await f.text()).toBe("d");
+  });
+
+  // `resp.body` materialises the body as a native ByteStream; once the
+  // transfer finishes the FetchTasklet is freed, but the body's PendingValue
+  // kept `task` / `on_start_buffering` pointing at the freed tasklet, and
+  // `Bun.write(path, resp)` then called `on_start_buffering(task)`.
+  it.skipIf(!isASAN).each([
+    ["getReader().read() then releaseLock()", "const rd = resp.body.getReader(); await rd.read(); rd.releaseLock();"],
+    ["resp.body getter", "resp.body;"],
+    ["resp.clone()", "resp.clone();"],
+  ])(
+    "Bun.write(path, fetch()) after the body was exposed as a stream does not use a freed FetchTasklet (%s)",
+    async (_name, expose) => {
+      using dir = tempDir("bun-write-fetch-freed-tasklet", {});
+      const out = JSON.stringify(join(String(dir), "out.bin"));
+      const fixture = `
+        const server = Bun.serve({ port: 0, fetch: () => new Response(Buffer.alloc(200000, "x")) });
+        for (let i = 0; i < 8; i++) {
+          const resp = await fetch(\`http://127.0.0.1:\${server.port}/\`);
+          ${expose}
+          await Bun.sleep(5);
+          await Promise.race([Bun.write(${out}, resp).catch(() => {}), Bun.sleep(100)]);
+        }
+        console.log("done");
+        server.stop(true);
+        process.exit(0);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        // detect_leaks=0: the write promise never settles on a stream-backed
+        // body (#13237), so WriteFileWaitFromLockedValueTask is still live at
+        // process.exit; this test is about the heap-use-after-free only.
+        env: {
+          ...bunEnv,
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+        },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "done", stderr: "", exitCode: 0 });
+    },
+  );
+
+  it("Bun.write(path, HTMLRewriter.transform(resp)) still resolves after out.body is touched", async () => {
+    using dir = tempDir("bun-write-htmlrewriter-body", {});
+    const dest = join(String(dir), "out.html");
+    const { promise: gate, resolve: openGate } = Promise.withResolvers();
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          async function* () {
+            yield "<html><body>";
+            await gate;
+            yield "<p>hi</p></body></html>";
+          },
+          { headers: { "content-type": "text/html" } },
+        ),
+    });
+    const resp = await fetch(server.url);
+    const out = new HTMLRewriter().on("*", {}).transform(resp);
+    const write = Bun.write(dest, out);
+    expect(out.body).toBeInstanceOf(ReadableStream);
+    openGate();
+    const written = await write;
+    expect(written).toBe(35);
+    expect(await Bun.file(dest).text()).toBe("<html><body><p>hi</p></body></html>");
+  });
+
+  // Bun.write owns the Locked body (on_receive_value + retargeted task);
+  // clone()'s tee must see that and yield a used body instead of dispatching
+  // the producer callbacks with Bun.write's task as ctx.
+  it("Bun.write(path, HTMLRewriter.transform(resp)) survives clone() while a handler is suspended", async () => {
+    using dir = tempDir("bun-write-htmlrewriter-clone", {});
+    const dest = join(String(dir), "out.html");
+    const { promise: suspended, resolve: onSuspend } = Promise.withResolvers();
+    const { promise: gate, resolve: openGate } = Promise.withResolvers();
+    const out = new HTMLRewriter()
+      .on("p", {
+        async element(el) {
+          onSuspend();
+          await gate;
+          el.setInnerContent("x");
+        },
+      })
+      .transform(new Response("<p>y</p>"));
+    const write = Bun.write(dest, out);
+    await suspended;
+    const clone = out.clone();
+    expect(clone).toBeInstanceOf(Response);
+    openGate();
+    await write;
+    expect(await Bun.file(dest).text()).toBe("<p>x</p>");
   });
 
   it("BunFile.name survives concurrent write() calls + GC", async () => {

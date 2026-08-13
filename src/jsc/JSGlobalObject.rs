@@ -13,7 +13,7 @@ use crate::{
     MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, VM,
 };
 
-use bun_core::{Output, StackCheck, fmt as bun_fmt, perf};
+use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{OwnedString, String as BunString, strings};
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -366,7 +366,7 @@ impl JSGlobalObject {
     }
 
     /// "Expected {field} to be a {typename} for '{name}'."
-    pub fn create_invalid_argument_type(
+    pub(crate) fn create_invalid_argument_type(
         &self,
         name_: &'static str,
         field: &'static str,
@@ -590,7 +590,7 @@ impl JSGlobalObject {
     /// `validators.throwErrInvalidArgType` —
     /// `The "<name>" property must be of type <expected>, got <actual>`
     /// where `<actual>` is the JS `typeof` (or `"array"` for arrays).
-    pub fn throw_invalid_property_type(
+    pub(crate) fn throw_invalid_property_type(
         &self,
         name: impl AsRef<[u8]>,
         expected_type: &str,
@@ -657,7 +657,7 @@ impl JSGlobalObject {
         .throw()
     }
 
-    pub fn create_not_enough_arguments(
+    pub(crate) fn create_not_enough_arguments(
         &self,
         name_: &'static str,
         expected: usize,
@@ -682,7 +682,7 @@ impl JSGlobalObject {
         self.throw_value(self.create_not_enough_arguments(name_, expected, got))
     }
 
-    pub fn reload(&self) -> JsResult<()> {
+    pub(crate) fn reload(&self) -> JsResult<()> {
         self.vm().drain_microtasks();
         self.vm().collect_async();
         crate::cpp::JSC__JSGlobalObject__reload(self)
@@ -694,7 +694,7 @@ impl JSGlobalObject {
         crate::cpp::JSC__JSGlobalObject__jsDateNow(self)
     }
 
-    pub fn run_on_load_plugins(
+    pub(crate) fn run_on_load_plugins(
         &self,
         namespace_: BunString,
         path: BunString,
@@ -710,7 +710,7 @@ impl JSGlobalObject {
         Ok(Some(result))
     }
 
-    pub fn run_on_resolve_plugins(
+    pub(crate) fn run_on_resolve_plugins(
         &self,
         namespace_: BunString,
         path: BunString,
@@ -767,7 +767,7 @@ impl JSGlobalObject {
         str.to_type_error_instance(self)
     }
 
-    pub fn create_dom_exception_instance(
+    pub(crate) fn create_dom_exception_instance(
         &self,
         code: DOMExceptionCode,
         args: Arguments<'_>,
@@ -857,8 +857,8 @@ impl JSGlobalObject {
     pub fn queue_microtask(&self, function: JSValue, args: &[JSValue]) {
         self.queue_microtask_job(
             function,
-            args.first().copied().unwrap_or(JSValue::ZERO),
-            args.get(1).copied().unwrap_or(JSValue::ZERO),
+            args.first().copied().unwrap_or_default(),
+            args.get(1).copied().unwrap_or_default(),
         );
     }
 
@@ -874,7 +874,7 @@ impl JSGlobalObject {
         })
     }
 
-    pub fn queue_microtask_job(&self, function: JSValue, first: JSValue, second: JSValue) {
+    pub(crate) fn queue_microtask_job(&self, function: JSValue, first: JSValue, second: JSValue) {
         JSC__JSGlobalObject__queueMicrotaskJob(self, function, first, second)
     }
 
@@ -966,7 +966,7 @@ impl JSGlobalObject {
         })
     }
 
-    pub fn generate_heap_snapshot(&self) -> JSValue {
+    pub(crate) fn generate_heap_snapshot(&self) -> JSValue {
         JSC__JSGlobalObject__generateHeapSnapshot(self)
     }
 
@@ -1053,10 +1053,12 @@ impl JSGlobalObject {
     ///
     /// The pattern:
     ///
-    ///     let result = match value.call(...) {
-    ///         Ok(v) => v,
-    ///         Err(err) => return global.report_active_exception_as_unhandled(err),
-    ///     };
+    /// ```ignore
+    /// let result = match value.call(...) {
+    ///     Ok(v) => v,
+    ///     Err(err) => return global.report_active_exception_as_unhandled(err),
+    /// };
+    /// ```
     ///
     pub fn report_active_exception_as_unhandled(&self, err: JsError) {
         let exception = self.take_exception(err);
@@ -1101,13 +1103,13 @@ impl JSGlobalObject {
     /// C++ shim into Rust callers (905 out-of-line `callq` sites in the
     /// release binary), and
     /// the FFI result is provably the same singleton — debug-asserted below
-    /// and in [`Self::bun_vm`]. Same-thread callers only; cross-thread paths
-    /// must use [`Self::bun_vm_concurrently`].
+    /// and in [`Self::bun_vm`]. JS thread only; another thread reaches a VM
+    /// through its [`VmHandle`](crate::VmHandle), never through a global.
     #[inline]
     pub fn bun_vm_ptr(&self) -> *mut VirtualMachine {
         debug_assert!(
             self.bun_vm_unsafe() == VirtualMachine::get_mut_ptr().cast::<c_void>(),
-            "bun_vm_ptr called off the JS thread; use bun_vm_concurrently",
+            "bun_vm_ptr called off the JS thread",
         );
         VirtualMachine::get_mut_ptr()
     }
@@ -1130,8 +1132,7 @@ impl JSGlobalObject {
     /// Reads the thread-local directly instead of calling
     /// `JSC__JSGlobalObject__bunVM` — cross-language LTO does not inline the
     /// C++ shim, and the two are address-equal by construction (asserted in
-    /// debug builds). Same-thread callers only; cross-thread paths must use
-    /// [`Self::bun_vm_concurrently`].
+    /// debug builds). JS thread only (see [`Self::bun_vm_ptr`]).
     #[inline]
     pub fn bun_vm(&self) -> &'static VirtualMachine {
         #[cfg(debug_assertions)]
@@ -1148,11 +1149,6 @@ impl JSGlobalObject {
             }
         }
         VirtualMachine::get()
-    }
-
-    /// We can't do the threadlocal check when queued from another thread
-    pub fn bun_vm_concurrently(&self) -> *mut VirtualMachine {
-        self.bun_vm_unsafe().cast::<VirtualMachine>()
     }
 
     pub fn handle_rejected_promises(&self) {
@@ -1377,34 +1373,7 @@ impl JSGlobalObject {
         }
     }
 
-    pub fn create(
-        v: &mut VirtualMachine,
-        console: *mut c_void,
-        context_id: i32,
-        mini_mode: bool,
-        eval_mode: bool,
-        worker_ptr: Option<*mut c_void>,
-    ) -> *mut JSGlobalObject {
-        let _trace = perf::trace("JSGlobalObject.create");
-
-        v.event_loop_mut().ensure_waker();
-        // C++ creates and returns a non-null global object; `console`/`worker_ptr`
-        // are opaque round-trip pointers C++ stores into the new global.
-        let global = Zig__GlobalObject__create(
-            console,
-            context_id,
-            mini_mode,
-            eval_mode,
-            worker_ptr.unwrap_or(core::ptr::null_mut()),
-        );
-
-        // JSC might mess with the stack size.
-        StackCheck::configure_thread();
-
-        global
-    }
-
-    pub fn create_for_test_isolation(
+    pub(crate) fn create_for_test_isolation(
         old_global: &JSGlobalObject,
         console: *mut c_void,
     ) -> *mut JSGlobalObject {
@@ -1490,7 +1459,7 @@ use bun_core::fmt::VecWriter as WriteVec;
 // ──────────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Zig__GlobalObject__resolve(
+unsafe extern "C" fn Zig__GlobalObject__resolve(
     res: *mut ErrorableString,
     global: *const JSGlobalObject,
     specifier: *mut BunString,
@@ -1504,7 +1473,14 @@ pub(crate) unsafe extern "C" fn Zig__GlobalObject__resolve(
     let (global, specifier, source) = unsafe { (&*global, *specifier, *source) };
     // SAFETY: C++ passes valid non-null pointers.
     let (res, query) = unsafe { (&mut *res, &mut *query) };
-    match VirtualMachine::resolve(res, global, specifier, source, Some(query), true) {
+    match VirtualMachine::resolve(
+        res,
+        global,
+        specifier,
+        source,
+        Some(query),
+        crate::virtual_machine::ResolveMode::Esm,
+    ) {
         Ok(()) => {}
         Err(_) => {
             debug_assert!(!res.success);
@@ -1513,7 +1489,7 @@ pub(crate) unsafe extern "C" fn Zig__GlobalObject__resolve(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
+unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
     global: *const JSGlobalObject,
     exception: *mut Exception,
 ) -> JSValue {
@@ -1530,7 +1506,7 @@ pub(crate) fn report_uncaught_exception(global: &JSGlobalObject, exception: &Exc
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Zig__GlobalObject__onCrash() {
+extern "C" fn Zig__GlobalObject__onCrash() {
     crate::mark_binding();
     Output::flush();
     panic!("A C++ exception occurred");
@@ -1660,18 +1636,6 @@ unsafe extern "C" {
     safe fn JSGlobalObject__setTimeZone(this: &JSGlobalObject, time_zone: &ZigString) -> bool;
     safe fn JSGlobalObject__tryTakeException(this: &JSGlobalObject) -> JSValue;
 
-    // safe: `console`/`worker_ptr` are opaque round-trip pointers C++ stores into
-    // the new ZigGlobalObject (never dereferenced as Rust data here — same
-    // contract as `Zig__GlobalObject__createForTestIsolation` below); remaining
-    // args are by-value scalars.
-    safe fn Zig__GlobalObject__create(
-        console: *mut c_void,
-        context_id: i32,
-        mini_mode: bool,
-        eval_mode: bool,
-        worker_ptr: *mut c_void,
-    ) -> *mut JSGlobalObject;
-
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); `console` is an opaque pointer C++
     // stores into the new global (never dereferenced as Rust data here).
@@ -1683,20 +1647,13 @@ unsafe extern "C" {
 
 impl ScriptExecutionContextIdentifier {
     /// Returns `None` if the context referred to by `self` no longer exists.
-    pub fn global_object(self) -> Option<GlobalRef> {
+    pub(crate) fn global_object(self) -> Option<GlobalRef> {
         // FFI call returns a valid pointer or null; the JSGlobalObject is owned
         // by the VM and outlives any ScriptExecutionContext id pointing at it.
         // `JSGlobalObject` is an opaque ZST handle so the deref is the
         // centralised `opaque_ref` proof.
         let p = ScriptExecutionContextIdentifier__getGlobalObject(self.0);
         (!p.is_null()).then(|| GlobalRef::from(JSGlobalObject::opaque_ref(p)))
-    }
-
-    /// Returns `None` if the context referred to by `self` no longer exists.
-    /// Concurrently-safe (`bun_vm_concurrently`) because identifiers are mostly
-    /// used from off-thread tasks.
-    pub fn bun_vm(self) -> Option<*mut VirtualMachine> {
-        Some(self.global_object()?.bun_vm_concurrently())
     }
 
     pub fn valid(self) -> bool {

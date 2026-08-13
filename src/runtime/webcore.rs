@@ -13,12 +13,12 @@ pub mod bake_response;
 pub mod byte_blob_loader;
 #[path = "webcore/ByteStream.rs"]
 pub mod byte_stream;
+#[path = "webcore/CompressionStreamCoder.rs"]
+pub mod compression_stream_coder;
 #[path = "webcore/CookieMap.rs"]
 pub mod cookie_map;
 #[path = "webcore/Crypto.rs"]
 pub mod crypto;
-#[path = "webcore/ResumableSink.rs"]
-pub mod resumable_sink;
 #[path = "webcore/S3Client.rs"]
 pub mod s3_client;
 #[path = "webcore/S3File.rs"]
@@ -33,20 +33,16 @@ pub mod text_encoder_stream_encoder;
 // ─── flat re-exports ─────────────────────────────────────────────────────────
 pub use bun_jsc::js_error_code::DOMExceptionCode;
 pub use bun_jsc::web_worker;
-pub use s3_stat::S3Stat;
-// `ResumableSink` is the `m_ctx` payload of a JS wrapper; it stores its
-// `JSGlobalObject` as a raw pointer (the FFI boundary cannot carry a Rust
-// lifetime), so the type aliases are lifetime-free and re-exported directly.
 pub use cookie_map::{CookieMap, CookieMapRef};
-pub use resumable_sink::{ResumableFetchSink, ResumableS3UploadSink, ResumableSinkBackpressure};
 pub use s3_client::S3Client;
+pub use s3_stat::S3Stat;
 pub use streams::{
     H3ResponseSink, HTTPResponseSink, HTTPSResponseSink, HTTPServerWritable, NetworkSink,
 };
 
 #[path = "webcore/ObjectURLRegistry.rs"]
 pub mod object_url_registry;
-pub use object_url_registry::ObjectURLRegistry;
+pub(crate) use object_url_registry::ObjectURLRegistry;
 
 // ─── webcore-local jsc re-export ─────────────────────────────────────────────
 // `bun_jsc` is now a dep of `bun_runtime`; forward to it. The per-class
@@ -90,7 +86,7 @@ use bun_event_loop::deferred_task_queue::DeferredRepeatingTask;
 pub struct AutoFlusher {
     /// `Cell` so register/unregister can be called from `&self` callbacks
     /// (R-2 §provenance — see `FileSink::on_write`).
-    pub registered: core::cell::Cell<bool>,
+    pub(crate) registered: core::cell::Cell<bool>,
 }
 
 /// Implemented below for `FileSink` and `HTTPServerWritable<_, _>`.
@@ -132,7 +128,7 @@ impl AutoFlusher {
     }
 
     #[inline]
-    pub fn register_deferred_microtask_with_type<T: HasAutoFlusher>(
+    pub(crate) fn register_deferred_microtask_with_type<T: HasAutoFlusher>(
         this: &T,
         vm: &jsc::VirtualMachine,
     ) {
@@ -143,7 +139,7 @@ impl AutoFlusher {
     }
 
     #[inline]
-    pub fn unregister_deferred_microtask_with_type<T: HasAutoFlusher>(
+    pub(crate) fn unregister_deferred_microtask_with_type<T: HasAutoFlusher>(
         this: &T,
         vm: &jsc::VirtualMachine,
     ) {
@@ -154,7 +150,7 @@ impl AutoFlusher {
     }
 
     #[inline]
-    pub fn unregister_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
+    pub(crate) fn unregister_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
         this: &T,
         vm: &jsc::VirtualMachine,
     ) {
@@ -170,7 +166,7 @@ impl AutoFlusher {
     }
 
     #[inline]
-    pub fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
+    pub(crate) fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
         this: &T,
         vm: &jsc::VirtualMachine,
     ) {
@@ -224,13 +220,12 @@ impl<const SSL: bool, const HTTP3: bool> HasAutoFlusher
 }
 
 #[path = "webcore/headers_ref.rs"]
-pub mod headers_ref;
+pub(crate) mod headers_ref;
 
 #[path = "webcore/Blob.rs"]
 pub mod blob;
 pub use blob::Any as AnyBlob;
 pub use blob::Internal as InternalBlob;
-pub use blob::store::StoreExt as BlobStoreExt;
 pub use blob::{Blob, BlobExt, SizeType as BlobSizeType};
 
 #[path = "webcore/Body.rs"]
@@ -247,11 +242,7 @@ pub use request::Request;
 
 #[path = "webcore/ReadableStream.rs"]
 pub mod readable_stream;
-pub use readable_stream::{
-    NewSource as ReadableStreamNewSource, ReadableStream, ReadableStreamStrong,
-    Source as ReadableStreamSource, SourceContext as ReadableStreamSourceContext,
-    Tag as ReadableStreamTag,
-};
+pub use readable_stream::ReadableStream;
 
 #[path = "webcore/FileReader.rs"]
 pub mod file_reader;
@@ -336,6 +327,9 @@ pub mod __s3_multipart;
 #[doc(hidden)]
 #[path = "webcore/s3/simple_request.rs"]
 pub mod __s3_simple_request;
+#[doc(hidden)]
+#[path = "webcore/s3/xml_response.rs"]
+pub mod __s3_xml_response;
 pub mod s3 {
     pub use super::multipart_options_impl as multipart_options;
     pub use super::multipart_options_impl::MultiPartUploadOptions;
@@ -348,6 +342,7 @@ pub mod s3 {
     pub use super::__s3_list_objects as list_objects;
     pub use super::__s3_multipart as multipart;
     pub use super::__s3_simple_request as simple_request;
+    pub(crate) use super::__s3_xml_response as xml_response;
     pub use multipart::MultiPartUpload;
 }
 
@@ -359,41 +354,75 @@ pub enum PathOrFileDescriptor {
     Fd(bun_sys::Fd),
 }
 
-#[derive(Default)]
-pub struct Pipe {
-    pub ctx: Option<NonNull<()>>,
-    pub on_pipe: Option<Function>,
+// ─── SinkHandle ──────────────────────────────────────────────────────────────
+// Held by ByteStream; dispatches write()/end() to the native sink.
+
+#[derive(Copy, Clone, Default)]
+pub enum SinkHandle {
+    #[default]
+    None,
+    ServerResponse(crate::server::AnyRequestContext),
+    FetchRequestBody(bun_ptr::BackRef<fetch::FetchRequestBodySink, bun_ptr::Mut>),
+    S3Upload(bun_ptr::BackRef<streams::NetworkSink, bun_ptr::Mut>),
+    FileSink(bun_ptr::BackRef<file_sink::FileSink>),
+    HTMLRewriter(bun_ptr::BackRef<crate::api::html_rewriter::RewriterPipe>),
+    HttpResponse(bun_ptr::BackRef<streams::HTTPResponseSink, bun_ptr::Mut>),
+    HttpsResponse(bun_ptr::BackRef<streams::HTTPSResponseSink, bun_ptr::Mut>),
+    H3Response(bun_ptr::BackRef<streams::H3ResponseSink, bun_ptr::Mut>),
+    ArrayBuffer(bun_ptr::BackRef<sink::ArrayBufferSink, bun_ptr::Mut>),
 }
 
-impl Pipe {
+impl SinkHandle {
     #[inline]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.ctx.is_none() && self.on_pipe.is_none()
-    }
-}
-
-pub type Function = fn(ctx: NonNull<()>, stream: streams::Result);
-
-// Callers implement `PipeHandler` for their type instead of passing a free fn
-// (`Wrap::<Foo>::init(self)`).
-pub(crate) trait PipeHandler {
-    fn on_pipe(&mut self, stream: streams::Result);
-}
-
-pub(crate) struct Wrap<T: PipeHandler>(core::marker::PhantomData<T>);
-
-impl<T: PipeHandler> Wrap<T> {
-    pub(crate) fn pipe(self_: NonNull<()>, stream: streams::Result) {
-        // SAFETY: `self_` was produced from `NonNull::from(&mut T)` in `init` below; caller
-        // guarantees the pointee outlives the Pipe and is exclusively borrowed here.
-        let this = unsafe { self_.cast::<T>().as_mut() };
-        this.on_pipe(stream);
+    pub fn is_none(&self) -> bool {
+        matches!(self, SinkHandle::None)
     }
 
-    pub(crate) fn init(self_: &mut T) -> Pipe {
-        Pipe {
-            ctx: Some(NonNull::from(self_).cast::<()>()),
-            on_pipe: Some(Self::pipe),
+    #[inline]
+    pub fn is_some(&self) -> bool {
+        !self.is_none()
+    }
+
+    /// SAFETY: every non-None variant's pointee is kept alive by the hook-in site for as long
+    /// as this handle is installed.
+    pub fn write(&self, data: &streams::Result) -> streams::Writable {
+        match *self {
+            SinkHandle::None => streams::Writable::Done,
+            SinkHandle::ServerResponse(any) => any.write_chunk(data),
+            // SAFETY: live backref; ByteStream clears sink before free.
+            SinkHandle::FetchRequestBody(mut p) => unsafe { p.get_mut() }.write(data),
+            // SAFETY: live backref; ByteStream clears sink before free.
+            SinkHandle::S3Upload(mut p) => unsafe { p.get_mut() }.write(data),
+            SinkHandle::FileSink(p) => p.write(data),
+            SinkHandle::HTMLRewriter(p) => p.write(data),
+            // SAFETY: live backref; transform detaches before the JSSink is finalized.
+            SinkHandle::HttpResponse(mut p) => unsafe { p.get_mut() }.write(data),
+            // SAFETY: live backref; transform detaches before the JSSink is finalized.
+            SinkHandle::HttpsResponse(mut p) => unsafe { p.get_mut() }.write(data),
+            // SAFETY: live backref; transform detaches before the JSSink is finalized.
+            SinkHandle::H3Response(mut p) => unsafe { p.get_mut() }.write(data),
+            // SAFETY: live backref; transform detaches before the JSSink is finalized.
+            SinkHandle::ArrayBuffer(mut p) => unsafe { p.get_mut() }.write(data),
+        }
+    }
+
+    /// Signal end-of-stream (or terminal error) to the attached sink.
+    ///
+    /// SAFETY: same pointee-liveness invariant as [`Self::write`].
+    pub fn end(&self, err: Option<streams::StreamError>) {
+        match *self {
+            SinkHandle::None => {}
+            SinkHandle::ServerResponse(any) => any.end_chunk(err.as_ref()),
+            // SAFETY: live backref; ByteStream clears sink before free.
+            SinkHandle::FetchRequestBody(mut p) => unsafe { p.get_mut() }.end_from_stream(err),
+            // Raw-ptr dispatch: may re-borrow and free the sink (see its doc).
+            SinkHandle::S3Upload(p) => streams::NetworkSink::end_from_stream(p.as_ptr(), err),
+            SinkHandle::FileSink(p) => p.end_from_stream(err),
+            SinkHandle::HTMLRewriter(p) => p.end_from_stream(err),
+            SinkHandle::HttpResponse(_) => {}
+            SinkHandle::HttpsResponse(_) => {}
+            SinkHandle::H3Response(_) => {}
+            SinkHandle::ArrayBuffer(_) => {}
         }
     }
 }

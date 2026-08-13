@@ -5,11 +5,15 @@ import {
   bunEnv,
   bunExe,
   dumpStats,
+  emptyProcessMaxRSS,
+  isASAN,
   isBroken,
+  isDebug,
   isIntelMacOS,
   isIPv4,
   isIPv6,
   isPosix,
+  runFixtureMaxRSS,
   tempDir,
   tls,
   tmpdirSync,
@@ -1574,18 +1578,83 @@ describe("response framing", () => {
       expect(headerNames).not.toContain("transfer-encoding");
     });
 
-    // 205 MUST indicate a zero-length body (RFC 9110 15.3.6) and 304 MAY carry
-    // a Content-Length (RFC 9110 15.4.5) -- both keep the explicit 0.
-    it.each([205, 304])("a %i response keeps Content-Length: 0", async status => {
+    // RFC 9110 15.3.6: a 205 MUST NOT generate content; the explicit 0 it
+    // already emitted stays (still conformant, and matches prior releases).
+    it("a 205 response keeps Content-Length: 0", async () => {
       using server = Bun.serve({
         port: 0,
         hostname: "127.0.0.1",
-        fetch: () => new Response(null, { status }),
+        fetch: () => new Response(null, { status: 205 }),
       });
-      const { statusLine, headerNames } = await rawRequest(server.port, method);
-      expect(statusLine).toStartWith(`HTTP/1.1 ${status} `);
-      expect(headerNames).toContain("content-length");
+      const { statusLine, headers } = await rawRequest(server.port, method);
+      expect(statusLine).toStartWith(`HTTP/1.1 205 `);
+      expect(headers["content-length"]).toBe("0");
     });
+
+    // RFC 9110 8.6: a 304 MAY carry Content-Length but MUST NOT unless it
+    // equals what the 200 would have sent. Only the handler knows that value,
+    // so pass its header through; when it sets none, emit none (a fabricated 0
+    // poisons caches that update stored headers from a 304, RFC 9111 4.3.4).
+    it.each([
+      [undefined, null],
+      ["1234", "1234"],
+      ["0", "0"],
+      ["abc", null],
+    ])("a 304 response passes the handler's Content-Length through (%p -> %p)", async (appCL, expected) => {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () =>
+          new Response(null, {
+            status: 304,
+            headers: appCL === undefined ? { etag: '"x"' } : { etag: '"x"', "content-length": appCL },
+          }),
+      });
+      const { statusLine, headers, body } = await rawRequest(server.port, method);
+      expect({ statusLine: statusLine.slice(0, 12), contentLength: headers["content-length"] ?? null, body }).toEqual({
+        statusLine: "HTTP/1.1 304",
+        contentLength: expected,
+        body: "",
+      });
+      expect(headers["date"]).toBeDefined();
+    });
+  });
+
+  // RFC 9112 6.3: a 304 is terminated at the blank line regardless of
+  // Content-Length, so a non-zero handler value must not desync keep-alive.
+  it("a 304 with a handler Content-Length does not desync keep-alive", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const p = new URL(req.url).pathname;
+        if (p === "/a") return new Response(null, { status: 304, headers: { "content-length": "1234", etag: '"a"' } });
+        return new Response("ok-b");
+      },
+    });
+    const received: Buffer[] = [];
+    const { resolve, reject, promise } = Promise.withResolvers<void>();
+    await using c = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        data: (_, d) => received.push(d),
+        close: () => resolve(),
+        end: () => resolve(),
+        error: (_, e) => reject(e),
+      },
+    });
+    c.write(
+      "GET /a HTTP/1.1\r\nHost: x\r\n\r\n" + //
+        "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+    c.flush();
+    await promise;
+    const raw = Buffer.concat(received).toString();
+    const [first, ...rest] = raw.split("HTTP/1.1 ").filter(Boolean);
+    expect(first).toMatch(/^304 Not Modified\r\n/);
+    expect(first).toMatch(/\r\ncontent-length: 1234\r\n/i);
+    expect(rest.join("HTTP/1.1 ")).toMatch(/^200 OK\r\n[\s\S]*\r\n\r\nok-b$/);
   });
 
   // RFC 9112 6.3 terminates a 1xx/204/304 at the blank line after the header
@@ -1599,8 +1668,8 @@ describe("response framing", () => {
       [204, "HEAD", null],
       [205, "GET", "0"],
       [205, "HEAD", "0"],
-      [304, "GET", "0"],
-      [304, "HEAD", "0"],
+      [304, "GET", null],
+      [304, "HEAD", null],
     ];
     it.each(cases)("%i %s", async (status, method, contentLength) => {
       const makeResponse = () => new Response("data", { status });
@@ -1808,6 +1877,109 @@ describe("response framing", () => {
       expect(exitCode).toBe(0);
     });
   });
+});
+
+it.concurrent("dev error page embeds the thrown error, its stack, and build/resolve errors as JSON", async () => {
+  using dir = tempDir("serve-dev-error-page", {
+    "server.ts": `
+      function inner() {
+        throw new TypeError("boom <b>&</b>");
+      }
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: true,
+        async fetch(req) {
+          const { pathname } = new URL(req.url);
+          if (pathname === "/throw") inner();
+          if (pathname === "/syntax") await import("./broken.ts");
+          if (pathname === "/resolve") await import("./bad-import.ts");
+          return new Response("unreachable");
+        },
+      });
+      const out = {};
+      for (const path of ["/throw", "/syntax", "/resolve"]) {
+        const res = await fetch(server.url + path.slice(1));
+        const html = await res.text();
+        const match = /<script id="__bunfallback" type="application\\/json">([^<]*)<\\/script>/.exec(html);
+        out[path] = {
+          status: res.status,
+          type: res.headers.get("content-type"),
+          payload: match && JSON.parse(match[1]),
+          // the page must carry the bun-error renderer (which registers this symbol) plus the call into it
+          rendererMentions: html.split('Symbol.for("Bun__renderFallbackError")').length - 1,
+          unfilledPlaceholder: /\\{\\[\\w+\\]s?\\}|\\[bun_error_js\\]/.test(html),
+        };
+      }
+      console.log(JSON.stringify(out));
+      server.stop(true);
+      // The thrown errors were reported through the unhandled-rejection path, which sets the exit code.
+      process.exit(0);
+    `,
+    "broken.ts": `export const a = 1;\nexport const oops = ;\n`,
+    "bad-import.ts": `import { nope } from "does-not-exist-pkg";\nexport const b = nope;\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = JSON.parse(stdout.trim().split("\n").at(-1)!);
+
+  for (const path of ["/throw", "/syntax", "/resolve"]) {
+    expect(out[path]).toMatchObject({
+      status: 500,
+      type: "text/html;charset=utf-8",
+      payload: { cwd: String(dir) },
+      rendererMentions: 2,
+      unfilledPlaceholder: false,
+    });
+  }
+
+  // Thrown exception: name/message, 1-based frame positions and the source lines around the throw.
+  const thrown = out["/throw"].payload.problems;
+  expect(thrown.exceptions).toHaveLength(1);
+  const [exception] = thrown.exceptions;
+  expect({ name: exception.name, message: exception.message }).toEqual({
+    name: "TypeError",
+    message: "boom <b>&</b>",
+  });
+  expect(exception.stack.frames[0]).toEqual({
+    function_name: "inner",
+    file: join(String(dir), "server.ts"),
+    // 1-based, pointing at `TypeError` — the same position `bun` prints to the terminal
+    position: { line: 3, column: 19 },
+    scope: 3, // function
+  });
+  expect(exception.stack.source_lines).toContainEqual({
+    line: 3,
+    text: '        throw new TypeError("boom <b>&</b>");',
+  });
+
+  // Syntax error in an imported module: reported as a build message with its location.
+  const syntax = out["/syntax"].payload.problems;
+  expect(syntax.build.errors).toBe(1);
+  expect(syntax.build.msgs[0]).toMatchObject({
+    level: 1,
+    data: {
+      text: "Unexpected ;",
+      location: { line: 2, line_text: "export const oops = ;" },
+    },
+    on: { build: true, resolve: "" },
+  });
+  expect(syntax.build.msgs[0].data.location.file).toEndWith("broken.ts");
+
+  // Failed resolution: reported as a resolve message carrying the specifier.
+  const resolution = out["/resolve"].payload.problems;
+  expect(resolution.build.errors).toBe(1);
+  expect(resolution.build.msgs[0].on).toEqual({ build: false, resolve: "does-not-exist-pkg" });
+  expect(resolution.build.msgs[0].data.text).toStartWith("Cannot find package 'does-not-exist-pkg'");
+
+  expect(stderr).toContain("boom <b>&</b>");
+  expect(exitCode).toBe(0);
 });
 
 it("should support multiple Set-Cookie headers", async () => {
@@ -2991,6 +3163,73 @@ it("Bun.serve hostname with interior NUL byte does not crash the process", async
   });
 });
 
+// A "[...]" hostname has its brackets stripped before it is handed to the socket layer.
+// That copy used to live in a fixed 1024-byte buffer, so a longer bracketed hostname
+// aborted the process instead of failing to listen like any other bogus hostname.
+it("Bun.serve with a bracketed hostname longer than 1024 bytes throws instead of crashing", async () => {
+  const script = `
+    const hostname = "[" + Buffer.alloc(1100, "a").toString() + "]";
+    let server;
+    try {
+      server = Bun.serve({ port: 0, hostname, fetch() { return new Response("ok"); } });
+    } catch (e) {
+      console.log("caught:" + (e instanceof Error));
+    }
+    if (server) {
+      console.log("listening:" + server.port);
+      server.stop(true);
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "caught:true",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("development error log prints the request pathname verbatim", async () => {
+  const script = `
+    const net = require("node:net");
+    const server = Bun.serve({
+      port: 0,
+      development: true,
+      fetch() {
+        throw new Error("boom");
+      },
+    });
+    const socket = net.connect(server.port, "127.0.0.1", () => {
+      socket.write("GET /a<b>c>d HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n");
+    });
+    socket.on("data", () => {});
+    socket.on("close", () => {
+      server.stop(true);
+      process.exit(0);
+    });
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("GET - /a<b>c>d failed");
+  expect(exitCode).toBe(0);
+});
+
 // The HTTP parser shares HttpParser.h between Bun.serve and node:http. When a request
 // handler tears the connection down from inside the request-body data callback, the
 // parser must stop consuming the rest of the TCP segment instead of routing a request
@@ -3571,11 +3810,11 @@ it("type: direct stream awaiting flush(true) under backpressure does not re-ente
         async pull(controller) {
           pullEntries++;
           for (let i = 0; i < TOTAL_CHUNKS; i++) {
-            // write() returns a negative number when the socket is backed up;
+            // write() returns a pending Promise when the socket is backed up;
             // await flush(true) (the pending-flush promise) to pause until the
             // drain.
             const n = controller.write(CHUNK);
-            if (typeof n === "number" && n < 0) {
+            if (n instanceof Promise) {
               await controller.flush(true);
             }
             writes++;
@@ -3627,6 +3866,199 @@ it("type: direct stream awaiting flush(true) under backpressure does not re-ente
     expect(writes).toBe(TOTAL_CHUNKS);
     expect(received).toBeGreaterThanOrEqual(TOTAL_CHUNKS * CHUNK.length);
   } finally {
+    socket.destroy();
+  }
+});
+
+// Under backpressure a type:"direct" controller.write() returns a Promise that
+// settles once the client drains; awaiting it must suspend pull and resume it
+// exactly there, with every chunk delivered once and in order.
+it("type: direct controller.write() Promise resolves on drain and resumes pull", async () => {
+  const CHUNK = Buffer.alloc(256 * 1024, 71);
+  const TOTAL_CHUNKS = 128; // 32 MiB
+  let awaited = 0;
+
+  using server = serve({
+    port: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            for (let i = 0; i < TOTAL_CHUNKS; i++) {
+              const wrote = controller.write(CHUNK);
+              if (wrote instanceof Promise) {
+                awaited++;
+                await wrote;
+              }
+            }
+            await controller.flush();
+            controller.close();
+          },
+        }),
+      );
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: closed, resolve: onClosed, reject: onSocketError } = Promise.withResolvers<void>();
+  socket.on("error", onSocketError);
+  socket.on("close", () => onClosed());
+  let received = 0;
+  socket.on("data", d => (received += d.length));
+  socket.on("connect", () => {
+    socket.pause();
+    socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+  });
+
+  try {
+    {
+      const t0 = Date.now();
+      while (awaited === 0 && Date.now() - t0 < 30000) await Bun.sleep(1);
+      expect(awaited).toBeGreaterThan(0);
+    }
+    // pull is suspended on the drain Promise; releasing the client must
+    // resume it and deliver the full body without duplication.
+    socket.resume();
+    await closed;
+    // headers + chunked framing on top; duplication would add >= one CHUNK.
+    expect(received).toBeGreaterThanOrEqual(TOTAL_CHUNKS * CHUNK.length);
+    expect(received).toBeLessThan(TOTAL_CHUNKS * CHUNK.length + 16 * 1024);
+  } finally {
+    socket.destroy();
+  }
+});
+
+// A handler that proxies an upstream response body to a slow client must
+// pause the upstream socket instead of buffering the rate difference:
+// ByteStream (fetch response) → HttpResponse sink with backpressure.
+it.each(["chunked", "content-length"] as const)(
+  "bounds memory when proxying a %s fetch response body to a stalled client",
+  async encoding => {
+    const fixture = `
+    const net = require("node:net");
+    const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 2048; // 128 MB
+    // Upstream: written as fast as the socket accepts it.
+    const source = net.createServer(sock => {
+      let n = 0;
+      if (${JSON.stringify(encoding)} === "chunked") {
+        sock.write("HTTP/1.1 200 OK\\r\\ntransfer-encoding: chunked\\r\\nconnection: close\\r\\n\\r\\n");
+        const framed = Buffer.concat([Buffer.from("10000\\r\\n"), CHUNK, Buffer.from("\\r\\n")]);
+        const pump = () => { while (n < COUNT) { n++; if (!sock.write(framed)) return sock.once("drain", pump); } sock.end("0\\r\\n\\r\\n"); };
+        pump();
+      } else {
+        sock.write("HTTP/1.1 200 OK\\r\\ncontent-length: " + CHUNK.length * COUNT + "\\r\\nconnection: close\\r\\n\\r\\n");
+        const pump = () => { while (n < COUNT) { n++; if (!sock.write(CHUNK)) return sock.once("drain", pump); } sock.end(); };
+        pump();
+      }
+    });
+    await new Promise(r => source.listen(0, "127.0.0.1", r));
+
+    const proxy = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      async fetch() {
+        const up = await fetch(\`http://127.0.0.1:\${source.address().port}/\`);
+        return new Response(up.body);
+      },
+    });
+
+    // Downstream client stalls before reading, then drains the whole body.
+    let received = 0;
+    const { promise: done, resolve } = Promise.withResolvers();
+    const client = net.connect(proxy.port, "127.0.0.1", () => {
+      client.pause();
+      setTimeout(() => client.resume(), 500);
+      client.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+    });
+    client.on("data", d => { received += d.length; if (received >= CHUNK.length * COUNT) resolve(); });
+    client.on("error", () => {});
+    await done;
+    client.destroy();
+    console.log(JSON.stringify({ received: received >= CHUNK.length * COUNT }));
+    process.exit(0);
+  `;
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+      runFixtureMaxRSS(fixture, { received: true }),
+      emptyProcessMaxRSS(),
+    ]);
+    // Without upstream pause the proxy accumulates the whole payload while the
+    // client stalls; with it, in-flight bytes are bounded by the socket buffers.
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 96);
+  },
+  10_000,
+);
+
+// Same as the test above but the pull does *not* await flush(true) — it keeps
+// writing through backpressure and then parks on an unrelated promise. The
+// sink's onWritable drain must not re-invoke pull; a second entry would
+// duplicate the already-written bytes into the response body.
+it("type: direct stream that ignores backpressure is not re-entered on drain", async () => {
+  const CHUNK = Buffer.alloc(256 * 1024, 69);
+  const TOTAL_CHUNKS = 128; // 32 MiB — well past any localhost send buffer
+  let pullEntries = 0;
+  let sawBackpressure = false;
+  let parked = false;
+  const gate = Promise.withResolvers<void>();
+
+  using server = serve({
+    port: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            pullEntries++;
+            for (let i = 0; i < TOTAL_CHUNKS; i++) {
+              if (controller.write(CHUNK) instanceof Promise) sawBackpressure = true;
+              await controller.flush();
+            }
+            parked = true;
+            await gate.promise;
+            controller.close();
+          },
+        }),
+      );
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: bodyDone, resolve: onBodyDone, reject: onSocketError } = Promise.withResolvers<void>();
+  socket.on("error", onSocketError);
+  socket.on("close", () => onBodyDone());
+  socket.on("connect", () => {
+    socket.pause();
+    socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+  });
+
+  try {
+    // Hold the client paused while pull pushes 32 MiB and parks on `gate`,
+    // then drain: onWritable fires while pull is still suspended.
+    {
+      const t0 = Date.now();
+      while (!sawBackpressure && Date.now() - t0 < 30000) await Bun.sleep(1);
+      expect(sawBackpressure).toBe(true);
+    }
+    {
+      const t0 = Date.now();
+      while (!parked && Date.now() - t0 < 30000) await Bun.sleep(1);
+      expect(parked).toBe(true);
+    }
+    let received = 0;
+    socket.on("data", d => (received += d.length));
+    socket.resume();
+    {
+      const t0 = Date.now();
+      while (received < TOTAL_CHUNKS * CHUNK.length && Date.now() - t0 < 30000) await Bun.sleep(10);
+      expect(received).toBeGreaterThanOrEqual(TOTAL_CHUNKS * CHUNK.length);
+    }
+
+    expect(pullEntries).toBe(1);
+    gate.resolve();
+    await bodyDone;
+    expect(pullEntries).toBe(1);
+  } finally {
+    gate.resolve();
     socket.destroy();
   }
 });
@@ -3701,7 +4133,7 @@ it("type: direct stream — small write queued under backpressure is delivered i
           // pending_flush is already parked.
           for (let i = 0; i < 256 && !hitBackpressure; i++) {
             const n = controller.write(BIG);
-            if (typeof n === "number" && n < 0) hitBackpressure = true;
+            if (n instanceof Promise) hitBackpressure = true;
           }
           controller.write(SMALL);
           await controller.flush(true);
@@ -3963,4 +4395,51 @@ it.each([
   socket.destroy();
 
   expect(statusLine).toBe("HTTP/1.1 400 Bad Request");
+});
+
+// HTTPServerWritable must stop dequeuing from a JS ReadableStream once uWS reports
+// socket backpressure. We observe this by snapshotting how many chunks the server has
+// enqueued once the client has consumed only a small prefix: with backpressure the
+// producer tracks the consumer + kernel send-buffer; without it the producer drains
+// the whole stream into uWS's internal buffer before the client reads anything.
+it("applies backpressure to a ReadableStream response while the client drains", async () => {
+  const chunk = Buffer.alloc(256 * 1024, 0x61);
+  const chunkCount = 64; // 16 MB — well above loopback socket-buffer capacity
+  let sent = 0;
+
+  using server = serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            controller.enqueue(chunk);
+            sent++;
+            if (sent === chunkCount) controller.close();
+          },
+        }),
+      );
+    },
+  });
+
+  const response = await fetch(server.url);
+  const reader = response.body!.getReader();
+  let received = 0;
+  let sentAtPartialDrain = -1;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (sentAtPartialDrain < 0 && received >= chunk.byteLength * 4) {
+      // Client has consumed 1 MB of 16 MB. Sample the producer's progress.
+      sentAtPartialDrain = sent;
+    }
+  }
+
+  expect(received).toBe(chunk.byteLength * chunkCount);
+  expect(sentAtPartialDrain).toBeGreaterThan(0);
+  // If the sink ignored backpressure it would have already drained all chunkCount
+  // chunks into uWS's buffer by the time the client read 1 MB.
+  expect(sentAtPartialDrain).toBeLessThan(chunkCount);
 });

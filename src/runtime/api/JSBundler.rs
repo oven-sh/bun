@@ -52,10 +52,7 @@ pub mod js_bundler {
     /// Expected format: `Record<string, string | Blob | File | TypedArray | ArrayBuffer>`.
     /// Uses async (`from_js_async`) parsing so the resulting bytes are owned —
     /// the bundler runs on a separate thread and must not borrow JS heap memory.
-    pub(crate) fn file_map_from_js(
-        global_this: &JSGlobalObject,
-        files_value: JSValue,
-    ) -> JsResult<FileMap> {
+    fn file_map_from_js(global_this: &JSGlobalObject, files_value: JSValue) -> JsResult<FileMap> {
         let mut this = FileMap::default();
         // errdefer this.deinit() — `FileMap` (Box<[u8]> values) drops on `?`.
 
@@ -116,57 +113,56 @@ pub mod js_bundler {
     }
 
     pub struct Config {
-        pub target: Target,
-        pub entry_points: StringSet,
-        pub react_fast_refresh: bool,
-        pub react_compiler: bun_ast::runtime::ReactCompilerMode,
-        pub react_compiler_parse_test_pragmas: bool,
-        pub react_compiler_output_mode: Option<bun_ast::runtime::ReactCompilerMode>,
-        pub define: StringMap,
-        pub loaders: Option<api::LoaderMap>,
-        pub dir: OwnedString,
-        pub outdir: OwnedString,
-        pub rootdir: OwnedString,
-        pub jsx: api::Jsx,
-        pub force_node_env: options::ForceNodeEnv,
-        pub code_splitting: bool,
-        pub minify: Minify,
-        pub no_macros: bool,
-        pub ignore_dce_annotations: bool,
-        pub emit_dce_annotations: Option<bool>,
-        pub tree_shaking: Option<bool>,
-        pub names: Names,
-        pub external: StringSet,
-        pub allow_unresolved: Option<StringSet>,
-        pub source_map: options::SourceMapOption,
-        pub public_path: OwnedString,
-        pub conditions: StringSet,
-        pub packages: options::PackagesOption,
-        pub format: options::Format,
-        pub bytecode: bool,
-        pub banner: OwnedString,
-        pub footer: OwnedString,
+        pub(crate) target: Target,
+        pub(crate) entry_points: StringSet,
+        pub(crate) react_fast_refresh: bool,
+        pub(crate) react_compiler: bun_ast::runtime::ReactCompilerMode,
+        pub(crate) react_compiler_parse_test_pragmas: bool,
+        pub(crate) react_compiler_output_mode: Option<bun_ast::runtime::ReactCompilerMode>,
+        pub(crate) define: StringMap,
+        pub(crate) loaders: Option<api::LoaderMap>,
+        pub(crate) dir: OwnedString,
+        pub(crate) outdir: OwnedString,
+        pub(crate) rootdir: OwnedString,
+        pub(crate) jsx: api::Jsx,
+        pub(crate) force_node_env: options::ForceNodeEnv,
+        pub(crate) code_splitting: bool,
+        pub(crate) minify: Minify,
+        pub(crate) no_macros: bool,
+        pub(crate) ignore_dce_annotations: bool,
+        pub(crate) emit_dce_annotations: Option<bool>,
+        pub(crate) tree_shaking: Option<bool>,
+        pub(crate) names: Names,
+        pub(crate) external: StringSet,
+        pub(crate) allow_unresolved: Option<StringSet>,
+        pub(crate) source_map: options::SourceMapOption,
+        pub(crate) public_path: OwnedString,
+        pub(crate) conditions: StringSet,
+        pub(crate) packages: options::PackagesOption,
+        pub(crate) format: options::Format,
+        pub(crate) bytecode: bool,
+        pub(crate) banner: OwnedString,
+        pub(crate) footer: OwnedString,
         /// Path to write JSON metafile (if specified via metafile object) - TEST: moved here
-        pub metafile_json_path: OwnedString,
+        pub(crate) metafile_json_path: OwnedString,
         /// Path to write markdown metafile (if specified via metafile object) - TEST: moved here
-        pub metafile_markdown_path: OwnedString,
-        pub css_chunking: bool,
-        pub drop: StringSet,
-        pub features: StringSet,
-        pub throw_on_error: bool,
-        pub env_behavior: api::DotEnvBehavior,
-        pub env_prefix: OwnedString,
-        pub tsconfig_override: OwnedString,
-        pub compile: Option<CompileOptions>,
+        pub(crate) metafile_markdown_path: OwnedString,
+        pub(crate) css_chunking: bool,
+        pub(crate) drop: StringSet,
+        pub(crate) features: StringSet,
+        pub(crate) throw_on_error: bool,
+        pub(crate) env_behavior: api::DotEnvBehavior,
+        pub(crate) env_prefix: OwnedString,
+        pub(crate) compile: Option<CompileOptions>,
         /// In-memory files that can be used as entrypoints or imported.
         /// These files do not need to exist on disk.
-        pub files: FileMap,
+        pub(crate) files: FileMap,
         /// Generate metafile (JSON module graph)
-        pub metafile: bool,
+        pub(crate) metafile: bool,
         /// Package names whose barrel files should be optimized.
         /// Named imports from these packages will only load the submodules
         /// that are actually used instead of parsing all re-exported submodules.
-        pub optimize_imports: StringSet,
+        pub(crate) optimize_imports: StringSet,
     }
 
     impl Default for Config {
@@ -217,7 +213,6 @@ pub mod js_bundler {
                 throw_on_error: true,
                 env_behavior: api::DotEnvBehavior::Disable,
                 env_prefix: OwnedString::default(),
-                tsconfig_override: OwnedString::default(),
                 compile: None,
                 files: FileMap::default(),
                 metafile: false,
@@ -227,22 +222,22 @@ pub mod js_bundler {
     }
 
     pub struct CompileOptions {
-        pub compile_target: CompileTarget,
-        pub exec_argv: OwnedString,
-        pub executable_path: OwnedString,
-        pub windows_hide_console: bool,
-        pub windows_icon_path: OwnedString,
-        pub windows_title: OwnedString,
-        pub windows_publisher: OwnedString,
-        pub windows_version: OwnedString,
-        pub windows_description: OwnedString,
-        pub windows_copyright: OwnedString,
-        pub outfile: OwnedString,
-        pub assets: Vec<Box<[u8]>>,
-        pub autoload_dotenv: bool,
-        pub autoload_bunfig: bool,
-        pub autoload_tsconfig: bool,
-        pub autoload_package_json: bool,
+        pub(crate) compile_target: CompileTarget,
+        pub(crate) exec_argv: OwnedString,
+        pub(crate) executable_path: OwnedString,
+        pub(crate) windows_hide_console: bool,
+        pub(crate) windows_icon_path: OwnedString,
+        pub(crate) windows_title: OwnedString,
+        pub(crate) windows_publisher: OwnedString,
+        pub(crate) windows_version: OwnedString,
+        pub(crate) windows_description: OwnedString,
+        pub(crate) windows_copyright: OwnedString,
+        pub(crate) outfile: OwnedString,
+        pub(crate) assets: Vec<Box<[u8]>>,
+        pub(crate) autoload_dotenv: bool,
+        pub(crate) autoload_bunfig: bool,
+        pub(crate) autoload_tsconfig: bool,
+        pub(crate) autoload_package_json: bool,
     }
 
     impl Default for CompileOptions {
@@ -269,7 +264,7 @@ pub mod js_bundler {
     }
 
     impl CompileOptions {
-        pub(crate) fn from_js(
+        fn from_js(
             global_this: &JSGlobalObject,
             config: JSValue,
             compile_target: Option<CompileTarget>,
@@ -553,11 +548,13 @@ pub mod js_bundler {
                         if let Some(promise) = plugin_result.as_any_promise() {
                             promise.set_handled(global_this.vm());
                             // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
-                            global_this.bun_vm().as_mut().wait_for_promise(promise);
+                            global_this.bun_vm().as_mut().wait_for_promise(promise)?;
                             match promise
                                 .unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled)
                             {
-                                jsc::PromiseResult::Pending => unreachable!(),
+                                jsc::PromiseResult::Pending => {
+                                    unreachable!("wait_for_promise returned Ok")
+                                }
                                 jsc::PromiseResult::Fulfilled(val) => {
                                     plugin_result = val;
                                 }
@@ -1008,23 +1005,38 @@ pub mod js_bundler {
                         buf.into_boxed_slice()
                     }
                 };
+                let validate = |option: &str, s: &[u8]| -> JsResult<()> {
+                    if let Some((pos, tail)) = options::find_unterminated_placeholder(s) {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "{}: unterminated \"{}\" placeholder (missing \"]\") at position {}",
+                            option,
+                            bstr::BStr::new(tail),
+                            pos,
+                        )));
+                    }
+                    Ok(())
+                };
                 if naming.is_string() {
                     if let Some(slice) = config.get_optional_slice(global_this, b"naming")? {
+                        validate("naming", slice.slice())?;
                         this.names.entry_point.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }
                 } else if naming.is_object() {
                     if let Some(slice) = naming.get_optional_slice(global_this, b"entry")? {
+                        validate("naming.entry", slice.slice())?;
                         this.names.entry_point.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }
 
                     if let Some(slice) = naming.get_optional_slice(global_this, b"chunk")? {
+                        validate("naming.chunk", slice.slice())?;
                         this.names.chunk.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }
 
                     if let Some(slice) = naming.get_optional_slice(global_this, b"asset")? {
+                        validate("naming.asset", slice.slice())?;
                         this.names.asset.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }
@@ -1305,9 +1317,9 @@ pub mod js_bundler {
     /// `PathTemplate.data` is owned (`Box<[u8]>`), so no separate backing
     /// string per template is needed.
     pub struct Names {
-        pub entry_point: options::PathTemplate,
-        pub chunk: options::PathTemplate,
-        pub asset: options::PathTemplate,
+        pub(crate) entry_point: options::PathTemplate,
+        pub(crate) chunk: options::PathTemplate,
+        pub(crate) asset: options::PathTemplate,
     }
 
     impl Default for Names {
@@ -1322,10 +1334,10 @@ pub mod js_bundler {
 
     #[derive(Default)]
     pub struct Minify {
-        pub whitespace: bool,
-        pub identifiers: bool,
-        pub syntax: bool,
-        pub keep_names: bool,
+        pub(crate) whitespace: bool,
+        pub(crate) identifiers: bool,
+        pub(crate) syntax: bool,
+        pub(crate) keep_names: bool,
     }
 
     fn build(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<JSValue> {
@@ -1354,8 +1366,6 @@ pub mod js_bundler {
         let mut plugins: Option<*mut Plugin> = None;
         let config = Config::from_js(global_this, arguments[0], &mut plugins)?;
 
-        let event_loop = vm.event_loop();
-
         // `BundleV2.generateFromJavaScript` — the completion-task struct lives in
         // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
         // fields name `Config`/`Plugin`/`HTMLBundle::Route`; lower-tier crates
@@ -1365,7 +1375,6 @@ pub mod js_bundler {
                 config,
                 plugins.and_then(core::ptr::NonNull::new),
                 global_this,
-                event_loop,
             )
             .map_err(|_| JsError::OutOfMemory)?;
         // SAFETY: `completion` is the freshly-boxed allocation returned above;
@@ -1432,7 +1441,7 @@ pub mod js_bundler {
     /// `resolve` must be the live `*mut Resolve` previously handed to C++ via
     /// `Resolve::dispatch`; sole owner on the JS thread for the call duration.
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn JSBundlerPlugin__onResolveAsync(
+    unsafe extern "C" fn JSBundlerPlugin__onResolveAsync(
         resolve: *mut Resolve,
         _unused: *mut c_void,
         path_value: JSValue,
@@ -1474,7 +1483,7 @@ pub mod js_bundler {
     /// JSC-aware plumbing for `Load` (upstream owns `init`/`dispatch`/
     /// `run_on_js_thread`/`bake_graph`). Only `on_defer` lives here because it
     /// returns a `JSValue` and throws on the `JSGlobalObject`.
-    pub(crate) trait LoadJsExt {
+    trait LoadJsExt {
         fn on_defer(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue>;
     }
 
@@ -1511,11 +1520,17 @@ pub mod js_bundler {
                     .r#loop()
                     .expect("BundleV2.linker.loop must be set before plugins run");
                 match &mut *any_loop.as_ptr() {
-                    bun_event_loop::AnyEventLoop::Js { owner } => {
-                        owner.enqueue_task_concurrent(ConcurrentTask::from_callback(
-                            ctx.as_mut_ptr(),
-                            on_notify_defer_raw,
-                        ));
+                    bun_event_loop::AnyEventLoop::Js { .. } => {
+                        let ct =
+                            ConcurrentTask::from_callback(ctx.as_mut_ptr(), on_notify_defer_raw);
+                        let poster = (*ctx.as_mut_ptr())
+                            .js_poster
+                            .as_ref()
+                            .expect("JS-owned bundle has a poster");
+                        if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
+                            // Owning JS VM torn down mid-bundle: the notify never runs.
+                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
+                        }
                     }
                     bun_event_loop::AnyEventLoop::Mini(mini) => {
                         // `mini.enqueueTaskConcurrentWithExtraCtx(
@@ -1550,7 +1565,7 @@ pub mod js_bundler {
     /// `Load::dispatch`, and `global` must be the plugin's owning
     /// `JSGlobalObject`; both valid and exclusively accessed on the JS thread.
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn JSBundlerPlugin__onDefer(
+    unsafe extern "C" fn JSBundlerPlugin__onDefer(
         load: *mut Load,
         global: *mut JSGlobalObject,
     ) -> JSValue {
@@ -1559,7 +1574,7 @@ pub mod js_bundler {
     }
 
     #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn JSBundlerPlugin__onLoadAsync(
+    extern "C" fn JSBundlerPlugin__onLoadAsync(
         this: &mut Load,
         _unused: *mut c_void,
         source_code_value: JSValue,
@@ -1668,6 +1683,9 @@ pub mod js_bundler {
         /// `this` must be a live handle previously returned by `Plugin::create`;
         /// non-null is checked via `Plugin::opaque_ref` (panics on null).
         fn destroy(this: *mut Plugin);
+        /// From here the plugin object swallows whatever its JS side still
+        /// delivers (onLoad/onResolve answers, defer, addError). JS thread.
+        fn tombstone(&self);
         fn global_object(&self) -> &JSGlobalObject;
         fn append_defer_promise(&mut self) -> JSValue;
         fn add_plugin(
@@ -1725,6 +1743,10 @@ pub mod js_bundler {
             );
             scope.return_if_exception()?;
             Ok(value)
+        }
+
+        fn tombstone(&self) {
+            JSBundlerPlugin__tombstone(self);
         }
 
         fn destroy(this: *mut Plugin) {
@@ -1826,7 +1848,7 @@ pub mod js_bundler {
     /// `which == 1`) previously handed to C++ via `dispatch`; sole owner on
     /// the JS thread.
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn JSBundlerPlugin__addError(
+    unsafe extern "C" fn JSBundlerPlugin__addError(
         ctx: *mut c_void,
         plugin: *mut Plugin,
         exception: JSValue,
@@ -1860,18 +1882,18 @@ pub use js_bundler as JSBundler;
 pub use js_bundler::Config;
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
 pub use js_bundler::Plugin;
-pub use js_bundler::PluginJscExt;
+pub(crate) use js_bundler::PluginJscExt;
 
 /// Full `.classes.ts` payload — wraps a `webcore::Blob` plus
 /// `loader/path/hash/output_kind`. `.sourcemap` lives on the JS wrapper
 /// (`m_sourcemap` WriteBarrier from `cache: true`), not here.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct BuildArtifact {
-    pub blob: Blob,
-    pub loader: bun_ast::Loader,
+    pub(crate) blob: Blob,
+    pub(crate) loader: bun_ast::Loader,
     pub path: Box<[u8]>,
-    pub hash: u64,
-    pub output_kind: OutputKind,
+    pub(crate) hash: u64,
+    pub(crate) output_kind: OutputKind,
 }
 
 /// `BuildArtifact.kind` — what role an output file plays. Single canonical
@@ -1883,7 +1905,7 @@ pub use bun_bundler::options::OutputKind;
 /// `JSValue::as(Blob)` BuildArtifact fallback — declared
 /// `extern "Rust"` in `bun_jsc::webcore_types`; link-time resolved.
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
+fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
     <BuildArtifact as bun_jsc::JsClass>::from_js(value).map(|b| {
         // SAFETY: `from_js` returns the non-null `*mut BuildArtifact` kept alive by
         // the JS wrapper; `addr_of_mut!` only computes the field address (no deref).
@@ -1892,16 +1914,8 @@ pub(crate) fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob
 }
 
 impl BuildArtifact {
-    /// `BuildArtifact` is not user-constructible (`noConstructor` in .classes.ts).
-    pub fn constructor(
-        global_this: &JSGlobalObject,
-        _callframe: &CallFrame,
-    ) -> JsResult<*mut BuildArtifact> {
-        Err(global_this.throw(format_args!("BuildArtifact is not constructable")))
-    }
-
     #[bun_jsc::host_fn(method)]
-    pub fn get_text(
+    pub(crate) fn get_text(
         this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1910,7 +1924,7 @@ impl BuildArtifact {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_json(
+    pub(crate) fn get_json(
         this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1919,7 +1933,7 @@ impl BuildArtifact {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_array_buffer(
+    pub(crate) fn get_array_buffer(
         this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1928,7 +1942,7 @@ impl BuildArtifact {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_slice(
+    pub(crate) fn get_slice(
         this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1940,7 +1954,7 @@ impl BuildArtifact {
     /// cached-stream slot must be BuildArtifact's own (`values: ["stream"]` in
     /// JSBundler.classes.ts); `Blob::get_stream` would poke `JSBlob::m_stream`.
     #[bun_jsc::host_fn(method)]
-    pub fn get_stream(
+    pub(crate) fn get_stream(
         this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1954,12 +1968,12 @@ impl BuildArtifact {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_path(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_path(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         jsc::bun_string_jsc::create_utf8_for_js(global_this, &this.path)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_loader(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_loader(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         jsc::bun_string_jsc::create_utf8_for_js(
             global_this,
             <&'static str>::from(this.loader).as_bytes(),
@@ -1967,7 +1981,7 @@ impl BuildArtifact {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_hash(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_hash(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         use std::io::Write;
         let mut buf = [0u8; 512];
         let mut cursor = &mut buf[..];
@@ -1977,19 +1991,22 @@ impl BuildArtifact {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_size(this: &Self, global_object: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_size(this: &Self, global_object: &JSGlobalObject) -> JSValue {
         // `Blob::get_size` is `&self` post-R-2 (lazy size caches are
         // Cell-backed inside `Blob`), so a shared borrow is sound here.
         this.blob.get_size(global_object)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_mime_type(this: &Self, global_object: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_mime_type(this: &Self, global_object: &JSGlobalObject) -> JSValue {
         BlobExt::get_type(&this.blob, global_object)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_output_kind(this: &Self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_output_kind(
+        this: &Self,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
         jsc::bun_string_jsc::create_utf8_for_js(
             global_object,
             <&'static str>::from(this.output_kind).as_bytes(),
@@ -1997,14 +2014,14 @@ impl BuildArtifact {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_source_map(_this: &Self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_source_map(_this: &Self, _global: &JSGlobalObject) -> JSValue {
         // The value lives in the wrapper's `m_sourcemap` WriteBarrier (seeded
         // by `on_complete`); the C++ getter returns that slot before calling
         // here, so reaching this means no sourcemap was assigned.
         JSValue::NULL
     }
 
-    pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
+    pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
         this_value: JSValue,
         formatter: &mut F,

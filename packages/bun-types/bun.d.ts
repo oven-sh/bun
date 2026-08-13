@@ -555,6 +555,18 @@ declare module "bun" {
      * @default true
      */
     ambiguousIsNarrow?: boolean;
+
+    /**
+     * If `true`, measure every Unicode code point individually (East Asian
+     * Width plus emoji presentation, the algorithm Node.js uses for
+     * `console.table` and `util.inspect` alignment), so each member of an
+     * emoji ZWJ sequence is counted: `"👨‍👩‍👧‍👦"` measures 8. If `false`,
+     * emoji sequences and other grapheme clusters count once: `"👨‍👩‍👧‍👦"`
+     * measures 2.
+     *
+     * @default false
+     */
+    perCodePoint?: boolean;
   }
 
   /**
@@ -822,6 +834,144 @@ declare module "bun" {
   }
 
   /**
+   * XML related APIs
+   */
+  namespace XML {
+    /**
+     * An element in the node tree returned by {@link parse} with `{ compact: false }`
+     * and accepted by {@link stringify}.
+     */
+    interface Node {
+      /** The element name as written, including any namespace prefix (`"soap:Envelope"`). */
+      name: string;
+      /**
+       * Attribute values by name, in document order, after attribute-value
+       * normalization and with defaults declared in the internal DTD subset applied.
+       * Namespace declarations (`xmlns`, `xmlns:*`) appear as ordinary attributes.
+       */
+      attributes: Record<string, string>;
+      /**
+       * Child elements and character data in document order. Text is passed through
+       * exactly (whitespace-only runs between elements included); CDATA sections,
+       * character references and internal entities are already expanded into the
+       * surrounding text, while a reference to an entity that only an (unread) external
+       * DTD could declare is kept as written (`"&name;"`). Comments and processing
+       * instructions are not represented.
+       */
+      children: Array<Node | string>;
+    }
+
+    interface ParseOptions {
+      /**
+       * Selects the shape of the result.
+       *
+       * - `true` (default): a compact object — `{ [rootName]: value }`, where an
+       *   element with no attributes and no child elements becomes its text (trimmed
+       *   of surrounding whitespace, `""` when empty), and any other element becomes
+       *   an object with a `"@name"` key per attribute, one key per distinct child
+       *   element name (an array when that name repeats, in document order), and
+       *   `"#text"` for its trimmed character data if any. The relative order of
+       *   differently named siblings and of text between them is not kept.
+       * - `false`: the root element as a {@link Node} tree, which keeps everything
+       *   in document order.
+       *
+       * @default true
+       */
+      compact?: boolean | undefined;
+    }
+
+    /**
+     * Parse an XML 1.0 document.
+     *
+     * `Bun.XML` is a non-validating processor: the document (including its internal
+     * DTD subset) must be well-formed, internal entities are expanded, and attribute
+     * defaults declared in the internal subset are applied, but external DTDs and
+     * external entities are never loaded. Comments and processing instructions are
+     * skipped. All values are strings; nothing is coerced to numbers or booleans.
+     *
+     * A string is parsed as already-decoded text. Bytes (`Buffer`, `TypedArray`,
+     * `DataView`, `ArrayBuffer`, `Blob`) are decoded per the XML rules: a byte-order
+     * mark or the `encoding` declared in `<?xml ...?>` selects UTF-8, UTF-16, or
+     * ISO-8859-1.
+     *
+     * @category Utilities
+     *
+     * @param input The XML document
+     * @throws {SyntaxError} If the document is not well-formed (which, in a document
+     * without an external DTD, includes referencing an undeclared entity), uses an
+     * unsupported encoding, or exceeds the entity-expansion limits
+     *
+     * @example
+     * ```ts
+     * import { XML } from "bun";
+     *
+     * XML.parse(`<order id="A1"><item sku="x">Tea</item><item sku="y">Mug</item><paid/></order>`);
+     * // {
+     * //   order: {
+     * //     "@id": "A1",
+     * //     item: [ { "@sku": "x", "#text": "Tea" }, { "@sku": "y", "#text": "Mug" } ],
+     * //     paid: "",
+     * //   },
+     * // }
+     *
+     * XML.parse(`<p>Hello <b>world</b>!</p>`, { compact: false });
+     * // {
+     * //   name: "p",
+     * //   attributes: {},
+     * //   children: [ "Hello ", { name: "b", attributes: {}, children: ["world"] }, "!" ],
+     * // }
+     * ```
+     */
+    function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+      options?: ParseOptions & { compact?: true },
+    ): Record<string, unknown>;
+    function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+      options: ParseOptions & { compact: false },
+    ): Node;
+    function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+      options?: ParseOptions,
+    ): Record<string, unknown> | Node;
+
+    /**
+     * Serialize a value to an XML document (without an XML declaration).
+     *
+     * Accepts either shape {@link parse} produces: a {@link Node} (anything with a
+     * string `name` and a `children` or `attributes` property), or a compact
+     * object with exactly one key naming the root element, using the same `"@name"` /
+     * `"#text"` / array conventions. Strings, numbers, booleans, bigints and `Date`s
+     * (as ISO strings) become text; `null` becomes an empty element; `undefined`,
+     * functions and symbols are skipped. The output is always well-formed: `& < >`
+     * (and, in attributes, quotes and whitespace other than space) are escaped, and
+     * names that are not XML names, characters XML cannot contain, and circular
+     * structures throw.
+     *
+     * @category Utilities
+     *
+     * @param value The {@link Node} or compact object to serialize
+     * @param replacer Not supported; pass `undefined` or `null`
+     * @param space Indentation for element-only content, as in `JSON.stringify`: a
+     * number of spaces (at most 10) or a string (its first 10 characters). Elements
+     * that contain text are always written inline so character data is unchanged.
+     * @returns The XML, or `undefined` if `value` is `undefined`, a function, or a symbol
+     *
+     * @example
+     * ```ts
+     * import { XML } from "bun";
+     *
+     * XML.stringify({ order: { "@id": "A1", item: ["Tea", "Mug"], paid: null } });
+     * // '<order id="A1"><item>Tea</item><item>Mug</item><paid/></order>'
+     *
+     * XML.stringify({ name: "p", attributes: { class: "x" }, children: ["Hi ", { name: "b", children: ["!"] }] }, null, 2);
+     * // '<p class="x">Hi <b>!</b></p>'
+     * ```
+     */
+    function stringify(value: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
+  }
+
+  /**
    * JSONC related APIs
    */
   namespace JSONC {
@@ -835,6 +985,7 @@ declare module "bun" {
      *
      * @param input The JSONC string to parse
      * @returns A JavaScript value
+     * @throws {SyntaxError} If the input is not valid JSONC
      *
      * @example
      * ```js
@@ -949,12 +1100,13 @@ declare module "bun" {
    */
   namespace YAML {
     /**
-     * Parse a YAML string into a JavaScript value
+     * Parse a YAML string into a JavaScript value. Every alias (`*name`) of an anchored collection yields the
+     * same object, and an alias may refer to a collection that contains it, so the result can be cyclic.
      *
      * @category Utilities
      *
      * @param input The YAML string to parse
-     * @returns A JavaScript value
+     * @returns A JavaScript value, or an array of them for a multi-document stream
      *
      * @example
      * ```ts
@@ -5409,6 +5561,7 @@ declare module "bun" {
     | "jsonc"
     | "toml"
     | "yaml"
+    | "xml"
     | "file"
     | "napi"
     | "wasm"
@@ -6807,6 +6960,33 @@ declare module "bun" {
        * POSIX only. On Windows the spawn fails with `ENOTSUP`.
        */
       gid?: number;
+
+      /**
+       * Start the child process inside this control group.
+       *
+       * Pass the path of an existing cgroup directory (e.g.
+       * `"/sys/fs/cgroup/my-jobs"`), or an open file descriptor for one. The
+       * child joins it before it begins executing, so resource limits
+       * configured on the cgroup (`memory.max`, `pids.max`, …) apply from its
+       * first instruction and to everything it spawns in turn. Works with both
+       * cgroup v1 and v2 hierarchies.
+       *
+       * Bun does not create or configure the cgroup; do that with `node:fs`
+       * beforehand.
+       *
+       * Linux only; ignored on other platforms. On Linux, the spawn fails if
+       * the cgroup cannot be joined (e.g. the directory does not exist).
+       *
+       * @example
+       * ```ts
+       * import { mkdirSync, writeFileSync } from "node:fs";
+       * const dir = "/sys/fs/cgroup/build-jobs";
+       * mkdirSync(dir, { recursive: true });
+       * writeFileSync(dir + "/memory.max", String(2 * 1024 ** 3));
+       * Bun.spawn({ cmd: ["make"], cgroup: dir });
+       * ```
+       */
+      cgroup?: string | number;
 
       /**
        * The environment variables of the process

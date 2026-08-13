@@ -158,14 +158,13 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         url,
         headers.entries,
         header_buf,
-        &raw mut response_buf,
         b"",
         None,
         None,
         http::FetchRedirect::Follow,
     );
 
-    let res = match req.send_sync() {
+    let res = match req.send_sync(&mut response_buf) {
         Ok(res) => res,
         Err(bun_http::Error::Alloc(bun_alloc::AllocError)) => {
             return Err(WhoamiError::OutOfMemory);
@@ -323,7 +322,7 @@ pub mod registry {
             bun_semver::semver_string::Builder::string_hash(str)
         }
 
-        pub fn get_name(name: &[u8]) -> &[u8] {
+        pub(crate) fn get_name(name: &[u8]) -> &[u8] {
             if name.is_empty() || name[0] != b'@' {
                 return name;
             }
@@ -335,7 +334,7 @@ pub mod registry {
             &name[1..]
         }
 
-        pub fn from_api(
+        pub(crate) fn from_api(
             name: &[u8],
             registry_: api::NpmRegistry,
             env: &mut DotEnv,
@@ -596,8 +595,8 @@ pub use registry as Registry;
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub struct DistTagMap {
-    pub tags: ExternalStringList,
-    pub versions: VersionSlice,
+    pub(crate) tags: ExternalStringList,
+    pub(crate) versions: VersionSlice,
 }
 
 pub(crate) type PackageVersionList = ExternalSlice<PackageVersion>;
@@ -605,16 +604,12 @@ pub(crate) type PackageVersionList = ExternalSlice<PackageVersion>;
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub struct ExternVersionMap {
-    pub keys: VersionSlice,
-    pub values: PackageVersionList,
+    pub(crate) keys: VersionSlice,
+    pub(crate) values: PackageVersionList,
 }
 
 impl ExternVersionMap {
-    pub(crate) fn find_key_index(
-        self,
-        buf: &[Semver::Version],
-        find: Semver::Version,
-    ) -> Option<u32> {
+    fn find_key_index(self, buf: &[Semver::Version], find: Semver::Version) -> Option<u32> {
         for (i, key) in self.keys.get(buf).iter().enumerate() {
             if key.eql(find) {
                 return Some(i as u32);
@@ -680,7 +675,7 @@ pub struct PackageVersion {
     /// `"integrity"` field || `"shasum"` field
     /// https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#dist
     // Splitting this into it's own array ends up increasing the final size a little bit.
-    pub integrity: Integrity,
+    pub(crate) integrity: Integrity,
 
     // Explicit padding so this struct has no implicit (uninitialized) padding
     // bytes — `Serializer::write_array` reinterprets the whole slice as `&[u8]`,
@@ -688,59 +683,59 @@ pub struct PackageVersion {
     // fields, `Default` zero-fills them and every byte of the struct is
     // initialized. Layout (size=240, align=8) is unchanged; see the
     // `offset_of!` asserts below and `padding_checker.rs` for the contract.
-    pub _padding_after_integrity: [u8; 3],
+    pub(crate) _padding_after_integrity: [u8; 3],
 
     /// "dependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#dependencies)
-    pub dependencies: ExternalStringMap,
+    pub(crate) dependencies: ExternalStringMap,
 
     /// `"optionalDependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#optionaldependencies)
-    pub optional_dependencies: ExternalStringMap,
+    pub(crate) optional_dependencies: ExternalStringMap,
 
     /// `"peerDependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependencies)
     /// if `non_optional_peer_dependencies_start` is > 0, then instead of alphabetical, the first N items are optional
-    pub peer_dependencies: ExternalStringMap,
+    pub(crate) peer_dependencies: ExternalStringMap,
 
     /// `"devDependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#devdependencies)
     /// We deliberately choose not to populate this field.
     /// We keep it in the data layout so that if it turns out we do need it, we can add it without invalidating everyone's history.
-    pub dev_dependencies: ExternalStringMap,
+    pub(crate) dev_dependencies: ExternalStringMap,
 
-    pub bundled_dependencies: ExternalPackageNameHashList,
+    pub(crate) bundled_dependencies: ExternalPackageNameHashList,
 
     /// `"bin"` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
-    pub bin: Bin,
+    pub(crate) bin: Bin,
 
     /// `"engines"` field in package.json
-    pub engines: ExternalStringMap,
+    pub(crate) engines: ExternalStringMap,
 
     /// `"peerDependenciesMeta"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependenciesmeta)
     /// if `non_optional_peer_dependencies_start` is > 0, then instead of alphabetical, the first N items of `peer_dependencies` are optional
-    pub non_optional_peer_dependencies_start: u32,
-    pub _padding_before_man_dir: [u8; 4],
+    pub(crate) non_optional_peer_dependencies_start: u32,
+    pub(crate) _padding_before_man_dir: [u8; 4],
 
-    pub man_dir: ExternalString,
+    pub(crate) man_dir: ExternalString,
 
     /// can be empty!
     /// When empty, it means that the tarball URL can be inferred
-    pub tarball_url: ExternalString,
+    pub(crate) tarball_url: ExternalString,
 
-    pub unpacked_size: u32,
-    pub file_count: u32,
+    pub(crate) unpacked_size: u32,
+    pub(crate) file_count: u32,
 
     /// `"os"` field in package.json
-    pub os: OperatingSystem,
+    pub(crate) os: OperatingSystem,
     /// `"cpu"` field in package.json
-    pub cpu: Architecture,
+    pub(crate) cpu: Architecture,
 
     /// `"libc"` field in package.json
-    pub libc: Libc,
+    pub(crate) libc: Libc,
 
     /// `hasInstallScript` field in registry API.
-    pub has_install_script: bool,
-    pub _padding_tail: [u8; 2],
+    pub(crate) has_install_script: bool,
+    pub(crate) _padding_tail: [u8; 2],
 
     /// Unix timestamp when this version was published (0 if unknown)
-    pub publish_timestamp_ms: f64,
+    pub(crate) publish_timestamp_ms: f64,
 }
 
 impl Default for PackageVersion {
@@ -840,32 +835,32 @@ const _: () = {
 #[derive(Default, Clone, Copy)]
 pub struct NpmPackage {
     /// HTTP response headers
-    pub last_modified: SemverString,
-    pub etag: SemverString,
+    pub(crate) last_modified: SemverString,
+    pub(crate) etag: SemverString,
 
     /// "modified" in the JSON
-    pub modified: SemverString,
-    pub public_max_age: u32,
+    pub(crate) modified: SemverString,
+    pub(crate) public_max_age: u32,
     // Explicit padding so this struct has no implicit (uninitialized) padding
     // bytes — `Serializer::write` reinterprets the whole struct as `&[u8]`,
     // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
     // fields, `Default` zero-fills them and every byte of the struct is
     // initialized. Layout (size=120, align=8) is unchanged; see the
     // `offset_of!` asserts below and `padding_checker.rs` for the contract.
-    pub _padding_after_max_age: [u8; 4],
+    pub(crate) _padding_after_max_age: [u8; 4],
 
-    pub name: ExternalString,
+    pub(crate) name: ExternalString,
 
-    pub releases: ExternVersionMap,
-    pub prereleases: ExternVersionMap,
-    pub dist_tags: DistTagMap,
+    pub(crate) releases: ExternVersionMap,
+    pub(crate) prereleases: ExternVersionMap,
+    pub(crate) dist_tags: DistTagMap,
 
-    pub versions_buf: VersionSlice,
-    pub string_lists_buf: ExternalStringList,
+    pub(crate) versions_buf: VersionSlice,
+    pub(crate) string_lists_buf: ExternalStringList,
 
     // Flag to indicate if we have timestamp data from extended manifest
-    pub has_extended_manifest: bool,
-    pub _padding_tail: [u8; 7],
+    pub(crate) has_extended_manifest: bool,
+    pub(crate) _padding_tail: [u8; 7],
 }
 
 // Compile-time proof that the explicit `_padding_*` fields above leave no
@@ -892,16 +887,16 @@ const _: () = {
 
 #[derive(Default, Clone)]
 pub struct PackageManifest {
-    pub pkg: NpmPackage,
+    pub(crate) pkg: NpmPackage,
 
     pub string_buf: Box<[u8]>,
     pub versions: Box<[Semver::Version]>,
-    pub external_strings: Box<[ExternalString]>,
+    pub(crate) external_strings: Box<[ExternalString]>,
     // We store this in a separate buffer so that we can dedupe contiguous identical versions without an extra pass
-    pub external_strings_for_versions: Box<[ExternalString]>,
-    pub package_versions: Box<[PackageVersion]>,
-    pub extern_strings_bin_entries: Box<[ExternalString]>,
-    pub bundled_deps_buf: Box<[PackageNameHash]>,
+    pub(crate) external_strings_for_versions: Box<[ExternalString]>,
+    pub(crate) package_versions: Box<[PackageVersion]>,
+    pub(crate) extern_strings_bin_entries: Box<[ExternalString]>,
+    pub(crate) bundled_deps_buf: Box<[PackageNameHash]>,
 }
 
 impl PackageManifest {
@@ -910,7 +905,7 @@ impl PackageManifest {
         self.pkg.name.slice(&self.string_buf)
     }
 
-    pub fn byte_length(&self, scope: &registry::Scope) -> usize {
+    pub(crate) fn byte_length(&self, scope: &registry::Scope) -> usize {
         let mut counter = bun_io::DiscardingWriter::new();
         match package_manifest::Serializer::write(self, scope, &mut counter) {
             Ok(()) => counter.count,
@@ -946,7 +941,7 @@ pub mod package_manifest {
     );
 
     impl Serializer {
-        pub fn write_array<W: bun_io::Write, T: Copy>(
+        pub(crate) fn write_array<W: bun_io::Write, T: Copy>(
             writer: &mut W,
             array: &[T],
             pos: &mut u64,
@@ -970,9 +965,9 @@ pub mod package_manifest {
             Ok(())
         }
 
-        pub fn read_array<'a, T: Copy>(
+        fn read_array_bytes<'a, T: Copy>(
             stream: &mut bun_io::FixedBufferStream<&'a [u8]>,
-        ) -> Result<&'a [T], Error> {
+        ) -> Result<&'a [u8], Error> {
             let byte_len = stream.read_int_le::<u64>()?;
             if byte_len == 0 {
                 return Ok(&[]);
@@ -984,18 +979,32 @@ pub mod package_manifest {
                 return Err(crate::Error::BufferTooSmall);
             }
             let result_bytes = &remaining[..byte_len as usize];
+            stream.pos += result_bytes.len();
+            Ok(result_bytes)
+        }
+
+        fn array_from_bytes<T: Copy>(result_bytes: &[u8]) -> &[T] {
+            if result_bytes.is_empty() {
+                return &[];
+            }
             // SAFETY: alignment was advanced by Aligner::skip_amount; T is POD
-            let result = unsafe {
+            unsafe {
                 bun_core::ffi::slice(
                     result_bytes.as_ptr().cast::<T>(),
                     result_bytes.len() / core::mem::size_of::<T>(),
                 )
-            };
-            stream.pos += result_bytes.len();
-            Ok(result)
+            }
         }
 
-        pub fn write<W: bun_io::Write>(
+        pub fn read_array<'a, T: Copy>(
+            stream: &mut bun_io::FixedBufferStream<&'a [u8]>,
+        ) -> Result<&'a [T], Error> {
+            Ok(Self::array_from_bytes::<T>(Self::read_array_bytes::<T>(
+                stream,
+            )?))
+        }
+
+        pub(crate) fn write<W: bun_io::Write>(
             this: &PackageManifest,
             scope: &registry::Scope,
             writer: &mut W,
@@ -1208,7 +1217,7 @@ pub mod package_manifest {
                                 cache_dir,
                                 outpath,
                                 bun_sys::Renameat2Flags {
-                                    exchange: true,
+                                    mode: bun_sys::RenameMode::Exchange,
                                     ..Default::default()
                                 },
                             )?;
@@ -1233,7 +1242,7 @@ pub mod package_manifest {
         /// Therefore, we choose to not increment the pending task count or wake up the main thread.
         ///
         /// This might leave temporary files in the temporary directory that will never be moved to the cache directory. We'll see if anyone asks about that.
-        pub fn save_async(
+        pub(crate) fn save_async(
             this: &PackageManifest,
             scope: &registry::Scope,
             tmpdir: Fd,
@@ -1243,7 +1252,7 @@ pub mod package_manifest {
                 Batch as PoolBatch, Node as PoolNode, Task as PoolTask,
             };
 
-            pub(crate) struct SaveTask {
+            struct SaveTask {
                 manifest: PackageManifest,
                 // Owned: the thread-pool task can outlive the caller's borrow
                 // of the Registry.Scope, so it owns a clone.
@@ -1257,7 +1266,7 @@ pub mod package_manifest {
             bun_threading::intrusive_work_task!(SaveTask, task);
 
             impl SaveTask {
-                pub(crate) fn new(init: SaveTask) -> Box<SaveTask> {
+                fn new(init: SaveTask) -> Box<SaveTask> {
                     Box::new(init)
                 }
 
@@ -1269,7 +1278,7 @@ pub mod package_manifest {
                 // discharged locally (matches `HardLinkWindowsInstallTask::
                 // run_from_thread_pool` in PackageInstall.rs). Safe `fn`
                 // coerces to the `unsafe fn(*mut Task)` field type.
-                pub(crate) fn run(task: *mut PoolTask) {
+                fn run(task: *mut PoolTask) {
                     use bun_threading::IntrusiveWorkTask as _;
                     let _tracer = bun_core::perf::trace("PackageManifest.Serializer.save");
 
@@ -1334,7 +1343,7 @@ pub mod package_manifest {
             Ok(bun_core::ZStr::from_buf_mut(buf, len - 1))
         }
 
-        pub fn save(
+        pub(crate) fn save(
             this: &PackageManifest,
             scope: &registry::Scope,
             tmpdir: Fd,
@@ -1361,9 +1370,10 @@ pub mod package_manifest {
             Self::write_file(this, scope, tmp_path, tmpdir, cache_dir, out_path)
         }
 
-        pub fn load_by_file_id(
+        pub(crate) fn load_by_file_id(
             scope: &registry::Scope,
             cache_dir: Fd,
+            name: &[u8],
             file_id: u64,
         ) -> Result<Option<PackageManifest>, Error> {
             let mut file_path_buf = [0u8; 512 + 64];
@@ -1374,8 +1384,8 @@ pub mod package_manifest {
 
             'delete: {
                 match Self::load_by_file(scope, &cache_file) {
-                    Ok(Some(m)) => return Ok(Some(m)),
-                    Ok(None) | Err(_) => break 'delete,
+                    Ok(Some(m)) if m.name() == name => return Ok(Some(m)),
+                    Ok(_) | Err(_) => break 'delete,
                 }
             }
 
@@ -1436,6 +1446,11 @@ pub mod package_manifest {
                 pkg_stream.pos = pkg_stream
                     .pos
                     .next_multiple_of(core::mem::align_of::<NpmPackage>());
+                let flag_at =
+                    pkg_stream.pos + core::mem::offset_of!(NpmPackage, has_extended_manifest);
+                if !matches!(bytes.get(flag_at).copied(), Some(0 | 1)) {
+                    return Ok(None);
+                }
                 package_manifest.pkg = pkg_stream.read_struct::<NpmPackage>()?;
             }
             package_manifest.string_buf = Self::read_array::<u8>(&mut pkg_stream)?.into();
@@ -1445,8 +1460,23 @@ pub mod package_manifest {
                 Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
             package_manifest.external_strings_for_versions =
                 Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
-            package_manifest.package_versions =
-                Self::read_array::<PackageVersion>(&mut pkg_stream)?.into();
+            package_manifest.package_versions = {
+                let raw = Self::read_array_bytes::<PackageVersion>(&mut pkg_stream)?;
+                let bin_tag_at =
+                    core::mem::offset_of!(PackageVersion, bin) + core::mem::offset_of!(Bin, tag);
+                let install_script_at = core::mem::offset_of!(PackageVersion, has_install_script);
+                for raw_pkg in raw
+                    .as_chunks::<{ core::mem::size_of::<PackageVersion>() }>()
+                    .0
+                {
+                    if !matches!(raw_pkg[bin_tag_at], 0..=4)
+                        || !matches!(raw_pkg[install_script_at], 0 | 1)
+                    {
+                        return Ok(None);
+                    }
+                }
+                Self::array_from_bytes::<PackageVersion>(raw).into()
+            };
             package_manifest.extern_strings_bin_entries =
                 Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
             package_manifest.bundled_deps_buf =
@@ -1460,7 +1490,7 @@ pub mod package_manifest {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl PackageManifest {
-    pub fn str<'a>(&'a self, external: &'a ExternalString) -> &'a [u8] {
+    pub(crate) fn str<'a>(&'a self, external: &'a ExternalString) -> &'a [u8] {
         external.slice(&self.string_buf)
     }
 }
@@ -1468,11 +1498,11 @@ impl PackageManifest {
 #[derive(Clone, Copy)]
 pub struct FindResult<'a> {
     pub version: Semver::Version,
-    pub package: &'a PackageVersion,
+    pub(crate) package: &'a PackageVersion,
 }
 
 impl PackageManifest {
-    pub fn find_by_version(&self, version: Semver::Version) -> Option<FindResult<'_>> {
+    pub(crate) fn find_by_version(&self, version: Semver::Version) -> Option<FindResult<'_>> {
         let list = if !version.tag.has_pre() {
             self.pkg.releases
         } else {
@@ -1506,7 +1536,7 @@ impl PackageManifest {
         None
     }
 
-    pub fn should_exclude_from_age_filter(&self, exclusions: Option<&[&[u8]]>) -> bool {
+    pub(crate) fn should_exclude_from_age_filter(&self, exclusions: Option<&[&[u8]]>) -> bool {
         if let Some(excl) = exclusions {
             let pkg_name = self.name();
             for excluded in excl {
@@ -1519,7 +1549,7 @@ impl PackageManifest {
     }
 
     #[inline]
-    pub fn is_package_version_too_recent(
+    pub(crate) fn is_package_version_too_recent(
         package_version: &PackageVersion,
         minimum_release_age_ms: f64,
     ) -> bool {

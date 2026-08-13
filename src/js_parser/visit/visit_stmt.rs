@@ -44,7 +44,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.current_scope_mut()
     }
 
-    pub fn visit_and_append_stmt(
+    pub(crate) fn visit_and_append_stmt(
         &mut self,
         stmts: &mut StmtList<'a>,
         stmt: &mut Stmt,
@@ -1472,9 +1472,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     S::Local {
                                         kind: S::Kind::KVar,
                                         is_export: false,
-                                        was_commonjs_export: true,
+                                        origin: S::LocalOrigin::CommonJsExport,
                                         decls,
-                                        ..Default::default()
                                     },
                                     stmt.loc,
                                 );
@@ -1653,14 +1652,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data.body = p.visit_loop_body(data.body);
 
         data.test = SideEffects::simplify_boolean(p, data.test);
-        let result = SideEffects::to_boolean(p, &data.test.data);
-        if result.ok && result.side_effects == SideEffects::NoSideEffects {
-            data.test = p.new_expr(
-                E::Boolean {
-                    value: result.value,
-                },
-                data.test.loc,
-            );
+        if let Some(result) = SideEffects::to_boolean(p, &data.test.data) {
+            if result.side_effects == SideEffects::NoSideEffects {
+                data.test = p.new_expr(
+                    E::Boolean {
+                        value: result.value,
+                    },
+                    data.test.loc,
+                );
+            }
         }
 
         stmts.push(*stmt);
@@ -1697,7 +1697,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let effects = SideEffects::to_boolean(p, &data.test.data);
-        if effects.ok && !effects.value {
+        if effects.is_some_and(|k| !k.value) {
             let old = p.is_control_flow_dead;
             p.is_control_flow_dead = true;
             data.yes = p.visit_single_stmt(data.yes, StmtsKind::None);
@@ -1708,7 +1708,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // The "else" clause is optional
         if let Some(no) = data.no {
-            if effects.ok && effects.value {
+            if effects.is_some_and(|k| k.value) {
                 let old = p.is_control_flow_dead;
                 p.is_control_flow_dead = true;
                 data.no = Some(p.visit_single_stmt(no, StmtsKind::None));
@@ -1739,7 +1739,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if p.options.features.minify_syntax {
-            if effects.ok {
+            if let Some(effects) = effects {
                 if effects.value {
                     if data.no.is_none()
                         || !SideEffects::should_keep_stmt_in_dead_control_flow(
@@ -1837,9 +1837,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.visit_expr(&mut test);
             data.test = Some(SideEffects::simplify_boolean(p, test));
 
-            let result = SideEffects::to_boolean(p, &data.test.unwrap().data);
-            if result.ok && result.value && result.side_effects == SideEffects::NoSideEffects {
-                data.test = None;
+            if let Some(result) = SideEffects::to_boolean(p, &data.test.unwrap().data) {
+                if result.value && result.side_effects == SideEffects::NoSideEffects {
+                    data.test = None;
+                }
             }
         }
 
@@ -2053,8 +2054,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut _stmts = stmts_to_list(p.arena, catch.body);
                 p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, catch.body_loc)
                     .expect("unreachable");
+                p.fn_or_arrow_data_visit.try_body_count += 1;
                 p.visit_stmts(&mut _stmts, StmtsKind::None)
                     .expect("unreachable");
+                p.fn_or_arrow_data_visit.try_body_count -= 1;
                 p.pop_scope();
                 catch.body = list_to_stmts(_stmts);
             }

@@ -42,7 +42,7 @@ pub type Index = IndexType;
 /// in `BackRef::get` instead of being re-derived per wrapper type.
 #[repr(transparent)]
 #[derive(Copy, Clone)]
-pub struct DirInfoRef(bun_ptr::BackRef<DirInfo>);
+pub struct DirInfoRef(bun_ptr::BackRef<DirInfo, bun_ptr::Mut>);
 
 impl DirInfoRef {
     /// Wrap a raw BSSMap slot pointer.
@@ -54,10 +54,10 @@ impl DirInfoRef {
     /// the entire lifetime of every copy of the returned handle (always true
     /// for BSSMap slots: they are never individually freed).
     #[inline]
-    pub const unsafe fn from_raw(p: *mut DirInfo) -> Self {
+    pub(crate) const unsafe fn from_raw(p: *mut DirInfo) -> Self {
         // SAFETY: caller contract — `p` is a non-null BSSMap slot that
         // outlives every copy of the handle (the `BackRef` invariant).
-        DirInfoRef(unsafe { bun_ptr::BackRef::from_raw(p) })
+        DirInfoRef(unsafe { bun_ptr::BackRef::from_raw_mut(p) })
     }
 
     /// Wrap a BSSMap slot reference. Safe: a `&mut DirInfo` obtained from
@@ -66,15 +66,8 @@ impl DirInfoRef {
     /// Centralizes the per-site `from_raw(ptr::from_mut(d))` open-coding at
     /// every `at_index` call.
     #[inline]
-    pub fn from_slot(slot: &mut DirInfo) -> Self {
+    pub(crate) fn from_slot(slot: &mut DirInfo) -> Self {
         DirInfoRef(bun_ptr::BackRef::new_mut(slot))
-    }
-
-    /// Raw pointer to the underlying slot. Preserves mut-provenance from the
-    /// BSSMap allocation site for the `dir_info_uncached` fill path.
-    #[inline]
-    pub const fn as_ptr(self) -> *mut DirInfo {
-        self.0.as_ptr()
     }
 }
 
@@ -101,11 +94,11 @@ impl core::fmt::Debug for DirInfoRef {
 pub struct DirInfo {
     // These objects are immutable, so we can just point to the parent directory
     // and avoid having to lock the cache again
-    pub parent: Index,
+    pub(crate) parent: Index,
 
     // A pointer to the enclosing dirInfo with a valid "browser" field in
     // package.json. We need this to remap paths after they have been resolved.
-    pub enclosing_browser_scope: Index,
+    pub(crate) enclosing_browser_scope: Index,
     // lifetime — `&'static` borrows below are ARENA-backed (the
     // resolver-owned PackageJSON/TSConfigJSON caches outlive every DirInfo).
     // Read-only fields (`package_json_for_browser_field`,
@@ -115,8 +108,8 @@ pub struct DirInfo {
     // write/drop sites (a `*const→*mut` cast there would be UB under Stacked
     // Borrows). Read sites use the `.package_json()` / `.tsconfig_json()` /
     // `.package_json_for_dependencies()` accessors.
-    pub package_json_for_browser_field: Option<&'static PackageJSON>,
-    pub enclosing_tsconfig_json: Option<&'static TSConfigJSON>,
+    pub(crate) package_json_for_browser_field: Option<&'static PackageJSON>,
+    pub(crate) enclosing_tsconfig_json: Option<&'static TSConfigJSON>,
 
     /// package.json used for bundling
     /// it's the deepest one in the hierarchy with a "name" field
@@ -129,22 +122,22 @@ pub struct DirInfo {
     // `NonNull` (not `&'static`) so `enqueue_dependency_to_resolve` can write
     // `package_manager_package_id` back through it without a const→mut
     // provenance cast. Read via `.package_json_for_dependencies()`.
-    pub package_json_for_dependencies: Option<NonNull<PackageJSON>>,
+    pub(crate) package_json_for_dependencies: Option<NonNull<PackageJSON>>,
 
     // lifetime — slice into BSS-backed path storage; never individually freed
     pub abs_path: &'static [u8],
-    pub entries: Index,
+    pub(crate) entries: Index,
     /// Is there a "package.json" file?
     // `NonNull` (not `&'static`) preserves mut-provenance. Read via `.package_json()`.
     pub package_json: Option<NonNull<PackageJSON>>,
     /// Is there a "tsconfig.json" file in this directory or a parent directory?
     // `NonNull` (not `&'static`) preserves mut-provenance. Read via `.tsconfig_json()`.
-    pub tsconfig_json: Option<NonNull<TSConfigJSON>>,
+    pub(crate) tsconfig_json: Option<NonNull<TSConfigJSON>>,
     /// If non-empty, this is the real absolute path resolving any symlinks
     // lifetime — slice into BSS-backed path storage; never individually freed
     pub abs_real_path: &'static [u8],
 
-    pub flags: Flags,
+    pub(crate) flags: Flags,
 }
 
 impl Default for DirInfo {
@@ -183,19 +176,19 @@ fn arena_ref<T>(p: NonNull<T>) -> &'static T {
 impl DirInfo {
     /// Is there a "node_modules" subdirectory?
     #[inline]
-    pub fn has_node_modules(&self) -> bool {
+    pub(crate) fn has_node_modules(&self) -> bool {
         self.flags.contains(Flags::HasNodeModules)
     }
 
     /// Is this a "node_modules" directory?
     #[inline]
-    pub fn is_node_modules(&self) -> bool {
+    pub(crate) fn is_node_modules(&self) -> bool {
         self.flags.contains(Flags::IsNodeModules)
     }
 
     /// Is this inside a "node_modules" directory?
     #[inline]
-    pub fn is_inside_node_modules(&self) -> bool {
+    pub(crate) fn is_inside_node_modules(&self) -> bool {
         self.flags.contains(Flags::InsideNodeModules)
     }
 
@@ -211,7 +204,7 @@ impl DirInfo {
     /// `enqueue_dependency_to_resolve`;
     /// callers that only read go through here.
     #[inline]
-    pub fn package_json_for_dependencies(&self) -> Option<&'static PackageJSON> {
+    pub(crate) fn package_json_for_dependencies(&self) -> Option<&'static PackageJSON> {
         self.package_json_for_dependencies.map(arena_ref)
     }
 
@@ -223,47 +216,20 @@ impl DirInfo {
 
     pub fn get_file_descriptor(&self) -> Fd {
         if FeatureFlags::STORE_FILE_DESCRIPTORS {
-            // `entries_at(_, 0)` never re-reads (`u16 < 0` is always false), so the
-            // lock it would take covers no mutation; go through the same plain
-            // `at_index` lookup `get_entries_const` uses.
+            // Scalar field read; see `get_entries_const` for the contract.
             return self.get_entries_const().map_or(Fd::INVALID, |e| e.fd);
         }
         Fd::INVALID
     }
 
-    /// Returns a
-    /// raw pointer (not `&'static mut`) because the BSSMap singleton is
-    /// shared-mutable and Rust forbids manufacturing aliased `&mut`. Callers
-    /// dereference at the use site where exclusivity is locally provable.
-    pub fn get_entries(&self, generation: Generation) -> Option<*mut fs::DirEntry> {
-        let entries_ptr = fs::FileSystem::instance()
-            .fs
-            .entries_at(self.entries, generation)?;
-        match entries_ptr {
-            fs::EntriesOption::Entries(entries) => Some(std::ptr::from_mut(*entries)),
-            fs::EntriesOption::Err(_) => None,
-        }
-    }
-
-    /// Shared-borrow variant of [`get_entries`](Self::get_entries) for the
-    /// read-only call sites (`.get()`, `.fd`, iteration). The `DirEntry` is a
-    /// slot in the BSSMap-backed `EntriesOptionMap` singleton (ARENA — process
-    /// lifetime), so a `&'static` reborrow of the `&'static mut` returned by
-    /// `entries_at` is sound and needs no `unsafe` here. Prefer this over
-    /// `get_entries` + per-site raw deref whenever the caller only reads.
-    pub fn get_entries_ref(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
-        let entries_ptr = fs::FileSystem::instance()
-            .fs
-            .entries_at(self.entries, generation)?;
-        match entries_ptr {
-            fs::EntriesOption::Entries(entries) => Some(&**entries),
-            fs::EntriesOption::Err(_) => None,
-        }
-    }
-
-    /// [`get_entries_ref`](Self::get_entries_ref) for call sites that already
-    /// hold `entries_mutex` (the mutex is non-recursive); see
-    /// [`RealFS::entries_at_locked`](fs::RealFS::entries_at_locked).
+    /// Generation-checked listing accessor for call sites that already hold
+    /// `entries_mutex` (the mutex is non-recursive); see
+    /// [`RealFS::entries_at_locked`](fs::RealFS::entries_at_locked). The
+    /// `DirEntry` is a slot in the BSSMap-backed `EntriesOptionMap` singleton
+    /// (ARENA — process lifetime), so a `&'static` reborrow of the
+    /// `&'static mut` returned by `entries_at_locked` is sound and needs no
+    /// `unsafe` here. The `.data` map must only be probed/iterated while the
+    /// lock is held; use [`get_entry`](Self::get_entry) for one-shot lookups.
     pub fn get_entries_ref_locked(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
         let entries_ptr = fs::FileSystem::instance()
             .fs
@@ -274,6 +240,36 @@ impl DirInfo {
         }
     }
 
+    /// Generation-checked lookup of one basename in this directory's cached
+    /// listing, performed in a single `entries_mutex` critical section. A
+    /// concurrent resolver with a newer generation rewrites the `DirEntry` in
+    /// place under that lock ([`RealFS::entries_at_locked`](fs::RealFS::entries_at_locked)
+    /// drops the old `data` map's buckets), so probing the map after the lock
+    /// is released can walk freed buckets. The returned lookup wraps a raw
+    /// pointer into the process-lifetime `EntryStore`, which stays valid after
+    /// the lock is dropped.
+    pub(crate) fn get_entry(
+        &self,
+        generation: Generation,
+        query: &[u8],
+    ) -> Option<fs::EntryLookup<'static>> {
+        let rfs = &mut fs::FileSystem::instance().fs;
+        // `MutexGuard` stores the mutex by raw pointer, so holding it does not
+        // keep `rfs` borrowed.
+        let _lock = rfs.entries_mutex.lock_guard();
+        match rfs.entries_at_locked(self.entries, generation)? {
+            fs::EntriesOption::Entries(entries) => {
+                let entries: &'static fs::DirEntry = entries;
+                entries.get(query)
+            }
+            fs::EntriesOption::Err(_) => None,
+        }
+    }
+
+    /// As-cached listing access with no generation check and no locking.
+    /// Scalar fields (`fd`, `dir`) may be read through this unlocked; the
+    /// `.data` map must only be probed/iterated while `entries_mutex` is held
+    /// (a concurrent stale-generation re-read rewrites it in place).
     pub fn get_entries_const(&self) -> Option<&fs::DirEntry> {
         let entries_ptr = fs::FileSystem::instance()
             .fs
@@ -286,7 +282,7 @@ impl DirInfo {
     }
 
     #[inline]
-    pub fn get_parent(&self) -> Option<DirInfoRef> {
+    pub(crate) fn get_parent(&self) -> Option<DirInfoRef> {
         ref_at_index(self.parent)
     }
 
@@ -294,7 +290,7 @@ impl DirInfo {
     /// resolves back to *this* slot, which is why a
     /// `Copy` arena handle (not `&mut`) is returned — overlapping shared
     /// reads through `DirInfoRef::deref` are sound.
-    pub fn get_enclosing_browser_scope(&self) -> Option<DirInfoRef> {
+    pub(crate) fn get_enclosing_browser_scope(&self) -> Option<DirInfoRef> {
         ref_at_index(self.enclosing_browser_scope)
     }
 }
@@ -312,7 +308,7 @@ static DIR_INFO_MAP: bun_core::AtomicCell<Option<NonNull<HashMap>>> =
 /// Raw pointer to the lazy DirInfo BSSMap singleton. Callers reborrow
 /// per-access under the resolver mutex — PORTING.md §Global mutable state.
 #[inline(always)]
-pub fn hash_map_instance() -> *mut HashMap {
+pub(crate) fn hash_map_instance() -> *mut HashMap {
     if let Some(p) = DIR_INFO_MAP.load() {
         return p.as_ptr();
     }
@@ -395,7 +391,7 @@ bitflags::bitflags! {
 }
 impl Flags {
     #[inline]
-    pub fn set_present(&mut self, flag: Flags, present: bool) {
+    pub(crate) fn set_present(&mut self, flag: Flags, present: bool) {
         self.set(flag, present);
     }
 }

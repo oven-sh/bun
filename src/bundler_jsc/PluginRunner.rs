@@ -3,10 +3,6 @@
 
 pub use bun_resolver::fs::Path as FsPath;
 
-/// Re-export of the canonical newtype
-/// (defined at the lowest tier that stores it, `bun_ast::Macro`).
-pub use bun_bundler::transpiler::MacroJSCtx as MacroJsCtx;
-
 /// Re-export of the concrete struct.
 /// `extract_namespace` / `could_be_plugin` (pure byte parsing) live in
 /// `bun_bundler`; the stateful struct + `on_resolve` body live in

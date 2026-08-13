@@ -1,29 +1,17 @@
 use core::ffi::c_void;
+use core::ptr::NonNull;
 
 use crate::api::bun_subprocess::Subprocess;
-use crate::webcore::streams::{self, Signal};
+use crate::webcore::streams::{self, SourceHandle};
 use bun_collections::TaggedPtrUnion;
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_sys::{self as sys, Error as SysError};
 
 // Re-export the real ArrayBufferSink so `crate::webcore::sink::ArrayBufferSink`
-// resolves to the full type (with `bytes`/`signal`/`destroy`) for Body.rs.
+// resolves to the full type (with `bytes`/`source`/`destroy`) for Body.rs.
 pub use crate::webcore::array_buffer_sink::ArrayBufferSink;
 
 crate::impl_js_sink_abi!(ArrayBufferSink, "ArrayBufferSink");
-
-impl JSSink<ArrayBufferSink> {
-    /// Unprotects the controller cell stashed in `signal.ptr`
-    /// and tells C++ to drop its back-pointer. Called from
-    /// `Body::ValueBufferer` Drop / reject paths.
-    // Renamed from `detach` to avoid colliding with the generic
-    // `JSSink<T: JsSinkAbi>::detach(signal, global)` associated fn — Rust
-    // forbids same-name items across impl blocks for the same type even with
-    // different signatures (E0592).
-    pub fn detach_self(&mut self, global: &JSGlobalObject) {
-        JSSink::<ArrayBufferSink>::detach(&mut self.sink.signal, global);
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // JSSink
@@ -51,13 +39,13 @@ pub struct JSSink<T> {
 // Const-generic `&'static str` cannot drive `#[link_name]`, so the abi name is
 // taken as a macro literal and `concat!`-ed.
 //
-// `decl_js_sink_externs!` emits the 7-fn extern set into a named submodule;
-// `impl_js_sink_abi!` wraps it in a 1:1-forwarding `JsSinkAbi` impl. The
-// extern-only form is exposed separately so `HTTPServerWritable<SSL,HTTP3>`
-// can declare three sets and keep its const-generic 3-way dispatch impl.
+// `decl_js_sink_externs!` emits the codegen `${abi}__*` externs into a named
+// submodule; `impl_js_sink_abi!` wraps them in a 1:1-forwarding `JsSinkAbi`
+// impl. The extern-only form is exposed separately so
+// `HTTPServerWritable<SSL,HTTP3>` can declare three sets and keep its
+// const-generic 3-way dispatch impl.
 
-/// Declare the codegen-emitted `${abi}__{fromJS,createObject,setDestroyCallback,
-/// assignToStream,onClose,onReady,detachPtr}` C externs into `pub mod $m`.
+/// Declare the codegen-emitted `${abi}__*` C externs into `pub(crate) mod $m`.
 ///
 /// `safe fn`: `&JSGlobalObject` discharges the only deref'd-param precondition;
 /// `*mut c_void` args are stored opaquely in the JS wrapper — module-private,
@@ -67,32 +55,24 @@ macro_rules! decl_js_sink_externs {
     ($abi:literal as $m:ident) => {
         #[allow(non_snake_case)]
         pub(crate) mod $m {
-            use ::bun_jsc::{JSGlobalObject, JSValue};
-            use ::core::ffi::c_void;
             unsafe extern "C" {
                 #[link_name = concat!($abi, "__fromJS")]
-                pub(crate) safe fn from_js(value: JSValue) -> usize;
+                pub(crate) safe fn from_js(value: ::bun_jsc::JSValue) -> usize;
                 #[link_name = concat!($abi, "__createObject")]
                 pub(crate) safe fn create_object(
-                    g: &JSGlobalObject,
-                    o: *mut c_void,
+                    g: &::bun_jsc::JSGlobalObject,
+                    o: *mut ::core::ffi::c_void,
                     d: usize,
-                ) -> JSValue;
+                ) -> ::bun_jsc::JSValue;
                 #[link_name = concat!($abi, "__setDestroyCallback")]
-                pub(crate) safe fn set_destroy_callback(v: JSValue, cb: usize);
+                pub(crate) safe fn set_destroy_callback(v: ::bun_jsc::JSValue, cb: usize);
                 #[link_name = concat!($abi, "__assignToStream")]
                 pub(crate) safe fn assign_to_stream(
-                    g: &JSGlobalObject,
-                    s: JSValue,
-                    p: *mut c_void,
-                    jp: *mut *mut c_void,
-                ) -> JSValue;
-                #[link_name = concat!($abi, "__onClose")]
-                pub(crate) safe fn on_close(p: JSValue, r: JSValue);
-                #[link_name = concat!($abi, "__onReady")]
-                pub(crate) safe fn on_ready(p: JSValue, a: JSValue, o: JSValue);
-                #[link_name = concat!($abi, "__detachPtr")]
-                pub(crate) safe fn detach_ptr(p: JSValue);
+                    g: &::bun_jsc::JSGlobalObject,
+                    s: ::bun_jsc::JSValue,
+                    p: *mut ::core::ffi::c_void,
+                    jp: *mut *mut ::core::ffi::c_void,
+                ) -> ::bun_jsc::JSValue;
             }
         }
     };
@@ -128,21 +108,59 @@ macro_rules! impl_js_sink_abi {
                 ) -> ::bun_jsc::JSValue {
                     __abi::assign_to_stream(global, stream, ptr, jsvalue_ptr)
                 }
-                fn on_close_extern(ptr: ::bun_jsc::JSValue, reason: ::bun_jsc::JSValue) {
-                    __abi::on_close(ptr, reason)
-                }
-                fn on_ready_extern(
-                    ptr: ::bun_jsc::JSValue,
-                    amount: ::bun_jsc::JSValue,
-                    offset: ::bun_jsc::JSValue,
-                ) {
-                    __abi::on_ready(ptr, amount, offset)
-                }
-                fn detach_ptr_extern(ptr: ::bun_jsc::JSValue) {
-                    __abi::detach_ptr(ptr)
-                }
             }
         };
+    };
+}
+
+/// Emits the `JsSinkType` items that every sink forwards 1:1 to an inherent
+/// method of the same name (`memory_cost`, `write_bytes` -> `write`,
+/// `write_utf16`, `write_latin1`, `end`, `flush`, `flush_from_js`, `start`).
+/// Invoke inside the `impl JsSinkType for T` block; `Self::name` resolves to
+/// the inherent method ahead of the trait item being defined, so the forward
+/// does not recurse. Items whose bodies differ per sink (`finalize`,
+/// `construct`, `end_from_js`, `source`, `done`, the `HAS_*` consts) stay
+/// hand-written.
+#[macro_export]
+macro_rules! impl_js_sink_forwarders {
+    () => {
+        fn memory_cost(&self) -> usize {
+            Self::memory_cost(self)
+        }
+        fn write_bytes(
+            &mut self,
+            data: &$crate::webcore::streams::Result,
+        ) -> $crate::webcore::streams::result::Writable {
+            Self::write(self, data)
+        }
+        fn write_utf16(
+            &mut self,
+            data: &$crate::webcore::streams::Result,
+        ) -> $crate::webcore::streams::result::Writable {
+            Self::write_utf16(self, data)
+        }
+        fn write_latin1(
+            &mut self,
+            data: &$crate::webcore::streams::Result,
+        ) -> $crate::webcore::streams::result::Writable {
+            Self::write_latin1(self, data)
+        }
+        fn end(&mut self, err: ::core::option::Option<::bun_sys::Error>) -> ::bun_sys::Result<()> {
+            Self::end(self, err)
+        }
+        fn flush(&mut self) -> ::bun_sys::Result<()> {
+            Self::flush(self)
+        }
+        fn flush_from_js(
+            &mut self,
+            global: &::bun_jsc::JSGlobalObject,
+            wait: bool,
+        ) -> ::bun_sys::Result<::bun_jsc::JSValue> {
+            Self::flush_from_js(self, global, wait)
+        }
+        fn start(&mut self, config: $crate::webcore::streams::Start) -> ::bun_sys::Result<()> {
+            Self::start(self, &config)
+        }
     };
 }
 
@@ -171,25 +189,15 @@ pub trait JsSinkAbi {
         ptr: *mut c_void,
         jsvalue_ptr: *mut *mut c_void,
     ) -> crate::webcore::jsc::JSValue;
-    /// `${abi_name}__onClose`.
-    fn on_close_extern(ptr: crate::webcore::jsc::JSValue, reason: crate::webcore::jsc::JSValue);
-    /// `${abi_name}__onReady`.
-    fn on_ready_extern(
-        ptr: crate::webcore::jsc::JSValue,
-        amount: crate::webcore::jsc::JSValue,
-        offset: crate::webcore::jsc::JSValue,
-    );
-    /// `${abi_name}__detachPtr`.
-    fn detach_ptr_extern(ptr: crate::webcore::jsc::JSValue);
 }
 
 /// `from_js_extern` encodes two distinct failure types using 0 and 1. Any other
 /// value is `*ThisSink`.
-pub mod from_js_result {
+pub(crate) mod from_js_result {
     /// The sink has been closed and the wrapped type is freed.
-    pub const DETACHED: usize = 0;
+    pub(crate) const DETACHED: usize = 0;
     /// JS exception has not yet been thrown.
-    pub const CAST_FAILED: usize = 1;
+    pub(crate) const CAST_FAILED: usize = 1;
 }
 
 impl<T: JsSinkAbi> JSSink<T> {
@@ -222,92 +230,76 @@ impl<T: JsSinkAbi> JSSink<T> {
     pub fn assign_to_stream(
         global: &crate::webcore::jsc::JSGlobalObject,
         stream: crate::webcore::jsc::JSValue,
-        ptr: &mut T,
-        jsvalue_ptr: *mut *mut c_void,
-    ) -> crate::webcore::jsc::JSValue {
-        T::assign_to_stream_extern(
+        mut ptr: NonNull<T>,
+    ) -> crate::webcore::jsc::JSValue
+    where
+        T: JsSinkType,
+    {
+        use crate::webcore::jsc::JSValue;
+        // SAFETY: `ptr` is a live sink owned by the caller for this synchronous
+        // call; the pointer is only stashed in C++ `m_sinkPtr` and `source()` is
+        // read here synchronously.
+        let ptr = unsafe { ptr.as_mut() };
+        // Pre-seed JSController(ZERO) so a sync drain's __controllerDetached can match-and-clear;
+        // only install the real controller value if the placeholder survived.
+        if let Some(src) = ptr.source() {
+            *src = streams::SourceHandle::JSController(JSValue::ZERO);
+        }
+        let mut bits: usize = 0;
+        let result = T::assign_to_stream_extern(
             global,
             stream,
             std::ptr::from_mut::<T>(ptr).cast::<c_void>(),
-            jsvalue_ptr,
-        )
-    }
-
-    /// `JSSink.detach(globalThis)` — disconnect the C++ controller cell stashed
-    /// in `signal.ptr` (a JSValue's encoded bits, see `SinkSignal::init`).
-    pub fn detach(signal: &mut Signal, _global: &crate::webcore::jsc::JSGlobalObject) {
-        use crate::webcore::jsc::JSValue;
-        let Some(ptr) = signal.ptr else { return }; // is_dead()
-        signal.clear();
-        // SAFETY: `signal.ptr` was stored by `SinkSignal::<T>::init` as the
-        // encoded JSValue bits (never a real Rust pointer); bitcast back.
-        let value = JSValue::from_encoded(ptr.as_ptr() as usize);
-        value.unprotect();
-        // `${abi}__detachPtr` runs the JS `onClose` callback through the bare
-        // `AsyncContextFrame::call` overload (no TopExceptionScope of its own)
-        // and RELEASE_AND_RETURNs its ThrowScope, so `m_needExceptionCheck` is
-        // left set when it returns into this scope-less thunk. Wrap in a
-        // TopExceptionScope so the verifier is satisfied; discard the result.
-        // TODO: properly propagate exception upwards.
-        let _ = ::bun_jsc::call_check_slow(_global, || T::detach_ptr_extern(value));
-    }
-}
-
-/// `JSSink.SinkSignal` — wraps a `JSValue` (the C++ sink controller cell) as
-/// a `streams::Signal`. The pointer stored in `Signal.ptr` is the encoded
-/// JSValue bits, never dereferenced; vtable thunks bitcast back and call the
-/// generated `${abi_name}__onClose` / `__onReady` externs.
-// Inherent associated types are unstable, so this is a free generic;
-// let each caller alias via `type SinkSignal = sink::SinkSignal<Self>;`.
-#[repr(C)]
-pub struct SinkSignal<T>(core::marker::PhantomData<T>);
-
-impl<T: JsSinkAbi> SinkSignal<T> {
-    pub fn init(cpp: crate::webcore::jsc::JSValue) -> Signal {
-        use crate::webcore::jsc::JSValue;
-        // Bypass `Signal::init_with_type` (which would form a fake
-        // `&mut SinkSignal<T>` ref); build the vtable directly so `this` stays
-        // a raw bit-pattern.
-        fn close<T: JsSinkAbi>(this: *mut c_void, _err: Option<SysError>) {
-            // `this` is the JSValue bits stashed by `init`; bitcast back.
-            let cpp = JSValue::from_encoded(this as usize);
-            // `call_check_slow` satisfies the C++ ThrowScope's
-            // `simulateThrow()`.
-            // TODO: this should be got from a parameter / properly propagate exception upwards.
-            let global = ::bun_jsc::virtual_machine::VirtualMachine::get().global();
-            if global.has_exception() {
-                return;
-            }
-            let _ =
-                ::bun_jsc::call_check_slow(global, || T::on_close_extern(cpp, JSValue::UNDEFINED));
-        }
-        fn ready<T: JsSinkAbi>(
-            this: *mut c_void,
-            _a: Option<crate::webcore::BlobSizeType>,
-            _o: Option<crate::webcore::BlobSizeType>,
-        ) {
-            let cpp = JSValue::from_encoded(this as usize);
-            // `${abi}__onReady` calls m_onPull through the bare
-            // `AsyncContextFrame::call` overload (no TopExceptionScope of its
-            // own); see `close` above. Same wrapper.
-            // TODO: this should be got from a parameter / properly propagate exception upwards.
-            let global = ::bun_jsc::virtual_machine::VirtualMachine::get().global();
-            if global.has_exception() {
-                return;
+            (&raw mut bits).cast::<*mut c_void>(),
+        );
+        // `${name}__assignToStream` creates the JSReadable*SinkController with
+        // m_sinkPtr=ptr before calling into the stream pump. If the pump setup
+        // throws (e.g. a direct stream's `pull` getter), nothing ever calls
+        // end()/close() on the controller, so its destructor would run
+        // `${name}__finalize(m_sinkPtr)` after the caller has freed the sink.
+        // Detach it now while `ptr` is still live; the controller's later GC
+        // then sees m_sinkPtr==null and skips the native finalize.
+        if bits != 0 && result.to_error().is_some() {
+            if let Some(src) = ptr.source() {
+                *src = streams::SourceHandle::None;
             }
             let _ = ::bun_jsc::call_check_slow(global, || {
-                T::on_ready_extern(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
+                streams::controller_abi::detach_ptr(JSValue::from_encoded(bits))
             });
+            return result;
         }
-        fn start(_this: *mut c_void) {}
-        Signal {
-            // this one can be null
-            ptr: core::ptr::NonNull::new(cpp.encoded() as *mut c_void),
-            vtable: streams::SignalVTable {
-                close: close::<T>,
-                ready: ready::<T>,
-                start,
-            },
+        if let Some(src) = ptr.source() {
+            if matches!(*src, streams::SourceHandle::JSController(_)) {
+                *src = if bits != 0 {
+                    streams::SourceHandle::JSController(JSValue::from_encoded(bits))
+                } else {
+                    streams::SourceHandle::None
+                };
+            }
+        }
+        result
+    }
+
+    /// Disconnect the upstream source: JSController → unprotect + detachPtr; ByteStream → clear its SinkHandle.
+    pub(crate) fn detach(source: &mut SourceHandle, _global: &crate::webcore::jsc::JSGlobalObject) {
+        match *source {
+            SourceHandle::JSController(value) => {
+                source.clear();
+                value.unprotect();
+                // detachPtr leaves m_needExceptionCheck set; wrap to satisfy the verifier.
+                let _ = ::bun_jsc::call_check_slow(_global, || {
+                    streams::controller_abi::detach_ptr(value)
+                });
+            }
+            SourceHandle::ByteStream(bs) => {
+                bs.unpipe_without_deref();
+                source.clear();
+            }
+            SourceHandle::FileReader(fr) => {
+                fr.unpipe_without_deref();
+                source.clear();
+            }
+            _ => {}
         }
     }
 }
@@ -315,7 +307,7 @@ impl<T: JsSinkAbi> SinkSignal<T> {
 /// Trait collecting every method `JSSink` may call on the wrapped `SinkType`.
 /// Most of these are optional, modeled with default method bodies and
 /// associated `const` gates.
-pub trait JsSinkType: Sized {
+pub trait JsSinkType: Sized + JsSinkAbi {
     const NAME: &'static str;
     /// Mirrors `@hasDecl(SinkType, "construct")`.
     const HAS_CONSTRUCT: bool = false;
@@ -332,7 +324,14 @@ pub trait JsSinkType: Sized {
     const START_TAG: Option<streams::StartTag> = None;
 
     fn memory_cost(&self) -> usize;
-    fn finalize(&mut self);
+    /// `${abi}__finalize`: the JS cell holding `this` as `m_sinkPtr` is giving
+    /// up its claim on the sink. Raw pointer, not `&mut self`: for
+    /// `ArrayBufferSink`, `FileSink` and `FetchRequestBodySink` that releases
+    /// the allocation, and freeing under a live reference argument is UB.
+    ///
+    /// # Safety
+    /// `this` is the cell's live sink and must not be used after the call.
+    unsafe fn finalize(this: *mut Self);
     fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
@@ -349,9 +348,17 @@ pub trait JsSinkType: Sized {
     fn get_pending_error(&mut self) -> Option<JSValue> {
         None
     }
-    fn signal(&mut self) -> Option<&mut Signal> {
+    fn source(&mut self) -> Option<&mut SourceHandle> {
         None
     }
+    /// Called from `js_controller_detached`: once per JS-pump controller, on
+    /// every detach path including its GC destructor. A sink co-owned by
+    /// another GC cell releases the controller's claim here (sweep order
+    /// between the two cells is unspecified, so neither destructor alone may
+    /// free it). Never free the allocation inline: the caller holds
+    /// `&mut Self` and the C++ dispatcher keeps using `m_sinkPtr` in the
+    /// same frame; defer a last-owner free to the event loop.
+    fn controller_detached(&mut self) {}
     fn done(&self) -> bool {
         false
     }
@@ -390,7 +397,7 @@ pub trait JsSinkType: Sized {
 // no lut entry and no C++ caller.
 // ──────────────────────────────────────────────────────────────────────────
 
-impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
+impl<T: JsSinkType> JSSink<T> {
     /// `JSSink.getThis` — recover `&mut JSSink<T>` from `callframe.this()` or
     /// throw the appropriate detached/cast-failed error.
     ///
@@ -418,7 +425,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     }
 
     /// `${abi_name}__construct` host-fn body.
-    pub fn js_construct(
+    pub(crate) fn js_construct(
         global: &crate::webcore::jsc::JSGlobalObject,
         _frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
@@ -437,7 +444,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     }
 
     /// `${abi_name}__write` host-fn body.
-    pub fn js_write(
+    pub(crate) fn js_write(
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
@@ -516,7 +523,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     }
 
     /// `${abi_name}__flush` host-fn body.
-    pub fn js_flush(
+    pub(crate) fn js_flush(
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
@@ -547,7 +554,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     }
 
     /// `${abi_name}__start` host-fn body.
-    pub fn js_start(
+    pub(crate) fn js_start(
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
@@ -580,7 +587,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     }
 
     /// `${abi_name}__end` host-fn body.
-    pub fn js_end(
+    pub(crate) fn js_end(
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
@@ -611,9 +618,14 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     }
 
     /// `${abi_name}__finalize` body.
+    ///
+    /// # Safety
+    /// As [`JsSinkType::finalize`].
     #[inline]
-    pub fn js_finalize(this: &mut T) {
-        this.finalize();
+    pub(crate) unsafe fn js_finalize(this: *mut T) {
+        debug_assert!(!this.is_null());
+        // SAFETY: the caller's contract is the same one.
+        unsafe { T::finalize(this) }
     }
 
     /// `${abi_name}__controllerDetached` body — called from
@@ -621,27 +633,30 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     /// fns) and from the controller's destructor, i.e. whenever the
     /// controller stops being attached to this sink.
     ///
-    /// `signal.ptr` stores the controller's encoded JSValue bits (written by
-    /// `__assignToStream`) without rooting the cell, so the controller can be
-    /// collected while the native sink still has a flush in flight (e.g. a
-    /// response stream parked on tryEnd() backpressure). Once the controller
-    /// detaches or dies the signal must never fire again: `onClose`/`onReady`
-    /// would decode a dead cell. Clear it, but only when it still holds this
-    /// controller's bits — `connect()`-style signals store a live native
-    /// pointer instead, and a sink re-assigned to a new stream holds the
-    /// newer controller's bits.
-    pub fn js_controller_detached(this: &mut T, controller: crate::webcore::jsc::JSValue) {
-        if let Some(signal) = this.signal() {
-            if signal.ptr.map(|p| p.as_ptr() as usize) == Some(controller.encoded()) {
-                signal.clear();
+    /// `SourceHandle::JSController` stores the controller's encoded JSValue
+    /// bits (written by `__assignToStream`) without rooting the cell, so the
+    /// controller can be collected while the native sink still has a flush in
+    /// flight. Once the controller detaches or dies the source must never
+    /// fire again: `onClose`/`onReady` would decode a dead cell. Clear it,
+    /// but only when it still holds this controller's bits — a sink
+    /// re-assigned to a new stream holds the newer controller's bits.
+    pub(crate) fn js_controller_detached(this: &mut T, controller: crate::webcore::jsc::JSValue) {
+        use crate::webcore::jsc::JSValue;
+        if let Some(src) = this.source() {
+            if let SourceHandle::JSController(held) = *src {
+                // ZERO = assign_to_stream placeholder; clear it too.
+                if held == controller || held == JSValue::ZERO {
+                    src.clear();
+                }
             }
         }
+        this.controller_detached();
     }
 
     /// `${abi_name}__close` body — called from
     /// `${controller}__close` and `${name}__doClose` in JSSink.cpp with a raw
     /// `m_sinkPtr` (not a host-fn callframe), so exceptions become `.zero`.
-    pub fn js_close(
+    pub(crate) fn js_close(
         global: &crate::webcore::jsc::JSGlobalObject,
         this: &mut T,
     ) -> crate::webcore::jsc::JSValue {
@@ -672,7 +687,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 
     /// `${abi_name}__endWithSink` body —
     /// called from `JSReadable${name}Controller__end` with a raw `m_sinkPtr`.
-    pub fn js_end_with_sink(
+    pub(crate) fn js_end_with_sink(
         this: &mut T,
         global: &crate::webcore::jsc::JSGlobalObject,
     ) -> crate::webcore::jsc::JSValue {
@@ -700,7 +715,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 
     /// `${abi_name}__updateRef` body.
     #[inline]
-    pub fn js_update_ref(this: &mut T, value: bool) {
+    pub(crate) fn js_update_ref(this: &mut T, value: bool) {
         bun_core::mark_binding!();
         if T::HAS_UPDATE_REF {
             this.update_ref(value);
@@ -709,7 +724,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 
     /// `${abi_name}__getInternalFd` body.
     #[inline]
-    pub fn js_get_internal_fd(this: &mut T) -> crate::webcore::jsc::JSValue {
+    pub(crate) fn js_get_internal_fd(this: &mut T) -> crate::webcore::jsc::JSValue {
         use crate::webcore::jsc::JSValue;
         if T::HAS_GET_FD {
             return JSValue::js_number(this.get_fd() as f64);
@@ -719,9 +734,123 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 
     /// `${abi_name}__memoryCost` body.
     #[inline]
-    pub fn js_memory_cost(this: &T) -> usize {
+    pub(crate) fn js_memory_cost(this: &T) -> usize {
         core::mem::size_of::<JSSink<T>>() + this.memory_cost()
     }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Native-transform → native-sink byte-write dispatch
+//
+// Replaces the generated per-sink `${name}__writeBytes` thunks + the C++
+// `JSSink__writeBytes` SinkID switch with a single Rust entry point that
+// routes through `SinkHandle::write`.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Map a C++ `WebCore::SinkID` + erased `m_sinkPtr` to a [`SinkHandle`].
+///
+/// `ptr` is the `m_sinkPtr` stored on the JS wrapper (a `*mut JSSink<T>` for
+/// the `T` selected by `id`); `JSSink<T>` is `#[repr(transparent)]` over `T`,
+/// so the cast to `*mut T` is an address-preserving no-op.
+///
+/// # Safety
+/// `ptr` must be a live, properly-aligned pointer to the concrete sink type
+/// that `id` names (the same pointer the generated `${name}__*` thunks
+/// receive), valid for the lifetime of the returned handle.
+pub(crate) unsafe fn sink_handle_from_id(
+    id: u8,
+    ptr: NonNull<c_void>,
+) -> crate::webcore::SinkHandle {
+    use crate::webcore::SinkHandle;
+    // Mirrors `enum SinkID` in src/jsc/bindings/Sink.h.
+    const ARRAY_BUFFER_SINK: u8 = 0;
+    const FILE_SINK: u8 = 2;
+    const HTML_REWRITER_SINK: u8 = 3;
+    const HTTP_RESPONSE_SINK: u8 = 4;
+    const HTTPS_RESPONSE_SINK: u8 = 5;
+    const NETWORK_SINK: u8 = 6;
+    const H3_RESPONSE_SINK: u8 = 7;
+    const FETCH_REQUEST_BODY_SINK: u8 = 8;
+
+    let raw = ptr.as_ptr();
+    match id {
+        // SAFETY: caller contract — `raw` is a live `*mut ArrayBufferSink`.
+        ARRAY_BUFFER_SINK => SinkHandle::ArrayBuffer(unsafe {
+            bun_ptr::BackRef::from_raw_mut(raw.cast::<ArrayBufferSink>())
+        }),
+        // SAFETY: caller contract — `raw` is a live `*mut FileSink`.
+        FILE_SINK => SinkHandle::FileSink(unsafe {
+            bun_ptr::BackRef::from_raw(raw.cast::<crate::webcore::file_sink::FileSink>())
+        }),
+        // SAFETY: caller contract — `raw` is a live `*mut RewriterPipe`.
+        HTML_REWRITER_SINK => SinkHandle::HTMLRewriter(unsafe {
+            bun_ptr::BackRef::from_raw(raw.cast::<crate::api::html_rewriter::RewriterPipe>())
+        }),
+        // SAFETY: caller contract — `raw` is a live `*mut HTTPResponseSink`.
+        HTTP_RESPONSE_SINK => SinkHandle::HttpResponse(unsafe {
+            bun_ptr::BackRef::from_raw_mut(raw.cast::<streams::HTTPResponseSink>())
+        }),
+        // SAFETY: caller contract — `raw` is a live `*mut HTTPSResponseSink`.
+        HTTPS_RESPONSE_SINK => SinkHandle::HttpsResponse(unsafe {
+            bun_ptr::BackRef::from_raw_mut(raw.cast::<streams::HTTPSResponseSink>())
+        }),
+        // SAFETY: caller contract — `raw` is a live `*mut NetworkSink`.
+        NETWORK_SINK => SinkHandle::S3Upload(unsafe {
+            bun_ptr::BackRef::from_raw_mut(raw.cast::<streams::NetworkSink>())
+        }),
+        // SAFETY: caller contract — `raw` is a live `*mut H3ResponseSink`.
+        H3_RESPONSE_SINK => SinkHandle::H3Response(unsafe {
+            bun_ptr::BackRef::from_raw_mut(raw.cast::<streams::H3ResponseSink>())
+        }),
+        // SAFETY: caller contract — `raw` is a live `*mut FetchRequestBodySink`.
+        FETCH_REQUEST_BODY_SINK => SinkHandle::FetchRequestBody(unsafe {
+            bun_ptr::BackRef::from_raw_mut(
+                raw.cast::<crate::webcore::fetch::FetchRequestBodySink>(),
+            )
+        }),
+        // 1 (TextSink) and any unknown id → no native sink.
+        _ => SinkHandle::None,
+    }
+}
+
+/// Route a borrowed byte chunk from a native transform (`JSTransformStream`
+/// with `m_nativeSinkPtr` attached) into the concrete sink via
+/// [`SinkHandle::write`].
+///
+/// Return shape matches [`streams::result::Writable::to_js`] so
+/// `nativeSinkWriteIsBackpressure` reads a negative number / pending promise
+/// exactly as the previous `js_write_bytes` path produced. No
+/// [`JsSinkType::get_pending_error`] guard: every sink uses the trait-default
+/// `None`, so omitting it is behavior-preserving.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn Bun__NativeTransformSink__writeBytes(
+    sink_id: u8,
+    sink_ptr: *mut c_void,
+    global: &JSGlobalObject,
+    ptr: *const u8,
+    len: usize,
+) -> JSValue {
+    bun_core::mark_binding!();
+    let Some(sink_ptr) = NonNull::new(sink_ptr) else {
+        return JSValue::js_number(0.0);
+    };
+    if len == 0 || ptr.is_null() {
+        return JSValue::js_number(0.0);
+    }
+    // SAFETY: C++ caller passes a live `m_sinkPtr` of the type `sink_id`
+    // names, valid for the duration of this synchronous call.
+    let handle = unsafe { sink_handle_from_id(sink_id, sink_ptr) };
+    if handle.is_none() {
+        return JSValue::UNDEFINED;
+    }
+    // SAFETY: caller guarantees `[ptr, ptr+len)` is a live readable byte
+    // buffer for the duration of this call (a GC-kept `JSArrayBufferView` or
+    // a caller-owned scratch buffer).
+    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+    handle
+        .write(&streams::Result::Temporary(bun_ptr::RawSlice::new(slice)))
+        .to_js(global)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -740,14 +869,14 @@ bun_opaque::opaque_ffi! {
 // (`Subprocess<'_>`) carries a lifetime so it cannot implement
 // `UnionMember`; only `Detached` is a typed member, and the Subprocess arm
 // in `Bun__onSinkDestroyed` casts the raw pointer manually.
-pub struct DestructorTypes;
+pub(crate) struct DestructorTypes;
 impl bun_ptr::tagged_pointer::TypeList for DestructorTypes {
     const MIN_TAG: bun_ptr::tagged_pointer::TagType = 1024 - 1;
 }
 impl bun_ptr::tagged_pointer::UnionMember<DestructorTypes> for Detached {
     const TAG: bun_ptr::tagged_pointer::TagType = 1024;
 }
-pub type DestructorPtr = TaggedPtrUnion<DestructorTypes>;
+pub(crate) type DestructorPtr = TaggedPtrUnion<DestructorTypes>;
 
 /// Encode a `*Subprocess` as the second `DestructorPtr` tag (1023). Manual
 /// re-encoding of `TaggedPtr::init(ptr, 1023)` because `Subprocess<'_>` carries
@@ -756,7 +885,7 @@ pub type DestructorPtr = TaggedPtrUnion<DestructorTypes>;
 /// `usize` directly) and round-tripped through C++ back to
 /// `Bun__onSinkDestroyed`.
 #[inline]
-pub fn destructor_ptr_subprocess(ptr: *const c_void) -> usize {
+pub(crate) fn destructor_ptr_subprocess(ptr: *const c_void) -> usize {
     const ADDR_BITS: u32 = 49;
     const ADDR_MASK: u64 = (1u64 << ADDR_BITS) - 1;
     const SUBPROCESS_TAG: u64 = 1023; // second variant: 1024 - 1
@@ -764,7 +893,7 @@ pub fn destructor_ptr_subprocess(ptr: *const c_void) -> usize {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_void) {
+pub(crate) extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_void) {
     let _ = sink_ptr; // autofix
     let ptr = DestructorPtr::from(Some(ptr_value));
 

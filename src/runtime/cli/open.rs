@@ -12,11 +12,11 @@ use crate::api::bun::process::sync;
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
-pub(super) const OPENER: &[u8] = b"/usr/bin/open";
+const OPENER: &[u8] = b"/usr/bin/open";
 #[cfg(windows)]
-pub(super) const OPENER: &[u8] = b"start";
+const OPENER: &[u8] = b"start";
 #[cfg(not(any(target_os = "macos", windows)))]
-pub(super) const OPENER: &[u8] = b"xdg-open";
+const OPENER: &[u8] = b"xdg-open";
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -60,14 +60,14 @@ bun_core::comptime_string_map! {
 }
 
 impl Editor {
-    pub fn by_name(name: &[u8]) -> Option<Editor> {
+    pub(crate) fn by_name(name: &[u8]) -> Option<Editor> {
         if let Some(i) = strings::index_of_char(name, b' ') {
             return NAME_MAP.get(&name[0..i as usize]).copied();
         }
         NAME_MAP.get(name).copied()
     }
 
-    pub fn detect(env: &mut dot_env::Loader) -> Option<Editor> {
+    pub(crate) fn detect(env: &mut dot_env::Loader) -> Option<Editor> {
         const VARS: [&[u8]; 2] = [b"EDITOR", b"VISUAL"];
         for name in VARS {
             if let Some(value) = env.get(name) {
@@ -80,7 +80,7 @@ impl Editor {
         None
     }
 
-    pub fn by_path_for_editor<'a>(
+    pub(crate) fn by_path_for_editor<'a>(
         env: &mut dot_env::Loader,
         editor: Editor,
         buf: &'a mut PathBuffer,
@@ -103,7 +103,10 @@ impl Editor {
         false
     }
 
-    pub fn by_fallback_path_for_editor(editor: Editor, out: Option<&mut &'static [u8]>) -> bool {
+    pub(crate) fn by_fallback_path_for_editor(
+        editor: Editor,
+        out: Option<&mut &'static [u8]>,
+    ) -> bool {
         if let Some(paths) = bin_path(editor) {
             for path in paths {
                 match bun_sys::File::open_at(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0) {
@@ -122,7 +125,7 @@ impl Editor {
         false
     }
 
-    pub fn by_fallback<'a>(
+    pub(crate) fn by_fallback<'a>(
         env: &mut dot_env::Loader,
         buf: &'a mut PathBuffer,
         cwd: &[u8],
@@ -148,11 +151,11 @@ impl Editor {
         None
     }
 
-    pub fn is_jet_brains(self) -> bool {
+    pub(crate) fn is_jet_brains(self) -> bool {
         matches!(self, Editor::Intellij | Editor::Webstorm)
     }
 
-    pub fn open(
+    pub(crate) fn open(
         self,
         binary: &[u8],
         file: &[u8],
@@ -292,7 +295,7 @@ impl Editor {
     }
 }
 
-pub(super) const DEFAULT_PREFERENCE_LIST: [Editor; 8] = [
+const DEFAULT_PREFERENCE_LIST: [Editor; 8] = [
     Editor::Vscode,
     Editor::Sublime,
     Editor::Atom,
@@ -303,7 +306,7 @@ pub(super) const DEFAULT_PREFERENCE_LIST: [Editor; 8] = [
     Editor::Vim,
 ];
 
-pub(super) static BIN_NAME: std::sync::LazyLock<enum_map::EnumMap<Editor, Option<&'static [u8]>>> =
+static BIN_NAME: std::sync::LazyLock<enum_map::EnumMap<Editor, Option<&'static [u8]>>> =
     std::sync::LazyLock::new(|| {
         enum_map::EnumMap::from_fn(|k| match k {
             Editor::Sublime => Some(&b"subl"[..]),
@@ -320,7 +323,7 @@ pub(super) static BIN_NAME: std::sync::LazyLock<enum_map::EnumMap<Editor, Option
         })
     });
 
-pub(super) fn bin_path(editor: Editor) -> Option<&'static [&'static ZStr]> {
+fn bin_path(editor: Editor) -> Option<&'static [&'static ZStr]> {
     #[cfg(target_os = "macos")]
     {
         // `const { &[...] }` forces const-promotion so the array lives in
@@ -430,7 +433,7 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct EditorContext {
-    pub editor: Option<Editor>,
+    pub(crate) editor: Option<Editor>,
     // Note: `name`/`path` are never freed; `path` is backed by
     // `Fs.FileSystem.instance.dirname_store` (process-lifetime arena) or aliases `name`.
     pub name: &'static [u8],
@@ -448,13 +451,19 @@ impl Default for EditorContext {
 }
 
 impl EditorContext {
-    pub fn auto_detect_editor(&mut self, env: &mut dot_env::Loader) {
+    /// `detect_editor` records `Editor::None` when nothing was found so the
+    /// search is not repeated; to callers that means "no editor".
+    pub(crate) fn found(&self) -> Option<Editor> {
+        self.editor.filter(|e| *e != Editor::None)
+    }
+
+    pub(crate) fn auto_detect_editor(&mut self, env: &mut dot_env::Loader) {
         if self.editor.is_none() {
             self.detect_editor(env);
         }
     }
 
-    pub fn detect_editor(&mut self, env: &mut dot_env::Loader) {
+    pub(crate) fn detect_editor(&mut self, env: &mut dot_env::Loader) {
         let mut buf = PathBuffer::uninit();
         // Note: borrowck — `by_path_for_editor`/`by_fallback` tie `out`'s lifetime
         // to `&'a mut buf`. On the `false` path NLL conservatively keeps `buf` borrowed

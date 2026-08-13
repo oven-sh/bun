@@ -28,6 +28,7 @@ const DATAGRAM_PAYLOAD_BUDGET: u64 = 1150;
 const CRYPTO_ERROR_CERTIFICATE_REQUIRED: u64 = 0x0100 + 116;
 /// QUIC CRYPTO_ERROR base (RFC 9001 §4.8) + TLS handshake_failure(40).
 const CRYPTO_ERROR_HANDSHAKE_FAILURE: u64 = 0x0100 + 40;
+const CRYPTO_ERROR_BAD_CERTIFICATE: u64 = 0x0100 + 42;
 
 const LISTENER_FLAG_PATH_VALIDATION: u32 = 0x1;
 const LISTENER_FLAG_DATAGRAM: u32 = 0x2;
@@ -185,23 +186,23 @@ impl StoredAddr {
 /// reads (`src/js/internal/quic/state.ts`).
 #[repr(C)]
 pub struct SessionState {
-    pub listener_flags: u32,
-    pub closing: u8,
-    pub graceful_close: u8,
-    pub silent_close: u8,
-    pub stateless_reset: u8,
-    pub handshake_completed: u8,
-    pub handshake_confirmed: u8,
-    pub stream_open_allowed: u8,
-    pub priority_supported: u8,
-    pub headers_supported: u8,
-    pub wrapped: u8,
-    pub application_type: u8,
-    pub no_error_code: u64,
-    pub internal_error_code: u64,
-    pub max_datagram_size: u16,
-    pub last_datagram_id: u64,
-    pub max_pending_datagrams: u16,
+    pub(crate) listener_flags: u32,
+    pub(crate) closing: u8,
+    pub(crate) graceful_close: u8,
+    pub(crate) silent_close: u8,
+    pub(crate) stateless_reset: u8,
+    pub(crate) handshake_completed: u8,
+    pub(crate) handshake_confirmed: u8,
+    pub(crate) stream_open_allowed: u8,
+    pub(crate) priority_supported: u8,
+    pub(crate) headers_supported: u8,
+    pub(crate) wrapped: u8,
+    pub(crate) application_type: u8,
+    pub(crate) no_error_code: u64,
+    pub(crate) internal_error_code: u64,
+    pub(crate) max_datagram_size: u16,
+    pub(crate) last_datagram_id: u64,
+    pub(crate) max_pending_datagrams: u16,
 }
 
 /// Node's `SESSION_STATS` field names, in declaration order.
@@ -390,6 +391,8 @@ pub struct QuicSession {
     close_when_bound: Cell<bool>,
     deferred_close: JsCell<Option<(bool, u64, Vec<u8>)>>,
     handshake_pending_ok: Cell<bool>,
+    reject_unverified_peer: Cell<bool>,
+    peer_cert_rejected: Cell<bool>,
     hsk_snapshot: JsCell<Option<HskSnapshot>>,
     close_reported: Cell<bool>,
     destroyed: Cell<bool>,
@@ -436,6 +439,8 @@ impl QuicSession {
             close_when_bound: Cell::new(false),
             deferred_close: JsCell::new(None),
             handshake_pending_ok: Cell::new(false),
+            reject_unverified_peer: Cell::new(true),
+            peer_cert_rejected: Cell::new(false),
             hsk_snapshot: JsCell::new(None),
             close_reported: Cell::new(false),
             destroyed: Cell::new(false),
@@ -552,7 +557,7 @@ impl QuicSession {
     /// before any other method can run, outlives `self` (the wrapper keeps
     /// both alive), and is only touched from the JS thread — so the single
     /// raw access below is in-bounds and unaliased.
-    pub(super) fn with_state<R>(&self, f: impl FnOnce(&mut SessionState) -> R) -> R {
+    fn with_state<R>(&self, f: impl FnOnce(&mut SessionState) -> R) -> R {
         // SAFETY: see doc comment.
         unsafe { f(&mut *self.state_mut()) }
     }
@@ -593,6 +598,10 @@ impl QuicSession {
         }
         if let Some(v) = options.get(global, "qlog")? {
             self.qlog_enabled.set(v.to_boolean());
+        }
+        if let Some(v) = options.get(global, "verifyPeer")?.filter(|v| v.is_string()) {
+            self.reject_unverified_peer
+                .set(bun_core::String::from_js(v, global)?.to_utf8_bytes() != b"manual");
         }
         if let Some(app) = options
             .get(global, "application")?
@@ -909,7 +918,7 @@ impl QuicSession {
                 SessionEvent::HandshakeDone { ok } => {
                     if ok {
                         self.capture_hsk_snapshot();
-                        if self.is_server.get() {
+                        if self.is_server.get() || self.peer_verification_refused() {
                             // Node's server reports at handshake COMPLETION
                             // (session.cc: server completion == confirmation
                             // per RFC 9001 §4.1.2).
@@ -970,6 +979,10 @@ impl QuicSession {
                     // session's close is in the same batch must never be
                     // surfaced (Node's onstream count excludes it).
                     if remote && self.conn.get().is_null() && stream.pre_reset_code().is_some() {
+                        stream.suppress_announce();
+                        continue;
+                    }
+                    if remote && self.peer_cert_rejected.get() {
                         stream.suppress_announce();
                         continue;
                     }
@@ -1173,7 +1186,7 @@ impl QuicSession {
                 }
                 SessionEvent::Datagram { payload, early } => {
                     self.add_stat(IDX_STATS_SESSION_DATAGRAMS_RECEIVED, 1);
-                    if !self.has_listener(LISTENER_FLAG_DATAGRAM) {
+                    if !self.has_listener(LISTENER_FLAG_DATAGRAM) || self.peer_cert_rejected.get() {
                         continue;
                     }
                     let buf = ArrayBuffer::create_buffer(global, &payload).or_report(global);
@@ -1469,6 +1482,10 @@ impl QuicSession {
                 true
             }
         };
+        if !cert_ok {
+            self.peer_cert_rejected.set(true);
+        }
+        let open_allowed = ok && !self.peer_cert_rejected.get();
         let peer_frame_size = if !ok || self.conn.get().is_null() {
             0
         } else {
@@ -1481,7 +1498,7 @@ impl QuicSession {
         self.with_state(|s| {
             s.handshake_completed = ok as u8;
             s.handshake_confirmed = ok as u8;
-            s.stream_open_allowed = (ok && cert_ok) as u8;
+            s.stream_open_allowed = open_allowed as u8;
             s.max_datagram_size = peer_frame_size
                 .saturating_sub(DATAGRAM_FRAME_OVERHEAD)
                 .min(DATAGRAM_PAYLOAD_BUDGET) as u16;
@@ -1621,6 +1638,16 @@ impl QuicSession {
             }
             self.schedule_process();
         }
+    }
+
+    fn peer_verification_refused(&self) -> bool {
+        !self.is_server.get()
+            && self.reject_unverified_peer.get()
+            && self
+                .hsk_snapshot
+                .get()
+                .as_ref()
+                .is_some_and(|s| s.validation.is_some())
     }
 
     fn capture_hsk_snapshot(&self) {
@@ -1850,7 +1877,7 @@ impl QuicSession {
         Ok((app, code, reason))
     }
 
-    pub(super) fn apply_graceful_close(&self, app: bool, code: u64, reason: Vec<u8>) {
+    fn apply_graceful_close(&self, app: bool, code: u64, reason: Vec<u8>) {
         let is_http = self
             .endpoint_ref()
             .map(|ep| ep.is_http(self.is_server.get()))
@@ -2033,7 +2060,7 @@ impl QuicSession {
                 (*qs).outbound.with_mut(|o| {
                     o.started = true;
                     o.data.extend(buf.byte_slice().iter().copied());
-                    o.fin_pending = true;
+                    o.end = super::stream::PendingEnd::Fin;
                 });
                 // As attach_source/init_streaming_source/send_headers do: this
                 // is what makes a later setOutbound() throw instead of
@@ -2386,6 +2413,26 @@ lsquic_callback! {
 
     pub(super) fn on_hsk_done(session: &QuicSession, status: c_int) {
         let ok = status == lsquic::LSQ_HSK_OK || status == lsquic::LSQ_HSK_RESUMED_OK;
+        if ok && !session.is_server.get() && session.reject_unverified_peer.get() {
+            session.capture_hsk_snapshot();
+            if session.peer_verification_refused() {
+                session.peer_cert_rejected.set(true);
+                session.self_close.with_mut(|s| {
+                    *s = Some((
+                        false,
+                        CRYPTO_ERROR_BAD_CERTIFICATE,
+                        b"peer certificate verification failed".to_vec(),
+                    ));
+                });
+                if let Some(c) = session.conn() {
+                    c.abort_error(
+                        false,
+                        CRYPTO_ERROR_BAD_CERTIFICATE as c_uint,
+                        c"peer certificate verification failed",
+                    );
+                }
+            }
+        }
         session.push_event(SessionEvent::HandshakeDone { ok });
     }
 }

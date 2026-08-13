@@ -50,7 +50,7 @@ impl JSValue {
     /// `getIfPropertyExistsImpl` / `fastGet` when the property does not exist.
     /// Deleted is a special encoding used in JSC hash-map internals for the
     /// null state; it is re-used here for "not present".
-    pub const PROPERTY_DOES_NOT_EXIST: JSValue = JSValue(0x4, PhantomData);
+    pub(crate) const PROPERTY_DOES_NOT_EXIST: JSValue = JSValue(0x4, PhantomData);
 
     /// Construct a JSValue from an opaque encoded bit-pattern.
     #[inline]
@@ -62,13 +62,8 @@ impl JSValue {
     pub const fn encoded(self) -> usize {
         self.0
     }
-    /// Signed view of the encoded bit-pattern.
     #[inline]
-    pub const fn raw(self) -> i64 {
-        self.0 as i64
-    }
-    #[inline]
-    pub const fn from_raw(raw: i64) -> JSValue {
+    pub(crate) const fn from_raw(raw: i64) -> JSValue {
         JSValue(raw as usize, PhantomData)
     }
 
@@ -276,7 +271,7 @@ impl JSValue {
     }
     /// `JSValue.isPrimitive` — true for non-cell or string/symbol/bigint cells.
     #[inline]
-    pub fn is_primitive(self) -> bool {
+    pub(crate) fn is_primitive(self) -> bool {
         JSC__JSValue__isPrimitive(self)
     }
     #[inline]
@@ -382,7 +377,7 @@ impl JSValue {
     /// own `errors` data property via `JSObject::getDirect` — no prototype
     /// walk, no getters invoked, nothrow. Used for `AggregateError.errors`.
     #[inline]
-    pub fn get_errors_property(self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_errors_property(self, global: &JSGlobalObject) -> JSValue {
         unsafe extern "C" {
             safe fn JSC__JSValue__getErrorsProperty(
                 this: JSValue,
@@ -516,7 +511,7 @@ impl JSValue {
     /// when the consumer round-trips through `f64::to_bits` / `as_number` and
     /// must see the original bit pattern (e.g. [`from_ptr_address`]).
     #[inline]
-    pub fn js_double_number(n: f64) -> JSValue {
+    pub(crate) fn js_double_number(n: f64) -> JSValue {
         const DOUBLE_ENCODE_OFFSET: i64 = 1i64 << 49;
         JSValue::from_raw((n.to_bits() as i64).wrapping_add(DOUBLE_ENCODE_OFFSET))
     }
@@ -584,12 +579,13 @@ impl JSValue {
         crate::mark_binding!();
         host_fn::from_js_host_call(global, || JSBuffer__bufferFromLength(global, len as i64))
     }
-    pub fn create_buffer(global: &JSGlobalObject, slice: &mut [u8]) -> JSValue {
-        // Wraps `JSBuffer__bufferFromPointerAndLengthAndDeinit`
-        // with `MarkedArrayBuffer_deallocator` (or null for empty slices).
+    /// Wraps `slice` (mimalloc-owned; ownership moves to JSC, freed via
+    /// `MarkedArrayBuffer_deallocator`) in a Node `Buffer`. Fails like any JS
+    /// allocation: OOM, or a termination request landing in it.
+    pub fn create_buffer(global: &JSGlobalObject, slice: &mut [u8]) -> JsResult<JSValue> {
         // SAFETY: `global` is live; slice ptr/len describe a valid range whose
         // ownership is transferred to JSC (freed via the deallocator).
-        unsafe {
+        host_fn::from_js_host_call(global, || unsafe {
             JSBuffer__bufferFromPointerAndLengthAndDeinit(
                 global,
                 slice.as_mut_ptr(),
@@ -601,13 +597,13 @@ impl JSValue {
                     Some(MarkedArrayBuffer_deallocator)
                 },
             )
-        }
+        })
     }
     /// Take ownership of a mimalloc-backed `Box<[u8]>` and wrap it in a Node
     /// `Buffer` without copying. Ownership transfers to JSC; freed via
     /// `MarkedArrayBuffer_deallocator` on GC. Prefer this over `Box::leak` +
     /// [`JSValue::create_buffer`] so the FFI hand-off is explicit at call sites.
-    pub fn create_buffer_from_box(global: &JSGlobalObject, bytes: Box<[u8]>) -> JSValue {
+    pub fn create_buffer_from_box(global: &JSGlobalObject, bytes: Box<[u8]>) -> JsResult<JSValue> {
         let len = bytes.len();
         // `into_raw` (not `leak`) — this is an FFI ownership transfer, paired
         // with `mi_free` in `MarkedArrayBuffer_deallocator`. An empty
@@ -616,7 +612,7 @@ impl JSValue {
         let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
         // SAFETY: `global` is live; `ptr`/`len` describe the just-released
         // mimalloc allocation whose ownership is transferred to JSC.
-        unsafe {
+        host_fn::from_js_host_call(global, || unsafe {
             JSBuffer__bufferFromPointerAndLengthAndDeinit(
                 global,
                 ptr,
@@ -628,7 +624,7 @@ impl JSValue {
                     Some(MarkedArrayBuffer_deallocator)
                 },
             )
-        }
+        })
     }
     /// `JSValue.createBufferWithCtx` — wrap a foreign-owned byte
     /// range in a Node `Buffer`, transferring ownership to JS. `free(ctx, ptr)`
@@ -643,11 +639,11 @@ impl JSValue {
         bytes: core::ptr::NonNull<[u8]>,
         ctx: *mut c_void,
         free: unsafe extern "C" fn(*mut c_void, *mut c_void),
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         let len = bytes.len();
         // SAFETY: `global` is live; `bytes` describes a valid range whose
         // ownership transfers to JSC and is released via `free` on collection.
-        unsafe {
+        host_fn::from_js_host_call(global, || unsafe {
             JSBuffer__bufferFromPointerAndLengthAndDeinit(
                 global,
                 bytes.as_ptr().cast::<u8>(),
@@ -655,7 +651,7 @@ impl JSValue {
                 ctx,
                 Some(free),
             )
-        }
+        })
     }
     pub fn from_date_number(global: &JSGlobalObject, value: f64) -> JSValue {
         JSC__JSValue__dateInstanceFromNumber(global, value)
@@ -996,7 +992,7 @@ impl JSValue {
     /// `JSValue.asInternalPromise()` — downcast to `JSInternalPromise`.
     /// Returns a raw pointer; see
     /// [`as_promise`] for the aliasing rationale.
-    pub fn as_internal_promise(self) -> Option<*mut JSInternalPromise> {
+    pub(crate) fn as_internal_promise(self) -> Option<*mut JSInternalPromise> {
         if !self.is_cell() {
             return None;
         }
@@ -1421,6 +1417,16 @@ impl JSValue {
     /// `&bun.String`.
     pub fn put<K: PutKey>(self, global: &JSGlobalObject, key: K, value: JSValue) {
         key.put(self, global, value)
+    }
+    /// [`put`] with `PropertyAttribute::DontEnum`.
+    pub fn put_non_enumerable(
+        self,
+        global: &JSGlobalObject,
+        key: impl AsRef<[u8]>,
+        value: JSValue,
+    ) {
+        let zs = bun_core::ZigString::init(key.as_ref());
+        JSC__JSValue__putNonEnumerable(self, global, &zs, value)
     }
     /// [`put`] only when `val` is `Some`; the property is *omitted* (not set to
     /// `undefined`) when `None`. Collapses the open-coded
@@ -2038,6 +2044,12 @@ unsafe extern "C" {
         key: &bun_core::ZigString,
         value: JSValue,
     );
+    safe fn JSC__JSValue__putNonEnumerable(
+        this: JSValue,
+        global: &JSGlobalObject,
+        key: &bun_core::ZigString,
+        value: JSValue,
+    );
     safe fn JSC__JSValue__deleteProperty(
         this: JSValue,
         global: &JSGlobalObject,
@@ -2203,7 +2215,7 @@ impl core::fmt::Display for StringFormatter<'_> {
 impl JSValue {
     // ── Equality / identity. ────────────────
     #[inline]
-    pub fn eql_value(self, other: JSValue) -> bool {
+    pub(crate) fn eql_value(self, other: JSValue) -> bool {
         JSC__JSValue__eqlValue(self, other)
     }
     /// `JSValue.isSameValue` (Object.is semantics).
@@ -2417,7 +2429,7 @@ impl JSValue {
     /// `JSValue.forEachWithContext` — typed-ctx wrapper (callers pass
     /// `*mut c_void` directly).
     #[inline]
-    pub fn for_each_with_context(
+    pub(crate) fn for_each_with_context(
         self,
         global: &JSGlobalObject,
         ctx: *mut c_void,
@@ -2431,7 +2443,7 @@ impl JSValue {
     /// Seats the exception scope and calls the FFI directly so the deep
     /// `print_as` recursion does not pay an extra closure frame per object level.
     #[inline(always)]
-    pub fn for_each_property(
+    pub(crate) fn for_each_property(
         self,
         global: &JSGlobalObject,
         ctx: *mut c_void,
@@ -2456,7 +2468,7 @@ impl JSValue {
     /// `JSValue.forEachPropertyNonIndexed` — like
     /// [`for_each_property`](Self::for_each_property) but skips array-index
     /// keys.
-    pub fn for_each_property_non_indexed(
+    pub(crate) fn for_each_property_non_indexed(
         self,
         global: &JSGlobalObject,
         ctx: *mut c_void,
@@ -2506,7 +2518,7 @@ impl JSValue {
     /// `JSValue.isBuffer` — `instanceof Buffer` check via
     /// the C++ `JSBuffer__isBuffer` shim. Accepts any JSValue; the C++ side
     /// handles non-cells (returns false), so no precondition is asserted.
-    pub fn is_buffer(self, global: &JSGlobalObject) -> bool {
+    pub(crate) fn is_buffer(self, global: &JSGlobalObject) -> bool {
         unsafe extern "C" {
             safe fn JSBuffer__isBuffer(global: &JSGlobalObject, value: JSValue) -> bool;
         }
@@ -2530,7 +2542,7 @@ impl JSValue {
     /// hole. Walks the array's backing storage (and sparse map) so a run of
     /// holes is skipped in one call instead of probing each index.
     /// Asserts `self` is a `JSArray` (`Array` or `DerivedArray`).
-    pub fn next_present_index(self, start: u32) -> Option<u32> {
+    pub(crate) fn next_present_index(self, start: u32) -> Option<u32> {
         debug_assert!(self.is_cell() && self.js_type().is_array());
         unsafe extern "C" {
             safe fn Bun__JSArray__nextPresentIndex(this: JSValue, start: u32) -> u64;
@@ -2564,7 +2576,7 @@ impl JSValue {
 
     // ── Proxy internals. ───────────────────────────────
     /// Asserts `self` is a `Proxy`.
-    pub fn get_proxy_internal_field(self, field: ProxyField) -> JSValue {
+    pub(crate) fn get_proxy_internal_field(self, field: ProxyField) -> JSValue {
         debug_assert!(self.is_cell() && self.js_type() == JSType::ProxyObject);
         Bun__ProxyObject__getInternalField(self, field as u32)
     }
@@ -2585,6 +2597,14 @@ impl JSValue {
     /// `byteOffset` of a typed array or `DataView`, `0` otherwise.
     pub fn get_array_buffer_view_byte_offset(self) -> usize {
         Bun__JSValue__getArrayBufferViewByteOffset(self)
+    }
+
+    /// Force a typed array out of JSC's "fast" mode so its data pointer stays
+    /// stable for the view's lifetime (fast-mode storage is abandoned when the
+    /// backing buffer is materialized). Returns `false` only when `self` is a
+    /// view whose backing buffer could not be allocated; non-views are a no-op.
+    pub fn materialize_array_buffer_view_buffer(self) -> bool {
+        Bun__JSValue__materializeArrayBufferViewBuffer(self)
     }
 
     // ── Formatting. ────────────────────────────────────
@@ -2713,6 +2733,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
     ) -> JSValue;
     safe fn Bun__JSValue__getArrayBufferViewByteOffset(this: JSValue) -> usize;
+    safe fn Bun__JSValue__materializeArrayBufferViewBuffer(this: JSValue) -> bool;
     safe fn Bun__Process__queueNextTick1(global: &JSGlobalObject, func: JSValue, arg: JSValue);
     fn Bun__JSValue__deserialize(
         global: *const JSGlobalObject,

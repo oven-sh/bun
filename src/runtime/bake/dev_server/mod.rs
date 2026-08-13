@@ -10,7 +10,6 @@
 //!   - `is_file_cached`
 
 #![allow(clippy::module_inception)]
-#![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` is not yet a declared cargo feature.
 
 use core::sync::atomic::Ordering;
 
@@ -23,7 +22,7 @@ use super::{Graph, Side};
 // ─── submodules ──────────────────────────────────────────────────────────────
 pub(crate) mod error_report_request;
 pub(crate) mod hmr_socket;
-pub(crate) mod js_escape;
+mod js_escape;
 pub(crate) mod memory_cost;
 
 // NOTE: the `DevServer` scoped-log static (`ScopedLogger`) is declared in
@@ -31,8 +30,8 @@ pub(crate) mod memory_cost;
 // re-exported via the `pub use` block below alongside the `struct DevServer`
 // type. Declaring it again here would collide in the value namespace.
 
-pub const ASSET_PREFIX: &str = "/_bun/asset";
-pub const CLIENT_PREFIX: &str = "/_bun/client";
+pub(crate) const ASSET_PREFIX: &str = "/_bun/asset";
+pub(crate) const CLIENT_PREFIX: &str = "/_bun/client";
 
 // LAYERING: the 4.8 kL of method bodies live in `../DevServer.rs` (mounted as
 // `super::dev_server_body`). The struct definitions are owned there so impl
@@ -89,9 +88,6 @@ pub enum MessageId {
     Version = b'V',
     HotUpdate = b'u',
     Errors = b'e',
-    BrowserMessage = b'b',
-    BrowserMessageClear = b'B',
-    RequestHandlerError = b'h',
     Visualizer = b'v',
     MemoryVisualizer = b'M',
     SetUrlResponse = b'n',
@@ -99,7 +95,7 @@ pub enum MessageId {
 }
 impl MessageId {
     #[inline]
-    pub fn char(self) -> u8 {
+    pub(crate) fn char(self) -> u8 {
         self as u8
     }
 }
@@ -133,10 +129,10 @@ pub enum HmrTopic {
 
 impl HmrTopic {
     /// `HmrTopic.max_count` — `@typeInfo(HmrTopic).@"enum".fields.len`.
-    pub const MAX_COUNT: usize = 6;
+    pub(crate) const MAX_COUNT: usize = 6;
 
     /// All variants in declaration order.
-    pub const ALL: &[HmrTopic] = &[
+    pub(crate) const ALL: &[HmrTopic] = &[
         HmrTopic::HotUpdate,
         HmrTopic::Errors,
         HmrTopic::BrowserError,
@@ -148,7 +144,7 @@ impl HmrTopic {
     /// Maps the wire-byte discriminant back to the variant (`@enumFromInt`
     /// with range-check). `None` for unknown bytes.
     #[inline]
-    pub fn from_u8(ch: u8) -> Option<HmrTopic> {
+    pub(crate) fn from_u8(ch: u8) -> Option<HmrTopic> {
         match ch {
             b'h' => Some(HmrTopic::HotUpdate),
             b'e' => Some(HmrTopic::Errors),
@@ -164,13 +160,13 @@ impl HmrTopic {
     /// occur in WTF-8, so no topic string passed to `ServerWebSocket`
     /// `subscribe()`/`publish()` or `Server.publish()` can ever name it.
     #[inline]
-    pub fn uws_topic(self) -> [u8; 2] {
+    pub(crate) fn uws_topic(self) -> [u8; 2] {
         [0xFF, self as u8]
     }
 
     /// Maps a topic to its packed `HmrTopicBits` flag.
     #[inline]
-    pub fn as_bit(self) -> crate::bake::dev_server_body::HmrTopicBits {
+    pub(crate) fn as_bit(self) -> crate::bake::dev_server_body::HmrTopicBits {
         use crate::bake::dev_server_body::HmrTopicBits;
         match self {
             HmrTopic::HotUpdate => HmrTopicBits::HOT_UPDATE,
@@ -192,18 +188,18 @@ pub use bun_event_loop::EventLoopTimer::{EventLoopTimer, Tag as TimerTag};
 // IncrementalResult / GraphTraceState
 // ──────────────────────────────────────────────────────────────────────────
 pub struct IncrementalResult {
-    pub framework_routes_affected: Vec<RouteIndexAndRecurseFlag>,
-    pub html_routes_soft_affected: Vec<route_bundle::Index>,
-    pub html_routes_hard_affected: Vec<route_bundle::Index>,
-    pub had_adjusted_edges: bool,
-    pub client_components_added: Vec<incremental_graph::ServerFileIndex>,
-    pub client_components_removed: Vec<incremental_graph::ServerFileIndex>,
-    pub failures_removed: Vec<SerializedFailure>,
-    pub client_components_affected: Vec<incremental_graph::ServerFileIndex>,
-    pub failures_added: Vec<SerializedFailure>,
+    pub(crate) framework_routes_affected: Vec<RouteIndexAndRecurseFlag>,
+    pub(crate) html_routes_soft_affected: Vec<route_bundle::Index>,
+    pub(crate) html_routes_hard_affected: Vec<route_bundle::Index>,
+    pub(crate) had_adjusted_edges: bool,
+    pub(crate) client_components_added: Vec<incremental_graph::ServerFileIndex>,
+    pub(crate) client_components_removed: Vec<incremental_graph::ServerFileIndex>,
+    pub(crate) failures_removed: Vec<SerializedFailure>,
+    pub(crate) client_components_affected: Vec<incremental_graph::ServerFileIndex>,
+    pub(crate) failures_added: Vec<SerializedFailure>,
 }
 impl IncrementalResult {
-    pub const EMPTY: IncrementalResult = IncrementalResult {
+    pub(crate) const EMPTY: IncrementalResult = IncrementalResult {
         framework_routes_affected: Vec::new(),
         html_routes_soft_affected: Vec::new(),
         html_routes_hard_affected: Vec::new(),
@@ -233,24 +229,24 @@ impl IncrementalResult {
 }
 
 pub struct GraphTraceState {
-    pub client_bits: DynamicBitSet,
-    pub server_bits: DynamicBitSet,
+    pub(crate) client_bits: DynamicBitSet,
+    pub(crate) server_bits: DynamicBitSet,
 }
 impl GraphTraceState {
     #[inline]
-    pub fn bits(&mut self, side: Side) -> &mut DynamicBitSet {
+    pub(crate) fn bits(&mut self, side: Side) -> &mut DynamicBitSet {
         match side {
             Side::Client => &mut self.client_bits,
             Side::Server => &mut self.server_bits,
         }
     }
 
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.server_bits.unmanaged.set_all(false);
         self.client_bits.unmanaged.set_all(false);
     }
 
-    pub fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {
+    pub(crate) fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {
         let b = match side {
             Side::Client => &mut self.client_bits,
             Side::Server => &mut self.server_bits,
@@ -261,7 +257,7 @@ impl GraphTraceState {
         Ok(())
     }
 
-    pub fn clear_and_free(&mut self) {
+    pub(crate) fn clear_and_free(&mut self) {
         self.client_bits
             .resize(0, false)
             .expect("freeing memory can not fail");
@@ -271,7 +267,7 @@ impl GraphTraceState {
     }
 }
 
-pub use super::dev_server_body::init;
+pub(crate) use super::dev_server_body::init;
 
 pub mod assets;
 pub mod incremental_graph;
@@ -344,23 +340,23 @@ impl ResponseLike for bun_uws::AnyResponse {
 pub struct HmrSocket {
     /// BACKREF: owned by `dev.active_websocket_connections`; destroyed via
     /// `remove` + `heap::take` in `on_close`.
-    pub dev: bun_ptr::BackRef<DevServer>,
-    pub underlying: Option<bun_uws::AnyWebSocket>,
-    pub subscriptions: super::dev_server_body::HmrTopicBits,
+    pub(crate) dev: bun_ptr::BackRef<DevServer, bun_ptr::Mut>,
+    pub(crate) underlying: Option<bun_uws::AnyWebSocket>,
+    pub(crate) subscriptions: super::dev_server_body::HmrTopicBits,
     /// By telling DevServer the active route, this enables receiving detailed
     /// `hot_update` events for when the route is updated.
-    pub active_route: route_bundle::IndexOptional,
+    pub(crate) active_route: route_bundle::IndexOptional,
     /// Source-map keys this socket has been sent; used to ref-count entries
     /// in `SourceMapStore` so they survive until the socket disconnects.
-    pub referenced_source_maps: HashMap<source_map_store::Key, ()>,
-    pub inspector_connection_id: i32,
+    pub(crate) referenced_source_maps: HashMap<source_map_store::Key, ()>,
+    pub(crate) inspector_connection_id: i32,
 }
 
 impl HmrSocket {
     /// `subscriptions` is a packed `HmrTopicBits` value; test the bit for a
     /// given topic.
     #[inline]
-    pub fn is_subscribed(&self, topic: HmrTopic) -> bool {
+    pub(crate) fn is_subscribed(&self, topic: HmrTopic) -> bool {
         self.subscriptions.contains(topic.as_bit())
     }
 }
@@ -376,28 +372,41 @@ pub struct HotReloadEvent {
     /// BACKREF (LIFETIMES.tsv): element of `WatcherAtomics.events: [3]`.
     /// Nulled by `Drop for DevServer` when an event is still queued; `run`
     /// checks for null before dereferencing.
-    pub owner: *mut DevServer,
+    pub(crate) owner: *mut DevServer,
     /// BACKREF to the owning `Box<WatcherAtomics>`; `run` reclaims it when
     /// `owner` has been nulled.
-    pub atomics: *mut WatcherAtomics,
-    pub concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask,
-    pub files: StringArrayHashMap<()>,
-    pub dirs: StringArrayHashMap<()>,
+    pub(crate) atomics: *mut WatcherAtomics,
+    pub(crate) concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask,
+    pub(crate) files: StringArrayHashMap<()>,
+    pub(crate) dirs: StringArrayHashMap<()>,
     /// NUL-joined absolute paths.
-    pub extra_files: Vec<u8>,
-    pub timer: std::time::Instant,
+    pub(crate) extra_files: Vec<u8>,
+    pub(crate) timer: std::time::Instant,
     /// 1 if referenced, 0 if unreferenced; see `WatcherAtomics`.
-    pub contention_indicator: core::sync::atomic::AtomicU32,
     #[cfg(debug_assertions)]
-    pub debug_mutex: bun_threading::Mutex,
+    pub(crate) contention_indicator: core::sync::atomic::AtomicU32,
+    #[cfg(debug_assertions)]
+    pub(crate) debug_mutex: bun_threading::Mutex,
 }
 
 impl bun_event_loop::Taskable for HotReloadEvent {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BakeHotReloadEvent;
+    /// An inline slot of the watcher's `WatcherAtomics`. If its DevServer is
+    /// gone (`owner` nulled by `Drop for DevServer`, which then leaves the
+    /// atomics to the queued event), this was the last thing keeping the
+    /// atomics alive; otherwise the DevServer still owns them.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract; `atomics` is the heap WatcherAtomics `this` lives in.
+        unsafe {
+            if (*this).owner.is_null() {
+                bun_core::heap::destroy((*this).atomics);
+            }
+        }
+    }
 }
 
 impl HotReloadEvent {
-    pub fn init_empty(owner: *mut DevServer) -> HotReloadEvent {
+    pub(crate) fn init_empty(owner: *mut DevServer) -> HotReloadEvent {
         HotReloadEvent {
             owner,
             atomics: core::ptr::null_mut(),
@@ -406,13 +415,14 @@ impl HotReloadEvent {
             dirs: Default::default(),
             extra_files: Vec::new(),
             timer: std::time::Instant::now(),
+            #[cfg(debug_assertions)]
             contention_indicator: core::sync::atomic::AtomicU32::new(0),
             #[cfg(debug_assertions)]
             debug_mutex: bun_threading::Mutex::default(),
         }
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         (self.files.count() + self.dirs.count()) == 0
     }
 
@@ -420,7 +430,7 @@ impl HotReloadEvent {
     /// held. Centralises the back-ref deref so the call sites in
     /// `watcher_acquire_event` / `watcher_release_and_submit_event` stay safe.
     #[inline]
-    pub fn assert_watcher_thread_locked(&self) {
+    pub(crate) fn assert_watcher_thread_locked(&self) {
         // SAFETY: BACKREF — `owner` is the live DevServer whose `watcher_atomics`
         // holds this event; only reached from the watcher thread while
         // `Watcher.mutex` is held, so `owner` has not been nulled. Raw place
@@ -429,7 +439,11 @@ impl HotReloadEvent {
     }
 
     /// Invalidates items in IncrementalGraph, appending all new items to `entry_points`.
-    pub fn process_file_list(&mut self, dev: &mut DevServer, entry_points: &mut EntryPointList) {
+    pub(crate) fn process_file_list(
+        &mut self,
+        dev: &mut DevServer,
+        entry_points: &mut EntryPointList,
+    ) {
         // RAII: `ThreadLockGuard` stores a raw `*const ThreadLock` and unlocks on
         // drop, so it does not hold a borrow of `dev` for the scope.
         let _g = dev.graph_safety_lock.guard();
@@ -567,13 +581,13 @@ impl HotReloadEvent {
     }
 
     /// Records a changed file path in the pending hot-reload event (deduplicated).
-    pub fn append_file(&mut self, file_path: &[u8]) {
+    pub(crate) fn append_file(&mut self, file_path: &[u8]) {
         bun_core::handle_oom(self.files.get_or_put(file_path));
     }
 
     /// Records a changed directory (and, when present, the changed entry
     /// within it) in the pending hot-reload event (deduplicated).
-    pub fn append_dir(&mut self, dir_path: &[u8], maybe_sub_path: Option<&[u8]>) {
+    pub(crate) fn append_dir(&mut self, dir_path: &[u8], maybe_sub_path: Option<&[u8]>) {
         if dir_path.is_empty() {
             return;
         }
@@ -611,7 +625,7 @@ impl HotReloadEvent {
     /// `WatcherAtomics`. `(*first).owner` is either the live owning
     /// `DevServer` or null (set by `Drop for DevServer` while this event was
     /// still queued). Must run on the DevServer thread.
-    pub unsafe fn run(first: *mut HotReloadEvent) {
+    pub(crate) unsafe fn run(first: *mut HotReloadEvent) {
         // SAFETY: caller contract — `first` is a live slot in a heap
         // `WatcherAtomics`; `owner` is either the live DevServer or null.
         let dev: *mut DevServer = unsafe { (*first).owner };
@@ -715,22 +729,22 @@ impl HotReloadEvent {
 /// `DevServer.WatcherAtomics` — three pre-allocated `HotReloadEvent`s
 /// rotated between the watcher thread and the main thread.
 pub struct WatcherAtomics {
-    pub events: [HotReloadEvent; 3],
+    pub(crate) events: [HotReloadEvent; 3],
     /// Atomically encodes a `NextEvent`: values 0..3 are an index into
     /// `events`, plus the `WAITING`/`DONE` sentinels.
     // Rust cannot align individual fields, so this field is not cache-line
     // aligned. Wrap in a `#[repr(align(128))]` newtype (init site:
     // lifecycle.rs) if false sharing ever shows up in profiles.
-    pub next_event: core::sync::atomic::AtomicU8,
+    pub(crate) next_event: core::sync::atomic::AtomicU8,
     /// Watcher-thread-only; index into `events` currently being processed.
-    pub current_event: Option<u8>,
+    pub(crate) current_event: Option<u8>,
     /// Watcher-thread-only; index into `events` queued behind `current_event`.
-    pub pending_event: Option<u8>,
+    pub(crate) pending_event: Option<u8>,
     // Debug fields to ensure methods are being called in the right order.
     #[cfg(debug_assertions)]
-    pub dbg_watcher_event: Option<*mut HotReloadEvent>,
+    pub(crate) dbg_watcher_event: Option<*mut HotReloadEvent>,
     #[cfg(debug_assertions)]
-    pub dbg_server_event: Option<*mut HotReloadEvent>,
+    pub(crate) dbg_server_event: Option<*mut HotReloadEvent>,
 }
 
 /// Stored in `WatcherAtomics::next_event` (an `AtomicU8`). Modeled as a
@@ -739,13 +753,13 @@ pub struct WatcherAtomics {
 /// Rust enums cannot hold unlisted discriminants.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct NextEvent(pub u8);
+pub struct NextEvent(pub(crate) u8);
 
 impl NextEvent {
     /// An event is running, and no next event is pending.
-    pub const WAITING: NextEvent = NextEvent(u8::MAX - 1);
+    pub(crate) const WAITING: NextEvent = NextEvent(u8::MAX - 1);
     /// No event is running.
-    pub const DONE: NextEvent = NextEvent(u8::MAX);
+    pub(crate) const DONE: NextEvent = NextEvent(u8::MAX);
     // Any other value represents an index into the `events` array.
 }
 
@@ -959,11 +973,12 @@ impl WatcherAtomics {
                         task: bun_event_loop::Task::init(ev),
                         ..Default::default()
                     };
-                    // `vm` is a `BackRef` (safe Deref); `event_loop` points at a
-                    // sibling field of `VirtualMachine`. The queued node pointer
-                    // is derived from `ev` (allocation-root provenance) so it
-                    // stays valid across `Drop for DevServer`'s writes.
-                    (*(&(*(*ev).owner).vm).event_loop).enqueue_task_concurrent(
+                    // The queued node pointer is derived from `ev` (allocation-root
+                    // provenance) so it stays valid across `Drop for DevServer`'s
+                    // writes. Refused ⇒ the VM is torn down; the event is one of
+                    // DevServer's inline slots and simply never runs.
+                    let _ = (*(*ev).owner).vm_handle.post(
+                        bun_jsc::LoopKind::Regular,
                         core::ptr::NonNull::new_unchecked(&raw mut (*ev).concurrent_task),
                     );
                 }
@@ -1007,10 +1022,10 @@ impl WatcherAtomics {
 /// is evicted from the incremental graph.
 #[derive(Default)]
 pub struct DirectoryWatchStore {
-    pub watches: StringArrayHashMap<directory_watch_store::Entry>,
-    pub dependencies: Vec<directory_watch_store::Dep>,
+    pub(crate) watches: StringArrayHashMap<directory_watch_store::Entry>,
+    pub(crate) dependencies: Vec<directory_watch_store::Dep>,
     /// Dependencies cannot be re-ordered. This list tracks what indexes are free.
-    pub dependencies_free_list: Vec<u32>,
+    pub(crate) dependencies_free_list: Vec<u32>,
 }
 impl DirectoryWatchStore {
     /// Intrusive backref: recover `*mut DevServer`.
@@ -1042,7 +1057,7 @@ impl DirectoryWatchStore {
     }
 
     /// Returns a dependency slot to the free list so it can be reused.
-    pub fn free_dependency_index(&mut self, index: u32) {
+    pub(crate) fn free_dependency_index(&mut self, index: u32) {
         // Zero out the slot so DevServer.deinit/memoryCost — which iterate
         // `dependencies` without consulting the free list — do not touch the
         // freed allocation or stale borrowed pointers.
@@ -1055,7 +1070,7 @@ impl DirectoryWatchStore {
     }
 
     /// Expects dependency list to be already freed.
-    pub fn free_entry(&mut self, entry_index: usize) {
+    pub(crate) fn free_entry(&mut self, entry_index: usize) {
         let entry = self.watches.values()[entry_index];
 
         bun_core::scoped_log!(
@@ -1065,7 +1080,7 @@ impl DirectoryWatchStore {
             entry.dir
         );
 
-        self.dev_bun_watcher().remove_at_index(
+        self.dev_bun_watcher().remove_at_index::<true>(
             bun_watcher::WatchItemKind::File,
             entry.watch_index,
             0,
@@ -1092,12 +1107,12 @@ pub mod directory_watch_store {
     #[derive(Copy, Clone)]
     pub struct Entry {
         /// The directory handle the watch is placed on.
-        pub dir: bun_sys::Fd,
-        pub dir_fd_owned: bool,
+        pub(crate) dir: bun_sys::Fd,
+        pub(crate) dir_fd_owned: bool,
         /// `Dep.Index` — head of the singly-linked dep chain for this dir.
-        pub first_dep: u32,
+        pub(crate) first_dep: u32,
         /// To pass to `Watcher.remove`.
-        pub watch_index: u16,
+        pub(crate) watch_index: u16,
     }
     impl Default for Entry {
         fn default() -> Self {
@@ -1111,14 +1126,14 @@ pub mod directory_watch_store {
     }
     /// `DirectoryWatchStore.Dep` — one resolution-failure to retry on dir change.
     pub struct Dep {
-        pub next: Option<u32>,
+        pub(crate) next: Option<u32>,
         /// The file used. BORROWED slice into `IncrementalGraph.bundled_files`
         /// key storage; compared by *pointer identity*. The graph calls
         /// `removeDependenciesForFile` before freeing the key, so the slice
         /// outlives every read — `RawSlice` invariant.
-        pub source_file_path: bun_ptr::RawSlice<u8>,
+        pub(crate) source_file_path: bun_ptr::RawSlice<u8>,
         /// The specifier that failed. Allocated memory.
-        pub specifier: Box<[u8]>,
+        pub(crate) specifier: Box<[u8]>,
     }
     impl Default for Dep {
         fn default() -> Self {
@@ -1210,12 +1225,12 @@ bun_bundler::link_impl_DevServerHandle! {
 
 impl DevServer {
     /// Length of `configuration_hash_key`.
-    pub const CONFIGURATION_HASH_KEY_LEN: usize = 16;
+    pub(crate) const CONFIGURATION_HASH_KEY_LEN: usize = 16;
 
     /// Construct the erased handle the bundler stores in
     /// `Transpiler.options.dev_server` / `LinkerContext.dev_server`.
     #[inline]
-    pub fn bundler_handle(&mut self) -> bun_bundler::dispatch::DevServerHandle {
+    pub(crate) fn bundler_handle(&mut self) -> bun_bundler::dispatch::DevServerHandle {
         // SAFETY: `self` is the single per-process DevServer; outlives all dispatch.
         unsafe {
             bun_bundler::dispatch::DevServerHandle::new(
@@ -1239,7 +1254,7 @@ bun_core::oom_from_alloc!(DirectoryWatchInsertError);
 impl DirectoryWatchStore {
     /// Registers a directory watch so that a failed import resolution is
     /// retried when the containing directory changes.
-    pub fn track_resolution_failure(
+    pub(crate) fn track_resolution_failure(
         &mut self,
         import_source: &[u8],
         specifier: &[u8],
@@ -1485,7 +1500,7 @@ impl DirectoryWatchStore {
     /// `file_path`, compared by *pointer identity* since the slice is shared
     /// with `IncrementalGraph.bundled_files`. Called before IncrementalGraph
     /// frees a file's key string so no `Dep` is left holding a dangling pointer.
-    pub fn remove_dependencies_for_file(&mut self, file_path: &[u8]) {
+    pub(crate) fn remove_dependencies_for_file(&mut self, file_path: &[u8]) {
         if self.watches.count() == 0 {
             return;
         }

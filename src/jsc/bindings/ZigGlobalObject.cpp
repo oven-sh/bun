@@ -761,10 +761,8 @@ static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
     return record->moduleEnvironmentMayBeNull() != nullptr;
 }
 
-// loadModuleSync() without fetch parameters loads the (key, JavaScript) entry.
-// registryEntry() would also match the JSON/HostDefined entry that an
-// `import ... with { type }` of the same file registers, which that load
-// leaves untouched.
+// The entry loadModuleSync() loads. registryEntry() would also match the entry an
+// `import ... with { type }` of the same file registers, which that load does not touch.
 static JSC::ModuleRegistryEntry* javaScriptRegistryEntry(JSC::JSModuleLoader* loader, const JSC::Identifier& key)
 {
     return loader->moduleMap().get({ key.impl(), JSC::ScriptFetchParameters::Type::JavaScript }).get();
@@ -843,17 +841,14 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         }
     }
 
-    // Hold the entry the load below evaluates instead of looking it up again
-    // afterwards: the module's own top level may `delete require.cache[key]`,
-    // which removes the entry from the registry while its record is still
-    // being evaluated. The entry cell itself keeps pointing at that record.
+    // Held across the load: the module's top level may `delete require.cache[key]`,
+    // which unlinks the entry from the registry but not from its record.
     JSC::ModuleRegistryEntry* entry = javaScriptRegistryEntry(loader, key);
 
     JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Builtin ES modules and module mocks reach this point before any entry
-    // exists; the load creates it.
+    // Builtin ES modules and module mocks have no entry until the load creates it.
     if (!entry)
         entry = javaScriptRegistryEntry(loader, key);
     JSC::AbstractModuleRecord* record = entry ? entry->record() : nullptr;

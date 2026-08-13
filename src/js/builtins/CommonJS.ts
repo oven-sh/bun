@@ -287,8 +287,7 @@ function loadEsmIntoCjs__dead(resolvedSpecifier: string) {
 }
 */
 
-// Returns the raw namespace (this is also import.meta.bakeBuiltin); the
-// require()-specific shaping of it lives in requireESMIntoModule.
+// Also bound as import.meta.bakeBuiltin, so this returns the namespace unshaped.
 $visibility = "Private";
 export function requireESM(this, resolved: string) {
   var exports = $esmNamespaceForCjs(resolved);
@@ -298,15 +297,12 @@ export function requireESM(this, resolved: string) {
   return exports;
 }
 
-// `this` is the CommonJS module object standing in for the ES module `id`.
-// Called by require() and, through C++, by the builtin Module._extensions loaders.
+// Also called from C++ by the builtin Module._extensions loaders (JSCommonJSExtensions.cpp).
 $visibility = "Private";
 export function requireESMIntoModule(this: JSCommonJSModule, id: string) {
   $assert(this);
   let namespace: any;
   try {
-    // Use the namespace this call returns rather than looking the registry up
-    // again: the module may have deleted itself from require.cache while evaluating.
     namespace = $requireESM(id);
   } catch (exception) {
     // Since the ESM code is mostly JS, we need to handle exceptions here.

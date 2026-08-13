@@ -581,9 +581,9 @@ function needsBaselineVerification(platform) {
 
 /**
  * Returns the emulator for the given platform. Both emulators come baked into
- * the image the step runs on (getVerifyBaselineHost); nothing is downloaded at
- * job time, since a per-job download failed the step whenever its host was
- * unreachable (the qemu tarball used to be fetched from github.com releases).
+ * the image the step runs on (getVerifyBaselineHost); neither is downloaded at
+ * job time. The qemu tarball used to be fetched from github.com releases per
+ * job, which failed the step whenever github.com was unreachable.
  * @param {Platform} platform
  * @returns {string}
  */
@@ -672,10 +672,10 @@ function getVerifyBaselineStep(platform, options) {
           `chmod +x ${profileDir}/${profileExe}`,
         ];
 
-  // verify-baseline is not a build lane: it stays on a host whose arch and libc
-  // match the TARGET, because qemu-user loads the emulated bun-profile against
-  // the host's own dynamic loader and libc (the shared arm64 build host has
-  // neither for an x64 or musl binary).
+  // verify-baseline is not a build lane: it runs on a host whose arch and libc
+  // match the TARGET, because verify-baseline.ts runs qemu-user without -L, so
+  // the emulated bun-profile resolves its dynamic loader and libc from the
+  // host's own / rather than from a sysroot.
   const host = getVerifyBaselineHost(platform);
   const agents =
     os === "windows"

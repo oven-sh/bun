@@ -1259,6 +1259,21 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("static accessor initializers run in source order with static fields", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const order = [];
+        class C {
+          static a = (order.push("a"), 1);
+          static accessor b = (order.push("b"), 2);
+          static c = (order.push("c"), C.b);
+        }
+        console.log(order.join(","), C.a, C.b, C.c);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a,b,c 1 2 2\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("instance accessor initializers run in source order with plain fields", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         const order = [];
@@ -1301,6 +1316,55 @@ describe("ES Decorators", () => {
       expect(stderr).toBe("");
       expect(stdout).toBe("7\n8\n");
       expect(exitCode).toBe(0);
+    });
+
+    test("instance private auto-accessor", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class C {
+          accessor #z = 5;
+          get z() { return this.#z; }
+          set z(v) { this.#z = v; }
+        }
+        const c = new C();
+        console.log(c.z);
+        c.z = 50;
+        console.log(c.z);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("5\n50\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("instance and static accessors may share a name", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class C {
+          accessor x = 1;
+          static accessor x = 2;
+        }
+        const c = new C();
+        c.x = 10;
+        C.x = 20;
+        console.log(c.x, C.x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("10 20\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("accessor lowers to a private backing field inside the class body", () => {
+      const transpiler = new Bun.Transpiler({ loader: "js", target: "bun" });
+      expect(transpiler.transformSync(`class C { accessor x = 1; }`)).toMatchInlineSnapshot(`
+        "class C {
+          #x = 1;
+          get x() {
+            return this.#x;
+          }
+          set x(v) {
+            this.#x = v;
+          }
+        }
+        "
+      `);
     });
 
     test("backing field name avoids the class's own private names", async () => {

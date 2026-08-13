@@ -317,7 +317,7 @@ pub enum Kind {
 
 impl Kind {
     #[inline]
-    pub(crate) fn is_private(self) -> bool {
+    pub fn is_private(self) -> bool {
         (self as u8) >= (Kind::PrivateField as u8)
             && (self as u8) <= (Kind::PrivateStaticGetSetPair as u8)
     }

@@ -754,6 +754,29 @@ pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool
     sys::directory_exists_at(get_cache_directory(this), folder_path).unwrap_or(false)
 }
 
+/// Cache hit for an unpatched entry: npm folders must contain `package.json`, git checkouts the `.bun-tag` written last.
+pub fn is_package_in_cache_at(cache_dir: Fd, folder_path: &ZStr, tag: ResolutionTag) -> bool {
+    let marker: &[u8] = match tag {
+        ResolutionTag::Npm => b"package.json",
+        ResolutionTag::Git => b".bun-tag",
+        _ => return sys::directory_exists_at(cache_dir, folder_path).unwrap_or(false),
+    };
+    let mut buf = PathBuffer::uninit();
+    let marker_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+        &mut buf.0,
+        &[folder_path.as_bytes(), marker],
+    );
+    sys::exists_at(cache_dir, marker_path)
+}
+
+pub fn is_package_in_cache(
+    this: &mut PackageManager,
+    folder_path: &ZStr,
+    tag: ResolutionTag,
+) -> bool {
+    is_package_in_cache_at(get_cache_directory(this), folder_path, tag)
+}
+
 // ─────────────────────────── global directories ───────────────────────────────
 
 pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) -> Result<(), Error> {

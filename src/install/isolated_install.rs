@@ -2348,25 +2348,11 @@ pub(crate) fn install_isolated_packages(
                         install::PreinstallState::Done => false,
                         _ => 'missing_from_cache: {
                             if matches!(patch_info, installer::PatchInfo::None) {
-                                let exists = match pkg_res_tag {
-                                    ResolutionTag::Npm => {
-                                        // Reshaped for borrowck — capture length
-                                        // instead of `save()` so the path stays unborrowed.
-                                        let cache_dir_path_save = pkg_cache_dir_subpath.len();
-                                        pkg_cache_dir_subpath.append(b"package.json").assume_ok();
-                                        let exists = sys::exists_at(
-                                            cache_dir,
-                                            pkg_cache_dir_subpath.slice_z(),
-                                        );
-                                        pkg_cache_dir_subpath.set_length(cache_dir_path_save);
-                                        exists
-                                    }
-                                    _ => sys::directory_exists_at(
-                                        cache_dir,
-                                        pkg_cache_dir_subpath.slice_z(),
-                                    )
-                                    .unwrap_or(false),
-                                };
+                                let exists = package_manager::directories::is_package_in_cache_at(
+                                    cache_dir,
+                                    pkg_cache_dir_subpath.slice_z(),
+                                    pkg_res_tag,
+                                );
                                 if exists {
                                     installer.manager_mut().set_preinstall_state(
                                         pkg_id,

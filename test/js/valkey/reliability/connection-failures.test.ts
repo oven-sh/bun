@@ -590,11 +590,17 @@ describe("Valkey: Recovering After fail()", () => {
         await client.connect();
         client.close();
         await fake.close();
-        const outcome = await client.connect().then(
+        let closes = 0;
+        client.onclose = () => closes++;
+        const attempt = client.connect();
+        // Reported from the event loop like a refused connection, not from
+        // inside connect(), so an onclose that calls connect() cannot recurse.
+        expect(closes).toBe(0);
+        const outcome = await attempt.then(
           () => "connected",
           (err: Error & { code: string }) => `rejected: ${err.code}`,
         );
-        expect(outcome).toBe("rejected: ERR_REDIS_CONNECTION_CLOSED");
+        expect({ outcome, closes }).toEqual({ outcome: "rejected: ERR_REDIS_CONNECTION_CLOSED", closes: 1 });
         await expect(client.ping()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
       } finally {
         client.close();

@@ -1191,15 +1191,30 @@ impl JSValkeyClient {
     /// `ValkeyClient::on_close()` is otherwise only reached from a socket's
     /// close or connect-error callback. Run it for a dial that failed before
     /// there was a socket, so the connect() promise, `onclose`, the retry
-    /// policy and the poll ref are handled the same way. `on_close()` releases
-    /// the ref a socket would have held, so take one for it to release.
-    fn on_close_without_socket(&self) -> JsTerminatedResult<()> {
-        let _guard = self.ref_scope();
+    /// policy and the poll ref are handled the same way. It runs from the
+    /// event loop like those callbacks do: `onclose` may call connect(), and
+    /// if that dial fails the same way it must not recurse into here.
+    /// `on_close()` releases the ref a socket would have held, so the task
+    /// takes one for it to release.
+    fn close_without_socket_next_tick(&self) {
+        fn run(this: *mut JSValkeyClient) -> bun_event_loop::JsResult<()> {
+            // SAFETY: adopts the ref taken at the enqueue site, which kept
+            // `this` alive until now and is released when this scope ends.
+            let _task_ref = unsafe { ScopedRef::adopt(this) };
+            // SAFETY: live per the ref above; tasks run on the JS thread.
+            let this = unsafe { &*this };
+            this.ref_();
+            this.client_mut().status = valkey::Status::Disconnected;
+            let result = this.client_mut().on_close();
+            this.update_poll_ref();
+            result.map_err(Into::into)
+        }
         self.ref_();
-        self.client_mut().status = valkey::Status::Disconnected;
-        let result = narrow_terminated(self.client_mut().on_close());
-        self.update_poll_ref();
-        result
+        let task = jsc::ManagedTask::ManagedTask::new(self.as_ctx_ptr(), run);
+        // SAFETY: VM-owned event loop pointer; uniquely accessed on the JS thread.
+        unsafe {
+            (*self.vm().event_loop()).enqueue_task(task);
+        }
     }
 
     pub(crate) fn on_reconnect_timer(&self) {
@@ -1241,7 +1256,7 @@ impl JSValkeyClient {
             );
             // Same outcome as a dial that fails asynchronously: another retry,
             // or fail() and a settled connect() promise once retries are used up.
-            let _ = self.on_close_without_socket();
+            self.close_without_socket_next_tick();
             return;
         }
 
@@ -1387,10 +1402,10 @@ impl JSValkeyClient {
     // Callback for when Valkey client needs to reconnect
     pub(crate) fn on_valkey_reconnect(&self) {
         // SAFETY: adopts connect()'s socket keep-alive ref for the just-closed
-        // socket (or the one `on_close_without_socket()` took in its place).
-        // Reached only from `ValkeyClient::on_close()`'s reconnect branch,
-        // which never calls `on_valkey_close()`, so this scope is the sole
-        // releaser. The caller holds its own scoped ref, so count > 0.
+        // socket (or the one `close_without_socket_next_tick()` took in its
+        // place). Reached only from `ValkeyClient::on_close()`'s reconnect
+        // branch, which never calls `on_valkey_close()`, so this scope is the
+        // sole releaser. The caller holds its own scoped ref, so count > 0.
         let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
 
         // This timer was bounding the attempt that just ended; left armed it
@@ -1406,8 +1421,8 @@ impl JSValkeyClient {
         let global_object = self.global_object;
 
         // SAFETY: adopts connect()'s socket keep-alive ref (or the one
-        // `on_close_without_socket()` took in its place); the caller holds its
-        // own scoped ref so count stays > 0 until this drops.
+        // `close_without_socket_next_tick()` took in its place); the caller
+        // holds its own scoped ref so count stays > 0 until this drops.
         let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
         let _defer = scopeguard::guard(BackRef::new(self), |p| p.update_poll_ref());
 

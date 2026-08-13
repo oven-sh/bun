@@ -8,7 +8,6 @@ use bstr::BStr;
 use bun_alloc::Arena as Bump;
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
-use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
@@ -44,7 +43,7 @@ pub(crate) struct TerminalHyperlink<'a> {
 }
 
 impl<'a> TerminalHyperlink<'a> {
-    pub(crate) fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
+    fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
         TerminalHyperlink {
             link,
             text,
@@ -110,7 +109,7 @@ struct PackageUpdate {
     workspace_path: Box<[u8]>,
 }
 
-pub(crate) struct CatalogUpdateRequest {
+struct CatalogUpdateRequest {
     // Owned copies keep the type lifetime-free (a few small allocations in
     // an interactive UI).
     package_name: Box<[u8]>,
@@ -272,7 +271,7 @@ impl UpdateInteractiveCommand {
         }
 
         let cli = CommandLineArguments::parse(Subcommand::Update)?;
-        let silent = cli.silent;
+        let silent = cli.log_level.is_silent();
 
         let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Update)
         {
@@ -544,20 +543,22 @@ impl UpdateInteractiveCommand {
             }
         }
 
-        let workspace_pkg_ids: Vec<PackageID> = if !manager.options.filter_patterns.is_empty() {
-            let filters = manager.options.filter_patterns;
-            Self::find_matching_workspaces(original_cwd, manager, filters)
-        } else if manager.options.do_.recursive() {
-            Self::get_all_workspaces(manager)
-        } else {
-            let root_pkg_id = manager
-                .root_package_id
-                .get(&manager.lockfile, manager.workspace_name_hash);
-            if root_pkg_id == INVALID_PACKAGE_ID {
-                return Ok(());
-            }
-            vec![root_pkg_id]
-        };
+        let workspace_pkg_ids: Vec<PackageID> =
+            if !manager.options.filter_patterns.is_empty() || manager.options.do_.recursive() {
+                WorkspaceFilter::select_workspaces(
+                    &manager.lockfile,
+                    manager.options.filter_patterns,
+                    original_cwd,
+                )
+            } else {
+                let root_pkg_id = manager
+                    .root_package_id
+                    .get(&manager.lockfile, manager.workspace_name_hash);
+                if root_pkg_id == INVALID_PACKAGE_ID {
+                    return Ok(());
+                }
+                vec![root_pkg_id]
+            };
 
         populate_manifest_cache::populate_manifest_cache(
             manager,
@@ -729,113 +730,6 @@ impl UpdateInteractiveCommand {
             }
         }
         Ok(())
-    }
-
-    fn get_all_workspaces(manager: &PackageManager) -> Vec<PackageID> {
-        let lockfile = &manager.lockfile;
-        let packages = lockfile.packages.slice();
-        let pkg_resolutions = packages.items_resolution();
-
-        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != resolution::Tag::Workspace
-                && resolution.tag != resolution::Tag::Root
-            {
-                continue;
-            }
-            workspace_pkg_ids.push(pkg_id as PackageID);
-        }
-        workspace_pkg_ids
-    }
-
-    fn find_matching_workspaces(
-        original_cwd: &[u8],
-        manager: &PackageManager,
-        filters: &[&[u8]],
-    ) -> Vec<PackageID> {
-        let lockfile = &manager.lockfile;
-        let packages = lockfile.packages.slice();
-        let pkg_names = packages.items_name();
-        let pkg_resolutions = packages.items_resolution();
-        let string_buf = lockfile.buffers.string_bytes.as_slice();
-
-        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != resolution::Tag::Workspace
-                && resolution.tag != resolution::Tag::Root
-            {
-                continue;
-            }
-            workspace_pkg_ids.push(pkg_id as PackageID);
-        }
-
-        let mut path_buf = PathBuffer::uninit();
-
-        let converted_filters: Vec<WorkspaceFilter> = filters
-            .iter()
-            .map(|filter| {
-                WorkspaceFilter::init(filter, original_cwd, &mut path_buf.0).expect("OOM")
-            })
-            .collect();
-        // `defer { filter.deinit(allocator); allocator.free(...) }` — implicit via Drop.
-
-        // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
-        let top_level_dir = FileSystem::get().top_level_dir;
-
-        // move all matched workspaces to front of array
-        let mut i: usize = 0;
-        while i < workspace_pkg_ids.len() {
-            let workspace_pkg_id = workspace_pkg_ids[i];
-
-            let matched = 'matched: {
-                for filter in &converted_filters {
-                    match filter {
-                        WorkspaceFilter::Path(pattern) => {
-                            if pattern.is_empty() {
-                                continue;
-                            }
-                            let res = &pkg_resolutions[workspace_pkg_id as usize];
-                            let res_path: &[u8] = match res.tag {
-                                resolution::Tag::Workspace => res.workspace().slice(string_buf),
-                                resolution::Tag::Root => top_level_dir,
-                                _ => unreachable!(),
-                            };
-
-                            let abs_res_path = path::resolve_path::join_abs_string_buf::<
-                                path::platform::Posix,
-                            >(
-                                top_level_dir, &mut path_buf.0, &[res_path]
-                            );
-
-                            if !glob::r#match(
-                                pattern,
-                                strings::without_trailing_slash(abs_res_path),
-                            )
-                            .matches()
-                            {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::Name(pattern) => {
-                            let name = pkg_names[workspace_pkg_id as usize].slice(string_buf);
-                            if !glob::r#match(pattern, name).matches() {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::All => {}
-                    }
-                }
-                true
-            };
-
-            if matched {
-                i += 1;
-            } else {
-                workspace_pkg_ids.swap_remove(i);
-            }
-        }
-
-        workspace_pkg_ids
     }
 
     fn group_catalog_dependencies(
@@ -2170,9 +2064,8 @@ impl UpdateInteractiveCommand {
                                     if c == b'M' || c == b'm' {
                                         // Parse SGR mouse event: ESC[<button;col;row(M or m)
                                         // button: 64 = scroll up, 65 = scroll down
-                                        let mut parts = buffer[0..buf_idx]
-                                            .split(|b| *b == b';')
-                                            .filter(|s| !s.is_empty());
+                                        let mut parts =
+                                            strings::tokenize(&buffer[0..buf_idx], b";");
                                         if let Some(button_str) = parts.next() {
                                             let button: u32 =
                                                 strings::parse_int(button_str, 10).unwrap_or(0);
@@ -2243,7 +2136,7 @@ fn leak_dup(bytes: &[u8]) -> &'static [u8] {
 // No `manager` parameter: a local `Bump` is used instead
 // (`E::Object::put` ignores its allocator arg), which keeps
 // `update_catalog_definitions` borrowck-clean.
-pub(crate) fn edit_catalog_definitions(
+fn edit_catalog_definitions(
     updates: &mut [CatalogUpdateRequest],
     current_package_json: &mut Expr,
 ) -> crate::Result<()> {

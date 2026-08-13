@@ -117,7 +117,7 @@ describe("ResolveMessage", () => {
     expect(async () => {
       // @ts-ignore
       await import(":://filesystem");
-    }).toThrow("Cannot find module");
+    }).toThrow("Cannot find package '::'");
   });
 
   it("referrer is not freed before it is read", () => {

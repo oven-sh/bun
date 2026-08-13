@@ -55,8 +55,9 @@ public:
     // setUpDirectStreamController, matching the native-sink path's m_onPull).
     JSC::WriteBarrier<JSC::JSObject> m_underlyingSource;
     JSC::WriteBarrier<JSC::JSObject> m_pull;
-    // _pendingRead — the promise the in-flight read() is waiting on. handleError rejects
-    // AND CLEARS it.
+    // _pendingRead — the promise the in-flight read()/readMany() is waiting on. Only
+    // promise-backed reads register here; pipeTo / tee / for-await reads wait in the
+    // reader's [[readRequests]] instead (see onPull). handleError rejects AND CLEARS it.
     JSC::WriteBarrier<JSC::JSPromise> m_pendingRead;
     // _deferCloseReason
     JSC::WriteBarrier<JSC::Unknown> m_deferCloseReason;
@@ -77,7 +78,7 @@ public:
     bool m_calledDone : 1 { false };
     // End-of-tick auto-flush (the JS-facing analogue of the HTTP sink's AutoFlusher):
     // armed by write() when data is buffered below the HWM while a consumer waits; the
-    // deferred task runs right after the current microtask drain and delivers it.
+    // process.nextTick job delivers it during the same microtask/nextTick drain.
     bool m_endOfTickFlushArmed : 1 { false };
     bool m_finalChunkArmed : 1 { false };
 
@@ -104,8 +105,12 @@ public:
     JSC::WriteBarrier<JSC::Unknown> m_finalChunk;
 
     // The state machine. All userJS: YES.
-    // the READ pump: the default reader's read()/readMany() on a Direct stream lands here.
-    JSC::JSValue onPull(JSC::JSGlobalObject*);
+    // The READ pump: every default-reader read on a Direct stream lands here. A promise-backed
+    // read()/readMany() passes readRequestQueued=false and adopts the returned promise
+    // (undefined when the pump refused). A pipeTo / tee / for-await read adds its
+    // JSReadRequest to [[readRequests]] first and passes readRequestQueued=true: that
+    // request is the consumer, the pump registers no promise for it and returns undefined.
+    JSC::JSValue onPull(JSC::JSGlobalObject*, bool readRequestQueued);
     // `end()` / `close(reason)` — reason may be the empty JSValue (absent).
     void onClose(JSC::JSGlobalObject*, JSC::JSValue reason);
     // `flush()` — BRANCH ORDER IS LOAD-BEARING.

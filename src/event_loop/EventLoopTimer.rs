@@ -1,6 +1,3 @@
-use core::ffi::c_void;
-use core::ptr::NonNull;
-
 // LAYERING: re-export `bun_core::Timespec` so every embedder of
 // `EventLoopTimer.next` agrees on the type (was a local stub with the same
 // `{sec,nsec}` layout, which forced higher tiers — `bun_runtime`, `bun_sql_jsc`
@@ -141,7 +138,7 @@ impl EventLoopTimer {
     /// `bun_runtime::dispatch::__bun_js_timer_epoch` (link-time extern).
     /// Returns `None` for non-JS timer tags.
     #[inline]
-    pub fn js_timer_epoch(&self) -> Option<u32> {
+    pub(crate) fn js_timer_epoch(&self) -> Option<u32> {
         // SAFETY: `self` is a live timer; the extern impl reads `tag` and
         // recovers the container via `offset_of`.
         unsafe { __bun_js_timer_epoch(self.tag, self) }
@@ -181,12 +178,12 @@ impl EventLoopTimer {
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum Tag {
-    TimerCallback,
     TimeoutObject,
     ImmediateObject,
     StatWatcherScheduler,
     UpgradedDuplex,
     DNSResolver,
+    DnsSdConnection,
     WindowsNamedPipe,
     WTFTimer,
     PostgresSQLConnectionTimeout,
@@ -203,7 +200,6 @@ pub enum Tag {
     BunTest,
     EventLoopDelayMonitor,
     CronJob,
-    GcOneShot,
     GcRepeating,
     QuicEndpoint,
 }
@@ -215,19 +211,13 @@ impl Tag {
             | Tag::BunTest // for test timeouts
             | Tag::EventLoopDelayMonitor // probably important
             | Tag::StatWatcherScheduler
-            | Tag::GcOneShot | Tag::GcRepeating // internal GC pacing
+            | Tag::GcRepeating // internal GC pacing
             | Tag::QuicEndpoint
+            | Tag::DnsSdConnection // internal lookup pacing
             => false,
             _ => true,
         }
     }
-}
-
-pub struct TimerCallback {
-    pub callback: fn(*mut TimerCallback),
-    // Opaque user ctx; ownership stays with whoever installs the callback.
-    pub ctx: Option<NonNull<c_void>>,
-    pub event_loop_timer: EventLoopTimer,
 }
 
 /// Stamp out one `unsafe fn $method(*const EventLoopTimer) -> *mut Self` per
@@ -269,8 +259,6 @@ macro_rules! impl_timer_owner {
         }
     };
 }
-
-crate::impl_timer_owner!(TimerCallback; from_timer_ptr => event_loop_timer);
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Default)]

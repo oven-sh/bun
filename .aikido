@@ -5,7 +5,6 @@ exclude:
     - bench
     - packages/bun-lambda
     - packages/bun-release
-    - packages/bun-wasm
     - packages/bun-vscode
     - packages/bun-plugin-yaml
     - packages/bun-plugin-svelte

@@ -36,7 +36,9 @@ const ArrayPrototypeSplice = Array.prototype.splice;
 var ArrayBufferIsView = ArrayBuffer.isView;
 
 var NumberIsInteger = Number.isInteger;
+var ObjectHasOwn = Object.hasOwn;
 var StringPrototypeIncludes = String.prototype.includes;
+var StringPrototypeStartsWith = String.prototype.startsWith;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
@@ -238,6 +240,7 @@ function execFile(file, args, options, callback) {
     killSignal: options.killSignal,
     uid: options.uid,
     gid: options.gid,
+    cgroup: options.cgroup,
     windowsHide: options.windowsHide,
     windowsVerbatimArguments: options.windowsVerbatimArguments,
     shell: options.shell,
@@ -569,6 +572,7 @@ function spawnSync(file, args, options) {
       detached: options.detached,
       uid: options.uid,
       gid: options.gid,
+      cgroup: options.cgroup,
       windowsVerbatimArguments: options.windowsVerbatimArguments,
       windowsHide: options.windowsHide,
       argv0: options.args[0],
@@ -1138,13 +1142,13 @@ class ChildProcess extends EventEmitter {
         stderr = this.#stderr;
 
       if (stdout === undefined) {
-        this.#stdout = this.#getBunSpawnIo(1, this.#encoding, true);
+        this.#stdout = this.#getBunSpawnIo(1, true);
       } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout.destroyed && stdout.readable) {
         stdout.resume?.();
       }
 
       if (stderr === undefined) {
-        this.#stderr = this.#getBunSpawnIo(2, this.#encoding, true);
+        this.#stderr = this.#getBunSpawnIo(2, true);
       } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr.destroyed && stderr.readable) {
         stderr.resume?.();
       }
@@ -1177,7 +1181,7 @@ class ChildProcess extends EventEmitter {
     this.#maybeClose();
   }
 
-  #getBunSpawnIo(i, encoding, autoResume = false) {
+  #getBunSpawnIo(i, autoResume = false) {
     if ($debug && !this.#handle) {
       if (this.#handle === null) {
         $debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
@@ -1247,7 +1251,7 @@ class ChildProcess extends EventEmitter {
               return stream;
             }
 
-            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, { encoding });
+            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, {});
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();
@@ -1286,7 +1290,6 @@ class ChildProcess extends EventEmitter {
   #stdout;
   #stderr;
   #stdioObject;
-  #encoding;
   #stdioOptions;
 
   #createStdioObject() {
@@ -1314,7 +1317,7 @@ class ChildProcess extends EventEmitter {
           result[i] = this.stderr;
           continue;
         default:
-          result[i] = this.#getBunSpawnIo(i, this.#encoding, false);
+          result[i] = this.#getBunSpawnIo(i, false);
           continue;
       }
     }
@@ -1322,15 +1325,15 @@ class ChildProcess extends EventEmitter {
   }
 
   get stdin() {
-    return (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false));
+    return (this.#stdin ??= this.#getBunSpawnIo(0, false));
   }
 
   get stdout() {
-    return (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false));
+    return (this.#stdout ??= this.#getBunSpawnIo(1, false));
   }
 
   get stderr() {
-    return (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false));
+    return (this.#stderr ??= this.#getBunSpawnIo(2, false));
   }
 
   get stdio() {
@@ -1382,7 +1385,6 @@ class ChildProcess extends EventEmitter {
     var env = options[kBunEnv] || parseEnvPairs(envPairs) || process.env;
 
     const detachedOption = options.detached;
-    this.#encoding = options.encoding || undefined;
     this.#stdioOptions = bunStdio;
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
@@ -1412,6 +1414,7 @@ class ChildProcess extends EventEmitter {
         detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
         uid: options.uid,
         gid: options.gid,
+        cgroup: options.cgroup,
         onExit: (handle, exitCode, signalCode, err) => {
           this.#handle = handle;
           this.pid = this.#handle.pid;
@@ -1502,7 +1505,7 @@ class ChildProcess extends EventEmitter {
   }
 
   #emitIpcMessage(message, _, handle) {
-    this.emit("message", message, handle);
+    this.emit(isInternalIpcMessage(message) ? "internalMessage" : "message", message, handle);
   }
 
   #send(message, handle, options, callback) {
@@ -1604,7 +1607,7 @@ class ChildProcess extends EventEmitter {
     Object.defineProperties(this.prototype, {
       stdin: {
         get: function () {
-          const value = (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false));
+          const value = (this.#stdin ??= this.#getBunSpawnIo(0, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdin", {
             value: value,
@@ -1619,7 +1622,7 @@ class ChildProcess extends EventEmitter {
       },
       stdout: {
         get: function () {
-          const value = (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false));
+          const value = (this.#stdout ??= this.#getBunSpawnIo(1, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdout", {
             value: value,
@@ -1634,7 +1637,7 @@ class ChildProcess extends EventEmitter {
       },
       stderr: {
         get: function () {
-          const value = (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false));
+          const value = (this.#stderr ??= this.#getBunSpawnIo(2, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stderr", {
             value: value,
@@ -1677,6 +1680,35 @@ const nodeToBunLookup = {
   ipc: "ipc",
 };
 
+const INTERNAL_IPC_PREFIX = "NODE_";
+
+function isInternalIpcMessage(message) {
+  if (message === null || typeof message !== "object") return false;
+  if (!ObjectHasOwn(message, "cmd")) return false;
+  const cmd = message.cmd;
+  if (typeof cmd !== "string" || cmd.length <= INTERNAL_IPC_PREFIX.length) return false;
+  return StringPrototypeStartsWith.$call(cmd, INTERNAL_IPC_PREFIX);
+}
+
+function streamFdOf(item): number | undefined {
+  const itemFd = ObjectHasOwn(item, "fd") ? item.fd : undefined;
+  if (typeof itemFd === "number") return itemFd;
+
+  const handle = item._handle;
+  const handleFd = handle ? handle.fd : undefined;
+  if (typeof handleFd === "number") return handleFd;
+
+  if (item.destroyed) return undefined;
+
+  const sink = item[require("internal/fs/streams").kWriteStreamFastPath];
+  if (sink && sink !== true) {
+    const fd = sink._getFd();
+    if (typeof fd === "number" && fd >= 0) return fd;
+  }
+
+  return undefined;
+}
+
 function nodeToBun(item: string, index: number): string | number | null | NodeJS.TypedArray | ArrayBufferView {
   // If not defined, use the default.
   // For stdin/stdout/stderr, it's pipe. For others, it's ignore.
@@ -1688,21 +1720,13 @@ function nodeToBun(item: string, index: number): string | number | null | NodeJS
   if (typeof item === "number") {
     return item;
   }
-  if (isNodeStreamReadable(item)) {
-    const itemFd = Object.hasOwn(item, "fd") ? item.fd : undefined;
-    if (typeof itemFd === "number") return itemFd;
-    const handle = item._handle;
-    const handleFd = handle ? handle.fd : undefined;
-    if (typeof handleFd === "number") return handleFd;
-    throw new Error(`TODO: stream.Readable stdio @ ${index}`);
-  }
-  if (isNodeStreamWritable(item)) {
-    const itemFd = Object.hasOwn(item, "fd") ? item.fd : undefined;
-    if (typeof itemFd === "number") return itemFd;
-    const handle = item._handle;
-    const handleFd = handle ? handle.fd : undefined;
-    if (typeof handleFd === "number") return handleFd;
-    throw new Error(`TODO: stream.Writable stdio @ ${index}`);
+  if (isNodeStreamReadable(item) || isNodeStreamWritable(item)) {
+    const fd = streamFdOf(item);
+    if (fd !== undefined) return fd;
+    const kind = isNodeStreamReadable(item) ? "Readable" : "Writable";
+    throw new Error(
+      `Passing a stream.${kind} without an underlying file descriptor as stdio[${index}] is not yet implemented in Bun`,
+    );
   }
   const result = nodeToBunLookup[item];
   if (result === undefined) {
@@ -1788,6 +1812,8 @@ function normalizeStdio(stdio): string[] {
         return ["ignore", "ignore", "ignore"];
       case "pipe":
         return ["pipe", "pipe", "pipe"];
+      case "overlapped":
+        return ["overlapped", "overlapped", "overlapped"];
       case "inherit":
         return ["inherit", "inherit", "inherit"];
       default:

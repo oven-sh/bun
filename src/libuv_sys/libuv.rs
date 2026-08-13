@@ -22,13 +22,16 @@ use core::{fmt, mem, ptr};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Debug log scope (`bun.Output.scoped(.uv, .hidden)`). This crate is leaf
-// (no `bun_output` dep), so the macro compiles to nothing in release and to
-// an `eprintln!` gated by `BUN_DEBUG_uv` in debug.
+// (no `bun_output` dep): an `eprintln!` gated by `BUN_DEBUG_uv` in debug, a
+// constant-false branch in release — the arguments stay type-checked (and
+// count as used) in both, like `bun_core::scoped_log!`.
 // ──────────────────────────────────────────────────────────────────────────
 #[doc(hidden)]
-#[cfg(debug_assertions)]
 #[inline]
 pub fn __uv_log_enabled() -> bool {
+    if !cfg!(debug_assertions) {
+        return false;
+    }
     // `Output.scoped` reads the env var once at startup; `inc/dec` are on the
     // per-handle ref/unref hot path, so cache the lookup instead of paying a
     // GetEnvironmentVariableW syscall + alloc per tick.
@@ -39,8 +42,7 @@ pub fn __uv_log_enabled() -> bool {
 #[macro_export]
 macro_rules! __uv_log {
     ($($arg:tt)*) => {{
-        #[cfg(debug_assertions)]
-        if $crate::__uv_log_enabled() {
+        if ::core::cfg!(debug_assertions) && $crate::__uv_log_enabled() {
             ::std::eprintln!("[uv] {}", ::std::format_args!($($arg)*));
         }
     }};
@@ -88,16 +90,16 @@ pub type uv_file = c_int;
 pub type uv_os_sock_t = SOCKET;
 pub type uv_os_fd_t = HANDLE;
 pub type uv_pid_t = c_int;
-pub type uv_thread_t = HANDLE;
+pub(crate) type uv_thread_t = HANDLE;
 pub type uv_sem_t = HANDLE;
 pub type uv_uid_t = u8;
 pub type uv_gid_t = u8;
 pub type uv_req_type = c_uint;
 pub type uv_fs_type = c_int;
 pub type uv_errno_t = c_int;
-pub type uv_loop_option = c_uint;
-pub type uv_membership = c_uint;
-pub type uv_tty_mode_t = c_uint;
+pub(crate) type uv_loop_option = c_uint;
+pub(crate) type uv_membership = c_uint;
+pub(crate) type uv_tty_mode_t = c_uint;
 /// `uv_tty_mode_t` (uv.h) — typed wrapper for `uv_tty_set_mode` callers.
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -109,9 +111,9 @@ pub enum TtyMode {
     /// terminal (Windows ENABLE_VIRTUAL_TERMINAL_INPUT). Aligns with POSIX raw.
     Vt = 3,
 }
-pub type uv_tty_vtermstate_t = c_uint;
+pub(crate) type uv_tty_vtermstate_t = c_uint;
 pub type uv_stdio_flags = c_uint;
-pub type uv_clock_id = c_uint;
+pub(crate) type uv_clock_id = c_uint;
 pub type uv_dirent_type_t = c_uint;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -241,7 +243,7 @@ pub struct Handle {
     pub handle_queue: uv__queue,
     pub u: handle_u,
     pub endgame_next: *mut Handle,
-    pub flags: c_uint,
+    pub(crate) flags: c_uint,
 }
 pub type uv_handle_t = Handle;
 pub type uv_handle_s = Handle;
@@ -319,11 +321,11 @@ pub type uv_idle_cb = Option<unsafe extern "C" fn(*mut uv_idle_t)>;
 pub type uv_poll_cb = Option<unsafe extern "C" fn(*mut uv_poll_t, c_int, c_int)>;
 pub type uv_signal_cb = Option<unsafe extern "C" fn(*mut uv_signal_t, c_int)>;
 pub type uv_exit_cb = Option<unsafe extern "C" fn(*mut Process, i64, c_int)>;
-pub type uv_walk_cb = Option<unsafe extern "C" fn(*mut uv_handle_t, *mut c_void)>;
+pub(crate) type uv_walk_cb = Option<unsafe extern "C" fn(*mut uv_handle_t, *mut c_void)>;
 pub type uv_fs_cb = Option<unsafe extern "C" fn(*mut fs_t)>;
 pub type uv_fs_event_cb =
     Option<unsafe extern "C" fn(*mut uv_fs_event_t, *const c_char, c_int, ReturnCode)>;
-pub type uv_fs_poll_cb =
+pub(crate) type uv_fs_poll_cb =
     Option<unsafe extern "C" fn(*mut uv_fs_poll_t, c_int, *const uv_stat_t, *const uv_stat_t)>;
 pub type uv_udp_send_cb = Option<unsafe extern "C" fn(*mut uv_udp_send_t, c_int)>;
 pub type uv_udp_recv_cb =
@@ -335,7 +337,7 @@ pub type uv_getnameinfo_cb =
 pub type uv_work_cb = Option<unsafe extern "C" fn(*mut uv_work_t)>;
 pub type uv_after_work_cb = Option<unsafe extern "C" fn(*mut uv_work_t, c_int)>;
 pub type uv_random_cb = Option<unsafe extern "C" fn(*mut uv_random_t, c_int, *mut c_void, usize)>;
-pub type uv_thread_cb = Option<unsafe extern "C" fn(*mut c_void)>;
+pub(crate) type uv_thread_cb = Option<unsafe extern "C" fn(*mut c_void)>;
 pub type uv_malloc_func = Option<unsafe extern "C" fn(usize) -> *mut c_void>;
 pub type uv_realloc_func = Option<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void>;
 pub type uv_calloc_func = Option<unsafe extern "C" fn(usize, usize) -> *mut c_void>;
@@ -401,6 +403,24 @@ thread_local! {
     static THREADLOCAL_LOOP: Cell<*mut Loop> = const { Cell::new(ptr::null_mut()) };
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Open stream/process handles on this thread — Bun's HandleWrap list.
+//
+// Every `uv_pipe_t`, `uv_tty_t` (except the process-static stdin tty) and
+// `uv_process_t` this thread initialises is listed here from `init`/`spawn`
+// until the `uv_close` for it is issued (`UvHandle::close`,
+// `Pipe::close_and_destroy`). Whoever currently drives the handle records
+// itself with [`open_handles::set_owner`] — readers/writers do so through
+// `Source::set_owner`, IPC / named pipes / Process when they take the handle —
+// so a thread teardown can close each handle through its owner's ordinary
+// close path (parents observe the close; pending writes finish ECANCELED)
+// while the VM is alive, or directly if nothing ever adopted it. Keyed by the
+// handle's address, which is stable for its life (boxed / embedded in a boxed
+// owner), so ownership moving between objects needs no re-registration.
+// ──────────────────────────────────────────────────────────────────────────
+#[path = "open_handles.rs"]
+pub mod open_handles;
+
 impl Loop {
     /// Returns this thread's
     /// libuv loop, lazily `uv_loop_init`ing it on first call. Each thread owns
@@ -427,9 +447,41 @@ impl Loop {
         })
     }
 
-    /// Closes this
-    /// thread's libuv loop. Called from `WebWorker::shutdown`.
-    pub fn shutdown() {
+    /// Complete every in-flight request on this thread's loop (fs, write,
+    /// connect): requests cannot be cancelled, and their callbacks expect the
+    /// VM that issued them — and may start more work (a shell pipeline moving
+    /// to its next builtin) — so teardown runs this in its stop phase, script
+    /// forbidden but the VM alive and still accepting (and later awaiting)
+    /// off-thread work (Node's `CleanupHandles`). `true` if anything ran.
+    pub fn drain_requests() -> bool {
+        THREADLOCAL_LOOP.with(|slot| {
+            let loop_ = slot.get();
+            if loop_.is_null() {
+                return false;
+            }
+            let mut ran = false;
+            // SAFETY: live per-thread loop; `count` is the active arm of the
+            // union whenever the loop is initialised (uv/win.h).
+            unsafe {
+                while (*loop_).active_reqs.count > 0 {
+                    log!("drain_requests: {} in flight", (*loop_).active_reqs.count);
+                    uv_run(loop_, RunMode::Once);
+                    ran = true;
+                }
+            }
+            ran
+        })
+    }
+
+    /// Closes this thread's libuv loop. Called from `WebWorker::shutdown` after
+    /// the thread's uws loop has been freed and the event loop's pending
+    /// keep-alive delta has been folded (Bun's virtual keep-alive count shares
+    /// `active_handles` with libuv, so an unbalanced ref would keep the loop
+    /// alive forever). Every handle Bun registered on the loop must have been
+    /// closed while its owner was alive; what remains here is uSockets' own
+    /// pre/check/async/timer, closed by us_loop_free and freed by their close
+    /// callbacks when the loop next turns.
+    pub fn close_thread_loop() {
         THREADLOCAL_LOOP.with(|slot| {
             let loop_ = slot.get();
             if loop_.is_null() {
@@ -437,17 +489,37 @@ impl Loop {
             }
             // SAFETY: `loop_` is the live per-thread loop initialized in `get()`.
             if let Some(err) = unsafe { uv_loop_close(loop_) }.raw_errno() {
-                // Only EBUSY means handles are
-                // still open; walk + close them, run once to flush close
-                // callbacks, then close again (must succeed). `uv_loop_close`
-                // documents no other failure code.
+                // Only EBUSY means handles are still linked; walk + close any not
+                // already closing, run to flush close callbacks and endgames, then
+                // close again (must succeed). `uv_loop_close` documents no other
+                // failure code.
                 if err == (UV_EBUSY as c_int).unsigned_abs() as u16 {
+                    // Anything open and not already closing here was left by an
+                    // owner that never closed it; name it under BUN_DEBUG_uv.
+                    // SAFETY: every linked handle's storage is still allocated
+                    // (owners are freed only after this returns).
+                    unsafe { uv_walk(loop_, Some(log_unclosed_cb), ptr::null_mut()) };
                     unsafe { uv_walk(loop_, Some(close_walk_cb), ptr::null_mut()) };
-                    let _ = unsafe { uv_run(loop_, RunMode::Default) };
-                    // NOTE the call is unconditional — the close must run in
-                    // release builds too.
-                    let rc = unsafe { uv_loop_close(loop_) };
-                    debug_assert_eq!(rc, ReturnCode::ZERO);
+                    // Everything is closing now; only close callbacks / endgames
+                    // remain. Turn the loop without blocking until they have run —
+                    // RunMode::Default would also wait on ref'd-but-idle state
+                    // (Bun's virtual keep-alive count lives in active_handles) and
+                    // never return.
+                    let mut rc = ReturnCode::ZERO;
+                    for _ in 0..64 {
+                        // SAFETY: this thread's initialised loop; nothing else drives it.
+                        let _ = unsafe { uv_run(loop_, RunMode::NoWait) };
+                        // SAFETY: as above.
+                        rc = unsafe { uv_loop_close(loop_) };
+                        if rc == ReturnCode::ZERO {
+                            break;
+                        }
+                    }
+                    debug_assert_eq!(
+                        rc,
+                        ReturnCode::ZERO,
+                        "uv loop still busy after closing every handle"
+                    );
                 }
             }
             slot.set(ptr::null_mut());
@@ -535,6 +607,44 @@ impl Loop {
     }
 }
 
+/// `Loop::close_thread_loop` diagnostics: which handles keep the worker's loop busy.
+unsafe extern "C" fn log_unclosed_cb(handle: *mut uv_handle_t, data: *mut c_void) {
+    // SAFETY: libuv passes live handles.
+    if unsafe { uv_is_closing(handle) } == 0 {
+        // SAFETY: as above.
+        unsafe { log_walk_cb(handle, data) };
+    }
+}
+
+/// # Safety
+/// `handle` is a live libuv handle (only its header is read).
+unsafe fn handle_type_name<'a>(handle: *mut uv_handle_t) -> &'a str {
+    // SAFETY: fn contract; libuv returns a static C string or null.
+    unsafe {
+        let name = uv_handle_type_name(uv_handle_get_type(handle));
+        if name.is_null() {
+            "?"
+        } else {
+            core::ffi::CStr::from_ptr(name).to_str().unwrap_or("?")
+        }
+    }
+}
+
+unsafe extern "C" fn log_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void) {
+    // SAFETY: libuv passes a live handle; these calls only read its header.
+    unsafe {
+        log!(
+            "handle left open by its owner: {} @{:p} active={} closing={} ref={} data={:p}",
+            handle_type_name(handle),
+            handle,
+            uv_is_active(handle),
+            uv_is_closing(handle),
+            uv_has_ref(handle),
+            (*handle).data
+        );
+    }
+}
+
 unsafe extern "C" fn close_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void) {
     // SAFETY: libuv passes a live handle.
     if unsafe { uv_is_closing(handle) } == 0 {
@@ -613,6 +723,7 @@ pub unsafe trait UvHandle: Sized {
     /// `*mut Self`. ABI-identical to `uv_close_cb` modulo the pointee type.
     #[inline]
     fn close(&mut self, cb: unsafe extern "C" fn(*mut Self)) {
+        open_handles::remove(self.as_handle_mut());
         // SAFETY: `Self` embeds `uv_handle_t` at offset 0; cb is ABI-identical.
         unsafe {
             uv_close(
@@ -916,9 +1027,9 @@ pub type struct_uv_stream_s = uv_stream_t;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct uv_write_t {
-    pub data: *mut c_void,
+    pub(crate) data: *mut c_void,
     pub type_: uv_req_type,
-    pub reserved: [*mut c_void; 6],
+    pub(crate) reserved: [*mut c_void; 6],
     pub u: req_u,
     pub next_req: *mut uv_req_t,
     pub cb: uv_write_cb,
@@ -1149,7 +1260,7 @@ union pipe_u {
 #[repr(C)]
 pub struct Pipe {
     pub data: *mut c_void,
-    pub loop_: *mut Loop,
+    pub(crate) loop_: *mut Loop,
     pub type_: HandleType,
     pub close_cb: uv_close_cb,
     pub handle_queue: uv__queue,
@@ -1171,13 +1282,22 @@ pub struct Pipe {
 pub type uv_pipe_t = Pipe;
 
 impl Pipe {
+    #[inline]
+    pub fn ipc_remote_pid(&self) -> DWORD {
+        // SAFETY: `conn` is the active variant for a connected IPC pipe (init
+        unsafe { self.pipe.conn.ipc_remote_pid }
+    }
     /// `uv_pipe_init` wrapper. Returns the raw `ReturnCode`; callers
     /// in higher tiers map to `bun_sys::Result` themselves so this crate stays
     /// free of `bun_sys`.
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop, ipc: bool) -> ReturnCode {
         // SAFETY: `self` is a valid `uv_pipe_t`-sized allocation.
-        unsafe { uv_pipe_init(loop_, self, if ipc { 1 } else { 0 }) }
+        let rc = unsafe { uv_pipe_init(loop_, self, if ipc { 1 } else { 0 }) };
+        if rc.0 == 0 {
+            open_handles::add_pipe(self);
+        }
+        rc
     }
     #[inline]
     pub fn open(&mut self, file: uv_file) -> ReturnCode {
@@ -1185,14 +1305,14 @@ impl Pipe {
         unsafe { uv_pipe_open(self, file) }
     }
     #[inline]
-    pub fn bind(&mut self, named_pipe: &[u8], flags: c_uint) -> ReturnCode {
+    pub(crate) fn bind(&mut self, named_pipe: &[u8], flags: c_uint) -> ReturnCode {
         // SAFETY: pipe was `init`ed; libuv copies the name.
         unsafe { uv_pipe_bind2(self, named_pipe.as_ptr(), named_pipe.len(), flags) }
     }
     /// Caller supplies a plain
     /// `uv_connection_cb` and recovers its context from `handle.data` itself.
     #[inline]
-    pub fn listen(
+    pub(crate) fn listen(
         &mut self,
         backlog: i32,
         context: *mut c_void,
@@ -1267,6 +1387,16 @@ impl Pipe {
     /// registered `uv_close` callback is assumed to free the box;
     /// if a non-freeing callback was registered, the pipe leaks.
     pub unsafe fn close_and_destroy(this: *mut Pipe) {
+        open_handles::remove(this.cast());
+        // SAFETY: caller contract.
+        unsafe { Self::close_and_destroy_unlisted(this) }
+    }
+
+    /// [`close_and_destroy`] for a pipe already taken off the open-handles list.
+    ///
+    /// # Safety
+    /// As [`close_and_destroy`].
+    pub(crate) unsafe fn close_and_destroy_unlisted(this: *mut Pipe) {
         unsafe extern "C" fn on_close_destroy(handle: *mut Pipe) {
             // SAFETY: handle was Box-allocated; callback fires exactly once.
             drop(unsafe { Box::from_raw(handle) });
@@ -1343,7 +1473,13 @@ impl uv_tty_t {
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop, file: uv_file) -> ReturnCode {
         // SAFETY: self is a valid `uv_tty_t`-sized allocation.
-        unsafe { uv_tty_init(loop_, self, file, 0) }
+        let rc = unsafe { uv_tty_init(loop_, self, file, 0) };
+        // fd 0 is the process-static stdin tty (never freed, shared across
+        // threads by design); everything else is a heap tty owned by this thread.
+        if rc.0 == 0 && file != 0 {
+            open_handles::add_tty(self);
+        }
+        rc
     }
     #[inline]
     pub fn set_mode(&mut self, mode: TtyMode) -> ReturnCode {
@@ -1574,7 +1710,11 @@ impl Process {
     #[inline]
     pub fn spawn(&mut self, loop_: *mut Loop, options: *const uv_process_options_t) -> ReturnCode {
         // SAFETY: `self` is a valid `uv_process_t`-sized allocation.
-        unsafe { uv_spawn(loop_, self, options) }
+        let rc = unsafe { uv_spawn(loop_, self, options) };
+        if rc.0 == 0 {
+            open_handles::add_process(self);
+        }
+        rc
     }
     #[inline]
     pub fn kill(&mut self, signum: c_int) -> ReturnCode {
@@ -1647,7 +1787,7 @@ pub struct uv_fs_event_t {
     pub cb: uv_fs_event_cb,
     pub filew: *mut WCHAR,
     pub short_filew: *mut WCHAR,
-    pub dirw: *mut WCHAR,
+    pub(crate) dirw: *mut WCHAR,
     pub buffer: *mut u8,
 }
 impl uv_fs_event_t {
@@ -1913,11 +2053,11 @@ pub struct fs_t {
     pub loop_: *mut Loop,
     pub cb: uv_fs_cb,
     pub result: ReturnCodeI64,
-    pub ptr: *mut c_void,
+    pub(crate) ptr: *mut c_void,
     pub path: *const c_char,
     pub statbuf: uv_stat_t,
     pub work_req: uv__work,
-    pub flags: c_int,
+    pub(crate) flags: c_int,
     pub sys_errno_: DWORD,
     file: fs_file,
     fs: fs_fs,
@@ -2326,7 +2466,7 @@ pub const fn e_discriminant_to_uv(discriminant: u16) -> Option<c_int> {
 
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct ReturnCode(pub c_int);
+pub struct ReturnCode(pub(crate) c_int);
 
 // ──────────────────────────────────────────────────────────────────────────
 // `bun_core::ffi::Zeroable` impls (S021). Every libuv handle/request struct
@@ -2372,7 +2512,7 @@ impl ReturnCode {
     /// (e.g. 4082 for `UV_EBUSY`). Use [`errno`] for the translated POSIX
     /// `bun.sys.E` value (e.g. 16 for `BUSY`).
     #[inline]
-    pub const fn raw_errno(self) -> Option<u16> {
+    pub(crate) const fn raw_errno(self) -> Option<u16> {
         if self.0 < 0 {
             Some(self.0.unsigned_abs() as u16)
         } else {
@@ -2421,7 +2561,7 @@ impl fmt::Display for ReturnCode {
 
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ReturnCodeI64(pub i64);
+pub struct ReturnCodeI64(pub(crate) i64);
 impl ReturnCodeI64 {
     #[inline]
     pub const fn init(i: i64) -> ReturnCodeI64 {
@@ -2474,10 +2614,10 @@ impl fmt::Display for ReturnCodeI64 {
 // these fns map to/from libuv's MSVC `_O_*` values that `uv_fs_open` expects.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod O {
-    pub const APPEND: i32 = 0x0008;
+    pub(crate) const APPEND: i32 = 0x0008;
     pub const CREAT: i32 = 0x0100;
-    pub const EXCL: i32 = 0x0400;
-    pub const FILEMAP: i32 = 0x2000_0000;
+    pub(crate) const EXCL: i32 = 0x0400;
+    pub(crate) const FILEMAP: i32 = 0x2000_0000;
     pub const RANDOM: i32 = 0x0010;
     pub const RDONLY: i32 = 0x0000;
     pub const RDWR: i32 = 0x0002;
@@ -2486,15 +2626,15 @@ pub mod O {
     pub const TEMPORARY: i32 = 0x0040;
     pub const TRUNC: i32 = 0x0200;
     pub const WRONLY: i32 = 0x0001;
-    pub const DIRECT: i32 = 0x0200_0000;
-    pub const DSYNC: i32 = 0x0400_0000;
-    pub const SYNC: i32 = 0x0800_0000;
+    pub(crate) const DIRECT: i32 = 0x0200_0000;
+    pub(crate) const DSYNC: i32 = 0x0400_0000;
+    pub(crate) const SYNC: i32 = 0x0800_0000;
     // No-ops on Windows.
     pub const DIRECTORY: i32 = 0;
     pub const EXLOCK: i32 = 0x1000_0000;
     pub const NOATIME: i32 = 0;
     pub const NOCTTY: i32 = 0;
-    pub const NOFOLLOW: i32 = 0;
+    pub(crate) const NOFOLLOW: i32 = 0;
     pub const NONBLOCK: i32 = 0;
     pub const SYMLINK: i32 = 0;
 
@@ -2729,7 +2869,7 @@ pub const UV_TTY_MODE_RAW: c_int = 1;
 pub const UV_TTY_MODE_IO: c_int = 2;
 pub const UV_TTY_SUPPORTED: c_int = 0;
 pub const UV_TTY_UNSUPPORTED: c_int = 1;
-pub const UV_PIPE_NO_TRUNCATE: c_uint = 1;
+pub(crate) const UV_PIPE_NO_TRUNCATE: c_uint = 1;
 pub const UV_FS_SYMLINK_DIR: c_int = 0x0001;
 pub const UV_FS_SYMLINK_JUNCTION: c_int = 0x0002;
 pub const UV_FS_COPYFILE_EXCL: c_int = 0x0001;
@@ -2821,11 +2961,11 @@ pub const UV_FS_O_NONBLOCK: i32 = 0;
 pub const UV_FS_O_SYMLINK: i32 = 0;
 pub const UV_FS_O_SYNC: i32 = O::SYNC;
 
-pub const UV_HANDLE_CLOSED: c_uint = 0x0000_0002;
+pub(crate) const UV_HANDLE_CLOSED: c_uint = 0x0000_0002;
 
 /// Non-ABI helper: `flags & UV_HANDLE_CLOSED != 0`.
 #[inline]
-pub fn uv_is_closed(handle: &uv_handle_t) -> bool {
+pub(crate) fn uv_is_closed(handle: &uv_handle_t) -> bool {
     handle.flags & UV_HANDLE_CLOSED != 0
 }
 

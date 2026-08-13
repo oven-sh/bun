@@ -54,7 +54,6 @@ bun_md.workspace = true
 bun_options_types.workspace = true
 bun_paths.workspace = true
 bun_perf.workspace = true
-bun_router.workspace = true
 bun_sourcemap.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
@@ -68,5 +67,3 @@ bun_hash.workspace = true
 
 [features]
 default = []
-debug_logs = []
-show_crash_trace = ["bun_crash_handler/show_crash_trace"]

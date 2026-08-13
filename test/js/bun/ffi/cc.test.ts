@@ -1,6 +1,15 @@
 import { cc, CString, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { promises as fs } from "fs";
+import {
+  chmodSync,
+  existsSync,
+  promises as fs,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
@@ -917,7 +926,7 @@ describe("double <-> JSValue conversions", () => {
         huge_bigint: ["number", "Infinity"],
         negative_huge_bigint: ["number", "-Infinity"],
         fractional: ["number", "-2.5"],
-        string: ["number", "2.5"],
+        string: ["threw", "TypeError"],
         null_arg: ["number", "0"],
         undefined_arg: ["number", "NaN"],
       },
@@ -1075,5 +1084,108 @@ describe("double <-> JSValue conversions", () => {
       },
       exitCode: 0,
     });
+  });
+});
+
+describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", () => {
+  const plantedHeader = "#define bool int\n#define true 100\n#define false 0\n";
+  const files = {
+    "sentinel.txt": "sentinel-unchanged\n",
+    "add.c": /* c */ `
+      #include <stdbool.h>
+      int add(int a, int b) {
+        return a + b + (int)true - 1;
+      }
+    `,
+    "fixture.js": /* js */ `
+      import { cc } from "bun:ffi";
+      import path from "path";
+
+      const { symbols } = cc({
+        source: path.join(import.meta.dir, "add.c"),
+        symbols: { add: { args: ["int", "int"], returns: "int" } },
+      });
+      console.log(symbols.add(1, 2));
+    `,
+  };
+
+  async function runFixture(dir: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: { ...bunEnv, BUN_TMPDIR: String(dir) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  }
+
+  it.skipIf(isWindows)("compiles a source that includes a compiler runtime header", async () => {
+    using dir = tempDir("bun-ffi-cc-rt-dir", files);
+
+    const [stdout, stderr, exitCode] = await runFixture(String(dir));
+
+    expect(readFileSync(path.join(String(dir), `bun-cc-${process.getuid!()}`, "stdbool.h"), "utf8")).toContain(
+      "_STDBOOL_H",
+    );
+    expect(stdout).toBe("3\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows)("does not write compiler runtime headers through a symlinked entry", async () => {
+    using dir = tempDir("bun-ffi-cc-rt-dir-symlink", files);
+    for (const name of ["bun-cc", `bun-cc-${process.getuid!()}`]) {
+      const headerDir = path.join(String(dir), name);
+      mkdirSync(headerDir, { recursive: true });
+      chmodSync(headerDir, 0o755);
+      symlinkSync("../sentinel.txt", path.join(headerDir, "stdbool.h"));
+    }
+
+    const [stdout, stderr, exitCode] = await runFixture(String(dir));
+
+    expect(readFileSync(path.join(String(dir), "sentinel.txt"), "utf8")).toBe("sentinel-unchanged\n");
+    expect(stdout).toBe("3\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows)(
+    "does not place compiler runtime headers in a pre-existing group- and world-writable directory",
+    async () => {
+      using dir = tempDir("bun-ffi-cc-rt-dir-mode", files);
+      const sharedName = `bun-cc-${process.getuid!()}`;
+      for (const name of ["bun-cc", sharedName]) {
+        const headerDir = path.join(String(dir), name);
+        mkdirSync(headerDir, { recursive: true });
+        writeFileSync(path.join(headerDir, "stdbool.h"), plantedHeader);
+      }
+      chmodSync(path.join(String(dir), "bun-cc"), 0o755);
+      chmodSync(path.join(String(dir), sharedName), 0o777);
+
+      const [stdout, stderr, exitCode] = await runFixture(String(dir));
+
+      expect(readFileSync(path.join(String(dir), "bun-cc", "stdbool.h"), "utf8")).toBe(plantedHeader);
+      expect(readFileSync(path.join(String(dir), sharedName, "stdbool.h"), "utf8")).toBe(plantedHeader);
+      expect(stdout).toBe("3\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it("does not reuse a pre-existing fixed-name bun-cc directory for compiler runtime headers", async () => {
+    using dir = tempDir("bun-ffi-cc-rt-dir-fixed-name", files);
+    const fixedDir = path.join(String(dir), "bun-cc");
+    mkdirSync(fixedDir, { recursive: true });
+    writeFileSync(path.join(fixedDir, "stdbool.h"), plantedHeader);
+
+    const [stdout, stderr, exitCode] = await runFixture(String(dir));
+
+    const staged = readdirSync(String(dir)).filter(
+      name => name !== "bun-cc" && name.includes("bun-cc") && existsSync(path.join(String(dir), name, "stdbool.h")),
+    );
+    expect(staged.length).toBe(1);
+    expect(readFileSync(path.join(String(dir), staged[0], "stdbool.h"), "utf8")).toContain("_STDBOOL_H");
+    expect(readdirSync(fixedDir).sort()).toEqual(["stdbool.h"]);
+    expect(readFileSync(path.join(fixedDir, "stdbool.h"), "utf8")).toBe(plantedHeader);
+    expect(stdout).toBe("3\n");
+    expect(exitCode).toBe(0);
   });
 });

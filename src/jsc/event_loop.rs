@@ -279,11 +279,19 @@ impl EventLoop {
     }
 
     /// "exit" a microtask context in the event loop. See `enter`.
+    ///
+    /// The outermost exit is a microtask checkpoint — unless the frame is
+    /// leaving with an exception pending. That exception is on its way to a
+    /// fold (the dispatcher's, or the host function's caller), which is what
+    /// takes it and then drains; a checkpoint may not run over it.
     pub fn exit(&mut self) {
         let count = self.entered_event_loop_count;
         bun_core::scoped_log!(EventLoop, "exit() = {}", count - 1);
 
-        if count == 1 && !self.vm_ref().is_inside_deferred_task_queue.get() {
+        if count == 1
+            && !self.vm_ref().is_inside_deferred_task_queue.get()
+            && !self.global_ref().has_exception()
+        {
             let _ = self.drain_microtasks();
         }
 

@@ -40,6 +40,21 @@ pub fn new<T: Taskable>(ptr: *mut T) -> Task {
 /// back is the VM's termination -- stand the tick loop down (WebCore: `isTerminationException(returned)`).
 #[cold]
 pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
+    fold_inner(global, proof)
+}
+
+/// [`report_error_or_terminate`] for a fold that runs outside any event-loop
+/// scope (a foreign dispatcher's trampoline: uSockets, timers, pipe I/O): the
+/// scopes beneath it skipped their microtask checkpoint over the pending
+/// exception (`EventLoop::exit`), so run it here once the exception is taken.
+#[cold]
+pub fn fold_at_loop_entry(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
+    fold_inner(global, proof)?;
+    global.bun_vm().event_loop_mut().drain_microtasks()
+}
+
+#[inline]
+fn fold_inner(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
     let ex = global.take_exception(proof);
     if ex.is_termination_exception() {
         return Err(Stopped);
@@ -63,7 +78,7 @@ pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Res
 #[unsafe(no_mangle)]
 fn __bun_fold_loop_js_error(err: bun_core::JsError) {
     let global = crate::virtual_machine::VirtualMachine::get().global();
-    let _ = report_error_or_terminate(global, err.into());
+    let _ = fold_at_loop_entry(global, err.into());
 }
 
 // The full ~96-arm `match` (previously in this file) has been hoisted to

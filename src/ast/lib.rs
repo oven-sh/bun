@@ -2945,6 +2945,11 @@ pub mod flags {
         IsStatic,
         WasShorthand,
         IsSpread,
+        /// The getter/setter pair generated for an `accessor` class member.
+        /// `ts_metadata` on the getter is the member's declared type; legacy
+        /// decorator metadata for the member describes that type, as tsc does
+        /// for `accessor` declarations, not the getter's signature.
+        IsLoweredAutoAccessor,
     }
     pub type PropertySet = EnumSet<Property>;
     pub const PROPERTY_NONE: PropertySet = EnumSet::empty();

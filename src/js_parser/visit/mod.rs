@@ -996,6 +996,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.fn_only_data_visit.is_this_nested = old_is_this_captured;
             }
 
+            // Classes headed for `lower_standard_decorators_*` keep their `accessor`
+            // members for it; any other class gets them desugared here, before the
+            // `useDefineForClassFields: false` lowering below so that the generated
+            // backing fields are relocated like the other instance fields.
+            if !class.should_lower_standard_decorators {
+                self.lower_auto_accessors_in_place(class);
+            }
+
             if Self::IS_TYPESCRIPT_ENABLED {
                 // `lower_standard_decorators_stmt` owns field placement for such classes.
                 let use_define = self.options.use_define_for_class_fields

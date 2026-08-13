@@ -85,6 +85,106 @@ test("auto-install in a project whose package.json has a name and version", asyn
   expect(exitCode).toBe(1);
 });
 
+// A registry that has a manifest for `name` whose only version points at a
+// tarball the registry then answers with a 404. Every other path is a 404 too.
+function registryWithMissingTarball(name: string) {
+  const requests: string[] = [];
+  const tarballPath = `/${name}/-/${name}-1.0.0.tgz`;
+  const registry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { pathname } = new URL(req.url);
+      requests.push(pathname);
+      if (pathname !== `/${name}`) return new Response("not found", { status: 404 });
+      return Response.json({
+        name,
+        "dist-tags": { latest: "1.0.0" },
+        versions: { "1.0.0": { name, version: "1.0.0", dist: { tarball: `${origin}${tarballPath}` } } },
+      });
+    },
+  });
+  const origin = `http://127.0.0.1:${registry.port}`;
+  return {
+    requests,
+    origin,
+    tarballPath,
+    tarballUrl: `${origin}${tarballPath}`,
+    [Symbol.dispose]() {
+      registry.stop(true);
+    },
+  };
+}
+
+async function runWithRegistry(registryOrigin: string, entry: string, source: string) {
+  using dir = tempDir("autoinstall-error-report", {
+    [entry]: source,
+    "bunfig.toml": `[install]\nregistry = "${registryOrigin}/"\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), entry],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// While auto-installing, the package manager writes the reason a package could
+// not be installed (the tarball GET and its status, a network error name, ...)
+// into the log of the resolve that triggered it. Those lines are attached to
+// the ResolveMessage as notes; without them the only output is
+// "<error name> while resolving package '...'".
+describe.concurrent("auto-install reports why a package could not be installed", () => {
+  test("tarball 404, static import", async () => {
+    const name = "pkg-whose-tarball-is-missing";
+    using r = registryWithMissingTarball(name);
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.js", `import "${name}";\n`);
+
+    expect(r.requests).toEqual([`/${name}`, r.tarballPath]);
+    expect(stderr).toContain(`note: GET ${r.tarballUrl} - 404`);
+    expect(exitCode).toBe(1);
+  });
+
+  test("tarball 404, require()", async () => {
+    const name = "pkg-whose-tarball-is-missing-cjs";
+    using r = registryWithMissingTarball(name);
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.cjs", `require("${name}");\n`);
+
+    expect(r.requests).toEqual([`/${name}`, r.tarballPath]);
+    expect(stderr).toContain(`note: GET ${r.tarballUrl} - 404`);
+    expect(exitCode).toBe(1);
+  });
+
+  test("tarball 404, dynamic import() caught and logged by the script", async () => {
+    const name = "pkg-whose-tarball-is-missing-dynamic";
+    using r = registryWithMissingTarball(name);
+    const { stdout, stderr, exitCode } = await runWithRegistry(
+      r.origin,
+      "index.js",
+      `try {\n  await import("${name}");\n} catch (err) {\n  console.log(err);\n}\n`,
+    );
+
+    expect(r.requests).toEqual([`/${name}`, r.tarballPath]);
+    expect(stdout).toContain(`package '${name}'`);
+    expect(stdout).toContain(`note: GET ${r.tarballUrl} - 404`);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("manifest 404", async () => {
+    const name = "pkg-whose-manifest-is-missing";
+    using r = registryWithMissingTarball("some-other-package");
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.js", `import "${name}";\n`);
+
+    expect(r.requests).toEqual([`/${name}`]);
+    expect(stderr).toContain(`error: Cannot find package '${name}'`);
+    expect(stderr).toContain(`note: GET ${r.origin}/${name} - 404`);
+    expect(exitCode).toBe(1);
+  });
+});
+
 test("--install=fallback to install missing packages", async () => {
   const dir = tmpdirSync();
   mkdirSync(dir, { recursive: true });

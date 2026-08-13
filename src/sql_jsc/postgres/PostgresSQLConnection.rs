@@ -2492,9 +2492,8 @@ impl PostgresSQLConnection {
                     }
                 }
 
-                // maxLifetime expired mid-query: retire before advance() dispatches
-                // more work, but only once the head request is finished. A named
-                // statement's Parse+Describe+Sync gets its own ReadyForQuery first.
+                // maxLifetime expired mid-query (#30646): retire only once the head is
+                // finished; a named statement's Parse+Describe+Sync RFQs first.
                 if self
                     .flags
                     .get()

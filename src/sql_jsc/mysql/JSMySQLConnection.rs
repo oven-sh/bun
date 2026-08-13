@@ -311,8 +311,7 @@ impl JSMySQLConnection {
             return;
         }
 
-        // Don't kill a healthy in-flight query (#30646): flag the connection
-        // and retire at the next queue-drain boundary instead.
+        // Don't kill an in-flight query (#30646): retire at the next drain boundary.
         if self.connection.get().status == my_sql_connection::Status::Connected
             && !self.connection.get().is_idle()
         {
@@ -338,8 +337,7 @@ impl JSMySQLConnection {
         );
     }
 
-    /// Retires a connection whose maxLifetime expired mid-query, once the
-    /// queue has nothing in flight. Returns true when it failed the connection.
+    /// Fails the connection if maxLifetime expired mid-query; returns true when it did.
     pub(crate) fn retire_if_lifetime_exceeded(&self) -> bool {
         if self.connection.get().status != my_sql_connection::Status::Connected
             || !self.connection.get().is_lifetime_exceeded()

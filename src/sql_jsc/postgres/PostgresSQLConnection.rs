@@ -27,7 +27,7 @@ use crate::postgres::data_cell as DataCell;
 use crate::postgres::error_jsc::{create_postgres_error, postgres_error_to_js};
 use crate::postgres::postgres_request as PostgresRequest;
 use crate::postgres::postgres_request::MessageType;
-use crate::postgres::postgres_sql_query::{self, Status as QueryStatus};
+use crate::postgres::postgres_sql_query::{self, RequestCounter, Status as QueryStatus};
 use crate::postgres::postgres_sql_statement::{Error as StatementError, Status as StatementStatus};
 use crate::postgres::sasl::SASLStatus;
 use crate::shared::CachedStructure as PostgresCachedStructure;
@@ -1765,19 +1765,20 @@ impl PostgresSQLConnection {
     fn finish_request(&self, item: &PostgresSQLQuery) {
         match item.status.get() {
             QueryStatus::Running | QueryStatus::Binding | QueryStatus::PartialResponse => {
-                let flags = item.flags.get();
-                if !flags.counted {
-                    return;
-                }
-                item.update_flags(|f| f.counted = false);
-                if flags.simple {
-                    let n = self.nonpipelinable_requests.get();
-                    debug_assert!(n > 0, "nonpipelinable_requests underflow");
-                    self.nonpipelinable_requests.set(n.saturating_sub(1));
-                } else if flags.pipelined {
-                    let n = self.pipelined_requests.get();
-                    debug_assert!(n > 0, "pipelined_requests underflow");
-                    self.pipelined_requests.set(n.saturating_sub(1));
+                let counter = item.flags.get().counter;
+                item.update_flags(|f| f.counter = RequestCounter::None);
+                match counter {
+                    RequestCounter::None => {}
+                    RequestCounter::Nonpipelinable => {
+                        let n = self.nonpipelinable_requests.get();
+                        debug_assert!(n > 0, "nonpipelinable_requests underflow");
+                        self.nonpipelinable_requests.set(n.saturating_sub(1));
+                    }
+                    RequestCounter::Pipelined => {
+                        let n = self.pipelined_requests.get();
+                        debug_assert!(n > 0, "pipelined_requests underflow");
+                        self.pipelined_requests.set(n.saturating_sub(1));
+                    }
                 }
             }
             QueryStatus::Pending => {
@@ -1897,7 +1898,7 @@ impl PostgresSQLConnection {
                         }
                         self.nonpipelinable_requests
                             .set(self.nonpipelinable_requests.get() + 1);
-                        req.update_flags(|f| f.counted = true);
+                        req.update_flags(|f| f.counter = RequestCounter::Nonpipelinable);
                         self.update_flags(|f| f.remove(ConnectionFlags::IS_READY_FOR_QUERY));
                         req.status.set(QueryStatus::Running);
                         defer_cleanup!(self);
@@ -2030,10 +2031,7 @@ impl PostgresSQLConnection {
                                         f.remove(ConnectionFlags::IS_READY_FOR_QUERY)
                                     });
                                     req.status.set(QueryStatus::Binding);
-                                    req.update_flags(|f| {
-                                        f.pipelined = true;
-                                        f.counted = true;
-                                    });
+                                    req.update_flags(|f| f.counter = RequestCounter::Pipelined);
                                     self.pipelined_requests
                                         .set(self.pipelined_requests.get() + 1);
 
@@ -2196,10 +2194,7 @@ impl PostgresSQLConnection {
                                         });
                                         req.status.set(QueryStatus::Binding);
                                         statement.status = StatementStatus::Parsing;
-                                        req.update_flags(|f| {
-                                            f.pipelined = true;
-                                            f.counted = true;
-                                        });
+                                        req.update_flags(|f| f.counter = RequestCounter::Pipelined);
                                         self.pipelined_requests
                                             .set(self.pipelined_requests.get() + 1);
                                         self.flush_data_and_reset_timeout();

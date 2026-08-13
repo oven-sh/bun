@@ -844,19 +844,41 @@ impl<'a> Resolver<'a> {
                 pm
             }
         };
-        // Re-point the singleton's backrefs at this resolver's live state
-        // before each wave; an earlier caller's log may have been freed.
+        // Re-point the singleton's log at this resolver's live one before
+        // each wave; an earlier caller's log may have been freed.
         // SAFETY: `pm` names the process-static singleton; sole `&mut` here.
         unsafe { (*pm.as_ptr()).set_log(self.log.as_ptr()) };
-        // An all-`None` handler (bundler / CLI resolver) must not clobber a
-        // VM's registered one.
+        // `wake_raw` reads `on_wake` lock-free from HTTP/task threads, so
+        // leave it untouched unless this resolver has a handler and it is
+        // not the installed one.
         // SAFETY: as above.
-        let pm_has_handler = unsafe { (*pm.as_ptr()).on_wake_context() }.is_some();
-        if self.on_wake_package_manager.context.is_some() || !pm_has_handler {
+        let installed = unsafe { (*pm.as_ptr()).on_wake_context() };
+        if self.on_wake_package_manager.context.is_some()
+            && installed != self.on_wake_package_manager.context
+        {
             // SAFETY: as above.
             unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager) };
         }
         Ok(pm.as_ptr())
+    }
+
+    /// Uninstall this resolver's `WakeHandler` from the `PackageManager`
+    /// singleton if it is the installed one. Called from `Transpiler::deinit`
+    /// so a dead VM's handler (whose `WakeContext` dies with the VM) is never
+    /// invoked by a later auto-install wave.
+    pub fn clear_package_manager_handler(&mut self) {
+        let Some(ctx) = self.on_wake_package_manager.context else {
+            return;
+        };
+        let Some(pm) = self.package_manager else {
+            return;
+        };
+        // SAFETY: `pm` names the process-static singleton; sole `&mut` here.
+        unsafe {
+            if (*pm.as_ptr()).on_wake_context() == Some(ctx) {
+                (*pm.as_ptr()).set_on_wake(Install::WakeHandler::default());
+            }
+        }
     }
 
     /// Safe accessor for the optional [`AutoInstaller`] back-reference.

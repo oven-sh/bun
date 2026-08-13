@@ -490,7 +490,9 @@ unsafe fn init_runtime_state(
                                 let Some(vm) = VirtualMachine::get_or_null() else {
                                     return;
                                 };
-                                // SAFETY: `ctx` is the `WakeContext` set just above; its queue is `(*vm).modules`.
+                                // SAFETY: `ctx` is some VM's live `WakeContext` (whichever
+                                // resolver last set the singleton's handler); the check
+                                // below rejects one that is not this thread's VM's.
                                 let queue = unsafe {
                                     bun_jsc::async_module::Queue::queue_from_wake_context(ctx)
                                 };

@@ -43,6 +43,7 @@ use crate::strings;
 #[path = "identifier.rs"]
 pub mod identifier;
 
+use crate::RawSlice;
 use core::sync::atomic::{AtomicUsize, Ordering};
 pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 
@@ -274,7 +275,7 @@ impl String {
     /// that calls `callback(ctx, buffer, len)` when the impl is destroyed.
     ///
     /// External strings are WTF strings whose bytes live elsewhere; `bytes` is
-    /// borrowed (not copied). If `bytes.len() >= max_length()`, `callback` is
+    /// borrowed (not copied). If `bytes.len() > max_length()`, `callback` is
     /// invoked immediately and a `dead` string is returned.
     ///
     /// `Ctx` must be a pointer-sized type (raw pointer or `&T`); enforced by
@@ -299,7 +300,7 @@ impl String {
         }
         let () = AssertPtrSized::<Ctx>::OK;
         debug_assert!(!bytes.is_empty());
-        if bytes.len() >= Self::max_length() {
+        if bytes.len() > Self::max_length() {
             callback(ctx, bytes.as_ptr().cast_mut().cast::<c_void>(), bytes.len());
             return Self::DEAD;
         }
@@ -322,7 +323,7 @@ impl String {
                 ExternalStringImplFreeFunction<Ctx>,
                 extern "C" fn(*mut c_void, *mut c_void, usize),
             >(callback) });
-        // SAFETY: bytes describes a valid slice; len < max_length checked.
+        // SAFETY: bytes describes a valid slice; len <= max_length checked.
         let s = unsafe {
             BunString__createExternal(
                 bytes.as_ptr(),
@@ -336,11 +337,13 @@ impl String {
         s
     }
 
-    /// Max `WTF::StringImpl` length (in characters, not bytes).
-    /// Reads the process-wide [`STRING_ALLOCATION_LIMIT`] data slot.
+    /// Max `WTF::StringImpl` length (in characters, not bytes):
+    /// [`STRING_ALLOCATION_LIMIT`] clamped to [`WTF_STRING_MAX_LENGTH`].
     #[inline]
     pub fn max_length() -> usize {
-        STRING_ALLOCATION_LIMIT.load(Ordering::Relaxed)
+        STRING_ALLOCATION_LIMIT
+            .load(Ordering::Relaxed)
+            .min(WTF_STRING_MAX_LENGTH)
     }
 
     /// `bun.String.createStaticExternal` — wraps `bytes` in a
@@ -405,7 +408,7 @@ impl String {
         if bytes.is_empty() {
             return Self::EMPTY;
         }
-        if bytes.len() >= Self::max_length() {
+        if bytes.len() > Self::max_length() {
             return Self::DEAD;
         }
         // Do NOT call `into_boxed_slice()` — when `len < capacity` it issues a
@@ -424,7 +427,7 @@ impl String {
         if bytes.is_empty() {
             return Self::EMPTY;
         }
-        if bytes.len() >= Self::max_length() {
+        if bytes.len() > Self::max_length() {
             return Self::DEAD;
         }
         // See `create_external_globally_allocated_latin1` — avoid the
@@ -987,15 +990,11 @@ impl String {
             // hand back a non-owning `WtfBorrowed` view pinned by it; a second
             // ref would be redundant since `underlying` already keeps the impl
             // alive.
-            if let ZigStringSlice::Static(ptr, len) = slice {
+            if let ZigStringSlice::Static(bytes) = slice {
                 self.ref_();
                 let string_impl = self.wtf_ptr();
                 return SliceWithUnderlyingString {
-                    utf8: ZigStringSlice::WtfBorrowed {
-                        string_impl,
-                        ptr,
-                        len,
-                    },
+                    utf8: ZigStringSlice::WtfBorrowed { string_impl, bytes },
                     underlying: *self,
                     #[cfg(debug_assertions)]
                     did_report_extra_memory_debug: false,
@@ -1544,7 +1543,7 @@ impl ZigString {
         if self.is_16bit() {
             return ZigStringSlice::Owned(self.to_owned_slice());
         }
-        ZigStringSlice::Static(Self::untagged(self.tagged_ptr()), self.len)
+        self.to_slice_borrowed()
     }
 
     /// `ZigString.sliceZBuf` — `Display`-format into `buf`, NUL-terminate, and
@@ -1641,7 +1640,15 @@ impl ZigString {
             }
             // None ⇒ all-ASCII; safe to borrow as-is.
         }
-        ZigStringSlice::Static(Self::untagged(self.tagged_ptr()), self.len)
+        self.to_slice_borrowed()
+    }
+
+    /// Caller must ensure `len != 0` (empty strings may carry a null pointer) and `!is_16bit()`.
+    #[inline]
+    fn to_slice_borrowed(&self) -> ZigStringSlice {
+        let ptr = Self::untagged(self.tagged_ptr());
+        // SAFETY: per the doc comment, `ptr` is non-null and addresses `len` initialized bytes.
+        ZigStringSlice::from_utf8_never_free(unsafe { core::slice::from_raw_parts(ptr, self.len) })
     }
 
     /// `ZigString.toOwnedSlice` — allocate a fresh UTF-8 `Vec<u8>` regardless
@@ -1695,7 +1702,7 @@ impl ZigString {
 /// ownership.
 pub enum ZigStringSlice {
     /// Borrowed; never freed (`fromUTF8NeverFree`).
-    Static(*const u8, usize),
+    Static(RawSlice<u8>),
     /// Heap-owned; Drop frees via global mimalloc.
     Owned(Vec<u8>),
     /// Backed by a WTFStringImpl ref; Drop derefs it. Stored as raw ptr to
@@ -1704,8 +1711,7 @@ pub enum ZigStringSlice {
     /// (which takes `*const`); refcount mutation happens on the C++ side.
     WTF {
         string_impl: *const wtf::WTFStringImplStruct,
-        ptr: *const u8,
-        len: usize,
+        bytes: RawSlice<u8>,
     },
     /// Borrowed view of a `WTFStringImpl`'s all-ASCII Latin-1 buffer that does
     /// **not** hold its own refcount: the enclosing
@@ -1721,8 +1727,7 @@ pub enum ZigStringSlice {
     /// [`clone_ref`]: ZigStringSlice::clone_ref
     WtfBorrowed {
         string_impl: *const wtf::WTFStringImplStruct,
-        ptr: *const u8,
-        len: usize,
+        bytes: RawSlice<u8>,
     },
 }
 impl Default for ZigStringSlice {
@@ -1731,9 +1736,10 @@ impl Default for ZigStringSlice {
     }
 }
 impl ZigStringSlice {
-    pub const EMPTY: Self = Self::Static(core::ptr::null(), 0);
+    pub const EMPTY: Self = Self::Static(RawSlice::EMPTY);
+    #[inline]
     pub fn from_utf8_never_free(s: &[u8]) -> Self {
-        Self::Static(s.as_ptr(), s.len())
+        Self::Static(RawSlice::new(s))
     }
     pub fn init_owned(v: Vec<u8>) -> Self {
         Self::Owned(v)
@@ -1755,16 +1761,10 @@ impl ZigStringSlice {
     #[inline]
     pub fn slice(&self) -> &[u8] {
         match self {
-            Self::Static(p, l) if *l == 0 => &[],
-            // SAFETY: constructor guarantees ptr/len describe a valid slice for self's lifetime.
-            Self::Static(p, l) => unsafe { core::slice::from_raw_parts(*p, *l) },
+            Self::Static(bytes) | Self::WTF { bytes, .. } | Self::WtfBorrowed { bytes, .. } => {
+                bytes.slice()
+            }
             Self::Owned(v) => v.as_slice(),
-            Self::WTF { ptr, len, .. } | Self::WtfBorrowed { ptr, len, .. } if *len == 0 => &[],
-            // SAFETY: WTF/WtfBorrowed views are pinned (own ref / `underlying`
-            // ref respectively); latin1 buffer valid while the pin is held.
-            Self::WTF { ptr, len, .. } | Self::WtfBorrowed { ptr, len, .. } => unsafe {
-                core::slice::from_raw_parts(*ptr, *len)
-            },
         }
     }
 }
@@ -1897,9 +1897,10 @@ impl ZigStringSlice {
     #[inline]
     pub fn length(&self) -> usize {
         match self {
-            Self::Static(_, l) => *l,
+            Self::Static(bytes) | Self::WTF { bytes, .. } | Self::WtfBorrowed { bytes, .. } => {
+                bytes.len()
+            }
             Self::Owned(v) => v.len(),
-            Self::WTF { len, .. } | Self::WtfBorrowed { len, .. } => *len,
         }
     }
 
@@ -1932,18 +1933,9 @@ impl ZigStringSlice {
     /// drops the utf8 view).
     pub fn clone_ref(&self) -> Self {
         match self {
-            Self::Static(p, l) => Self::Static(*p, *l),
+            Self::Static(bytes) => Self::Static(*bytes),
             Self::Owned(v) => Self::Owned(v.clone()),
-            Self::WTF {
-                string_impl,
-                ptr,
-                len,
-            }
-            | Self::WtfBorrowed {
-                string_impl,
-                ptr,
-                len,
-            } => {
+            Self::WTF { string_impl, bytes } | Self::WtfBorrowed { string_impl, bytes } => {
                 // SAFETY: invariant of the WTF/WtfBorrowed variants is that
                 // `string_impl` points at a live `WTF::StringImpl` for as long
                 // as `self` exists; bumping its refcount yields a second owner
@@ -1951,8 +1943,7 @@ impl ZigStringSlice {
                 unsafe { (**string_impl).r#ref() };
                 Self::WTF {
                     string_impl: *string_impl,
-                    ptr: *ptr,
-                    len: *len,
+                    bytes: *bytes,
                 }
             }
         }
@@ -1985,7 +1976,7 @@ pub mod zig_string {
         /// several dependents call `.empty()`.
         #[inline]
         pub const fn empty() -> Self {
-            Self::Static(core::ptr::null(), 0)
+            Self::EMPTY
         }
     }
 }
@@ -2100,6 +2091,10 @@ pub mod lexer_tables {
 /// `setSyntheticAllocationLimitForTesting` hook.
 #[unsafe(export_name = "Bun__stringSyntheticAllocationLimit")]
 pub static STRING_ALLOCATION_LIMIT: AtomicUsize = AtomicUsize::new(u32::MAX as usize);
+
+/// Mirror of `WTF::StringImpl::MaxLength` (`INT32_MAX`), which C++ enforces
+/// with `RELEASE_ASSERT` in the `StringImplShape` constructors.
+pub const WTF_STRING_MAX_LENGTH: usize = i32::MAX as usize;
 
 // ──────────────────────────────────────────────────────────────────────────
 // move-in: printer (MOVE_DOWN ← `bun_js_printer`)
@@ -2238,7 +2233,7 @@ pub mod printer {
 
             match c {
                 0x07 => {
-                    writer.write_all(b"\\x07")?;
+                    writer.write_all(if json { b"\\u0007" } else { b"\\x07" })?;
                     i += 1;
                 }
                 0x08 => {
@@ -2258,7 +2253,7 @@ pub mod printer {
                     i += 1;
                 }
                 0x0B => {
-                    writer.write_all(b"\\v")?;
+                    writer.write_all(if json { b"\\u000B" } else { b"\\v" })?;
                     i += 1;
                 }
                 0x5C => {

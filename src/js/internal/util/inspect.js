@@ -338,10 +338,6 @@ const validateObject = (value, name, allowArray = false) => {
     throw new codes.ERR_INVALID_ARG_TYPE(name, "Object", value);
 };
 
-function isURL(value) {
-  return typeof value.href === "string" && value instanceof URL;
-}
-
 const SymbolToPrimitive = Symbol.toPrimitive;
 
 const builtInObjects = new SafeSet(
@@ -1626,11 +1622,6 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       if (keys.length === 0 && protoProps === undefined) {
         return base;
       }
-    } else if (isURL(value) && !(recurseTimes > ctx.depth && ctx.depth !== null)) {
-      base = value.href;
-      if (keys.length === 0 && protoProps === undefined) {
-        return base;
-      }
     } else {
       if (keys.length === 0 && protoProps === undefined) {
         if (isExternal(value)) {
@@ -2905,20 +2896,40 @@ function formatWithOptionsInternal(inspectOptions, args) {
   }
   return str;
 }
-const stripANSI = Bun.stripANSI;
 const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBunStringWidth", 1);
 /**
  * Returns the number of columns required to display the given string.
  */
+const kPerCodePointWidthOptions = { __proto__: null, perCodePoint: true, countAnsiEscapeCodes: true };
+
 function getStringWidth(str, removeControlChars = true) {
   if (removeControlChars) str = stripVTControlCharacters(str);
   str = StringPrototypeNormalize(str, "NFC");
-  return internalGetStringWidth(str);
+  // node measures per code point, not grapheme clusters; ANSI was already stripped above.
+  // https://github.com/nodejs/node/blob/main/src/node_i18n.cc (GetColumnWidth)
+  return internalGetStringWidth(str, kPerCodePointWidthOptions);
 }
+
+// node's ansi matcher (from chalk/ansi-regex): only complete sequences are stripped —
+// Bun.stripANSI also eats bare/invalid ESC/CSI prefixes, which node keeps.
+// https://github.com/nodejs/node/blob/main/lib/internal/util/inspect.js
+const ansi = new RegExp(
+  "[\\u001B\\u009B][[\\]()#;?]*" +
+    "(?:(?:(?:(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]+)*" +
+    "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]*)*)?" +
+    "(?:\\u0007|\\u001B\\u005C|\\u009C))" +
+    "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?" +
+    "[\\dA-PR-TZcf-nq-uy=><~]))",
+  "g",
+);
 
 function stripVTControlCharacters(str) {
   if (typeof str !== "string") throw new codes.ERR_INVALID_ARG_TYPE("str", "string", str);
-  return stripANSI(str);
+  // All ANSI escape sequences start with ESC (7-bit) or CSI (8-bit).
+  if (StringPrototypeIndexOf(str, "\u001B") === -1 && StringPrototypeIndexOf(str, "\u009B") === -1) {
+    return str;
+  }
+  return RegExpPrototypeSymbolReplace(ansi, str, "");
 }
 
 // utils
@@ -2997,30 +3008,4 @@ export default {
   formatWithOptions,
   getStringWidth,
   stripVTControlCharacters,
-  //! non-standard properties, should these be kept? (not currently exposed)
-  //stylizeWithColor,
-  //stylizeWithHTML(str, styleType) {
-  //  const style = inspect.styles[styleType];
-  //  if (style !== undefined) {
-  //    return `<span style="color:${style};">${escapeHTML(str)}</span>`;
-  //  }
-  //  return escapeHTML(str);
-  //},
 };
-
-// unused without `stylizeWithHTML`
-/*const entities = {
-  34: "&quot;",
-  38: "&amp;",
-  39: "&apos;",
-  60: "&lt;",
-  62: "&gt;",
-  160: "&nbsp;",
-};
-function escapeHTML(str) {
-  return str.replace(/[\u0000-\u002F\u003A-\u0040\u005B-\u0060\u007B-\u00FF]/g, c => {
-    const code = String(c.charCodeAt(0));
-    const ent = entities[code];
-    return ent || "&#" + code + ";";
-  });
-}*/

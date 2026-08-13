@@ -17,6 +17,13 @@ pub struct DeferredBatchTask {
     running: bool,
 }
 
+impl bun_event_loop::Taskable for DeferredBatchTask {
+    const TAG: bun_event_loop::TaskTag = task_tag::BundleV2DeferredBatchTask;
+    /// Embedded in its `BundleV2`, which outlives the queue entry and owns
+    /// everything the drain would have touched; nothing to free.
+    unsafe fn release_unrun(_: *mut Self) {}
+}
+
 impl DeferredBatchTask {
     pub(crate) fn init(&mut self) {
         // Kept as `&mut self` (not `-> Self`) — this struct is embedded
@@ -47,12 +54,7 @@ impl DeferredBatchTask {
             debug_assert!(!self.running);
             self.running = false;
         }
-        // PORTING.md §Dispatch: tag+ptr, not TaggedPointer. Tag constant lives in
-        // `bun_event_loop::task_tag::BundleV2DeferredBatchTask`.
-        let task = ConcurrentTask::create(Task::new(
-            task_tag::BundleV2DeferredBatchTask,
-            std::ptr::from_mut::<Self>(self).cast::<()>(),
-        ));
+        let task = ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(self)));
 
         self.get_bundle_v2().enqueue_on_js_loop_for_plugins(task);
     }

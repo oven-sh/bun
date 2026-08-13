@@ -235,8 +235,9 @@ impl Listener {
                     strong_data: JsCell::new(Strong::empty()),
                     this_value: JsCell::new(JsRef::empty()),
                 }));
-                // SAFETY: just allocated, non-null, exclusive
-                let this_ref = unsafe { &mut *this };
+                // SAFETY: just allocated, non-null; every field touched below
+                // is `Cell`/`JsCell` or `&self`, so a shared borrow suffices.
+                let this_ref = unsafe { &*this };
                 if !default_data.is_empty() {
                     this_ref
                         .strong_data
@@ -268,15 +269,14 @@ impl Listener {
                         // Surface coded syscall failures the way node:net
                         // does (EADDRINUSE vs EACCES need different caller
                         // handling) rather than an invalid-arguments TypeError.
-                        if let ListenPipeError::Sys(sys_err) = &e {
+                        if let ListenPipeError::Sys(sys_err, uv_errno) = &e {
                             // get_error_code_tag_name does not reject EUNKNOWN /
                             // UV_EAI_* (>=3000); neither is a node-style code, so
                             // route those through the generic error below.
                             if let Some((name, se)) = sys_err.get_error_code_tag_name() {
                                 if se != bun_sys::SystemErrno::EUNKNOWN && (se as u16) < 3000 {
                                     let err = jsc::SystemError {
-                                        // Negated errno per fill_system_error_common.
-                                        errno: -(se as c_int),
+                                        errno: *uv_errno,
                                         code: bun_core::String::static_(name).into(),
                                         message: bun_core::String::clone_utf8(
                                             format!(
@@ -299,7 +299,7 @@ impl Listener {
                         let detail = match &e {
                             ListenPipeError::Other(err) => err.name(),
                             // Sys whose errno has no node-style code (EUNKNOWN / UV_EAI_*).
-                            ListenPipeError::Sys(_) => "UNKNOWN",
+                            ListenPipeError::Sys(..) => "UNKNOWN",
                         };
                         return Err(global.throw_invalid_arguments(format_args!(
                             "Failed to listen at {}: {}",
@@ -320,6 +320,12 @@ impl Listener {
                     .this_value
                     .with_mut(|r| r.set_strong(this_value, global));
                 this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+                if let Some(handles) = crate::jsc_hooks::active_handles() {
+                    bun_core::handle_oom(handles.put(
+                        crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(this_ref)),
+                        (),
+                    ));
+                }
                 return Ok(this_value);
             }
         }
@@ -357,8 +363,10 @@ impl Listener {
             strong_data: JsCell::new(Strong::empty()),
             this_value: JsCell::new(JsRef::empty()),
         }));
-        // SAFETY: just allocated, non-null, exclusive
-        let this_ref = unsafe { &mut *this };
+        // SAFETY: just allocated, non-null; every field touched through this
+        // borrow is `Cell`/`JsCell` or `&self`. The one plain-field write
+        // (`connection`, below) goes through the root pointer instead.
+        let this_ref = unsafe { &*this };
         this_ref
             .group
             .with_mut(|g| g.init(uws::Loop::get(), None, this.cast::<c_void>()));
@@ -374,8 +382,9 @@ impl Listener {
         // Cleanup guard: on any early return below, tear down the half-built Listener.
         // Disarmed via `into_inner` once ownership transfers to the JS wrapper.
         let cleanup = scopeguard::guard(this, |this| {
-            // SAFETY: this is still the sole owner on the error path
-            let this_ref = unsafe { &mut *this };
+            // SAFETY: this is still the sole owner on the error path; the
+            // fields below are `Cell`/`JsCell`, so a shared borrow suffices.
+            let this_ref = unsafe { &*this };
             if let Some(c) = this_ref.secure_ctx.take() {
                 // SAFETY: FFI — secure_ctx holds one owned SSL_CTX ref from create_ssl_context
                 unsafe { boring_sys::SSL_CTX_free(c.as_ptr()) };
@@ -463,18 +472,18 @@ impl Listener {
                 )
             }),
             UnixOrHost::Fd(fd) => {
-                let err = jsc::SystemError {
-                    errno: bun_sys::SystemErrno::EINVAL as c_int,
-                    code: bun_core::String::static_("EINVAL").into(),
-                    message: bun_core::String::static_(
-                        "Bun does not support listening on a file descriptor.",
+                let fd_native = fd.native() as uws_sys::LIBUS_SOCKET_DESCRIPTOR;
+                this_ref.group.with_mut(|g| {
+                    g.listen_fd(
+                        kind,
+                        secure_ctx_ptr,
+                        fd_native,
+                        511,
+                        socket_flags,
+                        size_of::<*mut c_void>() as c_int,
+                        &mut errno,
                     )
-                    .into(),
-                    syscall: bun_core::String::static_("listen").into(),
-                    fd: fd.uv(),
-                    ..Default::default()
-                };
-                return Err(global.throw_value(err.to_error_instance(global)));
+                })
             }
         };
         if listen_socket.is_null() {
@@ -489,9 +498,15 @@ impl Listener {
                 bstr::BStr::new(hostname_bytes)
             ));
             log!("Failed to listen {}", errno);
-            // libuv reports UV_EINVAL for a pipe path it cannot express in a
-            // sockaddr_un, which is what Node surfaces for an over-long path.
-            let errno = if errno == bun_sys::SystemErrno::ENAMETOOLONG as c_int {
+            let mapped = bun_sys::SystemErrno::init(errno as i64);
+            let errno = if mapped == Some(bun_sys::SystemErrno::ENAMETOOLONG)
+                || (matches!(connection, UnixOrHost::Fd(_))
+                    && matches!(
+                        mapped,
+                        Some(bun_sys::SystemErrno::ENOTSOCK)
+                            | Some(bun_sys::SystemErrno::EBADF)
+                            | Some(bun_sys::SystemErrno::EOPNOTSUPP)
+                    )) {
                 bun_sys::SystemErrno::EINVAL as c_int
             } else {
                 errno
@@ -522,7 +537,10 @@ impl Listener {
             return Err(global.throw_value(err));
         }
 
-        this_ref.connection = connection;
+        // SAFETY: sole owner during construction; scoped write through the
+        // root pointer so no `&mut Listener` is materialized (`this_ref` never
+        // reads `connection`).
+        unsafe { (*this).connection = connection };
         this_ref.listener.set(ListenerType::Uws(listen_socket));
         if !default_data.is_empty() {
             this_ref
@@ -573,6 +591,12 @@ impl Listener {
             .this_value
             .with_mut(|r| r.set_strong(this_value, global));
         this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        if let Some(handles) = crate::jsc_hooks::active_handles() {
+            bun_core::handle_oom(handles.put(
+                crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(this_ref)),
+                (),
+            ));
+        }
 
         Ok(this_value)
     }
@@ -812,11 +836,23 @@ impl Listener {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// The VM (or the finished `--isolate` file) is being torn down: stop
+    /// listening and close accepted connections now, while script can still
+    /// run their close handlers, instead of from the GC finalizer.
+    pub(crate) fn stop_for_vm_teardown(this: &Self) {
+        Self::do_stop(this, true);
+    }
+
     fn do_stop(this: &Self, force_close: bool) {
         if matches!(this.listener.get(), ListenerType::None) {
             return;
         }
         let listener = this.listener.replace(ListenerType::None);
+        if let Some(handles) = crate::jsc_hooks::active_handles() {
+            handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(
+                this,
+            )));
+        }
 
         if matches!(listener, ListenerType::Uws(_)) {
             Self::unlink_unix_socket_path(this);
@@ -860,6 +896,13 @@ impl Listener {
     pub fn finalize(self: Box<Self>) {
         log!("finalize");
         let listener = self.listener.replace(ListenerType::None);
+        if !matches!(listener, ListenerType::None) {
+            if let Some(handles) = crate::jsc_hooks::active_handles() {
+                handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(
+                    &*self,
+                )));
+            }
+        }
         match listener {
             ListenerType::Uws(socket) => {
                 Self::unlink_unix_socket_path(&self);
@@ -899,8 +942,11 @@ impl Listener {
 
     fn deinit(this: *mut Self) {
         log!("deinit");
-        // SAFETY: `this` is a Box<Listener> leaked via into_raw; sole owner here
-        let this_ref = unsafe { &mut *this };
+        // SAFETY: `this` is a Box<Listener> leaked via into_raw; sole owner
+        // here. Shared borrow: every field below is `Cell`/`JsCell`/`&self`,
+        // and `close_all()` can fire JS `close` handlers that re-derive
+        // `&Listener` — no `&mut` may span that.
+        let this_ref = unsafe { &*this };
         this_ref.this_value.with_mut(|r| r.finalize());
         this_ref.strong_data.with_mut(|s| s.deinit());
         this_ref.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
@@ -1002,9 +1048,9 @@ impl Listener {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
-        if this.handlers.active_connections.get() == 0 {
-            this.this_value.with_mut(|r| r.downgrade());
-        }
+        // `this_value` stays strong: the wrapper roots the handlers a future
+        // accept dispatches into. `do_stop` / `mark_inactive` downgrade it
+        // once the listen socket is closed.
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1042,6 +1088,16 @@ impl Listener {
         let connection: UnixOrHost = 'blk: {
             if let Some(fd_) = opts.get_truthy(global, "fd")? {
                 if fd_.is_number() {
+                    #[cfg(windows)]
+                    let fd = if opts
+                        .get_truthy(global, "fdIsRawSocket")?
+                        .is_some_and(|v| v.to_boolean())
+                    {
+                        Fd::from_system(fd_.to_int32() as u32 as usize as *mut c_void)
+                    } else {
+                        Fd::from_uv(fd_.to_int32())
+                    };
+                    #[cfg(not(windows))]
                     let fd = Fd::from_uv(fd_.to_int32());
                     break 'blk UnixOrHost::Fd(fd);
                 }
@@ -1130,6 +1186,7 @@ impl Listener {
                     }
                     None => false,
                 },
+                UnixOrHost::Fd(fd) if fd.kind() == bun_core::FdKind::System => false,
                 UnixOrHost::Fd(fd) => {
                     let uvfd = fd.uv();
                     let fd_type = uv::uv_guess_handle(uvfd);
@@ -1565,11 +1622,28 @@ fn connect_finish<const IS_SSL: bool>(
     // Note: `do_connect` reads `self.connection` directly so no second
     // borrow is needed here.
     if socket_ref.do_connect().is_err() {
+        // Winsock sets WSAGetLastError, not the CRT `_errno()` that
+        // `last_errno()` reads.
+        #[cfg(windows)]
+        let os_errno = {
+            let mut e = bun_sys::windows::WSAGetLastError().map_or(0, |err| err as c_int);
+            // Winsock AF_UNIX returns WSAECONNREFUSED whether the path exists
+            // or not; Node distinguishes ENOENT via `CreateFile`.
+            if port.is_none() && e == bun_sys::SystemErrno::ECONNREFUSED as c_int {
+                if let Some(UnixOrHost::Unix(path)) = socket_ref.connection.get() {
+                    if !bun_sys::exists(path) {
+                        e = bun_sys::SystemErrno::ENOENT as c_int;
+                    }
+                }
+            }
+            e
+        };
+        #[cfg(not(windows))]
+        let os_errno = bun_sys::last_errno();
         let errno = if port.is_none() {
             // Preserve the real errno from the failed connect(2) on a unix path:
             // connecting to an existing non-socket file is ENOTSOCK, a
             // permission-denied path is EACCES, a missing one is ENOENT.
-            let os_errno = bun_sys::last_errno();
             if os_errno == bun_sys::SystemErrno::ENAMETOOLONG as c_int {
                 // libuv reports UV_EINVAL for a pipe path it cannot express.
                 bun_sys::SystemErrno::EINVAL as c_int
@@ -1585,7 +1659,6 @@ fn connect_finish<const IS_SSL: bool>(
             // EADDRNOTAVAIL: address not local, EACCES: privileged port,
             // EINVAL: address family mismatch); everything else stays
             // ECONNREFUSED. Mirrors handle_connect_error's whitelist.
-            let os_errno = bun_sys::last_errno();
             if os_errno == bun_sys::SystemErrno::EADDRINUSE as c_int
                 || os_errno == bun_sys::SystemErrno::EADDRNOTAVAIL as c_int
                 || os_errno == bun_sys::SystemErrno::EACCES as c_int
@@ -1598,7 +1671,7 @@ fn connect_finish<const IS_SSL: bool>(
         };
         {
             let this = socket;
-            let _ = NewSocket::<IS_SSL>::handle_connect_error(this, errno, 0);
+            NewSocket::<IS_SSL>::handle_connect_error(this, errno, 0);
             // Balance the unconditional `socket_ref.ref_()` above.
             NewSocket::deref(&this);
         }
@@ -1682,12 +1755,10 @@ pub struct WindowsNamedPipeListeningContext {
     _priv: (),
 }
 
-/// `Sys` keeps the structured uv error so the JS error carries its real
-/// code/errno; `Other` covers the non-syscall setup failures, whose payload
-/// names the failure in the caller's generic invalid-arguments message.
+/// `c_int`: raw libuv return code so JS `err.errno` is the platform-correct UV value.
 #[cfg(windows)]
 enum ListenPipeError {
-    Sys(bun_sys::Error),
+    Sys(bun_sys::Error, c_int),
     Other(crate::Error),
 }
 
@@ -1696,10 +1767,11 @@ impl WindowsNamedPipeListeningContext {
     fn on_client_connect(this: *mut Self, status: uv::ReturnCode) {
         // SAFETY: `this` is the `data` pointer libuv hands back; it was set to a
         // live heap `WindowsNamedPipeListeningContext` in `listen_named_pipe`.
-        let this_ref = unsafe { &mut *this };
-        let shutting_down = this_ref.vm.is_shutting_down();
-        if status != uv::ReturnCode::ZERO || shutting_down || this_ref.listener.is_none() {
-            // connection dropped or vm is shutting down or we are deiniting/closing
+        // Shared borrow — `on_name_pipe_created` re-enters JS; the one `&mut`
+        // (the `uv_pipe` field) is taken through the root pointer below.
+        let this_ref = unsafe { &*this };
+        if status != uv::ReturnCode::ZERO || this_ref.listener.is_none() {
+            // connection dropped, or we are deiniting/closing
             return;
         }
         // `BackRef` deref — owner `Listener` outlives this context (see field doc).
@@ -1714,11 +1786,13 @@ impl WindowsNamedPipeListeningContext {
 
         let client = WindowsNamedPipeContext::create(&this_ref.global_this, socket);
 
-        // SAFETY: `client` was just heap-allocated by `create()`; exclusive here.
+        // SAFETY: `client` was just heap-allocated by `create()`; exclusive
+        // here. The `&mut` to `uv_pipe` comes from the root pointer, scoped to
+        // this call — `this_ref` (shared) never touches `uv_pipe`.
         let result = unsafe {
             (*client)
                 .named_pipe
-                .get_accepted_by(&mut this_ref.uv_pipe, this_ref.ctx.map(|p| p.as_ptr()))
+                .get_accepted_by(&mut (*this).uv_pipe, this_ref.ctx.map(|p| p.as_ptr()))
         };
         if result.is_err() {
             // connection dropped
@@ -1781,9 +1855,6 @@ impl WindowsNamedPipeListeningContext {
             vm: global_this.bun_vm(),
             ctx: None,
         }));
-        // SAFETY: just allocated, non-null, exclusive.
-        let this_ref = unsafe { &mut *this };
-
         // Cleanup guard: once the uv pipe handle is registered with the loop it must be closed via
         // uv_close; before that point we can free the struct directly. `deinit()` also
         // frees the SSL context if one was created. State `.1` flips once `uv_pipe_init`
@@ -1804,12 +1875,17 @@ impl WindowsNamedPipeListeningContext {
             let mut err = uws::create_bun_socket_error_t::none;
             // Create SSL context using uSockets to match behavior of node.js
             match ctx_opts.create_ssl_context(&mut err) {
-                Some(ctx) => this_ref.ctx = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>()),
+                // SAFETY: `this` was just allocated above; scoped field write.
+                Some(ctx) => unsafe {
+                    (*this).ctx = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>());
+                },
                 None => return Err(ListenPipeError::Other(crate::Error::InvalidOptions)),
             }
         }
 
-        let init_result = this_ref.uv_pipe.init(this_ref.vm.uv_loop().cast(), false);
+        // SAFETY: `this` was just allocated above; `&mut uv_pipe` is scoped to
+        // this call.
+        let init_result = unsafe { (*this).uv_pipe.init((*this).vm.uv_loop().cast(), false) };
         if init_result.is_err() {
             return Err(ListenPipeError::Other(crate::Error::FailedToInitPipe));
         }
@@ -1817,32 +1893,39 @@ impl WindowsNamedPipeListeningContext {
 
         let listen_rc = if path[path.len() - 1] == 0 {
             // is already null terminated
-            this_ref.uv_pipe.listen_named_pipe(
-                &path[..path.len() - 1],
-                backlog,
-                this.cast::<c_void>(),
-                Self::uv_on_client_connect,
-            )
+            // SAFETY: `this` is live; `&mut uv_pipe` is scoped to this call.
+            unsafe {
+                (*this).uv_pipe.listen_named_pipe(
+                    &path[..path.len() - 1],
+                    backlog,
+                    this.cast::<c_void>(),
+                    Self::uv_on_client_connect,
+                )
+            }
         } else {
             let mut path_buf = PathBuffer::uninit();
             // we need to null terminate the path
             let len = path.len().min(path_buf.len() - 1);
             path_buf[..len].copy_from_slice(&path[..len]);
             path_buf[len] = 0;
-            this_ref.uv_pipe.listen_named_pipe(
-                &path_buf[..len],
-                backlog,
-                this.cast::<c_void>(),
-                Self::uv_on_client_connect,
-            )
+            // SAFETY: `this` is live; `&mut uv_pipe` is scoped to this call.
+            unsafe {
+                (*this).uv_pipe.listen_named_pipe(
+                    &path_buf[..len],
+                    backlog,
+                    this.cast::<c_void>(),
+                    Self::uv_on_client_connect,
+                )
+            }
         };
         if listen_rc.is_err() {
             // Surface the real error code: EADDRINUSE (name taken) vs
             // EACCES (pipe namespace denied) need different caller
             // handling, and a generic bind failure hides that.
             use bun_sys::ReturnCodeExt as _;
+            let raw = listen_rc.int();
             return Err(match listen_rc.to_error(bun_sys::Tag::listen) {
-                Some(err) => ListenPipeError::Sys(err),
+                Some(err) => ListenPipeError::Sys(err, raw),
                 // Unreachable in practice: the uv→errno mapping is total.
                 None => ListenPipeError::Other(crate::Error::FailedToBindPipe),
             });
@@ -1852,6 +1935,15 @@ impl WindowsNamedPipeListeningContext {
         // this.closePipeAndDeinit();
         // return error.FailedChmodPipe;
         //}
+
+        // `uv_listen` made the pipe an active+ref'd uv handle. Strip libuv's
+        // loop ref so the owning `Listener`'s `poll_ref` is the only thing
+        // keeping the process alive (the contract usockets' libuv backend
+        // applies to its handles); otherwise `server.unref()` drops the
+        // `poll_ref` but the uv handle still pins `uv_loop_alive` and the
+        // process never exits.
+        // SAFETY: `this` is live; `&mut uv_pipe` is scoped to this call.
+        unsafe { (*this).uv_pipe.unref() };
 
         let (this, _) = scopeguard::ScopeGuard::into_inner(cleanup);
         Ok(this)
@@ -1899,9 +1991,6 @@ pub(crate) extern "C" fn us_dispatch_socket_server_name(
         return core::ptr::null_mut();
     }
     let handlers = tls.get_handlers();
-    if handlers.vm.is_shutting_down() {
-        return core::ptr::null_mut();
-    }
     let callback = handlers.on_server_name();
     if callback.is_empty() {
         return core::ptr::null_mut();
@@ -1992,9 +2081,6 @@ extern "C" fn us_dispatch_server_name(
     // duration of this synchronous handshake dispatch.
     let listener = unsafe { bun_ptr::ThisPtr::new(listener_ptr) };
     let handlers = &listener.handlers;
-    if handlers.vm.is_shutting_down() {
-        return core::ptr::null_mut();
-    }
     let callback = handlers.on_server_name();
     if callback.is_empty() {
         return core::ptr::null_mut();

@@ -376,9 +376,7 @@ pub struct CommandLineArguments {
     pub(crate) dry_run: bool,
     pub(crate) force: bool,
     pub(crate) no_cache: bool,
-    pub silent: bool,
-    pub(crate) quiet: bool,
-    pub(crate) verbose: bool,
+    pub log_level: Options::LogLevel,
     pub(crate) no_progress: bool,
     pub(crate) no_verify: bool,
     pub(crate) ignore_scripts: bool,
@@ -394,9 +392,7 @@ pub struct CommandLineArguments {
     pub(crate) pack_filename: &'static [u8],
     pub(crate) pack_gzip_level: Option<&'static [u8]>,
 
-    pub(crate) development: bool,
-    pub(crate) optional: bool,
-    pub(crate) peer: bool,
+    pub(crate) dependency_group: Options::DependencyGroup,
 
     pub(crate) omit: Option<Omit>,
 
@@ -463,9 +459,7 @@ impl Default for CommandLineArguments {
             dry_run: false,
             force: false,
             no_cache: false,
-            silent: false,
-            quiet: false,
-            verbose: false,
+            log_level: Options::LogLevel::default(),
             no_progress: false,
             no_verify: false,
             ignore_scripts: false,
@@ -481,9 +475,7 @@ impl Default for CommandLineArguments {
             pack_filename: b"",
             pack_gzip_level: None,
 
-            development: false,
-            optional: false,
-            peer: false,
+            dependency_group: Options::DependencyGroup::default(),
 
             omit: None,
 
@@ -944,31 +936,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
                 pretty_help(outro_text);
                 Output::flush();
             }
-            Subcommand::Scan => {
-                let intro_text = r"
-<b>Usage<r>: <b><green>bun pm scan<r> <cyan>[flags]<r>
-
-  Scan all packages in lockfile for security vulnerabilities.
-
-<b>Flags:<r>";
-
-                let outro_text = r"
-
-<b>Examples:<r>
-  <d>Scan all packages for vulnerabilities<r>
-  <b><green>bun pm scan<r>
-
-  <d>Output results as JSON<r>
-  <b><green>bun pm scan<r> <cyan>--json<r>
-
-Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
-";
-
-                pretty_help(intro_text);
-                clap::simple_help(PM_PARAMS);
-                pretty_help(outro_text);
-                Output::flush();
-            }
         }
     }
 
@@ -994,7 +961,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             // are not included in the help text
             Subcommand::Audit => AUDIT_PARAMS_FULL,
             Subcommand::Info => INFO_PARAMS,
-            Subcommand::Scan => PM_PARAMS, // scan uses the same params as pm command
         };
 
         let mut diag = clap::Diagnostic::default();
@@ -1010,6 +976,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             clap::ParseOptions {
                 diagnostic: Some(&mut diag),
                 stop_after_positional_at: 0,
+                ..Default::default()
             },
         ) {
             Ok(a) => {
@@ -1041,9 +1008,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         cli.force = args.flag(b"--force");
         cli.no_verify = args.flag(b"--no-verify");
         cli.no_cache = args.flag(b"--no-cache");
-        cli.silent = args.flag(b"--silent");
-        cli.quiet = args.flag(b"--quiet");
-        cli.verbose = args.flag(b"--verbose") || Output::is_verbose();
+        // --silent checked first so `is_silent()` matches `--silent` exactly:
+        // callers read it to suppress summaries/errors independently of verbose.
+        cli.log_level = if args.flag(b"--silent") {
+            Options::LogLevel::Silent
+        } else if args.flag(b"--verbose") || Output::is_verbose() {
+            Options::LogLevel::Verbose
+        } else if args.flag(b"--quiet") {
+            Options::LogLevel::Quiet
+        } else {
+            Options::LogLevel::Default
+        };
         cli.ignore_scripts = args.flag(b"--ignore-scripts");
         cli.trusted = args.flag(b"--trust");
         cli.no_summary = args.flag(b"--no-summary");
@@ -1305,9 +1280,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
 
         if matches!(subcommand, Subcommand::Add | Subcommand::Install) {
-            cli.development = args.flag(b"--development") || args.flag(b"--dev");
-            cli.optional = args.flag(b"--optional");
-            cli.peer = args.flag(b"--peer");
+            cli.dependency_group = if args.flag(b"--development") || args.flag(b"--dev") {
+                Options::DependencyGroup::DEV
+            } else if args.flag(b"--optional") {
+                Options::DependencyGroup::OPTIONAL
+            } else if args.flag(b"--peer") {
+                Options::DependencyGroup::PEER
+            } else {
+                Options::DependencyGroup::DEPENDENCIES
+            };
             cli.exact = args.flag(b"--exact");
             cli.analyze = args.flag(b"--analyze");
             cli.only_missing = args.flag(b"--only-missing");

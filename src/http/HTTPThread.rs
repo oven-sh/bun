@@ -13,7 +13,7 @@ use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
 use crate::http_context::ActiveSocketExt;
 use crate::proxy_tunnel::ProxyTunnel;
 use crate::ssl_config::{self, SSLConfig};
-use crate::{AsyncHttp, HTTPContext, HttpClient, InitError, NewHttpContext, h3};
+use crate::{AsyncHttp, HTTPContext, HttpClient, InitError, NewHttpContext, h2, h3};
 
 // The scope registry keys on name, so the two visibilities (.hidden +
 // .visible) are split into two scope names.
@@ -162,6 +162,7 @@ impl HttpThread {
                 secure: None,
                 active_h2_sessions: Vec::new(),
                 pending_h2_connects: Vec::new(),
+                session_cache: crate::session_cache::SessionCache::new(),
             },
             https_context: NewHttpContext::<true> {
                 ref_count: Cell::new(1),
@@ -170,6 +171,7 @@ impl HttpThread {
                 secure: None,
                 active_h2_sessions: Vec::new(),
                 pending_h2_connects: Vec::new(),
+                session_cache: crate::session_cache::SessionCache::new(),
             },
             lazy_https_init: None,
             queued_tasks: Queue::new(),
@@ -530,6 +532,7 @@ impl HttpThread {
                     secure: None,
                     active_h2_sessions: Vec::new(),
                     pending_h2_connects: Vec::new(),
+                    session_cache: crate::session_cache::SessionCache::new(),
                 }));
                 if let Err(err) = custom_context.init_with_client_config(client) {
                     // `init_with_client_config` fails before `group.init()` runs.
@@ -655,8 +658,8 @@ impl HttpThread {
                                 client.close_and_abort::<true>(socket);
                                 continue;
                             }
-                            if let Some(session) = tagged.session_mut() {
-                                session.abort_by_http_id(http.async_http_id);
+                            if let Some(session) = tagged.session() {
+                                h2::ClientSession::abort_by_http_id(session, http.async_http_id);
                                 continue;
                             }
                             socket.close(uws::CloseKind::Failure);
@@ -667,8 +670,8 @@ impl HttpThread {
                                 client.close_and_abort::<false>(socket);
                                 continue;
                             }
-                            if let Some(session) = tagged.session_mut() {
-                                session.abort_by_http_id(http.async_http_id);
+                            if let Some(session) = tagged.session() {
+                                h2::ClientSession::abort_by_http_id(session, http.async_http_id);
                                 continue;
                             }
                             socket.close(uws::CloseKind::Failure);
@@ -729,8 +732,12 @@ impl HttpThread {
                                     client.flush_stream::<true>(socket);
                                 }
                             }
-                            if let Some(session) = tagged.session_mut() {
-                                session.stream_body_by_http_id(write.async_http_id, ended);
+                            if let Some(session) = tagged.session() {
+                                h2::ClientSession::stream_body_by_http_id(
+                                    session,
+                                    write.async_http_id,
+                                    ended,
+                                );
                             }
                         }
                         uws::AnySocket::SocketTcp(socket) => {
@@ -746,8 +753,12 @@ impl HttpThread {
                                     client.flush_stream::<false>(socket);
                                 }
                             }
-                            if let Some(session) = tagged.session_mut() {
-                                session.stream_body_by_http_id(write.async_http_id, ended);
+                            if let Some(session) = tagged.session() {
+                                h2::ClientSession::stream_body_by_http_id(
+                                    session,
+                                    write.async_http_id,
+                                    ended,
+                                );
                             }
                         }
                     }
@@ -827,10 +838,13 @@ impl HttpThread {
                                 client.resume_receive::<true>(socket);
                                 client.drain_response_body::<true>(socket);
                             }
-                            if let Some(session) = tagged.session_mut() {
-                                let _g = session.ref_scope();
-                                session.resume_receive_by_http_id(id);
-                                session.drain_response_body_by_http_id(id);
+                            if let Some(session) = tagged.session() {
+                                // The resume may tear the session down and
+                                // release the socket's ref; hold one across
+                                // the second call.
+                                let _keep_alive = session.ref_guard();
+                                h2::ClientSession::resume_receive_by_http_id(session, id);
+                                h2::ClientSession::drain_response_body_by_http_id(session, id);
                             }
                         }
                         uws::AnySocket::SocketTcp(socket) => {
@@ -839,10 +853,11 @@ impl HttpThread {
                                 client.resume_receive::<false>(socket);
                                 client.drain_response_body::<false>(socket);
                             }
-                            if let Some(session) = tagged.session_mut() {
-                                let _g = session.ref_scope();
-                                session.resume_receive_by_http_id(id);
-                                session.drain_response_body_by_http_id(id);
+                            if let Some(session) = tagged.session() {
+                                // See the Tls arm.
+                                let _keep_alive = session.ref_guard();
+                                h2::ClientSession::resume_receive_by_http_id(session, id);
+                                h2::ClientSession::drain_response_body_by_http_id(session, id);
                             }
                         }
                     }
@@ -1029,6 +1044,25 @@ impl HttpThread {
             self.in_flight.len(),
             self.deferred_tasks.len()
         );
+        // Requests handed to us but never started (concurrency-deferred, or
+        // still on the incoming queue): the JS-side owner is waiting to get
+        // them back all the same. Nothing here was copied or connected, so
+        // `release_at_shutdown` is the whole story.
+        let release_unstarted = |http: NonNull<AsyncHttp<'static>>| {
+            // SAFETY: heap-owned by the caller, alive until its completion,
+            // and never touched by us again after this.
+            let release = unsafe { (*http.as_ptr()).result_callback };
+            if let Some(f) = release.release_at_shutdown {
+                // SAFETY: paired ctx/fn from `HTTPClientResultCallback::new_with_release`.
+                unsafe { f(release.ctx) };
+            }
+        };
+        for http in core::mem::take(&mut self.deferred_tasks) {
+            release_unstarted(http);
+        }
+        while let Some(http) = NonNull::new(self.queued_tasks.pop()) {
+            release_unstarted(http);
+        }
         for nn in core::mem::take(&mut self.in_flight) {
             // SAFETY: every entry is the `heap::release` allocation pushed by
             // `start_queued_task`; HTTP-thread-only and removed at the
@@ -1395,35 +1429,17 @@ static SHUTDOWN_DONE: (bun_threading::Guarded<bool>, bun_threading::Condvar) = (
     bun_threading::Condvar::new(),
 );
 
-struct ShutdownReclaim {
-    ctx: *mut c_void,
-    drop_fn: unsafe fn(*mut c_void),
-}
-// SAFETY: pushed from the HTTP thread, drained from the JS thread once the
-// HTTP thread is parked; `ctx` is an exclusive heap allocation handed off
-// between the two.
-unsafe impl Send for ShutdownReclaim {}
-
-static SHUTDOWN_RECLAIMS: bun_threading::Guarded<Vec<ShutdownReclaim>> =
-    bun_threading::Guarded::new(Vec::new());
-
-/// Park `(ctx, drop_fn)` until [`shutdown_for_exit`] has waited the HTTP
-/// thread out of its loop. The drop is applied on the JS thread once the
-/// daemon is parked, so callers can hand off allocations whose teardown is
-/// not safe while a `tick()` is still on the HTTP-thread stack.
-pub fn defer_shutdown_reclaim(ctx: *mut c_void, drop_fn: unsafe fn(*mut c_void)) {
-    SHUTDOWN_RECLAIMS
-        .lock()
-        .push(ShutdownReclaim { ctx, drop_fn });
-}
-
 /// Called from `bun_jsc::VirtualMachine::global_exit()` on the JS thread,
 /// before `~VM`. Asks the HTTP daemon thread to reclaim every in-flight
 /// `ThreadlocalAsyncHTTP` box and waits (with a short timeout) for it to ack.
 /// No-op if the HTTP thread was never started.
-pub fn shutdown_for_exit() {
+/// Returns whether the HTTP thread is now parked (or was never running):
+/// `false` means it did not acknowledge within the deadline and may still
+/// touch requests, so the caller must not free anything it shares with it.
+#[must_use]
+pub fn shutdown_for_exit() -> bool {
     if !crate::HTTP_THREAD_INIT.load(Ordering::Acquire) {
-        return;
+        return true;
     }
     // SAFETY: `HTTP_THREAD_INIT == true` ⇒ `HTTP_THREAD` is fully written.
     // `get_unchecked` so the `ThreadCell` owner assert is skipped on this
@@ -1438,7 +1454,7 @@ pub fn shutdown_for_exit() {
     if !thread.has_awoken.load(Ordering::Acquire) {
         // `on_start` hasn't published the loop yet — no `start_queued_task`
         // can have run, so no boxes exist.
-        return;
+        return true;
     }
     SHUTDOWN_REQUESTED.store(true, Ordering::Release);
     thread.wakeup();
@@ -1463,17 +1479,9 @@ pub fn shutdown_for_exit() {
         // Timed out without an ack: the HTTP thread may still be inside
         // `tick()` and could touch parked allocations. Leak them — the
         // process is exiting and a leak beats a use-after-free.
-        return;
+        return false;
     }
-
-    // The daemon is parked; no further callbacks will fire. Reclaim boxes
-    // that result-callback handlers parked here while the calling stack
-    // still aliased their contents.
-    for r in core::mem::take(&mut *SHUTDOWN_RECLAIMS.lock()) {
-        // SAFETY: `drop_fn` is paired with `ctx` by `defer_shutdown_reclaim`;
-        // each entry is pushed exactly once and drained exactly once here.
-        unsafe { (r.drop_fn)(r.ctx) };
-    }
+    true
 }
 
 // dispatch_deps bridge removed — real impls now live in

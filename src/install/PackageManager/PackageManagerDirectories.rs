@@ -183,7 +183,11 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     let tmpname =
         FileSystem::tmpname(b"hm", &mut tmpbuf, bun_core::fast_random()).expect("unreachable");
 
-    let mut timer = if manager.options.log_level != LogLevel::Silent {
+    let mut timer = if manager.options.log_level != LogLevel::Silent
+        && !bun_core::env_var::feature_flag::BUN_DISABLE_SLOW_FILESYSTEM_WARNING
+            .get()
+            .unwrap_or(false)
+    {
         Some(bun_core::time::Timer::start())
     } else {
         None
@@ -272,8 +276,8 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         break;
     }
 
-    if manager.options.log_level != LogLevel::Silent {
-        let elapsed = timer.as_mut().unwrap().read();
+    if let Some(timer) = timer.as_mut() {
+        let elapsed = timer.read();
         if elapsed > bun_core::time::NS_PER_MS * 100 {
             let mut path_buf = PathBuffer::uninit();
             let cache_dir_path: &[u8] = match sys::get_fd_path(cache_directory_fd, &mut path_buf) {

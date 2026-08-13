@@ -149,7 +149,7 @@ pub(crate) fn print_diff_main(
 
         for diff_segment in &diff_segments {
             if diff_segment.mode == DiffSegmentMode::Equal {
-                for line in diff_segment.removed.split(|&b| b == b'\n') {
+                for line in strings::split(diff_segment.removed, b"\n") {
                     new_diff_segments.push(DiffSegment {
                         removed: line,
                         inserted: line,
@@ -420,7 +420,7 @@ fn print_segment(
     config: &DiffConfig,
     style: Style,
 ) -> std::fmt::Result {
-    let mut lines = text.split(|&b| b == b'\n');
+    let mut lines = strings::split(text, b"\n");
 
     print_truncated_line(lines.next().unwrap(), writer, config, style)?;
 

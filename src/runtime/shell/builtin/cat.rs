@@ -37,7 +37,6 @@ pub enum CatState {
         in_done: bool,
     },
     WaitingWriteErr,
-    Done,
 }
 
 /// Internal: what to do after dropping the &mut state borrow.
@@ -111,7 +110,6 @@ impl Cat {
             Stdin,
             FileArg { args_start: usize, idx: usize },
             WaitingErr,
-            Done,
         }
         let branch = match &Self::state_mut(interp, cmd).state {
             CatState::Idle => panic!("Invalid state"),
@@ -123,7 +121,6 @@ impl Cat {
                 idx: *idx,
             },
             CatState::WaitingWriteErr => Branch::WaitingErr,
-            CatState::Done => Branch::Done,
         };
         match branch {
             Branch::Stdin => {
@@ -226,7 +223,6 @@ impl Cat {
                 reader.start()
             }
             Branch::WaitingErr => Yield::failed(),
-            Branch::Done => Builtin::done(interp, cmd, 0),
         }
     }
 
@@ -390,7 +386,7 @@ impl Cat {
                     Step::Suspend
                 }
             }
-            CatState::Done | CatState::WaitingWriteErr | CatState::Idle => Step::Suspend,
+            CatState::WaitingWriteErr | CatState::Idle => Step::Suspend,
         };
         if cancel {
             let wchild = ChildPtr::new(cmd, WriterTag::Builtin);

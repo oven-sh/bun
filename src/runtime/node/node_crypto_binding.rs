@@ -5,9 +5,10 @@ use core::ffi::{c_char, c_void};
 
 use bun_boringssl as boringssl;
 use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
+use bun_jsc::vm_handle::Borrow;
 use bun_jsc::{
-    self as jsc, AnyTaskJob, AnyTaskJobCtx, ArrayBuffer, CallFrame, JSGlobalObject, JSValue,
-    JsResult, StrongOptional,
+    self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSValue, Job, JobContext, JsPtr, JsResult,
+    JsThread, Protected, Strong,
 };
 
 use crate::node::StringOrBuffer;
@@ -54,6 +55,27 @@ impl JSValueCryptoExt for JSValue {
 // ExternCryptoJob — token-pastes C symbol names (`Bun__<name>Ctx__runTask`
 // etc.), so a `macro_rules!` is the right shape.
 // ───────────────────────────────────────────────────────────────────────────
+
+/// Completion-callback arguments produced by a job ctx's JS-thread half
+/// (`runFromJS`). Layout mirrors `Bun::JSCallbackArgs` (JSCallbackArgs.h),
+/// which fills it through the extern "C" out-pointer.
+#[repr(C)]
+struct JsCallbackArgs {
+    argv: [JSValue; 3],
+    argc: u32,
+}
+
+impl JsCallbackArgs {
+    const EMPTY: Self = Self {
+        argv: [JSValue::UNDEFINED; 3],
+        argc: 0,
+    };
+
+    fn as_slice(&self) -> &[JSValue] {
+        &self.argv[..(self.argc as usize).min(self.argv.len())]
+    }
+}
+
 macro_rules! extern_crypto_job {
     ($Name:ident, $name_str:literal) => {
         pub mod $Name {
@@ -66,68 +88,78 @@ macro_rules! extern_crypto_job {
             // to a non-null pointer and discharges the validity proof at the
             // type level. `global` in `runTask` is forwarded raw (the trait
             // hands us `*mut`; C++ never reads through it off-thread).
+            //
+            // `runFromJS` (the JS-thread half; `runTask` is the work-pool
+            // half) returns the completion callback's arguments by value. It
+            // never sees the callback, so it cannot run user JS; `then` frees
+            // the ctx and then invokes.
             unsafe extern "C" {
                 #[link_name = concat!("Bun__", $name_str, "Ctx__runTask")]
-                safe fn ctx_run_task(ctx: &Ctx, global: *mut JSGlobalObject);
+                safe fn ctx_run_task(ctx: &Ctx, global: &JSGlobalObject);
                 #[link_name = concat!("Bun__", $name_str, "Ctx__runFromJS")]
-                safe fn ctx_run_from_js(ctx: &Ctx, global: &JSGlobalObject, callback: JSValue);
+                safe fn ctx_run_from_js(
+                    ctx: &Ctx,
+                    global: &JSGlobalObject,
+                    out: &mut JsCallbackArgs,
+                );
                 #[link_name = concat!("Bun__", $name_str, "Ctx__deinit")]
                 safe fn ctx_deinit(ctx: &Ctx);
             }
 
-            pub(crate) struct ExternCtx {
-                ctx: *mut Ctx,
-                callback: StrongOptional,
+            /// The C++ context this job owns: plain data, freed wherever the job ends.
+            pub(crate) struct OwnedCtx(*mut Ctx);
+            // SAFETY: an owned C++ heap object with no thread affinity.
+            unsafe impl Send for OwnedCtx {}
+            impl Drop for OwnedCtx {
+                fn drop(&mut self) {
+                    ctx_deinit(Ctx::opaque_ref(self.0));
+                }
             }
 
-            impl AnyTaskJobCtx for ExternCtx {
-                fn run(&mut self, global: *mut JSGlobalObject) {
-                    ctx_run_task(Ctx::opaque_ref(self.ctx), global);
+            pub(crate) struct ExternJob {
+                ctx: OwnedCtx,
+                global: JsPtr<JSGlobalObject>,
+            }
+
+            impl JobContext for ExternJob {
+                type OffThread = Self;
+                type Js = Strong;
+
+                fn run(
+                    this: &mut Self,
+                    vm: &Borrow,
+                    done: bun_jsc::Completion<Self>,
+                ) -> Option<bun_jsc::Completion<Self>> {
+                    // SAFETY: the creating global, alive under the borrow; C++
+                    // only threads it through to error reporting state.
+                    ctx_run_task(Ctx::opaque_ref(this.ctx.0), unsafe {
+                        this.global.under_borrow(vm)
+                    });
+                    Some(done)
                 }
-                fn then(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-                    let Some(callback) = self.callback.try_swap() else {
-                        return Ok(());
-                    };
-                    let ctx = Ctx::opaque_ref(self.ctx);
-                    if let Err(err) = jsc::from_js_host_call_generic(global, || {
-                        ctx_run_from_js(ctx, global, callback);
-                    }) {
-                        global.report_active_exception_as_unhandled(err);
+
+                fn then(this: Self, callback: Strong, cx: &JsThread<'_>) -> JsResult<()> {
+                    let global = cx.global();
+                    let mut args = JsCallbackArgs::EMPTY;
+                    let produced = jsc::from_js_host_call_generic(global, || {
+                        ctx_run_from_js(Ctx::opaque_ref(this.ctx.0), global, &mut args);
+                    });
+                    // `runFromJS` never sees the callback, so it cannot run user
+                    // JS; free the ctx first, then invoke.
+                    drop(this);
+                    match produced {
+                        Ok(()) => {
+                            global.bun_vm().event_loop_mut().run_callback(
+                                callback.get(),
+                                global,
+                                JSValue::UNDEFINED,
+                                args.as_slice(),
+                            );
+                        }
+                        Err(err) => global.report_active_exception_as_unhandled(err),
                     }
                     Ok(())
                 }
-            }
-
-            impl Drop for ExternCtx {
-                fn drop(&mut self) {
-                    ctx_deinit(Ctx::opaque_ref(self.ctx));
-                    self.callback.deinit();
-                }
-            }
-
-            pub(crate) type Job = AnyTaskJob<ExternCtx>;
-
-            // Exported C symbols.
-            #[unsafe(export_name = concat!("Bun__", $name_str, "__create"))]
-            pub(crate) extern "C" fn __create(
-                global: &JSGlobalObject,
-                ctx: *mut Ctx,
-                callback: JSValue,
-            ) -> *mut Job {
-                Job::create(
-                    global,
-                    ExternCtx {
-                        ctx,
-                        callback: StrongOptional::create(callback, global),
-                    },
-                )
-                .expect("ExternCtx::init is infallible")
-            }
-
-            #[unsafe(export_name = concat!("Bun__", $name_str, "__schedule"))]
-            pub(crate) extern "C" fn __schedule(this: &mut Job) {
-                // SAFETY: `this` is a live pointer returned by `__create`.
-                unsafe { Job::schedule(this) };
             }
 
             #[unsafe(export_name = concat!("Bun__", $name_str, "__createAndSchedule"))]
@@ -136,15 +168,17 @@ macro_rules! extern_crypto_job {
                 ctx: *mut Ctx,
                 callback: JSValue,
             ) {
+                let cx = global.js_thread();
                 let callback = callback.with_async_context_if_needed(global);
-                Job::create_and_schedule(
-                    global,
-                    ExternCtx {
-                        ctx,
-                        callback: StrongOptional::create(callback, global),
+                Job::<ExternJob>::schedule(
+                    &cx,
+                    ExternJob {
+                        ctx: OwnedCtx(ctx),
+                        // SAFETY: the creating global outlives every borrow of its VM.
+                        global: unsafe { JsPtr::new(core::ptr::NonNull::from(global)) },
                     },
-                )
-                .expect("ExternCtx::init is infallible");
+                    Strong::create(callback, global),
+                );
             }
         }
     };
@@ -167,84 +201,27 @@ extern_crypto_job!(SignJob, "SignJob");
 // CryptoJob<Ctx>
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Trait expressing the interface `CryptoJob` expects of `Ctx`.
-pub trait CryptoJobCtx: Sized {
-    fn init(&mut self, global: &JSGlobalObject) -> JsResult<()>;
-    /// The impl reads its own `result` field directly.
-    fn run_task(&mut self);
-    fn run_from_js(&mut self, global: &JSGlobalObject, callback: JSValue);
-    fn deinit(&mut self);
-}
-
-/// Adapter binding a [`CryptoJobCtx`] + JS callback into an [`AnyTaskJobCtx`].
-/// `Drop` runs `inner.deinit()` then releases the callback handle.
-pub struct CallbackCtx<C: CryptoJobCtx> {
-    callback: StrongOptional,
-    inner: C,
-}
-
-impl<C: CryptoJobCtx> AnyTaskJobCtx for CallbackCtx<C> {
-    #[inline]
-    fn init(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        self.inner.init(global)
-    }
-    #[inline]
-    fn run(&mut self, _global: *mut JSGlobalObject) {
-        self.inner.run_task();
-    }
-    fn then(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        let Some(callback) = self.callback.try_swap() else {
-            return Ok(());
-        };
-        self.inner.run_from_js(global, callback);
-        Ok(())
-    }
-}
-
-impl<C: CryptoJobCtx> Drop for CallbackCtx<C> {
-    fn drop(&mut self) {
-        self.inner.deinit();
-        self.callback.deinit();
-    }
-}
-
-/// Kept as a free fn since `CryptoJob<C>` is
-/// a type alias for the foreign `AnyTaskJob<_>`.
-fn crypto_job_init_and_schedule<C: CryptoJobCtx>(
-    global: &JSGlobalObject,
-    callback: JSValue,
-    ctx: C,
-) -> JsResult<()> {
-    AnyTaskJob::create_and_schedule(
-        global,
-        CallbackCtx {
-            callback: StrongOptional::create(callback.with_async_context_if_needed(global), global),
-            inner: ctx,
-        },
-    )
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// random
-// ───────────────────────────────────────────────────────────────────────────
 pub mod random {
     use super::*;
 
     // No `Clone`: `value` is JSC-protected in `init`/unprotected in `deinit`, and
-    // `bytes` borrows into that ArrayBuffer. Cloning would alias the protect/unprotect
+    // `InPlace` borrows into that ArrayBuffer. Cloning would alias the protect/unprotect
     // pair and the borrowed buffer. `CryptoJob::init` moves the ctx by value.
-    pub struct JobCtx {
-        pub value: JSValue,
-        pub(crate) bytes: *mut u8,
-        pub offset: u32,
-        pub(crate) length: usize,
-        // Worker-owned destination for user-supplied buffers (`randomFill`).
-        // The user can detach (`transfer()`) or shrink (`resize()`) the backing
-        // store between scheduling and the WorkPool write, so the worker fills
-        // this scratch and `run_from_js` re-validates + copies on the JS thread.
-        // `randomBytes` allocates its own buffer (unreachable from JS until the
-        // callback fires) and leaves this `None`.
-        pub(crate) scratch: Option<Vec<u8>>,
+    /// `crypto.randomFill` / `randomBytes` off the JS thread.
+    enum RandomFillJob {
+        /// `randomBytes`: the ArrayBuffer was allocated by us and nothing else
+        /// can observe it yet, so fill its bytes directly (under the VM borrow
+        /// that keeps it alive).
+        InPlace { bytes: JsPtr<u8>, length: usize },
+        /// `randomFill`: the caller's buffer stays untouched until completion;
+        /// fill `scratch` off-thread and copy it in at `offset` on the JS thread.
+        Scratch { scratch: Vec<u8>, offset: u32 },
+    }
+
+    #[derive(bun_jsc::JsAffine)]
+    struct RandomFillJs {
+        callback: Strong,
+        value: Protected,
     }
 
     const MAX_POSSIBLE_LENGTH: usize = {
@@ -254,57 +231,68 @@ pub mod random {
     };
     const MAX_RANGE: i64 = 0xffff_ffff_ffff;
 
-    impl CryptoJobCtx for JobCtx {
-        fn init(&mut self, _: &JSGlobalObject) -> JsResult<()> {
-            self.value.protect();
-            Ok(())
-        }
+    impl JobContext for RandomFillJob {
+        type OffThread = Self;
+        type Js = RandomFillJs;
 
-        fn run_task(&mut self) {
-            if let Some(scratch) = &mut self.scratch {
-                boringssl::rand_bytes(scratch);
-                return;
+        fn run(
+            this: &mut Self,
+            vm: &Borrow,
+            done: bun_jsc::Completion<Self>,
+        ) -> Option<bun_jsc::Completion<Self>> {
+            match this {
+                RandomFillJob::Scratch { scratch, .. } => boringssl::rand_bytes(scratch),
+                RandomFillJob::InPlace { bytes, length } => {
+                    // SAFETY: `bytes` points into the ArrayBuffer `value` keeps alive;
+                    // the borrow keeps the VM (and so that buffer) alive; `length` is
+                    // the buffer's own allocation size.
+                    let slice = unsafe {
+                        core::slice::from_raw_parts_mut(
+                            core::ptr::from_mut(bytes.under_borrow(vm)),
+                            *length,
+                        )
+                    };
+                    boringssl::rand_bytes(slice);
+                }
             }
-            // SAFETY: `bytes` points into an ArrayBuffer kept alive by `self.value`
-            // (protected in `init`); offset+length were range-checked by callers.
-            // This branch is only used for internally-allocated buffers that JS
-            // cannot reach (and therefore cannot detach/resize) until `run_from_js`.
-            let slice = unsafe {
-                core::slice::from_raw_parts_mut(self.bytes.add(self.offset as usize), self.length)
-            };
-            boringssl::rand_bytes(slice);
+            Some(done)
         }
 
-        fn run_from_js(&mut self, global: &JSGlobalObject, callback: JSValue) {
-            if let Some(scratch) = self.scratch.take() {
-                // Re-fetch the buffer on the JS thread and re-validate bounds:
-                // the user may have detached or resized it while the WorkPool
-                // task ran. On mismatch, drop the random bytes rather than
-                // write through a stale pointer.
-                if let Some(mut buf) = self.value.as_array_buffer(global) {
-                    let off = self.offset as usize;
+        fn then(this: Self, js: RandomFillJs, cx: &JsThread<'_>) -> JsResult<()> {
+            let global = cx.global();
+            if let RandomFillJob::Scratch { scratch, offset } = this {
+                if let Some(mut buf) = js.value.value().as_array_buffer(global) {
+                    let off = offset as usize;
                     let dst = buf.slice_mut();
                     match off.checked_add(scratch.len()) {
                         Some(end) if end <= dst.len() => {
                             dst[off..end].copy_from_slice(&scratch);
                         }
+                        // Buffer was detached/shrunk while the job ran.
                         _ => {}
                     }
                 }
             }
-            // `bun_vm()` is the audited safe `&'static VirtualMachine` accessor;
-            // `event_loop_mut()` is the audited safe `&mut EventLoop` accessor.
             global.bun_vm().event_loop_mut().run_callback(
-                callback,
+                js.callback.get(),
                 global,
                 JSValue::UNDEFINED,
-                &[JSValue::NULL, self.value],
+                &[JSValue::NULL, js.value.value()],
             );
+            Ok(())
         }
+    }
 
-        fn deinit(&mut self) {
-            self.value.unprotect();
-        }
+    fn schedule(global: &JSGlobalObject, callback: JSValue, job: RandomFillJob, value: JSValue) {
+        let cx = global.js_thread();
+        Job::<RandomFillJob>::schedule(
+            &cx,
+            job,
+            RandomFillJs {
+                callback: Strong::create(callback.with_async_context_if_needed(global), global),
+                value: Protected::new(value),
+            },
+        );
     }
 
     mod _hostfns {
@@ -615,14 +603,19 @@ pub mod random {
                 return Ok(result);
             }
 
-            let ctx = JobCtx {
-                value: result,
-                bytes: bytes.as_mut_ptr(),
-                offset: 0,
-                length: size as usize,
-                scratch: None,
-            };
-            crypto_job_init_and_schedule(global, callback, ctx)?;
+            schedule(
+                global,
+                callback,
+                RandomFillJob::InPlace {
+                    // SAFETY: `bytes` is `result`'s backing store, kept alive by the job's
+                    // Js side; a slice's data pointer is non-null even when empty.
+                    bytes: unsafe {
+                        JsPtr::new(core::ptr::NonNull::new_unchecked(bytes.as_mut_ptr()))
+                    },
+                    length: size as usize,
+                },
+                result,
+            );
 
             Ok(JSValue::UNDEFINED)
         }
@@ -729,14 +722,12 @@ pub mod random {
             }
             scratch.resize(size, 0);
 
-            let ctx = JobCtx {
-                value: buf_value,
-                bytes: core::ptr::null_mut(),
-                offset,
-                length: size,
-                scratch: Some(scratch),
-            };
-            crypto_job_init_and_schedule(global, callback, ctx)?;
+            schedule(
+                global,
+                callback,
+                RandomFillJob::Scratch { scratch, offset },
+                buf_value,
+            );
 
             Ok(JSValue::UNDEFINED)
         }
@@ -751,11 +742,7 @@ pub mod random {
 pub(crate) struct Scrypt {
     // Plain `StringOrBuffer` — NOT `ThreadSafe<_>`. The struct serves both
     // `scryptSync` (no protect taken) and async `scrypt` (protect taken in
-    // `from_js_maybe_async(.., true)`); wrapping in `ThreadSafe` here would make
-    // the sync path's drop call `JSValue::unprotect()` on a buffer it never
-    // protected, stealing a refcount from any independent protector. The async
-    // path releases its protect via `Unprotect for Scrypt` in
-    // `CryptoJobCtx::deinit` instead.
+    // `from_js_maybe_async(.., true)`, adopted into a `ThreadSafe` by the job).
     password: StringOrBuffer,
     salt: StringOrBuffer,
     n: u32,
@@ -763,13 +750,6 @@ pub(crate) struct Scrypt {
     p: u32,
     maxmem: u64,
     keylen: u32,
-
-    // used in async mode
-    buf: StrongOptional, // Strong.Optional, default .empty
-    // Invariant: `result` borrows the ArrayBuffer backing kept alive by `buf`;
-    // `buf` must stay set for as long as `result` is dereferenced.
-    result: *mut [u8],
-    err: Option<u32>,
 }
 
 mod _impl {
@@ -961,9 +941,6 @@ mod _impl {
                 p: p.unwrap(),
                 maxmem: u64::try_from(maxmem.unwrap()).expect("int cast"),
                 keylen: u32::try_from(keylen).expect("int cast"),
-                buf: StrongOptional::empty(),
-                result: std::ptr::from_mut::<[u8]>(&mut []),
-                err: None,
             };
             // Re-arm the error guard now that ownership moved into `ctx` — it
             // covers the `validateFunction`/`checkScryptParams` calls below.
@@ -1020,18 +997,18 @@ mod _impl {
             Ok(())
         }
 
-        fn run_task_impl(&mut self, key: &mut [u8]) {
+        /// `Some(err)` on failure (`0` when there is no BoringSSL error code).
+        fn run_task_impl(&self, key: &mut [u8]) -> Option<u32> {
             let password = self.password.slice();
             let salt = self.salt.slice();
 
             if key.is_empty() {
                 // result will be an empty buffer
-                return;
+                return None;
             }
 
             if password.len() > i32::MAX as usize || salt.len() > i32::MAX as usize {
-                self.err = Some(0);
-                return;
+                return Some(0);
             }
 
             // SAFETY: password/salt/key are valid slices for the given lengths.
@@ -1051,21 +1028,15 @@ mod _impl {
             };
 
             if res == 0 {
-                self.err = Some(boringssl::c::ERR_peek_last_error());
-                return;
+                return Some(boringssl::c::ERR_peek_last_error());
             }
-        }
-
-        fn deinit_sync(&mut self) {
-            // `salt`/`password` are `StringOrBuffer` — released by `Drop` when
-            // `self` goes out of scope (the `scrypt_sync` scopeguard's `c`).
-            self.buf.deinit();
+            None
         }
     }
 
     impl bun_jsc::Unprotect for Scrypt {
         /// Release the `protect()` taken by `from_js_maybe_async(.., true)` on the
-        /// async path. The sync path never calls this (see `deinit_sync`).
+        /// async path (via the job's `ThreadSafe`). The sync path never calls this.
         #[inline]
         fn unprotect(&mut self) {
             bun_jsc::Unprotect::unprotect(&mut self.password);
@@ -1073,73 +1044,74 @@ mod _impl {
         }
     }
 
-    impl CryptoJobCtx for Scrypt {
-        fn init(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-            if self.keylen as usize > jsc::virtual_machine::synthetic_allocation_limit() {
-                return Err(global.throw_out_of_memory());
-            }
-            let (buf, bytes) = ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global, self.keylen)?;
+    /// `crypto.scrypt` off the JS thread: derives straight into the result
+    /// ArrayBuffer's bytes under the VM borrow that keeps them alive.
+    pub(crate) struct ScryptJob {
+        params: bun_jsc::ThreadSafe<Scrypt>,
+        result: JsPtr<[u8]>,
+        err: Option<u32>,
+    }
 
-            // to be filled in later
-            self.result = std::ptr::from_mut::<[u8]>(bytes);
-            self.buf = StrongOptional::create(buf, global);
-            Ok(())
+    #[derive(bun_jsc::JsAffine)]
+    pub(crate) struct ScryptJs {
+        callback: Strong,
+        buf: Strong,
+    }
+
+    impl JobContext for ScryptJob {
+        type OffThread = Self;
+        type Js = ScryptJs;
+
+        fn run(
+            this: &mut Self,
+            vm: &Borrow,
+            done: bun_jsc::Completion<Self>,
+        ) -> Option<bun_jsc::Completion<Self>> {
+            // SAFETY: `result` is `buf`'s backing store (kept by the Js side); VM alive under the borrow.
+            let key = unsafe { this.result.under_borrow(vm) };
+            this.err = this.params.run_task_impl(key);
+            Some(done)
         }
 
-        fn run_task(&mut self) {
-            // SAFETY: `result` points into the ArrayBuffer rooted by `self.buf` (set in `init`).
-            let key = unsafe { &mut *self.result };
-            self.run_task_impl(key);
-        }
-
-        fn run_from_js(&mut self, global: &JSGlobalObject, callback: JSValue) {
-            // a self-ptr live for the VM lifetime. Short-lived `&mut` formed at use site
-            // per VirtualMachine.rs §event_loop contract.
+        fn then(this: Self, js: ScryptJs, cx: &JsThread<'_>) -> JsResult<()> {
+            let global = cx.global();
             let event_loop = global.bun_vm().event_loop_mut();
+            let callback = js.callback.get();
 
-            if let Some(err) = self.err {
-                if err != 0 {
+            if let Some(err) = this.err {
+                let exception = if err != 0 {
                     let mut buf = [0u8; 256];
-                    // SAFETY: buf is a valid 256-byte buffer; ERR_error_string_n
-                    // NUL-terminates within `len` bytes and returns `buf`.
+                    // SAFETY: buf is a valid writable buffer of the given length.
                     unsafe {
                         boringssl::c::ERR_error_string_n(err, buf.as_mut_ptr().cast(), buf.len())
                     };
-                    // SAFETY: `buf` is NUL-terminated by the call above.
+                    // SAFETY: ERR_error_string_n always NUL-terminates within `buf`.
                     let msg = unsafe { bun_core::ffi::cstr(buf.as_ptr().cast()) };
-                    let exception = global
+                    global
                         .err(
                             ErrorCode::CRYPTO_OPERATION_FAILED,
                             format_args!("Scrypt failed: {}", bstr::BStr::new(msg.to_bytes())),
                         )
-                        .to_js();
-                    event_loop.run_callback(callback, global, JSValue::UNDEFINED, &[exception]);
-                    return;
-                }
-
-                let exception = global
-                    .err(
-                        ErrorCode::CRYPTO_OPERATION_FAILED,
-                        format_args!("Scrypt failed"),
-                    )
-                    .to_js();
+                        .to_js()
+                } else {
+                    global
+                        .err(
+                            ErrorCode::CRYPTO_OPERATION_FAILED,
+                            format_args!("Scrypt failed"),
+                        )
+                        .to_js()
+                };
                 event_loop.run_callback(callback, global, JSValue::UNDEFINED, &[exception]);
-                return;
+                return Ok(());
             }
 
-            let buf = self.buf.swap();
             event_loop.run_callback(
                 callback,
                 global,
                 JSValue::UNDEFINED,
-                &[JSValue::UNDEFINED, buf],
+                &[JSValue::UNDEFINED, js.buf.get()],
             );
-        }
-
-        fn deinit(&mut self) {
-            // `Drop for StringOrBuffer` releases salt/password when `CryptoJob` is freed.
-            bun_jsc::Unprotect::unprotect(self);
-            self.buf.deinit();
+            Ok(())
         }
     }
 
@@ -1147,11 +1119,7 @@ mod _impl {
     fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let data = PBKDF2::from_js(global_this, call_frame, true)?;
 
-        let job = pbkdf2::create_job(global_this, data);
-        // SAFETY: `job` was just boxed by `create()` and is live; `ctx.promise` is
-        // not touched by the off-thread `run` body, and the JS-thread completion
-        // cannot run until this host fn returns.
-        Ok(unsafe { (*job).ctx.promise.value() })
+        Ok(pbkdf2::create_job(global_this, data))
     }
 
     #[bun_jsc::host_fn]
@@ -1290,17 +1258,35 @@ mod _impl {
     #[bun_jsc::host_fn]
     fn scrypt(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (ctx, callback) = Scrypt::from_js::<true>(global, call_frame)?;
-        crypto_job_init_and_schedule(global, callback, ctx)?;
+        // Protected by `from_js::<true>`; released with the job wherever it ends.
+        let params = bun_jsc::ThreadSafe::adopt(ctx);
+        if params.keylen as usize > jsc::virtual_machine::synthetic_allocation_limit() {
+            return Err(global.throw_out_of_memory());
+        }
+        let (buf, bytes) = ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global, params.keylen)?;
+        let cx = global.js_thread();
+        Job::<ScryptJob>::schedule(
+            &cx,
+            ScryptJob {
+                params,
+                // SAFETY: `bytes` is `buf`'s backing store, kept alive by the job's Js side.
+                result: unsafe { JsPtr::new(core::ptr::NonNull::from(bytes)) },
+                err: None,
+            },
+            ScryptJs {
+                callback: Strong::create(callback.with_async_context_if_needed(global), global),
+                buf: Strong::create(buf, global),
+            },
+        );
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn]
     fn scrypt_sync(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        // `password`/`salt` release on drop; nothing was protected on this path.
         let (ctx, _) = Scrypt::from_js::<false>(global, call_frame)?;
-        let mut ctx = scopeguard::guard(ctx, |mut c| c.deinit_sync());
         let (buf, bytes) = ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global, ctx.keylen)?;
-        ctx.run_task_impl(bytes);
-        if ctx.err.is_some() {
+        if ctx.run_task_impl(bytes).is_some() {
             return Err(global
                 .err(
                     ErrorCode::CRYPTO_OPERATION_FAILED,

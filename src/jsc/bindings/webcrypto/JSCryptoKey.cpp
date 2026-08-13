@@ -59,7 +59,6 @@
 #include <variant>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
-#include <wtf/SortedArrayMap.h>
 #include <wtf/URL.h>
 
 namespace WebCore {
@@ -82,24 +81,6 @@ String convertEnumerationToString(CryptoKey::Type enumerationValue)
 template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject, CryptoKey::Type enumerationValue)
 {
     return jsStringWithCache(lexicalGlobalObject.vm(), convertEnumerationToString(enumerationValue));
-}
-
-template<> std::optional<CryptoKey::Type> parseEnumeration<CryptoKey::Type>(JSGlobalObject& lexicalGlobalObject, JSValue value)
-{
-    auto stringValue = value.toWTFString(&lexicalGlobalObject);
-    static constexpr SortedArrayMap enumerationMapping { std::to_array<std::pair<ComparableASCIILiteral, CryptoKey::Type>>({
-        { "private"_s, CryptoKey::Type::Private },
-        { "public"_s, CryptoKey::Type::Public },
-        { "secret"_s, CryptoKey::Type::Secret },
-    }) };
-    if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); enumerationValue) [[likely]]
-        return *enumerationValue;
-    return std::nullopt;
-}
-
-template<> ASCIILiteral expectedEnumerationValues<CryptoKey::Type>()
-{
-    return "\"public\", \"private\", \"secret\""_s;
 }
 
 // Attributes

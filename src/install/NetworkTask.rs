@@ -2,8 +2,6 @@ use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
 
-use bstr::ByteSlice;
-
 use crate::bun_fs::{FileSystem, FilenameStore};
 use bun_collections::HashMap;
 use bun_core::{self, fmt::quote};
@@ -42,7 +40,6 @@ pub(crate) fn filename_store_appender() -> FilenameStoreAppender<'static> {
 pub struct NetworkTask {
     // Self-referential: borrows `url_buf` / leaked header content owned by
     // sibling fields, so the lifetime is erased to `'static`.
-    //
     // `MaybeUninit` because the slot comes from `HiveArrayFallback`
     // as *uninitialized* memory (often zero-page on first mmap, but not
     // guaranteed — `get()`'s heap fallback is `Box::new_uninit()`) and is
@@ -68,7 +65,7 @@ pub struct NetworkTask {
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
     // ParentRef constructed via `from_raw_mut` so `assume_mut` retains write
     // provenance for `for_manifest`/`for_tarball` (which call `pm.log_mut()`).
-    pub(crate) package_manager: bun_ptr::ParentRef<PackageManager>,
+    pub(crate) package_manager: bun_ptr::ParentRef<PackageManager, bun_ptr::Mut>,
     pub(crate) callback: Callback,
     /// Key in patchedDependencies in package.json
     // `'static` because NetworkTask is stored lifetime-less in
@@ -181,14 +178,23 @@ impl NetworkTask {
         async_http: *mut AsyncHTTP<'static>,
         mut result: HTTPClientResult<'_>,
     ) {
-        // SAFETY: `this` is the `&mut NetworkTask` that was erased into the
-        // callback ctx in `get_completion_callback`; the HTTP thread is the
-        // sole writer for the duration of this call.
-        let this = unsafe { &mut *this };
+        // `this` is the NetworkTask erased into the callback ctx in
+        // `get_completion_callback`; the HTTP thread is the sole writer for
+        // this call. It stays a raw receiver: both exits below (`on_chunk(..,
+        // true, ..)` and the queue push) hand `this` to another thread, so no
+        // `&mut NetworkTask` may outlive them and every pointer handed off is
+        // derived from the raw `this`.
+        //
         // SAFETY: `async_http` is the threadlocal AsyncHTTP the HTTP client
         // passes to every completion callback; live for this call.
         let async_http = unsafe { &mut *async_http };
-        if let Some(stream) = this.tarball_stream.as_deref_mut() {
+        // SAFETY: `this` is live (see above). `on_chunk` takes `*mut Self`
+        // (freely-aliasing) because a worker may be inside `drain()`
+        // concurrently, so `stream` is a raw pointer, never `&mut TarballStream`.
+        // SAFETY: `this` is live and non-null (raw receiver from the completion callback).
+        let stream =
+            unsafe { (*this).tarball_stream.as_deref_mut() }.map(ptr::from_mut::<TarballStream>);
+        if let Some(stream) = stream {
             // Runs on the HTTP thread. With response-body streaming enabled,
             // `notify` is called once per body chunk (has_more=true) and once
             // more at the end (has_more=false). `result.body` borrows the
@@ -199,12 +205,16 @@ impl NetworkTask {
             // carries response headers. Cache the status code so both the
             // main thread and later chunk callbacks can see it.
             if let Some(m) = result.metadata.take() {
-                stream.status_code = m.response.status_code;
-                this.response.metadata = Some(m);
+                // SAFETY: `stream` is the live heap-allocated `TarballStream`.
+                unsafe { (*stream).status_code = m.response.status_code };
                 // New attempt's headers arrived — drop any bytes buffered from
                 // a prior failed attempt (pre-refactor `HTTPClient::start()`
                 // did this via `body_out_str.reset()`).
-                this.response_buffer.reset();
+                // SAFETY: `this` is live; the HTTP thread is its sole writer here.
+                unsafe {
+                    (*this).response.metadata = Some(m);
+                    (*this).response_buffer.reset();
+                }
             }
 
             let chunk = result.body_bytes();
@@ -214,14 +224,17 @@ impl NetworkTask {
             // overhead. For small bodies, or any 4xx/5xx / transport error,
             // fall back to the buffered path so the existing retry and
             // error-reporting code in `run_tasks` keeps working.
-            let ok_status = stream.status_code >= 200 && stream.status_code <= 299;
+            // SAFETY: raw-ptr field reads on the live `stream`/`this`.
+            let status_code = unsafe { (*stream).status_code };
+            let ok_status = status_code >= 200 && status_code <= 299;
             let big_enough = match result.body_size {
                 http::BodySize::ContentLength(len) => len >= TarballStream::min_size(),
                 // No Content-Length (chunked encoding): we can't know up
                 // front, so stream — it avoids an unbounded buffer.
                 _ => true,
             };
-            let committed = this.streaming_committed;
+            // SAFETY: `this` is live; the HTTP thread is its sole writer here.
+            let committed = unsafe { (*this).streaming_committed };
 
             if committed || (ok_status && big_enough && result.fail.is_none()) {
                 if result.has_more {
@@ -236,13 +249,10 @@ impl NetworkTask {
                         // its `incrementPendingTasks()` is satisfied by
                         // the extract Task that `TarballStream.finish()`
                         // publishes to `resolve_tasks`.
-                        this.streaming_committed = true;
+                        // SAFETY: `this` is live; the HTTP thread is its sole writer here.
+                        unsafe { (*this).streaming_committed = true };
                         // SAFETY: `stream` is the live heap-allocated
-                        // `TarballStream` owned by this task. `on_chunk`
-                        // takes `*mut Self` (freely-aliasing) because a
-                        // worker may be inside
-                        // `drain()` concurrently; coercing the `&mut` to a
-                        // raw pointer here matches that contract.
+                        // `TarballStream` owned by this task.
                         unsafe { TarballStream::on_chunk(stream, chunk, false, None) };
                     }
                     return;
@@ -283,7 +293,8 @@ impl NetworkTask {
                 // delivering its body: accumulate in `response_buffer` so
                 // the main thread can inspect it. Do not enqueue until the
                 // stream ends.
-                this.response_buffer.list.extend_from_slice(chunk);
+                // SAFETY: `this` is live; the HTTP thread is its sole writer here.
+                unsafe { (*this).response_buffer.list.extend_from_slice(chunk) };
                 return;
             }
             // Fall through to the normal completion path for anything that
@@ -300,9 +311,11 @@ impl NetworkTask {
             // clear stale bytes from a prior retry. The streaming fall-through
             // already `.take()`d metadata and reset above, so this is a no-op
             // there and accumulated chunks are preserved.
-            this.response_buffer.reset();
+            // SAFETY: `this` is live; the HTTP thread is its sole writer here.
+            unsafe { (*this).response_buffer.reset() };
         }
-        result.body_into(&mut this.response_buffer.list);
+        // SAFETY: `this` is live; the HTTP thread is its sole writer here.
+        unsafe { result.body_into(&mut (*this).response_buffer.list) };
 
         // BACKREF — PackageManager owns this task and outlives it. `notify`
         // runs on the HTTP thread, so we never materialize a `&mut
@@ -310,7 +323,12 @@ impl NetworkTask {
         // field access goes through `addr_of!` and the cross-thread
         // `wake_raw` path, mirroring `TarballStream::finish` /
         // `isolated_install::Installer::Task::callback`.
-        let pm = this.package_manager.as_mut_ptr();
+        //
+        // SAFETY: `this` is live and non-null; `package_manager` is the
+        // owning-manager BACKREF, valid for the task's lifetime.
+        let pm = unsafe { (*this).package_manager.as_mut_ptr() };
+        // SAFETY: `this` is non-null (raw receiver from the callback).
+        let this_ptr = unsafe { ptr::NonNull::new_unchecked(this) };
         // The wake happens at the end of the fn (no
         // early returns past this point).
 
@@ -320,17 +338,20 @@ impl NetworkTask {
             let real = async_http.real.expect("unreachable").as_ptr();
             ptr::write(real, ptr::read(async_http));
         }
-        // Preserve metadata captured on an earlier streaming callback; the
-        // final `result` won't have it.
-        let saved_metadata = this.response.metadata.take();
-        // SAFETY: `detach_lifetime` erases the callback-scoped `'_` to
-        // `'static` and clears `body` to `&[]`; the body bytes were stashed
-        // into `this.response_buffer` above.
-        this.response = unsafe { result.detach_lifetime() };
-        if this.response.metadata.is_none() {
-            this.response.metadata = saved_metadata;
+        // SAFETY: the HTTP thread is the sole writer for this call; nothing
+        // exclusive to `*this` outlives this block, which ends before the
+        // cross-thread push below. `detach_lifetime` erases the callback-scoped
+        // `'_` to `'static` and clears `body` to `&[]`; the body bytes were
+        // stashed into `(*this).response_buffer` above.
+        unsafe {
+            // Preserve metadata captured on an earlier streaming callback; the
+            // final `result` won't have it.
+            let saved_metadata = (*this).response.metadata.take();
+            (*this).response = result.detach_lifetime();
+            if (*this).response.metadata.is_none() {
+                (*this).response.metadata = saved_metadata;
+            }
         }
-        let this_ptr = ptr::NonNull::from(this);
         // SAFETY: `pm` is a live BACKREF; `async_network_task_queue` is
         // internally synchronized (`UnboundedQueue::push` takes `&self`).
         unsafe {
@@ -434,7 +455,7 @@ impl NetworkTask {
             // "npm" CLI requests the manifest with the encoded name.
             let encoded_name_storage;
             let encoded_name: &[u8] = if strings::index_of_char(name, b'/').is_some() {
-                encoded_name_storage = name.replace(b"/", b"%2f");
+                encoded_name_storage = strings::replace_owned(name, b"/", b"%2f");
                 &encoded_name_storage
             } else {
                 name
@@ -789,7 +810,6 @@ impl NetworkTask {
         // credentials. The empty-`tarball_url` branch builds the URL from
         // `scope.url.href()`, so its origin matches and authorized downloads
         // keep working.
-        //
         // Compare (protocol, hostname, effective port) rather than the raw
         // `URL.origin` slice — `origin` is a borrowed prefix of the input
         // string and is not normalized for default ports, so a tarball URL of

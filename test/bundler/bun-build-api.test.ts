@@ -549,6 +549,42 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toEqual(null);
   });
 
+  test.concurrent("fails instead of truncating when a module is too deeply nested to print", async () => {
+    // A TOML dotted header builds an object nested arbitrarily deep without
+    // recursing in the parser, so the printer's recursion guard is the first
+    // thing to hit it. The printed part used to be silently dropped, leaving
+    // a corrupt bundle and success: true.
+    using dir = tempDir("build-api-deep-toml", {
+      "deep.toml": "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 1\n",
+    });
+    const x = await buildNoThrow({
+      entrypoints: [join(String(dir), "deep.toml")],
+      outdir: join(String(dir), "out"),
+    });
+    expect(x.success).toBe(false);
+    expect(x.outputs).toHaveLength(0);
+    expect(x.logs).toHaveLength(1);
+    expect(x.logs[0].message).toContain("Maximum call stack size exceeded while generating code for this file");
+    expect(x.logs[0].name).toBe("BuildMessage");
+  });
+
+  test.concurrent("reports a module that fails to print once across entrypoints", async () => {
+    // Without code splitting the failing file is printed once per entry
+    // chunk; the error is still per-file, like parse errors.
+    using dir = tempDir("build-api-deep-toml-multi", {
+      "deep.toml": "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 1\n",
+      "a.js": `import d from "./deep.toml"; console.log(d);`,
+      "b.js": `import d from "./deep.toml"; console.log(Object.keys(d));`,
+    });
+    const x = await buildNoThrow({
+      entrypoints: [join(String(dir), "a.js"), join(String(dir), "b.js")],
+      outdir: join(String(dir), "out"),
+    });
+    expect(x.success).toBe(false);
+    expect(x.logs).toHaveLength(1);
+    expect(x.logs[0].message).toContain("Maximum call stack size exceeded while generating code for this file");
+  });
+
   test.concurrent("warnings do not fail a build", async () => {
     const x = await Bun.build({
       entrypoints: [join(import.meta.dir, "./fixtures/jsx-warning/index.jsx")],
@@ -1525,3 +1561,25 @@ test("Bun.build can be called thousands of times in one process without crashing
   expect(stdout.trim()).toBe("OK 400");
   expect(exitCode).toBe(0);
 }, 180_000);
+
+test("sourcemap sourcesContent is valid JSON when source contains C0 control chars", async () => {
+  // RFC 8259 only allows \" \\ \/ \b \f \n \r \t and six-char \u escapes; \v
+  // and \xNN are JavaScript-only. A VT (0x0B) or BEL (0x07) in the input used
+  // to leak through as \v / \x07 and break JSON.parse on the .map file.
+  const controls = Array.from({ length: 0x20 }, (_, i) => String.fromCharCode(i)).join("");
+  const source = `/* ctrl: [${controls}] */\nexport const x = 1;\n`;
+  using dir = tempDir("sourcemap-json-ctrl", { "in.js": source });
+
+  const res = await Bun.build({
+    entrypoints: [join(String(dir), "in.js")],
+    sourcemap: "external",
+    outdir: String(dir),
+  });
+  expect(res.success).toBe(true);
+
+  const map = res.outputs.find(o => o.kind === "sourcemap")!;
+  const text = await map.text();
+  expect(text).not.toMatch(/\\v|\\x[0-9A-Fa-f]{2}/);
+  const parsed = JSON.parse(text);
+  expect(parsed.sourcesContent[0]).toBe(source);
+});

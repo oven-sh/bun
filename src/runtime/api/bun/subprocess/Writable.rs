@@ -7,7 +7,6 @@ use bun_sys::{self, Fd, FdExt};
 
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::node::types::FdJsc;
-use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::file_sink::{self, FileSink};
 use crate::webcore::sink;
 use crate::webcore::streams::SourceHandle;
@@ -166,7 +165,6 @@ impl<'a> Writable<'a> {
         // act, so this must be the final access.
         process.on_stdin_destroyed();
     }
-    pub fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
 
     pub(crate) fn init(
         stdio: &mut Stdio,
@@ -467,7 +465,7 @@ impl<'a> Writable<'a> {
                         subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, true));
                     }
                     let parent_ptr = subprocess.as_ctx_ptr().cast::<Subprocess<'static>>();
-                    if matches!(*pipe.source.get(), SourceHandle::Subprocess(p) if p.as_ptr() == parent_ptr)
+                    if matches!(*pipe.source.get(), SourceHandle::Subprocess(p) if p.as_const_ptr() == parent_ptr.cast_const())
                     {
                         pipe.source.with_mut(|s| s.clear());
                     }
@@ -501,7 +499,7 @@ impl<'a> Writable<'a> {
         match subprocess.stdin.replace(Writable::Ignore) {
             Writable::Pipe(pipe_nn) => {
                 let pipe = Self::pipe_sink_mut(&pipe_nn);
-                if matches!(*pipe.source.get(), SourceHandle::Subprocess(p) if p.as_ptr() == parent_ptr)
+                if matches!(*pipe.source.get(), SourceHandle::Subprocess(p) if p.as_const_ptr() == parent_ptr.cast_const())
                 {
                     pipe.source.with_mut(|s| s.clear());
                 }

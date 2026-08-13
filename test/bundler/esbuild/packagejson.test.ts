@@ -1531,6 +1531,11 @@ describe("bundler", () => {
       stdout: "SUCCESS",
     },
   });
+  // Bun-specific: wildcard `exports` with an extensionless target now
+  // auto-resolves the extension (`.js`, `.mjs`, ...). Node.js and esbuild
+  // error here (this test is ported from esbuild, which is why it previously
+  // asserted a resolution error); Vite, webpack, and TypeScript's
+  // `moduleResolution: "bundler"` handle this shape. See oven-sh/bun#29679.
   itBundled("packagejson/ExportsNotExactMissingExtensionPattern", {
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg1/foo/bar'`,
@@ -1543,8 +1548,8 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/pkg1/dir/bar.js": `console.log('SUCCESS')`,
     },
-    bundleErrors: {
-      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1/foo/bar". Maybe you need to "bun install"?`],
+    run: {
+      stdout: "SUCCESS",
     },
   });
   itBundled("packagejson/ExportsExactMissingExtension", {
@@ -2187,6 +2192,151 @@ describe("bundler", () => {
     },
     run: {
       stdout: "browser-override",
+    },
+  });
+  // The "main" field value is checked against the browser map before extension
+  // resolution. Packages like jszip ship
+  //   "main": "./lib/index",
+  //   "browser": {"./lib/index": "./dist/jszip.min.js"}
+  // and expect the prebuilt bundle to be picked for browser targets.
+  itBundled("packagejson/BrowserMapMainFieldNoExt", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import value from 'demo-pkg'
+        console.log(value)
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "main": "./lib/index",
+          "browser": {
+            "./lib/index": "./dist/demo-pkg.min.js"
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/lib/index.js": `module.exports = 'lib'`,
+      "/Users/user/project/node_modules/demo-pkg/dist/demo-pkg.min.js": `module.exports = 'prebuilt'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "prebuilt",
+    },
+  });
+  // Extension matching for main-field browser remaps should match esbuild:
+  // the main-field value is probed as-is and with extensions appended, so an
+  // extensionless main still hits a ".js"-keyed browser entry, but a ".js"
+  // main does not hit an extensionless browser key.
+  itBundled("packagejson/BrowserMapMainFieldExtPermutations", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import a from 'pkg-a'
+        import b from 'pkg-b'
+        import c from 'pkg-c'
+        import d from 'pkg-d'
+        console.log(a, b, c, d)
+      `,
+      "/Users/user/project/node_modules/pkg-a/package.json": `{"main":"./lib/index.js","browser":{"./lib/index.js":"./browser.js"}}`,
+      "/Users/user/project/node_modules/pkg-a/lib/index.js": `module.exports = 'lib'`,
+      "/Users/user/project/node_modules/pkg-a/browser.js": `module.exports = 'browser'`,
+      "/Users/user/project/node_modules/pkg-b/package.json": `{"main":"./lib/index","browser":{"./lib/index.js":"./browser.js"}}`,
+      "/Users/user/project/node_modules/pkg-b/lib/index.js": `module.exports = 'lib'`,
+      "/Users/user/project/node_modules/pkg-b/browser.js": `module.exports = 'browser'`,
+      "/Users/user/project/node_modules/pkg-c/package.json": `{"main":"./lib/index.js","browser":{"./lib/index":"./browser.js"}}`,
+      "/Users/user/project/node_modules/pkg-c/lib/index.js": `module.exports = 'lib'`,
+      "/Users/user/project/node_modules/pkg-c/browser.js": `module.exports = 'browser'`,
+      "/Users/user/project/node_modules/pkg-d/package.json": `{"main":"./lib/index","browser":{"./lib/index":"./browser.js"}}`,
+      "/Users/user/project/node_modules/pkg-d/lib/index.js": `module.exports = 'lib'`,
+      "/Users/user/project/node_modules/pkg-d/browser.js": `module.exports = 'browser'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "browser browser lib browser",
+    },
+  });
+  itBundled("packagejson/BrowserMapMainFieldDisabledNoExt", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        console.log(require('demo-pkg') === 'lib' ? 'loaded-lib' : 'disabled')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "main": "./lib/index",
+          "browser": {
+            "./lib/index": false
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/lib/index.js": `module.exports = 'lib'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "disabled",
+    },
+  });
+  // A subpath that resolves to a directory's implicit "index" is checked
+  // against the enclosing package's browser map, and the remap target is
+  // resolved relative to that package (not the subdirectory).
+  itBundled("packagejson/BrowserMapSubpathDirIndex", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import value from 'demo-pkg/sub'
+        console.log(value)
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "browser": {
+            "./sub/index.js": "./browser-sub.js"
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/sub/index.js": `module.exports = 'sub-index'`,
+      "/Users/user/project/node_modules/demo-pkg/browser-sub.js": `module.exports = 'browser-sub'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "browser-sub",
+    },
+  });
+  itBundled("packagejson/BrowserMapSubpathDirIndexDisabled", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        console.log(require('demo-pkg/sub') === 'sub-index' ? 'loaded' : 'disabled')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "browser": {
+            "./sub/index": false
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/sub/index.js": `module.exports = 'sub-index'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "disabled",
+    },
+  });
+  // When "main" points at a directory, the implicit "<dir>/index" is checked
+  // against the browser map before extension resolution.
+  itBundled("packagejson/BrowserMapMainFieldDirIndexNoExt", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import value from 'demo-pkg'
+        console.log(value)
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "main": "./lib",
+          "browser": {
+            "./lib/index": "./browser.js"
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/lib/index.js": `module.exports = 'lib'`,
+      "/Users/user/project/node_modules/demo-pkg/browser.js": `module.exports = 'browser'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "browser",
     },
   });
 });

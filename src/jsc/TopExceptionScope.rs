@@ -166,7 +166,7 @@ impl Drop for TopExceptionScopeGuard<'_> {
     fn drop(&mut self) {
         // SAFETY: the guard is only ever constructed by `init_guard`, which fully
         // initialized the scope; the borrow ensures it has not been destroyed.
-        unsafe { TopExceptionScope::destroy(self.0) };
+        unsafe { self.0.destroy() };
     }
 }
 
@@ -343,16 +343,13 @@ impl TopExceptionScope {
     }
 
     /// # Safety
-    /// `this` must point to a scope previously initialized via `init()` and not yet destroyed.
+    /// The scope must have been initialized via `init()` and not yet destroyed.
     /// Prefer dropping a [`TopExceptionScopeGuard`] instead.
-    pub(crate) unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract.
-        let this = unsafe { &mut *this };
+    pub(crate) unsafe fn destroy(&mut self) {
         #[cfg(any(debug_assertions, bun_asan))]
-        debug_assert!(core::ptr::eq(this.location, &raw const this.bytes[0]));
+        debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         // SAFETY: bytes was initialized by init().
-        unsafe { TopExceptionScope__destruct(&raw mut this.bytes) };
-        // this.bytes = undefined; — no-op in Rust
+        unsafe { TopExceptionScope__destruct(&raw mut self.bytes) };
     }
 }
 
@@ -565,7 +562,7 @@ impl ExceptionValidationScope {
         // SAFETY: caller contract — `this` points to a scope initialized via `init()` and not
         // yet destroyed; under this cfg the wrapper's sole field is the inner scope.
         unsafe {
-            TopExceptionScope::destroy(&raw mut (*this).scope)
+            (*this).scope.destroy()
         };
         #[cfg(not(any(debug_assertions, bun_asan)))]
         let _ = this;

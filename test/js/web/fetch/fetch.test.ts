@@ -1,6 +1,6 @@
 import { AnyFunction, serve, ServeOptions, Server, sleep, TCPSocketListener } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, closeSync, ftruncateSync, openSync, rmSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -16,6 +16,7 @@ import {
   isWindows,
   rss,
   runFixtureMaxRSS,
+  tempDir,
   tls,
   tmpdirSync,
   withoutAggressiveGC,
@@ -3383,3 +3384,89 @@ it("the idle timer is an absolute deadline for the response header block (not re
     await new Promise<void>(r => server.close(() => r()));
   }
 }, 60_000);
+
+it.skipIf(isWindows)("sends the exact Content-Length for a file body of 100 GB", async () => {
+  using dir = tempDir("fetch-large-file-body", { "large.bin": "" });
+  const path = join(String(dir), "large.bin");
+  const size = 100_000_000_000;
+  const fd = openSync(path, "r+");
+  try {
+    ftruncateSync(fd, size);
+  } finally {
+    closeSync(fd);
+  }
+  expect(Bun.file(path).size).toBe(size);
+
+  const { promise: headPromise, resolve: resolveHead } = Promise.withResolvers<string>();
+  let received = "";
+  let headComplete = false;
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(socket, chunk) {
+        if (headComplete) return;
+        received += chunk.toString("latin1");
+        const end = received.indexOf("\r\n\r\n");
+        if (end !== -1) {
+          headComplete = true;
+          resolveHead(received.slice(0, end));
+          socket.end();
+        }
+      },
+    },
+  });
+
+  const controller = new AbortController();
+  const result = fetch(`http://${listener.hostname}:${listener.port}/upload`, {
+    method: "PUT",
+    body: Bun.file(path),
+    signal: controller.signal,
+  }).then(
+    () => null,
+    e => e,
+  );
+
+  const head = await headPromise;
+  controller.abort();
+  await result;
+
+  const contentLength = head
+    .split("\r\n")
+    .find(line => line.toLowerCase().startsWith("content-length:"))
+    ?.slice("content-length:".length)
+    .trim();
+  expect(contentLength).toBe(String(size));
+});
+
+it("verbose fetch logging prints [redacted] in place of Authorization credentials", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      return new Response(req.headers.get("authorization") ?? "");
+    },
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const res = await fetch(process.env.SERVER_URL, { headers: { Authorization: "Bearer sekret-token" } });
+       console.log(await res.text());`,
+    ],
+    env: { ...bunEnv, BUN_CONFIG_VERBOSE_FETCH: "1", SERVER_URL: server.url.href },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("Bearer sekret-token\n");
+  const authorizationLines = stderr.split(/\r?\n/).flatMap(line => {
+    const match = /^(?:\[fetch\])?\s*>?\s*authorization:(.*)$/i.exec(line);
+    return match ? [match[1].trim()] : [];
+  });
+  expect(authorizationLines).toEqual(["Bearer [redacted]"]);
+  expect(stderr).not.toContain("sekret-token");
+  expect(exitCode).toBe(0);
+});

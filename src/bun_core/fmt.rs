@@ -430,6 +430,29 @@ pub fn format_json_string_utf8(
     JSONFormatterUTF8 { input: text, opts }
 }
 
+/// Replaces each `{[name]s}` placeholder in `template` with the value paired
+/// with `name` in `args`. Anything else, including placeholders whose name is
+/// not in `args`, is copied through unchanged.
+pub fn substitute_named(template: &[u8], args: &[(&[u8], &[u8])]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(template.len());
+    let mut remaining = template;
+    'scan: while let Some(start) = strings::index_of(remaining, b"{[") {
+        out.extend_from_slice(&remaining[..start]);
+        let after = &remaining[start + 2..];
+        for &(name, value) in args {
+            if after.starts_with(name) && after[name.len()..].starts_with(b"]s}") {
+                out.extend_from_slice(value);
+                remaining = &after[name.len() + 3..];
+                continue 'scan;
+            }
+        }
+        out.extend_from_slice(b"{[");
+        remaining = after;
+    }
+    out.extend_from_slice(remaining);
+    out
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Shared temp buffer (threadlocal)
 // ───────────────────────────────────────────────────────────────────────────
@@ -1124,7 +1147,8 @@ impl Display for URLFormatter<'_> {
         )?;
 
         if let Some(hostname) = self.hostname {
-            let needs_brackets = hostname[0] != b'[' && strings::is_ipv6_address(hostname);
+            let needs_brackets =
+                hostname[0] != b'[' && crate::ip_address::is_ipv6_address(hostname);
             if needs_brackets {
                 write!(f, "[{}]", bstr::BStr::new(hostname))?;
             } else {
@@ -1683,12 +1707,12 @@ impl Keywords {
 
 pub(crate) struct RedactedKeywords;
 impl RedactedKeywords {
-    // 5 entries — a `matches!` chain is plenty at this size (the big keyword
+    // 6 entries — a `matches!` chain is plenty at this size (the big keyword
     // table in `Keywords::get` is where the length-dispatched map pays off).
     pub(crate) fn has(s: &[u8]) -> bool {
         matches!(
             s,
-            b"_auth" | b"_authToken" | b"token" | b"_password" | b"email"
+            b"_auth" | b"_authToken" | b"token" | b"_password" | b"password" | b"email"
         )
     }
 }
@@ -2321,7 +2345,7 @@ pub fn format_ip<'a>(
     let mut end = written;
 
     // Strip `:<port>`
-    if let Some(colon) = into[start..end].iter().rposition(|&b| b == b':') {
+    if let Some(colon) = strings::last_index_of_char(&into[start..end], b':') {
         end = start + colon;
     }
     // Strip brackets
@@ -2332,7 +2356,7 @@ pub fn format_ip<'a>(
     // Strip `%<zone>` — Node formats addresses via uv_inet_ntop on the bare
     // in6_addr and never includes the zone identifier; the scope is exposed
     // separately (e.g. `scopeid` in os.networkInterfaces()).
-    if let Some(percent) = into[start..end].iter().position(|&b| b == b'%') {
+    if let Some(percent) = strings::index_of_char_usize(&into[start..end], b'%') {
         end = start + percent;
     }
     Ok(&mut into[start..end])
@@ -2371,7 +2395,7 @@ pub fn count(args: fmt::Arguments<'_>) -> usize {
 /// the rare ≥ 2³² tail falls back to a `/= 10` loop so the full `u64` range is
 /// covered (the old `fast_digit_count` panicked on table OOB there).
 #[inline]
-pub fn digit_count_u64(x: u64) -> usize {
+fn digit_count_u64(x: u64) -> usize {
     if x == 0 {
         return 1;
     }
@@ -2425,7 +2449,7 @@ pub fn digit_count_u64(x: u64) -> usize {
 /// Decimal digit count of a signed 64-bit integer, including the leading `-`
 /// for negatives. Handles `i64::MIN` via `unsigned_abs`.
 #[inline]
-pub fn digit_count_i64(n: i64) -> usize {
+fn digit_count_i64(n: i64) -> usize {
     (n < 0) as usize + digit_count_u64(n.unsigned_abs())
 }
 
@@ -2606,8 +2630,8 @@ pub fn hex_upper(bytes: &[u8]) -> HexBytes<'_, false> {
     HexBytes(bytes)
 }
 
-pub const LOWER_HEX_TABLE: [u8; 16] = *b"0123456789abcdef";
-pub const UPPER_HEX_TABLE: [u8; 16] = *b"0123456789ABCDEF";
+const LOWER_HEX_TABLE: [u8; 16] = *b"0123456789abcdef";
+const UPPER_HEX_TABLE: [u8; 16] = *b"0123456789ABCDEF";
 
 /// Sentinel returned by [`HEX_DECODE_TABLE`] for non-hex-digit bytes.
 pub const HEX_INVALID: u8 = 0xff;
@@ -2799,7 +2823,7 @@ pub const fn hex4_upper(v: u16) -> [u8; 4] {
 }
 /// Four hex nibbles for a `u16` (`\\uXXXX`). `LOWER == false` → uppercase.
 #[inline]
-pub const fn hex_u16<const LOWER: bool>(v: u16) -> [u8; 4] {
+const fn hex_u16<const LOWER: bool>(v: u16) -> [u8; 4] {
     let t = if LOWER {
         &LOWER_HEX_TABLE
     } else {
@@ -3460,9 +3484,7 @@ fn truncated_hash32_impl(int: u64, writer: &mut impl fmt::Write) -> fmt::Result 
 
 /// Const-fn core of [`truncated_hash32`] / [`TruncatedHash32`]: the 8-byte
 /// base32-ish encoding (native-endian byte reinterpretation).
-/// Exposed so const contexts (e.g. `js_parser::generated_symbol_name!`) can
-/// share the single alphabet table instead of copy-pasting it.
-pub const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
+const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
     const CHARS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
     let b = int.to_ne_bytes();
     [

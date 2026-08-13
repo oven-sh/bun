@@ -409,15 +409,6 @@ type Str = &'static [u8];
 // `Str` is a lifetime-erased byte-slice alias; see the module-level OWNERSHIP
 // note for the real ownership story.
 
-// api — warning/error counters returned by `Log::to_api`.
-pub mod api {
-    #[derive(Clone, Default, Debug)]
-    pub struct Log {
-        pub warnings: u32,
-        pub errors: u32,
-    }
-}
-
 /// `[]const u8` parameter shim — accepts `&str` / `&[u8]` (any lifetime)
 /// and erases to the crate-wide `Str` (`&'static [u8]`) lie so callers in either
 /// string flavour compile against the same signatures.
@@ -575,6 +566,7 @@ impl Kind {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
+#[repr(transparent)]
 pub struct Loc {
     pub start: i32,
 }
@@ -1512,17 +1504,6 @@ impl Log {
         (self.warnings + self.errors) > 0
     }
 
-    pub fn to_api(&self) -> api::Log {
-        let mut warnings: u32 = 0;
-        let mut errors: u32 = 0;
-        for msg in &self.msgs {
-            errors += (msg.kind == Kind::Err) as u32;
-            warnings += (msg.kind == Kind::Warn) as u32;
-        }
-
-        api::Log { warnings, errors }
-    }
-
     pub fn init() -> Log {
         let level = DEFAULT_LOG_LEVEL.load();
         Log {
@@ -2376,7 +2357,7 @@ impl Default for Source {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct ErrorPosition {
+struct ErrorPosition {
     pub(crate) line_start: usize,
     pub(crate) line_end: usize,
     pub(crate) column_count: usize,
@@ -2909,7 +2890,6 @@ pub mod flags {
     #[derive(EnumSetType, Debug)]
     pub enum JSXElement {
         IsKeyAfterSpread,
-        HasAnyDynamic,
     }
     pub type JSXElementBitset = EnumSet<JSXElement>;
 
@@ -3171,7 +3151,7 @@ pub fn data_store_dupe_str(bytes: &[u8]) -> &'static [u8] {
 }
 
 /// RAII scope for [`store_ast_alloc_heap`]: `enter()` on construction,
-/// `reset()` via [`Self::reset`], `exit()` on drop.
+/// `exit()` on drop.
 #[must_use = "side-arena heap lives until this guard drops"]
 pub struct StoreAstAllocHeap(());
 impl StoreAstAllocHeap {
@@ -3179,10 +3159,6 @@ impl StoreAstAllocHeap {
     pub fn new() -> Self {
         store_ast_alloc_heap::enter();
         Self(())
-    }
-    #[inline]
-    pub fn reset(&self) {
-        store_ast_alloc_heap::reset();
     }
 }
 impl Drop for StoreAstAllocHeap {
@@ -3233,21 +3209,29 @@ pub fn initialize_store_or_reset() {
 
 /// RAII guard that pins the thread-local `disable_reset` flag on both AST
 /// `Store`s for its scope.
-#[must_use = "disable_reset is cleared on drop; bind to a named local"]
-pub struct DisableStoreReset(());
+#[must_use = "disable_reset is restored on drop; bind to a named local"]
+pub struct DisableStoreReset {
+    prev_expr: bool,
+    prev_stmt: bool,
+}
 impl DisableStoreReset {
     #[inline]
     pub fn new() -> Self {
+        let prev_expr = expr::data::Store::disable_reset();
+        let prev_stmt = stmt::data::Store::disable_reset();
         expr::data::Store::set_disable_reset(true);
         stmt::data::Store::set_disable_reset(true);
-        Self(())
+        Self {
+            prev_expr,
+            prev_stmt,
+        }
     }
 }
 impl Drop for DisableStoreReset {
     #[inline]
     fn drop(&mut self) {
-        expr::data::Store::set_disable_reset(false);
-        stmt::data::Store::set_disable_reset(false);
+        expr::data::Store::set_disable_reset(self.prev_expr);
+        stmt::data::Store::set_disable_reset(self.prev_stmt);
     }
 }
 

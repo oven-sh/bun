@@ -7,6 +7,7 @@ import {
   getMaxFD,
   isBroken,
   isDebug,
+  isLinux,
   isMacOS,
   isPosix,
   isWindows,
@@ -1252,6 +1253,7 @@ it.skipIf(isWindows)("leaves a caller-supplied stdout fd open when stdin stream 
     fstatSync(fd);
     writeSync(fd, "still-open");
     closeSync(fd);
+    Bun.gc(true);
     console.log(message);
     process.exit(0);
   `;
@@ -1261,6 +1263,7 @@ it.skipIf(isWindows)("leaves a caller-supplied stdout fd open when stdin stream 
     stdio: ["ignore", "pipe", "pipe"],
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout.trim()).toBe("pull unavailable");
   expect(readFileSync(file, "utf8")).toContain("still-open");
   expect(exitCode).toBe(0);
@@ -1293,6 +1296,7 @@ it.skipIf(isWindows)("leaves a Bun.file(fd) stdout open when stdin stream setup 
     fstatSync(fd);
     writeSync(fd, "still-open");
     closeSync(fd);
+    Bun.gc(true);
     console.log(message);
     process.exit(0);
   `;
@@ -1532,4 +1536,26 @@ describe("uid/gid", () => {
     }
     expect(thrown?.code).toBe("EPERM");
   });
+});
+
+// The allocator opts its own mappings out of THP; it must not use
+// prctl(PR_SET_THP_DISABLE), which children inherit across execve. Gate on our
+// parent so an environment (or older bun) that disabled THP itself skips.
+function thpEnabled(status: string) {
+  return status.match(/^THP_enabled:\s*(\d)/m)?.[1];
+}
+function parentThp() {
+  if (!isLinux) return undefined;
+  try {
+    return thpEnabled(readFileSync(`/proc/${process.ppid}/status`, "utf8"));
+  } catch {
+    return undefined; // hidepid mount: cannot tell, skip
+  }
+}
+it.if(parentThp() === "1")("spawned children keep the system THP policy", async () => {
+  await using proc = spawn({ cmd: ["cat", "/proc/self/status"], stdout: "pipe", stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(thpEnabled(stdout)).toBe("1");
+  expect(thpEnabled(readFileSync("/proc/self/status", "utf8"))).toBe("1");
+  expect(exitCode).toBe(0);
 });

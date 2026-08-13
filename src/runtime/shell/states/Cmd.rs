@@ -761,8 +761,9 @@ impl Cmd {
                 } else if crate::webcore::ReadableStream::from_js(jsval, global)?.is_some() {
                     panic!("TODO SHELL READABLE STREAM");
                 } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
-                    // SAFETY: `as_` returns a live JSC-owned `*mut Response`.
-                    let req = unsafe { &mut *req };
+                    // SAFETY: `as_` returns a live JSC-owned `*mut Response`;
+                    // `get_body_value` is `&self`.
+                    let req = unsafe { &*req };
                     req.get_body_value().to_blob_if_possible();
                     if flags.stdin() {
                         let b = req.get_body_value().use_as_any_blob();
@@ -849,24 +850,42 @@ impl Cmd {
         Yield::Next(this)
     }
 
-    /// Main-thread re-entry for a subprocess exit posted from off-thread —
-    /// equivalent to [`Self::on_exec_done`] but drives the trampoline itself
-    /// since the dispatcher discards the [`Yield`].
-    pub(crate) fn on_subprocess_done(interp: &Interpreter, this: NodeId, exit_code: ExitCode) {
-        Self::on_exec_done(interp, this, exit_code).run(interp);
+    /// [`Self::deinit`] for the VM-shutdown finalizer: defuses the
+    /// `> ${arraybuffer}` unpins first — the heap sweep already deleted the
+    /// `JSC::ArrayBuffer` impls they would write to.
+    #[cfg(not(windows))]
+    pub(crate) fn deinit_from_finalizer(interp: &Interpreter, this: NodeId) {
+        {
+            let me = interp.as_cmd_mut(this);
+            match &mut me.exec {
+                Exec::Builtin(b) => b.defuse_array_buf_pins(),
+                Exec::Subproc(sub) if !sub.child.is_null() => {
+                    // SAFETY: `child` is the live heap::alloc'd subprocess;
+                    // the call only writes its own fields.
+                    unsafe { ShellSubprocess::defuse_array_buffer_unpins(sub.child) };
+                }
+                _ => {}
+            }
+        }
+        Self::deinit(interp, this);
     }
 
     pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Cmd {} deinit", this);
-        let me = interp.as_cmd_mut(this);
-        me.args.clear();
-        me.redirection_file.clear();
-        if let Some(fd) = me.redirection_fd.take() {
-            // SAFETY: `fd` is the +1 ref held in `me.redirection_fd`.
-            CowFd::deref(fd);
-        }
-        // Tear down the running exec.
-        match core::mem::take(&mut me.exec) {
+        let exec = {
+            let me = interp.as_cmd_mut(this);
+            me.args.clear();
+            me.redirection_file.clear();
+            if let Some(fd) = me.redirection_fd.take() {
+                // SAFETY: `fd` is the +1 ref held in `me.redirection_fd`.
+                CowFd::deref(fd);
+            }
+            core::mem::take(&mut me.exec)
+        };
+        // `me`'s borrow ended above: the teardown below re-enters this Cmd
+        // via stdin `on_close_io` → `buffered_input_close` (a no-op once
+        // `exec` is taken).
+        match exec {
             Exec::None => {}
             Exec::Builtin(b) => drop(b),
             Exec::Subproc(sub) if !sub.child.is_null() => {
@@ -874,12 +893,18 @@ impl Cmd {
                 // `heap::alloc(ShellSubprocess)` and stays valid until this
                 // drop. Single-threaded. Reclaiming the box runs
                 // `ShellSubprocess::drop` → `finalize_sync` (closes stdio).
-                let mut child = unsafe { bun_core::heap::take(sub.child) };
-                if !child.has_exited() {
-                    let _ = child.try_kill(9);
+                unsafe {
+                    let child = sub.child;
+                    if !(*child).has_exited() {
+                        let _ = (*child).try_kill(9);
+                    }
+                    (*child).unref::<true>();
+                    // Stop any still-active stdio before the drop (only the
+                    // VM-shutdown path reaches here in flight).
+                    #[cfg(not(windows))]
+                    ShellSubprocess::deinit_in_flight_io(child);
+                    drop(bun_core::heap::take(child));
                 }
-                child.unref::<true>();
-                drop(child);
                 // `sub.buffered_closed` drops here, freeing any captured
                 // `Vec<u8>`s (spec `buffered_closed.deinit()`).
             }
@@ -890,7 +915,7 @@ impl Cmd {
         // Argv/env are heap-owned `Vec`s; there is no spawn arena to free.
         // `base.shell` is borrowed (or, when parent is Pipeline, freed by
         // `Pipeline::child_done` before this runs) — never freed here.
-        me.base.end_scope();
+        interp.as_cmd_mut(this).base.end_scope();
     }
 
     // ── Subprocess callbacks (legacy `*Cmd` backref shape) ────────────────

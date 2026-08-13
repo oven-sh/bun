@@ -331,7 +331,8 @@ pub mod dir_iterator {
                 // scan for the terminator; a scalar
                 // byte loop here showed up in startup profiles on large directories.
                 let name_field = &buf[base + 19..base + reclen];
-                let nul = memchr::memchr(0, name_field).unwrap_or(name_field.len());
+                let nul = bun_core::strings::index_of_char_usize(name_field, 0)
+                    .unwrap_or(name_field.len());
                 let name = &name_field[..nul];
 
                 // skip . and .. entries
@@ -1070,13 +1071,23 @@ impl error::IntoErrnoInt for bun_windows_sys::NTSTATUS {
     }
 }
 
+/// `Exchange` and `NoReplace` are mutually exclusive at the kernel level.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum RenameMode {
+    #[default]
+    Normal,
+    /// Linux `RENAME_EXCHANGE` / macOS `RENAME_SWAP`.
+    Exchange,
+    /// Linux `RENAME_NOREPLACE` / macOS `RENAME_EXCL`.
+    NoReplace,
+}
+
 /// Flags for [`renameat2`].
 /// On Linux maps to `RENAME_EXCHANGE`/`RENAME_NOREPLACE`; on macOS maps to
 /// `RENAME_SWAP`/`RENAME_EXCL`/`RENAME_NOFOLLOW_ANY`.
 #[derive(Clone, Copy, Default)]
 pub struct Renameat2Flags {
-    pub exchange: bool,
-    pub exclude: bool,
+    pub mode: RenameMode,
     pub nofollow: bool,
 }
 
@@ -1088,11 +1099,10 @@ impl Renameat2Flags {
         #[cfg(target_os = "macos")]
         {
             // <sys/stdio.h>: RENAME_SWAP=2, RENAME_EXCL=4, RENAME_NOFOLLOW_ANY=0x10
-            if self.exchange {
-                flags |= 2;
-            }
-            if self.exclude {
-                flags |= 4;
+            match self.mode {
+                RenameMode::Normal => {}
+                RenameMode::Exchange => flags |= 2,
+                RenameMode::NoReplace => flags |= 4,
             }
             if self.nofollow {
                 flags |= 0x10;
@@ -1100,20 +1110,19 @@ impl Renameat2Flags {
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            if self.exchange {
-                flags |= libc::RENAME_EXCHANGE as u32;
+            match self.mode {
+                RenameMode::Normal => {}
+                RenameMode::Exchange => flags |= libc::RENAME_EXCHANGE as u32,
+                RenameMode::NoReplace => flags |= libc::RENAME_NOREPLACE as u32,
             }
-            if self.exclude {
-                flags |= libc::RENAME_NOREPLACE as u32;
-            }
+            let _ = self.nofollow;
         }
         #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         {
-            if self.exchange {
-                flags |= 1;
-            }
-            if self.exclude {
-                flags |= 2;
+            match self.mode {
+                RenameMode::Normal => {}
+                RenameMode::Exchange => flags |= 1,
+                RenameMode::NoReplace => flags |= 2,
             }
             let _ = self.nofollow;
         }
@@ -1401,6 +1410,7 @@ impl Tag {
     pub(crate) const getrlimit: Tag = Tag(105);
     #[cfg(not(windows))]
     pub(crate) const setrlimit: Tag = Tag(106);
+    pub const clone3: Tag = Tag(107);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1408,7 +1418,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 107] = [
+        const NAMES: [&str; 108] = [
             "TODO",
             "dup",
             "access",
@@ -1517,6 +1527,7 @@ impl Tag {
             "ioctl",
             "getrlimit",
             "setrlimit",
+            "clone3",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -1962,8 +1973,26 @@ mod posix_impl {
         if !UNAVAILABLE.load(Ordering::Relaxed) {
             match super::linux_syscall::openat2_in_root(dir, path, flags, mode) {
                 Ok(fd) => return Ok(fd),
-                Err(libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG) => {
-                    UNAVAILABLE.store(true, Ordering::Relaxed);
+                Err(e @ (libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG)) => {
+                    let probe = super::linux_syscall::openat2_in_root(
+                        dir,
+                        bun_core::zstr!("."),
+                        O::PATH | O::DIRECTORY | O::CLOEXEC,
+                        0,
+                    );
+                    match probe {
+                        Err(libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG) => {
+                            UNAVAILABLE.store(true, Ordering::Relaxed);
+                        }
+                        other => {
+                            if let Ok(fd) = other {
+                                let _ = close(fd);
+                            }
+                            return Err(
+                                Error::from_code_int(e, Tag::open).with_path(path.as_bytes())
+                            );
+                        }
+                    }
                 }
                 Err(e) => {
                     return Err(Error::from_code_int(e, Tag::open).with_path(path.as_bytes()));
@@ -5710,8 +5739,6 @@ pub mod darwin {
         pub fn as_ptr(&self) -> *const OSLog {
             core::ptr::from_ref(self)
         }
-        /// Full signpost API lives in `bun_platform::darwin`; this stub lets
-        /// `bun_perf` compile its Darwin arm without pulling that crate up-tier.
         pub fn signpost(&self, name: i32) -> os_log::Signpost<'_> {
             os_log::Signpost { log: self, name }
         }
@@ -7156,7 +7183,7 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
     let opts: u32 = if follow {
         blocking_flag
     } else {
-        w::FILE_OPEN_REPARSE_POINT
+        blocking_flag | w::FILE_OPEN_REPARSE_POINT
     };
 
     let mut attributes: u32 = w::FILE_ATTRIBUTE_NORMAL;
@@ -7652,10 +7679,7 @@ fn linux_kernel_is_freebsd() -> bool {
         let mut buf = [0u8; 512];
         let n = read(fd, &mut buf).unwrap_or(0);
         let _ = close(fd);
-        if buf[..n]
-            .windows(7)
-            .any(|w| w.eq_ignore_ascii_case(b"freebsd"))
-        {
+        if bun_core::strings::contains_case_insensitive_ascii(&buf[..n], b"freebsd") {
             2
         } else {
             1
@@ -8505,6 +8529,69 @@ pub mod net {
         pub fn as_sockaddr(&self) -> *const sockaddr {
             (&raw const self.any).cast()
         }
+
+        /// Lay out `ip`:`port` as a sockaddr — the one place an in/in6 struct is written over the storage, so callers never cast.
+        pub fn from_ip(ip: core::net::IpAddr, port: u16) -> Self {
+            // SAFETY: `sockaddr_storage` is a POD C struct; all-zeros is valid.
+            let mut any: sockaddr_storage = unsafe { bun_core::ffi::zeroed_unchecked() };
+            match ip {
+                core::net::IpAddr::V4(v4) => {
+                    let inner = sockaddr_in {
+                        family: AF_INET as sa_family_t,
+                        port: port.to_be(),
+                        addr: u32::from_ne_bytes(v4.octets()),
+                        ..sockaddr_in::ZEROED
+                    };
+                    // SAFETY: `sockaddr_storage` holds a POD `sockaddr_in`; they cannot overlap.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            (&raw const inner).cast::<u8>(),
+                            (&raw mut any).cast::<u8>(),
+                            core::mem::size_of::<sockaddr_in>(),
+                        );
+                    }
+                }
+                core::net::IpAddr::V6(v6) => {
+                    let inner = sockaddr_in6 {
+                        family: AF_INET6 as sa_family_t,
+                        port: port.to_be(),
+                        addr: v6.octets(),
+                        ..sockaddr_in6::ZEROED
+                    };
+                    // SAFETY: as above, for `sockaddr_in6`.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            (&raw const inner).cast::<u8>(),
+                            (&raw mut any).cast::<u8>(),
+                            core::mem::size_of::<sockaddr_in6>(),
+                        );
+                    }
+                }
+            }
+            Self { any }
+        }
+
+        /// The IPv6 zone index (`fe80::1%en0`); ignored for IPv4.
+        pub fn set_scope_id(&mut self, scope_id: u32) {
+            if self.family() == AF_INET6 {
+                // SAFETY: `family() == AF_INET6` ⇒ the storage holds a `sockaddr_in6`.
+                unsafe { (*(&raw mut self.any).cast::<sockaddr_in6>()).scope_id = scope_id };
+            }
+        }
+
+        /// Bytes of `sockaddr_storage` this address actually occupies.
+        pub fn socklen(&self) -> u32 {
+            (if self.family() == AF_INET6 {
+                core::mem::size_of::<sockaddr_in6>()
+            } else {
+                core::mem::size_of::<sockaddr_in>()
+            }) as u32
+        }
+
+        /// The raw storage, for FFI that takes `sockaddr_storage` by value.
+        pub fn into_storage(self) -> sockaddr_storage {
+            self.any
+        }
         /// Tag-checked borrow of the IPv4 payload. `None` unless
         /// `family() == AF_INET`.
         #[inline]
@@ -9239,7 +9326,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
                 to_dir_fd,
                 to,
                 Renameat2Flags {
-                    exclude: true,
+                    mode: RenameMode::NoReplace,
                     ..Default::default()
                 },
             ) {
@@ -9265,7 +9352,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
                         to_dir_fd,
                         to,
                         Renameat2Flags {
-                            exchange: true,
+                            mode: RenameMode::Exchange,
                             ..Default::default()
                         },
                     ) {

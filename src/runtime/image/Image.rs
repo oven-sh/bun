@@ -6,7 +6,7 @@
 //! write one slot of `Pipeline` and return `this` — there is no op list, so
 //! calling a setter twice overwrites. The actual decode → transform → encode
 //! work happens off-thread when a terminal (`bytes`/`buffer`/`blob`/
-//! `toBase64`/`metadata`) is awaited, via `jsc.ConcurrentPromiseTask`.
+//! `toBase64`/`metadata`) is awaited, as a `bun_jsc::Job` (`PipelineTask`).
 
 use core::cell::Cell;
 use core::mem;
@@ -21,7 +21,6 @@ use bun_core::ZBox;
 use bun_core::base64;
 use bun_core::zstr;
 use bun_core::{ZStr, strings};
-use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass as _,
     JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
@@ -719,7 +718,7 @@ impl Image {
         &self,
         this_value: JSValue,
         _global: &JSGlobalObject,
-    ) -> Result<Input, PinError> {
+    ) -> Result<(Input, Pin), PinError> {
         match self.source.get() {
             Source::JsBuffer => {
                 let Some(v) = js::source_js_get_cached(this_value) else {
@@ -750,10 +749,13 @@ impl Image {
                             // SAFETY: classifier guarantees `ptr[0..len]` is
                             // valid for the duration of this call (JS thread).
                             let copied = unsafe { bun_core::ffi::slice(ptr, len) }.to_vec();
-                            Ok(Input {
-                                copied: Some(copied),
-                                ..Default::default()
-                            })
+                            Ok((
+                                Input {
+                                    copied: Some(copied),
+                                    ..Default::default()
+                                },
+                                Pin::NONE,
+                            ))
                         }
                     }
                     // Oversize/Wasteful/DataView/JSArrayBuffer: pinned by the
@@ -767,14 +769,16 @@ impl Image {
                             unsafe { JSC__JSValue__unpinArrayBuffer(v) };
                             Err(PinError::Detached)
                         } else {
-                            // SAFETY: pinned for the lifetime of the task;
-                            // unpinned in `then()` via `Input::release()`.
+                            // SAFETY: pinned until the returned `Pin` drops (with the job's
+                            // Js side, or the sync caller's scope).
                             let bytes = unsafe { bun_core::ffi::slice(ptr, len) };
-                            Ok(Input {
-                                bytes: bun_ptr::RawSlice::new(bytes),
-                                pinned: v,
-                                ..Default::default()
-                            })
+                            Ok((
+                                Input {
+                                    bytes: bun_ptr::RawSlice::new(bytes),
+                                    ..Default::default()
+                                },
+                                Pin(v),
+                            ))
                         }
                     }
                     _ => unreachable!(),
@@ -782,14 +786,20 @@ impl Image {
             }
             // SAFETY: `Owned` bytes outlive the task because `this_ref` is held
             // Strong while pending_tasks > 0 (see `schedule()`).
-            Source::Owned(b) => Ok(Input {
-                bytes: bun_ptr::RawSlice::new(b.as_slice()),
-                ..Default::default()
-            }),
-            Source::Path(p) => Ok(Input {
-                path: Some(std::ptr::from_ref::<ZStr>(p.as_zstr())),
-                ..Default::default()
-            }),
+            Source::Owned(b) => Ok((
+                Input {
+                    bytes: bun_ptr::RawSlice::new(b.as_slice()),
+                    ..Default::default()
+                },
+                Pin::NONE,
+            )),
+            Source::Path(p) => Ok((
+                Input {
+                    path: Some(std::ptr::from_ref::<ZStr>(p.as_zstr())),
+                    ..Default::default()
+                },
+                Pin::NONE,
+            )),
             // schedule() peels this off before pin_for_task is reached.
             Source::Blob(_) => unreachable!(),
         }
@@ -1111,11 +1121,9 @@ impl Image {
         if matches!(self.source.get(), Source::Blob(_)) {
             return BlobReadChain::start(self, global, this_value, kind, deliver);
         }
-        let input = match self.pin_for_task(this_value, global) {
+        let (input, pin) = match self.pin_for_task(this_value, global) {
             Ok(i) => i,
             Err(PinError::Detached) => {
-                // `deliver` may own a Strong; the task that would have freed it
-                // in Drop is never created on this branch.
                 drop(deliver);
                 return Ok(JSPromise::rejected_promise(
                     global,
@@ -1128,35 +1136,27 @@ impl Image {
                 .as_value(global));
             }
         };
-        let job = Box::new(PipelineTask {
-            image: std::ptr::from_ref::<Image>(self),
-            global,
-            // Struct copy — the worker reads its own snapshot so further chained
-            // calls on the JS side between schedule and completion don't race.
+        let work = PipelineTask {
             pipeline: self.pipeline.get(),
             input,
             kind,
-            deliver,
             max_pixels: self.max_pixels,
             auto_orient: self.auto_orient,
             result: TaskResult::Err(codecs::Error::DecodeFailed),
-        });
-        // First in-flight task ⇒ hold a Strong ref to the wrapper so GC can't
-        // collect it (and its sourceJS slot, and the pinned ArrayBuffer) until
-        // `then()` drops the count back to 0.
-        if self.pending_tasks.get() == 0 {
-            self.this_ref.with_mut(|r| r.set_strong(this_value, global));
-        }
-        self.pending_tasks.set(self.pending_tasks.get() + 1);
-        let task = ConcurrentPromiseTask::<PipelineTask<'_>>::create_on_js_thread(global, job);
-        let promise_value = task.promise.value();
-        // Ownership transfers to the WorkPool / event-loop dispatch
-        // (`task_tag::AsyncImageTask` → `run_from_js` → `destroy`).
-        let raw = bun_core::heap::into_raw(task);
-        // SAFETY: `raw` is freshly leaked; `schedule()` only writes the
-        // intrusive `task` field into the work-pool queue. The worker thread
-        // touches `ctx`/`task` only; `promise` was read above on this thread.
-        unsafe { (*raw).schedule() };
+        };
+        let cx = global.js_thread();
+        let promise = jsc::JSPromiseStrong::init(global);
+        let promise_value = promise.value();
+        jsc::Job::<PipelineTask>::schedule(
+            &cx,
+            work,
+            PipelineJs {
+                promise,
+                deliver,
+                _pin: pin,
+                image: PendingTask::new(self, this_value, global),
+            },
+        );
         Ok(promise_value)
     }
 
@@ -1204,38 +1204,26 @@ impl Image {
                 return Err(global.throw(format_args!("{REFUSE}")));
             }
         }
-        let input = match self.pin_for_task(this_value, global) {
+        let (input, _pin) = match self.pin_for_task(this_value, global) {
             Ok(i) => i,
             Err(PinError::Detached) => {
                 return Err(global.throw(format_args!("Image: source ArrayBuffer was detached")));
             }
         };
-        // The `input` release is hoisted below — `input`
-        // moves into `task`, and `run()` is sync with no early returns, so we
-        // release via `task.input` after the result is extracted.
-        // Cleanup must not run on this stack
-        // temporary (only `then()` does it). `Drop` here would
-        // underflow `pending_tasks` and downgrade `this_ref`, so suppress it.
-        let mut task = mem::ManuallyDrop::new(PipelineTask {
-            image: std::ptr::from_ref::<Image>(self),
-            global,
+        // `_pin` unpins at scope exit, after `run()` is done with the bytes.
+        let mut task = PipelineTask {
             pipeline: self.pipeline.get(),
             input,
             kind: Kind::Encode(self.pipeline.get().output),
-            deliver: Deliver::Uint8Array,
             max_pixels: self.max_pixels,
             auto_orient: self.auto_orient,
             result: TaskResult::Err(codecs::Error::DecodeFailed),
-        });
+        };
         task.run();
-        // Reshaped for borrowck — move `result` out via `replace`
-        // since `task` is behind `ManuallyDrop` deref.
         let result = mem::replace(
             &mut task.result,
             TaskResult::Err(codecs::Error::DecodeFailed),
         );
-        // Release `input` (see hoisting note above).
-        mem::take(&mut task.input).release();
         match result {
             TaskResult::Encoded { out, format, w, h } => {
                 self.last_width.set(i32::try_from(w).expect("int cast"));
@@ -1314,9 +1302,11 @@ impl<'a> BlobReadChain<'a> {
         // file/S3). Ownership of the chain transfers there; the trait impl
         // below reconstructs the Box and frees it.
         let raw = bun_core::heap::into_raw(chain);
-        // SAFETY: `raw` is freshly leaked and uniquely owned by the read
-        // dispatch; reclaimed in `<BlobReadChain as ReadBytesHandler>::on_read_bytes`.
-        unsafe { blob.read_bytes_to_handler(&raw mut *raw, global) }.map_err(jsc::JsError::from)?;
+        // SAFETY: `raw` is freshly leaked and not used again here; the read
+        // dispatch hands it to `on_read_bytes` below exactly once, also when it
+        // returns `Err` (a termination hit while delivering synchronously, i.e.
+        // after the chain has already been reclaimed).
+        unsafe { blob.read_bytes_to_handler(raw, global) }.map_err(jsc::JsError::from)?;
         Ok(promise)
     }
 
@@ -1389,46 +1379,106 @@ impl<'a> BlobReadChain<'a> {
 }
 
 impl<'a> ReadBytesHandler for BlobReadChain<'a> {
-    fn on_read_bytes(&mut self, result: ReadBytesResult) {
-        // SAFETY: `self` is the `&mut *heap::alloc(chain)` handed to
-        // `read_bytes_to_handler` in `start()`; we are the sole consumer on
-        // the JS thread. Reconstruct the Box so the body can move fields out
-        // and free the allocation.
-        let boxed = unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) };
+    unsafe fn on_read_bytes(this: *mut Self, result: ReadBytesResult) {
+        // SAFETY: `this` is the Box `start()` leaked into `read_bytes_to_handler`,
+        // handed back to us exactly once (trait contract); nothing else points
+        // at it, so reclaiming it here is the chain's one and only free.
+        let boxed = unsafe { bun_core::heap::take(this) };
         boxed.on_read_bytes_impl(result);
     }
 }
 
-/// `jsc.ConcurrentPromiseTask(PipelineTask)` — the heap object the event-loop
-/// dispatch sees (`task_tag::AsyncImageTask`).
-pub type AsyncImageTask<'a> = ConcurrentPromiseTask<'a, PipelineTask<'a>>;
-
-impl<'a> ConcurrentPromiseTaskContext for PipelineTask<'a> {
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncImageTask;
-    #[inline]
-    fn run(&mut self) {
-        PipelineTask::run(self)
-    }
-    #[inline]
-    fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
-        PipelineTask::then(self, promise)
-    }
-}
-
-pub struct PipelineTask<'a> {
-    image: *const Image,
-    global: &'a JSGlobalObject,
+/// The pool-side work of one `Image` operation: decode → pipeline → encode
+/// (or probe). Also run synchronously by `encode_for_body`.
+pub struct PipelineTask {
     pipeline: Pipeline,
     input: Input,
     kind: Kind,
-    deliver: Deliver,
     max_pixels: u64,
     auto_orient: bool,
     result: TaskResult,
 }
+// SAFETY: `input` borrows bytes that are pinned (`Pin`) or owned by the Image
+// the job's Js side keeps alive; read only under the pool borrow. The rest is owned.
+unsafe impl Send for PipelineTask {}
 
-/// Bytes for the worker. `.pinned` is the JS ArrayBuffer/view to unpin in
-/// `then()` — `.zero` for owned/path sources (nothing to unpin).
+/// The JS-thread half of a scheduled `PipelineTask`.
+#[derive(bun_jsc::JsAffine)]
+pub struct PipelineJs {
+    promise: jsc::JSPromiseStrong,
+    deliver: Deliver,
+    _pin: Pin,
+    image: PendingTask,
+}
+
+/// An ArrayBuffer pinned by `JSC__JSValue__borrowBytesForOffThread` (mode 2)
+/// so user code cannot transfer/detach it while the pool reads; unpinned on drop.
+pub struct Pin(JSValue);
+// SAFETY: a pin on a heap cell; gone with the heap.
+unsafe impl bun_jsc::job::JsAffine for Pin {}
+impl Pin {
+    const NONE: Pin = Pin(JSValue::ZERO);
+}
+impl Drop for Pin {
+    fn drop(&mut self) {
+        if !self.0.is_empty() {
+            // SAFETY: JS thread; `self.0` was pinned by the helper.
+            unsafe { JSC__JSValue__unpinArrayBuffer(self.0) };
+        }
+    }
+}
+
+/// One pending operation's hold on its `Image`: keeps the wrapper Strong while
+/// any are pending, and lets the completion reach the `Image` (JS thread).
+pub struct PendingTask(jsc::JsPtr<Image>);
+// SAFETY: the Image is its wrapper's m_ctx; the Strong we hold keeps that alive.
+unsafe impl bun_jsc::job::JsAffine for PendingTask {}
+impl PendingTask {
+    fn new(image: &Image, this_value: JSValue, global: &JSGlobalObject) -> Self {
+        if image.pending_tasks.get() == 0 {
+            image
+                .this_ref
+                .with_mut(|r| r.set_strong(this_value, global));
+        }
+        image.pending_tasks.set(image.pending_tasks.get() + 1);
+        // SAFETY: see the JsAffine note.
+        Self(unsafe { jsc::JsPtr::new(core::ptr::NonNull::from(image)) })
+    }
+    fn image<'s>(&'s self, _cx: &jsc::JsThread<'_>) -> &'s Image {
+        // SAFETY: JS thread (token); wrapper alive (Strong while pending > 0);
+        // shared deref — mutation goes through `Cell`/`JsCell` (R-2).
+        unsafe { &*self.0.as_ptr() }
+    }
+}
+impl Drop for PendingTask {
+    fn drop(&mut self) {
+        // JS thread (a job's Js side is only ever dropped there).
+        // SAFETY: as `image()`.
+        let image = unsafe { &*self.0.as_ptr() };
+        image.pending_tasks.set(image.pending_tasks.get() - 1);
+        if image.pending_tasks.get() == 0 {
+            image.this_ref.with_mut(|r| r.downgrade());
+        }
+    }
+}
+
+impl jsc::JobContext for PipelineTask {
+    type OffThread = Self;
+    type Js = PipelineJs;
+    fn run(
+        this: &mut Self,
+        _vm: &jsc::vm_handle::Borrow,
+        done: bun_jsc::Completion<Self>,
+    ) -> Option<bun_jsc::Completion<Self>> {
+        this.run();
+        Some(done)
+    }
+    fn then(this: Self, js: PipelineJs, cx: &jsc::JsThread<'_>) -> jsc::JsResult<()> {
+        Ok(PipelineTask::then(this, js, cx)?)
+    }
+}
+
+/// Bytes for the worker: a pinned/owned slice, a copy, or a path to read there.
 pub struct Input {
     // Borrows pinned ArrayBuffer or `image.source.owned`; the owning `Image`
     // is held via BACKREF for the task's lifetime — `RawSlice` invariant.
@@ -1436,10 +1486,7 @@ pub struct Input {
     // Borrows `image.source.path` (NUL-terminated); the owning `Image` is
     // held via BACKREF for the task's lifetime, same as `bytes` above.
     path: Option<*const ZStr>,
-    /// JS value to `unpinArrayBuffer` in `then()`. `.zero` for sources
-    /// with no ArrayBuffer to pin (Oversize TA, owned, path, copied).
-    pinned: JSValue,
-    /// Our own dupe of a FastTypedArray's bytes — freed in `then()`.
+    /// FastTypedArray inputs are tiny and GC-movable: copied instead of pinned.
     copied: Option<Vec<u8>>,
 }
 
@@ -1448,7 +1495,6 @@ impl Default for Input {
         Self {
             bytes: bun_ptr::RawSlice::EMPTY,
             path: None,
-            pinned: JSValue::ZERO,
             copied: None,
         }
     }
@@ -1461,16 +1507,9 @@ impl Input {
         }
         self.bytes.slice()
     }
-    fn release(mut self) {
-        if !self.pinned.is_empty() {
-            // SAFETY: JS thread; `pinned` was returned by
-            // `JSC__JSValue__borrowBytesForOffThread` with mode 2.
-            unsafe { JSC__JSValue__unpinArrayBuffer(self.pinned) };
-        }
-        self.copied = None;
-    }
 }
 
+#[derive(bun_jsc::JsAffine)]
 pub enum Deliver {
     Uint8Array,
     Buffer,
@@ -1514,7 +1553,7 @@ pub enum TaskResult {
     IoErr(sys::Error),
 }
 
-impl<'a> PipelineTask<'a> {
+impl PipelineTask {
     /// Runs on a `WorkPool` thread. No JSC access.
     pub(crate) fn run(&mut self) {
         // `self.input` was prepared on the JS thread by `pin_for_task`: either a
@@ -1731,23 +1770,18 @@ impl<'a> PipelineTask<'a> {
         };
     }
 
-    /// Back on the JS thread.
-    pub(crate) fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
-        // `defer self.deinit()` → handled by `Drop for PipelineTask` when the
-        // owning `ConcurrentPromiseTask` Box is destroyed by the event-loop
-        // dispatch (`run_from_js` → `destroy`), immediately after this returns.
-        // JS thread again — release the per-task pin so user code can
-        // transfer/detach the source now.
-        // Reshaped for borrowck — `PipelineTask: Drop` forbids
-        // moving fields out by destructure; `mem::take`/`mem::replace` the
-        // owning fields into locals instead so `Drop` still runs on the husk.
-        mem::take(&mut self.input).release();
-        let global = self.global;
-        // SAFETY: BACKREF; JS thread; wrapper kept alive by `this_ref` Strong.
-        // R-2: shared deref — mutation goes through `Cell`.
-        let image = unsafe { &*self.image };
+    /// Back on the JS thread: publish dims, deliver the result. The pin and
+    /// the hold on the Image are released when `js` drops at the end.
+    pub(crate) fn then(
+        mut self,
+        mut js: PipelineJs,
+        cx: &jsc::JsThread<'_>,
+    ) -> Result<(), jsc::JsTerminated> {
+        let global = cx.global();
+        let promise = js.promise.swap();
+        let image = js.image.image(cx);
         // Stash final dims here (JS thread) — `run()` is on a WorkPool thread
-        // so writing `self.image.*` there would race the synchronous getters.
+        // so writing `image.*` there would race the synchronous getters.
         match &self.result {
             TaskResult::Encoded { w, h, .. } | TaskResult::Meta { w, h, .. } => {
                 image.last_width.set(i32::try_from(*w).expect("int cast"));
@@ -1755,8 +1789,6 @@ impl<'a> PipelineTask<'a> {
             }
             _ => {}
         }
-        // `Drop` forbids moving out of `self.result`; swap in a
-        // throwaway sentinel (`Err` is `Copy`) and match the owned local.
         let result = mem::replace(
             &mut self.result,
             TaskResult::Err(codecs::Error::UnknownFormat),
@@ -1770,7 +1802,7 @@ impl<'a> PipelineTask<'a> {
                 // SAFETY: `out.bytes` is a non-null fat pointer into a live
                 // codec allocation; valid until `out.free` runs.
                 let out_slice: &[u8] = unsafe { out.bytes.as_ref() };
-                match &mut self.deliver {
+                match &mut js.deliver {
                     // The codec's own allocation is handed straight to JS with the
                     // codec's free as the finalizer — no dupe of the output.
                     Deliver::Uint8Array => {
@@ -1797,7 +1829,7 @@ impl<'a> PipelineTask<'a> {
                     // createBufferWithCtx returns plain JSValue (its C++ side asserts
                     // the no-throw contract), so the .uint8array catch is unmatched
                     // here by construction, not omission.
-                    Deliver::Buffer => promise.resolve(
+                    Deliver::Buffer => promise.settle(
                         global,
                         // SAFETY: `out.bytes` is the codec-owned allocation whose
                         // ownership transfers to JSC; `ctx` is null and `out.free`
@@ -1871,13 +1903,16 @@ impl<'a> PipelineTask<'a> {
                         // SAFETY: `out.bytes` is the codec-owned allocation whose
                         // ownership transfers to JSC; `ctx` is null and `out.free`
                         // ignores it.
-                        let data = unsafe {
+                        let data = match unsafe {
                             JSValue::create_buffer_with_ctx(
                                 global,
                                 out.bytes,
                                 core::ptr::null_mut(),
                                 out.free,
                             )
+                        } {
+                            Ok(d) => d,
+                            Err(e) => return promise.reject(global, Err(e)),
                         };
                         // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine`
                         // valid for the JS thread; `ArgumentsSlice::init` wants `&`.
@@ -2063,22 +2098,4 @@ fn apply_orientation(
         d.height = next.height;
     }
     Ok(())
-}
-
-impl<'a> Drop for PipelineTask<'a> {
-    fn drop(&mut self) {
-        // Only reached from `then()` on the JS thread (the `encode_for_body`
-        // stack temporary is wrapped in `ManuallyDrop`), so the ref/count touch is safe without
-        // atomics.
-        // `self.deliver.deinit()` — `Strong` Drop on the `WriteDest` arm.
-        // SAFETY: `image` is a BACKREF kept alive by the wrapper's Strong
-        // `this_ref` while pending_tasks > 0; we are on the JS thread.
-        // R-2: shared deref — mutation goes through `Cell`/`JsCell`.
-        let image = unsafe { &*self.image };
-        image.pending_tasks.set(image.pending_tasks.get() - 1);
-        if image.pending_tasks.get() == 0 {
-            image.this_ref.with_mut(|r| r.downgrade());
-        }
-        // `bun.destroy(this)` — `Box<PipelineTask>` drop is the caller.
-    }
 }

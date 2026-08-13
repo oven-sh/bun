@@ -831,7 +831,7 @@ fn match_sni<'a>(entries: &'a [(Vec<u8>, TlsContext)], host: &[u8]) -> Option<&'
     if let Some((_, ctx)) = entries.iter().find(|(h, _)| eq(h, host)) {
         return Some(ctx);
     }
-    if let Some(dot) = host.iter().position(|&b| b == b'.') {
+    if let Some(dot) = bun_core::strings::index_of_char_usize(host, b'.') {
         let suffix = &host[dot..];
         if let Some((_, ctx)) = entries
             .iter()
@@ -1577,7 +1577,12 @@ impl QuicEndpoint {
         // time-driven state (RTO, ACK delay, idle) and the deferred close.
         self.mark_driver_pending();
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
-        timer_all().update(self.event_loop_timer.as_ptr(), &next);
+        timer_all().update(
+            core::ptr::addr_of!(self.event_loop_timer)
+                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                .cast_mut(),
+            &next,
+        );
     }
 
     fn rearm_timer(&self) {
@@ -1615,7 +1620,12 @@ impl QuicEndpoint {
                 bun_core::TimespecMockMode::ForceRealTime,
                 ms as i64,
             );
-            timer_all().update(self.event_loop_timer.as_ptr(), &next);
+            timer_all().update(
+                core::ptr::addr_of!(self.event_loop_timer)
+                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                    .cast_mut(),
+                &next,
+            );
         }
     }
 
@@ -2115,7 +2125,12 @@ impl QuicEndpoint {
         self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         self.pending_endpoint_close.set(true);
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
-        timer_all().update(self.event_loop_timer.as_ptr(), &next);
+        timer_all().update(
+            core::ptr::addr_of!(self.event_loop_timer)
+                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                .cast_mut(),
+            &next,
+        );
     }
 
     fn apply_server_session_options(&self, global: &JSGlobalObject, session: *mut QuicSession) {

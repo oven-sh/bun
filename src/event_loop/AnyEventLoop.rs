@@ -29,10 +29,8 @@ unsafe extern "Rust" {
     /// preconditions: panics (not UB) if no VM is bound on this thread.
     pub(crate) safe fn __bun_js_event_loop_current() -> *mut ();
 
-    /// Like `__bun_js_event_loop_current`, but returns null instead of panicking
-    /// when no VM is bound on this thread. Used by `bun_install::PackageManager`
-    /// to fall back to a `MiniEventLoop` when called from a VM-less thread
-    /// (e.g. `bun build` CLI or the bundler's worker thread).
+    /// Like `__bun_js_event_loop_current`, but returns null instead of
+    /// panicking when no VM is bound on this thread.
     pub(crate) safe fn __bun_js_event_loop_current_or_null() -> *mut ();
 }
 
@@ -125,10 +123,8 @@ impl AnyEventLoop {
         }
     }
 
-    /// Like `js_current`, but falls back to a fresh `Mini` event loop when no
-    /// VM is bound on the calling thread. Used by `bun_install::PackageManager`
-    /// so auto-install works from the `bun build` CLI and the bundler's worker
-    /// thread (neither of which has a VM).
+    /// Like `js_current`, but falls back to a fresh `Mini` event loop when
+    /// no VM is bound on the calling thread.
     pub fn js_current_or_mini() -> AnyEventLoop {
         let ptr = __bun_js_event_loop_current_or_null();
         if ptr.is_null() {

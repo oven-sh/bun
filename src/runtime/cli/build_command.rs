@@ -250,8 +250,6 @@ impl BuildCommand {
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
 
-        // Propagate install config so the bundler can auto-install missing
-        // packages from the global cache or npm (matches the runtime/REPL path).
         this_transpiler.options.install = ctx.install.as_deref().map(core::ptr::NonNull::from);
         this_transpiler.options.global_cache = ctx.debug.global_cache;
         this_transpiler.options.install_preference = ctx

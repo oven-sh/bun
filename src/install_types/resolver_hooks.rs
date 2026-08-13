@@ -1465,14 +1465,10 @@ pub trait AutoInstaller {
 
     // ── PackageManager ops ────────────────────────────────────────────────
     fn set_on_wake(&mut self, handler: WakeHandler);
-    /// Returns the current `on_wake.context`. Used by the resolver to guard
-    /// against overwriting a pre-registered VM-side handler when the bundler
-    /// worker thread first reaches the PM singleton.
+    /// Current `on_wake.context`, so a caller can avoid clobbering a
+    /// registered handler.
     fn on_wake_context(&self) -> Option<NonNull<c_void>>;
-    /// Repoint the PM's error log. The PM is a process singleton shared by
-    /// every resolver; a previous caller's log (e.g. a `Bun.build()`
-    /// completion's per-task log) may have been freed since, so each resolver
-    /// refreshes the log to its own live instance before use.
+    /// Repoint the singleton's error log at the caller's live log.
     fn set_log(&mut self, log: *mut bun_ast::Log);
     fn path_for_resolution<'b>(
         &mut self,

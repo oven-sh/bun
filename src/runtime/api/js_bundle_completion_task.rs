@@ -84,9 +84,7 @@ pub struct JSBundleCompletionTask {
     pub(crate) transpiler: *mut BundleV2<'static>,
     pub(crate) plugins: Option<NonNull<Plugin>>,
     pub(crate) started_at_ns: u64,
-    /// Auto-install config captured from the VM's transpiler so the bundler
-    /// worker thread can propagate it into `Transpiler.options` in
-    /// `configure_bundler`.
+    /// Auto-install config captured from the VM's transpiler.
     pub(crate) global_cache: options::GlobalCache,
     pub(crate) install: Option<NonNull<api::BunInstall>>,
     pub(crate) install_preference: options::OfflineMode,
@@ -168,8 +166,6 @@ pub(crate) fn create_and_schedule_completion_task(
         transpiler: ptr::null_mut(),
         plugins,
         started_at_ns: 0,
-        // Mirror the VM's install config so the bundle thread can propagate
-        // it into `Transpiler.options` (and transitively the resolver).
         global_cache: vm_opts.global_cache,
         install: vm_opts.install,
         install_preference: vm_opts.install_preference,
@@ -1109,9 +1105,6 @@ impl CompletionStruct for JSBundleCompletionTask {
             transpiler.options.emit_dce_annotations = false;
         }
 
-        // Propagate install config captured from the VM at
-        // `create_and_schedule_completion_task` so the bundler's resolver can
-        // auto-install missing packages from the global cache or npm.
         transpiler.options.global_cache = self.global_cache;
         transpiler.options.install = self.install;
         transpiler.options.install_preference = self.install_preference;

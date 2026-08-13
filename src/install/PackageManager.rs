@@ -2332,14 +2332,10 @@ pub(crate) fn init_with_runtime(
     match *INIT_ERROR.lock() {
         None => {
             let pm = get();
-            // The once-init installs whatever `log` the first caller passed.
-            // Subsequent callers would otherwise leave the singleton pointing
-            // at a stale/freed log — e.g. `Bun.build()`'s per-completion log
-            // is freed when the task is dropped. Refresh on every call so
-            // error paths in `PackageManagerEnqueue` / `runTasks` always
-            // write through the live log.
+            // Refresh the log on every call; the first caller's log may
+            // since have been freed.
             // SAFETY: `pm` is the process-lifetime singleton; `log_ptr`
-            // aliases the caller's `log` which outlives this call.
+            // outlives this call.
             unsafe { (*pm).log = log_ptr };
             Ok(pm)
         }
@@ -2461,11 +2457,8 @@ fn init_with_runtime_once(
             root_package_json_file,
             bun_sys::File::from_fd(Fd::invalid())
         );
-        // erased *mut () set by tier-6; `js_current_or_mini()` resolves the
-        // per-thread JS event loop via `bun_io::__bun_get_vm_ctx` (link-time,
-        // definer in bun_runtime) and falls back to a fresh `MiniEventLoop`
-        // when no VM is bound — the case for `bun build` CLI and the bundler
-        // worker thread. See PackageManager.zig `initWithRuntimeOnce`.
+        // Falls back to a MiniEventLoop on VM-less threads (bun build CLI,
+        // bundler worker).
         wr!(event_loop, AnyEventLoop::js_current_or_mini());
         wr!(
             original_package_json_path,
@@ -2543,14 +2536,9 @@ fn init_with_runtime_once(
     // The lockfile allocation is folded into the struct literal above
     // (`Box::new(Lockfile::default())`).
 
-    // Zig: when `initWithRuntimeOnce` falls back to `MiniEventLoop`, wire the
-    // parent event loop and set `MiniEventLoop.global` so `FilePoll` cleanup
-    // on this thread has a valid thread-local handle. The regular `init()`
-    // path (bun install CLI) does the same dance above.
+    // Mini fallback: wire the parent loop and thread-local global, mirroring
+    // `init()` above.
     if matches!(manager.event_loop, AnyEventLoop::Mini(_)) {
-        // Write the parent event loop into `uws_loop.internal_loop_data` so
-        // uSockets timers / lifecycle waiters can recover the mini loop via
-        // `EventLoopHandle::from_tag_ptr`. Mirrors the `init()` path above.
         let uws_loop = manager.event_loop.r#loop();
         // SAFETY: `uws_loop` is the live process-global `uws::Loop` just
         // returned by `r#loop()`; backref is `manager.event_loop` owned by the

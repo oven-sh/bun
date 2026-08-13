@@ -827,10 +827,7 @@ impl<'a> Resolver<'a> {
     /// resolve failure rather than panicking.
     pub fn get_package_manager(&mut self) -> crate::CrateResult<*mut dyn AutoInstaller> {
         if let Some(pm) = self.package_manager {
-            // The PM is a process singleton shared by every resolver; another
-            // caller (e.g. a Bun.build() completion whose per-task log has
-            // since been freed) may have installed a stale log. Refresh so
-            // error paths always write through this resolver's live log.
+            // Repoint the shared PM at this resolver's live log.
             // SAFETY: `pm` names the process-lifetime singleton; `self.log`
             // outlives this resolver's use of it.
             unsafe { (*pm.as_ptr()).set_log(self.log.as_ptr()) };
@@ -846,11 +843,7 @@ impl<'a> Resolver<'a> {
         // names the `PackageManager` singleton (`'static`).
         let pm: NonNull<dyn AutoInstaller> =
             unsafe { __bun_resolver_init_package_manager(self.log, self.opts.install, env) }?;
-        // Zig: `if (pm.onWake.context == null) pm.onWake = this.onWakePackageManager;`
-        // — guard against overwriting a pre-registered VM-side handler when
-        // this Resolver is the second to reach the PM singleton (e.g. bundler
-        // worker thread after the runtime has already wired a dynamic-import
-        // handler).
+        // Keep a pre-registered VM-side wake handler.
         // SAFETY: `pm` is the just-initialized singleton; sole `&mut` here.
         if unsafe { (*pm.as_ptr()).on_wake_context() }.is_none() {
             // SAFETY: as above — `pm` names the live singleton; no other

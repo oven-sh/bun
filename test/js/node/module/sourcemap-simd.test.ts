@@ -1,10 +1,16 @@
 // Correctness tests for the SIMD source-map mappings decoder
-// (src/jsc/bindings/highway_sourcemap.cpp). The SIMD path is enabled for
-// mappings >= 128 bytes; every case here is parsed twice (once normally,
-// once with BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP=1 to force the scalar
-// decode) and the full mapping list must be byte-identical.
+// (src/jsc/bindings/highway_sourcemap.cpp), which src/sourcemap/Mapping.rs
+// uses for mappings >= 128 bytes. Every scenario is decoded by two children:
+// one running normally (SIMD kernel, then the scalar loop for the tail) and
+// one with BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP=1 (scalar loop only). The
+// two decodes must be identical, and both must equal the rows computed here
+// from the deltas that were encoded.
+//
+// The feature flag is read once per process, so all scenarios are sent to a
+// single child per mode (spawning a child per scenario and mode made this
+// file one of the slowest in the suite).
 
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug } from "harness";
 
 const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -37,156 +43,247 @@ type Entry = {
   name: string | null;
 };
 
-// Spawn a child that constructs the SourceMap and dumps findEntry results at
-// every probe point. The child runs with or without the SIMD path. The
-// payload (which can be tens of KiB) is piped over stdin rather than
-// embedded in `-e`, since Windows caps the command line at ~32 KiB.
-const dumpScript = `
-  const { SourceMap } = require("node:module");
-  const { payload, probes } = await Bun.stdin.json();
-  let error = null;
-  let entries = [];
-  try {
-    const map = new SourceMap(payload);
-    for (const [l, c] of probes) {
-      const e = map.findEntry(l, c);
-      entries.push({
-        generatedLine: e.generatedLine ?? null,
-        generatedColumn: e.generatedColumn ?? null,
-        originalLine: e.originalLine ?? null,
-        originalColumn: e.originalColumn ?? null,
-        originalSource: e.originalSource ?? null,
-        name: e.name ?? null,
-      });
-    }
-  } catch (err) {
-    error = String(err);
-  }
-  process.stdout.write(JSON.stringify({ entries, error }));
-`;
+type Decoded = {
+  // `new SourceMap(payload).findEntry(...)` at each probe, or [] when the
+  // constructor threw.
+  entries: Entry[];
+  // String(err) of the constructor's exception, or null.
+  error: string | null;
+};
 
-async function dumpMappings(
-  mappings: string,
-  sourcesLen: number,
-  namesLen: number,
-  probes: Array<[number, number]>,
-  disableSimd: boolean,
-): Promise<{ entries: Entry[]; error: string | null; debug: string }> {
-  const sources = Array.from({ length: sourcesLen }, (_, i) => `s${i}.js`);
-  const names = Array.from({ length: namesLen }, (_, i) => `n${i}`);
-  const env = { ...bunEnv };
-  if (disableSimd) {
-    env.BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP = "1";
-  } else {
-    delete env.BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP;
-  }
-  // Debug builds only: enable the SourceMap scoped log so the caller can
-  // verify the SIMD path actually fired (see assertSimdMatchesScalar).
-  if (isDebug) env.BUN_DEBUG_SourceMap = "1";
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", dumpScript],
-    env,
-    stdin: new Blob([JSON.stringify({ payload: { version: 3, sources, names, mappings }, probes })]),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  if (exitCode !== 0) {
-    throw new Error(`child exited ${exitCode}\nstderr: ${stderr}\nstdout: ${stdout}`);
-  }
-  // Scoped debug logs (BUN_DEBUG_SourceMap) go to stdout; the JSON payload
-  // is the final line with no trailing newline.
-  const lines = stdout.split("\n");
-  const json = lines[lines.length - 1];
-  const debug = lines.slice(0, -1).join("\n") + stderr;
-  return { ...JSON.parse(json), debug };
+type Scenario = {
+  mappings: string;
+  sources: string[];
+  names: string[];
+  probes: Array<[line: number, column: number]>;
+  expected: Decoded;
+  // Debug builds only. Scenarios with a deliberate anomaly: the byte offset of
+  // the offending segment, where the kernel must hand over to the scalar
+  // loop. Scenarios without one: the kernel must get to within one block
+  // (< 64 bytes) of the end.
+  simdStopsAt?: number;
+};
+
+function sourceList(count: number): string[] {
+  return Array.from({ length: count }, (_, i) => `s${i}.js`);
 }
 
-// Build a mappings string from a list of generated lines, each a list of
+function nameList(count: number): string[] {
+  return Array.from({ length: count }, (_, i) => `n${i}`);
+}
+
+// Build a scenario from a list of generated lines, each a list of
 // [genColDelta, srcIdxDelta, origLineDelta, origColDelta, nameIdxDelta?]
-// segments. Returns probe points at every segment's ABSOLUTE
-// (generatedLine, generatedColumn) so findEntry hits it exactly.
-function build(lines: number[][][]): {
-  mappings: string;
-  probes: Array<[number, number]>;
-  sourcesLen: number;
-  namesLen: number;
-} {
+// segments. A 1-field segment only advances the generated column; every
+// other segment produces a row, which is probed at its exact generated
+// position. Rows before the first 5-field segment have no name; after it,
+// 4-field rows carry the last name index forward (what the scalar decoder
+// does, and therefore what the kernel has to reproduce).
+function build(lines: number[][][]): Scenario {
   const parts: string[] = [];
-  const probes: Array<[number, number]> = [];
-  let srcMax = 0;
-  let nameMax = 0;
+  const probes: Scenario["probes"] = [];
+  const entries: Entry[] = [];
   let src = 0;
+  let srcMax = 0;
+  let origLine = 0;
+  let origCol = 0;
   let name = 0;
+  let nameMax = 0;
+  let hasNames = false;
   for (let li = 0; li < lines.length; li++) {
     let genCol = 0;
     const segs: string[] = [];
     for (const seg of lines[li]) {
       segs.push(encodeSegment(seg));
       genCol += seg[0];
-      if (seg.length >= 4) {
-        src += seg[1];
-        srcMax = Math.max(srcMax, src);
-        probes.push([li, genCol]);
-      }
+      if (seg.length < 4) continue;
+      src += seg[1];
+      srcMax = Math.max(srcMax, src);
+      origLine += seg[2];
+      origCol += seg[3];
       if (seg.length >= 5) {
         name += seg[4];
         nameMax = Math.max(nameMax, name);
+        hasNames = true;
       }
+      probes.push([li, genCol]);
+      entries.push({
+        generatedLine: li,
+        generatedColumn: genCol,
+        originalLine: origLine,
+        originalColumn: origCol,
+        originalSource: `s${src}.js`,
+        name: hasNames ? `n${name}` : null,
+      });
     }
     parts.push(segs.join(","));
   }
   return {
     mappings: parts.join(";"),
+    sources: sourceList(srcMax + 1),
+    names: hasNames ? nameList(nameMax + 1) : [],
     probes,
-    sourcesLen: srcMax + 1,
-    namesLen: nameMax + 1,
+    expected: { entries, error: null },
   };
 }
 
-async function assertSimdMatchesScalar(
-  label: string,
-  mappings: string,
-  sourcesLen: number,
-  namesLen: number,
-  probes: Array<[number, number]>,
-) {
-  const [simd, scalar] = await Promise.all([
-    dumpMappings(mappings, sourcesLen, namesLen, probes, false),
-    dumpMappings(mappings, sourcesLen, namesLen, probes, true),
-  ]);
-  expect({ label, error: simd.error }).toEqual({ label, error: scalar.error });
-  expect({ label, entries: simd.entries }).toEqual({ label, entries: scalar.entries });
-  // Prove the SIMD path actually ran (debug builds only: the scoped log is
-  // compiled out of release). Guards against the feature flag or threshold
-  // silently routing both children through the scalar path.
-  if (isDebug) {
-    expect({ label, simdRan: simd.debug.includes("simd consumed") }).toEqual({ label, simdRan: true });
-    expect({ label, scalarRan: scalar.debug.includes("simd consumed") }).toEqual({ label, scalarRan: false });
-  }
-  return scalar;
+// A row of a hand-encoded scenario: everything below that is encoded by hand
+// stays on generated line 0 / original line 0 of the single source.
+function row(generatedColumn: number, originalColumn: number, name: string | null = null): Entry {
+  return { generatedLine: 0, generatedColumn, originalLine: 0, originalColumn, originalSource: "s0.js", name };
 }
 
-describe.concurrent("SourceMap SIMD mappings decode", () => {
-  test("all 1-char 4-field segments (the 76% case)", async () => {
-    // 200 segments of (4 one-char fields + comma) on one line so the SIMD
-    // path sees many full blocks. Deltas cycle through the whole 1-char
-    // VLQ range.
+function handEncoded(segments: string[], entries: Entry[]): Scenario {
+  return {
+    mappings: segments.join(","),
+    sources: ["s0.js"],
+    names: [],
+    probes: entries.map((e): [number, number] => [0, e.generatedColumn!]),
+    expected: { entries, error: null },
+  };
+}
+
+// A [1, 0, 0, 1] segment: one generated column and one original column
+// further than the previous row.
+const STEP = encodeSegment([1, 0, 0, 1]); // "CAAC"
+
+// 60 STEP segments, 299 bytes: the well-formed prefix the kernel has to decode
+// before it reaches the deliberate anomaly that the scenarios using it append
+// at offset 300 (after the ',').
+function anomalyPrefix(): Scenario & { anomalyAt: number } {
+  const prefix = build([Array.from({ length: 60 }, () => [1, 0, 0, 1])]);
+  return { ...prefix, anomalyAt: prefix.mappings.length + 1 };
+}
+
+// Runs in the child. The BUN_DEBUG_SourceMap lines that the parser writes
+// (debug builds) go straight to fd 1, so a marker written to fd 1 before each
+// scenario lets the parent attribute them to the scenario being decoded.
+// (node:fs is deliberately not loaded: in a debug build it costs more to
+// initialize than everything else this script does.)
+const decodeScript = `
+  const { SourceMap } = require("node:module");
+  const results = [];
+  for (const { payload, probes } of await Bun.stdin.json()) {
+    await Bun.write(Bun.stdout, "@@scenario\\n");
+    const entries = [];
+    let error = null;
+    try {
+      const map = new SourceMap(payload);
+      for (const [line, column] of probes) {
+        const e = map.findEntry(line, column);
+        entries.push({
+          generatedLine: e.generatedLine ?? null,
+          generatedColumn: e.generatedColumn ?? null,
+          originalLine: e.originalLine ?? null,
+          originalColumn: e.originalColumn ?? null,
+          originalSource: e.originalSource ?? null,
+          name: e.name ?? null,
+        });
+      }
+    } catch (err) {
+      error = String(err);
+    }
+    results.push({ entries, error });
+  }
+  await Bun.write(Bun.stdout, "@@results\\n" + JSON.stringify(results) + "\\n");
+`;
+
+type Run = {
+  // Both indexed like `scenarios`.
+  results: Decoded[];
+  debug: string[];
+};
+
+const scenarios: Scenario[] = [];
+
+// `input` is the JSON the child reads from stdin: every scenario's payload and
+// probes. (Over stdin because it is ~80 KiB and Windows caps the command line
+// at ~32 KiB.)
+async function decodeAll(input: string, disableSimd: boolean): Promise<Run> {
+  const env = { ...bunEnv };
+  if (disableSimd) {
+    env.BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP = "1";
+  } else {
+    delete env.BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP;
+  }
+  // The SourceMap scoped log is compiled out of release builds; in debug
+  // builds it is how the tests tell which decoder actually ran.
+  if (isDebug) env.BUN_DEBUG_SourceMap = "1";
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", decodeScript],
+    env,
+    stdin: new Blob([input]),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  const [log, json] = stdout.split("@@results\n");
+  const debug = log.split("@@scenario\n").slice(1);
+  const results: Decoded[] = JSON.parse(json);
+  expect(debug).toHaveLength(scenarios.length);
+  expect(results).toHaveLength(scenarios.length);
+  return { results, debug };
+}
+
+describe("SourceMap SIMD mappings decode", () => {
+  let simd: Run;
+  let scalar: Run;
+
+  beforeAll(async () => {
+    const input = JSON.stringify(
+      scenarios.map(({ mappings, sources, names, probes }) => ({
+        payload: { version: 3, sources, names, mappings },
+        probes,
+      })),
+    );
+    [simd, scalar] = await Promise.all([decodeAll(input, false), decodeAll(input, true)]);
+  });
+
+  function scenario(name: string, make: () => Scenario) {
+    const index = scenarios.push(make()) - 1;
+    test(name, () => {
+      const { mappings, expected, simdStopsAt } = scenarios[index];
+      // SIMD_THRESHOLD in src/sourcemap/Mapping.rs.
+      expect(mappings.length).toBeGreaterThanOrEqual(128);
+      expect(simd.results[index]).toEqual(scalar.results[index]);
+      expect(scalar.results[index]).toEqual(expected);
+
+      if (!isDebug) return;
+      // The parse log line carries the input length, which ties each child's
+      // log chunk to this scenario. The scalar child must never enter the
+      // kernel; the other child logs "simd consumed <stopped at>/<len> bytes"
+      // (src/sourcemap/Mapping.rs) when the kernel returns.
+      const parsed = `parse mappings (${mappings.length} bytes)`;
+      expect(scalar.debug[index]).toContain(parsed);
+      expect(scalar.debug[index]).not.toContain("simd");
+      expect(simd.debug[index]).toContain(parsed);
+      expect(simd.debug[index]).toMatch(/simd consumed \d+\/\d+ bytes/);
+      const [stoppedAt, total] = /simd consumed (\d+)\/(\d+) bytes/.exec(simd.debug[index])!.slice(1).map(Number);
+      expect(total).toBe(mappings.length);
+      if (simdStopsAt !== undefined) {
+        expect(stoppedAt).toBe(simdStopsAt);
+      } else {
+        // Only the final partial block is left to the scalar loop; the widest
+        // block any target uses is 64 bytes.
+        expect(stoppedAt).toBeGreaterThan(mappings.length - 64);
+      }
+    });
+  }
+
+  scenario("all 1-char 4-field segments (the 76% case)", () => {
+    // 200 segments of (4 one-char fields + comma) on one line so the kernel
+    // sees many uniform blocks. Deltas cycle through the whole 1-char VLQ
+    // range.
     const segs: number[][] = [];
     for (let i = 0; i < 200; i++) {
       segs.push([1 + (i % 14), 0, i % 3, (i % 5) + 1]);
     }
-    const { mappings, probes, sourcesLen } = build([segs]);
-    expect(mappings.length).toBeGreaterThanOrEqual(128);
-    const scalar = await assertSimdMatchesScalar("all-1-char", mappings, sourcesLen, 0, probes);
-    expect(scalar.error).toBeNull();
-    expect(scalar.entries.length).toBe(200);
-    // Spot-check the last probe so a silently-empty map fails.
-    expect(scalar.entries[199].generatedLine).toBe(0);
-    expect(scalar.entries[199].originalSource).toBe("s0.js");
+    return build([segs]);
   });
 
-  test("mixed 1/2/3-char VLQs in each of the four positions", async () => {
+  scenario("mixed 1/2/3-char VLQs in each of the four positions", () => {
     // |v| in [0,15] -> 1 char, [16,511] -> 2 chars, [512,16383] -> 3 chars.
     const segs: number[][] = [];
     for (let i = 0; i < 120; i++) {
@@ -195,14 +292,10 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
       const doc = [2, 100, 700, 5][i % 4];
       segs.push([gc, 0, ol, doc]);
     }
-    const { mappings, probes, sourcesLen } = build([segs]);
-    expect(mappings.length).toBeGreaterThanOrEqual(128);
-    const scalar = await assertSimdMatchesScalar("mixed-vlq-widths", mappings, sourcesLen, 0, probes);
-    expect(scalar.error).toBeNull();
-    expect(scalar.entries.length).toBe(120);
+    return build([segs]);
   });
 
-  test("2-char VLQ in each of the five positions (Masked-VByte shuffle)", async () => {
+  scenario("2-char VLQ in each of the five positions (Masked-VByte shuffle)", () => {
     // Each segment has exactly one 2-char VLQ, rotating through all five
     // field positions, so every kShufTable entry with a single set bit
     // (cont = 1<<k for k in 0..4) is exercised.
@@ -213,101 +306,66 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
       if (i % 5 !== 4) f.pop(); // 4-field unless the 2-char is the name
       segs.push(f);
     }
-    const { mappings, probes, sourcesLen, namesLen } = build([segs]);
-    expect(mappings.length).toBeGreaterThanOrEqual(128);
-    const scalar = await assertSimdMatchesScalar("shuffle-single-2char", mappings, sourcesLen, namesLen, probes);
-    expect(scalar.error).toBeNull();
-    expect(scalar.entries.length).toBe(120);
+    return build([segs]);
   });
 
-  test("5-field segments with names", async () => {
+  scenario("5-field segments with names", () => {
+    // The name index accumulates across segments: rows resolve to n0..n119.
     const segs: number[][] = [];
     for (let i = 0; i < 120; i++) {
       segs.push([2, 0, 0, 1, i === 0 ? 0 : 1]);
     }
-    const { mappings, probes, sourcesLen, namesLen } = build([segs]);
-    expect(mappings.length).toBeGreaterThanOrEqual(128);
-    const scalar = await assertSimdMatchesScalar("5-field", mappings, sourcesLen, namesLen, probes);
-    expect(scalar.error).toBeNull();
-    // Name index accumulates across segments.
-    expect(scalar.entries[0].name).toBe("n0");
-    expect(scalar.entries[119].name).toBe("n119");
+    return build([segs]);
   });
 
-  test("interleaved 4- and 5-field segments", async () => {
-    // 4-field segments between 5-field ones carry the PREVIOUS name index
-    // forward (scalar parser doesn't reset it).
+  scenario("interleaved 4- and 5-field segments", () => {
+    // The 4-field segments between 5-field ones carry the previous name
+    // forward.
     const segs: number[][] = [];
     for (let i = 0; i < 120; i++) {
       if (i % 3 === 0) segs.push([2, 0, 0, 1, i === 0 ? 0 : 1]);
       else segs.push([2, 0, 0, 1]);
     }
-    const { mappings, probes, sourcesLen, namesLen } = build([segs]);
-    expect(mappings.length).toBeGreaterThanOrEqual(128);
-    const scalar = await assertSimdMatchesScalar("4-5-mixed", mappings, sourcesLen, namesLen, probes);
-    expect(scalar.error).toBeNull();
+    return build([segs]);
   });
 
-  test("all-4-field map with non-empty names: every row has name: null", async () => {
-    // The SIMD pre-pass promotes to WithNames up front when allow_names,
-    // so when the scalar loop resumes for the <N-byte tail (which it
-    // always does) it appends into a WithNames list. Without an explicit
-    // -1 those tail rows would store name_index=0 (the initial
-    // accumulator) and resolve to names[0] instead of null.
+  scenario("all-4-field map with non-empty names: every row has name: null", () => {
+    // The SIMD pre-pass promotes the list to WithNames up front (allow_names),
+    // so the rows the scalar loop appends for the tail land in a WithNames
+    // list too. They must carry an explicit -1; storing the initial name
+    // accumulator (0) instead would resolve them to names[0].
     const segs: number[][] = [];
     for (let i = 0; i < 200; i++) segs.push([1, 0, 0, 1]);
-    const { mappings, probes, sourcesLen } = build([segs]);
-    expect(mappings.length).toBeGreaterThanOrEqual(128);
-    // Non-empty names array but no 5-field segment: every row must be null.
-    const scalar = await assertSimdMatchesScalar("all-4-field-with-names", mappings, sourcesLen, 3, probes);
-    expect(scalar.error).toBeNull();
-    expect(scalar.entries.length).toBe(200);
-    for (let i = 0; i < 200; i++) {
-      expect({ i, name: scalar.entries[i].name }).toEqual({ i, name: null });
-    }
+    return { ...build([segs]), names: nameList(3) };
   });
 
-  test("4-field rows before the first 5-field segment keep name: null", async () => {
-    // WithoutNames -> WithNames promotion: scalar copies pre-promotion rows
-    // with name_index = -1 (to_named()), so rows before the first 5-field
-    // segment resolve to name: null, and 4-field rows AFTER it carry the
-    // previous 5-field's name forward. The first 5-field is placed in the
-    // same SIMD chunk as the preceding 4-field rows so the backfill path
-    // is exercised.
+  scenario("4-field rows before the first 5-field segment keep name: null", () => {
+    // WithoutNames -> WithNames promotion: rows before the first 5-field
+    // segment resolve to name: null, and 4-field rows after it carry its name
+    // forward. The first 5-field segment sits in the same block as preceding
+    // 4-field rows so the kernel's backfill path is exercised.
     const segs: number[][] = [];
     for (let i = 0; i < 80; i++) segs.push([1, 0, 0, 1]);
     segs.push([1, 0, 0, 1, 0]); // first 5-field at index 80
     for (let i = 0; i < 60; i++) segs.push([1, 0, 0, 1]);
-    const { mappings, probes, sourcesLen, namesLen } = build([segs]);
-    expect(mappings.length).toBeGreaterThanOrEqual(128);
-    const scalar = await assertSimdMatchesScalar("name-promotion", mappings, sourcesLen, namesLen, probes);
-    expect(scalar.error).toBeNull();
-    expect(scalar.entries[0].name).toBeNull();
-    expect(scalar.entries[79].name).toBeNull();
-    expect(scalar.entries[80].name).toBe("n0");
-    expect(scalar.entries[81].name).toBe("n0");
-    expect(scalar.entries[139].name).toBe("n0");
+    return build([segs]);
   });
 
-  test("1-field (generated-column-only) segments are skipped but accumulate", async () => {
-    // Interleave 1-field and 4-field so the generated column a 4-field
-    // segment lands on depends on the preceding 1-field deltas.
-    const lines: number[][][] = [[]];
+  scenario("1-field (generated-column-only) segments are skipped but accumulate", () => {
+    // Interleave 1-field and 4-field so the generated column of every 4-field
+    // row depends on the preceding 1-field deltas.
+    const segs: number[][] = [];
     for (let i = 0; i < 150; i++) {
-      lines[0].push([3]); // 1-field
-      lines[0].push([2, 0, 0, 1]); // 4-field; probed
+      segs.push([3]); // 1-field
+      segs.push([2, 0, 0, 1]); // 4-field; produces a row
     }
-    const { mappings, probes, sourcesLen } = build(lines);
-    expect(mappings.length).toBeGreaterThanOrEqual(128);
-    const scalar = await assertSimdMatchesScalar("1-field-interleaved", mappings, sourcesLen, 0, probes);
-    expect(scalar.error).toBeNull();
-    // The k'th 4-field segment lands at gen column 5*k + 5 - 0 = 5k+5... check one.
-    expect(scalar.entries[0].generatedColumn).toBe(5);
-    expect(scalar.entries[1].generatedColumn).toBe(10);
+    return build([segs]);
   });
 
-  test("semicolon runs (line resets) and trailing ';'", async () => {
+  scenario("semicolon runs (line resets) and trailing ';'", () => {
     // 60 lines, some empty (';;'), each non-empty line has a few segments.
+    // Only the generated column resets at a line break; the other
+    // accumulators carry across lines.
     const lines: number[][][] = [];
     for (let li = 0; li < 60; li++) {
       if (li % 5 === 2) {
@@ -320,162 +378,141 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
         ]);
       }
     }
-    let { mappings, probes, sourcesLen } = build(lines);
-    mappings += ";;;"; // trailing line breaks with no segments
-    expect(mappings.length).toBeGreaterThanOrEqual(128);
-    const scalar = await assertSimdMatchesScalar("semicolon-runs", mappings, sourcesLen, 0, probes);
-    expect(scalar.error).toBeNull();
+    const built = build(lines);
+    // Trailing line breaks with no segments after them.
+    return { ...built, mappings: built.mappings + ";;;" };
   });
 
   for (const pad of [10, 15, 16, 31, 32, 61, 63, 64]) {
-    test(`block-boundary straddle at offset ${pad * 2}`, async () => {
-      // `pad` one-char 1-field segments = 2*pad bytes ("X," repeated), so
-      // the first 4-field segment starts at byte 2*pad and its multi-byte
-      // body straddles whichever block boundary 2*pad is near.
-      const filler: number[][] = [];
-      for (let i = 0; i < pad; i++) filler.push([1]);
-      filler.push([1000, 0, 1000, 1000]); // 10-byte body (3+1+3+3); seg_len=10 passes the >10 bail
-      filler.push([1, 0, 0, 1]);
-      while (filler.length < 80) filler.push([1, 0, 0, 0]);
-      const { mappings, probes, sourcesLen } = build([filler]);
-      expect(mappings.length).toBeGreaterThanOrEqual(128);
-      const scalar = await assertSimdMatchesScalar(`straddle-${pad}`, mappings, sourcesLen, 0, probes);
-      expect(scalar.error).toBeNull();
-      expect(scalar.entries[0]).toEqual({
-        generatedLine: 0,
-        generatedColumn: pad + 1000,
-        originalLine: 1000,
-        originalColumn: 1000,
-        originalSource: "s0.js",
-        name: null,
-      });
+    scenario(`block-boundary straddle at offset ${pad * 2}`, () => {
+      // `pad` one-char 1-field segments = 2*pad bytes ("C," repeated), so the
+      // first 4-field segment starts at byte 2*pad and its multi-byte body
+      // straddles whichever block boundary 2*pad is near.
+      const segs: number[][] = [];
+      for (let i = 0; i < pad; i++) segs.push([1]);
+      segs.push([1000, 0, 1000, 1000]); // 10-byte body (3+1+3+3); seg_len=10 passes the >10 bail
+      segs.push([1, 0, 0, 1]);
+      while (segs.length < 80) segs.push([1, 0, 0, 0]);
+      return build([segs]);
     });
   }
 
-  test("every 1-char VLQ value (sextets 0..31)", async () => {
+  scenario("every 1-char VLQ value (sextets 0..31)", () => {
     // Sextets 0..31 have no continuation bit and form complete 1-char VLQs.
-    // Put each as the original-column delta; a large starting column keeps
-    // the accumulator non-negative across the negative deltas.
-    const head = "AAA" + encodeVlq(5000);
-    const pieces: string[] = [head];
-    for (let i = 0; i < 32; i++) pieces.push("CAA" + BASE64[i]);
-    for (let i = 0; i < 40; i++) pieces.push("CAAA");
-    const mappings = pieces.join(",");
-    expect(mappings.length).toBeGreaterThanOrEqual(128);
-    const probes: Array<[number, number]> = [];
-    for (let i = 0; i <= 32 + 40; i++) probes.push([0, i]);
-    const scalar = await assertSimdMatchesScalar("sextets-0-31", mappings, 1, 0, probes);
-    expect(scalar.error).toBeNull();
-    let oc = 5000;
+    // Each one is the original-column delta of its own segment: sextet i
+    // decodes to magnitude i >> 1, negated when bit 0 is set. The first
+    // segment parks the column at 5000 so it stays non-negative. Segment k
+    // sits at generated column k.
+    const segments = ["AAA" + encodeVlq(5000)];
+    const entries = [row(0, 5000)];
+    let originalColumn = 5000;
     for (let i = 0; i < 32; i++) {
-      const mag = i >> 1;
-      const v = i & 1 ? -mag : mag;
-      oc += v;
-      expect({ i, originalColumn: scalar.entries[1 + i].originalColumn }).toEqual({ i, originalColumn: oc });
+      segments.push("CAA" + BASE64[i]);
+      originalColumn += i & 1 ? -(i >> 1) : i >> 1;
+      entries.push(row(segments.length - 1, originalColumn));
     }
+    // Zero-delta padding to get past the SIMD threshold.
+    for (let i = 0; i < 40; i++) {
+      segments.push("CAAA");
+      entries.push(row(segments.length - 1, originalColumn));
+    }
+    return handEncoded(segments, entries);
   });
 
-  test("every continuation-byte sextet (32..63) including '+' and '/'", async () => {
-    // Sextets 32..63 have the continuation bit set; use each as the FIRST
-    // byte of a 2-char VLQ terminated by 'C' (sextet 2). The decoded value
-    // is SignMag((i & 31) | (2 << 5)) which is distinct for every i, so a
-    // wrong sextet lookup shows up as the wrong original column. Covers the
-    // '+' -> 62 and '/' -> 63 roll-table special cases.
-    const head = "AAA" + encodeVlq(5000);
-    const pieces: string[] = [head];
-    for (let i = 32; i < 64; i++) pieces.push("CAA" + BASE64[i] + "C");
-    for (let i = 0; i < 40; i++) pieces.push("CAAA");
-    const mappings = pieces.join(",");
-    expect(mappings.length).toBeGreaterThanOrEqual(128);
-    const probes: Array<[number, number]> = [];
-    for (let i = 0; i <= 32 + 40; i++) probes.push([0, i]);
-    const scalar = await assertSimdMatchesScalar("sextets-32-63", mappings, 1, 0, probes);
-    expect(scalar.error).toBeNull();
-    let oc = 5000;
+  scenario("every continuation-byte sextet (32..63) including '+' and '/'", () => {
+    // Sextets 32..63 have the continuation bit set; each one is the first
+    // byte of a 2-char VLQ terminated by 'C' (sextet 2), so the VLQ's raw
+    // value is (i & 31) | (2 << 5), distinct for every i: a wrong lookup for
+    // any byte (including the '+' -> 62 and '/' -> 63 roll-table special
+    // cases) shows up as the wrong original column.
+    const segments = ["AAA" + encodeVlq(5000)];
+    const entries = [row(0, 5000)];
+    let originalColumn = 5000;
     for (let i = 32; i < 64; i++) {
+      segments.push("CAA" + BASE64[i] + "C");
       const raw = (i & 31) | (2 << 5);
-      const v = raw & 1 ? -(raw >> 1) : raw >> 1;
-      oc += v;
-      expect({ i, originalColumn: scalar.entries[1 + (i - 32)].originalColumn }).toEqual({ i, originalColumn: oc });
+      originalColumn += raw & 1 ? -(raw >> 1) : raw >> 1;
+      entries.push(row(segments.length - 1, originalColumn));
     }
+    for (let i = 0; i < 40; i++) {
+      segments.push("CAAA");
+      entries.push(row(segments.length - 1, originalColumn));
+    }
+    return handEncoded(segments, entries);
   });
 
-  test("invalid base64 mid-input: SIMD bails, scalar produces identical result", async () => {
-    // Scalar decodes a non-base64 byte via its LUT to sextet 127 (cont set)
-    // rather than erroring; "!A" therefore decodes as a 2-char VLQ with
-    // value -15. SIMD must bail to scalar at that segment and produce the
-    // exact same mapping list.
-    const head: number[][] = [];
-    for (let i = 0; i < 60; i++) head.push([1, 0, 0, 1]);
-    const tail: number[][] = [];
-    for (let i = 0; i < 60; i++) tail.push([1, 0, 0, 1]);
-    const { mappings: headM, probes } = build([head]);
-    const { mappings: tailM } = build([tail]);
-    // "CAA!A": genCol+=1, src+=0, origLine+=0, origCol+=(-15). origCol was 60.
-    const mappings = headM + ",CAA!A," + tailM;
-    for (let i = 0; i <= 60; i++) probes.push([0, 60 + 1 + i]);
-    expect(mappings.length).toBeGreaterThanOrEqual(128);
-    const scalar = await assertSimdMatchesScalar("invalid-byte", mappings, 1, 0, probes);
-    expect(scalar.error).toBeNull();
-    // Verify the segment containing '!' actually landed where scalar puts it.
-    expect(scalar.entries[60]).toEqual({
-      generatedLine: 0,
-      generatedColumn: 61,
-      originalLine: 0,
-      originalColumn: 45,
-      originalSource: "s0.js",
-      name: null,
-    });
+  scenario("invalid base64 mid-input: SIMD bails, scalar produces identical result", () => {
+    // The scalar decoder does not reject a non-base64 byte: its LUT maps '!'
+    // to sextet 127 (continuation bit set, payload 31), so "!A" decodes as a
+    // 2-char VLQ with value -15. The kernel must hand over at that segment
+    // and the rest of the line must then decode from the resulting state.
+    const prefix = anomalyPrefix();
+    // The prefix rows end at generated column 60 / original column 60; "CAA!A"
+    // is one column further and moves the original column to 45; the 60 STEP
+    // segments after it advance both by one each.
+    const tail = Array.from({ length: 61 }, (_, i) => row(61 + i, 45 + i));
+    return {
+      ...handEncoded([prefix.mappings, "CAA!A", ...Array(60).fill(STEP)], [...prefix.expected.entries, ...tail]),
+      simdStopsAt: prefix.anomalyAt,
+    };
   });
 
-  test("6-field segment: SIMD bails, scalar re-decodes", async () => {
-    // Scalar decodes 5 fields then treats the 6th byte as a fresh 1-field
-    // segment; SIMD can't replicate that in one step so it must bail.
-    const head: number[][] = [];
-    for (let i = 0; i < 60; i++) head.push([1, 0, 0, 1]);
-    const { mappings: headM, probes } = build([head]);
-    const mappings = headM + ",CAACAC," + "CAAC,".repeat(40).slice(0, -1);
-    // Probe the 5-field row at column 61 and every tail row after it.
-    for (let i = 0; i <= 41; i++) probes.push([0, 61 + i]);
-    expect(mappings.length).toBeGreaterThanOrEqual(128);
-    await assertSimdMatchesScalar("6-field", mappings, 1, 1, probes);
+  scenario("6-field segment: SIMD bails, scalar re-decodes", () => {
+    // The scalar decoder reads five fields of "CAACAC" (a row at column 61
+    // naming n0) and then treats the sixth 'C' as a fresh 1-field segment,
+    // so the generated column moves on to 62 without a row and the 40 STEP
+    // segments after it land on columns 63..102, each carrying n0 forward.
+    // The kernel cannot express that in one step and must hand over.
+    const prefix = anomalyPrefix();
+    const sixField = row(61, 61, "n0");
+    const tail = Array.from({ length: 40 }, (_, i) => row(63 + i, 62 + i, "n0"));
+    return {
+      mappings: [prefix.mappings, "CAACAC", ...Array(40).fill(STEP)].join(","),
+      sources: prefix.sources,
+      names: ["n0"],
+      // Column 62 has no row of its own, so findEntry reports the row at 61
+      // for it as well.
+      probes: [...prefix.probes, [0, 61], [0, 62], ...tail.map((e): [number, number] => [0, e.generatedColumn!])],
+      expected: { entries: [...prefix.expected.entries, sixField, sixField, ...tail], error: null },
+      simdStopsAt: prefix.anomalyAt,
+    };
   });
 
-  test("over-long VLQ (>= 8 cont bytes): SIMD bails, scalar rejects", async () => {
-    // 'g' is sextet 32 (cont bit set, payload 0). Eight in a row then
-    // "AAAA," is a 12-byte segment whose first field has 9 sextets.
-    // Scalar caps at 8 bytes and returns no-progress -> ParseResult::Fail;
-    // SIMD must bail at this segment so scalar reports the same error.
-    const head: number[][] = [];
-    for (let i = 0; i < 60; i++) head.push([1, 0, 0, 1]);
-    const { mappings: headM } = build([head]);
-    const mappings = headM + ",ggggggggAAAA,AAAA";
-    expect(mappings.length).toBeGreaterThanOrEqual(128);
-    const [simd, scalar] = await Promise.all([
-      dumpMappings(mappings, 1, 0, [], false),
-      dumpMappings(mappings, 1, 0, [], true),
-    ]);
-    expect(scalar.error).toContain("Missing generated column value");
-    expect(simd.error).toEqual(scalar.error);
+  scenario("over-long VLQ (>= 8 cont bytes): SIMD bails, scalar rejects", () => {
+    // 'g' is sextet 32 (continuation bit set, payload 0). Eight in a row
+    // followed by "AAAA" is a 12-byte segment whose first VLQ has 9 sextets;
+    // the scalar decoder caps a VLQ at 8 bytes and reports no progress at the
+    // segment's offset. The kernel has to hand over there for the error to
+    // come out identical.
+    const prefix = anomalyPrefix();
+    return {
+      mappings: prefix.mappings + ",ggggggggAAAA,AAAA",
+      sources: prefix.sources,
+      names: [],
+      probes: [],
+      expected: { entries: [], error: `SyntaxError: Missing generated column value at ${prefix.anomalyAt}` },
+      simdStopsAt: prefix.anomalyAt,
+    };
   });
 
-  test("out-of-range source index: identical ParseResult::Fail", async () => {
-    const head: number[][] = [];
-    for (let i = 0; i < 60; i++) head.push([1, 0, 0, 1]);
-    const { mappings: headM } = build([head]);
-    // +5 source-index delta with sources.length == 1 -> out of range.
-    const mappings = headM + "," + encodeSegment([1, 5, 0, 0]);
-    expect(mappings.length).toBeGreaterThanOrEqual(128);
-    const [simd, scalar] = await Promise.all([
-      dumpMappings(mappings, 1, 0, [], false),
-      dumpMappings(mappings, 1, 0, [], true),
-    ]);
-    expect(scalar.error).toContain("Invalid source index value");
-    expect(simd.error).toEqual(scalar.error);
+  scenario("out-of-range source index: identical ParseResult::Fail", () => {
+    // A +5 source-index delta with a single source. The scalar decoder
+    // reports the offset of the field it rejected, one byte into the segment.
+    const prefix = anomalyPrefix();
+    return {
+      mappings: prefix.mappings + "," + encodeSegment([1, 5, 0, 0]),
+      sources: prefix.sources,
+      names: [],
+      probes: [],
+      expected: { entries: [], error: `SyntaxError: Invalid source index value at ${prefix.anomalyAt + 1}` },
+      simdStopsAt: prefix.anomalyAt,
+    };
   });
 
-  test("large pseudo-random map", async () => {
-    // Deterministic LCG so the fixture is reproducible.
+  scenario("large pseudo-random map", () => {
+    // Deterministic LCG so the fixture is reproducible: 200 lines and about
+    // 2,400 rows (14.5 KiB of mappings) wandering over up to 5 sources, with
+    // a 5-field segment roughly every 8 rows.
     let seed = 0x1234_5678 >>> 0;
     const rnd = () => {
       seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
@@ -504,10 +541,6 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
       }
       lines.push(segs);
     }
-    const { mappings, probes, sourcesLen, namesLen } = build(lines);
-    expect(mappings.length).toBeGreaterThanOrEqual(128);
-    const scalar = await assertSimdMatchesScalar("pseudo-random", mappings, sourcesLen, namesLen, probes);
-    expect(scalar.error).toBeNull();
-    expect(scalar.entries.length).toBeGreaterThan(1000);
+    return build(lines);
   });
 });

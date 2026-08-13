@@ -4069,19 +4069,27 @@ describe("http2 undefined header values", () => {
           "x-undefined": undefined,
           "x-ok": "1",
         });
+        // Same in the other order: the undefined spelling is not a second occurrence either.
+        const reversed = await observe(client, {
+          ":path": "/reversed",
+          "Content-Type": "text/plain",
+          "content-type": undefined,
+        });
         const raw = await observe(client, [":path", "/raw", "x-undefined", undefined, "x-ok", "1"]);
         // The session is still healthy afterwards: nothing was encoded and then thrown away.
         const after = await observe(client, { ":path": "/after", "x-after": "2" });
-        return [first, raw, after].map(({ status, rstCode }) => ({ status, rstCode }));
+        return [first, reversed, raw, after].map(({ status, rstCode }) => ({ status, rstCode }));
       },
     );
 
     expect(received).toEqual([
       ["content-type", "text/plain", "x-ok", "1"],
+      ["content-type", "text/plain"],
       ["x-ok", "1"],
       ["x-after", "2"],
     ]);
     expect(result).toEqual([
+      { status: 200, rstCode: 0 },
       { status: 200, rstCode: 0 },
       { status: 200, rstCode: 0 },
       { status: 200, rstCode: 0 },
@@ -4166,63 +4174,71 @@ describe("http2 undefined header values", () => {
   });
 
   it("pushStream() sends the block without the undefined-valued properties", async () => {
+    const pushBlocks = [
+      {
+        ":path": "/pushed",
+        ":bogus": undefined,
+        "bad name": undefined,
+        connection: undefined,
+        "content-type": undefined,
+        "Content-Type": "text/plain",
+        "x-undefined": undefined,
+        "x-ok": "1",
+      },
+      { ":path": "/reversed", "Content-Type": "text/plain", "content-type": undefined },
+    ];
     const thrown = [];
     const callbackErrors = [];
     const blocks = await pushedHeaderBlocks(stream => {
-      try {
-        stream.pushStream(
-          {
-            ":path": "/pushed",
-            ":bogus": undefined,
-            "bad name": undefined,
-            connection: undefined,
-            "content-type": undefined,
-            "Content-Type": "text/plain",
-            "x-undefined": undefined,
-            "x-ok": "1",
-          },
-          (err, push) => {
+      for (const block of pushBlocks) {
+        try {
+          stream.pushStream(block, (err, push) => {
             if (err) {
               callbackErrors.push(err.code);
-            } else {
-              push.respond({ ":status": 200 });
-              push.end();
+              return;
             }
-            stream.respond({ ":status": 200 });
-            stream.end();
-          },
-        );
-      } catch (err) {
-        thrown.push(err.code);
-        stream.respond({ ":status": 200 });
-        stream.end();
+            push.respond({ ":status": 200 });
+            push.end();
+          });
+        } catch (err) {
+          thrown.push(err.code);
+        }
       }
+      stream.respond({ ":status": 200 });
+      stream.end();
     });
 
     expect(thrown).toEqual([]);
     expect(callbackErrors).toEqual([]);
     expect(blocks.map(({ path, fields }) => ({ path, fields }))).toEqual([
       { path: "/pushed", fields: ["content-type", "text/plain", "x-ok", "1"] },
+      { path: "/reversed", fields: ["content-type", "text/plain"] },
     ]);
   });
 
   it("sendTrailers() sends the block without the undefined-valued properties", async () => {
+    // sendTrailers() has no JS pre-check, so the native trailers walk is the only thing judging
+    // these blocks, including the single-value rule in both spellings' orders.
+    const trailerBlocks = {
+      "/block": {
+        // A trailer block rejects every pseudo-header name, so this one is skipped only
+        // because its value is looked at first.
+        ":status": undefined,
+        "bad name": undefined,
+        "content-type": undefined,
+        "Content-Type": "text/plain",
+        "x-undefined": undefined,
+        "x-ok": "1",
+      },
+      "/reversed": { "Content-Type": "text/plain", "content-type": undefined },
+    };
     const thrown = [];
     const result = await withSession(
-      stream => {
+      (stream, headers) => {
         stream.respond({ ":status": 200 }, { waitForTrailers: true });
         stream.on("wantTrailers", () => {
           try {
-            stream.sendTrailers({
-              // A trailer block rejects every pseudo-header name, so this one is skipped only
-              // because its value is looked at first.
-              ":status": undefined,
-              "bad name": undefined,
-              "content-type": undefined,
-              "Content-Type": "text/plain",
-              "x-undefined": undefined,
-              "x-ok": "1",
-            });
+            stream.sendTrailers(trailerBlocks[headers[":path"]]);
           } catch (err) {
             thrown.push(err.code);
             stream.close();
@@ -4231,13 +4247,20 @@ describe("http2 undefined header values", () => {
         stream.end("body");
       },
       async client => {
-        const { trailers, rstCode } = await observe(client, { ":path": "/" });
-        return { trailers, rstCode };
+        const results = [];
+        for (const path of Object.keys(trailerBlocks)) {
+          const { trailers, rstCode } = await observe(client, { ":path": path });
+          results.push({ path, trailers, rstCode });
+        }
+        return results;
       },
     );
 
     expect(thrown).toEqual([]);
-    expect(result).toEqual({ trailers: ["content-type", "text/plain", "x-ok", "1"], rstCode: 0 });
+    expect(result).toEqual([
+      { path: "/block", trailers: ["content-type", "text/plain", "x-ok", "1"], rstCode: 0 },
+      { path: "/reversed", trailers: ["content-type", "text/plain"], rstCode: 0 },
+    ]);
   });
 
   it("sendTrailers() with nothing left to send ends the stream without a trailers block", async () => {

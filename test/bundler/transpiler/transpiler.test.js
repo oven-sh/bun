@@ -2544,8 +2544,7 @@ console.log(<div {...obj} key="after" />);`),
     }
     // target bun binds `require` from import.meta, so the fold stays.
     const bunOut = new Bun.Transpiler({ loader: "js", target: "bun" }).transformSync(input);
-    expect(bunOut).not.toContain("typeof require");
-    expect(bunOut).toContain("import.meta");
+    expect(bunOut).toBe(`var {require}=import.meta;export const hasRequire = !0;\n`);
   });
 
   it("CommonJS", () => {

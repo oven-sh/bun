@@ -123,9 +123,11 @@ impl MySQLRequestQueue {
         // `Cell`/`JsCell` interior mutability — `&Self` is sufficient.
         let queue_ref: ParentRef<Self> = ParentRef::new(&conn_ref.connection.get().queue);
 
-        // maxLifetime expired mid-query (#30646): retire before dispatching more work.
+        // maxLifetime expired mid-query (#30646): retire before dispatching more
+        // work, once the head finished (a prepare in flight bumps neither counter).
         if queue_ref.pipelined_requests.get() == 0
             && queue_ref.nonpipelinable_requests.get() == 0
+            && queue_ref.current_ref().is_none_or(|r| r.is_completed())
             && conn_ref.retire_if_lifetime_exceeded()
         {
             return;

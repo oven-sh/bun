@@ -3008,9 +3008,10 @@ describe("bundler", () => {
     },
     run: { stdout: "true" },
   });
-  // `import.meta.main` is rewritten to EImportMetaMain; under `target: node`
-  // that prints as `__require.main == __require.module` without its own paren
-  // wrap, so an unwrapped `delete` would bind to `__require.main`.
+  // `import.meta.main` is rewritten to EImportMetaMain, which prints as either
+  // the property access `import.meta.main` or `(__require.main === __require.module)`
+  // depending on target. The `(0, ...)` guard keeps `delete` applied to a value
+  // in both shapes instead of to the property access.
   itBundled("edgecase/DeleteFoldedImportMetaMainRef", {
     files: {
       "/entry.js": /* js */ `

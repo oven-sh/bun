@@ -465,6 +465,119 @@ console.log("survived", require("./late.js"));`,
     expect(wrap()).toBe("(function (exports, require, module, __filename, __dirname) { undefined\n});");
   });
 
+  describe("Module.wrapper override", () => {
+    // Every fixture records the modules that ran through the custom wrapper in
+    // globalThis.wrapped, then prints one JSON object for the test to compare.
+    async function runFixture(dir, cmd) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...cmd],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout);
+    }
+
+    const setWrapper = /* js */ `
+      globalThis.wrapped = [];
+      globalThis.note = filename => globalThis.wrapped.push(require("node:path").basename(filename));
+      require("node:module").wrapper = [
+        "(function (exports, require, module, __filename, __dirname) { globalThis.note(__filename); ",
+        "\\n});",
+      ];
+    `;
+
+    test("applies to CommonJS loaded through import() and import, like require()", async () => {
+      using dir = tempDir("module-wrapper-import", {
+        "set-wrapper.cjs": setWrapper,
+        "main.mjs": /* js */ `
+          import { createRequire } from "node:module";
+          const require = createRequire(import.meta.url);
+          require("./set-wrapper.cjs");
+          const viaImport = (await import("./dep-import.cjs")).default;
+          const viaStaticImport = (await import("./reexport.mjs")).default;
+          const viaRequire = require("./dep-require.cjs");
+          const viaRequireEmpty = require("./empty.cjs");
+          console.log(JSON.stringify({ viaImport, viaStaticImport, viaRequire, viaRequireEmpty, wrapped: globalThis.wrapped }));
+        `,
+        "dep-import.cjs": `module.exports = { loadedBy: "import()" };`,
+        "reexport.mjs": `export { default } from "./dep-static.cjs";`,
+        "dep-static.cjs": `module.exports = { loadedBy: "import" };`,
+        "dep-require.cjs": `module.exports = { loadedBy: "require" };`,
+        "empty.cjs": "",
+      });
+      expect(await runFixture(dir, ["main.mjs"])).toEqual({
+        viaImport: { loadedBy: "import()" },
+        viaStaticImport: { loadedBy: "import" },
+        viaRequire: { loadedBy: "require" },
+        viaRequireEmpty: {},
+        wrapped: ["dep-import.cjs", "dep-static.cjs", "dep-require.cjs", "empty.cjs"],
+      });
+    });
+
+    test("assigning the wrapper in a preload keeps a CommonJS entry point running", async () => {
+      using dir = tempDir("module-wrapper-preload", {
+        // jest-runtime style: copies the property back onto Module, which
+        // makes the setter run even though nothing changed.
+        "preload.cjs": `const Module = require("node:module"); Module.wrapper = Module.wrapper;`,
+        "main.cjs": `console.log(JSON.stringify({ ran: true, filename: require("node:path").basename(__filename) }));`,
+      });
+      expect(await runFixture(dir, ["-r", "./preload.cjs", "./main.cjs"])).toEqual({ ran: true, filename: "main.cjs" });
+    });
+
+    test("mutating Module.wrapper in place applies to imported CommonJS", async () => {
+      using dir = tempDir("module-wrapper-mutate", {
+        "main.mjs": /* js */ `
+          import Module from "node:module";
+          globalThis.wrapped = [];
+          Module.wrapper[0] += "globalThis.wrapped.push(require('node:path').basename(__filename));";
+          const dep = (await import("./dep.cjs")).default;
+          console.log(JSON.stringify({ dep, wrapped: globalThis.wrapped }));
+        `,
+        "dep.cjs": `module.exports = { answer: 42 };`,
+      });
+      expect(await runFixture(dir, ["main.mjs"])).toEqual({ dep: { answer: 42 }, wrapped: ["dep.cjs"] });
+    });
+
+    test("applies to bun build --format=cjs output (pragma line before the wrapper)", async () => {
+      using dir = tempDir("module-wrapper-prebundled", {
+        "set-wrapper.cjs": setWrapper,
+        "src/dep.cjs": `#!/usr/bin/env bun\nmodule.exports = { bundled: true };`,
+        "main.mjs": /* js */ `
+          import { createRequire } from "node:module";
+          const require = createRequire(import.meta.url);
+          const { success, logs } = await Bun.build({
+            entrypoints: ["./src/dep.cjs"],
+            outdir: "./out",
+            target: "bun",
+            format: "cjs",
+          });
+          if (!success) throw new AggregateError(logs);
+          const header = (await Bun.file("./out/dep.js").text()).split("\\n", 3);
+          require("./set-wrapper.cjs");
+          const viaRequire = require("./out/dep.js");
+          delete require.cache[require.resolve("./out/dep.js")];
+          const viaImport = (await import("./out/dep.js")).default;
+          console.log(JSON.stringify({ header, viaRequire, viaImport, wrapped: globalThis.wrapped }));
+        `,
+      });
+      expect(await runFixture(dir, ["main.mjs"])).toEqual({
+        header: [
+          "#!/usr/bin/env bun",
+          "// @bun @bun-cjs",
+          expect.stringContaining("(function(exports, require, module, __filename, __dirname) {"),
+        ],
+        viaRequire: { bundled: true },
+        viaImport: { bundled: true },
+        wrapped: ["dep.js", "dep.js"],
+      });
+    });
+  });
+
   test("Overwriting _resolveFilename", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", path.join(import.meta.dir, "resolveFilenameOverwrite.cjs")],

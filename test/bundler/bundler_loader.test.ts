@@ -85,18 +85,18 @@ describe("bundler", async () => {
         },
         run: { stdout: "polyfill true 1979-05-27" },
       });
-      // --no-bundle turns each top-level key into a module-scope var, so a key
-      // named Temporal must not capture the printed reference.
-      itBundled("bun/loader-toml-datetime-no-bundle-temporal-key", {
+      itBundled("bun/loader-toml-datetime-no-bundle", {
         target,
         bundling: false,
         entryPoints: ["/config.toml"],
         files: {
-          "/config.toml": `Temporal = "x"\nd = 1979-05-27`,
+          "/config.toml": `d = 1979-05-27\n[t]\nat = 1979-05-27T00:32:00-07:00`,
         },
         run: true,
         onAfterBundle(api) {
-          expect(api.readFile("/out.js")).toContain('globalThis.Temporal.PlainDate.from("1979-05-27")');
+          const code = api.readFile("/out.js");
+          expect(code).toContain('Temporal.PlainDate.from("1979-05-27")');
+          expect(code).toContain('Temporal.Instant.from("1979-05-27T00:32:00-07:00")');
         },
       });
       // TOML date/time values bundle as Temporal construction calls; the

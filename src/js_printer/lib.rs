@@ -3740,8 +3740,8 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EString(e) => {
-                    // Only reached on the `--no-bundle` data-loader path, which has
-                    // no symbol table; the bundler lowers these to a real call first.
+                    // The `--no-bundle` data-loader path prints the TOML AST
+                    // as-is; the bundler lowers these to a real call first.
                     if let Some(kind) = e.toml_datetime {
                         let wrap = level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall);
                         if wrap {
@@ -3749,7 +3749,7 @@ pub(crate) mod __gated_printer {
                         }
                         self.print_space_before_identifier();
                         self.add_source_mapping(expr.loc);
-                        self.print(b"globalThis.Temporal.");
+                        self.print(b"Temporal.");
                         self.print(kind.temporal_class());
                         self.print(b".from(\"");
                         // Always ASCII (validated by the TOML scanner); no escaping.

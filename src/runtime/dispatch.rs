@@ -39,9 +39,9 @@ use bun_event_loop::EventLoopTimer::{
 };
 
 use bun_jsc::event_loop::{EventLoop, Stopped};
-use bun_jsc::{JSGlobalObject, JsResult};
 use bun_jsc::task::report_error_or_terminate;
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{JSGlobalObject, JsResult};
 
 /// X-macro: the `node:fs` ops that are libuv requests on Windows
 /// (`UVFSRequest`); they complete on the JS thread and re-enter through the
@@ -340,7 +340,11 @@ pub(crate) fn tick_queue_with_count(
         // Incremented before dispatch so the count includes every task,
         // including the one that takes the HotReloadTask early return.
         *counter += 1;
-        let mut tick = Tick { el: &mut *el, vm: &mut *vm, global };
+        let mut tick = Tick {
+            el: &mut *el,
+            vm: &mut *vm,
+            global,
+        };
         match run_task(task, &mut tick) {
             Ok(false) => {}
             Ok(true) => {

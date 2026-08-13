@@ -1892,15 +1892,28 @@ export function getCpuDescription() {
   return `${model} x${availableParallelism()}`;
 }
 
+/** @type {string | undefined} "" once looked up and not available */
+let cloudInstanceType;
+
 /**
  * The instance type the cloud provider actually launched for this machine,
  * e.g. "r7i.2xlarge" on EC2 or "Standard_D8s_v5" on Azure. CI asks for one
  * type per lane (.buildkite/ci.mjs), but under capacity pressure the
  * machine may be a different, slower type, and nothing else in a job log
- * records which one it was.
+ * records which one it was. Looked up once per process.
  * @returns {string | undefined}
  */
 export function getCloudInstanceType() {
+  if (typeof cloudInstanceType !== "string") {
+    cloudInstanceType = fetchCloudInstanceType() || "";
+  }
+  return cloudInstanceType || undefined;
+}
+
+/**
+ * @returns {string | undefined}
+ */
+function fetchCloudInstanceType() {
   // The `cloud` tag scripts/agent.mjs puts on the agents we launch ourselves.
   // Anything without it (the darwin fleet, GitHub Actions) is not a machine
   // whose type we chose, so there is nothing to compare against and no request.

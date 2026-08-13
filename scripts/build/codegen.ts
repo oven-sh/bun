@@ -611,7 +611,10 @@ export function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): voi
   n.build({
     outputs,
     rule: "codegen",
-    inputs: [script, ...sources.zigGeneratedClasses, jsClassesTable(cfg)],
+    // jsCodegen covers the script's imports (class-definitions.ts, which the
+    // .classes.ts files import as well, and helpers.ts). Only the .classes.ts
+    // files go on the command line.
+    inputs: [script, ...sources.jsCodegen, ...sources.zigGeneratedClasses, jsClassesTable(cfg)],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -717,10 +720,11 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
 export function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bundle-modules.ts");
 
-  // Inputs from outside sources.js (src/js/**/*.{js,ts}) and sources.jsCodegen
-  // (src/codegen/*.ts). The script bakes each file it reads from elsewhere into
-  // its outputs, so an edit to one of them alone has to re-run the step, and
-  // ninja only does that for files listed here.
+  // Everything the script reads from outside sources.js (src/js/**/*.{js,ts})
+  // and sources.jsCodegen (src/codegen/*.ts). Each is baked into the outputs,
+  // so an edit to one of them alone has to re-run the step, and ninja only
+  // does that for files listed here. test/internal/build-codegen-extra-inputs
+  // checks this list against the script's imports in both directions.
   const extraInputs = [
     // internal-module-registry-scanner.ts numbers the native modules from this
     // list. The numbers end up in InternalModuleRegistry+*.h,
@@ -736,9 +740,6 @@ export function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     // ($makeErrorWithCode(N, ...)); without this dep an ErrorCode.ts edit leaves
     // stale error numbers in the JS bundles while the C++ enum regenerates.
     resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.ts"),
-    // Not read by the script; inherited from the CMake build's input list for
-    // this step.
-    resolve(cfg.cwd, "src", "jsc", "bindings", "InternalModuleRegistry.cpp"),
   ];
 
   const outputs = [
@@ -785,9 +786,6 @@ export function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
 function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bake-codegen.ts");
-
-  // InternalModuleRegistry.cpp is listed as a dep in CMake for this step too.
-  // The script doesn't read it; CMake copy-paste. We skip it.
 
   // CMake only declares bake.client.js and bake.server.js as outputs. The
   // script also emits bake.error.js (the runtime embeds it). We declare

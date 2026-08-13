@@ -1400,12 +1400,13 @@ describe("inbound stream lifecycle", () => {
       stderr: "pipe",
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The peer's RST_STREAM(NO_ERROR) closed the request cleanly before client.destroy() ran, so
+    // the session teardown has nothing left to cancel and the request emits no 'error'.
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
       "wantTrailers id=1
       toString:start
       toString:end
       sendTrailers:returned
-      req error ERR_HTTP2_STREAM_CANCEL
       req close"
     `);
     expect(proc.signalCode).toBeNull();
@@ -1659,6 +1660,255 @@ describe("inbound stream lifecycle", () => {
     } finally {
       c.destroy();
       server.close();
+    }
+  });
+});
+
+// A response begins with a HEADERS frame (RFC 9113 §8.1), so ending a server stream's writable
+// side before respond() cannot put anything on the wire by itself: the END_STREAM belongs on the
+// response HEADERS frame once respond() runs. (node: shutting the writable down only marks the
+// stream unwritable, and the response is then submitted without a body.) Before the fix the
+// writable's _final wrote an empty END_STREAM DATA frame ahead of any HEADERS, which closed the
+// stream natively and left a later respond() either throwing or sending HEADERS after END_STREAM.
+describe("server stream ended before respond() (RFC 9113 §8.1)", () => {
+  const END_STREAM = 0x1;
+
+  /**
+   * An h2c server whose single stream is handed to `onStream`, plus a raw client that has sent
+   * one request on stream 1. A GET arrives complete (the server stream is half-closed remote); a
+   * POST leaves the request body open, so the response END_STREAM only half-closes the stream.
+   */
+  async function requestOnStream1(method: "GET" | "POST", onStream: (stream: any, events: string[]) => void) {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const server = http2.createServer();
+    server.on("stream", (stream: any) => {
+      stream.on("error", (err: any) => events.push(`error ${err.code}`));
+      stream.on("aborted", () => events.push("aborted"));
+      stream.on("wantTrailers", () => events.push("wantTrailers"));
+      stream.on("finish", () => events.push("finish"));
+      stream.on("close", () => {
+        events.push(`close rstCode=${stream.rstCode}`);
+        closed.resolve();
+      });
+      onStream(stream, events);
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    c.sendPreface();
+    c.sendEmptySettings();
+    c.sendFrame(FrameType.HEADERS, method === "GET" ? 0x4 | END_STREAM : 0x4, 1, requestHeaderBlock(method));
+    let pings = 0;
+    return {
+      c,
+      events,
+      closed: closed.promise,
+      /** Round-trips a PING: everything the server wrote for stream 1 before it is in `c.frames`. */
+      async settle() {
+        const payload = Buffer.alloc(8);
+        payload.writeUInt32BE(++pings, 4);
+        c.sendFrame(FrameType.PING, 0, 0, payload);
+        await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload.equals(payload));
+      },
+      stream1Frames: () => c.frames.filter(f => f.streamId === 1).map(f => ({ type: f.type, flags: f.flags })),
+      cleanup() {
+        c.destroy();
+        server.close();
+      },
+    };
+  }
+
+  const waitForResponseHeaders = (c: RawH2) => c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+
+  test("end() then respond() puts END_STREAM on the HEADERS frame and sends no DATA", async () => {
+    const r = await requestOnStream1("GET", stream => {
+      stream.end();
+      stream.respond({ ":status": 200 });
+    });
+    try {
+      await waitForResponseHeaders(r.c);
+      await r.closed;
+      await r.settle();
+      expect(r.stream1Frames()).toEqual([{ type: FrameType.HEADERS, flags: 0x4 | END_STREAM }]);
+      expect(r.events).toEqual(["finish", "close rstCode=0"]);
+    } finally {
+      r.cleanup();
+    }
+  });
+
+  test("end() finishes the writable immediately and sends nothing until respond()", async () => {
+    let writableFinishedAfterEnd: boolean | undefined;
+    const r = await requestOnStream1("GET", (stream, events) => {
+      stream.end();
+      writableFinishedAfterEnd = stream.writableFinished;
+      stream.once("finish", () => {
+        events.push(`writableFinished=${stream.writableFinished}`);
+        // Before the fix end() had already put END_STREAM on the wire: a respond() from here sent
+        // HEADERS behind it, and one issued any later threw ERR_HTTP2_INVALID_STREAM because the
+        // stream had been torn down by then.
+        try {
+          stream.respond({ ":status": 204 });
+        } catch (err: any) {
+          events.push(`respond threw ${err.code}`);
+        }
+      });
+    });
+    try {
+      await waitForResponseHeaders(r.c);
+      await r.closed;
+      await r.settle();
+      // node also finishes the writable asynchronously ('finish' is emitted from a later tick).
+      expect(writableFinishedAfterEnd).toBe(false);
+      expect(r.stream1Frames()).toEqual([{ type: FrameType.HEADERS, flags: 0x4 | END_STREAM }]);
+      expect(r.events).toEqual(["finish", "writableFinished=true", "close rstCode=0"]);
+    } finally {
+      r.cleanup();
+    }
+  });
+
+  test("end() without a respond() puts nothing on the wire", async () => {
+    const r = await requestOnStream1("GET", stream => stream.end());
+    try {
+      await r.settle();
+      expect(r.stream1Frames()).toEqual([]);
+      // The writable still finishes, as node's does; the stream stays open awaiting respond().
+      expect(r.events).toEqual(["finish"]);
+    } finally {
+      r.cleanup();
+    }
+  });
+
+  test("end() then respond({ waitForTrailers }) ends on the HEADERS frame without asking for trailers", async () => {
+    const r = await requestOnStream1("GET", stream => {
+      stream.end();
+      stream.respond({ ":status": 200 }, { waitForTrailers: true });
+    });
+    try {
+      await waitForResponseHeaders(r.c);
+      await r.closed;
+      await r.settle();
+      expect(r.stream1Frames()).toEqual([{ type: FrameType.HEADERS, flags: 0x4 | END_STREAM }]);
+      // A response with no body never gets a 'wantTrailers' (node submits it without a data
+      // provider, which is what would have requested them).
+      expect(r.events).toEqual(["finish", "close rstCode=0"]);
+    } finally {
+      r.cleanup();
+    }
+  });
+
+  test("end() then respond() while the request body is still open half-closes the stream", async () => {
+    const r = await requestOnStream1("POST", stream => {
+      stream.resume();
+      stream.end();
+      stream.respond({ ":status": 200 });
+    });
+    try {
+      await waitForResponseHeaders(r.c);
+      await r.settle();
+      expect(r.stream1Frames()).toEqual([{ type: FrameType.HEADERS, flags: 0x4 | END_STREAM }]);
+      expect(r.events).toEqual(["finish"]);
+      // Finishing the request body is what closes the stream; nothing more is sent for it.
+      r.c.sendFrame(FrameType.DATA, END_STREAM, 1);
+      await r.closed;
+      await r.settle();
+      expect(r.stream1Frames()).toEqual([{ type: FrameType.HEADERS, flags: 0x4 | END_STREAM }]);
+      expect(r.events).toEqual(["finish", "close rstCode=0"]);
+    } finally {
+      r.cleanup();
+    }
+  });
+
+  // end() is already visible as writableEnded while the chunks cork() buffered are being written
+  // (and the implicit respond() for them is issued): END_STREAM must stay off the HEADERS frame
+  // then, or the body would be sent on a half-closed stream.
+  test("a body buffered behind cork() when end() is called still follows the HEADERS frame", async () => {
+    const r = await requestOnStream1("GET", stream => {
+      stream.cork();
+      stream.write("hel");
+      stream.write("lo");
+      stream.end();
+    });
+    try {
+      const headers = await waitForResponseHeaders(r.c);
+      expect(headers.flags & END_STREAM).toBe(0);
+      await r.closed;
+      await r.settle();
+      const dataFrames = r.c.frames.filter(f => f.streamId === 1 && f.type === FrameType.DATA);
+      expect(Buffer.concat(dataFrames.map(f => f.payload)).toString()).toBe("hello");
+      expect(dataFrames.at(-1)!.flags & END_STREAM).toBe(END_STREAM);
+      expect(r.events).toEqual(["finish", "close rstCode=0"]);
+    } finally {
+      r.cleanup();
+    }
+  });
+
+  test("a client sees the response of a stream that was ended before respond()", async () => {
+    const server = http2.createServer();
+    server.on("stream", (stream: any) => {
+      stream.end();
+      stream.respond({ ":status": 200, "x-ended-first": "1" });
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    try {
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      const req = client.request({ ":path": "/" });
+      req.on("error", (err: any) => events.push(`error ${err.code}`));
+      // Before the fix the bare END_STREAM DATA frame ended the request without a 'response'.
+      req.on("response", (headers: any, flags: number) =>
+        events.push(`response ${headers[":status"]} ${headers["x-ended-first"]} flags=${flags}`),
+      );
+      req.on("data", (chunk: Buffer) => events.push(`data ${chunk.length}`));
+      req.on("end", () => events.push("end"));
+      req.on("close", () => {
+        events.push(`close rstCode=${req.rstCode}`);
+        closed.resolve();
+      });
+      req.end();
+      await closed.promise;
+      expect(events).toEqual([`response 200 1 flags=${0x4 | END_STREAM}`, "end", "close rstCode=0"]);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+});
+
+// RST_STREAM(NO_ERROR) is how a node server closes a stream it never responded on (stream.close()
+// before respond()), and what a bun server now sends for it too. For the receiver it is a clean
+// end of the stream, not a stream error: node's client emits 'end' and then 'close' with rstCode 0
+// on a request nobody is reading. Routing it as a stream error destroyed the stream before the
+// readable could end, so 'end' never fired (test-http2-compat-write-head-after-close relies on it).
+describe("RST_STREAM(NO_ERROR) received by a client (RFC 9113 §6.4)", () => {
+  test("ends an unconsumed request cleanly", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    const events: string[] = [];
+    client.on("error", (err: any) => events.push(`session error ${err.code}`));
+    try {
+      const closed = Promise.withResolvers<void>();
+      const req = client.request({ ":path": "/" });
+      req.on("error", (err: any) => events.push(`error ${err.code}`));
+      req.on("response", () => events.push("response"));
+      req.on("aborted", () => events.push("aborted"));
+      req.on("end", () => events.push("end"));
+      req.on("close", () => {
+        events.push(`close rstCode=${req.rstCode}`);
+        closed.resolve();
+      });
+      req.end();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      raw.sendFrame(FrameType.RST_STREAM, 0, 1, Buffer.alloc(4)); // NO_ERROR
+      await closed.promise;
+      expect(events).toEqual(["end", "close rstCode=0"]);
+    } finally {
+      client.destroy();
+      raw.close();
     }
   });
 });

@@ -152,8 +152,7 @@ pub struct Feed {
 /// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
 const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 
-/// nghttp2's NGHTTP2_DEFAULT_MAX_CONTINUATIONS (CVE-2024-28182): CONTINUATION frames accepted for
-/// one header block. The byte cap in `handle_continuation` cannot bound zero-length frames.
+/// nghttp2's NGHTTP2_DEFAULT_MAX_CONTINUATIONS (CVE-2024-28182): CONTINUATION frames per header block.
 const MAX_CONTINUATIONS: u32 = 8;
 
 /// What the connection engine calls back into the embedder (the JSC binding) for. Methods take
@@ -1067,8 +1066,7 @@ impl Connection {
         // dispatch() already enforced that we are assembling this exact stream.
         inflight.continuations += 1;
         if inflight.continuations > MAX_CONTINUATIONS {
-            // nghttp2 fails the session with NGHTTP2_ERR_TOO_MANY_CONTINUATIONS, which node
-            // surfaces as errno -905 alongside a GOAWAY(INTERNAL_ERROR).
+            // INTERNAL_ERROR is the GOAWAY code nghttp2 uses for this.
             self.local_connection_error(
                 sink,
                 ErrorCode::InternalError,
@@ -2383,9 +2381,7 @@ mod tests {
         let sink = CaptureSink::default();
         let mut c = Connection::new(true, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
-        // Two request blocks, each split across HEADERS plus exactly MAX_CONTINUATIONS
-        // CONTINUATION frames. A counter that survived from one block to the next would trip on
-        // the second block.
+        // Two blocks, each using the whole budget: a session-wide counter would trip on the second.
         let mut bytes = Vec::new();
         for stream_id in [1u32, 3] {
             bytes.extend(frame(FrameType::Headers, 0, stream_id, &request_block()));
@@ -2400,8 +2396,7 @@ mod tests {
         assert_eq!(sink.local_error.get(), None);
         assert_eq!(*sink.headers_done.borrow(), vec![(1, false), (3, false)]);
 
-        // One past the budget on a third block is a connection error even though the frame that
-        // overflows it is the one carrying END_HEADERS.
+        // One past the budget is fatal even when the overflowing frame carries END_HEADERS.
         let mut bytes = frame(FrameType::Headers, 0, 5, &request_block());
         for _ in 0..MAX_CONTINUATIONS {
             bytes.extend(empty_continuation(5, 0));

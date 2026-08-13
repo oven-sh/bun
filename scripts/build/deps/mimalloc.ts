@@ -24,6 +24,13 @@ export const mimalloc: Dependency = {
     commit: MIMALLOC_COMMIT,
   }),
 
+  // The idle sweep's guard/counters must not be `__thread` variables: the
+  // Android target (API 28) compiles `__thread` to emulated TLS, whose first
+  // access on a thread calls malloc, i.e. mimalloc re-entering itself from
+  // inside a page collect (#38051). The patch keeps that state on the tld
+  // being swept. Drop it once the pin includes it.
+  patches: ["patches/mimalloc/sweep-state-on-tld.patch"],
+
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───
     //   ASAN:    OFF — ASAN interceptors must see the real malloc.

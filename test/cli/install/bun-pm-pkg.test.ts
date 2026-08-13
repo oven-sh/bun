@@ -850,20 +850,22 @@ describe.concurrent("bun pm pkg", () => {
     it("should handle numeric indices with different data types", async () => {
       using dir = makeTestDir();
 
-      const [arr0, arr1] = await Promise.all([
-        runPmPkg(["get", "keywords.0"], dir, false),
-        runPmPkg(["get", "keywords.1"], dir, false),
+      const setThenGet = async () => {
+        const { code } = await runPmPkg(["set", "config.0=zero-value"], dir);
+        expect(code).toBe(0);
+        return runPmPkg(["get", "config.0"], dir);
+      };
+      // The read-only gets use the shared fixture so they can overlap with the set/get round trip.
+      const [arr0, arr1, config0] = await Promise.all([
+        runPmPkg(["get", "keywords.0"], readonlyDir, false),
+        runPmPkg(["get", "keywords.1"], readonlyDir, false),
+        setThenGet(),
       ]);
       expect(arr0.output.trim()).toBe('"test"');
       expect(arr0.code).toBe(0);
       expect(arr1.output.trim()).toBe('"package"');
       expect(arr1.code).toBe(0);
-
-      const { code: setCode } = await runPmPkg(["set", "config.0=zero-value"], dir);
-      expect(setCode).toBe(0);
-
-      const { output } = await runPmPkg(["get", "config.0"], dir);
-      expect(output.trim()).toBe('"zero-value"');
+      expect(config0.output.trim()).toBe('"zero-value"');
     });
 
     it("should gracefully handle invalid notation patterns", async () => {
@@ -887,15 +889,15 @@ describe.concurrent("bun pm pkg", () => {
     it("should maintain consistency between set and get operations", async () => {
       using dir = makeTestDir();
 
-      const { code: setCode1 } = await runPmPkg(["set", "test.array.0=first"], dir);
-      expect(setCode1).toBe(0);
-      const { output: getOutput1 } = await runPmPkg(["get", "test.array.0"], dir);
-      expect(getOutput1.trim()).toBe('"first"');
+      const { code: setCode } = await runPmPkg(["set", "test.array.0=first", "test.bracket.access=success"], dir);
+      expect(setCode).toBe(0);
 
-      const { code: setCode2 } = await runPmPkg(["set", "test.bracket.access=success"], dir);
-      expect(setCode2).toBe(0);
-      const { output: getOutput2 } = await runPmPkg(["get", "test.bracket.access"], dir);
-      expect(getOutput2.trim()).toBe('"success"');
+      const [getOutput1, getOutput2] = await Promise.all([
+        runPmPkg(["get", "test.array.0"], dir),
+        runPmPkg(["get", "test.bracket.access"], dir),
+      ]);
+      expect(getOutput1.output.trim()).toBe('"first"');
+      expect(getOutput2.output.trim()).toBe('"success"');
     });
 
     it("should handle edge cases with special characters", async () => {

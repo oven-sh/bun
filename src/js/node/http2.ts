@@ -2884,12 +2884,21 @@ class Http2Stream extends Duplex {
     if (session) {
       const native = session[bunHTTP2Native];
       if (native) {
-        if (this instanceof ServerHttp2Stream && !this.headersSent && (this.id & 1) === 0) {
-          // A locally-pushed (even-id) stream ended before respond() (HEAD/endStream pushes): an
-          // empty DATA frame would precede the response HEADERS on the wire. respond() forces
-          // endStream for these streams, so END_STREAM rides on the HEADERS frame and the
-          // onStreamEnd(5) dispatch completes this callback through markWritableDone.
-          this[bunHTTP2StreamFinal] = callback;
+        if (this instanceof ServerHttp2Stream && !this.headersSent) {
+          // Ended before respond(). A response begins with HEADERS (RFC 9113 §8.1), so the empty
+          // END_STREAM DATA frame written below must not go out now; respond() puts END_STREAM on
+          // the HEADERS frame instead (node: shutdown only marks the stream unwritable, and the
+          // response is then submitted without a body).
+          if ((this.id & 1) === 0) {
+            // A locally-pushed stream (HEAD/endStream pushes): respond() forces endStream and the
+            // onStreamEnd(5) dispatch completes this callback through markWritableDone.
+            this[bunHTTP2StreamFinal] = callback;
+            return;
+          }
+          // A client-initiated stream finishes its writable right away, as node's does, whether or
+          // not a respond() ever follows; FinalCalled is what tells respond() to end the stream.
+          this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
+          callback();
           return;
         }
         this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
@@ -3810,7 +3819,13 @@ class ServerHttp2Stream extends Http2Stream {
       statusCode === HTTP_STATUS_NO_CONTENT ||
       statusCode === HTTP_STATUS_RESET_CONTENT ||
       statusCode === HTTP_STATUS_NOT_MODIFIED ||
-      this.headRequest === true
+      this.headRequest === true ||
+      // _final already ran (the stream was ended before any headers went out), so no body can
+      // follow and END_STREAM has to ride on this HEADERS frame, as in node's SubmitResponse once
+      // the writable half is shut. writableEnded would be the wrong signal: it is already set
+      // during the implicit respond() that _write/_writev issue for chunks buffered behind cork()
+      // when end() was called before uncorking.
+      (this[bunHTTP2StreamStatus] & StreamState.FinalCalled) !== 0
     ) {
       // When endStream is true the HEADERS frame itself carries END_STREAM
       // and the stream moves to HALF_CLOSED_LOCAL inside native request().

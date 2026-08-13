@@ -6369,6 +6369,16 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 JSValue::UNDEFINED,
                 JSValue::js_number(old_state as f64),
             );
+        } else if code == crate::api::h2::wire::ErrorCode::NoError.as_u32() {
+            // RST_STREAM(NO_ERROR) is a clean close (what a node server sends for a stream it
+            // close()s before responding): the stream ends like one that received END_STREAM, so
+            // 'end' still reaches an unconsumed readable. Same routing as end_stream and the
+            // legacy handle_rst_stream_frame; onStreamError would destroy it before 'end' fires.
+            self.dispatch_with_extra(
+                JSH2FrameParser::Gc::onStreamEnd,
+                stream_ctx,
+                JSValue::js_number(StreamState::CLOSED as u8 as f64),
+            );
         } else {
             self.dispatch_with_extra(
                 JSH2FrameParser::Gc::onStreamError,

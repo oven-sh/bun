@@ -3780,6 +3780,9 @@ impl<'a> HTTPClient<'a> {
         }
 
         if should_continue == ShouldContinue::Finished {
+            if !to_read.is_empty() {
+                self.state.flags.allow_keepalive = false;
+            }
             if self.state.flags.is_redirect_pending {
                 self.do_redirect::<IS_SSL>(ctx, socket);
                 return;

@@ -867,6 +867,16 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("handles accessor properties when filtering by napi_key_writable", async () => {
       await checkSameOutput("test_get_all_property_names_accessor", []);
     });
+    it("returns napi_pending_exception when a Proxy trap throws during the descriptor walk", async () => {
+      const output = await checkSameOutput("test_get_all_property_names_throwing_proxy_traps", []);
+      expect(output).toContain("own_only gopd throws: status=10 keys=undefined exception=gopd trap");
+      expect(output).toContain(
+        "include_prototypes gopd throws on prototype: status=10 keys=undefined exception=gopd trap",
+      );
+      expect(output).toContain(
+        "include_prototypes getPrototypeOf throws: status=10 keys=undefined exception=getPrototypeOf trap",
+      );
+    });
     it("matches Node for Proxy and String wrapper with napi_key_writable/napi_key_configurable", async () => {
       const output = await checkSameOutput("test_get_all_property_names_proxy_and_string_wrapper", []);
       expect(output).toContain(`proxy own_only writable: status=0 keys=["x","y"]`);

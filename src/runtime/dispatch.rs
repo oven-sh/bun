@@ -370,7 +370,10 @@ pub(crate) fn run_task(
 
         // ── napi ─────────────────────────────────────────────────────────
         task_tag::NapiAsyncWork => {
-            cast!(napi_async_work).run_from_js(vm, global);
+            // SAFETY: §Dispatch — tag identifies the pointee; the addon's
+            // `complete` callback usually frees the work, so it takes the raw
+            // pointer (no `&mut` at this boundary).
+            unsafe { napi_async_work::run_from_js(cast_ptr!(napi_async_work), vm, global) };
         }
         task_tag::ThreadSafeFunction => {
             ThreadSafeFunction::on_dispatch(cast_ptr!(ThreadSafeFunction));

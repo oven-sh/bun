@@ -81,6 +81,12 @@ nativeTests.test_napi_async_work_cancel = () => {
   }
 };
 
+nativeTests.test_napi_async_work_cancel_running = () => {
+  // `complete` prints the cancel status observed while `execute` was running
+  // and its own status, then deletes the work and resolves this.
+  return new Promise(resolve => nativeTests.test_cancel_running_async_work(resolve));
+};
+
 nativeTests.test_promise_with_threadsafe_function = async () => {
   await new Promise(resolve => setTimeout(resolve, 1));
   // create_promise_with_threadsafe_function returns a promise that calls our function from another

@@ -61,4 +61,4 @@ pub fn decode<C: Copy, R: ReaderContext>(
     Ok(())
 }
 
-pub(crate) const NULL_INT4: u32 = 4294967295;
+const NULL_INT4: u32 = 4294967295;

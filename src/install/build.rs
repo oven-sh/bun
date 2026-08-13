@@ -38,6 +38,10 @@ fn main() {
         "default-trusted-dependencies.txt is too large, please increase \
          'MAX_DEFAULT_TRUSTED_DEPENDENCIES' in lockfile.rs"
     );
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "adjacent-pair check, not a byte search"
+    )]
     for w in names.windows(2) {
         assert!(w[0] != w[1], "Duplicate trusted dependency: {}", w[0]);
     }

@@ -84,8 +84,8 @@ impl FdJsc for Fd {
             Err(_) => {
                 self.close();
                 let err_instance = (bun_jsc::SystemError {
-                    message: bun_core::String::static_(b"EMFILE, too many open files"),
-                    code: bun_core::String::static_(b"EMFILE"),
+                    message: bun_core::String::static_(b"EMFILE, too many open files").into(),
+                    code: bun_core::String::static_(b"EMFILE").into(),
                     ..Default::default()
                 })
                 .to_error_instance(global);

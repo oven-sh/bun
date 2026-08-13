@@ -29,9 +29,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#ifndef OPENSSL_NO_ENGINE
-#include <openssl/engine.h>
-#endif // !OPENSSL_NO_ENGINE
 // The FIPS-related functions are only available
 // when the OpenSSL itself was compiled with FIPS support.
 #if defined(OPENSSL_FIPS) && OPENSSL_VERSION_MAJOR < 3
@@ -208,7 +205,6 @@ using DeleteFnPtr = typename FunctionDeleter<T, function>::Pointer;
 
 using PKCS8Pointer = DeleteFnPtr<PKCS8_PRIV_KEY_INFO, PKCS8_PRIV_KEY_INFO_free>;
 using RSAPointer = DeleteFnPtr<RSA, RSA_free>;
-using SSLSessionPointer = DeleteFnPtr<SSL_SESSION, SSL_SESSION_free>;
 
 class BIOPointer;
 class BignumPointer;
@@ -218,8 +214,6 @@ class DHPointer;
 class ECKeyPointer;
 class EVPKeyPointer;
 class EVPMDCtxPointer;
-class SSLCtxPointer;
-class SSLPointer;
 class X509View;
 class X509Pointer;
 class ECDSASigPointer;
@@ -1070,139 +1064,8 @@ private:
     DeleteFnPtr<DH, DH_free> dh_;
 };
 
-struct StackOfX509Deleter {
-    void operator()(STACK_OF(X509) * p) const { sk_X509_pop_free(p, X509_free); }
-};
-using StackOfX509 = std::unique_ptr<STACK_OF(X509), StackOfX509Deleter>;
-
-class SSLCtxPointer final {
-    WTF_MAKE_TZONE_ALLOCATED(SSLCtxPointer);
-
-public:
-    SSLCtxPointer() = default;
-    explicit SSLCtxPointer(SSL_CTX* ctx);
-    SSLCtxPointer(SSLCtxPointer&& other) noexcept;
-    SSLCtxPointer& operator=(SSLCtxPointer&& other) noexcept;
-    NCRYPTO_DISALLOW_COPY(SSLCtxPointer)
-    ~SSLCtxPointer();
-
-    inline bool operator==(std::nullptr_t) const noexcept
-    {
-        return ctx_ == nullptr;
-    }
-    inline operator bool() const { return ctx_ != nullptr; }
-    inline SSL_CTX* get() const { return ctx_.get(); }
-    void reset(SSL_CTX* ctx = nullptr);
-    void reset(const SSL_METHOD* method);
-    SSL_CTX* release();
-
-    bool setGroups(const char* groups);
-    void setStatusCallback(auto callback)
-    {
-        if (!ctx_) return;
-        SSL_CTX_set_tlsext_status_cb(get(), callback);
-        SSL_CTX_set_tlsext_status_arg(get(), nullptr);
-    }
-
-    bool setCipherSuites(WTF::StringView ciphers);
-
-    static SSLCtxPointer NewServer();
-    static SSLCtxPointer NewClient();
-    static SSLCtxPointer New(const SSL_METHOD* method = TLS_method());
-
-private:
-    DeleteFnPtr<SSL_CTX, SSL_CTX_free> ctx_;
-};
-
-class SSLPointer final {
-    WTF_MAKE_TZONE_ALLOCATED(SSLPointer);
-
-public:
-    SSLPointer() = default;
-    explicit SSLPointer(SSL* ssl);
-    SSLPointer(SSLPointer&& other) noexcept;
-    SSLPointer& operator=(SSLPointer&& other) noexcept;
-    NCRYPTO_DISALLOW_COPY(SSLPointer)
-    ~SSLPointer();
-
-    inline bool operator==(std::nullptr_t) noexcept { return ssl_ == nullptr; }
-    inline operator bool() const { return ssl_ != nullptr; }
-    inline SSL* get() const { return ssl_.get(); }
-    inline operator SSL*() const { return ssl_.get(); }
-    void reset(SSL* ssl = nullptr);
-    SSL* release();
-
-    bool setSession(const SSLSessionPointer& session);
-    bool setSniContext(const SSLCtxPointer& ctx) const;
-
-    const WTF::StringView getClientHelloAlpn() const;
-    const WTF::StringView getClientHelloServerName() const;
-
-    std::optional<const WTF::String> getServerName() const;
-    X509View getCertificate() const;
-    EVPKeyPointer getPeerTempKey() const;
-    const SSL_CIPHER* getCipher() const;
-    bool isServer() const;
-
-    std::optional<WTF::StringView> getCipherName() const;
-    std::optional<WTF::StringView> getCipherStandardName() const;
-    std::optional<WTF::StringView> getCipherVersion() const;
-
-    std::optional<uint32_t> verifyPeerCertificate() const;
-
-    void getCiphers(WTF::Function<void(const WTF::StringView)>&& cb) const;
-
-    static SSLPointer New(const SSLCtxPointer& ctx);
-    static std::optional<const WTF::String> GetServerName(const SSL* ssl);
-
-private:
-    DeleteFnPtr<SSL, SSL_free> ssl_;
-};
-
-class X509Name final {
-    WTF_MAKE_TZONE_ALLOCATED(X509Name);
-
-public:
-    X509Name();
-    explicit X509Name(const X509_NAME* name);
-    NCRYPTO_DISALLOW_COPY_AND_MOVE(X509Name)
-
-    inline operator const X509_NAME*() const { return name_; }
-    inline operator bool() const { return name_ != nullptr; }
-    inline const X509_NAME* get() const { return name_; }
-    inline size_t size() const { return total_; }
-
-    class Iterator final {
-    public:
-        Iterator(const X509Name& name, int pos);
-        Iterator(const Iterator& other) = default;
-        Iterator(Iterator&& other) = default;
-        Iterator& operator=(const Iterator& other) = delete;
-        Iterator& operator=(Iterator&& other) = delete;
-        Iterator& operator++();
-        operator bool() const;
-        bool operator==(const Iterator& other) const;
-        bool operator!=(const Iterator& other) const;
-        std::pair<WTF::String, WTF::String> operator*() const;
-
-    private:
-        const X509Name& name_;
-        int loc_;
-    };
-
-    inline Iterator begin() const { return Iterator(*this, 0); }
-    inline Iterator end() const { return Iterator(*this, total_); }
-
-private:
-    const X509_NAME* name_;
-    int total_;
-};
-
 class X509View final {
 public:
-    static X509View From(const SSLPointer& ssl);
-    static X509View From(const SSLCtxPointer& ctx);
-
     X509View() = default;
     inline explicit X509View(const X509* cert)
         : cert_(cert)
@@ -1222,8 +1085,6 @@ public:
     BIOPointer toPEM() const;
     BIOPointer toDER() const;
 
-    const X509Name getSubjectName() const;
-    const X509Name getIssuerName() const;
     BIOPointer getSubject() const;
     BIOPointer getSubjectAltName() const;
     BIOPointer getIssuer() const;
@@ -1253,6 +1114,17 @@ public:
         INVALID_NAME,
         OPERATION_FAILED,
     };
+    // OpenSSL X509_CHECK_FLAG_* values. BoringSSL defines four of these as 0,
+    // so checkHost() carries its own copy and calls the shared Rust matcher
+    // (Bun__X509__checkHost) instead of X509_check_host.
+    struct CheckFlags {
+        static constexpr uint32_t ALWAYS_CHECK_SUBJECT = 0x01;
+        static constexpr uint32_t NO_WILDCARDS = 0x02;
+        static constexpr uint32_t NO_PARTIAL_WILDCARDS = 0x04;
+        static constexpr uint32_t MULTI_LABEL_WILDCARDS = 0x08;
+        static constexpr uint32_t SINGLE_LABEL_SUBDOMAINS = 0x10;
+        static constexpr uint32_t NEVER_CHECK_SUBJECT = 0x20;
+    };
     CheckMatch checkHost(const std::span<const char> host,
         int flags,
         DataPointer* peerName = nullptr) const;
@@ -1276,9 +1148,6 @@ class X509Pointer final {
 
 public:
     static Result<X509Pointer, int> Parse(Buffer<const unsigned char> buffer);
-    static X509Pointer IssuerFrom(const SSLPointer& ssl, const X509View& view);
-    static X509Pointer IssuerFrom(const SSL_CTX* ctx, const X509View& view);
-    static X509Pointer PeerFrom(const SSLPointer& ssl);
 
     X509Pointer() = default;
     explicit X509Pointer(X509* cert);
@@ -1507,45 +1376,6 @@ public:
 private:
     DeleteFnPtr<HMAC_CTX, HMAC_CTX_free> ctx_;
 };
-
-#ifndef OPENSSL_NO_ENGINE
-class EnginePointer final {
-public:
-    EnginePointer() = default;
-
-    explicit EnginePointer(ENGINE* engine_, bool finish_on_exit = false);
-    EnginePointer(EnginePointer&& other) noexcept;
-    EnginePointer& operator=(EnginePointer&& other) noexcept;
-    NCRYPTO_DISALLOW_COPY(EnginePointer)
-    ~EnginePointer();
-
-    inline operator bool() const { return engine != nullptr; }
-    inline ENGINE* get() { return engine; }
-    inline void setFinishOnExit() { finish_on_exit = true; }
-
-    void reset(ENGINE* engine_ = nullptr, bool finish_on_exit_ = false);
-
-    bool setAsDefault(uint32_t flags, CryptoErrorList* errors = nullptr);
-    bool init(bool finish_on_exit = false);
-    EVPKeyPointer loadPrivateKey(const WTF::StringView key_name);
-
-    // Release ownership of the ENGINE* pointer.
-    ENGINE* release();
-
-    // Retrieve an OpenSSL Engine instance by name. If the name does not
-    // identify a valid named engine, the returned EnginePointer will be
-    // empty.
-    static EnginePointer getEngineByName(const WTF::StringView name,
-        CryptoErrorList* errors = nullptr);
-
-    // Call once when initializing OpenSSL at startup for the process.
-    static void initEnginesOnce();
-
-private:
-    ENGINE* engine = nullptr;
-    bool finish_on_exit = false;
-};
-#endif // !OPENSSL_NO_ENGINE
 
 // ============================================================================
 // FIPS

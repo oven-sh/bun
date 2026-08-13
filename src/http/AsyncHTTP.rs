@@ -1,5 +1,5 @@
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_ast::{Loc, Log};
 use bun_core::FeatureFlags;
@@ -9,7 +9,6 @@ use bun_threading::thread_pool::{self, Batch, Task};
 use bun_url::{PercentEncoding, URL};
 
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_http_types::Encoding::Encoding;
 use bun_picohttp as picohttp;
 
 use crate::headers::{self, Headers};
@@ -29,44 +28,29 @@ bun_core::declare_scope!(AsyncHTTP, visible);
 // fields (`real`, `next`) are raw pointers and thus lifetime-erased; the
 // HTTP-thread copy uses the same `'a` as the JS-thread original it mirrors.
 pub struct AsyncHTTP<'a> {
-    pub request: Option<picohttp::Request<'static>>,
     pub response: Option<picohttp::Response<'static>>,
     pub request_headers: headers::EntryList,
-    pub response_headers: headers::EntryList,
-    // Caller-owned response buffer (raw pointer, lifetime-erased); never freed here.
-    pub response_buffer: *mut MutableString,
     pub request_body: HTTPRequestBody<'a>,
-    pub request_header_buf: &'a [u8],
-    pub method: Method,
+    pub(crate) method: Method,
     pub url: URL<'a>,
-    pub http_proxy: Option<URL<'a>>,
     // Backref to the JS-thread `real` AsyncHTTP this HTTP-thread copy mirrors.
     // Cleared in finalize. Same `'a` — the copy never outlives the original.
     pub real: Option<NonNull<AsyncHTTP<'a>>>,
     /// Intrusive link for `UnboundedQueue(AsyncHTTP, .next)` in HTTPThread.
     /// Lifetime-erased (`'static`) — the queue mixes requests with unrelated
     /// borrow scopes; consumers never read borrowed fields through `next`.
-    pub next: bun_threading::Link<AsyncHTTP<'static>>,
+    pub(crate) next: bun_threading::Link<AsyncHTTP<'static>>,
 
-    pub task: thread_pool::Task,
-    pub result_callback: HTTPClientResultCallback,
-
-    pub redirected: bool,
-
-    pub response_encoding: Encoding,
-    pub verbose: HTTPVerboseLevel,
+    pub(crate) task: thread_pool::Task,
+    pub(crate) result_callback: HTTPClientResultCallback,
 
     pub client: HTTPClient<'a>,
-    pub waiting_deffered: bool,
-    pub finalized: bool,
     pub err: Option<crate::Error>,
     pub async_http_id: u32,
 
-    pub state: AtomicState,
     pub elapsed: u64,
-    pub gzip_elapsed: u64,
 
-    pub signals: Signals,
+    pub(crate) signals: Signals,
 }
 
 bun_threading::intrusive_work_task!(['a] AsyncHTTP<'a>, task);
@@ -82,7 +66,7 @@ unsafe impl bun_threading::Linked for AsyncHTTP<'static> {
     }
 }
 
-pub static ACTIVE_REQUESTS_COUNT: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static ACTIVE_REQUESTS_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub static MAX_SIMULTANEOUS_REQUESTS: AtomicUsize = AtomicUsize::new(256);
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -122,10 +106,10 @@ fn http_thread_timer_read() -> u64 {
     crate::http_thread().timer.elapsed().as_nanos() as u64
 }
 
-/// Build the `Proxy-Authorization: Basic <b64(user[:pass])>` header value.
+/// Build the `Proxy-Authorization: Basic <b64(user:pass)>` header value.
 /// Returns `None` (and logs) if percent-decoding fails.
 pub(crate) fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
-    if proxy.username.is_empty() {
+    if proxy.username.is_empty() && proxy.password.is_empty() {
         return None;
     }
 
@@ -137,24 +121,17 @@ pub(crate) fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
         }
     };
 
-    let auth: Vec<u8> = if !proxy.password.is_empty() {
-        let password = match PercentEncoding::decode_alloc(proxy.password) {
-            Ok(p) => p,
-            Err(err) => {
-                bun_core::scoped_log!(AsyncHTTP, "failed to decode proxy password: {:?}", err);
-                return None;
-            }
-        };
-        // concat user and password
-        let mut auth: Vec<u8> = Vec::with_capacity(username.len() + 1 + password.len());
-        auth.extend_from_slice(&username);
-        auth.push(b':');
-        auth.extend_from_slice(&password);
-        auth
-    } else {
-        // only use user
-        username.into_vec()
+    let password = match PercentEncoding::decode_alloc(proxy.password) {
+        Ok(p) => p,
+        Err(err) => {
+            bun_core::scoped_log!(AsyncHTTP, "failed to decode proxy password: {:?}", err);
+            return None;
+        }
     };
+    let mut auth: Vec<u8> = Vec::with_capacity(username.len() + 1 + password.len());
+    auth.extend_from_slice(&username);
+    auth.push(b':');
+    auth.extend_from_slice(&password);
 
     let size = bun_base64::encode_len_from_size(auth.len());
     let mut buf = vec![0u8; size + b"Basic ".len()];
@@ -202,7 +179,7 @@ fn make_client<'a>(
         custom_ssl_ctx: None,
         result_callback: noop_callback(),
         if_modified_since: b"",
-        request_content_len_buf: [0u8; b"-4294967295".len()],
+        request_content_len_buf: [0u8; b"18446744073709551615".len()],
         http_proxy,
         proxy_settings: None,
         proxy_headers,
@@ -290,7 +267,7 @@ impl<'a> AsyncHTTP<'a> {
     /// Erase the borrow lifetime for storage in intrusive queues / raw-pointer
     /// callback contexts. See [`HTTPClient::as_erased_ptr`] for rationale.
     #[inline(always)]
-    pub fn as_erased_ptr(&self) -> *mut AsyncHTTP<'static> {
+    pub(crate) fn as_erased_ptr(&self) -> *mut AsyncHTTP<'static> {
         std::ptr::from_ref::<Self>(self)
             .cast_mut()
             .cast::<AsyncHTTP<'static>>()
@@ -301,14 +278,6 @@ impl<'a> AsyncHTTP<'a> {
     #[inline]
     pub fn max_simultaneous_requests() -> &'static core::sync::atomic::AtomicUsize {
         &MAX_SIMULTANEOUS_REQUESTS
-    }
-
-    pub fn signal_header_progress(&mut self) {
-        self.signals.store(
-            crate::signals::Field::HeaderProgress,
-            true,
-            Ordering::Release,
-        );
     }
 
     pub fn enable_response_body_streaming(&mut self) {
@@ -328,24 +297,15 @@ impl<'a> AsyncHTTP<'a> {
     /// `src` (the HTTP-thread copy keeps running while `has_more`).
     pub fn sync_progress_from(&mut self, src: &AsyncHTTP<'a>) {
         self.url = src.url.clone();
-        self.redirected = src.redirected;
         self.elapsed = src.elapsed;
-        self.gzip_elapsed = src.gzip_elapsed;
         self.err = src.err;
         self.response = src.response;
-        self.response_encoding = src.response_encoding;
-        self.response_buffer = src.response_buffer;
-        self.state
-            .store(src.state.load(Ordering::Relaxed), Ordering::Relaxed);
         self.client.url = src.client.url.clone();
         self.client.flags = src.client.flags;
         self.client.remaining_redirect_count = src.client.remaining_redirect_count;
     }
 
     pub fn clear_data(&mut self) {
-        // Note: `response_headers.deinit(allocator)` becomes drop-in-place via assignment.
-        self.response_headers = headers::EntryList::default();
-        self.request = None;
         self.response = None;
         // Note: `ZigStringSlice` Drop releases WTF/owned variants;
         // assigning EMPTY runs Drop on the old value.
@@ -358,12 +318,9 @@ impl<'a> AsyncHTTP<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 struct Preconnect {
-    // Self-referential — `async_http.response_buffer` borrows
-    // `self.response_buffer`. `Option` so we can write the field after the heap
-    // address is fixed (late-init); `None` is never observed after `preconnect()`
-    // populates it.
+    // `Option` so we can write the field after the heap address is fixed
+    // (late-init); `None` is never observed after `preconnect()` populates it.
     async_http: Option<AsyncHTTP<'static>>,
-    response_buffer: MutableString,
     url: URL<'static>,
     is_url_owned: bool,
 }
@@ -373,7 +330,6 @@ impl Preconnect {
         // SAFETY: `this` was produced by `heap::alloc` in `preconnect()` and is
         // uniquely owned here; `async_http` was fully written before scheduling.
         unsafe {
-            (*this).response_buffer = MutableString::default();
             (*this)
                 .async_http
                 .as_mut()
@@ -385,7 +341,7 @@ impl Preconnect {
                 free_owned_href((*this).url.href);
             }
             // Reclaim and drop the heap allocation (runs Drop on `async_http`
-            // — which in turn drops `HTTPClient` — and on `response_buffer`).
+            // — which in turn drops `HTTPClient`).
             drop(bun_core::heap::take(this));
         }
     }
@@ -411,23 +367,20 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
 
     let this: *mut Preconnect = bun_core::heap::into_raw(Box::new(Preconnect {
         async_http: None,
-        response_buffer: MutableString::default(),
         url,
         is_url_owned,
     }));
 
     // SAFETY: `this` is a freshly Box-allocated, uniquely-owned pointer; we
     // in-place write `async_http` before any read and before it can be observed
-    // by another thread. The address of `response_buffer` is stable (heap).
+    // by another thread.
     unsafe {
-        let response_buffer: *mut MutableString = core::ptr::addr_of_mut!((*this).response_buffer);
         let url = (*this).url.clone();
         let async_http = (*this).async_http.insert(AsyncHTTP::init(
             Method::GET,
             url,
             headers::EntryList::default(),
             b"",
-            response_buffer,
             b"",
             HTTPClientResultCallback::new::<Preconnect>(this, Preconnect::on_result),
             FetchRedirect::Manual,
@@ -449,7 +402,6 @@ impl<'a> AsyncHTTP<'a> {
         url: URL<'a>,
         headers: headers::EntryList,
         headers_buf: &'a [u8],
-        response_buffer: *mut MutableString,
         request_body: &'a [u8],
         callback: HTTPClientResultCallback,
         redirect_type: FetchRedirect,
@@ -467,7 +419,6 @@ impl<'a> AsyncHTTP<'a> {
         };
 
         let signals = options.signals.unwrap_or_default();
-        let http_proxy = options.http_proxy.clone();
 
         let client = make_client(
             method,
@@ -479,22 +430,17 @@ impl<'a> AsyncHTTP<'a> {
             options.hostname,
             signals,
             async_http_id,
-            http_proxy.clone(),
+            options.http_proxy,
             options.proxy_headers,
             redirect_type,
         );
 
         let mut this = AsyncHTTP {
-            request: None,
             response: None,
             request_headers: headers,
-            response_headers: headers::EntryList::default(),
-            response_buffer,
             request_body: HTTPRequestBody::Bytes(request_body),
-            request_header_buf: headers_buf,
             method,
             url,
-            http_proxy,
             real: None,
             next: bun_threading::Link::new(),
             task: thread_pool::Task {
@@ -502,17 +448,10 @@ impl<'a> AsyncHTTP<'a> {
                 callback: start_async_http,
             },
             result_callback: callback,
-            redirected: false,
-            response_encoding: Encoding::Identity,
-            verbose: HTTPVerboseLevel::None,
             client,
-            waiting_deffered: false,
-            finalized: false,
             err: None,
             async_http_id,
-            state: AtomicState::new(State::Pending),
             elapsed: 0,
-            gzip_elapsed: 0,
             signals,
         };
         if let Some(val) = options.unix_socket_path {
@@ -566,7 +505,6 @@ impl<'a> AsyncHTTP<'a> {
         url: URL<'a>,
         headers: headers::EntryList,
         headers_buf: &'a [u8],
-        response_buffer: *mut MutableString,
         request_body: &'a [u8],
         http_proxy: Option<URL<'a>>,
         hostname: Option<&'a [u8]>,
@@ -577,7 +515,6 @@ impl<'a> AsyncHTTP<'a> {
             url,
             headers,
             headers_buf,
-            response_buffer,
             request_body,
             noop_callback(),
             redirect_type,
@@ -590,7 +527,6 @@ impl<'a> AsyncHTTP<'a> {
     }
 
     pub fn schedule(&mut self, batch: &mut Batch) {
-        self.state.store(State::Scheduled, Ordering::Relaxed);
         batch.push(Batch::from(core::ptr::addr_of_mut!(self.task)));
     }
 }
@@ -603,20 +539,19 @@ impl<'a> AsyncHTTP<'a> {
 // Note: `bun_threading::Channel` requires `T: Copy`, which
 // `HTTPClientResult` is not. `send_sync` is a one-shot blocking handoff, so a
 // Guarded<Option<T>>+Condvar is the exact semantics needed.
-pub struct SingleHTTPChannel {
+pub(crate) struct SingleHTTPChannel {
     slot: bun_threading::Guarded<Option<HTTPClientResult<'static>>>,
     cv: bun_threading::Condvar,
+    response_buffer: *mut MutableString,
 }
 
 impl SingleHTTPChannel {
-    pub fn init() -> SingleHTTPChannel {
+    pub(crate) fn init() -> SingleHTTPChannel {
         SingleHTTPChannel {
             slot: bun_threading::Guarded::new(None),
             cv: bun_threading::Condvar::new(),
+            response_buffer: core::ptr::null_mut(),
         }
-    }
-    pub fn reset(&mut self) {
-        *self.slot.lock() = None;
     }
     fn write_item(&self, item: HTTPClientResult<'static>) {
         let mut g = self.slot.lock();
@@ -637,7 +572,7 @@ impl SingleHTTPChannel {
 fn send_sync_callback(
     this: *mut SingleHTTPChannel,
     async_http: *mut AsyncHTTP<'static>,
-    result: HTTPClientResult<'_>,
+    mut result: HTTPClientResult<'_>,
 ) {
     // `init_sync` leaves every streaming/progress signal unset, so the only
     // callback is the terminal one; writing on `has_more` would hand
@@ -654,35 +589,34 @@ fn send_sync_callback(
     if let Some(mut real) = async_http.real {
         // SAFETY: `real` outlives the HTTP-thread copy by construction.
         let real = unsafe { real.as_mut() };
-        real.response = async_http.response;
-        real.request = async_http.request.take();
-        real.response_headers = core::mem::take(&mut async_http.response_headers);
-        real.response_encoding = async_http.response_encoding;
+        // `response` aliases the metadata `send_sync` hands to the caller; a
+        // stored copy would dangle once that metadata is dropped.
+        real.response = None;
         real.err = async_http.err;
-        real.redirected = async_http.redirected;
         real.elapsed = async_http.elapsed;
-        real.gzip_elapsed = async_http.gzip_elapsed;
-        real.state
-            .store(async_http.state.load(Ordering::Relaxed), Ordering::Relaxed);
-        real.response_buffer = async_http.response_buffer;
     }
-    // SAFETY: `this` is the leaked `SingleHTTPChannel` from `send_sync` and is
-    // alive for the process lifetime; `result` borrows the HTTP-thread copy's
-    // response buffer, which is the caller's buffer — outlives the read in
-    // `send_sync`.
+    // SAFETY: `this` is the heap `SingleHTTPChannel` from `send_sync`;
+    // `response_buffer` is the caller's `&mut MutableString` which outlives
+    // `read_item`.
     unsafe {
+        result.body_into(&mut (*(*this).response_buffer).list);
         (*this).write_item(result.detach_lifetime());
     }
 }
 
 impl<'a> AsyncHTTP<'a> {
-    pub fn send_sync(&mut self) -> crate::Result<picohttp::Response<'static>> {
+    pub fn send_sync(
+        &mut self,
+        response_buffer: &mut MutableString,
+    ) -> crate::Result<crate::HTTPResponseMetadata> {
         crate::http_thread::init(&Default::default());
 
         // Note: `Box::leak` is forbidden (PORTING.md §Forbidden);
         // allocate via `heap::alloc` and reclaim once
         // the single sync callback has fired and we've read the result.
-        let ctx = bun_core::heap::into_raw_nn(Box::new(SingleHTTPChannel::init()));
+        let mut ch = SingleHTTPChannel::init();
+        ch.response_buffer = &raw mut *response_buffer;
+        let ctx = bun_core::heap::into_raw_nn(Box::new(ch));
         self.result_callback =
             HTTPClientResultCallback::new::<SingleHTTPChannel>(ctx.as_ptr(), send_sync_callback);
 
@@ -706,11 +640,7 @@ impl<'a> AsyncHTTP<'a> {
             // a network error rather than panicking on network-driven state.
             return Err(crate::Error::ConnectionClosed);
         };
-        // The returned `Response` borrows `metadata.owned_buf` (status text +
-        // header slices); suppress Drop so the borrowed buffer outlives the
-        // call. `send_sync` is one-shot CLI.
-        let metadata = core::mem::ManuallyDrop::new(metadata);
-        Ok(metadata.response)
+        Ok(metadata)
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -736,19 +666,14 @@ impl<'a> AsyncHTTP<'a> {
             let callback = (*this).result_callback;
             (*this).elapsed = http_thread_timer_read().saturating_sub((*this).elapsed);
 
-            // TODO: this condition seems wrong: if we started with a non-default value, we might
-            // report a redirect even if none happened
-            (*this).redirected = (*this).client.flags.redirected;
             if result.is_success() {
                 (*this).err = None;
                 if let Some(metadata) = &result.metadata {
                     (*this).response = Some(metadata.response);
                 }
-                (*this).state.store(State::Success, Ordering::Relaxed);
             } else {
                 (*this).err = result.fail;
                 (*this).response = None;
-                (*this).state.store(State::Fail, Ordering::Relaxed);
             }
 
             // Log the tracker count, then shrink
@@ -878,16 +803,6 @@ impl<'a> AsyncHTTP<'a> {
             thread.wakeup();
         }
     }
-
-    /// Thin wrapper kept for API parity; the body is raw-pointer based to avoid
-    /// holding `&mut self` across the dealloc of `self`'s storage.
-    pub fn on_async_http_callback(
-        &mut self,
-        async_http: *mut AsyncHTTP<'static>,
-        result: HTTPClientResult<'_>,
-    ) {
-        Self::on_async_http_callback_raw(self.as_erased_ptr(), async_http, result);
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -900,7 +815,7 @@ impl<'a> AsyncHTTP<'a> {
 /// # Safety
 /// `task` must point to the `task` field of a live `AsyncHTTP` scheduled via
 /// `schedule()`.
-pub unsafe fn start_async_http(task: *mut Task) {
+pub(crate) unsafe fn start_async_http(task: *mut Task) {
     // SAFETY: caller upholds the invariant above — `from_task_ptr` recovers the
     // live heap `AsyncHTTP` parent via container_of; the trampoline is its sole
     // borrower (HTTP-thread-only). Same single-step shape as every other
@@ -910,10 +825,9 @@ pub unsafe fn start_async_http(task: *mut Task) {
 }
 
 impl<'a> AsyncHTTP<'a> {
-    pub fn on_start(&mut self) {
+    pub(crate) fn on_start(&mut self) {
         let _ = ACTIVE_REQUESTS_COUNT.fetch_add(1, Ordering::Relaxed);
         self.err = None;
-        self.state.store(State::Sending, Ordering::Relaxed);
         self.client.result_callback = HTTPClientResultCallback::new::<AsyncHTTP<'static>>(
             self.as_erased_ptr(),
             AsyncHTTP::on_async_http_callback_raw,
@@ -929,20 +843,12 @@ impl<'a> AsyncHTTP<'a> {
 
         self.elapsed = http_thread_timer_read();
 
-        // `response_buffer` was set in `init()` to a caller-owned MutableString
-        // that outlives this request — the very buffer `start()` records as
-        // `state.body_out_str`. Route through the shared `body_out` accessor
-        // (one centralised unsafe).
-        let response_buffer = crate::body_out::as_mut(
-            NonNull::new(self.response_buffer).expect("response_buffer set in init"),
-        );
-
         // Note: `HTTPRequestBody` is not `Clone` (the `Stream` arm holds an
         // intrusive refcount). Move owned
         // payloads into the client and leave a detached placeholder so Drop on
         // `self.request_body` is a no-op.
         let body = core::mem::replace(&mut self.request_body, HTTPRequestBody::Bytes(b""));
-        self.client.start(body, response_buffer);
+        self.client.start(body);
     }
 }
 
@@ -953,69 +859,3 @@ impl<'a> AsyncHTTP<'a> {
 // `bun_threading::Channel` requires `T: Copy`, which `HTTPClientResult` is not, so the
 // `HTTPChannel` here boxes the pair and ships the pointer (which IS `Copy`) through
 // a static-buffer channel. The receiver takes ownership of the Box.
-pub type HTTPCallbackPair = (*mut AsyncHTTP<'static>, HTTPClientResult<'static>);
-
-pub type HTTPChannel = bun_threading::Channel<
-    *mut HTTPCallbackPair,
-    bun_collections::linear_fifo::StaticBuffer<*mut HTTPCallbackPair, 1000>,
->;
-
-pub struct HTTPChannelContext<'a> {
-    pub http: AsyncHTTP<'a>,
-    // BACKREF: set once by the owner before scheduling; the channel outlives
-    // every callback dispatched through it.
-    pub channel: Option<bun_ptr::BackRef<HTTPChannel>>,
-}
-
-impl HTTPChannelContext<'_> {
-    pub fn callback(data: HTTPCallbackPair) {
-        // SAFETY: `data.0` points to the `http` field of an `HTTPChannelContext`.
-        let this: &mut HTTPChannelContext =
-            unsafe { &mut *(bun_core::from_field_ptr!(HTTPChannelContext, http, data.0)) };
-        let boxed = bun_core::heap::into_raw(Box::new(data));
-        // `channel` is a set-once `BackRef`; `write_item` takes `&self`, so the
-        // safe `Deref` impl covers the access (no open-coded `unsafe as_ref`).
-        this.channel
-            .expect("HTTPChannelContext.channel set before scheduling")
-            .write_item(boxed)
-            .expect("HTTPChannel full");
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// State / AtomicState
-// ──────────────────────────────────────────────────────────────────────────
-
-#[repr(u32)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum State {
-    Pending = 0,
-    Scheduled = 1,
-    Sending = 2,
-    Success = 3,
-    Fail = 4,
-}
-
-#[repr(transparent)]
-pub struct AtomicState(AtomicU32);
-
-impl AtomicState {
-    pub const fn new(s: State) -> Self {
-        Self(AtomicU32::new(s as u32))
-    }
-    pub fn store(&self, s: State, order: Ordering) {
-        self.0.store(s as u32, order);
-    }
-    pub fn load(&self, order: Ordering) -> State {
-        // Only ever stored via `store` above with valid discriminants; the
-        // wildcard arm is statically unreachable but keeps the match safe.
-        match self.0.load(order) {
-            0 => State::Pending,
-            1 => State::Scheduled,
-            2 => State::Sending,
-            3 => State::Success,
-            4 => State::Fail,
-            _ => unreachable!("invalid AsyncHTTP::State discriminant"),
-        }
-    }
-}

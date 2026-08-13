@@ -4,31 +4,28 @@ use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_uws as uws;
 
 pub struct WebSocketServerContext {
-    // Set provisionally in `on_create`; the server overwrites it on
-    // adoption. LIFETIMES.tsv = JSC_BORROW — the global outlives the context.
-    pub global_object: bun_ptr::BackRef<JSGlobalObject>,
-    pub handler: Handler,
+    pub(crate) handler: Handler,
 
-    pub max_payload_length: u32, // default 16MB
-    pub max_lifetime: u16,
-    pub idle_timeout: u16, // default 2 minutes
-    pub compression: i32,
-    pub backpressure_limit: u32, // default 16MB
-    pub send_pings_automatically: bool,
-    pub reset_idle_timeout_on_send: bool,
-    pub close_on_backpressure_limit: bool,
+    pub(crate) max_payload_length: u32, // default 16MB
+    pub(crate) max_lifetime: u16,
+    pub(crate) idle_timeout: u16, // default 2 minutes
+    pub(crate) compression: i32,
+    pub(crate) backpressure_limit: u32, // default 16MB
+    pub(crate) send_pings_automatically: bool,
+    pub(crate) reset_idle_timeout_on_send: bool,
+    pub(crate) close_on_backpressure_limit: bool,
 }
 
 pub struct Handler {
-    pub on_open: JSValue,
-    pub on_message: JSValue,
+    pub(crate) on_open: JSValue,
+    pub(crate) on_message: JSValue,
     pub on_close: JSValue,
-    pub on_drain: JSValue,
-    pub on_error: JSValue,
-    pub on_ping: JSValue,
-    pub on_pong: JSValue,
+    pub(crate) on_drain: JSValue,
+    pub(crate) on_error: JSValue,
+    pub(crate) on_ping: JSValue,
+    pub(crate) on_pong: JSValue,
 
-    pub app: Option<*mut c_void>,
+    pub(crate) app: Option<*mut c_void>,
     /// Type-erased backref to the owning `NewServer`, set alongside `app`
     /// in `set_routes` (so it is in place before any socket can upgrade and
     /// refreshed whenever a reload installs a new context).
@@ -37,15 +34,15 @@ pub struct Handler {
     /// handler slots it carries, reachable while any socket is connected), and
     /// `ServerWebSocket` open/close events route the live-socket accounting
     /// through it.
-    pub server: Option<super::AnyServer>,
+    pub(crate) server: Option<super::AnyServer>,
 
     // Always set manually.
     // LIFETIMES.tsv = STATIC (vm) / JSC_BORROW (global_object) — both outlive the handler.
-    pub vm: bun_ptr::BackRef<VirtualMachine>,
-    pub global_object: bun_ptr::BackRef<JSGlobalObject>,
+    pub(crate) vm: bun_ptr::BackRef<VirtualMachine>,
+    pub(crate) global_object: bun_ptr::BackRef<JSGlobalObject>,
 
     /// used by publish()
-    pub flags: HandlerFlags,
+    pub(crate) flags: HandlerFlags,
 }
 
 bitflags::bitflags! {
@@ -62,14 +59,14 @@ impl Handler {
     /// `global_object` is a `BackRef` set by the server before any websocket
     /// connection exists; the global outlives every `ServerWebSocket`.
     #[inline]
-    pub fn global_object(&self) -> &JSGlobalObject {
+    pub(crate) fn global_object(&self) -> &JSGlobalObject {
         self.global_object.get()
     }
 
     /// `vm` is a `BackRef`; the VM is `'static` per LIFETIMES.tsv (set in
     /// `from_js`).
     #[inline]
-    pub fn vm(&self) -> &VirtualMachine {
+    pub(crate) fn vm(&self) -> &VirtualMachine {
         self.vm.get()
     }
 
@@ -78,13 +75,17 @@ impl Handler {
     /// server can downgrade the wrapper (the sole GC root for `wsOnError`)
     /// mid-handler, so a fresh `self.on_error` read after user JS could be a
     /// freed cell.
-    pub fn run_error_callback(
+    pub(crate) fn run_error_callback(
         &self,
         on_error: JSValue,
-        vm: &VirtualMachine,
         global_object: &JSGlobalObject,
         error_value: JSValue,
     ) {
+        // Termination raised inside the preceding callback.call() cannot be
+        // cleared; entering JS again trips executeCallImpl's assertNoException.
+        if global_object.has_exception() {
+            return;
+        }
         if !on_error.is_empty_or_undefined_or_null() {
             let _ = on_error
                 .call(global_object, JSValue::UNDEFINED, &[error_value])
@@ -92,16 +93,10 @@ impl Handler {
             return;
         }
 
-        // VirtualMachine is the
-        // process-lifetime singleton (LIFETIMES.tsv = STATIC) and is only touched on the JS
-        // thread; `uncaught_exception` needs `&mut` to bump counters / set flags. Derive the
-        // mutable pointer from the stored BackRef (== `vm`) rather than casting the
-        // shared ref, which rustc's invalid_reference_casting lint rejects.
-        let _ = vm;
-        let mut vm_ref = self.vm;
-        // SAFETY: process-lifetime singleton; sole `&mut` on the JS thread.
-        let vm_mut = unsafe { vm_ref.get_mut() };
-        let _ = vm_mut.uncaught_exception(global_object, error_value, false);
+        let _ =
+            VirtualMachine::get()
+                .as_mut()
+                .uncaught_exception(global_object, error_value, false);
     }
 
     pub fn from_js(global_object: &JSGlobalObject, object: JSValue) -> JsResult<Handler> {
@@ -162,7 +157,7 @@ impl Handler {
 }
 
 impl WebSocketServerContext {
-    pub fn to_behavior(&self) -> uws::WebSocketBehavior {
+    pub(crate) fn to_behavior(&self) -> uws::WebSocketBehavior {
         uws::WebSocketBehavior {
             max_payload_length: self.max_payload_length,
             idle_timeout: self.idle_timeout,
@@ -225,11 +220,8 @@ pub(crate) fn on_create(
     object: JSValue,
 ) -> JsResult<WebSocketServerContext> {
     // Construct the struct with the handler and explicit defaults up front.
-    // The top-level `global_object` is provisionally set to the param; the
-    // server overwrites it after `on_create` returns anyway.
     let handler = Handler::from_js(global_object, object)?;
     let mut server = WebSocketServerContext {
-        global_object: bun_ptr::BackRef::new(global_object),
         handler,
         max_payload_length: 1024 * 1024 * 16, // 16MB
         max_lifetime: 0,

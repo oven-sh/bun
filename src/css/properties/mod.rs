@@ -17,8 +17,8 @@
 // margin_padding).
 //
 // `define_rect_shorthand!` is the full mixin: it emits the struct
-// `{top,right,bottom,left}`, `PROPERTY_FIELD_MAP`, `deep_clone`/`eql`, the
-// `RectShorthand` marker impl, *and* calls `impl_rect_shorthand!`. Used by
+// `{top,right,bottom,left}`, `deep_clone`/`eql`, *and* calls
+// `impl_rect_shorthand!`. Used by
 // the 8 rect-shorthand value types in border.rs / margin_padding.rs so the
 // boilerplate isn't hand-copied per type.
 //
@@ -73,19 +73,6 @@ macro_rules! define_rect_shorthand {
             pub left: $inner,
         }
 
-        impl $name {
-            // `PROPERTY_FIELD_MAP` records the shorthand field→property map.
-
-            pub const PROPERTY_FIELD_MAP: &[(&str, $crate::properties::PropertyIdTag)] = &[
-                ("top", $crate::properties::PropertyIdTag::$top_id),
-                ("right", $crate::properties::PropertyIdTag::$right_id),
-                ("bottom", $crate::properties::PropertyIdTag::$bottom_id),
-                ("left", $crate::properties::PropertyIdTag::$left_id),
-            ];
-        }
-        impl $crate::properties::margin_padding::RectShorthand for $name {
-            type Value = $inner;
-        }
         // parse/to_css via `Rect<V>`.
         impl_rect_shorthand!($name, $inner);
     };
@@ -129,7 +116,6 @@ pub mod box_shadow;
 pub mod display;
 pub mod flex;
 pub mod font;
-pub mod grid;
 pub mod margin_padding;
 pub mod masking;
 pub mod outline;

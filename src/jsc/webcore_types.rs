@@ -232,21 +232,17 @@ impl Blob {
             self.is_heap_allocated(),
             "`finalize` may only be called on a heap-allocated Blob"
         );
-        // `release` returns the raw `m_ctx` pointer without dropping;
-        // `Blob__deref` runs `deinit()` (which `drop(heap::take)`s) when the
-        // count reaches zero.
-        Blob__deref(bun_core::heap::release(self));
+        // SAFETY: `self` is the allocation `Blob::new` produced and the JS
+        // wrapper's `+1` is the count released here. `into_raw` hands the box
+        // over without dropping it; `Blob__deref` runs `deinit()` (which
+        // `drop(heap::take)`s) when the count reaches zero.
+        unsafe { Blob__deref(bun_core::heap::into_raw(self)) }
     }
 
     #[inline]
     pub fn is_heap_allocated(&self) -> bool {
         // Single read of `self.ref_count`'s raw value.
         self.ref_count.unsafe_get_value() != 0
-    }
-
-    #[inline]
-    pub fn set_not_heap_allocated(&mut self) {
-        self.ref_count = bun_ptr::RawRefCount::init(0);
     }
 
     #[inline]
@@ -476,34 +472,59 @@ impl Blob {
 unsafe impl bun_ptr::ExternalSharedDescriptor for Blob {
     unsafe fn ext_ref(this: *mut Self) {
         // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
-        unsafe { Blob__ref(&mut *this) }
+        unsafe { Blob__ref(this) }
     }
     unsafe fn ext_deref(this: *mut Self) {
-        // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
-        unsafe { Blob__deref(&mut *this) }
+        // SAFETY: caller guarantees `this` points to a live heap-allocated Blob
+        // and is releasing a count it owns.
+        unsafe { Blob__deref(this) }
     }
 }
 
+/// Retain half of the refcount protocol behind `BlobImplRefDerefTraits`
+/// (`src/jsc/bindings/blob.h`) and [`bun_ptr::ExternalShared`].
+///
+/// # Safety
+/// `this` must point to a live `Blob` produced by [`Blob::new`], and the call
+/// must happen on the thread that owns it (the count is not atomic). A
+/// by-value `Blob` has a count of zero; bumping it would make a later
+/// [`Blob::deinit`] free an address that was never heap-allocated.
 #[unsafe(no_mangle)]
-pub extern "C" fn Blob__ref(self_: &mut Blob) {
-    debug_assert!(
-        self_.is_heap_allocated(),
-        "cannot ref: this Blob is not heap-allocated"
-    );
-    self_.ref_count.increment();
+unsafe extern "C" fn Blob__ref(this: *mut Blob) {
+    // SAFETY: caller contract above.
+    unsafe {
+        debug_assert!(
+            (*this).is_heap_allocated(),
+            "cannot ref: this Blob is not heap-allocated"
+        );
+        (*this).ref_count.increment();
+    }
 }
 
+/// Release half of the refcount protocol behind `BlobImplRefDerefTraits`
+/// (`src/jsc/bindings/blob.h`), [`bun_ptr::ExternalShared`] and the JS
+/// wrapper's [`Blob::finalize`].
+///
+/// # Safety
+/// `this` must point to a live `Blob` produced by [`Blob::new`], the caller
+/// must own one of its counts (which this call consumes), and the call must
+/// happen on the thread that owns it (the count is not atomic). Releasing the
+/// last count frees the `Blob`, so `this` is dangling once this returns.
 #[unsafe(no_mangle)]
-pub extern "C" fn Blob__deref(self_: &mut Blob) {
-    debug_assert!(
-        self_.is_heap_allocated(),
-        "cannot deref: this Blob is not heap-allocated"
-    );
-    if self_.ref_count.decrement() == bun_ptr::raw_ref_count::DecrementResult::ShouldDestroy {
-        // `deinit` has its own `is_heap_allocated()` guard around the
-        // `drop(heap::take)`, so re-arm so it returns true.
-        self_.ref_count.increment();
-        self_.deinit();
+unsafe extern "C" fn Blob__deref(this: *mut Blob) {
+    // SAFETY: caller contract above. `deinit` frees the allocation, so `this`
+    // is not touched after it.
+    unsafe {
+        debug_assert!(
+            (*this).is_heap_allocated(),
+            "cannot deref: this Blob is not heap-allocated"
+        );
+        if (*this).ref_count.decrement() == bun_ptr::raw_ref_count::DecrementResult::ShouldDestroy {
+            // `deinit` has its own `is_heap_allocated()` guard around the
+            // `drop(heap::take)`, so re-arm so it returns true.
+            (*this).ref_count.increment();
+            (*this).deinit();
+        }
     }
 }
 
@@ -797,17 +818,6 @@ pub mod store {
                 ..Default::default()
             }
         }
-
-        #[inline]
-        pub fn is_seekable(&self) -> Option<bool> {
-            if let Some(s) = self.seekable {
-                return Some(s);
-            }
-            if self.mode != 0 {
-                return Some(bun_core::kind_from_mode(self.mode) == bun_core::FileKind::File);
-            }
-            None
-        }
     }
 
     // ────────────────────────────────────────────────────────────────────
@@ -819,8 +829,8 @@ pub mod store {
     /// live in `bun_runtime` because they reach the HTTP client / event loop.
     pub struct S3 {
         pub pathlike: PathLike,
-        pub mime_type: MimeType,
-        pub credentials: Option<Rc<bun_s3_signing::S3Credentials>>,
+        pub(crate) mime_type: MimeType,
+        pub(crate) credentials: Option<Rc<bun_s3_signing::S3Credentials>>,
         pub options: bun_s3_signing::MultiPartUploadOptions,
         pub acl: Option<bun_s3_signing::ACL>,
         pub storage_class: Option<bun_s3_signing::StorageClass>,
@@ -828,11 +838,6 @@ pub mod store {
     }
 
     impl S3 {
-        #[inline]
-        pub fn is_seekable(&self) -> Option<bool> {
-            Some(true)
-        }
-
         pub fn get_credentials(&self) -> &Rc<bun_s3_signing::S3Credentials> {
             debug_assert!(self.credentials.is_some());
             self.credentials.as_ref().unwrap()
@@ -861,22 +866,6 @@ pub mod store {
                 path_name = &path_name[1..];
             }
             path_name
-        }
-
-        pub fn init_with_referenced_credentials(
-            pathlike: PathLike,
-            mime_type: Option<MimeType>,
-            credentials: Rc<bun_s3_signing::S3Credentials>,
-        ) -> S3 {
-            S3 {
-                credentials: Some(credentials),
-                pathlike,
-                mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
-                options: bun_s3_signing::MultiPartUploadOptions::default(),
-                acl: None,
-                storage_class: None,
-                request_payer: false,
-            }
         }
 
         pub fn init(
@@ -1038,16 +1027,6 @@ pub mod store {
     }
 
     impl StoreRef {
-        /// Adopt an existing +1. Does **not** increment.
-        ///
-        /// # Safety
-        /// `ptr` must be a live `Store` allocated by `Store::new`/`Box::new`,
-        /// and the caller transfers one outstanding reference.
-        #[inline]
-        pub unsafe fn adopt(ptr: NonNull<Store>) -> Self {
-            Self { ptr }
-        }
-
         /// Wrap a raw `*Store`, incrementing its intrusive refcount.
         ///
         /// # Safety
@@ -1064,14 +1043,6 @@ pub mod store {
         #[inline]
         pub fn as_ptr(&self) -> *mut Store {
             self.ptr.as_ptr()
-        }
-
-        /// Raw `NonNull<Store>` view (does not touch the refcount). For
-        /// passing the parent `Store` alongside a `&mut` into one of its
-        /// fields without materialising an aliasing `&Store`.
-        #[inline]
-        pub fn as_non_null(&self) -> NonNull<Store> {
-            self.ptr
         }
 
         /// Leak the held +1 and return the raw pointer. Pair with a later

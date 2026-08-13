@@ -7,7 +7,7 @@ pub enum ColumnIdentifier {
 }
 
 impl ColumnIdentifier {
-    pub fn init(name: Data) -> Result<Self, bun_alloc::AllocError> {
+    pub(crate) fn init(name: Data) -> Result<Self, bun_alloc::AllocError> {
         const U32_MAX_DIGITS: usize = "4294967295".len();
         let might_be_int = match name.slice().len() {
             1..=U32_MAX_DIGITS => true,
@@ -35,7 +35,12 @@ impl ColumnIdentifier {
             }
         }
 
-        Ok(Self::Name(Data::Owned(name.to_owned()?)))
+        let owned = name.to_owned()?;
+        let owned = match bstr::ByteSlice::to_str_lossy(owned.as_slice()) {
+            std::borrow::Cow::Owned(replaced) => replaced.into_bytes(),
+            std::borrow::Cow::Borrowed(_) => owned,
+        };
+        Ok(Self::Name(Data::Owned(owned)))
     }
 }
 

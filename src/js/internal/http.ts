@@ -25,7 +25,7 @@ const {
     server: any,
     requireHostHeader: boolean,
     useStrictMethodValidation: boolean,
-    insecureHTTPParser: boolean,
+    lenientHttpFlags: number,
     maxHeaderSize: number,
     onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
     onConnection?: (socketHandle: any) => undefined,
@@ -34,7 +34,7 @@ const {
     server: any,
     requireHostHeader: boolean,
     useStrictMethodValidation: boolean,
-    insecureHTTPParser: boolean,
+    lenientHttpFlags: number,
     httpAllowHalfOpen: boolean,
   ) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
@@ -244,7 +244,10 @@ function emitEOFIncomingMessage(self) {
 
 function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPResponseAbortEvent) {
   if (aborted === NodeHTTPResponseAbortEvent.abort) {
-    this.destroy();
+    // The request is aborted from the socket's #onClose (like Node.js's
+    // socketOnClose → abortIncoming), which the native close path always
+    // reaches right after this callback; destroying here would drop the
+    // ECONNRESET and emit req 'close' before res 'close'.
     return;
   }
 

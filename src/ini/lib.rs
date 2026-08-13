@@ -1,32 +1,11 @@
 #![warn(unused_must_use)]
-// ──────────────────────────────────────────────────────────────────────────
-// The remaining `'static` lifetime erasures and raw-pointer borrow splits in
-// this file are documented at each site; removing them is tracked by the
-// bun_ini Parser lifetime-restructure work item (external arena, split `env`
-// lifetime, `Source` lifetime threading in bun_ast).
-// ──────────────────────────────────────────────────────────────────────────
+#![forbid(unsafe_code)]
 use core::fmt;
 
 use bun_alloc::AllocError;
 use bun_ast::{Loc, Log, Source};
 
 type OOM<T> = Result<T, AllocError>;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Options
-// ──────────────────────────────────────────────────────────────────────────
-
-pub struct Options {
-    pub bracked_array: bool,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            bracked_array: true,
-        }
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Pure-byte helpers. They touch no parser state; exposed as free fns so
@@ -62,20 +41,20 @@ pub(crate) fn is_quoted(val: &[u8]) -> bool {
 
 #[inline]
 pub(crate) fn next_dot(key: &[u8]) -> Option<usize> {
-    key.iter().position(|&b| b == b'.')
+    bun_core::strings::index_of_char_usize(key, b'.')
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // IniOption — tri-state used by iterators (None != end-of-iteration)
 // ──────────────────────────────────────────────────────────────────────────
 
-pub enum IniOption<T> {
+pub(crate) enum IniOption<T> {
     Some(T),
     None,
 }
 
 impl<T> IniOption<T> {
-    pub(crate) fn get(self) -> Option<T> {
+    fn get(self) -> Option<T> {
         match self {
             IniOption::Some(v) => Some(v),
             IniOption::None => None,
@@ -117,7 +96,7 @@ pub enum ConfigOpt {
 }
 
 impl ConfigOpt {
-    pub fn is_base64_encoded(self) -> bool {
+    pub(crate) fn is_base64_encoded(self) -> bool {
         matches!(self, ConfigOpt::_Auth | ConfigOpt::_Password)
     }
 }
@@ -127,15 +106,15 @@ impl ConfigOpt {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct ConfigItem {
-    pub registry_url: Box<[u8]>,
-    pub optname: ConfigOpt,
-    pub value: Box<[u8]>,
-    pub loc: Loc,
+    pub(crate) registry_url: Box<[u8]>,
+    pub(crate) optname: ConfigOpt,
+    pub(crate) value: Box<[u8]>,
+    pub(crate) loc: Loc,
 }
 
 impl ConfigItem {
     /// Duplicate ConfigIterator.Item
-    pub fn dupe(&self) -> OOM<Option<ConfigItem>> {
+    pub(crate) fn dupe(&self) -> OOM<Option<ConfigItem>> {
         Ok(Some(ConfigItem {
             registry_url: Box::<[u8]>::from(&*self.registry_url),
             optname: self.optname,
@@ -145,7 +124,11 @@ impl ConfigItem {
     }
 
     /// Duplicate the value, decoding it if it is base64 encoded.
-    pub fn dupe_value_decoded(&self, log: &mut Log, source: &Source) -> OOM<Option<Box<[u8]>>> {
+    pub(crate) fn dupe_value_decoded(
+        &self,
+        log: &mut Log,
+        source: &Source,
+    ) -> OOM<Option<Box<[u8]>>> {
         if self.optname.is_base64_encoded() {
             if self.value.is_empty() {
                 return Ok(Some(Box::default()));
@@ -159,6 +142,7 @@ impl ConfigItem {
                     bun_ast::AddErrorOptions {
                         source: Some(source),
                         loc: self.loc,
+                        redact_sensitive_information: true,
                         ..Default::default()
                     },
                 );
@@ -206,7 +190,7 @@ pub use draft::{
     load_npmrc_config,
 };
 pub mod config_iterator {
-    pub use super::{ConfigItem as Item, ConfigIterator as Iter, ConfigOpt as Opt};
+    pub use super::ConfigItem as Item;
 }
 
 mod draft {
@@ -217,8 +201,8 @@ mod draft {
     use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
     use bun_api::{self, BunInstall, NpmRegistry, npm_registry};
     use bun_ast::E::Rope;
-    use bun_ast::{E, Expr, ExprData};
-    use bun_ast::{IntoStr, Loc, Log, Source};
+    use bun_ast::{E, Expr, ExprData, StoreRef};
+    use bun_ast::{Loc, Log, Source};
     use bun_collections::{ArrayHashMap, VecExt};
     use bun_core::ZStr;
     use bun_core::{Global, Output};
@@ -226,8 +210,8 @@ mod draft {
     use bun_url::URL;
 
     use super::{
-        ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, Options, is_quoted,
-        next_dot, should_skip_line,
+        ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, is_quoted, next_dot,
+        should_skip_line,
     };
 
     type OOM<T> = Result<T, AllocError>;
@@ -244,13 +228,10 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct Parser<'a> {
-        pub opts: Options,
-        pub source: Source,
-        pub src: &'a [u8],
+        pub(crate) source: &'a Source,
+        pub(crate) src: &'a [u8],
         pub out: Expr,
-        pub logger: Log,
-        pub arena: Arena,
-        pub env: &'a mut DotEnvLoader<'a>,
+        pub(crate) env: &'a DotEnvLoader,
     }
 
     // The result type depends on the usage (`.section -> *Rope`, `.key ->
@@ -281,41 +262,28 @@ mod draft {
     }
 
     impl<'a> Parser<'a> {
-        pub fn init(path: &[u8], src: &'a [u8], env: &'a mut DotEnvLoader<'a>) -> Parser<'a> {
-            // TODO: bun_ast::Source<'bump> — `Source::init_path_string`
-            // currently takes `Str = &'static [u8]`; once the lower tier threads a
-            // lifetime through `Source`, pass `path`/`src` directly. They outlive
-            // the `Parser` and its `Source`/`Expr` tree (arena-freed in lockstep),
-            // so no wrong value is produced today.
-            let path_s: &'static [u8] = path.into_str();
-            let src_s: &'static [u8] = src.into_str();
+        pub fn init(source: &'a Source, env: &'a DotEnvLoader) -> Parser<'a> {
             Parser {
-                opts: Options::default(),
-                logger: Log::init(),
-                src,
+                src: source.contents.as_ref(),
                 out: Expr::init(E::Object::default(), Loc::EMPTY),
-                source: Source::init_path_string(path_s, src_s),
-                arena: Arena::new(),
+                source,
                 env,
             }
         }
 
-        // deinit -> Drop: `logger` and `arena` are owned and drop automatically.
+        // deinit -> Drop: `logger` is owned and drops automatically.
 
         pub fn parse(&mut self, bump: &'a Arena) -> OOM<()> {
-            // borrowck — `arena_allocator` is passed separately (rather than
-            // read off `self.arena`) to avoid overlapping &mut self borrows.
             let src = self.src;
-            let mut iter = src.split(|&b| b == b'\n');
-            // TODO: borrowck — `head` aliases into `self.out.data.e_object` while
-            // `self` is also borrowed mutably for prepare_str(). Kept as raw `*mut`
-            // (the underlying `E::Object` lives in the Expr Store, not on `self`).
-            let mut head: *mut E::Object = std::ptr::from_mut::<E::Object>(
-                self.out
-                    .data
-                    .e_object_mut()
-                    .expect("Parser.out is E.Object"),
-            );
+            let env = self.env;
+            let source_path = self.source.path.text;
+            let mut iter = bun_core::strings::split(src, b"\n");
+            // `StoreRef` is the arena-backed handle `ExprData` already stores;
+            // it is `Copy`, so keeping the root and the current-section head as
+            // separate values is a split borrow, not an alias.
+            let root: StoreRef<E::Object> =
+                self.out.data.e_object().expect("Parser.out is E.Object");
+            let mut head: StoreRef<E::Object> = root;
 
             let ropealloc = bump;
 
@@ -337,7 +305,9 @@ mod draft {
                     let mut treat_as_key = false;
                     'treat_as_key: {
                         skip_until_next_section = false;
-                        let Some(close_bracket_idx) = line.iter().position(|&b| b == b']') else {
+                        let Some(close_bracket_idx) =
+                            bun_core::strings::index_of_char_usize(line, b']')
+                        else {
                             // Skip the whole line: treat_as_key stays false and
                             // we fall through to `continue` below.
                             break 'treat_as_key;
@@ -354,22 +324,18 @@ mod draft {
                         let offset = i32::try_from(line.as_ptr() as usize - src.as_ptr() as usize)
                             .unwrap()
                             + 1;
-                        let section: &mut Rope = self
-                            .prepare_str(
-                                Usage::Section,
-                                bump,
-                                ropealloc,
-                                &line[1..close_bracket_idx],
-                                offset,
-                            )?
-                            .into_section();
-                        // SAFETY: `self.out` was constructed as `E.Object` in `init()`.
-                        let root = self
-                            .out
-                            .data
-                            .e_object_mut()
-                            .expect("Parser.out is E.Object");
-                        let mut parent_object = match root.get_or_put_object(section, bump) {
+                        let section: &mut Rope = Self::prepare_str(
+                            env,
+                            source_path,
+                            Usage::Section,
+                            bump,
+                            ropealloc,
+                            &line[1..close_bracket_idx],
+                            offset,
+                        )?
+                        .into_section();
+                        let mut r = root;
+                        let parent_object = match r.get_or_put_object(section, bump) {
                             Ok(v) => v,
                             Err(E::SetError::OutOfMemory) => return Err(AllocError),
                             Err(E::SetError::Clobber) => {
@@ -408,12 +374,10 @@ mod draft {
                                 break 'treat_as_key;
                             }
                         };
-                        head = std::ptr::from_mut::<E::Object>(
-                            parent_object
-                                .data
-                                .e_object_mut()
-                                .expect("get_or_put_object returns E.Object"),
-                        );
+                        head = parent_object
+                            .data
+                            .e_object()
+                            .expect("get_or_put_object returns E.Object");
                         break 'treat_as_key;
                     }
                     if !treat_as_key {
@@ -429,17 +393,18 @@ mod draft {
                 let line_offset = i32::try_from(line.as_ptr() as usize - src.as_ptr() as usize)
                     .expect("int cast");
 
-                let maybe_eq_sign_idx = line.iter().position(|&b| b == b'=');
+                let maybe_eq_sign_idx = bun_core::strings::index_of_char_usize(line, b'=');
 
-                let key_raw: &[u8] = self
-                    .prepare_str(
-                        Usage::Key,
-                        bump,
-                        ropealloc,
-                        &line[..maybe_eq_sign_idx.unwrap_or(line.len())],
-                        line_offset,
-                    )?
-                    .into_key();
+                let key_raw: &[u8] = Self::prepare_str(
+                    env,
+                    source_path,
+                    Usage::Key,
+                    bump,
+                    ropealloc,
+                    &line[..maybe_eq_sign_idx.unwrap_or(line.len())],
+                    line_offset,
+                )?
+                .into_key();
                 let is_array: bool = {
                     key_raw.len() > 2 && bun_core::strings::ends_with(key_raw, b"[]")
                     // Commenting out because options are not supported but we might
@@ -469,15 +434,16 @@ mod draft {
                 let value_raw: Expr = 'brk: {
                     if let Some(eq_sign_idx) = maybe_eq_sign_idx {
                         if eq_sign_idx + 1 < line.len() {
-                            break 'brk self
-                                .prepare_str(
-                                    Usage::Value,
-                                    bump,
-                                    ropealloc,
-                                    &line[eq_sign_idx + 1..],
-                                    line_offset + i32::try_from(eq_sign_idx).expect("int cast") + 1,
-                                )?
-                                .into_value();
+                            break 'brk Self::prepare_str(
+                                env,
+                                source_path,
+                                Usage::Value,
+                                bump,
+                                ropealloc,
+                                &line[eq_sign_idx + 1..],
+                                line_offset + i32::try_from(eq_sign_idx).expect("int cast") + 1,
+                            )?
+                            .into_value();
                         }
                         break 'brk Expr::init(E::EString::init(b""), Loc::EMPTY);
                     }
@@ -499,44 +465,41 @@ mod draft {
                     _ => value_raw,
                 };
 
-                // SAFETY: head points into self.out's E::Object tree, valid for the
-                // duration of parse().
-                let head_ref = unsafe { &mut *head };
-
                 if is_array {
-                    if let Some(val) = head_ref.get(key) {
+                    if let Some(val) = E::Object::get(&head, key) {
                         if !matches!(val.data, ExprData::EArray(_)) {
                             let mut arr = E::Array::default();
                             arr.push(bump, val)?;
-                            head_ref.put(bump, key, Expr::init(arr, Loc::EMPTY))?;
+                            head.put(bump, key, Expr::init(arr, Loc::EMPTY))?;
                         }
                     } else {
-                        head_ref.put(bump, key, Expr::init(E::Array::default(), Loc::EMPTY))?;
+                        head.put(bump, key, Expr::init(E::Array::default(), Loc::EMPTY))?;
                     }
                 }
 
                 // safeguard against resetting a previously defined
                 // array by accidentally forgetting the brackets
                 let mut was_already_array = false;
-                if let Some(mut val) = head_ref.get(key) {
+                if let Some(mut val) = E::Object::get(&head, key) {
                     if matches!(val.data, ExprData::EArray(_)) {
                         was_already_array = true;
                         val.data
                             .e_array_mut()
                             .expect("infallible: variant checked")
                             .push(bump, value)?;
-                        head_ref.put(bump, key, val)?;
+                        head.put(bump, key, val)?;
                     }
                 }
                 if !was_already_array {
-                    head_ref.put(bump, key, value)?;
+                    head.put(bump, key, value)?;
                 }
             }
             Ok(())
         }
 
         fn prepare_str(
-            &mut self,
+            env: &DotEnvLoader,
+            source_path: &[u8],
             usage: Usage,
             bump: &'a Arena,
             ropealloc: &'a Arena,
@@ -568,11 +531,7 @@ mod draft {
                     // `bun_ast::Expr` (via the `From` impl in
                     // `bun_ast::expr`) so the rest of this body works
                     // against a single `ExprData`.
-                    // `Str = &'static [u8]` lifetime erasure (see PORTING.md
-                    // §Allocators / `Parser::init` above). `val` is a sub-slice
-                    // of `self.src` and outlives the temporary `Source`.
-                    let val_s: &'static [u8] = val.into_str();
-                    let src = Source::init_path_string(self.source.path.text, val_s);
+                    let src = Source::init_path_string(source_path, val);
                     let mut log = Log::init();
                     // Try to parse it and if it fails will just treat it as a string
                     let json_val: Expr =
@@ -582,7 +541,7 @@ mod draft {
                                 // JSON parse failed (e.g., single-quoted string like '${VAR}')
                                 // Still need to expand env vars in the content
                                 if usage == Usage::Value {
-                                    let expanded = self.expand_env_vars(bump, val)?;
+                                    let expanded = Self::expand_env_vars(env, bump, val)?;
                                     return Ok(PrepareResult::Value(Expr::init(
                                         E::EString::init(expanded),
                                         Loc { start: offset },
@@ -597,7 +556,7 @@ mod draft {
                         let str_ = s.string(bump)?;
                         // Expand env vars in the JSON-parsed string
                         let expanded = if usage == Usage::Value {
-                            self.expand_env_vars(bump, str_)?
+                            Self::expand_env_vars(env, bump, str_)?
                         } else {
                             str_
                         };
@@ -742,7 +701,7 @@ mod draft {
                                     }
 
                                     if let Some(new_i) =
-                                        self.parse_env_substitution(val, i, i, 0, &mut unesc)?
+                                        Self::parse_env_substitution(env, val, i, i, 0, &mut unesc)?
                                     {
                                         // set to true so we heap alloc
                                         did_any_escape = true;
@@ -761,7 +720,7 @@ mod draft {
                             b'.' => {
                                 if usage == Usage::Section && rope_parts < MAX_SECTION_ROPE_SEGMENTS
                                 {
-                                    self.commit_rope_part(bump, ropealloc, &mut unesc, &mut rope)?;
+                                    Self::commit_rope_part(bump, ropealloc, &mut unesc, &mut rope)?;
                                     rope_parts += 1;
                                 } else {
                                     unesc.push(b'.');
@@ -813,7 +772,7 @@ mod draft {
 
                 match usage {
                     Usage::Section => {
-                        self.commit_rope_part(bump, ropealloc, &mut unesc, &mut rope)?;
+                        Self::commit_rope_part(bump, ropealloc, &mut unesc, &mut rope)?;
                         return Ok(PrepareResult::Section(rope.unwrap()));
                     }
                     Usage::Value => {
@@ -870,7 +829,7 @@ mod draft {
         /// - ${VAR} - if VAR is undefined, leave as "${VAR}" (no expansion)
         /// - ${VAR?} - if VAR is undefined, expand to empty string
         /// - Backslash escaping is already handled by JSON parsing
-        fn expand_env_vars(&mut self, bump: &'a Arena, val: &'a [u8]) -> OOM<&'a [u8]> {
+        fn expand_env_vars(env: &DotEnvLoader, bump: &'a Arena, val: &'a [u8]) -> OOM<&'a [u8]> {
             // Quick check if there are any env vars to expand
             if bun_core::index_of(val, b"${").is_none() {
                 // Nothing to expand: return the borrow directly.
@@ -904,7 +863,7 @@ mod draft {
                             env_var_raw
                         };
 
-                        if let Some(expanded) = self.env.get(env_var) {
+                        if let Some(expanded) = env.get(env_var) {
                             result.extend_from_slice(expanded);
                         } else if !optional {
                             // Not found and not optional: leave as-is
@@ -930,7 +889,7 @@ mod draft {
         /// - ${VAR} - if undefined, returns null (leaves as-is)
         /// - ${VAR?} - if undefined, expands to empty string
         fn parse_env_substitution(
-            &mut self,
+            env: &DotEnvLoader,
             val: &[u8],
             start: usize,
             i: usize,
@@ -951,7 +910,8 @@ mod draft {
                         b'\\' => esc = !esc,
                         b'$' => {
                             if !esc {
-                                return self.parse_env_substitution(
+                                return Self::parse_env_substitution(
+                                    env,
                                     val,
                                     start,
                                     j,
@@ -995,7 +955,7 @@ mod draft {
                 };
 
                 // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/workspaces/config/lib/env-replace.js#L6
-                if let Some(expanded) = self.env.get(env_var) {
+                if let Some(expanded) = env.get(env_var) {
                     unesc.extend_from_slice(expanded);
                 } else if !optional {
                     // Not found and not optional: return null to leave as-is
@@ -1017,13 +977,11 @@ mod draft {
         }
 
         fn commit_rope_part(
-            &mut self,
             bump: &'a Arena,
             ropealloc: &'a Arena,
             unesc: &mut ArenaVec<'a, u8>,
             existing_rope: &mut Option<&'a mut Rope>,
         ) -> OOM<()> {
-            let _ = self; // autofix
             let slice = bump.alloc_slice_copy(&unesc[..]);
             let expr = Expr::init(E::EString::init(slice), Loc::EMPTY);
             if let Some(r) = existing_rope.as_deref_mut() {
@@ -1080,7 +1038,7 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct ToStringFormatter<'a> {
-        pub d: &'a ExprData,
+        pub(crate) d: &'a ExprData,
     }
 
     impl fmt::Display for ToStringFormatter<'_> {
@@ -1128,15 +1086,14 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct ConfigIterator<'a> {
-        pub config: &'a E::Object,
-        pub source: &'a Source,
-        pub log: &'a mut Log,
+        pub(crate) config: &'a E::Object,
+        pub(crate) log: &'a mut Log,
 
-        pub prop_idx: usize,
+        pub(crate) prop_idx: usize,
     }
 
     impl<'a> ConfigIterator<'a> {
-        pub fn next(&mut self) -> Option<IniOption<ConfigItem>> {
+        pub(crate) fn next(&mut self) -> Option<IniOption<ConfigItem>> {
             if self.prop_idx >= self.config.properties.len_u32() as usize {
                 return None;
             }
@@ -1194,21 +1151,21 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct ScopeIterator<'a> {
-        pub config: &'a E::Object,
-        pub source: &'a Source,
-        pub log: &'a mut Log,
+        pub(crate) config: &'a E::Object,
+        pub(crate) source: &'a Source,
+        pub(crate) log: &'a mut Log,
 
-        pub prop_idx: usize,
-        pub count: bool,
+        pub(crate) prop_idx: usize,
+        pub(crate) count: bool,
     }
 
     pub struct ScopeItem {
-        pub scope: Box<[u8]>,
-        pub registry: NpmRegistry,
+        pub(crate) scope: Box<[u8]>,
+        pub(crate) registry: NpmRegistry,
     }
 
     impl<'a> ScopeIterator<'a> {
-        pub fn next(&mut self) -> OOM<Option<IniOption<ScopeItem>>> {
+        pub(crate) fn next(&mut self) -> OOM<Option<IniOption<ScopeItem>>> {
             if self.prop_idx >= self.config.properties.len_u32() as usize {
                 return Ok(None);
             }
@@ -1254,7 +1211,7 @@ mod draft {
 
     pub fn load_npmrc_config(
         install: &mut BunInstall,
-        env: &mut DotEnvLoader<'_>,
+        env: &DotEnvLoader,
         auto_loaded: bool,
         npmrc_paths: &[&ZStr],
     ) {
@@ -1285,7 +1242,7 @@ mod draft {
             };
             // `source.contents` is owned; drops at end of loop iteration.
 
-            match load_npmrc(install, env, npmrc_path, &mut log, &source, &mut configs) {
+            match load_npmrc(install, env, &mut log, &source, &mut configs) {
                 Ok(()) => {}
                 Err(AllocError) => bun_core::out_of_memory(),
             }
@@ -1311,30 +1268,14 @@ mod draft {
 
     pub fn load_npmrc(
         install: &mut BunInstall,
-        env: &mut DotEnvLoader<'_>,
-        npmrc_path: &ZStr,
+        env: &DotEnvLoader,
         log: &mut Log,
         source: &Source,
         configs: &mut Vec<ConfigItem>,
     ) -> OOM<()> {
-        // TODO: lifetime — `Parser<'a>` ties `src` and `env: &'a mut DotEnvLoader<'a>`
-        // to a single invariant `'a`; threading that through this fn signature poisons
-        // the `load_npmrc_config` loop (env borrowed-for-'a across iterations). The
-        // local `parser` is dropped before this fn returns, so erase both to a fresh
-        // `'p` (matches `Parser::init`'s own erasures for `path`/`src`).
-        // SAFETY: `parser` does not outlive `env`/`source.contents`.
-        let contents: &'static [u8] = source.contents.as_ref().into_str();
-        // SAFETY: `parser` is dropped before this function returns and so does not
-        // outlive `env` or its borrowed data; this cast only erases lifetimes.
-        let env = unsafe {
-            &mut *std::ptr::from_mut::<DotEnvLoader<'_>>(env).cast::<DotEnvLoader<'static>>()
-        };
-        let mut parser = Parser::init(npmrc_path.as_bytes(), contents, env);
-        // TODO: borrowck — `parser.arena` is borrowed while `parser` is `&mut`.
-        // TODO(refactor): restructure Parser so the bump is passed externally or split borrows.
-        let bump_ptr: *const Arena = &raw const parser.arena;
-        // SAFETY: arena outlives all bump-allocated slices used below.
-        let bump: &Arena = unsafe { &*bump_ptr };
+        let arena = Arena::new();
+        let bump = &arena;
+        let mut parser = Parser::init(source, env);
         parser.parse(bump)?;
         // Need to be very, very careful here with strings.
         // They are allocated in the Parser's arena, which of course gets
@@ -1510,18 +1451,20 @@ mod draft {
                 };
         }
 
+        if let Some(hoist_expr) = out.get(b"hoist") {
+            if let Some(hoist) = hoist_expr.as_bool() {
+                install.hoist = Some(hoist);
+            }
+        }
+
         let mut registry_map = install.scoped.take().unwrap_or_default();
 
-        // SAFETY: `parser.out` is an `E::Object` produced by `Parser::parse`; the
-        // arena pointee lives until `parser` drops at end of fn.
-        let out_obj: &E::Object = unsafe {
-            &*parser
-                .out
-                .data
-                .e_object()
-                .expect("ini parser always yields object")
-                .as_ptr()
-        };
+        let out_ref = parser
+            .out
+            .data
+            .e_object()
+            .expect("ini parser always yields object");
+        let out_obj: &E::Object = &out_ref;
 
         // Process scopes
         {
@@ -1553,7 +1496,7 @@ mod draft {
 
             while let Some(val) = iter.next()? {
                 if let Some(result) = val.get() {
-                    let registry = result.registry.dupe();
+                    let registry = result.registry.clone();
                     registry_map.scopes.put(&*result.scope, registry)?;
                 }
             }
@@ -1630,7 +1573,6 @@ mod draft {
 
             let mut iter = ConfigIterator {
                 config: out_obj,
-                source,
                 log,
                 prop_idx: 0,
             };
@@ -1823,10 +1765,8 @@ mod draft {
 
         match &expr.data {
             ExprData::EString(s) => {
-                // SAFETY: arena-backed `EString::slice` mutates only its own
-                // resolved-data cache; the StoreRef pointee outlives this call.
-                let s_mut: &mut E::EString = unsafe { &mut *s.as_ptr() };
-                let pattern = s_mut.slice(bump);
+                let mut s = *s;
+                let pattern = s.slice(bump);
                 let matcher = match create_matcher(pattern, &mut buf) {
                     Ok(m) => m,
                     Err(CreateMatcherError::OutOfMemory) => return Err(FromExprError::OutOfMemory),
@@ -1947,7 +1887,8 @@ mod draft {
             return Ok(());
         }
         let username_password = &decoded[..result.count];
-        let Some(colon_idx) = username_password.iter().position(|&b| b == b':') else {
+        let Some(colon_idx) = bun_core::strings::index_of_char_usize(username_password, b':')
+        else {
             log.add_error_opts(
                 b"invalid _auth value, expected base64 encoded \"<username>:<password>\"",
                 bun_ast::AddErrorOptions {

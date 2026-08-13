@@ -66,6 +66,46 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("with --isolate, a file's process.chdir() is undone before the next file", async () => {
+    const cwdFixtures = {
+      "a-chdir.test.ts": `
+        import { test, expect } from "bun:test";
+        import { tmpdir } from "node:os";
+        test("chdir away", () => {
+          process.chdir(tmpdir());
+          expect(process.cwd()).not.toBe(import.meta.dir);
+        });
+      `,
+      "b-cwd.test.ts": `
+        import { test, expect } from "bun:test";
+        import { realpathSync } from "node:fs";
+        test("cwd is the fixture dir", () => {
+          expect(realpathSync(process.cwd())).toBe(realpathSync(import.meta.dir));
+        });
+      `,
+    };
+    const files = ["./a-chdir.test.ts", "./b-cwd.test.ts"];
+
+    using isolated = tempDir("isolate-cwd", cwdFixtures);
+    const serial = await runTests(String(isolated), ["--isolate"], files);
+    expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("2 pass");
+    expect(serial.exitCode).toBe(0);
+
+    // One worker takes both files (scale-up gated), so the same restore runs
+    // between files inside a --parallel worker.
+    using parallel = tempDir("isolate-cwd-parallel", cwdFixtures);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", ...files],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
+      cwd: String(parallel),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, parallel)).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+
   test("with --isolate, --preload re-runs in each file's fresh global", async () => {
     using dir = tempDir("isolate-preload", {
       "preload.ts": `
@@ -258,6 +298,66 @@ describe.concurrent("bun test --isolate", () => {
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
     expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("with --isolate, leaked vi.useFakeTimers() is deactivated before next file", async () => {
+    // Fake-timer state lives in the per-thread timer heap, not the JS global,
+    // so a file that activates vi.useFakeTimers() and never restores real
+    // timers (e.g. an it.failing that throws before useRealTimers()) used to
+    // route the next file's setTimeout into the never-driven fake heap.
+    // net.Server.listen() fires 'listening' via setTimeout, so such a file
+    // would hang until its per-test timeout.
+    const fakeTimerFixtures = {
+      "a-fake.test.ts": `
+        import { test, vi } from "bun:test";
+        test("leak fake timers", () => {
+          vi.useFakeTimers();
+          setTimeout(() => {}, 1000);
+          AbortSignal.timeout(1000);
+          // intentionally never calling vi.useRealTimers()
+        });
+      `,
+      "b-real.test.ts": `
+        import { test, expect } from "bun:test";
+        import { createServer } from "node:net";
+        test("setTimeout fires and net.Server 'listening' emits", async () => {
+          const fired = await new Promise<boolean>(resolve => {
+            setTimeout(() => resolve(true), 1);
+          });
+          expect(fired).toBe(true);
+
+          const server = createServer();
+          const listened = await new Promise<boolean>((resolve, reject) => {
+            server.once("error", reject);
+            server.listen(0, "127.0.0.1", () => resolve(true));
+          });
+          server.close();
+          expect(listened).toBe(true);
+        });
+      `,
+    };
+    const files = ["./a-fake.test.ts", "./b-real.test.ts"];
+
+    using isolated = tempDir("isolate-fake-timers", fakeTimerFixtures);
+    const serial = await runTests(String(isolated), ["--isolate", "--timeout=5000"], files);
+    expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("2 pass");
+    expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("0 fail");
+    expect(serial.exitCode).toBe(0);
+
+    // One worker takes both files (scale-up gated) so the same reset runs
+    // between files inside a --parallel worker.
+    using parallel = tempDir("isolate-fake-timers-parallel", fakeTimerFixtures);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--timeout=5000", ...files],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
+      cwd: String(parallel),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, parallel)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, parallel)).toContain("0 fail");
     expect(exitCode).toBe(0);
   });
 
@@ -677,6 +777,11 @@ test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next fil
 // - setTimeout/setInterval: generation-stale timers only self-cancelled when
 //   they FIRED, so a module-scope long timer held a Strong on its wrapper
 //   until the deadline (effectively forever for hour-scale timers).
+// - AbortSignal.timeout with an abort listener: the swap unlinked the native
+//   timer but left the signal believing it still had one, and the GC keeps a
+//   pending timeout signal's wrapper (hence its listener, hence the global)
+//   alive for as long as the signal says so. Same story when the timer sat in
+//   the fake-timer heap of a file that never called useRealTimers().
 //
 // Each fixture runs 8 isolated files that leak one handle apiece, forces a
 // full GC, and counts live GlobalObject cells. Pinned globals accumulate
@@ -747,6 +852,28 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
       makeLeakFixture(`
         setTimeout(() => {}, 3_600_000);
         setInterval(() => {}, 3_600_000);
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  test("AbortSignal.timeout with an abort listener left pending", async () => {
+    using dir = tempDir(
+      "isolate-leak-abort-timeout",
+      makeLeakFixture(`
+        AbortSignal.timeout(3_600_000).addEventListener("abort", () => {});
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  test("AbortSignal.timeout with an abort listener left pending in a fake-timer heap", async () => {
+    using dir = tempDir(
+      "isolate-leak-abort-timeout-fake",
+      makeLeakFixture(`
+        import { vi } from "bun:test";
+        vi.useFakeTimers();
+        AbortSignal.timeout(3_600_000).addEventListener("abort", () => {});
       `),
     );
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);

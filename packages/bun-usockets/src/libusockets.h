@@ -155,6 +155,11 @@ enum {
      * Safe for HTTP/TLS where the client always sends first; do not use for protocols where
      * the server sends the first bytes. */
     LIBUS_LISTEN_DEFER_ACCEPT = 64,
+    /* Enable IP_RECVERR on a UDP socket so ICMP errors land on the error
+     * queue for on_recv_error to drain. Off by default: on a shared
+     * unconnected socket it also makes the next send fail for a datagram
+     * bound to a different, live peer. */
+    LIBUS_UDP_LINUX_RECVERR = 128,
 };
 
 /* Library types publicly available */
@@ -222,6 +227,7 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), const char *host, unsigned short port, int flags, int *err, void *user);
 
+
 void us_udp_socket_close(struct us_udp_socket_t *s);
 
 int us_udp_socket_set_broadcast(struct us_udp_socket_t *s, int enabled);
@@ -237,7 +243,7 @@ LIBUS_SOCKET_DESCRIPTOR us_udp_socket_fd(struct us_udp_socket_t *s);
 /* Adopts an already created (and usually already bound) UDP socket descriptor
  * instead of creating a new one. The fd is made non-blocking and the standard
  * receive-path options are applied. Returns null with *err set on failure. */
-struct us_udp_socket_t *us_create_udp_socket_from_fd(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), LIBUS_SOCKET_DESCRIPTOR fd, int *err, void *user);
+struct us_udp_socket_t *us_create_udp_socket_from_fd(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), LIBUS_SOCKET_DESCRIPTOR fd, int shared, int *err, void *user);
 
 /* This one is ugly, should be ext! not user */
 void *us_udp_socket_user(struct us_udp_socket_t *s);
@@ -368,7 +374,8 @@ struct us_socket_t *us_socket_adopt(us_socket_r s, us_socket_group_r group,
  * sni may be NULL. */
 struct us_socket_t *us_socket_adopt_tls(us_socket_r s, us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx, const char *sni,
-    int is_client, int old_ext_size, int ext_size) __attribute__((nonnull(1, 2, 4)));
+    int is_client, int request_cert, int reject_unauthorized,
+    int old_ext_size, int ext_size) __attribute__((nonnull(1, 2, 4)));
 /* Feed bytes that were already read off the wire (e.g. a ClientHello consumed
  * by the plain-TCP layer before the socket was adopted into TLS) through the
  * same decrypt path as bytes arriving from the kernel. */
@@ -389,6 +396,10 @@ struct us_listen_socket_t *us_socket_group_listen_unix(us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx,
     const char *path, size_t pathlen, int options, int socket_ext_size, int *error)
     __attribute__((nonnull(1, 4, 8)));  /* ssl_ctx nullable */
+struct us_listen_socket_t *us_socket_group_listen_fd(us_socket_group_r group,
+    unsigned char kind, struct ssl_ctx_st *ssl_ctx,
+    LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error)
+    __attribute__((nonnull(1, 8)));  /* ssl_ctx nullable */
 void us_listen_socket_close(struct us_listen_socket_t *ls) nonnull_fn_decl;
 
 /* SNI: tree hangs off the listen socket. ssl_ctx is up_ref'd; user is opaque
@@ -416,6 +427,22 @@ void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
  * after the socket closed (no-op). */
 void us_socket_sni_resolve(us_socket_r s, struct ssl_ctx_st *ctx, int error);
 void *us_socket_server_name_userdata(us_socket_r s);
+/* Records a per-serverName entry's client-certificate policy on its SSL_CTX
+ * so the SNI switch adds it to the connection's inherited one, and gives the
+ * context its own session-id context so sessions from other contexts are not
+ * resumed under it. Contexts without one keep the server-level policy. */
+void us_ssl_ctx_set_sni_policy(struct ssl_ctx_st *ctx, int request_cert,
+    int reject_unauthorized);
+/* 1 iff the SNI-selected context for this connection demands closing on a
+ * client-certificate verification error. */
+int us_socket_server_name_reject_unauthorized(us_socket_r s);
+int us_ssl_ctx_reject_unauthorized(struct ssl_ctx_st *ctx);
+/* Socket-level SNI resolver, for a server-side socket adopted into TLS with no
+ * listen socket behind it. Same contract as the listener resolver: an owned
+ * SSL_CTX ref or NULL; *abort_handshake 1 = drop silently, 2 = suspend. */
+typedef struct ssl_ctx_st *(*us_socket_server_name_cb)(struct us_socket_t *socket,
+    const char *hostname, int *abort_handshake);
+void us_socket_on_server_name(us_socket_r s, us_socket_server_name_cb cb);
 
 /* ── Connect ──────────────────────────────────────────────────────────────
  * Returns either us_socket_t* (fast path, *is_connecting=1) or
@@ -484,6 +511,18 @@ struct us_bun_socket_context_options_t {
     int request_cert;
     unsigned int client_renegotiation_limit;
     unsigned int client_renegotiation_window;
+    /* Session timeout in seconds applied via SSL_CTX_set_timeout; 0 = library default. */
+    int session_timeout;
+    /* PEM-encoded CRLs added to the context's X509_STORE (enables CRL checking). */
+    const char * const *crl;
+    unsigned int crl_count;
+    /* Sets X509_V_FLAG_PARTIAL_CHAIN on the context's certificate store. */
+    int allow_partial_trust_chain;
+    /* Colon-separated signature algorithm list applied via
+     * SSL_CTX_set1_sigalgs_list. */
+    const char *sigalgs;
+    /* Colon-separated named-group list applied via SSL_CTX_set1_groups_list. */
+    const char *ecdh_curve;
 };
 
 enum create_bun_socket_error_t {
@@ -492,6 +531,8 @@ enum create_bun_socket_error_t {
     CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE,
     CREATE_BUN_SOCKET_ERROR_INVALID_CA,
     CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS,
+    CREATE_BUN_SOCKET_ERROR_INVALID_CRL,
+    CREATE_BUN_SOCKET_ERROR_INVALID_ECDH_CURVE,
 };
 
 /* Build an SSL_CTX from options. Returns the BoringSSL SSL_CTX*; caller owns
@@ -525,6 +566,16 @@ int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
 void us_ssl_enable_pending_events(struct ssl_st *ssl);
 int us_ssl_pop_pending_session(struct ssl_st *ssl, unsigned char *out, int out_cap);
 int us_ssl_pop_pending_keylog(struct ssl_st *ssl, unsigned char *out, int out_cap);
+/* The resumable session most recently delivered via the new-session callback,
+ * or NULL if none. Borrowed; valid until the next NewSessionTicket or SSL_free. */
+struct ssl_session_st *us_ssl_get_new_session(struct ssl_st *ssl);
+/* Per-SSL session sink: each resumable session reaching the new-session
+ * callback is SSL_SESSION_up_ref'd and handed to on_new_session (which takes
+ * ownership of that reference). on_free(owner) runs once on SSL_free. */
+void us_ssl_set_session_sink(struct ssl_st *ssl, void *owner,
+                             void (*on_new_session)(void *, struct ssl_session_st *),
+                             void (*on_free)(void *));
+void *us_ssl_get_session_sink_owner(struct ssl_st *ssl);
 
 /* Public interfaces for loops */
 
@@ -632,6 +683,11 @@ int us_socket_is_closed(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_tls(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_ssl_handshake_finished(us_socket_r s) nonnull_fn_decl;
 int us_socket_ssl_handshake_callback_has_fired(us_socket_r s) nonnull_fn_decl;
+/* TLS ciphertext bytes already sealed for this socket and reported as
+ * written by us_socket_write(), still waiting on a writable event to reach
+ * the kernel (the loop-wide spill slot owned by this socket). 0 for
+ * plain-TCP sockets and for TLS sockets with nothing spilled. */
+unsigned int us_socket_ssl_spill_pending(us_socket_r s) nonnull_fn_decl;
 
 struct us_socket_t *us_socket_close(us_socket_r s, int code, void *reason) __attribute__((nonnull(1)));
 
@@ -656,13 +712,21 @@ LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) nonnull_fn_decl;
 
 /* Bun extras */
 struct us_socket_t *us_socket_pair(us_socket_group_r group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) nonnull_fn_decl;
-struct us_socket_t *us_socket_from_fd(us_socket_group_r group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc)
+struct us_socket_t *us_socket_from_fd(us_socket_group_r group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int options, int ipc)
     __attribute__((nonnull(1)));  /* ssl_ctx nullable */
 struct us_socket_t *us_socket_open(struct us_socket_t *s, int is_client, char *ip, int ip_length);
 int us_raw_root_certs(struct us_cert_string_t **out);
 unsigned int us_get_remote_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
 unsigned int us_get_local_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
 int us_socket_get_error(us_socket_r s);
+/* A writable event's write made zero progress: does that prove the peer is
+ * gone? On epoll/kqueue a writable event implies real send-buffer space, so
+ * no progress means the send itself failed (EPIPE/ECONNRESET folded to 0) and
+ * the answer is always yes. The libuv backend's completion model can deliver
+ * a writable completion for space the same loop iteration already refilled,
+ * making a stall there routine backpressure, so it asks the kernel
+ * (SO_ERROR, then a zero-byte send probe). */
+int us_socket_stalled_write_means_peer_gone(us_socket_r s);
 
 void us_socket_ref(us_socket_r s);
 void us_socket_unref(us_socket_r s);

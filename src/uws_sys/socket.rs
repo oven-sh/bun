@@ -100,7 +100,7 @@ impl InternalSocket {
         matches!(self, InternalSocket::Detached)
     }
     #[inline]
-    pub fn is_named_pipe(&self) -> bool {
+    pub(crate) fn is_named_pipe(&self) -> bool {
         #[cfg(windows)]
         return matches!(self, InternalSocket::Pipe(_));
         #[cfg(not(windows))]
@@ -346,6 +346,18 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// The JS wrapper that owns this socket is being finalized: whatever the
+    /// close below unwinds must not reach back into JS objects.
+    pub fn prepare_for_finalize(&self) {
+        on_socket!(self.socket;
+            connected _s => {},
+            connecting _c => {},
+            detached => {},
+            duplex d => d.abandon_js_side(),
+            pipe _p => {},
+        )
+    }
+
     pub fn shutdown(&self) {
         on_socket!(self.socket;
             connected s => s.shutdown(),
@@ -568,13 +580,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── TLS ─────────────────────────────────────────────────────────────────
 
-    /// Kick TLS open (ClientHello / accept) on an already-connected socket.
-    pub fn start_tls(&self, is_client: bool) {
-        if let InternalSocket::Connected(s) = self.socket {
-            sock(s).open(is_client, None);
-        }
-    }
-
     /// `SSL*` if this is a TLS socket, else `None`.
     #[inline]
     pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
@@ -642,42 +647,32 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    pub fn local_port(&self) -> i32 {
+    pub fn local_port(&self) -> Option<u16> {
         match self.socket {
             InternalSocket::Connected(s) => sock(s).local_port(),
-            _ => 0,
+            _ => None,
         }
     }
 
-    pub fn remote_port(&self) -> i32 {
+    pub fn remote_port(&self) -> Option<u16> {
         match self.socket {
             InternalSocket::Connected(s) => sock(s).remote_port(),
-            _ => 0,
+            _ => None,
         }
     }
 
     pub fn local_address<'b>(&self, buf: &'b mut [u8]) -> Option<&'b [u8]> {
         match self.socket {
-            InternalSocket::Connected(s) => match sock(s).local_address(buf) {
-                Ok(v) => Some(v),
-                Err(e) => bun_core::Output::panic(format_args!(
-                    "Failed to get socket's local address: {}",
-                    e.name()
-                )),
-            },
+            // getsockname() can fail (EBADF/ENOTCONN/…) on a socket the OS
+            // closed or reset underneath us; callers treat that as "no address".
+            InternalSocket::Connected(s) => sock(s).local_address(buf).ok(),
             _ => None,
         }
     }
 
     pub fn remote_address<'b>(&self, buf: &'b mut [u8]) -> Option<&'b [u8]> {
         match self.socket {
-            InternalSocket::Connected(s) => match sock(s).remote_address(buf) {
-                Ok(v) => Some(v),
-                Err(e) => bun_core::Output::panic(format_args!(
-                    "Failed to get socket's remote address: {}",
-                    e.name()
-                )),
-            },
+            InternalSocket::Connected(s) => sock(s).remote_address(buf).ok(),
             _ => None,
         }
     }
@@ -739,6 +734,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             None,
             ext_size,
             handle.native() as LIBUS_SOCKET_DESCRIPTOR,
+            0,
             is_ipc,
         );
         if raw.is_null() {
@@ -938,26 +934,11 @@ macro_rules! any_socket_forward {
 
 impl AnySocket {
     #[inline]
-    pub fn is_ssl(&self) -> bool {
-        matches!(self, AnySocket::SocketTls(_))
-    }
-    #[inline]
     pub fn socket(&self) -> &InternalSocket {
         match self {
             AnySocket::SocketTcp(s) => &s.socket,
             AnySocket::SocketTls(s) => &s.socket,
         }
-    }
-    #[inline]
-    pub fn ext<T>(&self) -> Option<*mut T> {
-        match self {
-            AnySocket::SocketTcp(s) => s.ext::<T>(),
-            AnySocket::SocketTls(s) => s.ext::<T>(),
-        }
-    }
-    #[inline]
-    pub fn terminate(&self) {
-        self.close(CloseCode::failure)
     }
     #[inline]
     pub fn group(&self) -> *mut SocketGroup {
@@ -977,7 +958,7 @@ impl AnySocket {
         fn set_timeout(&self, seconds: c_uint);
         fn shutdown(&self);
         fn shutdown_read(&self);
-        fn local_port(&self) -> i32;
+        fn local_port(&self) -> Option<u16>;
         fn get_native_handle(&self) -> Option<*mut c_void>;
     }
 }

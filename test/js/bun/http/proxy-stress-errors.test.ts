@@ -120,11 +120,11 @@ describe("proxy unreachable", () => {
   for (const originTls of [false, true] as const) {
     test.concurrent(`proxy port refused, ${originTls ? "https" : "http"} origin`, async () => {
       await using origin = await createAdversarialOrigin({ tls: originTls, body: "unreachable" });
-      const port = await deadPort();
+      using dead = await deadPort();
       let code: string;
       try {
         const res = await fetch(origin.url, {
-          proxy: `http://127.0.0.1:${port}`,
+          proxy: `http://127.0.0.1:${dead.port}`,
           keepalive: false,
           tls: laxTls,
           signal: AbortSignal.timeout(15_000),
@@ -148,12 +148,12 @@ describe("proxy unreachable", () => {
 describe("upstream unreachable via proxy", () => {
   for (const proxyTls of [false, true] as const) {
     test.concurrent(`${proxyTls ? "https" : "http"}-proxy, CONNECT upstream refused → 502`, async () => {
-      const port = await deadPort();
+      using dead = await deadPort();
       await using proxy = await createAdversarialProxy({ tls: proxyTls });
 
       // Point at a refused port directly — the client will CONNECT to it,
       // the proxy will fail to dial, and return 502.
-      const res = await fetch(`https://127.0.0.1:${port}/`, {
+      const res = await fetch(`https://127.0.0.1:${dead.port}/`, {
         proxy: proxy.url,
         keepalive: false,
         tls: laxTls,
@@ -163,9 +163,9 @@ describe("upstream unreachable via proxy", () => {
     });
 
     test.concurrent(`${proxyTls ? "https" : "http"}-proxy, absolute-form upstream refused → 502`, async () => {
-      const port = await deadPort();
+      using dead = await deadPort();
       await using proxy = await createAdversarialProxy({ tls: proxyTls });
-      const res = await fetch(`http://127.0.0.1:${port}/`, {
+      const res = await fetch(`http://127.0.0.1:${dead.port}/`, {
         proxy: proxy.url,
         keepalive: false,
         tls: laxTls,

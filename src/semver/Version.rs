@@ -102,16 +102,11 @@ impl VersionType<u32> {
 }
 
 impl<T: VersionInt> VersionType<T> {
-    /// Assumes that there is only one buffer for all the strings
-    pub fn sort_gt(ctx: &[u8], lhs: Self, rhs: Self) -> bool {
-        Self::order_fn(ctx, lhs, rhs) == Ordering::Greater
-    }
-
     pub fn order_fn(ctx: &[u8], lhs: Self, rhs: Self) -> Ordering {
         lhs.order(rhs, ctx, ctx)
     }
 
-    pub fn is_zero(self) -> bool {
+    pub(crate) fn is_zero(self) -> bool {
         self.patch == T::ZERO && self.minor == T::ZERO && self.major == T::ZERO
     }
 
@@ -127,11 +122,6 @@ impl<T: VersionInt> VersionType<T> {
             _tag_padding: Default::default(),
             tag: self.tag.clone_into(slice, buf),
         }
-    }
-
-    #[inline]
-    pub fn len(&self) -> u32 {
-        (self.tag.build.len() + self.tag.pre.len()) as u32
     }
 
     pub fn fmt<'a>(self, input: &'a [u8]) -> Formatter<'a, T> {
@@ -416,7 +406,7 @@ impl<T: VersionInt> VersionType<T> {
         true
     }
 
-    pub fn order_without_tag(lhs: Self, rhs: Self) -> Ordering {
+    pub(crate) fn order_without_tag(lhs: Self, rhs: Self) -> Ordering {
         if lhs.major < rhs.major {
             return Ordering::Less;
         }
@@ -677,8 +667,8 @@ fn valid_pre_or_build_tag_character(c: u8) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct Formatter<'a, T: VersionInt> {
-    pub version: VersionType<T>,
-    pub input: &'a [u8],
+    pub(crate) version: VersionType<T>,
+    pub(crate) input: &'a [u8],
 }
 
 impl<'a, T: VersionInt> fmt::Display for Formatter<'a, T> {
@@ -705,10 +695,10 @@ impl<'a, T: VersionInt> fmt::Display for Formatter<'a, T> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct DiffFormatter<'a, T: VersionInt> {
-    pub version: VersionType<T>,
-    pub buf: &'a [u8],
-    pub other: VersionType<T>,
-    pub other_buf: &'a [u8],
+    pub(crate) version: VersionType<T>,
+    pub(crate) buf: &'a [u8],
+    pub(crate) other: VersionType<T>,
+    pub(crate) other_buf: &'a [u8],
 }
 
 impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
@@ -942,7 +932,7 @@ pub struct Tag {
 // TODO: support multiple tags
 
 impl Tag {
-    pub fn order_pre(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+    pub(crate) fn order_pre(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
         let lhs_str = self.pre.slice(lhs_buf);
         let rhs_str = rhs.pre.slice(rhs_buf);
 
@@ -1005,7 +995,7 @@ impl Tag {
         }
     }
 
-    pub fn order(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+    pub(crate) fn order(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
         if !self.pre.is_empty() && !rhs.pre.is_empty() {
             return self.order_pre(rhs, lhs_buf, rhs_buf);
         }
@@ -1018,7 +1008,7 @@ impl Tag {
         self.build.order(&rhs.build, lhs_buf, rhs_buf)
     }
 
-    pub fn order_without_build(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+    pub(crate) fn order_without_build(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
         if !self.pre.is_empty() && !rhs.pre.is_empty() {
             return self.order_pre(rhs, lhs_buf, rhs_buf);
         }
@@ -1076,11 +1066,14 @@ impl Tag {
         self.pre.hash == rhs.pre.hash
     }
 
-    pub fn parse(sliced_string: SlicedString) -> TagResult {
+    pub(crate) fn parse(sliced_string: SlicedString) -> TagResult {
         Self::parse_with_pre_count(sliced_string, 0)
     }
 
-    pub fn parse_with_pre_count(sliced_string: SlicedString, initial_pre_count: u32) -> TagResult {
+    pub(crate) fn parse_with_pre_count(
+        sliced_string: SlicedString,
+        initial_pre_count: u32,
+    ) -> TagResult {
         let input = sliced_string.slice;
         let mut build_count: u32 = 0;
         let mut pre_count: u32 = initial_pre_count;
@@ -1192,8 +1185,8 @@ impl Tag {
 
 #[derive(Copy, Clone, Default)]
 pub struct TagResult {
-    pub tag: Tag,
-    pub len: u32,
+    pub(crate) tag: Tag,
+    pub(crate) len: u32,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1205,7 +1198,7 @@ pub struct ParseResult<T: VersionInt> {
     pub wildcard: Wildcard,
     pub valid: bool,
     pub version: Partial<T>,
-    pub len: u32,
+    pub(crate) len: u32,
 }
 
 impl<T: VersionInt> Default for ParseResult<T> {

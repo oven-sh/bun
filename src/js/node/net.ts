@@ -2193,12 +2193,9 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     } else if (this._closeAfterHandlingError) {
       // Enqueue closing the socket as a microtask, so that the socket can be
       // accessible when an `error` event is handled in the `next tick queue`.
-      // Close the handle captured above rather than re-reading _handle: when
-      // the failed handshake was dispatched with JS already on the stack (the
-      // stream-level TLS engine fed from a 'data' listener, resumeSNI from an
-      // asynchronous SNICallback completion), the native close callback runs
-      // right behind it, before any microtask, and detaches _handle. Nothing
-      // else emits 'close' once _destroy has run, so this must not bail.
+      // A handshake failure dispatched from inside a JS-initiated native call
+      // (stream-level TLS engine, resumeSNI) is followed by the native close,
+      // which detaches _handle, before this microtask runs; pass the handle.
       queueMicrotask(() => closeSocketHandle(this, currentHandle, isException, true));
     } else if (currentHandle[kAdoptedTLSRaw]) {
       // Shared-fd TLS pair: defer the close two check-phase turns
@@ -4274,9 +4271,8 @@ function initSocketHandle(self) {
 // intercepts close on `socket._handle` and invokes it, so always pass one.
 function onSocketHandleClosed() {}
 
-// Closes the handle _destroy found on the socket and emits 'close' for it. The
-// handle may have closed natively and detached itself (self._handle is null by
-// now) in the meantime; closing it again is a no-op and 'close' is still owed.
+// `handle` is the one _destroy found; close() on one the native side already
+// closed is a no-op, and 'close' is emitted either way.
 function closeSocketHandle(self, handle, isException, isCleanupPending = false) {
   $debug("closeSocketHandle", isException, isCleanupPending);
   handle.close(onSocketHandleClosed);
@@ -4284,8 +4280,8 @@ function closeSocketHandle(self, handle, isException, isCleanupPending = false) 
     $debug("emit close", isCleanupPending);
     self.emit("close", isException);
     if (isCleanupPending) {
-      // A second destroy() before this runs clears self._handle, and a
-      // re-attach replaces it - only tear down the handle captured here.
+      // The native close may have detached self._handle by now, or a re-attach
+      // replaced it; only tear down the handle captured here.
       handle.onread = noop;
       if (self._handle === handle) {
         self._handle = null;

@@ -1,6 +1,6 @@
 /**
- * Pins how scripts/build tracks generated headers between codegen and the
- * compiles that include them (the PCH above all).
+ * Pins how scripts/build tracks generated headers between the step that writes
+ * them and the compiles that include them (the PCH above all).
  *
  * Codegen headers are order-only inputs of the PCH/cxx/cc edges; the compiler's
  * depfile is what makes a later change to one of them rebuild the compile. Ninja
@@ -13,20 +13,29 @@
  * every TU failed against it; the next `bun bd` then rebuilt the PCH. This only
  * works for headers that ARE declared outputs, which is why the otherwise
  * unreported BunBuiltinNames+extras.h (reached from root-pch.h) is declared by
- * hand.
+ * hand. The compile constructors reject the absolute spelling outright, and a
+ * direct dep that includes another dep's generated headers (libarchive, libspng,
+ * lsquic -> zlib's zlib.h) gets them as implicit inputs on top of that.
  *
  * Pure ninja-emission logic: no compiler, ninja, or subprocess; runs on every host.
  */
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
-import { basename, join, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 
 import { bunCompileFlags } from "../../scripts/build/bun.ts";
 import { emitJsModules, registerCodegenRules, type CodegenOutputs } from "../../scripts/build/codegen.ts";
-import { includeFlags, registerDirStamps } from "../../scripts/build/compile.ts";
+import { cc, cxx, includeFlags, pch, registerCompileRules, registerDirStamps } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type Toolchain } from "../../scripts/build/config.ts";
 import { computeFlags } from "../../scripts/build/flags.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
+import {
+  depBuildDir,
+  registerDepRules,
+  resolveDep,
+  type Dependency,
+  type ResolvedDep,
+} from "../../scripts/build/source.ts";
 import type { Sources } from "../../scripts/glob-sources.ts";
 
 /** A fully-populated fake toolchain; resolveConfig never spawns any of these. */
@@ -75,13 +84,38 @@ function linuxDebugConfig(buildDir: string): Config {
   );
 }
 
-/** The `build` line (continuations unwrapped) whose outputs include `output`, or undefined. */
-function edgeProducing(ninja: string, output: string): string | undefined {
-  const flat = ninja.replace(/ \$\n +/g, " ");
-  return flat
-    .split("\n")
-    .filter(l => l.startsWith("build "))
-    .find(l => l.slice("build ".length, l.indexOf(": ")).split(" ").includes(output));
+/** One emitted edge: its `build` line with continuations unwrapped, and its variable bindings. */
+interface Edge {
+  outputs: string[];
+  /** Everything after `: rule`, i.e. `inputs | implicit || order-only`, as written. */
+  deps: string;
+  vars: Record<string, string>;
+}
+
+/** The edge producing `output` (spelled as ninja.ts writes it), or undefined. */
+function edgeProducing(ninja: string, output: string): Edge | undefined {
+  const lines = ninja.replace(/ \$\n +/g, " ").split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (!line.startsWith("build ")) continue;
+    const colon = line.indexOf(": ");
+    const outputs = line.slice("build ".length, colon).split(" ");
+    if (!outputs.includes(output)) continue;
+    const afterRule = line.slice(colon + 2).replace(/^\S+ ?/, "");
+    const vars: Record<string, string> = {};
+    for (let j = i + 1; j < lines.length && lines[j]!.startsWith("  "); j++) {
+      const eq = lines[j]!.indexOf(" = ");
+      vars[lines[j]!.slice(2, eq)] = lines[j]!.slice(eq + " = ".length);
+    }
+    return { outputs, deps: afterRule, vars };
+  }
+  return undefined;
+}
+
+/** The `| implicit` section of an edge's dependency list. */
+function implicitInputs(edge: Edge): string[] {
+  const match = / \| (.*?)(?: \|\| |$)/.exec(edge.deps);
+  return match === null ? [] : match[1]!.split(" ");
 }
 
 describe("includeFlags", () => {
@@ -149,6 +183,103 @@ describe("bunCompileFlags", () => {
   });
 });
 
+describe("compile constructors", () => {
+  function compileSetup(buildDir: string): { cfg: Config; n: Ninja } {
+    const cfg = linuxDebugConfig(buildDir);
+    const n = new Ninja({ buildDir });
+    registerDirStamps(n, cfg);
+    registerCompileRules(n, cfg);
+    return { cfg, n };
+  }
+
+  test("cc, cxx and pch reject a build-dir include spelled absolutely", () => {
+    using dir = tempDir("build-compile-assert", {});
+    const buildDir = String(dir);
+    const { cfg, n } = compileSetup(buildDir);
+    const absolute = `-I${join(buildDir, "codegen")}`;
+
+    expect(() => cc(n, cfg, "src/fake.c", { flags: [absolute] })).toThrow("spelled absolutely");
+    expect(() => cxx(n, cfg, "src/fake.cpp", { flags: ["-std=gnu++23", absolute] })).toThrow("spelled absolutely");
+    expect(() => pch(n, cfg, "src/jsc/bindings/root-pch.h", { flags: [absolute] })).toThrow("spelled absolutely");
+    // The build dir itself, and a flag emitDirect has quote()d as a whole.
+    expect(() => cc(n, cfg, "src/fake.c", { flags: [`-I${buildDir}`] })).toThrow("spelled absolutely");
+    expect(() => cc(n, cfg, "src/fake.c", { flags: [`'-I${join(buildDir, "deps", "zlib")}'`] })).toThrow(
+      "spelled absolutely",
+    );
+  });
+
+  test("the includeFlags() spelling and source-tree includes are accepted as they are", () => {
+    using dir = tempDir("build-compile-assert", {});
+    const buildDir = String(dir);
+    const { cfg, n } = compileSetup(buildDir);
+    const flags = includeFlags(n, [join(buildDir, "codegen"), buildDir, join(cfg.cwd, "src", "jsc", "bindings")]);
+
+    const object = cc(n, cfg, "src/fake.c", { flags });
+    const edge = edgeProducing(n.toString(), n.rel(object));
+    expect(edge?.vars.cflags).toBe(`-Icodegen -I. -I${join(cfg.cwd, "src", "jsc", "bindings")}`);
+  });
+});
+
+describe("emitDirect", () => {
+  /**
+   * A direct dep generating one header into its build dir, and a second direct
+   * dep whose sources include it (the libarchive/libspng/lsquic -> zlib shape).
+   * Both live inside the scratch build dir so nothing under the repo is read or
+   * touched; their source files only have to exist as paths.
+   */
+  test("a fetchDeps producer's generated headers are implicit inputs, included via the declared spelling", () => {
+    using dir = tempDir("build-direct-dep", { "producer-src/.keep": "", "consumer-src/.keep": "" });
+    const buildDir = String(dir);
+    const cfg = linuxDebugConfig(buildDir);
+    const n = new Ninja({ buildDir });
+    registerDirStamps(n, cfg);
+    registerCompileRules(n, cfg);
+    registerDepRules(n, cfg);
+
+    const producer: Dependency = {
+      name: "producer",
+      source: () => ({ kind: "local", path: join(buildDir, "producer-src") }),
+      build: () => ({
+        kind: "direct",
+        sources: ["p.c"],
+        headers: { "gen.h": { from: "gen.h.in" } },
+      }),
+      provides: () => ({ libs: [], includes: [] }),
+    };
+    const consumer: Dependency = {
+      name: "consumer",
+      source: () => ({ kind: "local", path: join(buildDir, "consumer-src") }),
+      fetchDeps: ["producer"],
+      build: cfg => ({
+        kind: "direct",
+        sources: ["c.c"],
+        includes: [depBuildDir(cfg, "producer")],
+      }),
+      provides: () => ({ libs: [], includes: [] }),
+    };
+
+    const resolved = new Map<string, ResolvedDep>();
+    const producerDep = resolveDep(n, cfg, producer, resolved)!;
+    resolved.set(producer.name, producerDep);
+    const consumerDep = resolveDep(n, cfg, consumer, resolved)!;
+
+    const generatedHeader = resolve(depBuildDir(cfg, "producer"), "gen.h");
+    expect(producerDep.outputs).toContain(generatedHeader);
+
+    const ninja = n.toString();
+    expect(edgeProducing(ninja, n.rel(generatedHeader))).toBeDefined();
+
+    const [object] = consumerDep.objects;
+    const edge = edgeProducing(ninja, n.rel(object!))!;
+    // Implicit, not order-only: a regenerated gen.h (or a re-fetched producer)
+    // rebuilds c.c.o in the run that regenerated it.
+    expect(implicitInputs(edge)).toEqual(expect.arrayContaining(producerDep.outputs.map(o => n.rel(o))));
+    // And the -I is the spelling gen.h is declared under, so the depfile agrees.
+    const includes = edge.vars.cflags!.split(" ").filter(f => f.startsWith("-I"));
+    expect(includes).toEqual([`-I${relative(buildDir, depBuildDir(cfg, "producer"))}`]);
+  });
+});
+
 describe("emitJsModules", () => {
   test("declares BunBuiltinNames+extras.h, which root-pch.h reaches", () => {
     using dir = tempDir("build-codegen-outputs", {});
@@ -187,8 +318,7 @@ describe("emitJsModules", () => {
 
     const edge = edgeProducing(n.toString(), n.rel(extras));
     expect(edge).toBeDefined();
-    expect(edge).toContain(": codegen ");
     // Declared on the same edge as the headers bundle-modules.ts itself reports.
-    expect(edge).toContain(n.rel(resolve(cfg.codegenDir, "InternalModuleRegistry+enum.h")));
+    expect(edge!.outputs).toContain(n.rel(resolve(cfg.codegenDir, "InternalModuleRegistry+enum.h")));
   });
 });

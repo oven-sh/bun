@@ -703,11 +703,7 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.rustInputs.push(outputRs);
 }
 
-/**
- * Exported for test/internal/build-codegen-header-tracking.test.ts, which
- * pins the hand-declared header below without running the whole of
- * emitCodegen (emitBindgenV2 spawns bun).
- */
+/** Exported for test/internal/build-codegen-header-tracking.test.ts. */
 export function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bundle-modules.ts");
 

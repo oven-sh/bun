@@ -200,7 +200,7 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
 // ---------------------------------------------------------------------------
 
 export interface CompileOpts {
-  /** Compiler flags (including -I, -D — caller assembles). */
+  /** Compiler flags (including -I, -D — caller assembles; -I via includeFlags()). */
   flags: string[];
   /** PCH to use (absolute path to .pch/.gch output). */
   pch?: string;
@@ -247,17 +247,47 @@ export interface CompileOpts {
  * the pch rule; plain `ninja` or a host without ccache showed it on all of them.
  *
  * Directories outside buildDir stay as given: the headers found through them
- * are never declared outputs (dep headers are tracked via depHeaderSignal in
- * bun.ts), and a relative spelling of the machine-shared cache dir would vary
- * with the checkout's depth and split the ccache between worktrees.
+ * are never declared outputs (dep headers are tracked as implicit inputs —
+ * depHeaderSignal in bun.ts, fetchDepStamps in source.ts), and a relative
+ * spelling of the machine-shared cache dir would vary with the checkout's
+ * depth and split the ccache between worktrees.
+ *
+ * Every -I that compile()/pch() see must have come through here: they reject
+ * an absolute spelling of a build-dir directory.
  */
 export function includeFlags(n: Ninja, dirs: string[]): string[] {
-  return dirs.map(dir => {
-    const rel = n.rel(dir);
-    if (rel === "") return "-I.";
-    const outside = isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`);
-    return `-I${outside ? dir : rel}`;
-  });
+  return dirs.map(dir => `-I${buildDirSpelling(n, dir) ?? dir}`);
+}
+
+/** `dir` as ninja.ts would spell an output in it, or undefined if it is not inside buildDir. */
+function buildDirSpelling(n: Ninja, dir: string): string | undefined {
+  const rel = n.rel(dir);
+  if (rel === "") return ".";
+  if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) return undefined;
+  return rel;
+}
+
+/**
+ * The configure-time check behind includeFlags(): a depfile-bearing edge whose
+ * flags name a build-dir directory absolutely would track the generated
+ * headers in it one build late, silently. Only the attached `-I<dir>` form is
+ * emitted by this build (possibly quote()d as a whole), so that is what is
+ * inspected.
+ */
+function assertIncludesSpelledAsDeclared(n: Ninja, flags: string[], out: string): void {
+  for (const flag of flags) {
+    // A quote()d flag is '-I…' / "-I…" as a whole.
+    const bare = flag.startsWith("-") ? flag : flag.slice(1, -1);
+    if (!bare.startsWith("-I")) continue;
+    const dir = bare.slice("-I".length);
+    // Cheap prefix filter: ~1300 edges × ~40 absolute -I each; only the
+    // candidates pay for the exact containment check.
+    if (!dir.startsWith(n.buildDir)) continue;
+    const spelling = buildDirSpelling(n, dir);
+    assert(spelling === undefined, `${n.rel(out)}: include dir ${dir} is inside the build dir but spelled absolutely`, {
+      hint: `Pass it through includeFlags() (-I${spelling}) so the depfile entries for its headers are the declared outputs.`,
+    });
+  }
 }
 
 /**
@@ -319,6 +349,7 @@ export function nasm(
 function compile(n: Ninja, cfg: Config, src: string, opts: CompileOpts, lang: "cxx" | "cc"): string {
   const absSrc = resolve(cfg.cwd, src);
   const out = objectPath(cfg, src);
+  assertIncludesSpelledAsDeclared(n, opts.flags, out);
 
   const rule = opts.pch !== undefined && lang === "cxx" ? "cxx_pch" : lang;
   const flagVar = lang === "cxx" ? "cxxflags" : "cflags";
@@ -419,6 +450,7 @@ export function pch(
   const wrapperHeader = resolve(pchDir, `${basename(header)}.hxx`);
   const stubCxx = resolve(pchDir, `${basename(header)}.hxx.cxx`);
   const out = resolve(pchDir, `${basename(header)}.hxx.pch`);
+  assertIncludesSpelledAsDeclared(n, opts.flags, out);
   // clang-cl /Yc compiles the stub source AND emits a PCH in one invocation,
   // so it always writes a side-effect .obj. Unlike MSVC, clang's PCH is a
   // serialized AST (not a partial object file), so consumers don't need this

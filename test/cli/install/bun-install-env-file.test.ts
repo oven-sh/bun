@@ -132,6 +132,27 @@ registry = { url = "http://localhost:${server.port}/", token = "$NPM_TOKEN" }
     expect(stderr).not.toContain(".env");
   });
 
+  test.concurrent("`bun --env-file=PATH install` (flag before the subcommand) works", async () => {
+    const received: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        received.push(req.headers.get("authorization") ?? "<none>");
+        return new Response("{}", { status: 404 });
+      },
+    });
+    using dir = tempDir("install-env-file-global-flag", projectFiles(server.port));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--env-file=.env.custom", "install"],
+      cwd: String(dir),
+      env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined, NPM_TOKEN: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(received[0]).toBe("Bearer CUSTOM");
+  });
+
   test.concurrent("--env-file value is consumed, not treated as a package to add", async () => {
     using dir = tempDir("install-env-missing", {
       "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
@@ -147,6 +168,63 @@ registry = { url = "http://localhost:${server.port}/", token = "$NPM_TOKEN" }
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("unrecognised dependency format");
     expect(stdout).not.toMatch(/add v\d/);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/31450
+// Lifecycle scripts inherit whatever `bun install` loaded from `.env*`, so the
+// flags also decide what package scripts get to see.
+async function probeLifecycleEnv(extraArgs: string[]): Promise<{ seen: string; stderr: string; exitCode: number }> {
+  using dir = tempDir("install-env-file-lifecycle", {
+    "package.json": JSON.stringify({
+      name: "env-file-lifecycle",
+      version: "1.0.0",
+      scripts: {
+        // --no-env-file on the probe itself so it reports what install passed
+        // down instead of loading the project's .env* files on its own.
+        postinstall: `${bunExe()} --no-env-file -e 'await Bun.write("probe.txt", String(process.env.INSTALL_ENV_PROBE))'`,
+      },
+    }),
+    ".env": "INSTALL_ENV_PROBE=from-dotenv\n",
+    ".env.development": "INSTALL_ENV_PROBE=from-dotenv-development\n",
+    ".env.custom": "INSTALL_ENV_PROBE=from-custom\n",
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install", ...extraArgs],
+    cwd: String(dir),
+    env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined, INSTALL_ENV_PROBE: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const seen = await Bun.file(`${dir}/probe.txt`).text();
+  return { seen, stderr, exitCode };
+}
+
+describe("bun install .env loading and lifecycle scripts (#31450)", () => {
+  test.concurrent("by default the postinstall script sees the loaded .env* values", async () => {
+    const { seen, stderr, exitCode } = await probeLifecycleEnv([]);
+    expect(seen).toBe("from-dotenv-development");
+    // The loader's banner quotes each file it loaded; the echoed postinstall
+    // command line also mentions `process.env`, hence matching on the quote.
+    expect(stderr).toContain('".env.development"');
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("--no-env-file keeps .env* values out of the postinstall script", async () => {
+    const { seen, stderr, exitCode } = await probeLifecycleEnv(["--no-env-file"]);
+    expect(seen).toBe("undefined");
+    expect(stderr).not.toContain('".env');
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("--no-env-file together with --env-file still loads the explicit file", async () => {
+    const { seen, stderr, exitCode } = await probeLifecycleEnv(["--no-env-file", "--env-file", ".env.custom"]);
+    expect(seen).toBe("from-custom");
+    expect(stderr).toContain('".env.custom"');
+    expect(stderr).not.toContain('".env.development"');
     expect(exitCode).toBe(0);
   });
 });

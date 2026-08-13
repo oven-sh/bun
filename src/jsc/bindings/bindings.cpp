@@ -6223,10 +6223,54 @@ extern "C" [[ZIG_EXPORT(nothrow)]] uint8_t Bun__JSValue__temporalObjectType(JSC:
     return 0;
 }
 
+static Int128 ceilToMultiple(Int128 ns, Int128 unit)
+{
+    Int128 rem = ns % unit;
+    return rem == 0 ? ns : ns - rem + (ns > 0 ? unit : 0);
+}
+
+static Int128 floorToMultiple(Int128 ns, Int128 unit)
+{
+    Int128 rem = ns % unit;
+    return rem == 0 ? ns : ns - rem - (ns < 0 ? unit : 0);
+}
+
+// Every `local±HH:MM` spelling of an instant denotes the same nanosecond
+// (`local - offset`); TOML can only carry the spellings whose local year has
+// four digits. Returns `preferredNs` if that spelling fits; otherwise the
+// offset closest to it whose spelling fits, whole-hour if one does and
+// whole-minute (TOML's granularity, within ±23:59) if not; or nullopt if the
+// instant is a day or more outside 0000..9999 and so has no TOML spelling.
+static std::optional<int64_t> tomlOffsetForInstant(JSC::ISO8601::ExactTime exactTime, int64_t preferredNs)
+{
+    using JSC::ISO8601::ExactTime;
+    constexpr Int128 minLocal = Int128 { -62167219200 } * ExactTime::nsPerSecond; // 0000-01-01T00:00:00
+    constexpr Int128 maxLocal = Int128 { 253402300800 } * ExactTime::nsPerSecond; // +010000-01-01T00:00:00
+    constexpr Int128 maxOffset = ExactTime::nsPerHour * 23 + ExactTime::nsPerMinute * 59;
+
+    Int128 epoch = exactTime.epochNanoseconds();
+    // Whole-minute offsets o with minLocal <= epoch + o < maxLocal.
+    Int128 lo = std::max(ceilToMultiple(minLocal - epoch, ExactTime::nsPerMinute), -maxOffset);
+    Int128 hi = std::min(floorToMultiple(maxLocal - Int128 { 1 } - epoch, ExactTime::nsPerMinute), maxOffset);
+    if (lo > hi)
+        return std::nullopt;
+    Int128 preferred { preferredNs };
+    if (preferred < lo) {
+        Int128 hour = ceilToMultiple(lo, ExactTime::nsPerHour);
+        return static_cast<int64_t>(hour <= hi ? hour : lo);
+    }
+    if (preferred > hi) {
+        Int128 hour = floorToMultiple(hi, ExactTime::nsPerHour);
+        return static_cast<int64_t>(hour >= lo ? hour : hi);
+    }
+    return preferredNs;
+}
+
 // Formats a Temporal object (`temporalType` 1-5 from the classifier above)
-// as a TOML date/time literal into `buf`; returns the length written, or -1
-// if it cannot fit. The ISO fields are formatted directly, dropping the
-// `[u-ca=...]` and `[Time/Zone]` annotations TOML cannot carry.
+// as a TOML date/time literal into `buf`; returns the length written, -1 if
+// it cannot fit, or -2 if the value's year is outside TOML's 0000..9999. The
+// ISO fields are formatted directly, dropping the `[u-ca=...]` and
+// `[Time/Zone]` annotations TOML cannot carry.
 extern "C" [[ZIG_EXPORT(check_slow)]] int32_t Bun__Temporal__toTOMLDateTime(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, uint8_t temporalType, uint8_t* buf, size_t bufLen)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -6237,9 +6281,16 @@ extern "C" [[ZIG_EXPORT(check_slow)]] int32_t Bun__Temporal__toTOMLDateTime(JSC:
 
     WTF::String string;
     switch (temporalType) {
-    case 1:
-        string = JSC::TemporalCore::instantToString(uncheckedDowncast<JSC::TemporalInstant>(cell)->exactTime(), std::nullopt, autoPrecision);
+    case 1: {
+        auto exactTime = uncheckedDowncast<JSC::TemporalInstant>(cell)->exactTime();
+        std::optional<int64_t> offsetNs = tomlOffsetForInstant(exactTime, 0);
+        if (!offsetNs)
+            return -2;
+        if (!*offsetNs)
+            offsetNs = std::nullopt; // `Z`
+        string = JSC::TemporalCore::instantToString(exactTime, offsetNs, autoPrecision);
         break;
+    }
     case 2: {
         auto* dateTime = uncheckedDowncast<JSC::TemporalPlainDateTime>(cell);
         string = JSC::ISO8601::temporalDateTimeToString(dateTime->plainDate(), dateTime->plainTime(), { JSC::Precision::Auto, 0 });
@@ -6253,12 +6304,16 @@ extern "C" [[ZIG_EXPORT(check_slow)]] int32_t Bun__Temporal__toTOMLDateTime(JSC:
         break;
     case 5: {
         auto* zoned = uncheckedDowncast<JSC::TemporalZonedDateTime>(cell);
-        std::optional<int64_t> offsetNs = zoned->getOffsetNanoseconds(globalObject);
+        std::optional<int64_t> zoneOffsetNs = zoned->getOffsetNanoseconds(globalObject);
         RETURN_IF_EXCEPTION(scope, -1);
-        ASSERT(offsetNs);
+        ASSERT(zoneOffsetNs);
         // TOML offsets are `HH:MM` only; a historic sub-minute offset falls
-        // back to the equivalent UTC instant.
-        if (offsetNs && *offsetNs % 60000000000ll != 0)
+        // back to the `Z` spelling of the same instant.
+        bool wholeMinutes = *zoneOffsetNs % 60000000000ll == 0;
+        std::optional<int64_t> offsetNs = tomlOffsetForInstant(zoned->exactTime(), wholeMinutes ? *zoneOffsetNs : 0);
+        if (!offsetNs)
+            return -2;
+        if (!wholeMinutes && !*offsetNs)
             offsetNs = std::nullopt;
         string = JSC::TemporalCore::instantToString(zoned->exactTime(), offsetNs, autoPrecision);
         break;

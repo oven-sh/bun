@@ -820,12 +820,41 @@ describe("TOML.stringify", () => {
     expect(stringifyError({ d: Temporal.PlainDate.from({ year: -1, month: 12, day: 31 }) }).message).toBe(
       "TOML.stringify cannot serialize a Temporal.PlainDate outside years 0000-9999",
     );
-    expect(stringifyError({ i: Temporal.Instant.from("+010000-01-01T00:00:00Z") }).message).toBe(
+    // An instant a day or more outside the range has no `±HH:MM` spelling with a 4-digit year.
+    expect(stringifyError({ i: Temporal.Instant.from("+010000-01-02T00:00:00Z") }).message).toBe(
+      "TOML.stringify cannot serialize a Temporal.Instant outside years 0000-9999",
+    );
+    expect(stringifyError({ i: Temporal.Instant.from("-000001-12-31T00:00:00Z") }).message).toBe(
       "TOML.stringify cannot serialize a Temporal.Instant outside years 0000-9999",
     );
     // The boundary years themselves are fine.
     expect(TOML.stringify({ d: Temporal.PlainDate.from("0000-01-01") })).toBe("d = 0000-01-01\n");
     expect(TOML.stringify({ d: Temporal.PlainDate.from("9999-12-31") })).toBe("d = 9999-12-31\n");
+  });
+
+  test("an instant whose UTC year is outside 0000-9999 is spelled with an offset that keeps the year in range", () => {
+    // These are what `TOML.parse` produces for valid offset date-times at the
+    // year edges; the same instant must stringify, and to the same nanosecond.
+    const cases: [string, string][] = [
+      ["0000-01-01T00:00:00+01:00", "0000-01-01T00:00:00+01:00"],
+      ["0000-01-01T00:20:00.5+01:00", "0000-01-01T00:20:00.5+01:00"],
+      ["0000-01-01T00:00:00+23:59", "0000-01-01T00:00:00+23:59"],
+      ["0000-01-01T00:00:30+23:59", "0000-01-01T00:00:30+23:59"],
+      ["9999-12-31T23:30:00-01:00", "9999-12-31T23:30:00-01:00"],
+      ["9999-12-31T23:59:59.999999999-23:59", "9999-12-31T23:59:59.999999999-23:59"],
+      // In range as UTC: `Z` is preferred over the written offset.
+      ["0000-01-01T01:00:00+01:00", "0000-01-01T00:00:00Z"],
+      ["9999-12-31T23:59:59.999999999+00:00", "9999-12-31T23:59:59.999999999Z"],
+    ];
+    for (const [source, printed] of cases) {
+      const i = TOML.parse(`i = ${source}`).i as Temporal.Instant;
+      expect(TOML.stringify({ i })).toBe(`i = ${printed}\n`);
+      expect((TOML.parse(`i = ${printed}`).i as Temporal.Instant).epochNanoseconds).toBe(i.epochNanoseconds);
+    }
+    // A ZonedDateTime keeps its own offset when that spelling fits, else the same rule applies.
+    const zdt = Temporal.Instant.from("+010000-01-01T00:00:00Z").toZonedDateTimeISO("+02:00");
+    expect(TOML.stringify({ zdt })).toBe("zdt = 9999-12-31T23:00:00-01:00\n");
+    expect((TOML.parse(TOML.stringify({ zdt })).zdt as Temporal.Instant).epochNanoseconds).toBe(zdt.epochNanoseconds);
   });
 
   test("null values throw with the offending key", () => {

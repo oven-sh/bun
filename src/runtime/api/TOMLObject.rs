@@ -537,8 +537,9 @@ impl Stringifier {
                 buf.len(),
             )
         }?;
-        // The expanded-year form (leading `+`/`-`) has a 6-digit year, which
-        // TOML's 4-digit `date-fullyear` cannot carry.
+        // -2: an instant with no four-digit-year spelling. A leading `+`/`-`
+        // is the expanded-year form of a `PlainDate`/`PlainDateTime`, which
+        // TOML's 4-digit `date-fullyear` cannot carry either.
         if len < 1 || !buf[0].is_ascii_digit() {
             return Err(global
                 .throw(format_args!(

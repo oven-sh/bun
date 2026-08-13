@@ -48,8 +48,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         return nullptr;
     }
 
-    // vm.ts already ran validateInt32 on the offsets; like Node's ModuleWrap this
-    // only checks the type. Negative offsets are valid, and -0 fails isAnyInt().
+    // Type check only: vm.ts validated the int32 range, and -0 (valid there) is not an isAnyInt().
     JSValue lineOffsetValue = args.at(3);
     if (!lineOffsetValue.isNumber()) {
         throwArgumentTypeError(*globalObject, scope, 3, "lineOffset"_s, "Module"_s, "Module"_s, "number"_s);
@@ -103,9 +102,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     WTF::String identifier = identifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    // Built the same way vm.Script builds its source: the identifier is the URL
-    // stack frames report, and makeSource converts the zero-based offsets to the
-    // one-based first line/column that SourceCode counts positions from.
+    // As for vm.Script: makeSource turns the zero-based offsets into SourceCode's one-based start position.
     SourceCode sourceCode = makeSource(sourceText, sourceOrigin, SourceTaintedOrigin::Untainted, identifier, startPosition, SourceProviderSourceType::Module);
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);

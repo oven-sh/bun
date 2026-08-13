@@ -2080,10 +2080,8 @@ pub(crate) fn install_isolated_packages(
             task.installer = installer_backref;
         }
 
-        // Both of these have to happen before the first `start_task`: a worker
-        // symlinking a dependent's node_modules reads the global link dir for
-        // name-form `link:<name>` (and cannot take `&mut PackageManager` to
-        // create it), and would create the link for a refused path-form target.
+        // Must precede the first `start_task`: workers symlink `link:` packages
+        // into dependents (`append_store_path`) and cannot create the global dir.
         {
             let mut needs_global_link_dir = false;
             for (pkg_id, res) in pkg_resolutions.iter().enumerate() {

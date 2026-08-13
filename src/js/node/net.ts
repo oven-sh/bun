@@ -397,10 +397,8 @@ function tlsHandshakeError(verifyError) {
   return new ConnResetException("socket hang up");
 }
 
-// True once a TLS engine owns `self`'s bytes (kTLSUpgradeSink); they were
-// handed to it and must not become `data` on `self`. Called after a table's
-// bytesRead accounting, where it has one: node's wrapped socket keeps counting
-// the ciphertext too.
+// Once a TLS layer owns `self`'s bytes they go to it instead of push(). Called
+// after the bytesRead accounting: node's wrapped socket keeps counting them too.
 function sinkUpgradedBytes(self, buffer) {
   const sink = self[kTLSUpgradeSink];
   if (sink === undefined) return false;
@@ -1888,10 +1886,8 @@ Socket.prototype[kCloseRawConnection] = function () {
   connection.destroy();
 };
 
-// upgradeTLS adopted `connection`'s fd for `self`: `tlsHandle` is the decrypting
-// side, `raw` the retired plaintext side, which keeps `connection`'s handlers
-// and is still shown the ciphertext. Nothing is left to do with those bytes,
-// the engine already consumed them, so the sink just drops them.
+// `raw` keeps `connection`'s handlers and is shown the ciphertext `tlsHandle`
+// decrypts; nothing is left to do with it, so `connection` just drops it.
 function discardUpgradedBytes() {}
 function adoptTLSPair(self, connection, [raw, tlsHandle]) {
   connection._handle = raw;

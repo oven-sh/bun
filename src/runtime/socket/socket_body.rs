@@ -3716,12 +3716,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !initial_data.is_empty() {
             bun_opaque::opaque_deref_mut(new_raw.as_ptr()).tls_feed(initial_data.as_slice());
         }
-        // `raw` observes the ciphertext that arrives from here on. Enabled only
-        // now: `initial_data` already went through these same handlers once, on
-        // its way in, so feeding it must not dispatch it to them a second time.
-        // Nothing can have been dispatched between `resume()` and this point,
-        // wire bytes only arrive from the event loop. (`us_socket_t` is an
-        // `opaque_ffi!` ZST, so the deref is safe.)
+        // `raw` sees the ciphertext from here on. Not before: `initial_data`
+        // already went through these handlers once, on its way in. (Wire bytes
+        // only arrive from the event loop, so nothing was missed since `resume()`.)
         bun_opaque::opaque_deref_mut(new_raw.as_ptr()).set_ssl_raw_tap(true);
 
         let array = JSValue::create_empty_array(global, 2)?;

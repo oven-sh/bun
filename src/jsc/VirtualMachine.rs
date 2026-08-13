@@ -68,9 +68,7 @@ pub type ExceptionList = Vec<crate::exception_list::JsException>;
 pub struct EntryPointResult {
     pub value: crate::strong::Optional, // jsc.Strong.Optional
     pub cjs_set_value: bool,
-    /// The run command reports the entry's failure with Node's origin
-    /// `uncaughtException` when set (CJS entry, or a throwing `Module.runMain`
-    /// override), `unhandledRejection` otherwise (ESM).
+    /// CJS entry or throwing runMain override: reported with Node's `uncaughtException` origin, not `unhandledRejection`.
     pub evaluated_as_cjs: bool,
 }
 
@@ -2848,8 +2846,7 @@ impl VirtualMachine {
                     });
                     let promise: *mut JSInternalPromise = match result {
                         Ok(ret) => {
-                            // Calling the original runMain stores a promise; otherwise
-                            // wrap the override's return value.
+                            // Calling the original runMain stores a promise; else wrap the return value.
                             if let Some(stored) = self.pending_internal_promise {
                                 return Ok(stored);
                             }
@@ -2861,10 +2858,7 @@ impl VirtualMachine {
                             .map_err(|_| crate::CrateError::JSError)?
                         }
                         Err(err) => {
-                            // Hand the exception back as the entry point's rejection,
-                            // marked handled so only the caller reports it, with a CJS
-                            // entry's `uncaughtException` origin (Node throws this
-                            // synchronously from its bootstrap).
+                            // Marked handled so only the caller reports the rejection.
                             self.entry_point_result.evaluated_as_cjs = true;
                             let promise = crate::JSPromise::create(global_ref);
                             promise.set_handled();

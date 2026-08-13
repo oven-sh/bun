@@ -2607,7 +2607,7 @@ pub mod parse_worker {
                 Some(source),
                 Loc::EMPTY,
                 format_args!(
-                    "\"{directive}\" requires a framework with server components configured; \"bun build --server-components\" only bundles the server graph"
+                    "\"{directive}\" requires a framework with server components configured; \"bun build --server-components\" does not configure one"
                 ),
             );
             Err(crate::Error::ParserError)

@@ -1774,13 +1774,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// Binds generated helper symbols (runtime helpers, the JSX runtime) to
-    /// `import_path`. This is an `import` statement, except when the module is
-    /// about to be wrapped in Bun's CommonJS function wrapper
-    /// (`wrap_mode == BunCommonjs`): an `import` inside that function body is a
-    /// syntax error, so the helpers are bound with
-    /// `const { a, b } = require(import_path)` instead, like the `bun:test`
-    /// globals are.
+    /// Binds generated helper symbols to `import_path` with an `import`
+    /// statement, or with `const { .. } = require()` when the module body is
+    /// going into the CommonJS wrapper function, where an `import` cannot appear.
     pub(crate) fn generate_import_stmt<I, Sym>(
         &mut self,
         import_path: &'a [u8],

@@ -2994,6 +2994,11 @@ fn transpile_source_code_inner(
                     } else {
                         ResolvedSourceTag::Javascript
                     };
+                    // Mirrors the `is_main` handling on the print path below.
+                    if is_main {
+                        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                        unsafe { (*jsc_vm).has_loaded = true };
+                    }
                     return Ok(ResolvedSource {
                         source_code,
                         source_url: input_specifier.create_if_different(path.text),

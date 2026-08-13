@@ -101,13 +101,22 @@ function tlsSocketWrite(this: TLSProxySocket, chunk: Buffer, encoding: string, c
 }
 
 // _destroy: called when the stream is destroyed (e.g. tlsSocket.destroy(err)).
-// Cleans up the native TLS handle.
+// Cleans up the native TLS handle and takes the raw socket down with it.
 // Mirrors net.ts Socket.prototype._destroy.
 function tlsSocketDestroy(this: TLSProxySocket, err: Error | null, callback: (err?: Error | null) => void) {
-  const h = this._ctx.nativeHandle;
+  const ctx = this._ctx;
+  const h = ctx.nativeHandle;
   if (h) {
     h.close();
-    this._ctx.nativeHandle = null;
+    ctx.nativeHandle = null;
+  }
+  // Closing the native handle only end()s the raw socket (close_notify + FIN), which keeps it
+  // open, and counted by the net.Server that accepted it, until the peer closes as well. Node's
+  // TLSWrap destroys the wrapped socket whenever the TLS socket goes down, so a failed handshake
+  // or a torn-down session releases the connection even if the peer never closes its side.
+  const rawSocket = ctx.rawSocket;
+  if (!rawSocket.destroyed) {
+    rawSocket.destroy();
   }
   // Must invoke pending write callback with error per Writable stream contract
   const writeCb = this._writeCallback;

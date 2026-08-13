@@ -42,6 +42,15 @@
  * process (0xC0000409) — no exception, just gone. Streaming avoids the
  * large native allocation and keeps peak memory flat regardless of
  * tarball size (WebKit is ~200MB).
+ *
+ * ## Scratch in the cache dir
+ *
+ * Prebuilt fetches (and the macOS SDK fetch in macos-sdk.ts) download and
+ * extract next to the cache entry they are producing and publish it with one
+ * rename. Every such path is named by `scratchSuffix()`, and every fetch
+ * starts by calling `removeAbandonedScratch()` on the cache dir, because a
+ * fetch that gets killed never deletes its own scratch and nothing else
+ * would ever look at it again.
  */
 
 import { spawnSync } from "node:child_process";
@@ -118,8 +127,7 @@ export async function tryPrefetchExtracted(dest: string, stampFile: string, expe
   console.log(`using prefetch cache: ${src}`);
   // Stage-then-rename so an interrupted copy doesn't leave a stamped-but-
   // incomplete tree at dest (same publish discipline as fetchPrebuilt).
-  const staging = `${dest}.${process.pid}.prefetch`;
-  await rm(staging, { recursive: true, force: true });
+  const staging = `${dest}${scratchSuffix()}.prefetch`;
   await mkdir(resolve(dest, ".."), { recursive: true });
   try {
     await cp(src, staging, { recursive: true });
@@ -145,6 +153,91 @@ async function chmodRecursiveWritable(root: string): Promise<void> {
   await chmod(root, st.mode | 0o200);
   if (!st.isDirectory()) return;
   for (const e of await readdir(root)) await chmodRecursiveWritable(resolve(root, e));
+}
+
+/**
+ * Suffix for the scratch a fetch writes next to the cache entry it is
+ * producing: `<entry>.<pid>.<start time in base36>.<kind>`. The kinds are
+ * `tar.gz` (fetchPrebuilt's download, which downloadWithRetry writes as
+ * `.tar.gz.<pid>.partial` first), `staging` (the extraction dir of
+ * fetchPrebuilt and ensureMacosSdk) and `prefetch` (tryPrefetchExtracted's
+ * copy). Unique per process so that builds sharing a cacheDir (every checkout
+ * on a machine does) never write into each other's scratch.
+ *
+ * `scratchName` must keep matching everything this produces: it is how
+ * removeAbandonedScratch() tells scratch from the cache entries proper.
+ */
+export function scratchSuffix(): string {
+  return `.${process.pid}.${Date.now().toString(36)}`;
+}
+
+// `{8}`: Date.now() has 8 base36 digits until 2059 (build-abandoned-scratch.test.ts
+// sweeps scratchSuffix() output, so it will say so when that stops holding).
+// Pinning the width keeps a merely version-looking name such as
+// `foo-1.2.3.tar.gz` from passing as scratch.
+const scratchName = /\.\d+\.[0-9a-z]{8}\.(?:tar\.gz(?:\.\d+\.partial)?|staging|prefetch)$/;
+
+/**
+ * Scratch whose own mtime is older than this has been abandoned. Live scratch
+ * never gets anywhere near this old: a download in progress keeps writing to
+ * its `.partial`, and the tarball and the staging/prefetch dirs are touched
+ * when their extraction or copy starts (a directory's mtime moves when its
+ * top-level entries are created, not on deeper writes), so while the fetch is
+ * alive their age is bounded by the length of one extraction or copy: minutes
+ * at most, even for the 2.3 GB debug-asan WebKit tree.
+ */
+export const scratchAbandonedAfterMs = 60 * 60 * 1000;
+
+/**
+ * Delete the scratch that earlier fetches abandoned in `dir`.
+ *
+ * fetchPrebuilt and ensureMacosSdk delete their scratch in a `finally`, which
+ * does not run when the build is killed mid-fetch (ctrl-c, OOM killer,
+ * ENOSPC, the container being stopped), and nothing revisits those names
+ * afterwards: the retry uses a fresh suffix, and once the entry exists (or
+ * its version has moved on) no fetch for it runs at all. In a long-lived
+ * cacheDir the half-extracted WebKit trees, 0.5 to 2.5 GB apiece, pile up
+ * until the disk is full. So every fetch first collects what its
+ * predecessors left behind.
+ *
+ * Staleness is judged by age alone; the pid in the name is deliberately not
+ * consulted. A cacheDir is commonly one host directory mounted into several
+ * containers, each with its own pid namespace, so a sibling container's
+ * in-flight extraction has a pid that looks dead from here, and checking it
+ * would delete that extraction out from under it. Age has no such problem:
+ * the mtimes come from the one filesystem everybody is writing to.
+ *
+ * Best effort: an entry that cannot be removed (a scanner holding one of its
+ * files open on Windows, say) is reported and left for the next fetch.
+ */
+export async function removeAbandonedScratch(dir: string): Promise<void> {
+  // Not there yet (first fetch into this cacheDir) or unreadable: nothing to
+  // collect. If the directory is genuinely broken the fetch itself will say so.
+  const names = await readdir(dir).catch(() => []);
+  const cutoff = Date.now() - scratchAbandonedAfterMs;
+  for (const name of names) {
+    if (!scratchName.test(name)) continue;
+    const path = resolve(dir, name);
+    try {
+      if ((await lstat(path)).mtimeMs > cutoff) continue;
+      console.log(`removing abandoned ${path}`);
+      await rmScratch(path);
+    } catch (err) {
+      // Already gone means a concurrent build's sweep got there first.
+      if (existsSync(path)) console.warn(`could not remove ${path}: ${describeError(err)}`);
+    }
+  }
+}
+
+async function rmScratch(path: string): Promise<void> {
+  try {
+    await rm(path, { recursive: true, force: true });
+  } catch {
+    // An interrupted tryPrefetchExtracted copy still has the prefetch tree's
+    // read-only modes, and nothing can be unlinked from a 555 directory.
+    await chmodRecursiveWritable(path).catch(() => {});
+    await rm(path, { recursive: true, force: true });
+  }
 }
 
 /** Retry schedule for one download. Sizing rationale: "Retry behavior" above. */
@@ -366,6 +459,13 @@ export async function fetchPrebuilt(
   rmPaths: string[] = [],
 ): Promise<void> {
   const stampPath = resolve(dest, ".identity");
+  const destParent = resolve(dest, "..");
+
+  // Before the short-circuit: ninja re-runs this edge whenever fetch-cli.ts
+  // is newer than the stamp (every fresh checkout against a warm shared
+  // cache), and each of those runs is a chance to collect what killed
+  // fetches left in the cache, at the cost of one readdir.
+  await removeAbandonedScratch(destParent);
 
   // ─── Short-circuit: already at this identity? ───
   if (existsSync(stampPath)) {
@@ -382,12 +482,9 @@ export async function fetchPrebuilt(
 
   console.log(`fetching ${url}`);
 
-  // Process-unique temp paths so concurrent builds (shared cacheDir across
-  // checkouts) can't stomp each other's download/extraction.
-  const suffix = `.${process.pid}.${Date.now().toString(36)}`;
+  const suffix = scratchSuffix();
 
   // ─── Download ───
-  const destParent = resolve(dest, "..");
   await mkdir(destParent, { recursive: true });
   const tarballPath = `${dest}${suffix}.tar.gz`;
   try {

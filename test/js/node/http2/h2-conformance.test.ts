@@ -1008,11 +1008,11 @@ describe("request header and body framing (RFC 9113 §8.1)", () => {
   });
 });
 
-describe("sendTrailers() with a block that encodes to no fields (RFC 9113 §8.1)", () => {
-  // An empty array value puts no field on the wire. When that leaves nothing at all, node
-  // (Http2Stream::SubmitTrailers) ends the stream with the empty END_STREAM DATA frame that
-  // sendTrailers({}) also produces, instead of a HEADERS frame carrying a zero-length block,
-  // which the peer reports as a 'trailers' event with no headers in it.
+describe.concurrent("sendTrailers() with a block that encodes to no fields (RFC 9113 §8.1)", () => {
+  // An empty array value puts no field on the wire (nor does an empty name). When that leaves
+  // nothing at all, node (Http2Stream::SubmitTrailers) ends the stream with the empty END_STREAM
+  // DATA frame that sendTrailers({}) also produces, instead of a HEADERS frame carrying a
+  // zero-length block, which the peer reports as a 'trailers' event with no headers in it.
   const END_STREAM = 0x1;
   const END_HEADERS = 0x4;
 
@@ -1056,16 +1056,22 @@ describe("sendTrailers() with a block that encodes to no fields (RFC 9113 §8.1)
     }
   }
 
-  test.each([[{ "x-none": [] }], [{ "x-none": [], "content-type": [] }], [{}]])(
-    "server: %j ends the response with an empty DATA frame and no trailer HEADERS frame",
-    async trailers => {
-      expect(await serverSends(trailers)).toEqual({
-        headersFlags: [END_HEADERS], // the response block; it cannot carry END_STREAM with trailers pending
-        endStream: [{ type: FrameType.DATA, flags: END_STREAM, length: 0 }],
-        sentTrailers: trailers,
-      });
-    },
-  );
+  test.each([
+    [{ "x-none": [] }],
+    // content-type is a single-value field: its bookkeeping runs for the empty array but must
+    // not count as a field either.
+    [{ "x-none": [], "content-type": [] }],
+    [{ "": "x" }],
+    // {} is short-circuited to noTrailers() in JS before the encoder runs; it pins that the two
+    // routes put the same frame on the wire.
+    [{}],
+  ])("server: %j ends the response with an empty DATA frame and no trailer HEADERS frame", async trailers => {
+    expect(await serverSends(trailers)).toEqual({
+      headersFlags: [END_HEADERS], // the response block; it cannot carry END_STREAM with trailers pending
+      endStream: [{ type: FrameType.DATA, flags: END_STREAM, length: 0 }],
+      sentTrailers: trailers,
+    });
+  });
 
   test("server: one field next to an empty array still goes out as a trailer HEADERS frame", async () => {
     const result = await serverSends({ "x-none": [], "x-sent": "1" });

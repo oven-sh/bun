@@ -671,8 +671,8 @@ static void noteBindingBeforeOverride(Zig::GlobalObject* globalObject, ModuleMoc
     RETURN_IF_EXCEPTION(scope, void());
     if (!source)
         return;
-    // If this test already mocked `default` too, the live slot holds the mock; the log has the real object.
-    JSValue sourceValue = source->value;
+    // The live slot may hold a spy or (if this test mocked `default` too) a mock; the log then has the real object.
+    JSValue sourceValue = Bun::unwrapSpyOriginal(source->value);
     if (const auto* loggedDefault = log.findBinding(source->record, source->localName))
         sourceValue = loggedDefault->original.get();
     JSObject* sourceObject = sourceValue ? sourceValue.getObject() : nullptr;

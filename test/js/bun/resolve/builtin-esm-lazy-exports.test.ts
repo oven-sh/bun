@@ -292,35 +292,44 @@ test.concurrent("spyOn and mock.module on an imported builtin", async () => {
   expect(exitCode).toBe(0);
 });
 
-test.concurrent(
-  "mocking default together with a lazy export still restores the export from the real object",
-  async () => {
-    const { stderr, exitCode } = await run(
-      {
-        "lazy.test.ts": `
-        import { expect, mock, test } from "bun:test";
+test.concurrent("a lazy export is restored from the real object even while default is replaced", async () => {
+  const { stderr, exitCode } = await run(
+    {
+      "lazy.test.ts": `
+        import { expect, mock, spyOn, test } from "bun:test";
         import * as ns from "node:fs";
-        import { fs, kinds } from "./helper.mjs";
+        import { kinds } from "./helper.mjs";
+        const realFs = ns.default;
 
-        test("default is overridden before ReadStream is looked at", () => {
+        test("by the same mock.module() call, which overrides default first", () => {
           expect(kinds()).toEqual(${JSON.stringify(kinds())});
           mock.module("node:fs", () => ({ default: { notFs: true }, ReadStream: "mocked" }));
           expect(ns.default).toEqual({ notFs: true });
           expect(ns.ReadStream).toBe("mocked");
           mock.restore();
-          expect(ns.default).toBe(fs);
-          expect(ns.ReadStream).toBe(fs.ReadStream);
+          expect(ns.default).toBe(realFs);
+          expect(ns.ReadStream).toBe(realFs.ReadStream);
           expect(kinds()).toEqual(${JSON.stringify(kinds("ReadStream"))});
         });
+
+        test("by an earlier spyOn(ns, 'default')", () => {
+          spyOn(ns, "default");
+          expect(ns.default).not.toBe(realFs);
+          mock.module("node:fs", () => ({ WriteStream: "mocked" }));
+          expect(ns.WriteStream).toBe("mocked");
+          mock.restore();
+          expect(ns.default).toBe(realFs);
+          expect(ns.WriteStream).toBe(realFs.WriteStream);
+          expect(kinds()).toEqual(${JSON.stringify(kinds("ReadStream", "WriteStream"))});
+        });
       `,
-      },
-      ["test", "lazy.test.ts"],
-    );
-    expect(stderr).toContain(" 1 pass");
-    expect(stderr).toContain(" 0 fail");
-    expect(exitCode).toBe(0);
-  },
-);
+    },
+    ["test", "lazy.test.ts"],
+  );
+  expect(stderr).toContain(" 2 pass");
+  expect(stderr).toContain(" 0 fail");
+  expect(exitCode).toBe(0);
+});
 
 test.concurrent('"bun": re-exports construct the properties that get bound, not the rest of the object', async () => {
   const result = await runEntry(
@@ -527,14 +536,12 @@ test.concurrent('"bun": a throwing getter fails mock.restore() and keeps the moc
   expect(exitCode).toBe(0);
 });
 
-test.concurrent(
-  '"bun": a getter that itself calls mock.module() and mock.restore() does not derail the restore',
-  async () => {
-    const { stderr, exitCode } = await run(
-      {
-        "reexport.mjs": bunReexport,
-        "dep.mjs": `export const value = "real dep";`,
-        "lazy.test.ts": `
+test.concurrent('"bun": a getter that itself mocks and restores does not derail the restore', async () => {
+  const { stderr, exitCode } = await run(
+    {
+      "reexport.mjs": bunReexport,
+      "dep.mjs": `export const value = "real dep";`,
+      "lazy.test.ts": `
         import { expect, mock, test } from "bun:test";
         import * as dep from "./dep.mjs";
 
@@ -562,14 +569,13 @@ test.concurrent(
           expect(dep.value).toBe("real dep");
         });
       `,
-      },
-      ["test", "lazy.test.ts"],
-    );
-    expect(stderr).toContain(" 1 pass");
-    expect(stderr).toContain(" 0 fail");
-    expect(exitCode).toBe(0);
-  },
-);
+    },
+    ["test", "lazy.test.ts"],
+  );
+  expect(stderr).toContain(" 1 pass");
+  expect(stderr).toContain(" 0 fail");
+  expect(exitCode).toBe(0);
+});
 
 test.concurrent("node:process: linking constructs the linked bindings, not the stdio streams", async () => {
   const result = await runEntry(`

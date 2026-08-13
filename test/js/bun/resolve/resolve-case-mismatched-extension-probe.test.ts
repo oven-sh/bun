@@ -230,4 +230,26 @@ describe("extensionless import with case-differing sibling (#22686)", () => {
     expect(lines[1]).toBe(join(String(dir), "Todos.tsx"));
     expect(exitCode).toBe(0);
   });
+
+  // A specifier ending in a separator still goes through the js -> ts rewrite. Deriving the cached
+  // path from the probed spelling gave "<dir>/ffoo.ts" there (basename offset off by one) and, as
+  // the entry is shared, broke every later import of foo.ts in the process too.
+  test("js->ts rewrite of a specifier with a trailing slash caches the entry's real path", async () => {
+    using dir = tempDir("22686-trailing-slash", {
+      "foo.ts": `export const which = "foo-ts";`,
+      "entry.ts": `
+        const dir = import.meta.dir;
+        console.log(Bun.resolveSync("./foo.js/", dir));
+        console.log(Bun.resolveSync("./foo.js", dir));
+        console.log(Bun.resolveSync("./foo.ts", dir));
+        const { which } = await import("./foo.ts");
+        console.log(which);
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "entry.ts");
+    expect(stderr).toBe("");
+    const fooTs = join(String(dir), "foo.ts");
+    expect(stdout.trim().split("\n")).toEqual([fooTs, fooTs, fooTs, "foo-ts"]);
+    expect(exitCode).toBe(0);
+  });
 });

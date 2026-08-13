@@ -1378,7 +1378,7 @@ pub mod parse_worker {
         resolver: *mut Resolver,
         bump: &Bump,
         file_path: &mut Fs::Path,
-        _loader: Loader,
+        loader: Loader,
     ) -> core::result::Result<CacheEntry, AnyError> {
         match &task.contents_or_fd {
             ContentsOrFd::Fd { dir, file } => 'brk: {
@@ -1458,6 +1458,7 @@ pub mod parse_worker {
                     false,
                     contents_file.unwrap_valid(),
                     read_arena,
+                    Fs::BomHandling::for_loader(loader),
                 ) {
                     Ok(e) => {
                         // `bun_resolver::cache::Entry` ↔ `crate::cache::Entry`

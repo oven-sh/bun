@@ -126,6 +126,37 @@ impl Loader {
         )
     }
 
+    /// Loaders that pass the file's bytes through as-is (copied to the output
+    /// directory, content-hashed, base64/data-URL encoded) instead of parsing
+    /// them as text. Reading a file for one of these must not rewrite a
+    /// BOM-shaped prefix; see `bun_resolver::fs::BomHandling`.
+    pub fn is_binary(self) -> bool {
+        match self {
+            Loader::File
+            | Loader::Wasm
+            | Loader::Napi
+            | Loader::Sqlite
+            | Loader::SqliteEmbedded
+            | Loader::Base64
+            | Loader::Dataurl => true,
+            Loader::Jsx
+            | Loader::Js
+            | Loader::Ts
+            | Loader::Tsx
+            | Loader::Css
+            | Loader::Json
+            | Loader::Jsonc
+            | Loader::Toml
+            | Loader::Yaml
+            | Loader::Json5
+            | Loader::Xml
+            | Loader::Html
+            | Loader::Md
+            | Loader::Text
+            | Loader::Bunsh => false,
+        }
+    }
+
     pub fn handles_empty_file(self) -> bool {
         matches!(self, Loader::Wasm | Loader::File | Loader::Text)
     }

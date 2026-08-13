@@ -1733,7 +1733,7 @@ pub mod fs {
     /// `bun_bundler::cache`) routes through ONE body instead of inlining a
     /// subset of `readFileWithHandleAndAllocator`.
     pub use super::fs_full::{
-        BOM, PathContentsPair, read_file_contents, read_file_contents_in_arena,
+        BOM, BomHandling, PathContentsPair, read_file_contents, read_file_contents_in_arena,
         read_file_with_handle_impl,
     };
 
@@ -2318,6 +2318,10 @@ pub mod cache {
         /// drops instead of landing in the worker thread's default mimalloc
         /// heap (which is never destroyed). `None` keeps the global-heap
         /// `Contents::Owned(Vec<u8>)` path.
+        ///
+        /// `bom_handling`: text that is about to be parsed wants
+        /// [`fs_mod::BomHandling::Convert`]; files emitted byte-for-byte (the
+        /// bundler's binary loaders) must pass [`fs_mod::BomHandling::Keep`].
         pub fn read_file_with_allocator(
             &mut self,
             _fs: &mut fs_mod::FileSystem,
@@ -2326,6 +2330,7 @@ pub mod cache {
             use_shared_buffer: bool,
             _file_handle: Option<Fd>,
             arena: Option<&bun_alloc::Arena>,
+            bom_handling: fs_mod::BomHandling,
         ) -> crate::CrateResult<Entry> {
             let rfs = &_fs.fs;
 
@@ -2389,7 +2394,12 @@ pub mod cache {
                 // are reclaimed by `mi_heap_destroy` instead of pinning a
                 // segment in the worker thread's default heap.
                 (false, Some(arena)) => {
-                    match fs_mod::read_file_contents_in_arena(file_handle, path, arena) {
+                    match fs_mod::read_file_contents_in_arena(
+                        file_handle,
+                        path,
+                        arena,
+                        bom_handling,
+                    ) {
                         Ok((_, 0)) => Contents::Empty,
                         Ok((ptr, len)) => Contents::Arena { ptr, len },
                         Err(err) => {
@@ -2406,8 +2416,14 @@ pub mod cache {
                 }
                 _ => {
                     let shared = self.shared_buffer();
-                    match fs_mod::read_file_contents(file_handle, use_shared_buffer, shared, stream)
-                        .map(Contents::from)
+                    match fs_mod::read_file_contents(
+                        file_handle,
+                        use_shared_buffer,
+                        shared,
+                        stream,
+                        bom_handling,
+                    )
+                    .map(Contents::from)
                     {
                         Ok(c) => c,
                         Err(err) => {

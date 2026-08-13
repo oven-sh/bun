@@ -761,6 +761,15 @@ static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
     return record->moduleEnvironmentMayBeNull() != nullptr;
 }
 
+// loadModuleSync() without fetch parameters loads the (key, JavaScript) entry.
+// registryEntry() would also match the JSON/HostDefined entry that an
+// `import ... with { type }` of the same file registers, which that load
+// leaves untouched.
+static JSC::ModuleRegistryEntry* javaScriptRegistryEntry(JSC::JSModuleLoader* loader, const JSC::Identifier& key)
+{
+    return loader->moduleMap().get({ key.impl(), JSC::ScriptFetchParameters::Type::JavaScript }).get();
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -825,32 +834,29 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
 
     auto* loader = globalObject->moduleLoader();
     bool entryExistedBefore = false;
-    // fetchCommonJSModule() already parsed the file into the registry, so the
-    // record to evaluate is normally known now. Keep it rather than re-reading
-    // the registry after the load: the module's top level (or a dependency's)
-    // may `delete require.cache[...]` while it runs, and like a static import
-    // this load still returns the instance it evaluated. The eviction only
-    // affects the next load.
-    JSC::AbstractModuleRecord* record = nullptr;
-    if (auto* entry = loader->registryEntry(key)) {
+    if (auto* existing = loader->registryEntry(key)) {
         entryExistedBefore = true;
-        record = entry->record();
-        if (isModuleEvaluated(record)) {
-            auto* ns = record->getModuleNamespace(globalObject, false);
+        if (isModuleEvaluated(existing->record())) {
+            auto* ns = existing->record()->getModuleNamespace(globalObject, false);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(ns);
         }
     }
 
+    // Hold the entry the load below evaluates instead of looking it up again
+    // afterwards: the module's own top level may `delete require.cache[key]`,
+    // which removes the entry from the registry while its record is still
+    // being evaluated. The entry cell itself keeps pointing at that record.
+    JSC::ModuleRegistryEntry* entry = javaScriptRegistryEntry(loader, key);
+
     JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Builtin ES modules and module mocks arrive without a parsed entry; the
-    // load itself creates it.
-    if (!record) {
-        if (auto* entry = loader->registryEntry(key))
-            record = entry->record();
-    }
+    // Builtin ES modules and module mocks reach this point before any entry
+    // exists; the load creates it.
+    if (!entry)
+        entry = javaScriptRegistryEntry(loader, key);
+    JSC::AbstractModuleRecord* record = entry ? entry->record() : nullptr;
 
     switch (promise->status()) {
     case JSPromise::Status::Fulfilled:
@@ -2969,8 +2975,8 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, Encod
     return JSValue::encode(stderrValue);
 }
 
-// The CommonJS `require()` machinery (`@requireESM`, `@loadEsmIntoCjs`,
-// `@internalRequire`) is only ever reached from inside CommonJS modules. A
+// The CommonJS `require()` machinery (`@requireESM`, `@requireESMIntoModule`,
+// `@loadEsmIntoCjs`, `@internalRequire`) is only ever reached from inside CommonJS modules. A
 // process whose entry point is ESM (the common case for short scripts) never
 // touches it, so parsing/compiling these builtins during global object setup is
 // pure startup overhead. Register lazy custom-value getters instead: the first
@@ -2978,8 +2984,8 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, Encod
 // accessor with the plain builtin function for subsequent fast access.
 //
 // Note: these private names are only consumed via `op_get_from_scope` from
-// builtin JS (`$requireESM`, `$loadEsmIntoCjs`, `$internalRequire`), never via
-// `getDirect`, so a custom accessor is a transparent substitute. (`@create*ReadableStream`
+// builtin JS (`$requireESM`, `$requireESMIntoModule`, `$loadEsmIntoCjs`, `$internalRequire`),
+// never via `getDirect`, so a custom accessor is a transparent substitute. (`@create*ReadableStream`
 // next to these *do* have `getDirect` callers and must stay eager.)
 #define BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getterName, codeGenerator, attributes)                                           \
     JSC_DEFINE_CUSTOM_GETTER(getterName, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue, PropertyName name))            \
@@ -2990,6 +2996,7 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, Encod
         return JSValue::encode(fn);                                                                                            \
     }
 BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getRequireESMBuiltin, commonJSRequireESMCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
+BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getRequireESMIntoModuleBuiltin, commonJSRequireESMIntoModuleCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
 BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getLoadEsmIntoCjsBuiltin, commonJSLoadEsmIntoCjsCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
 BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getInternalRequireBuiltin, commonJSInternalRequireCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
 #undef BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER
@@ -3171,10 +3178,11 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     // i've noticed doing it as is will work somewhat but getDirect() wont be able to find them
 
     putDirectBuiltinFunction(vm, this, builtinNames.createFIFOPrivateName(), fifoCreateFIFOCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    // These three are CommonJS-only and never reached on an ESM startup path; install
+    // These four are CommonJS-only and never reached on an ESM startup path; install
     // lazy getters so their source isn't parsed during global object construction.
-    // (See getRequireESMBuiltin / getLoadEsmIntoCjsBuiltin / getInternalRequireBuiltin above.)
+    // (See getRequireESMBuiltin / getRequireESMIntoModuleBuiltin / getLoadEsmIntoCjsBuiltin / getInternalRequireBuiltin above.)
     putDirectCustomAccessor(vm, builtinNames.requireESMPrivateName(), JSC::CustomGetterSetter::create(vm, getRequireESMBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
+    putDirectCustomAccessor(vm, builtinNames.requireESMIntoModulePrivateName(), JSC::CustomGetterSetter::create(vm, getRequireESMIntoModuleBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
     putDirectCustomAccessor(vm, builtinNames.loadEsmIntoCjsPrivateName(), JSC::CustomGetterSetter::create(vm, getLoadEsmIntoCjsBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
     putDirectCustomAccessor(vm, builtinNames.internalRequirePrivateName(), JSC::CustomGetterSetter::create(vm, getInternalRequireBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
 

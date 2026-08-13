@@ -106,33 +106,8 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 
   // -1 means we need to lookup the module from the ESM registry.
   if (out === -1) {
-    // Keep the namespace $requireESM returns instead of looking the registry up
-    // again: the module may have deleted itself from require.cache while evaluating.
-    let namespace: any;
-    try {
-      namespace = $requireESM(id);
-    } catch (exception) {
-      // Since the ESM code is mostly JS, we need to handle exceptions here.
-      $requireMap.$delete(id);
-      throw exception;
-    }
-
-    // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
-    // Various libraries expect __esModule to be set when using ESM from require().
-    // We don't want to always inject the __esModule export into every module,
-    // And creating an Object wrapper causes the actual exports to not be own properties.
-    // So instead of either of those, we make it so that the __esModule property can be set at runtime.
-    // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
-    // https://github.com/oven-sh/bun/issues/14411
-    if (namespace.__esModule === undefined) {
-      try {
-        namespace.__esModule = true;
-      } catch {
-        // https://github.com/oven-sh/bun/issues/17816
-      }
-    }
-
-    return (mod.exports = namespace["module.exports"] ?? namespace);
+    $requireESMIntoModule.$call(mod, id);
+    return mod.exports;
   }
 
   const c = $evaluateCommonJSModule(mod, this);
@@ -312,24 +287,26 @@ function loadEsmIntoCjs__dead(resolvedSpecifier: string) {
 }
 */
 
+// Returns the raw namespace (this is also import.meta.bakeBuiltin); the
+// require()-specific shaping of it lives in requireESMIntoModule.
 $visibility = "Private";
 export function requireESM(this, resolved: string) {
   var exports = $esmNamespaceForCjs(resolved);
   if (exports === undefined) {
     exports = $loadEsmIntoCjs(resolved);
   }
-  if (exports === undefined) {
-    throw new TypeError(`require() failed to evaluate module "${resolved}". This is an internal consistency error.`);
-  }
   return exports;
 }
 
-export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: string) {
+// `this` is the CommonJS module object standing in for the ES module `id`.
+// Called by require() and, through C++, by the builtin Module._extensions loaders.
+$visibility = "Private";
+export function requireESMIntoModule(this: JSCommonJSModule, id: string) {
   $assert(this);
-  // As in overridableRequire, the module may have deleted itself from
-  // require.cache while evaluating, so don't look the namespace up again.
   let namespace: any;
   try {
+    // Use the namespace this call returns rather than looking the registry up
+    // again: the module may have deleted itself from require.cache while evaluating.
     namespace = $requireESM(id);
   } catch (exception) {
     // Since the ESM code is mostly JS, we need to handle exceptions here.

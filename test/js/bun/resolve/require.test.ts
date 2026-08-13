@@ -161,8 +161,8 @@ describe.concurrent("require(esm) of a module evicted from require.cache during 
     expect(exitCode).toBe(0);
   });
 
-  // A user-wrapped require.extensions loader reaches the ESM namespace through
-  // Module._extensions (requireESMFromHijackedExtension) rather than require().
+  // A user-wrapped require.extensions loader goes through the builtin
+  // Module._extensions loader, which assigns module.exports itself.
   it("sets module.exports when loaded through a wrapped require.extensions loader", async () => {
     using dir = tempDir("require-esm-self-evict-extensions", {
       "self-evict.mjs": selfEvicting,
@@ -178,7 +178,7 @@ describe.concurrent("require(esm) of a module evicted from require.cache during 
         const second = require("./self-evict.mjs");
         console.log(JSON.stringify({
           wrapperCalls,
-          first: { x: first.x, evaluation: first.evaluation },
+          first: { x: first.x, evaluation: first.evaluation, __esModule: first.__esModule },
           cachedAfterFirst,
           second: { x: second.x, evaluation: second.evaluation },
         }));
@@ -188,9 +188,115 @@ describe.concurrent("require(esm) of a module evicted from require.cache during 
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
       wrapperCalls: 2,
-      first: { x: 1, evaluation: 1 },
+      first: { x: 1, evaluation: 1, __esModule: true },
       cachedAfterFirst: false,
       second: { x: 1, evaluation: 2 },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Here the registry entry exists before require() is called but has no
+  // module record yet: an import() graph asked a plugin for the file and the
+  // plugin has not answered. require() has to finish that entry (record created
+  // during the load) and still return it after the module removes the entry.
+  it("returns the namespace when the entry was still being fetched by an import() graph", async () => {
+    using dir = tempDir("require-esm-self-evict-while-fetching", {
+      "side.mjs": selfEvicting,
+      "outer.mjs": /* js */ `
+        export { x as sideX } from "./side.mjs";
+      `,
+      "entry.cjs": /* js */ `
+        const { readFileSync } = require("node:fs");
+        const importAskedForSide = Promise.withResolvers();
+        let releaseImportFetch;
+        Bun.plugin({
+          name: "hold the import() graph's fetch of side.mjs",
+          setup(build) {
+            build.onLoad({ filter: /side\\.mjs$/ }, args => {
+              const source = { contents: readFileSync(args.path, "utf8"), loader: "js" };
+              // Only the first load (the import() graph) is held back; require() gets its source synchronously.
+              if (releaseImportFetch) return source;
+              const { promise, resolve } = Promise.withResolvers();
+              releaseImportFetch = () => resolve(source);
+              importAskedForSide.resolve();
+              return promise;
+            });
+          },
+        });
+
+        (async () => {
+          const outerImport = import("./outer.mjs");
+          await importAskedForSide.promise;
+          releaseImportFetch();
+          // The loader turns the released source into a module record a few
+          // microtasks later; require() on every hop until then covers the hop
+          // on which require() itself has to finish the entry.
+          let required;
+          const errors = [];
+          while (required === undefined && errors.length < 32) {
+            await null;
+            try {
+              required = require("./side.mjs");
+            } catch (error) {
+              errors.push(error.message);
+              if (!error.message.includes("async module")) break;
+            }
+          }
+          const outer = await outerImport;
+          console.log(JSON.stringify({
+            required: required && { x: required.x },
+            outerSideX: outer.sideX,
+            unexpectedErrors: errors.filter(message => !message.includes("async module")),
+          }));
+        })();
+      `,
+    });
+    const { stdout, stderr, exitCode } = await bunRun(path.join(dir, "entry.cjs"));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      required: { x: 1 },
+      outerSideX: 1,
+      unexpectedErrors: [],
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
+// `import "./dep.js" with { type: "js" }` registers dep.js under a separate,
+// attribute-typed registry entry. require() of the same file loads and
+// evaluates the plain entry, and must report that one: not the attribute-typed
+// instance, whose evaluation failed here.
+describe.concurrent("require(esm) of a file that an import with a type attribute already registered", () => {
+  it("returns the instance require() evaluated", async () => {
+    using dir = tempDir("require-esm-attribute-typed-entry", {
+      "dep.js": /* js */ `
+        if (!globalThis.depThrewOnce) {
+          globalThis.depThrewOnce = true;
+          throw new Error("dep.js failed on purpose");
+        }
+        export const v = "second evaluation";
+      `,
+      "graph.mjs": /* js */ `
+        import { v } from "./dep.js" with { type: "js" };
+        export { v };
+      `,
+      "entry.cjs": /* js */ `
+        import("./graph.mjs").then(
+          () => {
+            throw new Error("graph.mjs was expected to fail");
+          },
+          importError => {
+            const required = require("./dep.js");
+            console.log(JSON.stringify({ importError: importError.message, required: required.v }));
+          },
+        );
+      `,
+    });
+    const { stdout, stderr, exitCode } = await bunRun(path.join(dir, "entry.cjs"));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      importError: "dep.js failed on purpose",
+      required: "second evaluation",
     });
     expect(exitCode).toBe(0);
   });

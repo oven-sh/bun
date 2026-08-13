@@ -385,6 +385,7 @@ declare function $redirect(): TODO;
 declare function $relative(): TODO;
 declare function $require(): TODO;
 declare function $requireESM(path: string): any;
+declare function $requireESMIntoModule(this: JSCommonJSModule, id: string): void;
 declare const $requireMap: Map<string, JSCommonJSModule>;
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
 declare function $resolve(name: string, from: string): Promise<string>;

@@ -167,6 +167,7 @@ using namespace JSC;
     macro(removeAbortAlgorithmFromSignal) \
     macro(require) \
     macro(requireESM) \
+    macro(requireESMIntoModule) \
     macro(requireMap) \
     macro(requireNativeModule) \
     macro(resolveSync) \

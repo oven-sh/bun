@@ -362,7 +362,6 @@ describe("?raw", () => {
   }
 });
 
-
 describe("unsupported import attributes (#28510)", () => {
   test.concurrent("dynamic import with unsupported attribute throws ERR_IMPORT_ATTRIBUTE_UNSUPPORTED", async () => {
     using dir = tempDir("28510", {

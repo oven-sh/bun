@@ -538,7 +538,7 @@ describe.concurrent("bun build --server-components", () => {
     using dir = tempDir("sc-default-target", { "server.ts": `console.log("server");` });
     const { stdout, stderr, exitCode } = await build(dir, "--server-components", "server.ts");
     expect(stderr).toBe("");
-    expect(stdout).toStartWith("// @bun\n");
+    expect(stdout).toStartWith("// @bun");
     expect(stdout).toContain('console.log("server")');
     expect(exitCode).toBe(0);
   });

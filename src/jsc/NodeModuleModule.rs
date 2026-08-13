@@ -200,21 +200,43 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
 }
 
 /// Both arguments accept either a path or a `file:` URL (`import.meta.url`,
-/// `import.meta.resolve()`).
+/// `import.meta.resolve()`, or a `URL`, which arrives here as its href). A URL
+/// of any other scheme is rejected the way `fileURLToPath()` rejects it.
 fn location_to_path(global: &JSGlobalObject, location: BunString) -> JsResult<OwnedString> {
-    if !location.has_prefix_comptime(b"file:") {
-        return Ok(OwnedString::new(location.dupe_ref()));
+    if location.has_prefix_comptime(b"file:") {
+        let path = OwnedString::new(jsc::URL::path_from_file_url(location));
+        if path.get().is_dead() {
+            return Err(global
+                .err(
+                    jsc::ErrorCode::INVALID_URL,
+                    format_args!("Invalid URL: {}", location),
+                )
+                .throw());
+        }
+        return Ok(path);
     }
-    let path = OwnedString::new(jsc::URL::path_from_file_url(location));
-    if path.get().is_dead() {
+    if has_url_scheme(location.to_utf8().slice()) {
         return Err(global
             .err(
-                jsc::ErrorCode::INVALID_URL,
-                format_args!("Invalid URL: {}", location),
+                jsc::ErrorCode::INVALID_URL_SCHEME,
+                format_args!("The URL must be of scheme file"),
             )
             .throw());
     }
-    Ok(path)
+    Ok(OwnedString::new(location.dupe_ref()))
+}
+
+/// `https://`, `data:`, `node:` and the like. A scheme must be at least two
+/// characters so that a Windows drive letter (`C:\`) is still a path.
+fn has_url_scheme(location: &[u8]) -> bool {
+    let Some(colon) = strings::index_of_char_usize(location, b':') else {
+        return false;
+    };
+    colon >= 2
+        && location[0].is_ascii_alphabetic()
+        && location[1..colon]
+            .iter()
+            .all(|&c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.'))
 }
 
 pub fn stat(path: &[u8]) -> i32 {

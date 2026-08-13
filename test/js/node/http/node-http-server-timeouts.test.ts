@@ -235,8 +235,8 @@ describe("keepAliveTimeout idle expiry ignores setSystemTime()", () => {
   const KEEP_ALIVE_MS = 500;
   // How long the server sits on the second request before answering it. The
   // socket timer armed by the first response keeps counting down meanwhile,
-  // so it fires this much into the second response's idle period and the
-  // expiry has to be settled from the recorded mark.
+  // so it fires KEEP_ALIVE_MS - SLOW_RESPONSE_MS (200ms) into the second
+  // response's idle period and the expiry has to be settled from the mark.
   const SLOW_RESPONSE_MS = 300;
   const HOUR_MS = 60 * 60 * 1000;
 
@@ -255,8 +255,10 @@ describe("keepAliveTimeout idle expiry ignores setSystemTime()", () => {
     const socket = net.connect(port, "127.0.0.1");
     try {
       socket.setNoDelay(true);
-      socket.on("error", () => {});
-      const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+      // An idle keep-alive close is a clean FIN; a reset or any other error
+      // would make this probe fail instead of timing an unrelated close.
+      const { promise: closed, resolve: onClosed, reject: onSocketError } = Promise.withResolvers<void>();
+      socket.on("error", onSocketError);
       socket.on("close", () => onClosed());
 
       let received = "";

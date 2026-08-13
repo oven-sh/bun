@@ -3477,9 +3477,11 @@ describe("connects to the host of a URL whose authority contains an @", () => {
   // was present from the position of the first colon, so `user@host:port`
   // (credentials without a password, plus an explicit port) was connected to
   // as if `user@host` were the hostname. An @ outside the authority (#1390)
-  // must still not be mistaken for userinfo.
+  // must still not be mistaken for userinfo, and the Host header the server
+  // sees must be the bare host:port in every case.
   it.each([
     ["user@", "/creds"],
+    ["user@", ""],
     ["user:pw@", "/creds"],
     [":pw@", "/creds"],
     ["", "/@/path"],
@@ -3488,12 +3490,12 @@ describe("connects to the host of a URL whose authority contains an @", () => {
     using server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
-      fetch: req => new Response(new URL(req.url).pathname),
+      fetch: req => new Response(`${req.headers.get("host")} ${new URL(req.url).pathname}`),
     });
     const res = await fetch(`http://${userinfo}127.0.0.1:${server.port}${pathAndQuery}`, { keepalive: false });
-    expect({ status: res.status, pathname: await res.text() }).toEqual({
+    expect({ status: res.status, hostAndPath: await res.text() }).toEqual({
       status: 200,
-      pathname: new URL(pathAndQuery, "http://x").pathname,
+      hostAndPath: `127.0.0.1:${server.port} ${new URL(pathAndQuery, "http://x").pathname}`,
     });
   });
 });

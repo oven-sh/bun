@@ -2830,28 +2830,23 @@ impl<'a> Transpiler<'a> {
             return Ok(None);
         };
         // `resolver::Result.path_pair` carries `bun_resolver::fs::Path<'_>`;
-        // downstream `linker.link`/`get_hashed_filename` and `OutputFile.src_path`
-        // expect `bun_paths::fs::Path<'_>` / `bun_paths::fs::Path<'static>`. Re-init via
+        // downstream `linker.link` and `OutputFile.src_path` expect
+        // `bun_paths::fs::Path<'_>` / `bun_paths::fs::Path<'static>`. Re-init via
         // `text` (the only field both shapes share semantically).
         let file_path_text: &'static [u8] = crate::linker::dupe(file_path_ref.text);
-        let file_path_ext: &'static [u8] = crate::linker::dupe(file_path_ref.name().ext);
 
         // Step 1. Parse & scan
         // Key the loader on the ORIGINAL resolve
         // result's extension *before* the `client_entry_point` path override.
         // Compute it here, then apply the override.
-        let loader = self.options.loader(file_path_ext);
+        let loader = self.options.loader(file_path_ref.name().ext);
 
         // `client_entry_point_` is always `None` from the only in-tree caller;
         // its source path uses the `bun_paths::fs::Path<'static>` shape, so just override
-        // text/ext when present.
-        let (file_path_text, file_path_ext) = if let Some(cep) = client_entry_point_.as_deref() {
-            (
-                crate::linker::dupe(cep.source.path.text),
-                crate::linker::dupe(cep.source.path.name().ext),
-            )
-        } else {
-            (file_path_text, file_path_ext)
+        // the text when present.
+        let file_path_text = match client_entry_point_.as_deref() {
+            Some(cep) => crate::linker::dupe(cep.source.path.text),
+            None => file_path_text,
         };
 
         let mut file_path = Fs::Path::init(file_path_text);
@@ -2997,11 +2992,57 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Wasm
             | options::Loader::File
             | options::Loader::Napi => {
-                output_file.value = self.build_copied_file_output(file_path_text, file_path_ext)?;
+                let Some(bytes) = self.read_copied_file(file_path_text, file_path.pretty) else {
+                    return Ok(None);
+                };
+                output_file.size = bytes.len();
+                output_file.dest_path = self.transform_only_dest_path(
+                    file_path_text,
+                    file_path.name().ext_without_leading_dot(),
+                    &bytes,
+                );
+                output_file.value = crate::output_file::Value::Buffer { bytes };
             }
         }
 
         Ok(Some(output_file))
+    }
+
+    /// Mirrors the entry-point naming in `computeChunks`: `--entry-naming`
+    /// (default `[dir]/[name].[ext]`) applied to the path relative to `--root`,
+    /// producing a posix path relative to `--outdir`.
+    fn transform_only_dest_path(
+        &self,
+        file_path_text: &[u8],
+        ext: &[u8],
+        output: &[u8],
+    ) -> Box<[u8]> {
+        let rel_to_root = bun_paths::resolve_path::relative_platform::<
+            bun_paths::resolve_path::platform::Loose,
+            false,
+        >(&self.options.root_dir, file_path_text);
+        let pathname = Fs::PathName::init(rel_to_root);
+
+        let mut template: options::PathTemplate = options::PathTemplate::FILE.into();
+        if !self.options.entry_naming.is_empty() {
+            template.data.clone_from(&self.options.entry_naming);
+        }
+        template.placeholder.dir = pathname.dir.into();
+        template.placeholder.name = pathname.base.into();
+        template.placeholder.ext = ext.into();
+        if template.needs(options::PlaceholderField::Target) {
+            template.placeholder.target = self.options.target.naming_placeholder().into();
+        }
+        if template.needs(options::PlaceholderField::Hash) {
+            template.placeholder.hash = Some(crate::ContentHasher::run(output));
+        }
+
+        let mut dest_path = Vec::new();
+        template
+            .print(&mut dest_path, true)
+            .expect("write to Vec<u8>");
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut dest_path);
+        dest_path.into_boxed_slice()
     }
 
     /// Cold path: `bun build` of a `.css` entry. Split out of
@@ -3121,25 +3162,31 @@ impl<'a> Transpiler<'a> {
 
     /// Cold path: `bun build` of a non-JS asset copied verbatim (`.html`,
     /// `.wasm`, `.node`, sqlite, bunsh, generic `file`). Split out so it
-    /// isn't interleaved (post-LTO) with the hot JS/TS transpile path.
+    /// isn't interleaved (post-LTO) with the hot JS/TS transpile path. Read
+    /// with `bun_sys` rather than the resolver's file cache, which strips BOMs.
+    /// Returns `None` after logging when the file cannot be read.
     #[cold]
     #[inline(never)]
-    fn build_copied_file_output(
+    fn read_copied_file(
         &mut self,
-        file_path_text: &'static [u8],
-        file_path_ext: &[u8],
-    ) -> crate::Result<crate::output_file::Value> {
-        let hashed_name = self
-            .linker
-            .get_hashed_filename(&bun_paths::fs::Path::init(file_path_text), None)?;
-        let mut pathname = Vec::with_capacity(hashed_name.len() + file_path_ext.len());
-        pathname.extend_from_slice(hashed_name);
-        pathname.extend_from_slice(file_path_ext);
-        Ok(crate::output_file::Value::Copy(
-            crate::output_file::FileOperation {
-                pathname: pathname.into_boxed_slice(),
-            },
-        ))
+        file_path_text: &[u8],
+        file_path_pretty: &[u8],
+    ) -> Option<Box<[u8]>> {
+        match bun_sys::File::read_from(FD::cwd(), file_path_text) {
+            Ok(bytes) => Some(bytes.into_boxed_slice()),
+            Err(err) => {
+                self.log_mut().add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "{} reading \"{}\"",
+                        bstr::BStr::new(err.name()),
+                        bstr::BStr::new(file_path_pretty),
+                    ),
+                );
+                None
+            }
+        }
     }
 }
 

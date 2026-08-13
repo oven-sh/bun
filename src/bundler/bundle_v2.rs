@@ -4260,10 +4260,7 @@ pub mod bv2_impl {
                             }
 
                             if template.needs(options::PlaceholderField::Target) {
-                                template.placeholder.target = <&'static str>::from(target)
-                                    .as_bytes()
-                                    .to_vec()
-                                    .into_boxed_slice();
+                                template.placeholder.target = target.naming_placeholder().into();
                             }
                             let mut v = Vec::new();
                             template

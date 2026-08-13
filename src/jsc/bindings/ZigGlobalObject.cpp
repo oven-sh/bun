@@ -2313,12 +2313,14 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_utilInspectFunction.initLater(
         [](const Initializer<JSFunction>& init) {
-            // init.set must run on every path; node:util's inspect export is user-mutable.
+            // Read inspect from the internal module rather than node:util, whose
+            // export user code can reassign (Node also hands custom inspect
+            // functions its internal inspect). init.set must run on every path.
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(init.vm);
             JSC::JSFunction* inspect = nullptr;
-            JSValue nodeUtilValue = uncheckedDowncast<Zig::GlobalObject>(init.owner)->internalModuleRegistry()->requireId(init.owner, init.vm, Bun::InternalModuleRegistry::Field::NodeUtil);
-            if (!scope.exception() && nodeUtilValue.isObject()) {
-                JSValue prop = nodeUtilValue.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s));
+            JSValue exports = uncheckedDowncast<Zig::GlobalObject>(init.owner)->internalModuleRegistry()->requireId(init.owner, init.vm, Bun::InternalModuleRegistry::Field::InternalUtilInspect);
+            if (!scope.exception() && exports.isObject()) {
+                JSValue prop = exports.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s));
                 if (!scope.exception() && prop)
                     inspect = dynamicDowncast<JSFunction>(prop);
             }

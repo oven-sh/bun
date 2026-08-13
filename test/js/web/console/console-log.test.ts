@@ -145,24 +145,35 @@ NamedError: console.error a named error
 
 // Bun.$ is a lazy property whose initializer evaluates the shell builtin, so
 // each of these clobbers makes it throw while the formatter behind console.log
-// and Bun.inspect is reifying it mid-enumeration, at a different point of the
-// builtin: Symbol is the first thing it calls, process.env comes after that,
-// and ShellPromise extends the global Promise before any of it runs. The
-// pending exception has to be cleared (debug builds otherwise abort on the
-// next lazy property), and the walk has to keep going, so everything after $
-// still prints.
+// and Bun.inspect is reifying it mid-enumeration. The first three throw at
+// different points of the builtin (its first Symbol() call, process.env, and
+// the ShellPromise class extending the global Promise) before anything else
+// has happened, so they cover clearing the pending exception: debug builds
+// used to abort on the next lazy property and release builds dropped every
+// property after $. The last one reifies another Bun property before it
+// throws, which transitions Bun's structure in the middle of the lookup; that
+// used to trip Structure::storedPrototype's stale-structure assertion in the
+// prototype walk even once the exception was cleared. `sorted` routes through
+// the second enumeration loop, which has the same two problems.
 describe.each([
   ["Symbol", "globalThis.Symbol = NaN;"],
   ["process", "globalThis.process = undefined;"],
   ["Promise", "globalThis.Promise = undefined;"],
-])("inspecting Bun with %s clobbered", (_label, clobber) => {
-  it.concurrent("skips the lazy property that failed to initialize and prints the rest", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `${clobber}
-const out = Bun.inspect(Bun);
+  [
+    "Symbol with a hook that reifies Bun.semver and then throws",
+    "globalThis.Symbol = () => { Bun.semver; throw new Error('boom'); };",
+  ],
+])("inspecting Bun after clobbering %s", (_label, clobber) => {
+  for (const sorted of [false, true]) {
+    it.concurrent(
+      `skips the lazy property that failed to initialize and prints the rest (sorted: ${sorted})`,
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `${clobber}
+const out = Bun.inspect(Bun, { sorted: ${sorted} });
 console.log(JSON.stringify({
   shell: out.includes("$: [Function"),
   archive: out.includes("Archive:"),
@@ -171,43 +182,78 @@ console.log(JSON.stringify({
   semver: out.includes("semver:"),
   zstdDecompress: out.includes("zstdDecompress:"),
 }));`,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: JSON.stringify({
-        shell: false,
-        archive: true,
-        argv: true,
-        gc: true,
-        semver: true,
-        zstdDecompress: true,
-      }),
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+        expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+          stdout: JSON.stringify({
+            shell: false,
+            archive: true,
+            argv: true,
+            gc: true,
+            semver: true,
+            zstdDecompress: true,
+          }),
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+  }
 });
 
+it("Bun.inspect with sorted: true propagates an exception thrown by a custom inspect like the unsorted walk does", () => {
+  const thrower = {
+    [Bun.inspect.custom]() {
+      throw new Error("boom");
+    },
+  };
+  // The sorted walk used to leave the exception pending and carry on, so it
+  // surfaced (or not) depending on which property threw.
+  expect(() => Bun.inspect({ a: thrower, b: 1, c: 2 })).toThrow("boom");
+  expect(() => Bun.inspect({ a: thrower, b: 1, c: 2 }, { sorted: true })).toThrow("boom");
+  expect(() => Bun.inspect({ a: 1, b: 2, c: thrower }, { sorted: true })).toThrow("boom");
+});
+
+// The native formatter loads util.inspect lazily the first time it meets a
+// custom inspect function, and used to abort the process if that failed. It
+// reads the function from the internal inspect module, so reassigning
+// util.inspect (or breaking node:util, whose top level needs process) does not
+// affect it, and a custom inspect function still gets the real inspect as its
+// third argument, as in Node. Only when the internal module itself cannot be
+// evaluated does the formatter fall back to a stub: the custom inspect still
+// runs, options.stylize returns its input unchanged (console.log's own colored
+// path via FORCE_COLOR as well as an explicit colors: true), and calling the
+// stub throws a catchable TypeError.
+const green = (text: string) => `\x1b[32m${text}\x1b[39m`;
 describe.each([
-  ["replaced with a non-function", `require("node:util").inspect = 42;`],
+  ["util.inspect replaced with a non-function", `require("node:util").inspect = 42;`, { inspectAvailable: true }],
   [
-    "a throwing getter",
+    "util.inspect replaced with a throwing getter",
     `Object.defineProperty(require("node:util"), "inspect", { get() { throw new Error("boom"); } });`,
+    { inspectAvailable: true },
   ],
-  // node:util's top level reads the process binding, so requiring it throws.
-  ["unavailable because node:util failed to load", `globalThis.process = undefined;`],
-])("console.log with node:util inspect %s", (_label, sabotage) => {
-  it.concurrent("degrades gracefully instead of crashing", async () => {
-    // util.inspect is cached lazily the first time a custom inspect runs. With
-    // it unavailable the custom inspect still runs, options.stylize returns its
-    // input unchanged (both console.log's own colored path, via FORCE_COLOR,
-    // and an explicit colors: true), and only calling the inspect argument
-    // throws.
+  ["process clobbered, so node:util cannot load", `globalThis.process = undefined;`, { inspectAvailable: true }],
+  [
+    "Map clobbered, so the internal inspect module cannot load",
+    `globalThis.Map = undefined;`,
+    { inspectAvailable: false },
+  ],
+])("console.log with a custom inspect function and %s", (_label, sabotage, { inspectAvailable }) => {
+  it.concurrent("keeps printing", async () => {
+    const stylized = inspectAvailable ? green : (text: string) => text;
+    const expected = [
+      "custom",
+      stylized("styled by console.log"),
+      stylized("styled by Bun.inspect"),
+      inspectAvailable ? "1" : "caught TypeError",
+      "ok",
+      "",
+    ].join("\n");
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -225,11 +271,7 @@ console.log("ok")`,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "custom\nstyled by console.log\nstyled by Bun.inspect\ncaught TypeError\nok\n",
-      stderr: "",
-      exitCode: 0,
-    });
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
   });
 });
 

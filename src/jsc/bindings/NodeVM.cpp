@@ -187,12 +187,8 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     String code = stringifyAnonymousFunction(globalObject, args, throwScope, &startOffset);
     EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
 
-    // The user's body starts on line 2 of the wrapped program (after the
-    // "(function () {\n" prefix). Start the program one line above the
-    // requested offset so body line N reports as N + lineOffset, the way V8's
-    // CompileFunction does. For lineOffset <= 0 this start is negative; JSC
-    // counts from line 1 regardless and the stack formatters add the negative
-    // part back (Bun::applyNegativeSourceStart).
+    // The body is line 2 of the wrapped program, so start the program one line
+    // early; a negative start is honored by Bun::applyNegativeSourceStart.
     int startLine = position.m_line.zeroBasedInt();
     if (startLine != std::numeric_limits<int>::min())
         startLine--;
@@ -576,12 +572,8 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
         unsigned caretColumn = 0;
         if (JSC::CodeBlock* codeBlock = stack_frame.codeBlock()) {
             if (JSC::SourceProvider* provider = codeBlock->source().provider()) {
-                // JSC::SourceCode clamps the start position it counts from to 1:1,
-                // so line_and_column only carries the non-negative part of
-                // lineOffset/columnOffset: undo that part to index the source
-                // text, then report the physical line with the whole offset, as
-                // Node does (and as Bun::applyNegativeSourceStart does for the
-                // frames below the header).
+                // line_and_column includes the start position clamped to 1:1 (see
+                // Bun::applyNegativeSourceStart); the header shows the full offset.
                 TextPosition start = provider->startPosition();
                 int startLineZeroBased = start.m_line.zeroBasedInt();
                 int64_t physicalLine = static_cast<int64_t>(line_and_column.line) - std::max(startLineZeroBased, 0);

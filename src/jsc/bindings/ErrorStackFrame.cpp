@@ -14,14 +14,12 @@ void applyNegativeSourceStart(CodeBlock* code, int& lineZeroBased, int& columnZe
     if (!provider)
         return;
 
-    // Function code blocks share the provider of the program they were parsed from, so this is
-    // the whole source's start even for a frame inside a function.
+    // Nested functions share the program's provider, so this is the whole source's start.
     TextPosition start = provider->startPosition();
     int startLine = start.m_line.zeroBasedInt();
     int startColumn = start.m_column.zeroBasedInt();
 
-    // JSC only adds the start column to positions on the first physical line, which it reports
-    // as the clamped start line.
+    // JSC applies the start column to the first physical line only, reported as the clamped start line.
     if (startColumn < 0 && lineZeroBased == std::max(startLine, 0))
         columnZeroBased += startColumn;
     if (startLine < 0)
@@ -115,8 +113,7 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
         break;
     }
 
-    // Last, so that the walk above runs on the coordinates JSC reported (it recounts the column
-    // from the source when it crosses a line) and the first-line test sees the line it ended on.
+    // After the walk: it works in JSC's coordinates and may end on a different line.
     applyNegativeSourceStart(code, pos.line_zero_based, pos.column_zero_based);
     return pos;
 }

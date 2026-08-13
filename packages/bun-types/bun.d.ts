@@ -421,7 +421,16 @@ declare module "bun" {
      * @default true
      */
     // trackUnmanagedFds?: boolean;
-    // resourceLimits?: import("worker_threads").ResourceLimits;
+
+    /**
+     * Resource limits for the worker's JS engine, in megabytes, with the same
+     * shape as Node.js. `maxOldGenerationSizeMb` caps the worker's heap: a
+     * worker whose heap is still above it after a full garbage collection is
+     * terminated and emits an `ERR_WORKER_OUT_OF_MEMORY` error event. The
+     * other fields are accepted for Node.js compatibility and reported back
+     * through `resourceLimits`, but are not enforced.
+     */
+    resourceLimits?: import("node:worker_threads").ResourceLimits;
 
     /**
      * An array of module specifiers to preload in the worker.
@@ -492,6 +501,13 @@ declare module "bun" {
      * This value is unique for each `Worker` instance inside a single process.
      */
     threadId: number;
+
+    /**
+     * The JS engine resource constraints this worker was created with, or
+     * an empty object once the worker has stopped. Inside the worker thread,
+     * it is available as `require('node:worker_threads').resourceLimits`.
+     */
+    readonly resourceLimits: import("node:worker_threads").ResourceLimits;
   }
 
   interface Env {

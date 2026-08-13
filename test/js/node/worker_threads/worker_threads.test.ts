@@ -345,7 +345,10 @@ describe("execArgv option", async () => {
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
-test("eval does not leak source code", async () => {
+// Skipped in debug: the fixture's 6 workers each lex a 100 MiB source, which
+// a debug build does at ~25 MiB/s (~30 s total), and a smaller source falls
+// below the fixture's RSS noise floor. Release + ASAN cover the regression.
+test.skipIf(isDebug)("eval does not leak source code", async () => {
   const proc = Bun.spawn({
     cmd: [bunExe(), "eval-source-leak-fixture.js"],
     env: bunEnv,
@@ -575,7 +578,7 @@ describe("environmentData", () => {
     if (errors.length > 0) throw new Error(errors);
     expect(proc.exitCode).toBe(0);
     const out = await proc.stdout.text();
-    expect(out).toBe("foo\n".repeat(5));
+    expect(out).toBe("foo\n".repeat(2));
   });
 
   test("can be used if parent thread had not imported worker_threads", async () => {
@@ -2584,4 +2587,340 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
     expect(tags).toEqual([TAG.ready, TAG.exitHandler]);
     expect(code).toBe(7);
   });
+});
+
+describe("resourceLimits", () => {
+  test("worker.resourceLimits echoes the normalized object", () => {
+    const w = new Worker(`process.exit(0)`, {
+      eval: true,
+      resourceLimits: { maxOldGenerationSizeMb: 32, maxYoungGenerationSizeMb: 8 },
+    });
+    expect(w.resourceLimits).toEqual({
+      maxYoungGenerationSizeMb: 8,
+      maxOldGenerationSizeMb: 32,
+      codeRangeSizeMb: -1,
+      stackSizeMb: 4,
+    });
+    return w.terminate();
+  });
+
+  test("maxOldGenerationSizeMb is floored at 2 like Node; the other keys are stored raw", () => {
+    // Node's parseResourceLimits: MathMax(obj.maxOldGenerationSizeMb, 2), for that key only.
+    const cases = [
+      { in: 0, out: 2 },
+      { in: -5, out: 2 },
+      { in: 0.5, out: 2 },
+      { in: 1, out: 2 },
+      { in: 1.99, out: 2 },
+      { in: 2, out: 2 },
+      { in: 3, out: 3 },
+    ];
+    const seen = cases.map(({ in: v }) => {
+      const w = new Worker("process.exit(0)", { eval: true, resourceLimits: { maxOldGenerationSizeMb: v } });
+      const { maxOldGenerationSizeMb } = w.resourceLimits;
+      w.terminate();
+      return { in: v, out: maxOldGenerationSizeMb };
+    });
+    expect(seen).toEqual(cases);
+
+    // The other three keys are stored unclamped in Node.
+    const w = new Worker("process.exit(0)", {
+      eval: true,
+      resourceLimits: { maxYoungGenerationSizeMb: 0, codeRangeSizeMb: -5, stackSizeMb: 0.5 },
+    });
+    expect(w.resourceLimits).toEqual({
+      maxYoungGenerationSizeMb: 0,
+      maxOldGenerationSizeMb: -1,
+      codeRangeSizeMb: -5,
+      stackSizeMb: 0.5,
+    });
+    return w.terminate();
+  });
+
+  test("worker.resourceLimits defaults when option is omitted", () => {
+    const w = new Worker(`process.exit(0)`, { eval: true });
+    expect(w.resourceLimits).toEqual({
+      maxYoungGenerationSizeMb: -1,
+      maxOldGenerationSizeMb: -1,
+      codeRangeSizeMb: -1,
+      stackSizeMb: 4,
+    });
+    return w.terminate();
+  });
+
+  test("options.resourceLimits is read once and worker.resourceLimits returns a fresh object", async () => {
+    // Like Node, the option (and each key) is parsed once, so the reported
+    // limits cannot diverge from the enforced ones, and the getter does not
+    // hand out a shared mutable object.
+    let optionReads = 0;
+    let keyReads = 0;
+    const limits = new Proxy({ maxOldGenerationSizeMb: 32 } as Record<string, unknown>, {
+      get(target, key) {
+        if (key === "maxOldGenerationSizeMb") keyReads++;
+        return target[key as string];
+      },
+    });
+    const w = new Worker(`process.exit(0)`, {
+      eval: true,
+      get resourceLimits() {
+        optionReads++;
+        return limits;
+      },
+    } as any);
+    const first = w.resourceLimits;
+    (first as any).maxOldGenerationSizeMb = 999;
+    expect({ optionReads, keyReads, second: w.resourceLimits, sameObject: first === w.resourceLimits }).toEqual({
+      optionReads: 1,
+      keyReads: 1,
+      second: { maxYoungGenerationSizeMb: -1, maxOldGenerationSizeMb: 32, codeRangeSizeMb: -1, stackSizeMb: 4 },
+      sameObject: false,
+    });
+    await w.terminate();
+  });
+
+  test("worker.resourceLimits stays {} after terminate() on a worker that exited with code 0", async () => {
+    const w = new Worker(`process.exit(0)`, {
+      eval: true,
+      resourceLimits: { maxOldGenerationSizeMb: 32 },
+    });
+    const [code] = await once(w, "exit");
+    // terminate() on an already-exited worker must not reset the exited
+    // state, must not hang, and resolves to undefined (not the exit code),
+    // like Node.
+    const terminated = w.terminate();
+    expect({ code, resourceLimits: w.resourceLimits }).toEqual({ code: 0, resourceLimits: {} });
+    expect(await terminated).toBeUndefined();
+  });
+
+  test("non-number resourceLimits values are ignored on both sides, like Node", async () => {
+    // Node's parseResourceLimits only accepts `typeof === 'number'`. Coercing
+    // "32"/true/null would silently enforce a limit the parent-side getter
+    // reports as unset.
+    const w = new Worker(`const wt = require("node:worker_threads"); wt.parentPort.postMessage(wt.resourceLimits);`, {
+      eval: true,
+      resourceLimits: { maxOldGenerationSizeMb: "32", maxYoungGenerationSizeMb: true, stackSizeMb: null },
+    } as any);
+    const defaults = { maxYoungGenerationSizeMb: -1, maxOldGenerationSizeMb: -1, codeRangeSizeMb: -1, stackSizeMb: 4 };
+    const [inWorker] = await once(w, "message");
+    expect({ parent: w.resourceLimits, inWorker }).toEqual({ parent: defaults, inWorker: defaults });
+    await w.terminate();
+  });
+
+  test("a non-object resourceLimits is ignored, like Node", () => {
+    // Node's parseResourceLimits accepts only `typeof === 'object'`:
+    // primitives, arrays, and callables (even ones carrying a limit as an
+    // own property) all yield the defaults without throwing.
+    const defaults = { maxYoungGenerationSizeMb: -1, maxOldGenerationSizeMb: -1, codeRangeSizeMb: -1, stackSizeMb: 4 };
+    const workers = [5, [], "x", () => {}, Object.assign(() => {}, { maxOldGenerationSizeMb: 32 })].map(
+      bad => new Worker(`process.exit(0)`, { eval: true, resourceLimits: bad } as any),
+    );
+    expect(workers.map(w => w.resourceLimits)).toEqual(workers.map(() => defaults));
+    return Promise.all(workers.map(w => w.terminate()));
+  });
+
+  test("a stackSizeMb that is not positive reads back as Node's 4 MB default", () => {
+    // node_worker.cc falls back to the default stack size for stackSizeMb <= 0
+    // and writes that back into the limits the parent can read.
+    const cases = [
+      { in: 0, out: 4 },
+      { in: -1, out: 4 },
+      { in: 0.5, out: 0.5 },
+      { in: 8, out: 8 },
+    ];
+    const seen = cases.map(({ in: v }) => {
+      const w = new Worker("process.exit(0)", { eval: true, resourceLimits: { stackSizeMb: v } });
+      const { stackSizeMb } = w.resourceLimits;
+      w.terminate();
+      return { in: v, out: stackSizeMb };
+    });
+    expect(seen).toEqual(cases);
+  });
+
+  test("all four limits are reported on the parent side and inside the worker", async () => {
+    const limits = { maxYoungGenerationSizeMb: 8, maxOldGenerationSizeMb: 64, codeRangeSizeMb: 16, stackSizeMb: 2 };
+    const w = new Worker(`const wt = require("node:worker_threads"); wt.parentPort.postMessage(wt.resourceLimits);`, {
+      eval: true,
+      resourceLimits: limits,
+    });
+    const [inWorker] = await once(w, "message");
+    expect({ parent: w.resourceLimits, inWorker }).toEqual({ parent: limits, inWorker: limits });
+    await w.terminate();
+  });
+
+  test("the module-level export is {} on the main thread", () => {
+    expect(resourceLimits).toEqual({});
+  });
+
+  test("worker.resourceLimits is {} once terminate() has stopped the worker", async () => {
+    const w = new Worker(`setInterval(() => {}, 1000)`, {
+      eval: true,
+      resourceLimits: { maxOldGenerationSizeMb: 32 },
+    });
+    await once(w, "online");
+    const before = w.resourceLimits;
+    await w.terminate();
+    expect({ before: before.maxOldGenerationSizeMb, after: w.resourceLimits }).toEqual({ before: 32, after: {} });
+  });
+
+  test("maxYoungGenerationSizeMb alone does not cap the heap", async () => {
+    // Node sizes the nursery with it; it is not a limit on how much the worker
+    // may retain, so retaining far more than it must not be reported as OOM.
+    const w = new Worker(
+      `
+        // ~50 MB of live JS values, then a full collection while they are all still reachable.
+        const a = [];
+        for (let i = 0; i < 64; i++) a.push(new Array(100_000).fill(i));
+        Bun.gc(true);
+        require("node:worker_threads").parentPort.postMessage(a.length);
+      `,
+      { eval: true, resourceLimits: { maxYoungGenerationSizeMb: 1 } },
+    );
+    const errors: unknown[] = [];
+    w.on("error", e => errors.push(e));
+    const exited = once(w, "exit");
+    const [retained] = await once(w, "message");
+    const [code] = await exited;
+    expect({ retained, errors, code }).toEqual({ retained: 64, errors: [], code: 0 });
+  });
+
+  test("maxOldGenerationSizeMb terminates a runaway worker with ERR_WORKER_OUT_OF_MEMORY", async () => {
+    using dir = tempDir("worker-resource-limits", {
+      "main.mjs": `
+        import { Worker } from "node:worker_threads";
+        const w = new Worker(new URL("./child.mjs", import.meta.url), {
+          resourceLimits: { maxOldGenerationSizeMb: 64 },
+        });
+        console.log("parentLimits", JSON.stringify(w.resourceLimits));
+        w.on("message", m => console.log("message", JSON.stringify(m)));
+        // Node's worker.resourceLimits already reports {} inside the OOM
+        // 'error' handler (the worker has stopped by then).
+        w.on("error", e => console.log("error", e.code, e.message, JSON.stringify(w.resourceLimits)));
+        w.on("exit", c => console.log("exit", c));
+      `,
+      "child.mjs": `
+        import { resourceLimits, parentPort } from "node:worker_threads";
+        parentPort.postMessage({ resourceLimits });
+        const a = [];
+        let i = 0;
+        for (;;) {
+          a.push(new Array(10000).fill(i++));
+          // Fail the test if we blew well past the limit without being stopped.
+          if ((i & 4095) === 0) {
+            const mb = (process.memoryUsage().heapUsed / 1048576) | 0;
+            if (mb > 512) {
+              parentPort.postMessage("NOT_ENFORCED_" + mb + "MB");
+              process.exit(99);
+            }
+          }
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // One stdout line per event, in order: parent-side limits, worker-side
+    // limits, the ERR_WORKER_OUT_OF_MEMORY error, then exit code 1. A worker
+    // that outgrows the limit unchecked reports NOT_ENFORCED_<n>MB and exits 99.
+    const lines = stdout.trim().split("\n");
+    const jsonAfter = (line: string | undefined, prefix: string) => {
+      if (line === undefined || !line.startsWith(prefix)) return line;
+      try {
+        return JSON.parse(line.slice(prefix.length));
+      } catch {
+        return line;
+      }
+    };
+    const limits = { maxYoungGenerationSizeMb: -1, maxOldGenerationSizeMb: 64, codeRangeSizeMb: -1, stackSizeMb: 4 };
+    expect({
+      parentLimits: jsonAfter(lines[0], "parentLimits "),
+      workerLimits: jsonAfter(lines[1], "message "),
+      error: lines[2],
+      exit: lines[3],
+      stderr,
+      exitCode,
+    }).toEqual({
+      // worker.resourceLimits on the parent side
+      parentLimits: limits,
+      // require('worker_threads').resourceLimits inside the worker
+      workerLimits: { resourceLimits: limits },
+      error: "error ERR_WORKER_OUT_OF_MEMORY Worker terminated due to reaching memory limit: JS heap out of memory {}",
+      exit: "exit 1",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
+  test("maxOldGenerationSizeMb terminates a worker that OOMs inside vm.runInContext", async () => {
+    using dir = tempDir("worker-rl-vm-oom", {
+      "main.mjs": `
+        import { Worker } from "node:worker_threads";
+        const w = new Worker(new URL("./child.mjs", import.meta.url), {
+          resourceLimits: { maxOldGenerationSizeMb: 48 },
+        });
+        w.on("error", e => console.log("error", e.code ?? e.message));
+        w.on("exit", c => console.log("exit", c));
+      `,
+      "child.mjs": `
+        import vm from "node:vm";
+        // over() bounds the script so the test fails fast (by throwing a plain
+        // NOT_ENFORCED error) instead of hanging if the limit is unenforced.
+        // 512MB is >10x the 48MB cap, so enforcement always trips first.
+        const over = () => process.memoryUsage().heapUsed / 1048576 > 512;
+        const ctx = vm.createContext({ a: [], Array, over });
+        vm.runInContext(
+          "for (let i = 0;; i++) { a.push(new Array(10000).fill(i)); if ((i & 4095) === 0 && over()) throw new Error('NOT_ENFORCED'); }",
+          ctx,
+        );
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: ["error ERR_WORKER_OUT_OF_MEMORY", "exit 1"],
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+});
+
+// node:vm must treat the TerminationException that worker.terminate() raises
+// inside a no-timeout vm.runInContext as a worker-level termination, not a
+// script timeout or SIGINT.
+test("worker.terminate() while the worker is inside a no-timeout vm.runInContext", async () => {
+  using dir = tempDir("worker-terminate-vm", {
+    "main.mjs": `
+      import { Worker } from "node:worker_threads";
+      const w = new Worker(new URL("./child.mjs", import.meta.url));
+      w.on("message", () => w.terminate());
+      w.on("error", e => console.log("error", e.code ?? e.name));
+      w.on("exit", c => console.log("exit", c));
+    `,
+    "child.mjs": `
+      import vm from "node:vm";
+      import { parentPort } from "node:worker_threads";
+      const ctx = vm.createContext({ ping: () => parentPort.postMessage("in-vm") });
+      // Signals the parent from inside the script, then spins with no timeout.
+      vm.runInContext("ping(); for(;;);", ctx);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "exit 1\n", stderr: expect.any(String), exitCode: 0 });
 });

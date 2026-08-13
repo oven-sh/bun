@@ -378,5 +378,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_INSPECTOR_NOT_CONNECTED", Error],
   ["ERR_INSPECTOR_NOT_WORKER", Error],
   ["ERR_INSPECTOR_COMMAND", Error],
+  ["ERR_WORKER_OUT_OF_MEMORY", Error],
 ];
 export default errors;

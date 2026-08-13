@@ -80,6 +80,7 @@ const {
   9: _setEntryEvaluatedHook,
   10: _isNodeWorker,
   11: _setParentPort,
+  12: resourceLimits,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -93,6 +94,7 @@ const {
   (hook: () => void) => void,
   boolean,
   (port: MessagePort) => void,
+  Record<string, number>,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -316,8 +318,6 @@ Object.defineProperty(MessagePort.prototype, kInspectCustom, {
   enumerable: false,
   configurable: true,
 });
-
-let resourceLimits = {};
 
 const BUN_WORKER_STDIO_KEY = "@@bunWorkerThreadsStdio";
 const BUN_WORKER_MESSAGING_KEY = "@@bunWorkerThreadsMessaging";
@@ -1150,6 +1150,11 @@ class Worker extends EventEmitter {
 
   get threadName() {
     return this.#exited ? null : this.#name;
+  }
+
+  get resourceLimits() {
+    // Read back from the single native parse; {} once the worker stopped.
+    return this.#worker.resourceLimits;
   }
 
   ref() {

@@ -103,7 +103,7 @@ pub struct WebWorker {
     worker_env_loader: Cell<*mut bun_dotenv::Loader>,
     /// `process.exit(code)` ran; later error paths must not overwrite its code.
     exit_called: AtomicBool,
-    /// The parent asked this thread to stop (`worker.terminate()` or an exiting
+    /// Stopped from outside (`worker.terminate()`, the heap limit or an exiting
     /// parent) while its VM was live — as opposed to the thread stopping itself,
     /// or being stopped before it started. Written under `vm_lock`.
     terminated_by_parent: AtomicBool,
@@ -146,6 +146,13 @@ unsafe extern "C" {
         message: &mut BunString,
         err: JSValue,
     );
+    // WorkerMessagingProxy.cpp; the observer passes `worker_thread` back to `request_termination`.
+    safe fn WebWorker__installHeapLimitObserver(
+        proxy: *mut c_void,
+        global: &JSGlobalObject,
+        worker_thread: *const c_void,
+    );
+    safe fn WebWorker__disarmHeapLimitObserver(proxy: *mut c_void);
     safe fn Bun__freeSharedHeaderBufferForThreadExit();
     // Raw FFI (no RAII guard) so `thread_main` can take the API lock and abandon
     // it with the VM — see the note there.
@@ -459,9 +466,9 @@ impl WebWorker {
 
     /// Ask the thread to stop: set `requested_terminate`, raise a
     /// TerminationException in its VM at the next safepoint, wake its loop.
-    /// Any thread that holds a ref (the proxy) may call this.
+    /// Any thread that holds a ref may call this; false if the thread was already stopping.
     #[unsafe(export_name = "WebWorker__requestTermination")]
-    pub(crate) extern "C" fn request_termination(this: *mut WebWorker) {
+    pub(crate) extern "C" fn request_termination(this: *mut WebWorker) -> bool {
         let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
         // vm_lock serialises against shutdown() nulling `vm` and freeing the
         // arena it lives in — and is taken *before* the flag is published: a
@@ -471,7 +478,7 @@ impl WebWorker {
         this.vm_lock.lock();
         if this.set_requested_terminate() {
             this.vm_lock.unlock();
-            return;
+            return false;
         }
         log!("[{}] requestTermination", this.execution_context_id);
         // vm_lock held; `vm` is published/unpublished under vm_lock.
@@ -495,6 +502,7 @@ impl WebWorker {
             unsafe { (*(*vm_ptr).event_loop()).wakeup() };
         }
         this.vm_lock.unlock();
+        true
     }
 
     /// The parent is releasing this thread: drop the keep-alive on the parent's
@@ -718,6 +726,17 @@ impl WebWorker {
         // vm_lock held; this is the publish point.
         self.vm.set(vm);
         self.vm_lock.unlock();
+
+        // The observer is handed `self` from this thread because the proxy's
+        // `m_workerThread` is assigned on the parent thread, racing with us; it is
+        // installed after the publish so `request_termination` finds a live VM.
+        // SAFETY: `vm` is valid (checked above) and `global` is set by
+        // `init_worker` for the VM's lifetime; raw field read, no `&VirtualMachine`.
+        WebWorker__installHeapLimitObserver(
+            self.messaging_proxy,
+            JSGlobalObject::opaque_ref(unsafe { (*vm).global }),
+            core::ptr::from_ref(self).cast(),
+        );
 
         // Post-publish: do NOT re-form `&mut VirtualMachine`. Field/method
         // access goes through the raw `*mut` so any autoref is scoped to the
@@ -986,6 +1005,9 @@ impl WebWorker {
         self.set_status(Status::Terminated);
         bun_analytics::features::workers_terminated.fetch_add(1, Ordering::Relaxed);
         log!("[{}] shutdown", self.execution_context_id);
+
+        // The exit handlers' and teardown's collections must not report out of memory.
+        WebWorker__disarmHeapLimitObserver(self.messaging_proxy);
 
         // worker-thread only field; no other thread reads `arena`.
         let mut arena = self.arena.replace(None);

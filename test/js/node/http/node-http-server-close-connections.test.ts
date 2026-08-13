@@ -1,8 +1,10 @@
 // server.closeIdleConnections() / server.closeAllConnections() must keep
 // working after server.close() has run: that is the canonical graceful-drain
 // pattern (close(); wait; closeIdleConnections()) and the force path used by
-// http-terminator. These tests also pass on Node.js.
+// http-terminator. Apart from the subprocess test at the end, these tests also
+// pass on Node.js.
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { once } from "node:events";
 import { createServer, type Server } from "node:http";
 import { connect, type AddressInfo, type Socket } from "node:net";
@@ -251,9 +253,87 @@ describe("closeAllConnections", () => {
     }
   });
 
+  test("destroys every tracked connection", async () => {
+    const server = createServer((req, res) => res.end("ok"));
+    const serverSockets: Socket[] = [];
+    server.on("connection", socket => serverSockets.push(socket));
+    try {
+      const port = await listen(server);
+
+      const clients: Socket[] = [];
+      for (let i = 0; i < 4; i++) {
+        const { client } = await openConnection(server, port);
+        const response = once(client, "data");
+        client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n");
+        await response;
+        clients.push(client);
+      }
+      expect(serverSockets).toHaveLength(4);
+
+      const allClosed = Promise.all(clients.map(waitClose));
+      server.closeAllConnections();
+
+      // Like Node, the socket objects themselves are destroyed synchronously, so
+      // the usual 'connection' + socket.on('close') bookkeeping sees them leave.
+      expect(serverSockets.map(socket => socket.destroyed)).toEqual([true, true, true, true]);
+      await allClosed;
+      expect(server.listening).toBe(true);
+
+      const { promise, resolve } = Promise.withResolvers<Error | undefined>();
+      server.close(resolve);
+      expect(await promise).toBeUndefined();
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
   test("is a no-op on a server that never listened", () => {
     const server = createServer();
     expect(() => server.closeAllConnections()).not.toThrow();
     expect(() => server.closeIdleConnections()).not.toThrow();
   });
 });
+
+// https://github.com/oven-sh/bun/issues/30501: @azure/msal-node tears its
+// loopback redirect server down with exactly this sequence. The browser's
+// connection is still in flight at that point, so only closeAllConnections()
+// can reclaim it; when it was a no-op after close(), the process hung.
+test("close(); closeAllConnections(); unref() with an in-flight request lets the process exit", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const http = require("node:http");
+        const net = require("node:net");
+        const server = http.createServer(() => {
+          // Never respond; tear down while the request is in flight.
+          server.close();
+          server.closeAllConnections();
+          server.unref();
+          console.log("teardown done");
+          setTimeout(() => {
+            console.log("still alive after teardown");
+            process.exit(7);
+          }, 3000).unref();
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const client = net.connect(server.address().port, "127.0.0.1", () => {
+            client.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+          });
+          client.on("error", () => {});
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("teardown done\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  // Debug builds spend a few seconds just loading node:http in the child, and
+  // the child's own 3s watchdog needs to get its message out when this breaks.
+}, 15_000);

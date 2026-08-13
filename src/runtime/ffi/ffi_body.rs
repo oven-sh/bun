@@ -1221,9 +1221,7 @@ impl FFI {
             }
             match &function.step {
                 Step::Failed { msg, .. } => {
-                    // `to_error_instance` wraps an untagged `ZigString` without
-                    // copying, and `msg` is freed with `compile_c` when this
-                    // returns; the UTF-8 tag makes it copy.
+                    // UTF-8-tagged so it is copied: `msg` dies with `compile_c` below.
                     let res = ZigString::init_utf8(msg).to_error_instance(global_this);
                     return Err(global_this.throw_value(res));
                 }

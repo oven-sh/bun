@@ -982,10 +982,6 @@ pub mod parse_worker {
                 //
                 // import.meta.require(unique_key, { type: "sqlite" }).db
                 //
-                // cjs output runs inside the `@bun-cjs` function wrapper (see
-                // postProcessJSChunk), where `import.meta` is a SyntaxError, so it
-                // calls the wrapper's `require` parameter instead. This AST skips the
-                // visit pass, so nothing later rewrites `import.meta` for us.
                 let import_path = Expr::init(
                     E::String {
                         data: path_to_use.into(),
@@ -994,6 +990,8 @@ pub mod parse_worker {
                     Loc { start: 0 },
                 );
 
+                // In cjs output `import.meta` is a SyntaxError inside the `@bun-cjs`
+                // wrapper, so call the wrapper's `require` parameter instead.
                 let require_target = if opts.output_format == js_parser::options::Format::Cjs {
                     Expr {
                         data: ast::ExprData::ERequireCallTarget,

@@ -260,12 +260,19 @@ impl Handlers {
         false
     }
 
-    pub(crate) fn call_error_handler(&self, this_value: JSValue, args: &[JSValue; 2]) -> bool {
+    /// Route an error a socket handler produced to the `error` handler
+    /// (`Ok(true)`), or — with none registered — to the VM's uncaught-exception
+    /// path (`Ok(false)`). `Err` is what the `error` handler itself left pending.
+    pub(crate) fn call_error_handler(
+        &self,
+        this_value: JSValue,
+        args: &[JSValue; 2],
+    ) -> JsResult<bool> {
         let global_object = self.global_object;
         // Termination raised inside the preceding callback.call() cannot be
-        // cleared; entering JS again trips executeCallImpl's assertNoException.
+        // cleared; it is the caller's `Err`, not an error to hand to `error`.
         if global_object.has_exception() {
-            return false;
+            return Err(bun_jsc::JsError::Thrown);
         }
         let on_error = self.on_error();
 
@@ -276,14 +283,11 @@ impl Handlers {
                     .bun_vm()
                     .as_mut()
                     .uncaught_exception(&global_object, args[1], false);
-            return false;
+            return Ok(false);
         }
 
-        if let Err(e) = on_error.call(&global_object, this_value, args) {
-            global_object.report_active_exception_as_unhandled(e);
-        }
-
-        true
+        on_error.call(&global_object, this_value, args)?;
+        Ok(true)
     }
 
     pub fn from_js(

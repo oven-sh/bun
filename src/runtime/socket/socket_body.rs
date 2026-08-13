@@ -156,7 +156,13 @@ extern "C" fn select_alpn_callback(
                     Err(err) => global.take_exception(err),
                 };
             if let Some(err_value) = result.to_error() {
-                let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
+                // BoringSSL's ALPN callback is these sockets' trampoline for this
+                // event: fold what the `error` handler left pending here.
+                super::uws_handlers::fold(
+                    handlers
+                        .call_error_handler(this_value, &[this_value, err_value])
+                        .map(|_| ()),
+                );
                 tls_socket_functions::ffi::us_internal_ssl_loop_state_restore(
                     saved_loop_state.as_mut_ptr(),
                 );
@@ -836,7 +842,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn handle_error(&self, err_value: JSValue) {
+    pub(crate) fn handle_error(&self, err_value: JSValue) -> JsResult<()> {
         log!("handleError");
         let handlers = self.get_handlers();
         // the handlers must be kept alive for the duration of the function call
@@ -844,8 +850,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         let scope = handlers.enter();
         let global = handlers.global_object;
         let this_value = self.get_this_value(&global);
-        let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
+        let called = handlers.call_error_handler(this_value, &[this_value, err_value]);
         self.exit_scope(scope);
+        called.map(|_| ())
     }
 
     /// Takes `ThisPtr<Self>`, not `&mut self`: `callback.call(...)` re-enters
@@ -906,7 +913,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 &sys::Error::from_code_int(fatal_send_errno, sys::Tag::write),
                 &global,
             );
-            let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
+            handlers.call_error_handler(this_value, &[this_value, err_value])?;
             // The error handler can destroy the socket itself; only close a
             // still-attached socket. Close without detaching so on_close runs
             // and JS observes 'close' (mirrors h2's dead-transport close).
@@ -934,7 +941,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
-            let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
+            handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])?;
         }
         this.exit_scope(scope);
         Ok(())
@@ -974,7 +981,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
-            let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
+            handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])?;
         }
         this.exit_scope(scope);
         Ok(())
@@ -1212,7 +1219,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             match handlers.reject_promise(err_val)? {
                 true => return Ok(()),
                 false => {
-                    let _ = handlers.call_error_handler(this_value, &[this_value, err_val]);
+                    handlers.call_error_handler(this_value, &[this_value, err_val])?;
                 }
             }
         } else if let Some(val) = handlers.take_promise() {
@@ -1527,7 +1534,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             match handlers.reject_promise(err) {
                 Ok(true) => {}
                 Ok(false) => {
-                    let _ = handlers.call_error_handler(this_value, &[this_value, err]);
+                    handlers.call_error_handler(this_value, &[this_value, err])?;
                 }
                 Err(e) => opened = Err(e),
             }
@@ -1554,8 +1561,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                 let drain_callback = handlers.on_writable();
                 if !drain_callback.is_empty() {
                     if let Err(err) = drain_callback.call(&global, this_value, &[this_value]) {
-                        let _ = handlers
-                            .call_error_handler(this_value, &[this_value, global.take_error(err)]);
+                        handlers
+                            .call_error_handler(this_value, &[this_value, global.take_error(err)])?;
                     }
                 }
             }
@@ -1640,7 +1647,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
-            let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
+            handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])?;
         }
         this.exit_scope(scope);
         Ok(())
@@ -1848,7 +1855,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         if let Some(err_value) = result.to_error() {
-            let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
+            handlers.call_error_handler(this_value, &[this_value, err_value])?;
         }
         this.exit_scope(scope);
         if reject_unauthorized {
@@ -1957,7 +1964,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             Err(err) => global.take_exception(err),
         };
         if let Some(err_value) = result.to_error() {
-            let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
+            handlers.call_error_handler(this_value, &[this_value, err_value])?;
         }
         this.exit_scope(scope);
         Ok(())
@@ -2004,7 +2011,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             Err(err) => global.take_exception(err),
         };
         if let Some(err_value) = result.to_error() {
-            let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
+            handlers.call_error_handler(this_value, &[this_value, err_value])?;
         }
         this.exit_scope(scope);
         Ok(())
@@ -2103,7 +2110,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         if let Err(e) = callback.call(&global, this_value, &[this_value, js_error]) {
-            let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(e)]);
+            handlers.call_error_handler(this_value, &[this_value, global.take_error(e)])?;
         }
         this.exit_scope(scope);
         drop(cleanup);
@@ -2148,7 +2155,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let output_value = match handlers.binary_type.get().to_js(data, &global) {
             Ok(v) => v,
             Err(err) => {
-                this.handle_error(global.take_exception(err));
+                this.handle_error(global.take_exception(err))?;
                 return Ok(());
             }
         };
@@ -2159,7 +2166,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // const encoding = handlers.encoding;
         if let Err(err) = callback.call(&global, this_value, &[this_value, output_value]) {
-            let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
+            handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])?;
         }
         this.exit_scope(scope);
         Ok(())
@@ -4346,7 +4353,7 @@ impl DuplexUpgradeContext {
             // SAFETY: fn contract; `handle_error(&self)` takes `this_ptr` copied
             // out, so no borrow of `*this` spans the JS call.
             if let Some(tls) = unsafe { Self::tls_this_ptr(this) } {
-                tls.handle_error(err_value);
+                super::uws_handlers::fold(tls.handle_error(err_value));
             }
         } else {
             // SAFETY: fn contract; take the tls out (disjoint field).

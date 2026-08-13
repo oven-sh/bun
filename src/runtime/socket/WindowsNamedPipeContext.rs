@@ -250,7 +250,8 @@ impl WindowsNamedPipeContext {
                 // SAFETY: `this` is live; `global_this` is disjoint from the caller's
                 // `&mut named_pipe` and the borrow ends before `handle_error` runs JS.
                 let js_err = err.to_js(unsafe { &(*this).global_this });
-                s.handle_error(js_err);
+                // TODO(one-fold): libuv named-pipe trampoline; folds with the libuv dispatcher.
+                super::uws_handlers::fold(s.handle_error(js_err));
             });
         } else {
             match_socket!(socket, |s: NewSocket<SSL>| NewSocket::handle_connect_error(

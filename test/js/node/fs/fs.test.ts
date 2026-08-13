@@ -5313,6 +5313,80 @@ describe("error.syscall is node's operation name, not the raw kernel syscall", (
   });
 });
 
+// The message used to be formatted into a fixed 4096 byte buffer and stopped
+// mid-path (no closing quote, no dest) when it did not fit. Linux only: with
+// PATH_MAX = 4096 these operands reach the syscall while the message is longer
+// than that buffer was; macOS caps a path at 1024 bytes.
+describe.skipIf(!isLinux)("error.message includes long path and dest operands in full", () => {
+  // Nothing is ever created below `root`, so every operation fails with ENOENT.
+  const root = tmpdirSync();
+
+  // A path of exactly `length` bytes below `root`. No component is longer than
+  // 201 bytes, so only the total length is unusual.
+  function pathOfLength(length: number, fill: string): string {
+    let p = root;
+    while (length - p.length > 202) p += "/" + Buffer.alloc(200, fill).toString();
+    return p + "/" + Buffer.alloc(length - p.length - 1, fill).toString();
+  }
+
+  const src = pathOfLength(3000, "a");
+  const dest = pathOfLength(3000, "b");
+
+  function expectedShape(syscall: string) {
+    return {
+      code: "ENOENT",
+      syscall,
+      path: src,
+      dest,
+      message: `ENOENT: no such file or directory, ${syscall} '${src}' -> '${dest}'`,
+    };
+  }
+
+  function shapeOf(err: any) {
+    const { code, syscall, path, dest, message } = err;
+    return { code, syscall, path, dest, message };
+  }
+
+  function thrownBy(fn: () => unknown) {
+    try {
+      fn();
+    } catch (err) {
+      return shapeOf(err);
+    }
+    throw new Error("expected to throw");
+  }
+
+  it.each([
+    ["renameSync", "rename", renameSync],
+    ["linkSync", "link", fs.linkSync],
+    ["copyFileSync", "copyfile", copyFileSync],
+    ["symlinkSync", "symlink", symlinkSync],
+  ] as const)("%s", (_name, syscall, op) => {
+    expect(thrownBy(() => op(src, dest))).toEqual(expectedShape(syscall));
+  });
+
+  it("promises.rename", async () => {
+    const err = await promises.rename(src, dest).catch(err => err);
+    expect(shapeOf(err)).toEqual(expectedShape("rename"));
+  });
+
+  it("rename with a callback", async () => {
+    const err = await new Promise(resolve => fs.rename(src, dest, resolve));
+    expect(shapeOf(err)).toEqual(expectedShape("rename"));
+  });
+
+  it("a single path just below PATH_MAX", () => {
+    const file = pathOfLength(4090, "c");
+    expect(thrownBy(() => openSync(file, "r"))).toEqual({
+      code: "ENOENT",
+      syscall: "open",
+      path: file,
+      dest: undefined,
+      message: `ENOENT: no such file or directory, open '${file}'`,
+    });
+  });
+});
+
 it.if(isWindows)("writing to windows hidden file is possible", () => {
   const temp = tmpdir();
   writeFileSync(join(temp, "file.txt"), "FAIL");

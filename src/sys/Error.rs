@@ -349,7 +349,7 @@ impl Error {
     /// Shared scaffolding for [`to_shell_system_error`] and [`to_system_error`].
     /// Fills `errno`/`syscall`/`code`/`path`/`dest`/`fd`, leaves `message` empty,
     /// and returns the looked-up `(code, label)` so each caller can build its own
-    /// `message` (shell: static label; node: formatted stack buffer).
+    /// `message` (shell: static label; node: formatted with path/dest).
     fn fill_system_error_common(
         &self,
         map: &enum_map::EnumMap<SystemErrno, &'static str>,
@@ -418,59 +418,33 @@ impl Error {
 
         // format taken from Node.js 'exceptions.cc'
         // search keyword: `Local<Value> UVException(Isolate* isolate,`
-        let mut message_buf = [0u8; 4096];
-        let pos = {
-            use std::io::Write as _;
-            let mut cursor = std::io::Cursor::new(&mut message_buf[..]);
-            'brk: {
-                if let Some((code, _)) = looked_up {
-                    if cursor.write_all(code.as_bytes()).is_err() {
-                        break 'brk;
-                    }
-                    if cursor.write_all(b": ").is_err() {
-                        break 'brk;
-                    }
-                }
-                let label = looked_up.map(|(_, l)| l).unwrap_or("Unknown Error");
-                if cursor.write_all(label.as_bytes()).is_err() {
-                    break 'brk;
-                }
-                if cursor.write_all(b", ").is_err() {
-                    break 'brk;
-                }
-                if cursor
-                    .write_all(<&'static str>::from(self.syscall).as_bytes())
-                    .is_err()
-                {
-                    break 'brk;
-                }
-                if !self.path.is_empty() {
-                    if cursor.write_all(b" '").is_err() {
-                        break 'brk;
-                    }
-                    if cursor.write_all(&self.path).is_err() {
-                        break 'brk;
-                    }
-                    if cursor.write_all(b"'").is_err() {
-                        break 'brk;
-                    }
+        // Node concatenates, so the message has no size limit: `path` and `dest`
+        // appear in full however long they are.
+        let label = looked_up.map_or("Unknown Error", |(_, label)| label);
+        let syscall = <&'static str>::from(self.syscall);
+        // 64 covers the code and the punctuation around every piece.
+        let mut message = Vec::with_capacity(
+            64 + label.len() + syscall.len() + self.path.len() + self.dest.len(),
+        );
+        if let Some((code, _)) = looked_up {
+            message.extend_from_slice(code.as_bytes());
+            message.extend_from_slice(b": ");
+        }
+        message.extend_from_slice(label.as_bytes());
+        message.extend_from_slice(b", ");
+        message.extend_from_slice(syscall.as_bytes());
+        if !self.path.is_empty() {
+            message.extend_from_slice(b" '");
+            message.extend_from_slice(&self.path);
+            message.extend_from_slice(b"'");
 
-                    if !self.dest.is_empty() {
-                        if cursor.write_all(b" -> '").is_err() {
-                            break 'brk;
-                        }
-                        if cursor.write_all(&self.dest).is_err() {
-                            break 'brk;
-                        }
-                        if cursor.write_all(b"'").is_err() {
-                            break 'brk;
-                        }
-                    }
-                }
+            if !self.dest.is_empty() {
+                message.extend_from_slice(b" -> '");
+                message.extend_from_slice(&self.dest);
+                message.extend_from_slice(b"'");
             }
-            usize::try_from(cursor.position()).expect("int cast")
-        };
-        err.message = BunString::clone_utf8(&message_buf[..pos]).into();
+        }
+        err.message = BunString::clone_utf8(&message).into();
 
         err
     }

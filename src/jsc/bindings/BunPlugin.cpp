@@ -462,19 +462,20 @@ struct ModuleMockUndoLog {
         // Persistent entry (a preload mock or Bun.plugin module) the test's mock displaced; null removes the key.
         JSC::Strong<JSC::JSObject> displaced;
     };
+    // Not undo state: what a builtin's lazy exports are restored from, its `default` export as of the first mock touching it (null: unmaterialized itself by then).
+    struct LazySource {
+        JSC::Strong<JSC::SyntheticModuleRecord> record;
+        JSC::Strong<JSC::JSObject> object;
+    };
 
     Vector<Binding> bindings;
     Vector<CommonJS> commonJSModules;
     Vector<Installed> installed;
+    Vector<LazySource> lazySources;
 
-    size_t findBindingIndex(JSC::AbstractModuleRecord* record, const JSC::Identifier& localName) const
+    size_t findBinding(JSC::AbstractModuleRecord* record, const JSC::Identifier& localName) const
     {
         return bindings.findIf([&](auto& entry) { return entry.record.get() == record && entry.localName == localName; });
-    }
-    const Binding* findBinding(JSC::AbstractModuleRecord* record, const JSC::Identifier& localName) const
-    {
-        size_t index = findBindingIndex(record, localName);
-        return index == notFound ? nullptr : &bindings[index];
     }
     size_t findCommonJS(Bun::JSCommonJSModule* module) const
     {
@@ -484,14 +485,30 @@ struct ModuleMockUndoLog {
     {
         return installed.findIf([&](auto& entry) { return entry.specifier == specifier; });
     }
+    size_t findLazySource(JSC::SyntheticModuleRecord* record) const
+    {
+        return lazySources.findIf([&](auto& entry) { return entry.record.get() == record; });
+    }
 
-    ModuleMockUndoLog take() { return std::exchange(*this, {}); }
+    // The undo entries move as a unit; lazySources describes the modules themselves and stays put.
+    void takeEntriesFrom(ModuleMockUndoLog& other)
+    {
+        bindings = std::exchange(other.bindings, {});
+        commonJSModules = std::exchange(other.commonJSModules, {});
+        installed = std::exchange(other.installed, {});
+    }
+    ModuleMockUndoLog take()
+    {
+        ModuleMockUndoLog taken;
+        taken.takeEntriesFrom(*this);
+        return taken;
+    }
 
     // Adds entries logged after this one was taken, except where this one already has the older (winning) entry.
     void absorbNewer(ModuleMockUndoLog&& newer)
     {
         for (auto& entry : newer.bindings) {
-            if (findBindingIndex(entry.record.get(), entry.localName) == notFound)
+            if (findBinding(entry.record.get(), entry.localName) == notFound)
                 bindings.append(WTF::move(entry));
         }
         for (auto& entry : newer.commonJSModules) {
@@ -536,19 +553,15 @@ void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSOb
     auto existing = virtualModules->find(path);
     JSObject* current = existing != virtualModules->end() ? existing->value.get() : nullptr;
 
+    auto& log = ensureUndoLog(*this);
     if (mock->persistent) {
         // File-level setup supersedes whatever an earlier test left behind for this specifier.
-        if (moduleMockUndoLog) {
-            if (size_t index = moduleMockUndoLog->findInstalled(path); index != notFound)
-                moduleMockUndoLog->installed.removeAt(index);
-        }
-    } else {
-        auto& log = ensureUndoLog(*this);
-        if (log.findInstalled(path) == notFound) {
-            auto* currentMock = dynamicDowncast<JSModuleMock>(current);
-            bool currentIsPersistent = current && (!currentMock || currentMock->persistent);
-            log.installed.append({ path, currentIsPersistent ? JSC::Strong<JSC::JSObject> { vm, current } : JSC::Strong<JSC::JSObject> {} });
-        }
+        if (size_t index = log.findInstalled(path); index != notFound)
+            log.installed.removeAt(index);
+    } else if (log.findInstalled(path) == notFound) {
+        auto* currentMock = dynamicDowncast<JSModuleMock>(current);
+        bool currentIsPersistent = current && (!currentMock || currentMock->persistent);
+        log.installed.append({ path, currentIsPersistent ? JSC::Strong<JSC::JSObject> { vm, current } : JSC::Strong<JSC::JSObject> {} });
     }
 
     virtualModules->set(path, JSC::Strong<JSC::JSObject> { vm, mockObject });
@@ -647,6 +660,23 @@ static std::optional<ExportBinding> readExportBinding(JSC::JSGlobalObject* globa
     return ExportBinding { resolution.moduleRecord, resolution.localName, environment->variableAt(offset).get() };
 }
 
+// Every override is preceded by a note, so the first note on a module reads a `default` no mock has replaced yet (a spy on it is seen through).
+static JSC::JSObject* lazySourceFor(Zig::GlobalObject* globalObject, ModuleMockUndoLog& log, JSC::SyntheticModuleRecord* record)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    size_t index = log.findLazySource(record);
+    if (index == notFound) {
+        auto defaultBinding = readExportBinding(globalObject, record, vm.propertyNames->defaultKeyword);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        JSC::JSObject* object = defaultBinding && defaultBinding->value ? Bun::unwrapSpyOriginal(defaultBinding->value).getObject() : nullptr;
+        index = log.lazySources.size();
+        log.lazySources.append({ JSC::Strong<JSC::SyntheticModuleRecord> { vm, record }, object ? JSC::Strong<JSC::JSObject> { vm, object } : JSC::Strong<JSC::JSObject> {} });
+    }
+    return log.lazySources[index].object.get();
+}
+
 // Before a mock overwrites a binding: a test's mock logs its current value (first write wins), a persistent mock unlogs it (new baseline).
 static void noteBindingBeforeOverride(Zig::GlobalObject* globalObject, ModuleMockUndoLog& log, JSC::JSModuleNamespaceObject* ns, const JSC::Identifier& exportName, bool persistent)
 {
@@ -659,7 +689,13 @@ static void noteBindingBeforeOverride(Zig::GlobalObject* globalObject, ModuleMoc
     if (!binding)
         return;
 
-    size_t logged = log.findBindingIndex(binding->record, binding->localName);
+    JSC::JSObject* lazySource = nullptr;
+    if (auto* synthetic = dynamicDowncast<JSC::SyntheticModuleRecord>(binding->record); synthetic && synthetic->hasLazyExports()) {
+        lazySource = lazySourceFor(globalObject, log, synthetic);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+
+    size_t logged = log.findBinding(binding->record, binding->localName);
     if (persistent) {
         if (logged != notFound)
             log.bindings.removeAt(logged);
@@ -681,24 +717,10 @@ static void noteBindingBeforeOverride(Zig::GlobalObject* globalObject, ModuleMoc
         return;
     }
 
-    // An empty slot in any other record is a TDZ binding; the module's own evaluation initializes it later.
-    auto* synthetic = dynamicDowncast<JSC::SyntheticModuleRecord>(binding->record);
-    if (!synthetic || !synthetic->hasLazyExports())
+    // Empty slot: a builtin export gets restored by reading it off the source object; without one (TDZ binding, or `default` unmaterialized too) the mock stays.
+    if (!lazySource)
         return;
-    // Unmaterialized builtin export: restore reads it off the default export, the object the engine itself reads lazy exports from.
-    auto source = readExportBinding(globalObject, binding->record, vm.propertyNames->defaultKeyword);
-    RETURN_IF_EXCEPTION(scope, void());
-    // No value to read from if `default` is itself a lazy export nothing has materialized.
-    if (!source || !source->value)
-        return;
-    // The live slot may hold a spy or (if this test mocked `default` too) a mock; the log then has the real object.
-    JSValue sourceValue = Bun::unwrapSpyOriginal(source->value);
-    if (const auto* loggedDefault = log.findBinding(source->record, source->localName))
-        sourceValue = loggedDefault->original.get();
-    JSObject* sourceObject = sourceValue ? sourceValue.getObject() : nullptr;
-    if (!sourceObject)
-        return;
-    entry.lazySource = JSC::Strong<JSC::JSObject> { vm, sourceObject };
+    entry.lazySource = JSC::Strong<JSC::JSObject> { vm, lazySource };
     log.bindings.append(WTF::move(entry));
 }
 
@@ -815,8 +837,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), callback);
     mock->persistent = Bun__Jest__moduleMockIsPersistent(globalObject);
-    // A test's mock needs a log to write to; a persistent one only needs to clean up an existing log.
-    ModuleMockUndoLog* undoLog = mock->persistent ? globalObject->onLoadPlugins.moduleMockUndoLog : &ensureUndoLog(globalObject->onLoadPlugins);
+    ModuleMockUndoLog& undoLog = ensureUndoLog(globalObject->onLoadPlugins);
 
     auto getJSValue = [&]() -> JSValue {
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -886,20 +907,16 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                                     (void)scope.tryClearException();
                                     value = jsUndefined();
                                 }
-                                if (undoLog) {
-                                    noteBindingBeforeOverride(globalObject, *undoLog, moduleNamespaceObject, name, mock->persistent);
-                                    RETURN_IF_EXCEPTION(scope, {});
-                                }
+                                noteBindingBeforeOverride(globalObject, undoLog, moduleNamespaceObject, name, mock->persistent);
+                                RETURN_IF_EXCEPTION(scope, {});
                                 moduleNamespaceObject->overrideExportValue(globalObject, name, value);
                                 RETURN_IF_EXCEPTION(scope, {});
                             }
 
                         } else {
                             // if it's not an object, I guess we just set the default export?
-                            if (undoLog) {
-                                noteBindingBeforeOverride(globalObject, *undoLog, moduleNamespaceObject, vm.propertyNames->defaultKeyword, mock->persistent);
-                                RETURN_IF_EXCEPTION(scope, {});
-                            }
+                            noteBindingBeforeOverride(globalObject, undoLog, moduleNamespaceObject, vm.propertyNames->defaultKeyword, mock->persistent);
+                            RETURN_IF_EXCEPTION(scope, {});
                             moduleNamespaceObject->overrideExportValue(globalObject, vm.propertyNames->defaultKeyword, exportsValue);
                             RETURN_IF_EXCEPTION(scope, {});
                         }
@@ -918,8 +935,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     if (entryValue) {
         removeFromCJS = true;
         if (auto* moduleObject = entryValue ? dynamicDowncast<Bun::JSCommonJSModule>(entryValue) : nullptr) {
-            if (undoLog)
-                noteCommonJSBeforeOverride(vm, *undoLog, moduleObject, mock->persistent);
+            noteCommonJSBeforeOverride(vm, undoLog, moduleObject, mock->persistent);
 
             JSValue exportsValue = getJSValue();
             RETURN_IF_EXCEPTION(scope, {});
@@ -982,25 +998,33 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
         if (scope.exception()) [[unlikely]]
             break;
         restored++;
+        // A getter that re-mocked this while it was pending logged the value just undone as the original; its mock went with it.
+        if (size_t relogged = log->findBinding(binding.record.get(), binding.localName); relogged != notFound)
+            log->bindings.removeAt(relogged);
     }
     if (restored < pending.bindings.size()) {
         // Threw: everything not yet undone goes back, ahead of what was logged meanwhile, for the next restore().
         pending.bindings.removeAt(0, restored);
         pending.absorbNewer(log->take());
-        *log = WTF::move(pending);
+        log->takeEntriesFrom(pending);
     }
     RETURN_IF_EXCEPTION(scope, void());
 
-    for (auto& entry : pending.commonJSModules)
+    for (auto& entry : pending.commonJSModules) {
         entry.module->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), entry.originalExports.get(), 0);
+        if (size_t relogged = log->findCommonJS(entry.module.get()); relogged != notFound)
+            log->commonJSModules.removeAt(relogged);
+    }
 
-    if (virtualModules) {
-        for (auto& entry : pending.installed) {
+    for (auto& entry : pending.installed) {
+        if (virtualModules) {
             if (entry.displaced)
                 virtualModules->set(entry.specifier, JSC::Strong<JSC::JSObject> { vm, entry.displaced.get() });
             else
                 virtualModules->remove(entry.specifier);
         }
+        if (size_t relogged = log->findInstalled(entry.specifier); relogged != notFound)
+            log->installed.removeAt(relogged);
     }
 }
 

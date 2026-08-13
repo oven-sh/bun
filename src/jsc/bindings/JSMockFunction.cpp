@@ -925,6 +925,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
             }
 
             setReturnValue(createMockResult(vm, globalObject, "incomplete"_s, jsUndefined()));
+            RETURN_IF_EXCEPTION(scope, {});
 
             auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
@@ -954,16 +955,19 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
         case JSMockImplementation::Kind::ReturnValue: {
             JSValue returnValue = impl->underlyingValue.get();
             setReturnValue(createMockResult(vm, globalObject, "return"_s, returnValue));
+            RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(returnValue);
         }
         case JSMockImplementation::Kind::ReturnThis: {
             setReturnValue(createMockResult(vm, globalObject, "return"_s, thisValue));
+            RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(thisValue);
         }
         case JSMockImplementation::Kind::RejectedValue: {
             JSValue rejectedPromise = JSC::JSPromise::rejectedPromise(globalObject, impl->underlyingValue.get());
             RETURN_IF_EXCEPTION(scope, {});
             setReturnValue(createMockResult(vm, globalObject, "return"_s, rejectedPromise));
+            RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(rejectedPromise);
         }
         default: {
@@ -973,6 +977,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
     }
 
     setReturnValue(createMockResult(vm, globalObject, "return"_s, jsUndefined()));
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 
@@ -1555,6 +1560,13 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
 
             pushImpl(mock, globalObject, JSMockImplementation::Kind::Call, value);
         } else {
+            // JSFunction::getOwnPropertySlot serves `prototype` straight from property storage, ignoring
+            // the Accessor attribute, so a GetterSetter installed here would escape to script as a raw cell.
+            if (propertyKey == vm.propertyNames->prototype && object->inherits<JSC::JSFunction>()) {
+                throwVMError(globalObject, scope, "Cannot spy on the `prototype` property because it is not a function"_s);
+                return {};
+            }
+
             if (hasValue)
                 attributes = slot.attributes();
 

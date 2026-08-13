@@ -1,23 +1,32 @@
 //! HTMLRewriter API — wraps lol-html for JS.
 
 use core::cell::{Cell, RefCell};
+use core::ffi::c_void;
 use core::ptr::NonNull;
 use std::rc::Rc;
 
-use bun_core::MutableString;
 use bun_jsc::{
-    self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, ProtectedJSValue,
-    StrongOptional, SystemError, bun_string_jsc,
+    self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult,
+    ProtectedJSValue, SystemError, bun_string_jsc,
 };
 // Note: `bun_jsc::VirtualMachine` is a *module* re-export
 // (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
 // `bun_jsc::virtual_machine::VirtualMachine` — import that directly so the
-// name resolves as a type at `&mut VirtualMachine` annotations and as the
-// owner of the `on_quiet_unhandled_rejection_handler_capture_value` assoc fn.
+// name resolves as a type.
 use bun_jsc::virtual_machine::VirtualMachine;
 
-use crate::webcore::response::HeadersRef;
-use crate::webcore::{self, Response};
+use bun_collections::ByteVecExt;
+use bun_ptr::{BackRef, CellRefCounted, DetachablePtr, RawSlice};
+use bun_sys::Error as SysError;
+
+use crate::api::native_promise_context;
+use crate::generated_classes::{js_HTMLRewriterTransform, js_Response};
+use crate::webcore::blob::SizeType as BlobSizeType;
+use crate::webcore::sink::JSSink;
+use crate::webcore::streams::{
+    self, SourceHandle, Start, StartTag, StreamError, StreamResult, Writable, WritablePending,
+};
+use crate::webcore::{self, ByteStream, DrainResult, ReadableStream, Response, SinkHandle};
 use bun_core::String as BunString;
 // `ZigString` re-exports `bun_core::ZigString`; JSC-side methods
 // (`to_js`, `with_encoding`, …) come from the `ZigStringJsc` extension trait.
@@ -26,8 +35,14 @@ use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::zig_string::ZigString;
 
 // lol-html rewritable units, lifetime-erased to `'static` so a `*mut RawX`
-// can be parked in a JsClass `Cell` for the duration of the synchronous
-// handler call (the Cell is nulled again before the handler returns).
+// can be parked in a JsClass `DetachablePtr` for the duration of the
+// synchronous handler call (the slot is nulled again before the handler
+// returns). The `DetachablePtr` type invariant is discharged by
+// `handler_callback`: it parks the `&mut X` lol-html lends the closure
+// (`build_settings`, `EndTag::on_end_tag`), runs the JS callback, and its
+// scopeguard `detach()`s the slot before the closure returns to lol-html — so
+// a non-null load means the pointee is still inside lol-html's exclusive
+// borrow, and a JS object retained past its handler reads `None`.
 type RawElement = lol_html::html_content::Element<'static, 'static>;
 type RawTextChunk = lol_html::html_content::TextChunk<'static>;
 type RawComment = lol_html::html_content::Comment<'static>;
@@ -36,26 +51,6 @@ type RawDocumentEnd = lol_html::html_content::DocumentEnd<'static>;
 type RawEndTag = lol_html::html_content::EndTag<'static>;
 
 // ───────────────────── local helpers ─────────────────────────────────────
-
-/// Load the lol-html unit out of a wrapper's `Cell<*mut RawX>` field for the
-/// body of one host-fn. This is the ONE sanctioned lifetime-erasure `unsafe`
-/// in this module. Returns `None` once the wrapper has been detached (the
-/// Cell nulled), so a JS object retained past its handler can never reach a
-/// dangling pointer.
-fn cell_get<'a, T>(cell: &Cell<*mut T>) -> Option<&'a mut T> {
-    // SAFETY: every non-null pointer in these Cells was erased with
-    // `ptr::from_mut(x).cast()` from the `&mut X` lol-html lends a handler
-    // closure for the duration of that synchronous call (`build_settings`,
-    // `EndTag::on_end_tag`). `handler_callback` parks it in the wrapper only
-    // while it runs the JS callback, and its scopeguard (`clear_field` /
-    // `invalidate`) nulls the Cell before that closure returns to lol-html —
-    // so a non-null load means the pointee is still inside lol-html's
-    // exclusive `&mut` borrow: live, aligned, and lent to nobody else. The
-    // unbounded `'a` is the caller's obligation: consume the returned `&mut`
-    // within the current host-fn body and never hold it across a re-entry
-    // into JS, which could reach this fn again on the same wrapper.
-    unsafe { cell.get().as_mut() }
-}
 
 /// Construct a `SystemError` with code+message and remaining fields defaulted.
 fn system_error(code: &'static str, message: &'static str) -> SystemError {
@@ -140,7 +135,7 @@ fn content_type(opts: Option<ContentOptions>) -> lol_html::html_content::Content
 /// - `$Raw`      — the `Raw*` type alias of the backing lol-html unit, e.g.
 ///                 `RawElement` (also paths the raw op as `$Raw::$name`,
 ///                 which holds for all 16 ops).
-/// - `$field`    — the `Cell<*mut $Raw>` field on `self`.
+/// - `$field`    — the `DetachablePtr<$Raw>` field on `self`.
 /// - `$null_ret` — sentinel when the raw ptr is null. **Differs per wrapper**:
 ///                 `JSValue::UNDEFINED` for TextChunk/Element,
 ///                 `JSValue::NULL` for DocEnd/Comment/EndTag.
@@ -160,7 +155,7 @@ macro_rules! lol_content_ops {
             content: ZigString,
             content_options: Option<ContentOptions>,
         ) -> JsResult<JSValue> {
-            let Some(raw) = cell_get(&self.$field) else {
+            let Some(raw) = self.$field.get_mut() else {
                 return Ok($null_ret);
             };
             let content_slice = content.to_slice();
@@ -222,14 +217,28 @@ pub struct LOLHTMLContext {
     pub(crate) document_handlers: Vec<Box<DocumentHandler>>,
 }
 
-/// `true` = the STOP directive from an `ElementHandler`/`DocumentHandler`/
-/// `EndTagHandler` callback. The message is load-bearing: lol-html's C API
-/// produced exactly this string for a stopped rewriter; it reaches JS as-is.
-fn directive_result(stop: bool) -> lol_html::HandlerResult {
-    if stop {
-        Err("The rewriter has been stopped.".into())
-    } else {
-        Ok(())
+/// What a JS content handler decided.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum HandlerOutcome {
+    /// The handler completed; keep rewriting.
+    Continue,
+    /// The handler threw / rejected / returned an Error: abort the rewrite.
+    Stop,
+    /// The handler returned a promise that is still pending after one
+    /// microtask drain: make lol-html park the current rewritable unit and
+    /// return from `write()`/`end()`/`resume()` so the event loop can run.
+    /// See [`RewriterPipe::begin_suspension`].
+    Suspend,
+}
+
+/// Map the outcome onto lol-html's `HandlerResult`. The `Stop` message is
+/// load-bearing: lol-html's C API produced exactly this string for a stopped
+/// rewriter; it reaches JS as-is.
+fn handler_result(outcome: HandlerOutcome) -> lol_html::HandlerResult {
+    match outcome {
+        HandlerOutcome::Continue => Ok(()),
+        HandlerOutcome::Stop => Err("The rewriter has been stopped.".into()),
+        HandlerOutcome::Suspend => Err(Box::new(lol_html::SuspensionRequest)),
     }
 }
 
@@ -261,21 +270,21 @@ fn build_settings(
             handlers = handlers.element(move |el: &mut lol_html::html_content::Element| {
                 let raw: *mut lol_html::html_content::Element<'static, 'static> =
                     core::ptr::from_mut(el).cast();
-                directive_result(ElementHandler::on_element(h.as_ptr(), raw))
+                handler_result(ElementHandler::on_element(h, raw))
             });
         }
         if has_comment {
             handlers = handlers.comments(move |c: &mut lol_html::html_content::Comment| {
                 let raw: *mut lol_html::html_content::Comment<'static> =
                     core::ptr::from_mut(c).cast();
-                directive_result(ElementHandler::on_comment(h.as_ptr(), raw))
+                handler_result(ElementHandler::on_comment(h, raw))
             });
         }
         if has_text {
             handlers = handlers.text(move |t: &mut lol_html::html_content::TextChunk| {
                 let raw: *mut lol_html::html_content::TextChunk<'static> =
                     core::ptr::from_mut(t).cast();
-                directive_result(ElementHandler::on_text(h.as_ptr(), raw))
+                handler_result(ElementHandler::on_text(h, raw))
             });
         }
         element_content_handlers.push((std::borrow::Cow::Owned(selector.clone()), handlers));
@@ -296,28 +305,28 @@ fn build_settings(
             handlers = handlers.doctype(move |d: &mut lol_html::html_content::Doctype| {
                 let raw: *mut lol_html::html_content::Doctype<'static> =
                     core::ptr::from_mut(d).cast();
-                directive_result(DocumentHandler::on_doc_type(h.as_ptr(), raw))
+                handler_result(DocumentHandler::on_doc_type(h, raw))
             });
         }
         if has_comment {
             handlers = handlers.comments(move |c: &mut lol_html::html_content::Comment| {
                 let raw: *mut lol_html::html_content::Comment<'static> =
                     core::ptr::from_mut(c).cast();
-                directive_result(DocumentHandler::on_comment(h.as_ptr(), raw))
+                handler_result(DocumentHandler::on_comment(h, raw))
             });
         }
         if has_text {
             handlers = handlers.text(move |t: &mut lol_html::html_content::TextChunk| {
                 let raw: *mut lol_html::html_content::TextChunk<'static> =
                     core::ptr::from_mut(t).cast();
-                directive_result(DocumentHandler::on_text(h.as_ptr(), raw))
+                handler_result(DocumentHandler::on_text(h, raw))
             });
         }
         if has_end {
             handlers = handlers.end(move |e: &mut lol_html::html_content::DocumentEnd| {
                 let raw: *mut lol_html::html_content::DocumentEnd<'static> =
                     core::ptr::from_mut(e).cast();
-                directive_result(DocumentHandler::on_end(h.as_ptr(), raw))
+                handler_result(DocumentHandler::on_end(h, raw))
             });
         }
         document_content_handlers.push(handlers);
@@ -389,15 +398,17 @@ impl HTMLRewriter {
     #[expect(clippy::boxed_local)]
     pub fn finalize(self: Box<Self>) {}
 
+    /// `sync_only_noun` is `Some("a string" | "an ArrayBuffer")` when the
+    /// caller needs the rewrite to finish before `transform()` returns; a
+    /// handler that would suspend then fails the rewrite instead.
     pub(crate) fn begin_transform(
         &self,
         global: &JSGlobalObject,
-        response: &mut Response,
+        response: &Response,
+        sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
         let new_context = Rc::clone(&self.context);
-        // SAFETY: `response` is a live `Response` whose JS wrapper is on
-        // the caller's stack (see `transform_`).
-        unsafe { BufferOutputSink::init(new_context, global, response) }
+        RewriterPipe::init(new_context, global, response, sync_only_noun)
     }
 
     pub(crate) fn transform_(
@@ -405,22 +416,26 @@ impl HTMLRewriter {
         global: &JSGlobalObject,
         response_value: JSValue,
     ) -> JsResult<JSValue> {
-        // Note: `Response` doesn't yet impl `JsClass`, so use the
-        // codegen `from_js` directly instead of `JSValue::as_::<Response>()`.
-        if let Some(response) =
-            webcore::response::js::from_js(response_value).map(|p| p.cast::<Response>())
+        // `js_Response::from_js` returns the `m_ctx` as `NonNull<Response>`;
+        // wrap it in a `BackRef` for a safe `&Response` — `response_value` is
+        // on the stack (conservatively scanned), so the native payload outlives
+        // this host-fn body.
+        if let Some(response) = js_Response::from_js(response_value).map(BackRef::<Response>::from)
         {
-            // SAFETY: response is the m_ctx of a live JS Response (response_value
-            // is on the stack, conservatively scanned).
-            let body_value = unsafe { (*response).get_body_value() };
+            // An already-failed body surfaces its stored upstream error (abort
+            // reason, connection error) instead of a generic "body already used"
+            // — the error is the useful bit, and `wire_input` would otherwise
+            // treat `Value::Error` as an empty blob and emit an empty document.
+            let body_value = response.get_body_value();
+            if let webcore::body::Value::Error(err) = body_value {
+                return Err(global.throw_value(err.to_js(global)));
+            }
             if matches!(*body_value, webcore::body::Value::Used) {
                 return Err(
                     global.throw_invalid_arguments(format_args!("Response body already used"))
                 );
             }
-            // SAFETY: `response` is the live m_ctx of `response_value` (kept
-            // alive on the caller's stack), never null.
-            let out = self.begin_transform(global, unsafe { &mut *response })?;
+            let out = self.begin_transform(global, &response, None)?;
             // Check if the returned value is an error and throw it properly
             if let Some(err) = out.to_error() {
                 return Err(global.throw_value(err));
@@ -436,7 +451,7 @@ impl HTMLRewriter {
         }
         let kind = if response_value.is_string() {
             ResponseKind::String
-        } else if response_value.js_type().is_typed_array_or_array_buffer() {
+        } else if response_value.js_type().is_array_buffer_like() {
             ResponseKind::ArrayBuffer
         } else {
             ResponseKind::Other
@@ -444,58 +459,53 @@ impl HTMLRewriter {
 
         if kind != ResponseKind::Other {
             let body_value = webcore::body::extract(global, response_value)?;
-            let resp = bun_core::heap::into_raw(Box::new(Response::init(
-                webcore::response::Init {
-                    status_code: 200,
-                    ..Default::default()
-                },
-                body_value,
-                BunString::empty(),
-                false,
-            )));
-            let _resp_guard = scopeguard::guard(resp, |r| {
-                // SAFETY: `r` is the `heap::into_raw` allocation from just
-                // above; finalize takes ownership and frees it exactly once.
-                Response::finalize(unsafe { Box::from_raw(r) })
-            });
+            // The guard owns the `Box<Response>` for the whole scope and hands
+            // it to `Response::finalize` on drop (unwind or return) — no raw
+            // pointer round-trip.
+            let resp = scopeguard::guard(
+                Box::new(Response::init(
+                    webcore::response::Init {
+                        status_code: 200,
+                        ..Default::default()
+                    },
+                    body_value,
+                    BunString::empty(),
+                    false,
+                )),
+                Response::finalize,
+            );
 
-            // SAFETY: `resp` is a live `heap::into_raw` allocation, never null.
-            let out_response_value = self.begin_transform(global, unsafe { &mut *resp })?;
+            // Carries its own article: "an ArrayBuffer", not "a ArrayBuffer".
+            let noun = if kind == ResponseKind::String {
+                "a string"
+            } else {
+                "an ArrayBuffer"
+            };
+            let out_response_value = self.begin_transform(global, &resp, Some(noun))?;
             // Check if the returned value is an error and throw it properly
             if let Some(err) = out_response_value.to_error() {
                 return Err(global.throw_value(err));
             }
             out_response_value.ensure_still_alive();
             let Some(out_response) =
-                webcore::response::js::from_js(out_response_value).map(|p| p.cast::<Response>())
+                js_Response::from_js(out_response_value).map(BackRef::<Response>::from)
             else {
                 return Ok(out_response_value);
             };
-            // SAFETY: out_response is the m_ctx of out_response_value (kept alive
-            // on the stack via ensure_still_alive above).
-            let mut blob = unsafe {
-                (*out_response)
-                    .get_body_value()
-                    .use_as_any_blob_allow_non_utf8_string()
-            };
 
-            let _out_guard = scopeguard::guard((out_response_value, out_response), |(v, r)| {
-                // `Response.js.dangerouslySetPtr(v, null)` — null out the JS
-                // wrapper's `m_ctx` so its GC finalize is a no-op, then finalize
-                // the native side ourselves.
-                // SAFETY: `v` is the live JS wrapper (kept on stack via
-                // ensure_still_alive); `r` is its `m_ctx` pointer, detached here
-                // and finalized exactly once.
-                unsafe {
-                    let _ = bun_jsc::generated::JSResponse::dangerously_set_ptr(
-                        v,
-                        core::ptr::null_mut(),
-                    );
-                    // Manually invoke the finalizer to ensure it does what we want.
-                    // SAFETY: `r` is the detached `m_ctx` pointer, sole owner here.
-                    Response::finalize(Box::from_raw(r));
-                }
-            });
+            // The body is never still `Locked` here: `sync_only_noun` makes a
+            // handler that would suspend fail the rewrite instead, and `init`
+            // rethrows that as the synchronous TypeError above.
+            let mut blob = out_response
+                .get_body_value()
+                .use_as_any_blob_allow_non_utf8_string();
+
+            // Null out the JS wrapper's `m_ctx` so its GC finalize is a no-op,
+            // then release the wrapper's +1 ourselves. The pipe still holds its
+            // own +1 (from `Response::ref_` in `init()`); `Drop for RewriterPipe`
+            // reclaims the allocation when the Transform cell is collected.
+            js_Response::detach_ptr(out_response_value);
+            Response::unref(out_response.as_const_ptr().cast_mut());
 
             return match kind {
                 ResponseKind::String => blob.to_string(global, webcore::Lifetime::Transfer),
@@ -540,134 +550,409 @@ impl HTMLRewriter {
     }
 }
 
-// ───────────────────────── BufferOutputSink ──────────────────────────────
+// ─────────────────────────── RewriterPipe ────────────────────────────────
 
-#[derive(bun_ptr::CellRefCounted)]
-pub struct BufferOutputSink {
-    // Intrusive RefCount; *Self is the `SinkRef` carried inside `rewriter`.
-    ref_count: Cell<u32>,
-    pub global: GlobalRef, // JSC_BORROW
-    pub(crate) bytes: MutableString,
-    // Heap-allocated (never held by value): `run_output_sink` must reach the
-    // rewriter through a raw pointer, never a `&mut` of `*sink`, because the
-    // output sink re-enters `&mut *sink` while the rewriter runs.
-    pub(crate) rewriter: *mut lol_html::HtmlRewriter<'static, SinkRef>, // null when unset
-    pub(crate) context: Rc<RefCell<LOLHTMLContext>>,
-    pub(crate) response: *mut Response, // BORROW_FIELD: kept alive by response_value Strong
-    pub(crate) response_value: StrongOptional,
-    pub(crate) body_value_bufferer: Option<webcore::body::ValueBufferer<'static>>,
-    // Points at the `sink_error` stack local in `init()`;
-    // only written while `init()` is on the stack.
-    // See `write_tmp_sync_error` for the full liveness/provenance argument.
-    pub(crate) tmp_sync_error: Option<NonNull<JSValue>>,
+/// The concrete lol-html rewriter type backing one `transform()`.
+pub(crate) type LolRewriter = lol_html::HtmlRewriter<'static, PipeOutput>;
+
+/// Which lol-html call the pipe still has to run (or finish). Advanced by
+/// [`RewriterPipe::feed`] / [`RewriterPipe::end_rewrite`] /
+/// [`RewriterPipe::resume_rewrite`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RewritePhase {
+    /// `write(input)` has not completed (not started, or a handler suspended it).
+    WritePending,
+    /// `write` completed; `end()` has not (not started, or suspended).
+    EndPending,
+    /// The rewrite ran to completion or failed; nothing left to drive.
+    Done,
 }
 
-impl BufferOutputSink {
-    // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
+/// The JS wrapper a suspended handler is still using. Typed so the retarget/
+/// release dispatch is a match, not a `c_void` + fn-ptr pair.
+#[derive(Clone, Copy)]
+enum SuspendedWrapper {
+    Element(NonNull<Element>),
+    Comment(NonNull<Comment>),
+    TextChunk(NonNull<TextChunk>),
+    EndTag(NonNull<EndTag>),
+    DocType(NonNull<DocType>),
+    DocEnd(NonNull<DocEnd>),
+}
 
-    /// Single unsafe deref site for the set-once
-    /// `tmp_sync_error: Option<NonNull<JSValue>>` field, so the two callers in
-    /// `on_finished_buffering` stay safe. `tmp_sync_error` points at the
-    /// `sink_error: Cell<JSValue>` stack local in [`init`]; it is only written
-    /// through on the synchronous (`is_async == false`) path while `init` is
-    /// still on the stack, so the pointee is live and the `Cell`-derived
-    /// pointer carries `SharedReadWrite` provenance.
-    #[inline]
-    fn write_tmp_sync_error(sink: *mut Self, err: JSValue) {
-        // SAFETY: `sink` is a live heap allocation (refcount > 0, caller
-        // invariant); `tmp_sync_error` was set in `init()` and the synchronous
-        // caller is reached only while `init()` is still on the stack.
-        unsafe { *(*sink).tmp_sync_error.unwrap().as_ptr() = err };
+impl SuspendedWrapper {
+    /// Point the wrapper at the heap copy lol-html parked on suspend.
+    fn retarget(&self, rewriter: &mut LolRewriter) {
+        match *self {
+            Self::Element(p) => BackRef::from(p).retarget(Element::suspended_raw(rewriter)),
+            Self::Comment(p) => BackRef::from(p).retarget(Comment::suspended_raw(rewriter)),
+            Self::TextChunk(p) => BackRef::from(p).retarget(TextChunk::suspended_raw(rewriter)),
+            Self::EndTag(p) => BackRef::from(p).retarget(EndTag::suspended_raw(rewriter)),
+            Self::DocType(p) => BackRef::from(p).retarget(DocType::suspended_raw(rewriter)),
+            Self::DocEnd(p) => BackRef::from(p).retarget(DocEnd::suspended_raw(rewriter)),
+        }
+    }
+    /// Detach the wrapper and drop the ref `handler_callback` took.
+    fn release(self) {
+        match self {
+            Self::Element(p) => {
+                BackRef::from(p).detach();
+                <Element as CellRefCounted>::deref_nn(p);
+            }
+            Self::Comment(p) => {
+                BackRef::from(p).detach();
+                <Comment as CellRefCounted>::deref_nn(p);
+            }
+            Self::TextChunk(p) => {
+                BackRef::from(p).detach();
+                <TextChunk as CellRefCounted>::deref_nn(p);
+            }
+            Self::EndTag(p) => {
+                BackRef::from(p).detach();
+                <EndTag as CellRefCounted>::deref_nn(p);
+            }
+            Self::DocType(p) => {
+                BackRef::from(p).detach();
+                <DocType as CellRefCounted>::deref_nn(p);
+            }
+            Self::DocEnd(p) => {
+                BackRef::from(p).detach();
+                <DocEnd as CellRefCounted>::deref_nn(p);
+            }
+        }
+    }
+}
+
+/// Recorded by [`handler_callback`] when a handler returned a still-pending
+/// promise, consumed by [`RewriterPipe::begin_suspension`] immediately after
+/// the lol-html call returns `Err(Suspended)`. The promise itself is rooted in
+/// the cell's `suspensionPromise` WriteBarrier slot, not here.
+struct PendingSuspension {
+    wrapper: SuspendedWrapper,
+}
+
+impl PendingSuspension {
+    /// Hand the wrapper to a caller that adopts its ref, disarming [`Drop`].
+    fn take_wrapper(self) -> SuspendedWrapper {
+        core::mem::ManuallyDrop::new(self).wrapper
+    }
+}
+
+impl Drop for PendingSuspension {
+    fn drop(&mut self) {
+        self.wrapper.release();
+    }
+}
+
+/// Installs `pipe` as the VM's active HTMLRewriter sink for the duration of
+/// one lol-html `write()`/`end()`/`resume()` call, restoring the previous one
+/// on drop. LIFO so a handler body that synchronously runs a nested
+/// `transform()` nests correctly.
+struct ActiveSinkGuard {
+    prev: Option<NonNull<c_void>>,
+}
+
+impl ActiveSinkGuard {
+    fn enter(pipe: &RewriterPipe) -> Self {
+        let vm: &mut VirtualMachine = pipe.global.bun_vm().as_mut();
+        Self {
+            prev: core::mem::replace(
+                &mut vm.html_rewriter_active_sink,
+                NonNull::new(core::ptr::from_ref(pipe).cast_mut().cast()),
+            ),
+        }
+    }
+}
+
+impl Drop for ActiveSinkGuard {
+    fn drop(&mut self) {
+        // SAFETY: the JS thread's VM outlives this synchronous frame.
+        VirtualMachine::get().as_mut().html_rewriter_active_sink = self.prev;
+    }
+}
+
+/// The `RewriterPipe` whose lol-html call is on this VM's native stack, if
+/// any. Content handlers can only run inside such a call.
+fn active_sink(global: &JSGlobalObject) -> Option<BackRef<RewriterPipe>> {
+    global
+        .bun_vm_ref()
+        .html_rewriter_active_sink
+        .map(|p| BackRef::from(p.cast::<RewriterPipe>()))
+}
+
+/// Codegen alias: the generated `JSHTMLRewriterTransform` cell's `m_ctx` is a
+/// `*mut RewriterPipe`. The cell is created per `transform()` call, stashed in
+/// the output Response's `m_transform` slot, and used as the `.then()` context
+/// for a suspended handler's promise. Its six `values:` WriteBarrier slots
+/// root the output Response, input/output ReadableStreams, the JS-pump
+/// `WritablePending` promise, a captured handler error, and the suspension
+/// promise.
+pub type HTMLRewriterTransform = RewriterPipe;
+
+/// Streaming pipe for one `HTMLRewriter::transform()`: receives input bytes
+/// via [`SinkHandle::HTMLRewriter`], feeds them through lol-html (suspending
+/// when a content handler returns a pending Promise), and emits output either
+/// into a pre-stream buffer or — once JS reads `.body` — a [`ByteStream`]
+/// whose `producer` is [`SourceHandle::HTMLRewriter`].
+#[derive(bun_ptr::CellRefCounted)]
+pub struct RewriterPipe {
+    pub(crate) global: GlobalRef,
+    /// The owning `JSHTMLRewriterTransform` wrapper cell (whose `m_ctx` is this
+    /// pipe). Its WriteBarrier slots root the response, input/output streams,
+    /// pending promise, and handler error.
+    cell: Cell<JSValue>,
+    /// Boxed (never held by value): lol-html's `write/end/resume` re-enter
+    /// `PipeOutput::handle_chunk` which reads fields off `*self`. `JsCell`
+    /// because those calls (and `suspended_*`) need `&mut LolRewriter` from
+    /// `&self`.
+    rewriter: JsCell<Option<Box<LolRewriter>>>,
+    context: Rc<RefCell<LOLHTMLContext>>,
+
+    // ── input side ───────────────────────────────────────────────────────
+    /// Upstream to resume (`ready()`) once output drains, or `close()` once
+    /// the output reader cancels.
+    input_source: Cell<SourceHandle>,
+    /// Input EOF arrived while a suspension or output backpressure kept us
+    /// from calling `end_rewrite()`; run it once unblocked.
+    input_ended: Cell<bool>,
+    /// `true` while a JS-pump `.then()` reaction (attached in
+    /// [`Self::wire_input`]) is still owed. The generated `${controller}__close`
+    /// drops its error argument, so `end_from_stream` defers terminal work to
+    /// the reaction (which carries the real error) while this is set.
+    js_pump_reaction_pending: Cell<bool>,
+    /// Bytes accepted from the input while suspended or output-backpressured.
+    pending_input: JsCell<Vec<u8>>,
+    high_water_mark: Cell<BlobSizeType>,
+
+    // ── output side ──────────────────────────────────────────────────────
+    /// Set by [`Self::on_readable_stream_available`]; `None` until JS reads
+    /// `.body` on the output Response. Kept alive by the cell's `outputStream`
+    /// slot.
+    output: Cell<Option<bun_ptr::BackRef<ByteStream>>>,
+    /// lol-html output buffered before the output ByteStream exists.
+    output_buffer: JsCell<Vec<u8>>,
+    /// Output Response. The pipe holds a native `+1` (released in `Drop`) so
+    /// the body stays reachable on the abandon-suspension path after the
+    /// Response JS wrapper has been swept alongside the Transform cell.
+    response: Cell<Option<bun_ptr::BackRef<Response>>>,
+
+    // ── suspension (from #33243) ─────────────────────────────────────────
+    phase: Cell<RewritePhase>,
+    /// Set for `transform(string)` / `transform(ArrayBuffer)`. Holds the noun
+    /// for the error message, article included. A handler that would suspend
+    /// fails the whole rewrite instead.
+    sync_only_noun: Cell<Option<&'static str>>,
+    /// Handed from the suspending [`handler_callback`] to
+    /// [`Self::begin_suspension`] across the lol-html unwind.
+    pending_suspension: Cell<Option<PendingSuspension>>,
+    suspended_wrapper: Cell<Option<SuspendedWrapper>>,
+    /// `true` while a lol-html `write`/`end_mut`/`resume` call on this pipe's
+    /// `rewriter` is on the stack. The output sink may re-enter the pipe via
+    /// `on_ready`/`write`/`end_from_stream` during that call; those entry
+    /// points defer instead of re-driving the (still-running) rewriter.
+    driving: Cell<bool>,
+
+    // ── JS-pump path ─────────────────────────────────────────────────────
+    /// Shared pending drain promise for the JS-pump `write()`/`flush(true)`.
+    pending: JsCell<WritablePending>,
+    done: Cell<bool>,
+
+    // ── allocation lifetime ──────────────────────────────────────────────
+    /// Owners that may still dispatch into this allocation: the Transform
+    /// cell (releases in [`Self::finalize`]), the JS-pump controller's raw
+    /// `m_sinkPtr` (releases via `__controllerDetached`), and a parked
+    /// suspension's reaction/abandon task. GC sweeps cells in unspecified
+    /// order within a cycle, so whichever owner releases last frees the Box.
+    ref_count: Cell<u32>,
+    /// `ref_count` includes a JS-pump controller entry; consumed exactly once
+    /// by [`Self::release_pump_ref`].
+    pump_controller_attached: Cell<bool>,
+}
+
+impl RewriterPipe {
+    /// `JSHTMLRewriterTransform` finalizer. Runs during GC sweep: nothing
+    /// here may touch other GC cells, and the other ref holders may still
+    /// dispatch into the pipe after this cell is swept. So only release the
+    /// cell's ref; the last holder frees the Box. At VM shutdown deferred
+    /// releases never run, so a pipe with refs outstanding leaks instead of
+    /// being freed under a live ref.
+    pub fn finalize(this: Box<Self>) {
+        bun_ptr::finalize_js_box(this, |pipe| pipe.cell.set(JSValue::ZERO));
     }
 
-    /// # Safety
-    /// `original` must point to a live `Response` whose JS wrapper is kept
-    /// alive for the duration of this call.
-    unsafe fn init(
+    /// The JS-pump controller detached and can never dispatch into the pipe
+    /// again: release its ref. Releasing the last ref is deferred to the
+    /// event loop because the C++ caller keeps using the allocation in the
+    /// same frame (the destructor's trailing `__finalize`, the close/end host
+    /// fns' `__close`/`__endWithSink` on the saved pointer).
+    fn release_pump_ref(&self) {
+        if !self.pump_controller_attached.replace(false) {
+            return;
+        }
+        if self.ref_count.get() > 1 {
+            Self::deref_nn(NonNull::from(self));
+            return;
+        }
+        native_promise_context::DeferredDerefTask::schedule(
+            core::ptr::from_ref(self).cast_mut().cast(),
+            native_promise_context::Tag::HTMLRewriterPipeFree,
+        );
+    }
+
+    /// Queued by the `NativePromiseContext` destructor (via
+    /// `DeferredDerefTask`) when the handler's promise was collected without
+    /// settling: it will never resume this pipe. Runs on the JS thread,
+    /// outside GC sweep; the suspension's ref keeps `pipe` live until here.
+    ///
+    /// If the Transform cell is still alive (its `cell` backref is set) —
+    /// a reader or the output Response keeps the rewrite reachable — fail
+    /// the body normally, which errors the live output stream and clears the
+    /// `owner`/`sinkOwner` edges so the cell becomes ordinary garbage. If the
+    /// cell was swept with the promise (`cell` is zeroed), every source that
+    /// could have held a backref died with the cell, so clear the handles
+    /// raw and fail the body through the Response native `+1`.
+    pub(crate) fn abandon_suspension(pipe: bun_ptr::BackRef<Self>) {
+        let this = &*pipe;
+        let cell_alive = this.cell.get().is_cell();
+        this.release_suspended_wrapper();
+        if !cell_alive {
+            this.input_source.set(SourceHandle::None);
+            this.output.set(None);
+        }
+        this.fail(webcore::body::ValueError::Message(BunString::static_(
+            "HTMLRewriter content handler returned a Promise that will never settle",
+        )));
+        Self::deref_nn(pipe.into());
+    }
+
+    /// Record a handler's exception for the enclosing lol-html call to pick
+    /// up once it returns. Rooted by the cell's `handlerError` WriteBarrier
+    /// slot until it is taken.
+    pub(crate) fn set_handler_error(&self, err: JSValue) {
+        js_HTMLRewriterTransform::handler_error_set_cached(self.cell.get(), &self.global, err);
+    }
+
+    /// Take (and clear) the handler error recorded during the lol-html call
+    /// that just returned.
+    fn take_handler_error(&self) -> Option<JSValue> {
+        let cell = self.cell.get();
+        let err = js_HTMLRewriterTransform::handler_error_get_cached(cell);
+        match err {
+            Some(v) if !v.is_empty_or_undefined_or_null() => {
+                js_HTMLRewriterTransform::handler_error_set_cached(
+                    cell,
+                    &self.global,
+                    JSValue::UNDEFINED,
+                );
+                Some(v)
+            }
+            _ => None,
+        }
+    }
+
+    /// Sever the wired input source: null the upstream's raw `sink` backref
+    /// so it can no longer dispatch into this pipe, and clear its `sinkOwner`
+    /// slot so I/O no longer roots the Transform cell through it. With
+    /// `cancel_upstream`, also close a native producer afterwards, so a
+    /// failed or cancelled rewrite stops a fetch mid-download and closes a
+    /// file fd instead of draining to upstream EOF; EOF paths pass `false`.
+    /// Only called from terminal paths on the JS thread, where the source is
+    /// still alive (it is rooted by the cell's `inputStream` slot until the
+    /// handle is dropped here). Idempotent: the handle is `None` after the
+    /// first call.
+    fn detach_input_source(&self, cancel_upstream: bool) {
+        let mut src = self.input_source.replace(SourceHandle::None);
+        match &src {
+            SourceHandle::ByteStream(bs) => bs.parent_const().set_sink_owner(JSValue::UNDEFINED),
+            SourceHandle::FileReader(fr) => fr.parent_const().set_sink_owner(JSValue::UNDEFINED),
+            _ => {}
+        }
+        let mut upstream = src;
+        JSSink::<RewriterPipe>::detach(&mut src, &self.global);
+        if cancel_upstream {
+            match upstream {
+                SourceHandle::ByteStream(_) | SourceHandle::FileReader(_) => {
+                    upstream.close(None);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Sever the output `ByteStream`'s `SourceHandle::HTMLRewriter` backref
+    /// (installed via `PendingValue.producer` in [`Self::init`]) so a later
+    /// `signal_drained()` can't reach a freed pipe, and clear its `owner`
+    /// slot. Only called from terminal paths on the JS thread. Idempotent.
+    fn detach_output(&self) {
+        if let Some(out) = self.output.take() {
+            out.parent_const().set_owner(JSValue::UNDEFINED);
+            out.parent_const().producer.set(SourceHandle::None);
+        }
+    }
+
+    #[inline]
+    fn is_suspended(&self) -> bool {
+        self.suspended_wrapper.get().is_some() || self.pending_suspension.take_peek().is_some()
+    }
+
+    #[inline]
+    fn output_backpressured(&self) -> bool {
+        if let Some(out) = self.output.get() {
+            if out.sink_paused.get() {
+                return true;
+            }
+            // A body-mixin collector grows `buffer` deliberately until Done.
+            if out.buffer_action.get().is_some() {
+                return false;
+            }
+            return out.buffer.get().len() as BlobSizeType > self.high_water_mark.get();
+        }
+        // No output ByteStream yet: the pre-stream buffer has no drain signal
+        // (only `on_start_streaming`/`finish` consume it), so backpressuring
+        // the input here would deadlock the body-mixin (`.text()` etc.) path.
+        false
+    }
+
+    fn init(
         context: Rc<RefCell<LOLHTMLContext>>,
         global: &JSGlobalObject,
-        original: *mut Response,
+        original: &Response,
+        sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
-        let sink = bun_core::heap::into_raw(Box::new(BufferOutputSink {
-            ref_count: Cell::new(1),
+        let pipe = bun_core::heap::alloc_nn(RewriterPipe {
             global: GlobalRef::from(global),
-            bytes: MutableString::init_empty(),
-            rewriter: core::ptr::null_mut(),
+            cell: Cell::new(JSValue::ZERO),
+            rewriter: JsCell::new(None),
             context,
-            response: core::ptr::null_mut(),
-            response_value: StrongOptional::empty(),
-            body_value_bufferer: None,
-            tmp_sync_error: None,
-        }));
-        // SAFETY: `sink` is the `heap::into_raw` allocation above; refcount >= 1.
-        let _sink_guard = unsafe { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
-        // Note: do not hold a long-lived `&mut *sink` here — the same
-        // allocation is also written through the raw pointer by the lol-html
-        // output-sink callback during `bufferer.run()` and by `deref(sink)`
-        // below. Access fields via raw-pointer place expressions instead.
+            input_source: Cell::new(SourceHandle::None),
+            input_ended: Cell::new(false),
+            js_pump_reaction_pending: Cell::new(false),
+            pending_input: JsCell::new(Vec::new()),
+            high_water_mark: Cell::new(16384),
+            output: Cell::new(None),
+            output_buffer: JsCell::new(Vec::new()),
+            response: Cell::new(None),
+            phase: Cell::new(RewritePhase::WritePending),
+            sync_only_noun: Cell::new(sync_only_noun),
+            pending_suspension: Cell::new(None),
+            suspended_wrapper: Cell::new(None),
+            driving: Cell::new(false),
+            pending: JsCell::new(WritablePending::default()),
+            done: Cell::new(false),
+            ref_count: Cell::new(1),
+            pump_controller_attached: Cell::new(false),
+        });
+        // Every field is `Cell`/`JsCell`, so a shared `&RewriterPipe` via
+        // `BackRef` is sound across the re-entrant lol-html calls below.
+        let this = BackRef::from(pipe);
 
-        let result = bun_core::heap::into_raw(Box::new(Response::init(
-            webcore::response::Init {
-                status_code: 200,
-                ..Default::default()
-            },
-            webcore::Body::new({
-                let mut pv = webcore::body::PendingValue::new(global);
-                pv.task = Some(sink.cast::<core::ffi::c_void>());
-                webcore::body::Value::Locked(pv)
-            }),
-            BunString::empty(),
-            false,
-        )));
+        let input_size = original.get_body_len();
 
-        // SAFETY: sink was just allocated via heap::alloc above; refcount==1.
-        unsafe { (*sink).response = result };
-        // Note (Stacked Borrows): `sink_error` is written via raw pointer
-        // by the unhandled-rejection handler during `bufferer.run()` and via
-        // `tmp_sync_error` from `on_finished_buffering`. Use a `Cell` so the
-        // exported `*mut` (via `Cell::as_ptr`, i.e. `UnsafeCell::get`) carries
-        // SharedReadWrite provenance — local `.get()` reads do NOT invalidate
-        // the stored raw pointer the way a `&`/`&mut` reborrow of a plain
-        // `mut` local would.
-        let sink_error: core::cell::Cell<JSValue> = core::cell::Cell::new(JSValue::ZERO);
-        let sink_error_ptr: *mut JSValue = sink_error.as_ptr();
-        // SAFETY: original is a live *Response passed from begin_transform; its
-        // JS wrapper is on the caller's stack.
-        let input_size = unsafe { (*original).get_body_len() };
-        // SAFETY: bun_vm() returns the live VM raw ptr; VM outlives this fn.
-        let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-
-        // Since we're still using vm.waitForPromise, we have to also override
-        // the error rejection handler. That way, we can propagate errors to the
-        // caller.
-        let scope = vm.unhandled_rejection_scope();
-        let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
-        vm.unhandled_pending_rejection_to_capture = Some(sink_error_ptr);
-        // SAFETY: sink is a live heap allocation (refcount >= 1); sink_error_ptr
-        // is non-null (addr of stack local).
-        unsafe { (*sink).tmp_sync_error = Some(NonNull::new_unchecked(sink_error_ptr)) };
-        vm.on_unhandled_rejection =
-            VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
-        // Read the *live* slot at scope exit (Cell shares provenance with the
-        // raw-pointer writers).
-        scopeguard::defer! {
-            sink_error.get().ensure_still_alive();
-            // SAFETY: VM outlives this guard (sync stack frame).
-            let vm = VirtualMachine::get().as_mut();
-            vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
-            scope.apply(vm);
-        }
-
-        // The handler closures point into `Box`es owned by `(*sink).context`,
-        // which `sink` keeps alive for the rewriter's whole lifetime.
-        // SAFETY: sink is a live heap allocation (refcount >= 1); the `RefMut`
-        // of `(*sink).context` is released at the end of this statement.
+        // The handler closures point into `Box`es owned by `(*pipe).context`,
+        // which `pipe` keeps alive for the rewriter's whole lifetime.
         let (element_content_handlers, document_content_handlers) =
-            unsafe { build_settings(&mut (*sink).context.borrow_mut()) };
-        // `SinkRef` carries the raw `sink` (`heap::into_raw` root) so every
-        // `(*sink).field` access shares its provenance; `run_output_sink`
-        // reaches the rewriter through a raw pointer, never `&mut *sink`.
-        let rewriter = bun_core::heap::into_raw(Box::new(lol_html::HtmlRewriter::new(
+            build_settings(&mut this.context.borrow_mut());
+        this.rewriter.set(Some(Box::new(lol_html::HtmlRewriter::new(
             lol_html::Settings {
                 element_content_handlers,
                 document_content_handlers,
@@ -686,98 +971,79 @@ impl BufferOutputSink {
                 enable_esi_tags: false,
                 adjust_charset_on_meta_tag: false,
             },
-            SinkRef(sink),
-        )));
-        // SAFETY: sink is a live heap allocation (refcount >= 1).
-        unsafe { (*sink).rewriter = rewriter };
+            PipeOutput(this),
+        ))));
 
-        // SAFETY: result and original are both live *Response (result allocated
-        // above, original kept alive by caller); no aliasing &mut exists.
-        unsafe {
-            (*result).set_init(
-                (*original).get_method(),
-                (*original).get_init_status_code(),
-                (*original).get_init_status_text().clone(),
-            );
+        // ── output Response: body starts Locked(PendingValue{...}) ──────────
+        // A consumer reading `.body` creates the ByteStream lazily; until then
+        // `PipeOutput` buffers into `output_buffer`, and `on_start_streaming`
+        // hands that over as `DrainResult::Owned`.
+        let result = bun_core::heap::alloc_nn(Response::init(
+            webcore::response::Init {
+                status_code: 200,
+                ..Default::default()
+            },
+            webcore::Body::new({
+                let mut pv = webcore::body::PendingValue::new(global);
+                pv.task = Some(pipe.cast::<c_void>());
+                pv.on_start_streaming = Some(RewriterPipe::on_start_streaming);
+                pv.on_readable_stream_available = Some(RewriterPipe::on_readable_stream_available);
+                pv.producer = SourceHandle::HTMLRewriter(this);
+                webcore::body::Value::Locked(pv)
+            }),
+            BunString::empty(),
+            false,
+        ));
+        let result_ref = BackRef::from(result);
+        this.response.set(Some(result_ref));
+        // Pipe owns a `+1` on the Response native so `fail()` can still reach
+        // the body after the Response JS wrapper has been swept (the
+        // abandon-suspension path runs from a deferred task after the
+        // Transform cell and Response wrapper were collected together).
+        Response::ref_(result.as_ptr());
 
-            // https://github.com/oven-sh/bun/issues/3334
-            // Note: `clone_this` takes `&mut self`, so use the `_mut`
-            // accessor (original is `*mut Response`). `clone_this` only reads
-            // `self` (FFI mutates a freshly-allocated clone, not the receiver).
-            if let Some(headers) = (*original).get_init_headers_mut() {
-                let cloned = headers.clone_this(global)?;
-                (*result).set_init_headers(cloned.map(|p| HeadersRef::adopt(p)));
-            }
+        result_ref.set_init(
+            original.get_method(),
+            original.get_init_status_code(),
+            original.get_init_status_text().clone(),
+        );
+
+        // https://github.com/oven-sh/bun/issues/3334
+        result_ref.set_init_headers(original.clone_init_headers(global)?);
+
+        let response_js_value = result_ref.to_js(&this.global);
+
+        // Hand ownership of `pipe` to its `JSHTMLRewriterTransform` wrapper cell.
+        // The cell's WriteBarrier slots root the Response and (later) the
+        // input/output streams; the Response's `transform` slot roots the cell
+        // so it survives as long as user code can reach the output.
+        let cell = js_HTMLRewriterTransform::to_js(pipe.as_ptr(), global);
+        if !cell.is_cell() {
+            // No wrapper exists to own the initial ref, so drop it here.
+            Self::deref_nn(pipe);
+            return Err(global.throw_out_of_memory());
         }
+        this.cell.set(cell);
+        js_HTMLRewriterTransform::response_set_cached(cell, global, response_js_value);
+        js_Response::transform_set_cached(response_js_value, global, cell);
 
-        // Hold off on cloning until we're actually done.
-        // SAFETY: (*sink).response == result (set above), live heap allocation.
-        let response_js_value = unsafe { (*(*sink).response).to_js(&(*sink).global) };
-        // SAFETY: sink is a live heap allocation (refcount >= 1).
-        unsafe { (*sink).response_value.set(global, response_js_value) };
+        result_ref.set_url(original.url().clone());
 
-        // SAFETY: result/original are live *Response (see SAFETY note above).
-        // `url()` is +0 borrowed-bits; `set_url` takes +1 — `.clone()` to bump.
-        unsafe { (*result).set_url((*original).url().clone()) };
+        // ── wire input ──────────────────────────────────────────────────────
+        let value = original.get_body_value();
+        let owned_readable_stream = original.get_body_readable_stream(&this.global);
 
-        // SAFETY: original is a live *Response kept alive by caller.
-        let value = unsafe { (*original).get_body_value() };
-        // SAFETY: original is a live *Response kept alive by caller; sink live.
-        let owned_readable_stream =
-            unsafe { (*original).get_body_readable_stream(&(*sink).global) };
-        // SAFETY: sink is a live heap allocation (refcount >= 1).
-        unsafe {
-            (*sink).ref_();
-            (*sink).body_value_bufferer = Some(webcore::body::ValueBufferer::init(
-                sink.cast::<core::ffi::c_void>(),
-                // Note: `ValueBuffererCallback` takes `*mut c_void` for ctx;
-                // `on_finished_buffering` takes `*mut BufferOutputSink`. The
-                // wrapper trampoline restores the concrete type.
-                Self::on_finished_buffering_trampoline,
-                &(*sink).global,
-            ));
-        }
-        response_js_value.ensure_still_alive();
+        Self::wire_input(this, global, value, owned_readable_stream);
 
-        // SAFETY: sink is a live heap allocation; body_value_bufferer was just
-        // set to Some above. `run()` may synchronously invoke
-        // `on_finished_buffering`, which (via the rewriter's output sink)
-        // re-enters `SinkRef::handle_chunk` and forms a fresh
-        // `&mut *sink`. Hoist the bufferer through a raw pointer so no `&mut`
-        // derived from `*sink` is live across that callback.
-        let buffering_result: crate::Result<()> = unsafe {
-            let bufferer: *mut webcore::body::ValueBufferer =
-                (*sink).body_value_bufferer.as_mut().unwrap();
-            (*bufferer).run(value, owned_readable_stream)
-        };
-        if let Err(buffering_error) = buffering_result {
-            // SAFETY: `sink` is a live `heap::into_raw` allocation; release the
-            // ref taken for the in-flight bufferer.
-            unsafe { BufferOutputSink::deref(sink) };
-            return Ok(match buffering_error {
-                crate::Error::StreamAlreadyUsed => {
-                    let err = system_error(
-                        "ERR_STREAM_ALREADY_FINISHED",
-                        "Stream already used, please create a new one",
-                    );
-                    err.to_error_instance(global)
-                }
-                _ => {
-                    let err = system_error("ERR_STREAM_CANNOT_PIPE", "Failed to pipe stream");
-                    err.to_error_instance(global)
-                }
-            });
-        }
-
-        // sync error occurs — read via the Cell (shares SharedReadWrite
-        // provenance with the raw-pointer writers; see Note above).
-        let captured = sink_error.get();
-        if !captured.is_empty() {
+        // A handler that failed synchronously (the input was materialized, so
+        // the whole rewrite ran inline above) surfaces as a synchronous throw
+        // from `transform()`. Mark the pipe terminal so nothing tries to
+        // drive it again; the cell and its slots are ordinary garbage now.
+        if let Some(captured) = this.take_handler_error() {
             captured.ensure_still_alive();
-            captured.unprotect();
-            // Throw directly: the callers gate on `JSValue::to_error()`, which
-            // only recognises `ErrorInstance`/`Exception`, so an abort reason
-            // (a DOMException or any user value) would be returned instead.
+            this.phase.set(RewritePhase::Done);
+            this.done.set(true);
+            this.detach_output();
             return Err(global.throw_value(captured));
         }
 
@@ -785,198 +1051,741 @@ impl BufferOutputSink {
         Ok(response_js_value)
     }
 
-    fn on_finished_buffering_trampoline(
-        ctx: *mut core::ffi::c_void,
-        bytes: &[u8],
-        js_err: Option<webcore::body::ValueError>,
-        is_async: bool,
+    fn wire_input(
+        pipe: bun_ptr::BackRef<Self>,
+        global: &JSGlobalObject,
+        value: &mut webcore::body::Value,
+        stream: Option<ReadableStream>,
     ) {
-        // SAFETY: `ctx` is the `sink` heap allocation registered with the
-        // bufferer in `init()`; it was `ref_()`'d there so refcount > 0.
-        unsafe {
-            Self::on_finished_buffering(ctx.cast::<BufferOutputSink>(), bytes, js_err, is_async)
-        }
-    }
+        // `pipe` is the `heap::alloc_nn` allocation from `init()`; every field
+        // is `Cell`/`JsCell`, so the shared `BackRef` borrow is sound across
+        // the re-entrant lol-html calls below.
+        let this = pipe;
 
-    /// # Safety
-    /// `sink` must be a live `BufferOutputSink` heap allocation with
-    /// refcount > 0 (the +1 taken in `init()` is consumed here).
-    unsafe fn on_finished_buffering(
-        sink: *mut BufferOutputSink,
-        bytes: &[u8],
-        js_err: Option<webcore::body::ValueError>,
-        is_async: bool,
-    ) {
-        // SAFETY: `sink` was ref'd in `init()` before scheduling this callback;
-        // refcount > 0 so the allocation is live. `adopt` consumes that +1 on Drop.
-        let _g = unsafe { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
-        // Note: do not materialise `&mut *sink` here — the rewriter
-        // write/end calls below re-enter `SinkRef::handle_chunk`
-        // through the stored raw pointer, which forms
-        // its own `&mut *sink`. Holding an outer `&mut` across that re-entry
-        // is aliased-&mut UB. Access fields via raw-pointer place expressions
-        // instead (mirroring `init()`).
-        //
-        // SAFETY: sink was ref'd in init() before scheduling this callback;
-        // refcount > 0 so the allocation is live.
-        let global = unsafe { (*sink).global };
-
-        if let Some(mut err) = js_err {
-            // SAFETY: (*sink).response is the heap Response allocated in init()
-            // and kept alive by (*sink).response_value (Strong root).
-            let sink_body_value = unsafe { (*(*sink).response).get_body_value() };
-            let sink_ptr_usize = sink as usize;
-            // If a `.body` readable is already attached, stay `Locked` so
-            // `to_error_instance` delivers the error to its ByteStream; clearing
-            // to `Empty` here would strand any pending `reader.read()` forever.
-            let has_readable = match sink_body_value {
-                webcore::body::Value::Locked(l) => l.readable.has(),
+        // A Locked body with no realised stream (fresh `fetch()` Response), or
+        // a file/S3-backed Blob, must be turned into a ReadableStream first so
+        // the ByteStream/FileReader wiring below can drive it.
+        let mut stream = stream;
+        if stream.is_none() {
+            let needs_stream = match value {
+                webcore::body::Value::Locked(_) => true,
+                webcore::body::Value::Blob(b) => b.needs_to_read_file() || b.is_s3(),
                 _ => false,
             };
-            if !has_readable
-                && matches!(sink_body_value, webcore::body::Value::Locked(l)
-                    if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_none())
-            {
-                // No reader and no pending read: normalize to `Empty` so
-                // `to_error_instance` takes the simple (non-`Locked`) path.
-                *sink_body_value = webcore::body::Value::Empty;
-            } else if matches!(sink_body_value, webcore::body::Value::Locked(l)
-                if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_some())
-            {
-                if let webcore::body::Value::Locked(l) = sink_body_value {
-                    l.on_receive_value = None;
-                    l.task = None;
+            if needs_stream {
+                match value
+                    .to_readable_stream(global)
+                    .and_then(|v| ReadableStream::from_js(v, global))
+                {
+                    Ok(s) => stream = s,
+                    Err(e) => {
+                        let err = global.take_exception(e);
+                        this.set_handler_error(err);
+                        return;
+                    }
                 }
             }
-            if is_async {
-                let _ = sink_body_value.to_error_instance(err.dupe(&global), &global);
-                // TODO: properly propagate exception upwards
-            } else {
-                let ret_err = err.to_js(&global);
-                ret_err.ensure_still_alive();
-                ret_err.protect();
-                Self::write_tmp_sync_error(sink, ret_err);
+        }
+
+        // Materialized-body fast path: feed synchronously, end, return. No
+        // stream wiring; this covers InternalBlob/WTFStringImpl/Empty/Used and
+        // Blob-with-bytes (the `sync_only_noun` path always lands here).
+        let Some(stream) = stream else {
+            // lol-html consumes UTF-8; `use_as_any_blob()` encodes a non-ASCII
+            // WTFStringImpl into an InternalBlob so `.slice()` is always UTF-8.
+            let mut any_blob = value.use_as_any_blob();
+            let bytes = any_blob.slice();
+            // Mark EOF first so a handler that suspends mid-feed resumes into
+            // `end_rewrite` once its promise settles.
+            this.input_ended.set(true);
+            if this.feed(bytes) {
+                this.end_rewrite();
             }
-            // Do not `end()` the rewriter: that would run `done()`, replacing
-            // the error just stored on the body with the truncated output.
-            // `Drop` destroys the rewriter once the sink's refcount hits zero.
+            // `blob::Any` has no `Drop`; release the WTFStringImpl/Blob `+1`
+            // transferred by `use_as_any_blob`. A suspended lol-html has
+            // already copied the unconsumed tail into its arena.
+            any_blob.detach();
+            return;
+        };
+
+        if stream.is_locked(global) || stream.is_disturbed(global) {
+            let err = system_error(
+                "ERR_STREAM_ALREADY_FINISHED",
+                "Stream already used, please create a new one",
+            );
+            this.set_handler_error(err.to_error_instance(global));
             return;
         }
 
-        // SAFETY: `sink` is live (refcount > 0, see fn safety contract).
-        if let Some(ret_err) = unsafe { Self::run_output_sink(sink, bytes, is_async) } {
-            ret_err.ensure_still_alive();
-            ret_err.protect();
-            Self::write_tmp_sync_error(sink, ret_err);
+        // Root the stream on the pipe and mark the input body consumed, so a
+        // second `transform()` / `.text()` on the same input throws "Body
+        // already used" instead of quietly yielding an empty document.
+        js_HTMLRewriterTransform::input_stream_set_cached(this.cell.get(), global, stream.value);
+        *value = webcore::body::Value::Used;
+
+        let sink_handle = SinkHandle::HTMLRewriter(this);
+
+        // Native ByteStream/FileReader fast-path: wire the SinkHandle directly,
+        // skipping the JS pump.
+        match stream.wire_native_sink(global, sink_handle, this.cell.get(), |src| {
+            this.input_source.set(src)
+        }) {
+            webcore::readable_stream::NativeWireResult::Wired => return,
+            webcore::readable_stream::NativeWireResult::EndedInline(err) => {
+                this.end_from_stream(err);
+                return;
+            }
+            webcore::readable_stream::NativeWireResult::NotNative => {}
+        }
+
+        // JS-pump fallback: `assign_to_stream` installs a JS sink wrapper that
+        // forwards to `JsSinkType for RewriterPipe`. The controller cell it
+        // creates holds `pipe` raw as `m_sinkPtr` and dispatches
+        // `__controllerDetached` from wherever it detaches (including its
+        // GC destructor), so it owns a ref until `release_pump_ref`.
+        this.pump_controller_attached.set(true);
+        this.ref_();
+        let assignment_result =
+            JSSink::<RewriterPipe>::assign_to_stream(global, stream.value, pipe.into());
+        assignment_result.ensure_still_alive();
+
+        if let Some(err) = assignment_result.to_error() {
+            this.end_from_stream(Some(StreamError::JSValue(jsc::strong::Optional::create(
+                err, global,
+            ))));
+            return;
+        }
+
+        if !assignment_result.is_empty_or_undefined_or_null() {
+            if let Some(promise) = assignment_result.as_any_promise() {
+                match promise.status() {
+                    jsc::js_promise::Status::Pending => {
+                        this.js_pump_reaction_pending.set(true);
+                        assignment_result.then_with_value(
+                            global,
+                            this.cell.get(),
+                            on_resolve_input_stream_shim,
+                            on_reject_input_stream_shim,
+                        );
+                        return;
+                    }
+                    jsc::js_promise::Status::Fulfilled => {
+                        this.end_from_stream(None);
+                        return;
+                    }
+                    jsc::js_promise::Status::Rejected => {
+                        promise.set_handled(global.vm());
+                        let result = promise.result(global.vm());
+                        this.end_from_stream(Some(StreamError::JSValue(
+                            jsc::strong::Optional::create(result, global),
+                        )));
+                        return;
+                    }
+                }
+            }
+        }
+
+        // undefined/null: the stream drained synchronously inside
+        // assignToStream.
+        this.end_from_stream(None);
+    }
+
+    /// `PendingValue::on_start_streaming` — the output Response's body is
+    /// being realised as a ByteStream: hand over everything lol-html has
+    /// already emitted.
+    fn on_start_streaming(ctx: NonNull<c_void>) -> DrainResult {
+        // `ctx` is the `pipe` heap allocation registered on the PendingValue
+        // in `init()`; the owning `JSHTMLRewriterTransform` cell (rooted by
+        // the output Response's `transform` slot) keeps it live.
+        let this = bun_ptr::BackRef::from(ctx.cast::<RewriterPipe>());
+        let list = this.output_buffer.replace(Vec::new());
+        if list.is_empty() {
+            return DrainResult::EstimatedSize(0);
+        }
+        let len = list.len();
+        DrainResult::Owned {
+            list,
+            size_hint: len,
         }
     }
 
-    /// Note: takes `*mut Self` (not `&mut self`) because
-    /// `HtmlRewriter::write/end` re-enter
-    /// `SinkRef::handle_chunk(&mut self)` through the
-    /// raw `*mut BufferOutputSink` captured at build time. A `&mut self`
-    /// receiver here would alias that inner `&mut` (Stacked Borrows UB).
-    ///
-    /// # Safety
-    /// `sink` must be a live `BufferOutputSink` heap allocation with
-    /// refcount > 0; `(*sink).rewriter` and `(*sink).response` must be set.
-    unsafe fn run_output_sink(sink: *mut Self, bytes: &[u8], is_async: bool) -> Option<JSValue> {
-        // SAFETY: sink is a live heap allocation (refcount > 0, caller
-        // invariant). Read fields into locals before the rewriter calls so no
-        // borrow of `*sink` is live across the re-entrant output sink.
-        let (global, response, rewriter) = unsafe {
-            let _ = (*sink).bytes.grow_by(bytes.len()); // OOM/capacity: fire-and-forget
-            ((*sink).global, (*sink).response, (*sink).rewriter)
+    /// `PendingValue::on_readable_stream_available` — the output ByteStream
+    /// now exists: stash its backref so `PipeOutput::handle_chunk` pushes
+    /// there instead of buffering.
+    fn on_readable_stream_available(
+        ctx: NonNull<c_void>,
+        global_this: &JSGlobalObject,
+        readable: ReadableStream,
+    ) {
+        let this = bun_ptr::BackRef::from(ctx.cast::<RewriterPipe>());
+        if let Some(bytes) = readable.ptr.bytes() {
+            // A reader rooting the output stream now roots the Transform cell
+            // too, so the `producer` backref cannot outlive the pipe. Cleared
+            // in `detach_output`.
+            bytes.parent_const().set_owner(this.cell.get());
+            this.output.set(Some(bytes));
+        }
+        js_HTMLRewriterTransform::output_stream_set_cached(
+            this.cell.get(),
+            global_this,
+            readable.value,
+        );
+        // If the rewrite already completed before a reader attached, deliver
+        // the terminal `Done` now so the first `read()` resolves.
+        if this.phase.get() == RewritePhase::Done
+            && !this.done.get()
+            && js_HTMLRewriterTransform::handler_error_get_cached(this.cell.get())
+                .is_none_or(|v| v.is_empty_or_undefined_or_null())
+        {
+            if let Some(out) = this.output.get() {
+                let _ = out.on_data(StreamResult::Done);
+            }
+            this.detach_output();
+        }
+    }
+
+    /// `SinkHandle::write` entry — input bytes arrived.
+    pub fn write(&self, data: &StreamResult) -> Writable {
+        let bytes = data.slice();
+        let len = bytes.len() as BlobSizeType;
+        if self.done.get() || self.phase.get() == RewritePhase::Done {
+            return Writable::Done;
+        }
+        if self.driving.get() || self.is_suspended() || self.output_backpressured() {
+            self.pending_input.with_mut(|v| v.extend_from_slice(bytes));
+            return Writable::Backpressure(len);
+        }
+        let fed = self.feed(bytes);
+        // `feed` ran user JS; a handler may have cancelled the output reader
+        // (`cancel_from_output`). Return `Done` so the native caller detaches
+        // its sink snapshot, even if the handler also suspended.
+        if self.done.get() || self.phase.get() == RewritePhase::Done {
+            return Writable::Done;
+        }
+        if !fed {
+            // `feed` returns false for both a handler suspension and a fatal
+            // error. Only the latter should detach the upstream sink.
+            if self.is_suspended() {
+                return Writable::Backpressure(len);
+            }
+            return Writable::Done;
+        }
+        if self.is_suspended() || self.output_backpressured() {
+            return Writable::Backpressure(len);
+        }
+        Writable::Owned(len)
+    }
+
+    /// `SinkHandle::end` entry — input EOF or terminal upstream error.
+    pub fn end_from_stream(&self, err: Option<StreamError>) {
+        // Detach via `detach_input_source` (not a bare `.set(None)`) so a
+        // `JSController`'s `m_sinkPtr` is nulled before any path can free the
+        // pipe; otherwise the controller's destructor would later dispatch
+        // `__controllerDetached`/`__finalize` on freed memory. The upstream
+        // already ended, so there is nothing to cancel.
+        self.detach_input_source(false);
+
+        if self.js_pump_reaction_pending.get() {
+            // The pump-promise `.then()` reaction is the single terminal
+            // authority on the JS-pump path: `rsisAbrupt` calls
+            // `controller.close(error)` synchronously (the generated `__close`
+            // drops the argument) before rejecting the pump promise, so running
+            // `end_rewrite` here would resolve the body with truncated output
+            // and pre-empt the reject reaction.
+            return;
+        }
+
+        js_HTMLRewriterTransform::input_stream_set_cached(
+            self.cell.get(),
+            &self.global,
+            JSValue::UNDEFINED,
+        );
+        if self.done.get() || self.phase.get() == RewritePhase::Done {
+            return;
+        }
+        if let Some(err) = err {
+            let value_error = match err {
+                StreamError::JSValue(v) => webcore::body::ValueError::JSValue(v),
+                StreamError::Error(e) => {
+                    webcore::body::ValueError::SystemError(e.to_system_error().into())
+                }
+                StreamError::AbortReason(r) => webcore::body::ValueError::AbortReason(r),
+            };
+            self.fail(value_error);
+            return;
+        }
+        if self.driving.get() || self.is_suspended() || !self.pending_input.get().is_empty() {
+            self.input_ended.set(true);
+            return;
+        }
+        self.end_rewrite();
+    }
+
+    /// `SourceHandle::on_ready` entry — the output ByteStream drained.
+    pub fn resume(&self) {
+        if self.done.get()
+            || self.phase.get() == RewritePhase::Done
+            || self.driving.get()
+            || self.is_suspended()
+            || self.output_backpressured()
+        {
+            return;
+        }
+        self.drain_pending_input();
+    }
+
+    /// `SourceHandle::on_close` entry — the output reader cancelled.
+    pub fn cancel_from_output(&self, _err: Option<SysError>) {
+        self.detach_output();
+        self.detach_input_source(true);
+        js_HTMLRewriterTransform::input_stream_set_cached(
+            self.cell.get(),
+            &self.global,
+            JSValue::UNDEFINED,
+        );
+        self.phase.set(RewritePhase::Done);
+        self.done.set(true);
+        self.pending.with_mut(|p| {
+            p.result = Writable::Done;
+            p.run();
+        });
+    }
+
+    /// Run one lol-html `write`/`end_mut`/`resume` call under the
+    /// [`ActiveSinkGuard`] and `driving` flag. Re-entrant `SinkHandle`/
+    /// `SourceHandle` calls into this pipe check `driving` and defer, so the
+    /// `with_mut` borrow on `rewriter` is never aliased. Returns `None` when
+    /// the rewriter is unset.
+    fn drive_rewriter<R>(&self, f: impl FnOnce(&mut LolRewriter) -> R) -> Option<R> {
+        if self.rewriter.get().is_none() {
+            return None;
+        }
+        let _active = ActiveSinkGuard::enter(self);
+        self.driving.set(true);
+        let res = self.rewriter.with_mut(|r| r.as_deref_mut().map(f));
+        self.driving.set(false);
+        res
+    }
+
+    /// Feed `bytes` through lol-html once. Returns `true` if the write
+    /// completed (`Ok` — possibly buffering output), `false` if the rewrite
+    /// failed or suspended.
+    fn feed(&self, bytes: &[u8]) -> bool {
+        match self.drive_rewriter(|r| r.write(bytes)) {
+            None => false,
+            Some(Ok(())) => true,
+            Some(Err(e)) => {
+                self.on_rewriting_error(&e);
+                false
+            }
+        }
+    }
+
+    /// `write` completed (no more input owed): run `end()`. Installs its own
+    /// [`ActiveSinkGuard`].
+    fn end_rewrite(&self) {
+        self.phase.set(RewritePhase::EndPending);
+        // `end_mut` (unlike the consuming `end`) keeps the rewriter alive: a
+        // document-end handler can suspend it, and `Drop` is what frees it.
+        match self.drive_rewriter(|r| r.end_mut()) {
+            None => self.phase.set(RewritePhase::Done),
+            Some(Err(e)) => self.on_rewriting_error(&e),
+            Some(Ok(())) => self.finish(),
+        }
+    }
+
+    fn finish(&self) {
+        self.phase.set(RewritePhase::Done);
+        // The rewrite completed: free the boxed lol-html state machine now
+        // instead of at cell collection, so a long-lived output Response does
+        // not retain the parser arena. Safe here: every driver null-checks
+        // `rewriter` or gates on `phase == Done` first, and no wrapper is
+        // parked in the rewriter (a suspension is resolved before `finish`
+        // is reachable). Error/cancel paths leave it for `Drop` — a wrapper
+        // retargeted at a heap-parked unit may still be attached there.
+        debug_assert!(!self.is_suspended());
+        self.rewriter.set(None);
+        if let Some(out) = self.output.get() {
+            let _ = out.on_data(StreamResult::Done);
+            self.detach_output();
+            return;
+        }
+        // No stream attached yet: resolve the output body with the buffered
+        // output so `.text()`/`Bun.serve` sees the final bytes.
+        let Some(response) = self.response.get() else {
+            return;
         };
-
-        // SAFETY: rewriter heap-allocated by init(), not yet freed.
-        if let Err(e) = unsafe { (*rewriter).write(bytes) } {
-            // Poisoned: never call `end()` after a failed `write()`. The
-            // field stays non-null so `Drop` frees the rewriter.
-            if is_async {
-                // SAFETY: response kept alive by response_value Strong.
-                let _ = unsafe { (*response).get_body_value() }.to_error_instance(
-                    webcore::body::ValueError::Message(lol_err_string(&e)),
-                    &global,
-                );
-                // TODO: properly propagate exception upwards
-                return None;
-            } else {
-                return Some(create_lolhtml_error(&global, &e));
-            }
-        }
-
-        // `HtmlRewriter::end(self)` consumes the rewriter: null the field
-        // first so `Drop` does not free it a second time.
-        // SAFETY: sink is a live heap allocation (refcount > 0).
-        unsafe { (*sink).rewriter = core::ptr::null_mut() };
-        // SAFETY: `rewriter` was heap-allocated by init(); sole owner now.
-        if let Err(e) = unsafe { bun_core::heap::take(rewriter) }.end() {
-            if is_async {
-                // SAFETY: response kept alive by response_value Strong.
-                let _ = unsafe { (*response).get_body_value() }.to_error_instance(
-                    webcore::body::ValueError::Message(lol_err_string(&e)),
-                    &global,
-                );
-                // TODO: properly propagate exception upwards
-                return None;
-            } else {
-                return Some(create_lolhtml_error(&global, &e));
-            }
-        }
-
-        None
-    }
-
-    pub(crate) fn done(&mut self) {
-        // SAFETY: self.response is kept alive by self.response_value (Strong
-        // root) for the lifetime of this sink.
-        let body_value = unsafe { (*self.response).get_body_value() };
+        let body_value = response.get_body_value();
+        let bytes = self.output_buffer.replace(Vec::new());
         let mut prev_value = core::mem::replace(
             body_value,
             webcore::body::Value::InternalBlob(webcore::InternalBlob {
-                bytes: core::mem::replace(&mut self.bytes, MutableString::init_empty()).list,
+                bytes,
                 was_string: false,
             }),
         );
-
         let _ = webcore::body::Value::resolve(&mut prev_value, body_value, &self.global, None);
-        // TODO: properly propagate exception upwards
     }
 
-    pub fn write(&mut self, bytes: &[u8]) {
-        let _ = self.bytes.append(bytes); // OOM/capacity: fire-and-forget
+    /// Feed the accumulated `pending_input` once unblocked, then maybe end,
+    /// then signal the upstream source to resume.
+    fn drain_pending_input(&self) {
+        let pending = self.pending_input.replace(Vec::new());
+        if !pending.is_empty() && !self.feed(&pending) {
+            return;
+        }
+        // `feed` ran user JS; re-check the terminal state before `end_rewrite`
+        // would overwrite `phase = Done` set by `cancel_from_output`/`fail`.
+        if self.done.get() || self.phase.get() == RewritePhase::Done {
+            return;
+        }
+        if self.is_suspended() || self.output_backpressured() {
+            return;
+        }
+        if self.input_ended.get() {
+            self.end_rewrite();
+            return;
+        }
+        // `ready()` may re-enter and write `input_source` (sink → feed →
+        // fail/end_from_stream), so copy the handle out instead of holding a
+        // `with_mut` borrow across the call.
+        let mut src = self.input_source.get();
+        src.ready(None, None);
+        // Wake a JS pump's pending `write()`/`flush(true)` promise.
+        self.pending.with_mut(|p| p.run());
+    }
+
+    /// A content handler's promise resolved: continue the rewrite from
+    /// wherever lol-html parked it, then drain any `pending_input` that
+    /// arrived while suspended.
+    fn resume_rewrite(&self) {
+        if self.phase.get() == RewritePhase::Done {
+            // Output reader cancelled (or the rewrite failed) while suspended.
+            return;
+        }
+        if let Some(Err(e)) = self.drive_rewriter(|r| r.resume()) {
+            return self.on_rewriting_error(&e);
+        }
+        match self.phase.get() {
+            RewritePhase::WritePending => self.drain_pending_input(),
+            RewritePhase::EndPending => self.finish(),
+            RewritePhase::Done => {}
+        }
+    }
+
+    /// A lol-html call returned an error: either the (non-fatal) handler
+    /// suspension escape, or a real failure to surface.
+    fn on_rewriting_error(&self, e: &lol_html::errors::RewritingError) {
+        if matches!(e, lol_html::errors::RewritingError::Suspended) {
+            return self.begin_suspension();
+        }
+        let leftover = self.pending_suspension.take();
+        debug_assert!(
+            leftover.is_none(),
+            "lol-html returned a non-suspension error with a suspension armed"
+        );
+        drop(leftover);
+
+        self.phase.set(RewritePhase::Done);
+        let captured = self.take_handler_error();
+
+        if self.sync_only_noun.get().is_some() {
+            // `init()` is still on the stack; make `transform()` throw.
+            return self.set_handler_error(
+                captured.unwrap_or_else(|| create_lolhtml_error(&self.global, e)),
+            );
+        }
+
+        let value_error = match captured {
+            Some(js_err) => {
+                js_err.ensure_still_alive();
+                webcore::body::ValueError::JSValue(jsc::strong::Optional::create(
+                    js_err,
+                    &self.global,
+                ))
+            }
+            None => webcore::body::ValueError::Message(lol_err_string(e)),
+        };
+        self.fail(value_error);
+    }
+
+    fn begin_suspension(&self) {
+        let wrapper = self
+            .pending_suspension
+            .take()
+            .expect("lol-html suspended without a pending HTMLRewriter handler promise")
+            .take_wrapper();
+
+        self.rewriter.with_mut(|r| {
+            if let Some(r) = r.as_deref_mut() {
+                wrapper.retarget(r);
+            }
+        });
+        self.suspended_wrapper.set(Some(wrapper));
+
+        // The `.then()` context is a `NativePromiseContext` holding the
+        // Transform cell: while the promise can settle, the reaction roots
+        // the context, the context roots the cell, and the cell keeps `pipe`
+        // alive. If the promise is collected without settling, the context's
+        // destructor queues `abandon_suspension` — independent of whether
+        // anything else still reaches the cell — so a rewrite parked on a
+        // dead promise always fails its body instead of leaking.
+        let cell = self.cell.get();
+        let promise = js_HTMLRewriterTransform::suspension_promise_get_cached(cell)
+            .expect("suspension promise slot empty");
+        let pipe = core::ptr::from_ref(self).cast_mut();
+        let context = native_promise_context::create(&self.global, pipe, cell);
+        // The context destructor (promise GC'd unsettled) queues
+        // `abandon_suspension`; this ref keeps the pipe alive until that
+        // task or the settle reaction releases it.
+        self.ref_();
+        promise.then_with_value(
+            &self.global,
+            context,
+            Bun__HTMLRewriter__onHandlerResolve,
+            Bun__HTMLRewriter__onHandlerReject,
+        );
+        // The slot only roots the promise across the lol-html unwind; once the
+        // reaction is wired the promise must be independently collectible so
+        // the NativePromiseContext destructor can fire `abandon_suspension`.
+        js_HTMLRewriterTransform::suspension_promise_set_cached(
+            cell,
+            &self.global,
+            JSValue::UNDEFINED,
+        );
+    }
+
+    fn release_suspended_wrapper(&self) {
+        if let Some(wrapper) = self.suspended_wrapper.take() {
+            wrapper.release();
+        }
+    }
+
+    /// Put `err` on the output `Response`'s body / ByteStream.
+    fn fail(&self, err: webcore::body::ValueError) {
+        self.phase.set(RewritePhase::Done);
+        self.done.set(true);
+        self.detach_input_source(true);
+        let cell = self.cell.get();
+        if cell.is_cell() {
+            js_HTMLRewriterTransform::input_stream_set_cached(
+                cell,
+                &self.global,
+                JSValue::UNDEFINED,
+            );
+        }
+        // Settle any `flush(true)`/`write()` promise a direct-stream `pull()`
+        // is parked on so the pump promise can settle (mirrors
+        // `cancel_from_output`).
+        self.pending.with_mut(|p| {
+            p.result = Writable::Done;
+            p.run();
+        });
+
+        if let Some(out) = self.output.get() {
+            let mut err = err;
+            let _ = out.on_data(StreamResult::Err(err.to_stream_error(&self.global)));
+            self.detach_output();
+            return;
+        }
+        let Some(response) = self.response.get() else {
+            return;
+        };
+        let body_value = response.get_body_value();
+        let has_readable = match body_value {
+            webcore::body::Value::Locked(l) => l.readable.has(),
+            _ => false,
+        };
+        if !has_readable
+            && matches!(body_value, webcore::body::Value::Locked(l)
+                if l.promise.is_none() && l.on_receive_value.is_none())
+        {
+            *body_value = webcore::body::Value::Empty;
+        }
+        let _ = body_value.to_error_instance(err, &self.global);
     }
 }
 
-/// `lol_html::OutputSink` for the rewriter built in [`BufferOutputSink::init`].
-/// Carries a raw `*mut BufferOutputSink` (never a reference) so the rewriter
-/// stored on the sink does not self-borrow.
-pub struct SinkRef(*mut BufferOutputSink);
+/// `lol_html::OutputSink` for the rewriter built in [`RewriterPipe::init`].
+/// The pipe owns the `Box<LolRewriter>` that owns this `PipeOutput`, so the
+/// back-reference invariant (pointee outlives holder) is structurally upheld.
+pub struct PipeOutput(BackRef<RewriterPipe>);
 
-impl lol_html::OutputSink for SinkRef {
+impl lol_html::OutputSink for PipeOutput {
     fn handle_chunk(&mut self, chunk: &[u8]) {
-        // SAFETY: `self.0` is the sink that owns this rewriter (refcount > 0
-        // inside `run_output_sink`), and no other `&mut *sink` is live —
-        // `run_output_sink` reads its fields into locals before the call.
-        let sink = unsafe { &mut *self.0 };
-        // lol-html signals end-of-output with a zero-length final chunk.
         if chunk.is_empty() {
-            sink.done();
+            return;
+        }
+        let pipe = &*self.0;
+        if let Some(out) = pipe.output.get() {
+            let _ = out.on_data(StreamResult::Temporary(RawSlice::new(chunk)));
         } else {
-            sink.write(chunk);
+            pipe.output_buffer.with_mut(|v| v.extend_from_slice(chunk));
         }
     }
 }
 
-impl Drop for BufferOutputSink {
+impl Drop for RewriterPipe {
     fn drop(&mut self) {
-        // bytes, body_value_bufferer, context (Rc), response_value (Strong) drop automatically.
-        if !self.rewriter.is_null() {
-            // SAFETY: rewriter heap-allocated by init() and not yet freed
-            // (`run_output_sink` nulls the field before consuming it in `end`).
-            unsafe { bun_core::heap::destroy(self.rewriter) };
+        // A pipe cancelled or failed while suspended keeps its parked wrapper
+        // until the handler promise settles; if that promise is collected
+        // instead, this is the wrapper's last owner. Releasing it here (it
+        // only nulls the wrapper's unit Cell and drops its Box, no GC access)
+        // detaches any JS-retained Element/TextChunk before the rewriter it
+        // points into is destroyed below.
+        if let Some(w) = self.suspended_wrapper.take() {
+            w.release();
         }
+        if let Some(response) = self.response.take() {
+            // Balances the `Response::ref_()` in `init()`.
+            Response::unref(response.as_const_ptr().cast_mut());
+        }
+    }
+}
+
+// ───────────────── RewriterPipe: JsSinkType (JS-pump fallback) ───────────
+
+crate::impl_js_sink_abi!(RewriterPipe, "HTMLRewriterSink");
+
+impl crate::webcore::sink::JsSinkType for RewriterPipe {
+    const NAME: &'static str = "HTMLRewriterSink";
+    const HAS_FLUSH_FROM_JS: bool = true;
+    const START_TAG: Option<StartTag> = Some(StartTag::HTMLRewriterSink);
+
+    fn memory_cost(&self) -> usize {
+        self.pending_input.get().capacity() + self.output_buffer.get().capacity()
+    }
+    // Unlike other sinks, the controller does not own the pipe: its ref is
+    // released by `controller_detached` below, and the free happens wherever
+    // the last ref drops.
+    unsafe fn finalize(_this: *mut Self) {}
+    fn controller_detached(&mut self) {
+        RewriterPipe::release_pump_ref(self);
+    }
+    fn write_bytes(&mut self, data: &StreamResult) -> Writable {
+        RewriterPipe::write(self, data)
+    }
+    fn write_utf16(&mut self, data: &StreamResult) -> Writable {
+        let mut buf = Vec::new();
+        let _ = buf.write_utf16(data.slice16());
+        RewriterPipe::write(self, &StreamResult::Temporary(RawSlice::new(&buf)))
+    }
+    fn write_latin1(&mut self, data: &StreamResult) -> Writable {
+        let bytes = data.slice();
+        if bun_core::strings::is_all_ascii(bytes) {
+            return RewriterPipe::write(self, data);
+        }
+        let mut buf = Vec::new();
+        let _ = buf.write_latin1(bytes);
+        RewriterPipe::write(self, &StreamResult::Temporary(RawSlice::new(&buf)))
+    }
+    fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
+        self.end_from_stream(err.map(StreamError::Error));
+        bun_sys::Result::Ok(())
+    }
+    fn end_from_js(&mut self, _global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
+        self.end_from_stream(None);
+        bun_sys::Result::Ok(JSValue::js_number(0.0))
+    }
+    fn flush(&mut self) -> bun_sys::Result<()> {
+        bun_sys::Result::Ok(())
+    }
+    fn flush_from_js(&mut self, global: &JSGlobalObject, wait: bool) -> bun_sys::Result<JSValue> {
+        use streams::PendingState;
+        if self.pending.get().state == PendingState::Pending {
+            let prom = self.pending.with_mut(|p| p.promise(global));
+            let prom_js = JSPromise::opaque_ref(prom).to_js();
+            js_HTMLRewriterTransform::pending_promise_set_cached(self.cell.get(), global, prom_js);
+            return bun_sys::Result::Ok(prom_js);
+        }
+        if self.done.get() || self.phase.get() == RewritePhase::Done {
+            return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
+                global,
+                JSValue::js_number(0.0),
+            ));
+        }
+        if wait && (self.driving.get() || self.is_suspended() || self.output_backpressured()) {
+            let prom = self.pending.with_mut(|p| {
+                p.result = Writable::Owned(0);
+                p.promise(global)
+            });
+            let prom_js = JSPromise::opaque_ref(prom).to_js();
+            js_HTMLRewriterTransform::pending_promise_set_cached(self.cell.get(), global, prom_js);
+            return bun_sys::Result::Ok(prom_js);
+        }
+        bun_sys::Result::Ok(JSPromise::resolved_promise_value(
+            global,
+            JSValue::js_number(0.0),
+        ))
+    }
+    fn start(&mut self, config: Start) -> bun_sys::Result<()> {
+        if let Start::ChunkSize(chunk_size) = config {
+            if chunk_size > 0 {
+                self.high_water_mark.set(chunk_size);
+            }
+        }
+        bun_sys::Result::Ok(())
+    }
+    fn source(&mut self) -> Option<&mut SourceHandle> {
+        Some(self.input_source.get_mut())
+    }
+    fn done(&self) -> bool {
+        self.done.get()
+    }
+}
+
+// ───────── .then() reactions for a content handler's promise ─────────────
+
+bun_jsc::jsc_promise_handler!(
+    pub fn Bun__HTMLRewriter__onHandlerResolve => on_handler_resolve
+);
+bun_jsc::jsc_promise_handler!(
+    pub fn Bun__HTMLRewriter__onHandlerReject => on_handler_reject
+);
+
+fn on_handler_resolve(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let _ = global;
+    let args = frame.arguments();
+    // `take` nulls the context so its destructor is a no-op; `None` means the
+    // suspension was already abandoned.
+    let Some(pipe) = native_promise_context::take::<RewriterPipe>(args[args.len() - 1]) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    let pipe = BackRef::from(pipe);
+    pipe.release_suspended_wrapper();
+    pipe.resume_rewrite();
+    // Balances the `ref_()` in `begin_suspension`.
+    RewriterPipe::deref_nn(pipe.into());
+    Ok(JSValue::UNDEFINED)
+}
+
+fn on_handler_reject(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let args = frame.arguments();
+    let reason = args[0];
+    let Some(pipe) = native_promise_context::take::<RewriterPipe>(args[args.len() - 1]) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    let pipe = BackRef::from(pipe);
+    pipe.release_suspended_wrapper();
+    pipe.fail(webcore::body::ValueError::JSValue(
+        jsc::strong::Optional::create(reason, global),
+    ));
+    // Balances the `ref_()` in `begin_suspension`.
+    RewriterPipe::deref_nn(pipe.into());
+    Ok(JSValue::UNDEFINED)
+}
+
+/// Peek helper for `Cell<Option<T>>` where `T` is not `Copy`.
+trait CellOptionPeek<T> {
+    fn take_peek(&self) -> Option<()>;
+}
+impl<T> CellOptionPeek<T> for Cell<Option<T>> {
+    #[inline]
+    fn take_peek(&self) -> Option<()> {
+        let v = self.take();
+        let some = v.is_some().then_some(());
+        self.set(v);
+        some
     }
 }
 
@@ -998,49 +1807,25 @@ pub struct DocumentHandler {
 }
 
 impl DocumentHandler {
-    pub(crate) fn on_doc_type(
-        this: *mut Self,
-        value: *mut lol_html::html_content::Doctype<'static>,
-    ) -> bool {
-        handler_callback::<Self, DocType, lol_html::html_content::Doctype<'static>>(
-            this,
-            value,
-            |w| w.doctype.set(core::ptr::null_mut()),
-            |h| h.on_doc_type_callback.as_ref().map(ProtectedJSValue::value),
-        )
+    pub(crate) fn on_doc_type(this: NonNull<Self>, value: *mut RawDoctype) -> HandlerOutcome {
+        handler_callback::<Self, DocType, RawDoctype>(this, value, |h| {
+            h.on_doc_type_callback.as_ref().map(ProtectedJSValue::value)
+        })
     }
-    pub(crate) fn on_comment(
-        this: *mut Self,
-        value: *mut lol_html::html_content::Comment<'static>,
-    ) -> bool {
-        handler_callback::<Self, Comment, lol_html::html_content::Comment<'static>>(
-            this,
-            value,
-            |w| w.comment.set(core::ptr::null_mut()),
-            |h| h.on_comment_callback.as_ref().map(ProtectedJSValue::value),
-        )
+    pub(crate) fn on_comment(this: NonNull<Self>, value: *mut RawComment) -> HandlerOutcome {
+        handler_callback::<Self, Comment, RawComment>(this, value, |h| {
+            h.on_comment_callback.as_ref().map(ProtectedJSValue::value)
+        })
     }
-    pub(crate) fn on_text(
-        this: *mut Self,
-        value: *mut lol_html::html_content::TextChunk<'static>,
-    ) -> bool {
-        handler_callback::<Self, TextChunk, lol_html::html_content::TextChunk<'static>>(
-            this,
-            value,
-            |w| w.text_chunk.set(core::ptr::null_mut()),
-            |h| h.on_text_callback.as_ref().map(ProtectedJSValue::value),
-        )
+    pub(crate) fn on_text(this: NonNull<Self>, value: *mut RawTextChunk) -> HandlerOutcome {
+        handler_callback::<Self, TextChunk, RawTextChunk>(this, value, |h| {
+            h.on_text_callback.as_ref().map(ProtectedJSValue::value)
+        })
     }
-    pub(crate) fn on_end(
-        this: *mut Self,
-        value: *mut lol_html::html_content::DocumentEnd<'static>,
-    ) -> bool {
-        handler_callback::<Self, DocEnd, lol_html::html_content::DocumentEnd<'static>>(
-            this,
-            value,
-            |w| w.doc_end.set(core::ptr::null_mut()),
-            |h| h.on_end_callback.as_ref().map(ProtectedJSValue::value),
-        )
+    pub(crate) fn on_end(this: NonNull<Self>, value: *mut RawDocumentEnd) -> HandlerOutcome {
+        handler_callback::<Self, DocEnd, RawDocumentEnd>(this, value, |h| {
+            h.on_end_callback.as_ref().map(ProtectedJSValue::value)
+        })
     }
 
     pub(crate) fn init(global: &JSGlobalObject, this_object: JSValue) -> JsResult<DocumentHandler> {
@@ -1101,7 +1886,7 @@ impl DocumentHandler {
 
 /// Trait abstracting the per-handler bits `HandlerCallback` needs:
 /// `global` field and (optionally) `thisObject`.
-pub trait HandlerLike {
+trait HandlerLike {
     fn global(&self) -> &JSGlobalObject;
     fn this_object(&self) -> JSValue {
         JSValue::ZERO
@@ -1130,109 +1915,133 @@ impl HandlerLike for EndTagHandler {
     }
 }
 
-/// Trait abstracting the wrapper-type bits `HandlerCallback` needs.
-pub trait WrapperLike {
+/// Trait abstracting the wrapper-type bits [`handler_callback`] and the
+/// suspension plumbing need.
+trait WrapperLike {
     type Raw;
-    fn init(value: *mut Self::Raw) -> *mut Self;
+    fn init(value: *mut Self::Raw) -> NonNull<Self>;
     fn ref_(&self);
-    /// # Safety
-    /// `this` must be a live `heap::alloc` allocation with refcount >= 1.
-    unsafe fn deref(this: *mut Self);
+    /// Release one intrusive ref on the live `heap::alloc` allocation `this`.
+    fn deref_nn(this: NonNull<Self>);
     /// `jsc.Codegen.JS${T}.toJS` — wraps the *existing* heap allocation `this`
-    /// in a JS wrapper (the codegen `${T}__create`). Takes `*mut Self` (not
+    /// in a JS wrapper (the codegen `${T}__create`). Takes `NonNull<Self>` (not
     /// `&self`) because the C++ side stores the raw heap pointer in `m_ctx`;
     /// deriving it from a `&self` would launder shared-borrow provenance into
     /// the GC's exclusive-owner pointer.
-    ///
-    /// # Safety
-    /// `this` must be a live `heap::alloc` allocation with refcount >= 1.
-    unsafe fn to_js(this: *mut Self, global: &JSGlobalObject) -> JSValue;
-    /// Some wrapper types (Element) hand out sub-objects that borrow from the
-    /// underlying lol-html value and must be detached along with the wrapper
-    /// itself. Default: no-op (caller passes a `clear_field` closure instead).
-    fn invalidate(&self) {}
-    const HAS_INVALIDATE: bool = false;
+    fn to_js(this: NonNull<Self>, global: &JSGlobalObject) -> JSValue;
+    /// Null out the wrapper's lol-html pointer and detach any sub-objects it
+    /// handed to JS (Element's AttributeIterators). Every host-fn on the
+    /// wrapper is a harmless no-op afterwards.
+    fn detach(&self);
+    /// Re-point the wrapper at a different lol-html unit: the heap copy
+    /// lol-html parks when one of the unit's handlers suspends on it.
+    fn retarget(&self, raw: *mut Self::Raw);
+    /// The lol-html unit of this type the rewriter is suspended on, as the
+    /// lifetime-erased raw pointer the wrapper stores. Null if the rewriter
+    /// is not suspended on a `Self::Raw`.
+    fn suspended_raw(rewriter: &mut LolRewriter) -> *mut Self::Raw;
+    /// Wrap a ref'd `NonNull<Self>` as the matching [`SuspendedWrapper`] variant.
+    fn into_suspended(wrapper: NonNull<Self>) -> SuspendedWrapper;
 }
 
 /// Forwarding `WrapperLike` impl — every wrapper type's trait impl is a pure
 /// pass-through to inherent / `CellRefCounted`-derived / `JsClass`-codegen
-/// methods. The optional `, invalidate`
-/// tail wires up types (Element) that hand out sub-objects which must be
-/// detached alongside the lol-html value.
+/// methods. `$field` is the wrapper's `DetachablePtr<$raw>`; `$suspended` is the
+/// `lol_html::HtmlRewriter` accessor for the parked unit of that type.
+/// `Element` implements the trait by hand: its `detach` also has to
+/// invalidate the `AttributeIterator`s it handed out.
 macro_rules! impl_wrapper_like {
-    ($ty:ty, $raw:ty $(, $invalidate:ident)?) => {
+    ($ty:ident, $raw:ty, $field:ident, $suspended:ident) => {
         impl WrapperLike for $ty {
             type Raw = $raw;
-            fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
-            fn ref_(&self) { self.ref_() }
-            unsafe fn deref(this: *mut Self) {
-                // SAFETY: `WrapperLike::deref` contract — `this` is a live
-                // `heap::alloc` allocation with refcount >= 1.
-                unsafe { Self::deref(this) }
+            fn init(v: *mut Self::Raw) -> NonNull<Self> {
+                Self::init(v)
             }
-            unsafe fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
-                // SAFETY: `this` is a live `heap::alloc` allocation
-                // (refcount >= 1); ownership is shared with the GC wrapper via
-                // the intrusive refcount (`${T}Class__finalize` →
-                // `Self::finalize` → `deref`).
-                unsafe { Self::to_js_ptr(this, g) }
+            fn ref_(&self) {
+                self.ref_()
             }
-            $(
-                fn invalidate(&self) { Self::$invalidate(self) }
-                const HAS_INVALIDATE: bool = true;
-            )?
+            fn deref_nn(this: NonNull<Self>) {
+                <Self as CellRefCounted>::deref_nn(this)
+            }
+            fn to_js(this: NonNull<Self>, g: &JSGlobalObject) -> JSValue {
+                Self::to_js_nonnull(this, g)
+            }
+            fn detach(&self) {
+                self.$field.detach();
+            }
+            fn retarget(&self, raw: *mut Self::Raw) {
+                self.$field.set(raw);
+            }
+            fn suspended_raw(rewriter: &mut LolRewriter) -> *mut Self::Raw {
+                rewriter.$suspended().map_or(core::ptr::null_mut(), |unit| {
+                    core::ptr::from_mut(unit).cast()
+                })
+            }
+            fn into_suspended(wrapper: NonNull<Self>) -> SuspendedWrapper {
+                SuspendedWrapper::$ty(wrapper)
+            }
         }
     };
 }
 
+/// The value an `Exception` cell wraps. Handing the cell itself to
+/// `JSPromise::reject` asserts, and a `Locked` body can now reject with any
+/// handler error, so unwrap at the point of capture. `to_error` falls back to
+/// the cell for a non-`Exception` (it cannot happen here).
+fn exception_value(exc: NonNull<jsc::Exception>) -> JSValue {
+    let cell = JSValue::from_cell(exc.as_ptr());
+    cell.to_error().unwrap_or(cell)
+}
+
+/// Record a content handler's exception / rejection on the sink whose lol-html
+/// call is on the stack, so `transform()` (sync) or the output body (async)
+/// surfaces it instead of lol-html's generic "stopped" message.
+///
+/// Takes the sink explicitly rather than re-deriving it from `global`: a caller
+/// that has already established there is none would otherwise silently drop the
+/// error.
+fn record_handler_error(sink: &RewriterPipe, err: JSValue) {
+    err.ensure_still_alive();
+    sink.set_handler_error(err);
+}
+
 fn handler_callback<H, Z, L>(
-    this: *mut H,
+    this: NonNull<H>,
     value: *mut L,
-    clear_field: impl FnOnce(&Z),
     get_callback: impl FnOnce(&H) -> Option<JSValue>,
-) -> bool
+) -> HandlerOutcome
 where
     H: HandlerLike,
     Z: WrapperLike<Raw = L>,
 {
     jsc::mark_binding();
 
-    let wrapper = Z::init(value);
-    // SAFETY: Z::init returns a fresh heap allocation.
-    unsafe { (*wrapper).ref_() };
+    let wrapper: NonNull<Z> = Z::init(value);
+    BackRef::from(wrapper).ref_();
 
-    // When using RefCount, we don't check the count value directly as it's an
-    // opaque type now. The init values are handled by Box::new with Cell::new(1).
-
-    // SAFETY: wrapper is a live heap allocation (ref'd above) for the entire
-    // scope of this guard; deref runs at most once on this path.
-    let _guard = scopeguard::guard(wrapper, |w| unsafe {
-        if Z::HAS_INVALIDATE {
-            // Some wrapper types (Element) hand out sub-objects that borrow
-            // from the underlying lol-html value and must be detached along
-            // with the wrapper itself.
-            (*w).invalidate();
-        } else {
-            clear_field(&*w);
-        }
-        Z::deref(w);
+    // The detach+deref runs at most once on this path. On the SUSPEND path the
+    // guard is disarmed and `SuspendedWrapper::release` runs the same
+    // detach+deref once the handler's promise settles instead.
+    let guard = scopeguard::guard(wrapper, |w| {
+        BackRef::from(w).detach();
+        Z::deref_nn(w);
     });
 
-    // SAFETY: `this` is the Box<ElementHandler>/Box<DocumentHandler> userdata
-    // pointer we registered with lol-html; it lives in LOLHTMLContext for the
-    // duration of the rewriter. `&` (not `&mut`) — `cb.call()` below re-enters
-    // JS, which may re-enter another `handler_callback` on the same handler
-    // (R-2); aliased `&H` is sound, aliased `&mut H` is not.
-    let this = unsafe { &*this };
+    // `this` is the Box<ElementHandler>/Box<DocumentHandler> userdata pointer we
+    // registered with lol-html; it lives in LOLHTMLContext for the duration of
+    // the rewriter. `&` (not `&mut`) — `cb.call()` below re-enters JS, which
+    // may re-enter another `handler_callback` on the same handler (R-2);
+    // aliased `&H` is sound, aliased `&mut H` is not.
+    let this = BackRef::from(this);
     let global = this.global();
-    // Note: re-derive the VM at each use site rather than caching a `&mut`.
-    // `cb.call(...)` and `wait_for_promise(...)` re-enter JS / the event loop,
-    // which mutate the same VirtualMachine through `global.bun_vm()` (and a
-    // nested handler_callback would form its own `&mut VirtualMachine`).
-    // Holding a long-lived `&mut` across those calls is two-live-&mut UB under
-    // Stacked Borrows, so re-acquire a short-lived borrow at each touch.
-    // SAFETY: bun_vm() returns the live VM raw ptr; VM outlives this call.
-    let vm = || -> &mut VirtualMachine { global.bun_vm().as_mut() };
+
+    // Content handlers only ever run from inside a pipe's lol-html call, which
+    // installs the guard. Read it once here so every error path below has a
+    // sink to record onto.
+    let Some(sink) = active_sink(global) else {
+        debug_assert!(false, "HTMLRewriter handler ran outside a rewrite");
+        return HandlerOutcome::Stop;
+    };
 
     // Use a TopExceptionScope to properly handle exceptions from the JavaScript
     // callback. A post-hoc `try_take_exception()`
@@ -1245,68 +2054,88 @@ where
     // the pending exception through it, and clear it explicitly.
     bun_jsc::top_scope!(scope, global);
 
-    let cb = get_callback(this).expect("callback must be set if handler registered");
-    let result = match cb.call(
-        global,
-        this.this_object(),
-        // SAFETY: `wrapper` is a live heap allocation (ref'd above; guard deref
-        // runs after this call). `to_js` hands the raw pointer to the C++
-        // wrapper.
-        &[unsafe { Z::to_js(wrapper, global) }],
-    ) {
+    let cb = get_callback(&this).expect("callback must be set if handler registered");
+    let result = match cb.call(global, this.this_object(), &[Z::to_js(wrapper, global)]) {
         Ok(v) => v,
         Err(_) => {
-            // If there's an exception in the scope, capture it for later retrieval
             if let Some(exc) = scope.exception() {
-                let exc_value = JSValue::from_cell(exc.as_ptr());
-                // Store the exception in the VM's unhandled rejection capture
-                // mechanism if it's available (this is the same mechanism used
-                // by BufferOutputSink)
-                if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
-                    // SAFETY: VM-owned pointer set by BufferOutputSink::init.
-                    unsafe { *err_ptr = exc_value };
-                }
+                record_handler_error(&sink, exception_value(exc));
             }
-            // Clear the exception from the scope to prevent assertion failures
             scope.clear_exception();
-            // Return true to indicate failure to LOLHTML, which will cause the
-            // write operation to fail and the error handling logic to take over.
-            return true;
+            return HandlerOutcome::Stop;
         }
     };
 
-    // Check if there's an exception that was thrown but not caught by the error union
     if let Some(exc) = scope.exception() {
-        let exc_value = JSValue::from_cell(exc.as_ptr());
-        // Store the exception in the VM's unhandled rejection capture mechanism
-        if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
-            // SAFETY: VM-owned pointer set by BufferOutputSink::init.
-            unsafe { *err_ptr = exc_value };
-        }
-        // Clear the exception to prevent assertion failures
+        record_handler_error(&sink, exception_value(exc));
         scope.clear_exception();
-        return true;
+        return HandlerOutcome::Stop;
     }
 
-    if !result.is_undefined_or_null() {
-        // Note: `is_error() || is_aggregate_error(global)` —
-        // NOT `isAnyError`, which has different
-        // coverage (Exception cells / `Symbol.error` vs cross-realm
-        // AggregateError).
-        if result.is_error() || result.is_aggregate_error(global) {
-            return true;
-        }
+    if result.is_undefined_or_null() {
+        return HandlerOutcome::Continue;
+    }
 
-        if let Some(promise) = result.as_any_promise() {
-            vm().wait_for_promise(promise);
-            let fail = promise.status() == jsc::js_promise::Status::Rejected;
-            if fail {
-                vm().unhandled_rejection(global, promise.result(global.vm()), promise.as_value());
+    // Note: `is_error() || is_aggregate_error(global)` —
+    // NOT `isAnyError`, which has different
+    // coverage (Exception cells / `Symbol.error` vs cross-realm
+    // AggregateError).
+    if result.is_error() || result.is_aggregate_error(global) {
+        record_handler_error(&sink, result);
+        return HandlerOutcome::Stop;
+    }
+
+    let Some(promise) = result.as_any_promise() else {
+        return HandlerOutcome::Continue;
+    };
+
+    // An `async` handler's promise settles through a microtask checkpoint even
+    // when its body never truly awaits; run ONE checkpoint before deciding. A
+    // promise still pending afterwards is waiting on I/O or a timer and must
+    // suspend the rewrite instead of nesting the whole event loop inside
+    // lol-html's `write()`.
+    if promise.status() == jsc::js_promise::Status::Pending {
+        if global.drain_microtasks_and_next_ticks().is_err()
+            || !global.clear_exception_except_termination()
+        {
+            return HandlerOutcome::Stop;
+        }
+    }
+
+    match promise.status() {
+        jsc::js_promise::Status::Fulfilled => HandlerOutcome::Continue,
+        jsc::js_promise::Status::Rejected => {
+            promise.set_handled(global.vm());
+            record_handler_error(&sink, promise.result(global.vm()));
+            HandlerOutcome::Stop
+        }
+        jsc::js_promise::Status::Pending => {
+            // `transform(string)` / `transform(ArrayBuffer)` must hand back the
+            // result before `transform()` returns.
+            if let Some(noun) = sink.sync_only_noun.get() {
+                let err = global.create_type_error_instance(format_args!(
+                    "HTMLRewriter.transform() cannot synchronously return {noun} because a \
+                     content handler returned a Promise that did not resolve within a microtask. \
+                     Pass a Response instead and await its body"
+                ));
+                record_handler_error(&sink, err);
+                return HandlerOutcome::Stop;
             }
-            return fail;
+
+            // Hand the wrapper to the suspension: it has to stay valid across
+            // the handler's `await`, so disarm the guard here.
+            let wrapper = scopeguard::ScopeGuard::into_inner(guard);
+            js_HTMLRewriterTransform::suspension_promise_set_cached(
+                sink.cell.get(),
+                global,
+                result,
+            );
+            sink.pending_suspension.set(Some(PendingSuspension {
+                wrapper: Z::into_suspended(wrapper),
+            }));
+            HandlerOutcome::Suspend
         }
     }
-    false
 }
 
 // ───────────────────────── ElementHandler ────────────────────────────────
@@ -1363,40 +2192,22 @@ impl ElementHandler {
         Ok(handler)
     }
 
-    pub(crate) fn on_element(
-        this: *mut Self,
-        value: *mut lol_html::html_content::Element<'static, 'static>,
-    ) -> bool {
-        handler_callback::<Self, Element, lol_html::html_content::Element<'static, 'static>>(
-            this,
-            value,
-            |_| {}, // Element uses HAS_INVALIDATE
-            |h| h.on_element_callback.as_ref().map(ProtectedJSValue::value),
-        )
+    pub(crate) fn on_element(this: NonNull<Self>, value: *mut RawElement) -> HandlerOutcome {
+        handler_callback::<Self, Element, RawElement>(this, value, |h| {
+            h.on_element_callback.as_ref().map(ProtectedJSValue::value)
+        })
     }
 
-    pub(crate) fn on_comment(
-        this: *mut Self,
-        value: *mut lol_html::html_content::Comment<'static>,
-    ) -> bool {
-        handler_callback::<Self, Comment, lol_html::html_content::Comment<'static>>(
-            this,
-            value,
-            |w| w.comment.set(core::ptr::null_mut()),
-            |h| h.on_comment_callback.as_ref().map(ProtectedJSValue::value),
-        )
+    pub(crate) fn on_comment(this: NonNull<Self>, value: *mut RawComment) -> HandlerOutcome {
+        handler_callback::<Self, Comment, RawComment>(this, value, |h| {
+            h.on_comment_callback.as_ref().map(ProtectedJSValue::value)
+        })
     }
 
-    pub(crate) fn on_text(
-        this: *mut Self,
-        value: *mut lol_html::html_content::TextChunk<'static>,
-    ) -> bool {
-        handler_callback::<Self, TextChunk, lol_html::html_content::TextChunk<'static>>(
-            this,
-            value,
-            |w| w.text_chunk.set(core::ptr::null_mut()),
-            |h| h.on_text_callback.as_ref().map(ProtectedJSValue::value),
-        )
+    pub(crate) fn on_text(this: NonNull<Self>, value: *mut RawTextChunk) -> HandlerOutcome {
+        handler_callback::<Self, TextChunk, RawTextChunk>(this, value, |h| {
+            h.on_text_callback.as_ref().map(ProtectedJSValue::value)
+        })
     }
 }
 
@@ -1415,18 +2226,10 @@ fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Displa
         // it's a synchronous error
         return err;
     }
-    // SAFETY: bun_vm() returns the live VM raw ptr; VM outlives this call.
-    let vm: &VirtualMachine = global.bun_vm();
-    if let Some(err_ptr) = vm.unhandled_pending_rejection_to_capture {
-        // SAFETY: VM-owned pointer; valid while VM lives.
-        let slot = unsafe { &mut *err_ptr };
-        if !slot.is_empty() {
-            let result = *slot;
-            *slot = JSValue::ZERO;
-            return result;
-        }
-    }
-
+    // The handler's own exception / rejection, if any, is recorded on the
+    // active `RewriterPipe` (`record_handler_error`) and `on_rewriting_error`
+    // prefers it over the generic message, so only lol-html-internal
+    // parse/encoding errors reach here.
     let err = lol_err_string(message);
     let value = bun_string_jsc::to_error_instance(&err, global);
     value.put(
@@ -1452,7 +2255,8 @@ fn utf8_or_throw<'a>(global: &JSGlobalObject, bytes: &'a [u8]) -> JsResult<&'a s
 
 /// Decode a raw-`JSValue` setter argument to owned UTF-8. `to_slice` runs
 /// ToString (user `toString()`/`[Symbol.toPrimitive]`), so callers MUST do
-/// this BEFORE `cell_get`: the re-entered JS would alias its exclusive `&mut`.
+/// this BEFORE `DetachablePtr::get_mut`: the re-entered JS would alias its
+/// exclusive `&mut`.
 fn setter_utf8_arg(global: &JSGlobalObject, value: JSValue) -> JsResult<String> {
     let slice = value.to_slice(global)?;
     Ok(utf8_or_throw(global, slice.slice())?.to_owned())
@@ -1480,17 +2284,17 @@ pub struct TextChunk {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub(crate) text_chunk: Cell<*mut RawTextChunk>,
+    pub(crate) text_chunk: DetachablePtr<RawTextChunk>,
 }
 
 impl TextChunk {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub(crate) fn init(text_chunk: *mut RawTextChunk) -> *mut TextChunk {
-        bun_core::heap::into_raw(Box::new(TextChunk {
+    pub(crate) fn init(text_chunk: *mut RawTextChunk) -> NonNull<TextChunk> {
+        bun_core::heap::alloc_nn(TextChunk {
             ref_count: Cell::new(1),
-            text_chunk: Cell::new(text_chunk),
-        }))
+            text_chunk: DetachablePtr::new(text_chunk),
+        })
     }
 
     lol_content_ops! { RawTextChunk, text_chunk, JSValue::UNDEFINED;
@@ -1505,7 +2309,7 @@ impl TextChunk {
         _global: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let Some(chunk) = cell_get(&self.text_chunk) else {
+        let Some(chunk) = self.text_chunk.get_mut() else {
             return Ok(JSValue::UNDEFINED);
         };
         chunk.remove();
@@ -1514,7 +2318,7 @@ impl TextChunk {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_text(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(chunk) = cell_get(&self.text_chunk) else {
+        let Some(chunk) = self.text_chunk.get_mut() else {
             return Ok(JSValue::UNDEFINED);
         };
         string_to_js(chunk.as_str(), global)
@@ -1522,7 +2326,7 @@ impl TextChunk {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn removed(&self, _global: &JSGlobalObject) -> JSValue {
-        match cell_get(&self.text_chunk) {
+        match self.text_chunk.get_mut() {
             Some(chunk) => JSValue::from(chunk.removed()),
             None => JSValue::UNDEFINED,
         }
@@ -1530,7 +2334,7 @@ impl TextChunk {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn last_in_text_node(&self, _global: &JSGlobalObject) -> JSValue {
-        match cell_get(&self.text_chunk) {
+        match self.text_chunk.get_mut() {
             Some(chunk) => JSValue::from(chunk.last_in_text_node()),
             None => JSValue::UNDEFINED,
         }
@@ -1541,7 +2345,7 @@ impl TextChunk {
     }
 }
 
-impl_wrapper_like!(TextChunk, RawTextChunk);
+impl_wrapper_like!(TextChunk, RawTextChunk, text_chunk, suspended_text_chunk);
 
 // ──────────────────────────── DocType ────────────────────────────────────
 
@@ -1551,7 +2355,7 @@ pub struct DocType {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub(crate) doctype: Cell<*mut RawDoctype>,
+    pub(crate) doctype: DetachablePtr<RawDoctype>,
 }
 
 impl DocType {
@@ -1561,17 +2365,17 @@ impl DocType {
         bun_ptr::finalize_js_box_noop(self);
     }
 
-    pub(crate) fn init(doctype: *mut RawDoctype) -> *mut DocType {
-        bun_core::heap::into_raw(Box::new(DocType {
+    pub(crate) fn init(doctype: *mut RawDoctype) -> NonNull<DocType> {
+        bun_core::heap::alloc_nn(DocType {
             ref_count: Cell::new(1),
-            doctype: Cell::new(doctype),
-        }))
+            doctype: DetachablePtr::new(doctype),
+        })
     }
 
     /// The doctype name.
     #[bun_jsc::host_fn(getter)]
     pub fn name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(dt) = cell_get(&self.doctype) else {
+        let Some(dt) = self.doctype.get_mut() else {
             return Ok(JSValue::UNDEFINED);
         };
         opt_string_to_js_or_null(dt.name(), global_object)
@@ -1579,7 +2383,7 @@ impl DocType {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn system_id(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(dt) = cell_get(&self.doctype) else {
+        let Some(dt) = self.doctype.get_mut() else {
             return Ok(JSValue::UNDEFINED);
         };
         opt_string_to_js_or_null(dt.system_id(), global_object)
@@ -1587,7 +2391,7 @@ impl DocType {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn public_id(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(dt) = cell_get(&self.doctype) else {
+        let Some(dt) = self.doctype.get_mut() else {
             return Ok(JSValue::UNDEFINED);
         };
         opt_string_to_js_or_null(dt.public_id(), global_object)
@@ -1599,7 +2403,7 @@ impl DocType {
         _global: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let Some(dt) = cell_get(&self.doctype) else {
+        let Some(dt) = self.doctype.get_mut() else {
             return Ok(JSValue::UNDEFINED);
         };
         dt.remove();
@@ -1608,14 +2412,14 @@ impl DocType {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn removed(&self, _global: &JSGlobalObject) -> JSValue {
-        match cell_get(&self.doctype) {
+        match self.doctype.get_mut() {
             Some(dt) => JSValue::from(dt.removed()),
             None => JSValue::UNDEFINED,
         }
     }
 }
 
-impl_wrapper_like!(DocType, RawDoctype);
+impl_wrapper_like!(DocType, RawDoctype, doctype, suspended_doctype);
 
 // ──────────────────────────── DocEnd ─────────────────────────────────────
 
@@ -1625,17 +2429,17 @@ pub struct DocEnd {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub(crate) doc_end: Cell<*mut RawDocumentEnd>,
+    pub(crate) doc_end: DetachablePtr<RawDocumentEnd>,
 }
 
 impl DocEnd {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub(crate) fn init(doc_end: *mut RawDocumentEnd) -> *mut DocEnd {
-        bun_core::heap::into_raw(Box::new(DocEnd {
+    pub(crate) fn init(doc_end: *mut RawDocumentEnd) -> NonNull<DocEnd> {
+        bun_core::heap::alloc_nn(DocEnd {
             ref_count: Cell::new(1),
-            doc_end: Cell::new(doc_end),
-        }))
+            doc_end: DetachablePtr::new(doc_end),
+        })
     }
 
     lol_content_ops! { RawDocumentEnd, doc_end, JSValue::NULL;
@@ -1647,7 +2451,7 @@ impl DocEnd {
     }
 }
 
-impl_wrapper_like!(DocEnd, RawDocumentEnd);
+impl_wrapper_like!(DocEnd, RawDocumentEnd, doc_end, suspended_document_end);
 
 // ──────────────────────────── Comment ────────────────────────────────────
 
@@ -1657,17 +2461,17 @@ pub struct Comment {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub(crate) comment: Cell<*mut RawComment>,
+    pub(crate) comment: DetachablePtr<RawComment>,
 }
 
 impl Comment {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub(crate) fn init(comment: *mut RawComment) -> *mut Comment {
-        bun_core::heap::into_raw(Box::new(Comment {
+    pub(crate) fn init(comment: *mut RawComment) -> NonNull<Comment> {
+        bun_core::heap::alloc_nn(Comment {
             ref_count: Cell::new(1),
-            comment: Cell::new(comment),
-        }))
+            comment: DetachablePtr::new(comment),
+        })
     }
 
     lol_content_ops! { RawComment, comment, JSValue::NULL;
@@ -1682,7 +2486,7 @@ impl Comment {
         _global: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let Some(comment) = cell_get(&self.comment) else {
+        let Some(comment) = self.comment.get_mut() else {
             return Ok(JSValue::NULL);
         };
         comment.remove();
@@ -1691,7 +2495,7 @@ impl Comment {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_text(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(comment) = cell_get(&self.comment) else {
+        let Some(comment) = self.comment.get_mut() else {
             return Ok(JSValue::NULL);
         };
         string_to_js(&comment.text(), global_object)
@@ -1702,11 +2506,11 @@ impl Comment {
     // `JsResult<()>`); the proc-macro shim would emit a second, conflicting
     // `JsResult<bool>` wrapper.
     pub(crate) fn set_text(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-        if self.comment.get().is_null() {
+        if self.comment.is_detached() {
             return Ok(());
         }
         let text = setter_utf8_arg(global, value)?;
-        let Some(comment) = cell_get(&self.comment) else {
+        let Some(comment) = self.comment.get_mut() else {
             return Ok(());
         };
         if let Err(e) = comment.set_text(&text) {
@@ -1717,7 +2521,7 @@ impl Comment {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn removed(&self, _global: &JSGlobalObject) -> JSValue {
-        match cell_get(&self.comment) {
+        match self.comment.get_mut() {
             Some(comment) => JSValue::from(comment.removed()),
             None => JSValue::UNDEFINED,
         }
@@ -1728,7 +2532,7 @@ impl Comment {
     }
 }
 
-impl_wrapper_like!(Comment, RawComment);
+impl_wrapper_like!(Comment, RawComment, comment, suspended_comment);
 
 // ──────────────────────────── EndTag ─────────────────────────────────────
 
@@ -1738,10 +2542,10 @@ pub struct EndTag {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub(crate) end_tag: Cell<*mut RawEndTag>,
+    pub(crate) end_tag: DetachablePtr<RawEndTag>,
 }
 
-pub struct EndTagHandler {
+struct EndTagHandler {
     // GC-rooted via `ProtectedJSValue` (RAII protect/unprotect), matching
     // `DocumentHandler`/`ElementHandler` — self-unprotects on drop.
     pub callback: Option<ProtectedJSValue>,
@@ -1749,24 +2553,21 @@ pub struct EndTagHandler {
 }
 
 impl EndTagHandler {
-    pub(crate) fn on_end_tag(this: *mut Self, value: *mut RawEndTag) -> bool {
-        handler_callback::<Self, EndTag, RawEndTag>(
-            this,
-            value,
-            |w| w.end_tag.set(core::ptr::null_mut()),
-            |h| h.callback.as_ref().map(ProtectedJSValue::value),
-        )
+    pub(crate) fn on_end_tag(this: NonNull<Self>, value: *mut RawEndTag) -> HandlerOutcome {
+        handler_callback::<Self, EndTag, RawEndTag>(this, value, |h| {
+            h.callback.as_ref().map(ProtectedJSValue::value)
+        })
     }
 }
 
 impl EndTag {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub(crate) fn init(end_tag: *mut RawEndTag) -> *mut EndTag {
-        bun_core::heap::into_raw(Box::new(EndTag {
+    pub(crate) fn init(end_tag: *mut RawEndTag) -> NonNull<EndTag> {
+        bun_core::heap::alloc_nn(EndTag {
             ref_count: Cell::new(1),
-            end_tag: Cell::new(end_tag),
-        }))
+            end_tag: DetachablePtr::new(end_tag),
+        })
     }
 
     pub fn finalize(self: Box<Self>) {
@@ -1785,7 +2586,7 @@ impl EndTag {
         _global: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let Some(end_tag) = cell_get(&self.end_tag) else {
+        let Some(end_tag) = self.end_tag.get_mut() else {
             return Ok(JSValue::UNDEFINED);
         };
         end_tag.remove();
@@ -1794,7 +2595,7 @@ impl EndTag {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(end_tag) = cell_get(&self.end_tag) else {
+        let Some(end_tag) = self.end_tag.get_mut() else {
             return Ok(JSValue::UNDEFINED);
         };
         string_to_js(&end_tag.name(), global_object)
@@ -1803,11 +2604,11 @@ impl EndTag {
     // Note: no `#[bun_jsc::host_fn(setter)]` — generated_classes.rs already
     // emits `EndTagPrototype__setName` via `host_setter_result`.
     pub(crate) fn set_name(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-        if self.end_tag.get().is_null() {
+        if self.end_tag.is_detached() {
             return Ok(());
         }
         let name = setter_utf8_arg(global, value)?;
-        let Some(end_tag) = cell_get(&self.end_tag) else {
+        let Some(end_tag) = self.end_tag.get_mut() else {
             return Ok(());
         };
         end_tag.set_name_str(name);
@@ -1815,60 +2616,47 @@ impl EndTag {
     }
 }
 
-impl_wrapper_like!(EndTag, RawEndTag);
+impl_wrapper_like!(EndTag, RawEndTag, end_tag, suspended_end_tag);
 
 // ───────────────────────── AttributeIterator ─────────────────────────────
 
 /// The JS `AttributeIterator` heap-boxes one of these over `Element::attributes`
-/// (the Rust crate exposes a slice, not a boxed iterator like the C API did).
-/// Lifetimes are erased; `Element` detaches every iterator before invalidation.
-type RawAttributeIterator = core::slice::Iter<'static, lol_html::html_content::Attribute<'static>>;
-
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = AttributeIterator::destroy_on_zero)]
 pub struct AttributeIterator {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
-    // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub(crate) iterator: Cell<*mut RawAttributeIterator>,
+    /// Non-owning backref to the `Element` wrapper that handed this iterator
+    /// out. Reading the attributes through it (rather than caching a
+    /// `slice::Iter` into the attribute buffer) means a suspension, which
+    /// re-points the element at lol-html's heap-parked copy, re-points this
+    /// iterator too. The element keeps a `+1` on us and nulls this in
+    /// `detach()`, so it never dangles. R-2: `Cell` so host-fns take `&self`.
+    element: Cell<Option<BackRef<Element>>>,
+    /// Index of the next attribute to yield.
+    index: Cell<usize>,
 }
 
 impl AttributeIterator {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    /// `CellRefCounted::destroy` target — detach the lol-html iterator before
-    /// freeing the Box.
+    /// `CellRefCounted::destroy` target.
     ///
     /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
     /// whose generated trait `destroy` upholds the sole-owner contract.
     fn destroy_on_zero(this: *mut Self) {
-        // SAFETY: refcount hit zero; sole owner of a `heap::alloc`'d `Self`.
-        unsafe {
-            (*this).detach();
-            drop(bun_core::heap::take(this));
-        }
+        bun_ptr::destroy_box_with(this, |t| t.detach());
     }
 
+    /// Drop the backref. The element owns our `+1` and clears it here, so the
+    /// raw pointer is never read after the element stops tracking us.
     fn detach(&self) {
-        let iterator = self.iterator.replace(core::ptr::null_mut());
-        if !iterator.is_null() {
-            // SAFETY: `iterator` was `heap::into_raw`'d in
-            // `Element::get_attributes`; the Cell is its sole owner and was
-            // nulled above, so this runs at most once.
-            unsafe { bun_core::heap::destroy(iterator) };
-        }
+        self.element.set(None);
     }
 
     pub fn finalize(self: Box<Self>) {
-        // Refcounted: release the JS wrapper's +1. Hand ownership back to the
-        // raw refcount FIRST so a panic in detach() leaks instead of UAF-ing
-        // siblings.
-        let this = bun_core::heap::release(self);
-        this.detach();
-        // SAFETY: `this` is the Box-allocated m_ctx payload; the JS wrapper
-        // held one ref, which this call releases.
-        unsafe { Self::deref(this) };
+        bun_ptr::finalize_js_box(self, |t| t.detach());
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1880,9 +2668,14 @@ impl AttributeIterator {
         let done_label = bun_core::ZigString::init(b"done");
         let value_label = bun_core::ZigString::init(b"value");
 
-        let Some(attribute) = cell_get(&self.iterator).and_then(|it| it.next()) else {
-            // Exhausted or already detached: free the boxed iterator eagerly
-            // (a no-op once the Cell is null), matching the c-api path.
+        // Detached (the handler returned, or an attribute was mutated), the
+        // element itself is gone, or we ran off the end of the buffer.
+        let attribute = self
+            .element
+            .get()
+            .and_then(|el| el.element.get_mut())
+            .and_then(|raw| raw.attributes().get(self.index.get()));
+        let Some(attribute) = attribute else {
             self.detach();
             return JSValue::create_object2(
                 global_object,
@@ -1892,6 +2685,7 @@ impl AttributeIterator {
                 JSValue::UNDEFINED,
             );
         };
+        self.index.set(self.index.get() + 1);
 
         let value = attribute.value();
         let name = attribute.name();
@@ -1930,16 +2724,15 @@ pub struct Element {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub(crate) element: Cell<*mut RawElement>,
-    /// AttributeIterator instances created by `getAttributes()` that borrow
-    /// from `element`. They must be detached in `invalidate()` when the
-    /// handler returns so that JS cannot dereference the freed lol-html
-    /// attribute buffer.
+    pub(crate) element: DetachablePtr<RawElement>,
+    /// AttributeIterator instances handed out by `getAttributes()`. Each holds
+    /// a non-owning backref to this `Element` plus a `+1` we own; `invalidate()`
+    /// nulls those backrefs when the handler returns, so none can outlive us.
     /// R-2: `JsCell` (non-Copy `Vec`) — pushed/drained from `&self` host-fns
     /// (`get_attributes`, `set_attribute`, `remove_attribute`). The `with_mut`
     /// closures do not call into JS, so the short `&mut Vec` borrow cannot
     /// overlap a re-entrant access.
-    pub(crate) attribute_iterators: JsCell<Vec<*mut AttributeIterator>>,
+    pub(crate) attribute_iterators: JsCell<Vec<NonNull<AttributeIterator>>>,
 }
 
 impl Element {
@@ -1951,50 +2744,41 @@ impl Element {
     /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
     /// whose generated trait `destroy` upholds the sole-owner contract.
     fn destroy_on_zero(this: *mut Self) {
-        // SAFETY: refcount hit zero; sole owner of a `heap::alloc`'d `Self`.
-        unsafe {
-            (*this).invalidate();
-            drop(bun_core::heap::take(this));
-        }
+        bun_ptr::destroy_box_with(this, |t| t.invalidate());
     }
 
-    pub(crate) fn init(element: *mut RawElement) -> *mut Element {
-        bun_core::heap::into_raw(Box::new(Element {
+    pub(crate) fn init(element: *mut RawElement) -> NonNull<Element> {
+        bun_core::heap::alloc_nn(Element {
             ref_count: Cell::new(1),
-            element: Cell::new(element),
+            element: DetachablePtr::new(element),
             attribute_iterators: JsCell::new(Vec::new()),
-        }))
+        })
     }
 
     pub fn finalize(self: Box<Self>) {
         bun_ptr::finalize_js_box_noop(self);
     }
 
-    /// Detach every `AttributeIterator` we handed to JS. Called when the
-    /// underlying attribute buffer is about to become invalid — either because
-    /// the handler is returning, or because `setAttribute` / `removeAttribute`
-    /// is about to mutate the `Vec<Attribute>` the iterators borrow from.
+    /// End every `AttributeIterator` we handed to JS: null its backref to us
+    /// and release our `+1`. Called when the handler is returning (we are about
+    /// to stop being a valid target) or when `setAttribute` / `removeAttribute`
+    /// is about to renumber the attributes their index refers into.
     fn detach_attribute_iterators(&self) {
         // R-2: take the Vec out of the cell, drain on the stack — no `&mut`
         // projection of `self` is held across `detach()`/`deref()` (which do
         // not re-enter JS, but defence-in-depth keeps the JsCell borrow zero-len).
         let iters = self.attribute_iterators.replace(Vec::new());
         for iter in iters {
-            // SAFETY: iter is a live AttributeIterator we ref'd in get_attributes();
-            // ref_count >= 1 so the allocation is valid here.
-            unsafe { (*iter).detach() };
-            // SAFETY: `iter` is a live AttributeIterator we ref'd in
-            // `get_attributes()`; release that ref.
-            unsafe { AttributeIterator::deref(iter) };
+            BackRef::from(iter).detach();
+            <AttributeIterator as CellRefCounted>::deref_nn(iter);
         }
     }
 
     /// Called by `handler_callback` when the handler returns. The underlying
-    /// `*LOLHTML.Element` (and the attribute buffer any `AttributeIterator`
-    /// borrows from) is only valid during handler execution, so we must null
-    /// it out here along with any iterators we handed to JS.
+    /// `*LOLHTML.Element` is only valid during handler execution, so null it
+    /// out here, and end the iterators that read through it.
     pub(crate) fn invalidate(&self) {
-        self.element.set(core::ptr::null_mut());
+        self.element.detach();
         self.detach_attribute_iterators();
         self.attribute_iterators.set(Vec::new());
     }
@@ -2005,7 +2789,7 @@ impl Element {
         function: JSValue,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let Some(el) = cell_get(&self.element) else {
+        let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::NULL);
         };
         if function.is_undefined_or_null() || !function.is_callable() {
@@ -2031,12 +2815,13 @@ impl Element {
         };
         handlers.push(Box::new(move |end_tag| {
             // SAFETY: lifetime erasure. `end_tag` only lives for this
-            // synchronous call; `handler_callback`'s `clear_field` nulls the
-            // `EndTag` JsClass `Cell` before this closure returns, so JS can
-            // never reach the erased pointer afterwards.
+            // synchronous call; `handler_callback`'s guard detaches the
+            // `EndTag` JsClass slot before this closure returns (or, on a
+            // suspension, re-points it at the heap copy lol-html parks), so
+            // JS can never reach a dangling pointer.
             let raw: *mut RawEndTag = core::ptr::from_mut(end_tag).cast();
-            directive_result(EndTagHandler::on_end_tag(
-                core::ptr::from_mut(&mut end_tag_handler),
+            handler_result(EndTagHandler::on_end_tag(
+                NonNull::from(&mut end_tag_handler),
                 raw,
             ))
         }));
@@ -2050,7 +2835,7 @@ impl Element {
         global_object: &JSGlobalObject,
         name: ZigString,
     ) -> JsResult<JSValue> {
-        let Some(el) = cell_get(&self.element) else {
+        let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::NULL);
         };
         let slice = name.to_slice();
@@ -2068,7 +2853,7 @@ impl Element {
         global: &JSGlobalObject,
         name: ZigString,
     ) -> JsResult<JSValue> {
-        let Some(el) = cell_get(&self.element) else {
+        let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::FALSE);
         };
         let slice = name.to_slice();
@@ -2084,12 +2869,12 @@ impl Element {
         name_: ZigString,
         value_: ZigString,
     ) -> JsResult<JSValue> {
-        let Some(el) = cell_get(&self.element) else {
+        let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::UNDEFINED);
         };
 
-        // Mutating the attribute Vec (push → possible realloc) invalidates the
-        // slice::Iter any live AttributeIterator borrows from.
+        // A push shifts what the index any live AttributeIterator holds refers
+        // to, so end their iteration rather than let them repeat or skip one.
         self.detach_attribute_iterators();
 
         let name_slice = name_.to_slice();
@@ -2110,12 +2895,12 @@ impl Element {
         global_object: &JSGlobalObject,
         name: ZigString,
     ) -> JsResult<JSValue> {
-        let Some(el) = cell_get(&self.element) else {
+        let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::UNDEFINED);
         };
 
-        // Vec::remove shifts trailing elements and shrinks len, leaving any
-        // live slice::Iter's end pointer past the new end.
+        // `Vec::remove` shifts the trailing attributes down, so a live
+        // AttributeIterator's index would skip the one that took this slot.
         self.detach_attribute_iterators();
 
         let name_slice = name.to_slice();
@@ -2199,7 +2984,7 @@ impl Element {
         _global: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let Some(el) = cell_get(&self.element) else {
+        let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::UNDEFINED);
         };
         el.remove();
@@ -2213,7 +2998,7 @@ impl Element {
         _global: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let Some(el) = cell_get(&self.element) else {
+        let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::UNDEFINED);
         };
         el.remove_and_keep_content();
@@ -2222,7 +3007,7 @@ impl Element {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_tag_name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(el) = cell_get(&self.element) else {
+        let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::UNDEFINED);
         };
         string_to_js(&el.tag_name(), global_object)
@@ -2231,11 +3016,11 @@ impl Element {
     // Note: no `#[bun_jsc::host_fn(setter)]` — generated_classes.rs already
     // emits `ElementPrototype__setTagName` via `host_setter_result`.
     pub(crate) fn set_tag_name(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-        if self.element.get().is_null() {
+        if self.element.is_detached() {
             return Ok(());
         }
         let name = setter_utf8_arg(global, value)?;
-        let Some(el) = cell_get(&self.element) else {
+        let Some(el) = self.element.get_mut() else {
             return Ok(());
         };
         if let Err(e) = el.set_tag_name(&name) {
@@ -2246,7 +3031,7 @@ impl Element {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_removed(&self, _global: &JSGlobalObject) -> JSValue {
-        match cell_get(&self.element) {
+        match self.element.get_mut() {
             Some(el) => JSValue::from(el.removed()),
             None => JSValue::UNDEFINED,
         }
@@ -2254,7 +3039,7 @@ impl Element {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_self_closing(&self, _global: &JSGlobalObject) -> JSValue {
-        match cell_get(&self.element) {
+        match self.element.get_mut() {
             Some(el) => JSValue::from(el.is_self_closing()),
             None => JSValue::UNDEFINED,
         }
@@ -2262,7 +3047,7 @@ impl Element {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_can_have_content(&self, _global: &JSGlobalObject) -> JSValue {
-        match cell_get(&self.element) {
+        match self.element.get_mut() {
             Some(el) => JSValue::from(el.can_have_content()),
             None => JSValue::UNDEFINED,
         }
@@ -2270,7 +3055,7 @@ impl Element {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_namespace_uri(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(el) = cell_get(&self.element) else {
+        let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::UNDEFINED);
         };
         string_to_js(el.namespace_uri(), global_object)
@@ -2278,32 +3063,117 @@ impl Element {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_attributes(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(el) = cell_get(&self.element) else {
+        if self.element.is_detached() {
             return Ok(JSValue::UNDEFINED);
-        };
+        }
 
-        // `cell_get`'s erased `'static` carries through `attributes()`. The
-        // boxed iterator never outlives the real attribute buffer: it is
-        // tracked below and detached in `invalidate()` (when the handler
-        // returns) and before any attribute mutation.
-        let attrs: &'static [lol_html::html_content::Attribute<'static>] = el.attributes();
-        let iter = bun_core::heap::into_raw(Box::new(attrs.iter()));
-        let attr_iter = bun_core::heap::into_raw(Box::new(AttributeIterator {
+        // The iterator reads attributes back through `self` on every `next()`,
+        // so it follows a retarget (suspension) and never caches a borrow into
+        // the attribute buffer.
+        let attr_iter = bun_core::heap::alloc_nn(AttributeIterator {
             ref_count: Cell::new(1),
-            iterator: Cell::new(iter),
-        }));
-        // Track this iterator so we can detach it when the handler returns.
-        // lol-html's attribute slice borrows from the element's token buffer
-        // which is freed after the callback; leaking the iterator to JS
-        // without detaching it would be a use-after-free.
-        // SAFETY: attr_iter is a fresh heap::alloc allocation (refcount==1).
-        unsafe { (*attr_iter).ref_() };
+            element: Cell::new(Some(BackRef::new(self))),
+            index: Cell::new(0),
+        });
+        // Track this iterator so we can detach it when the handler returns or
+        // an attribute mutation invalidates it.
+        <AttributeIterator as CellRefCounted>::ref_nn(attr_iter);
         // R-2: `with_mut` — closure does not call into JS (push only).
         self.attribute_iterators.with_mut(|v| v.push(attr_iter));
-        // SAFETY: attr_iter is live (refcount==2 now); ownership is shared with
-        // the GC wrapper via the intrusive refcount (`finalize` → `deref`).
-        Ok(unsafe { AttributeIterator::to_js_ptr(attr_iter, global_object) })
+        Ok(AttributeIterator::to_js_nonnull(attr_iter, global_object))
     }
 }
 
-impl_wrapper_like!(Element, RawElement, invalidate);
+// `Element` is the one wrapper whose `detach` has to do more than null out the
+// raw pointer: it also ends the `AttributeIterator`s it handed to JS, which
+// hold a backref to it and read through it (see `invalidate`).
+impl WrapperLike for Element {
+    type Raw = RawElement;
+    fn init(v: *mut Self::Raw) -> NonNull<Self> {
+        Self::init(v)
+    }
+    fn ref_(&self) {
+        self.ref_()
+    }
+    fn deref_nn(this: NonNull<Self>) {
+        <Self as CellRefCounted>::deref_nn(this)
+    }
+    fn to_js(this: NonNull<Self>, g: &JSGlobalObject) -> JSValue {
+        Self::to_js_nonnull(this, g)
+    }
+    fn detach(&self) {
+        self.invalidate();
+    }
+    fn retarget(&self, raw: *mut Self::Raw) {
+        // The element's lol-html backing (including the attribute buffer) was
+        // replaced by the owned copy `into_suspended` parked on the heap.
+        // `AttributeIterator` reads through this same cell on every `next()`,
+        // so iterators handed out before the handler's `await` keep working,
+        // resuming at the same index into the copied buffer.
+        self.element.set(raw);
+    }
+    fn suspended_raw(rewriter: &mut LolRewriter) -> *mut Self::Raw {
+        rewriter
+            .suspended_element()
+            .map_or(core::ptr::null_mut(), |unit| {
+                core::ptr::from_mut(unit).cast()
+            })
+    }
+    fn into_suspended(wrapper: NonNull<Self>) -> SuspendedWrapper {
+        SuspendedWrapper::Element(wrapper)
+    }
+}
+
+// ───────────────── input-stream JS-pump .then() reactions ────────────────
+// `JSSink::<RewriterPipe>::assign_to_stream` returns a promise on the
+// JS-readable fallback path (no native ByteStream/FileReader). These are its
+// resolve/reject reactions, mirroring `Bun__FetchTasklet__on*RequestStream`
+// (src/runtime/webcore/fetch/FetchTasklet.rs) and `Bun__FileSink__on*Stream`.
+// The context is the `JSHTMLRewriterTransform` cell passed by
+// `RewriterPipe::wire_input`'s `.then_with_value()`; the cell (and thus the
+// pipe) stays alive as long as the pump promise's reaction is rooted.
+
+fn on_resolve_input_stream(
+    _global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let args = callframe.arguments();
+    let Some(this) = js_HTMLRewriterTransform::from_js(args[args.len() - 1]) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    let this = BackRef::from(this);
+    let this = &*this;
+    this.js_pump_reaction_pending.set(false);
+    this.end_from_stream(None);
+    Ok(JSValue::UNDEFINED)
+}
+
+fn on_reject_input_stream(
+    global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let args = callframe.arguments();
+    let Some(this) = js_HTMLRewriterTransform::from_js(args[args.len() - 1]) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    let err = args[0];
+    let this = BackRef::from(this);
+    let this = &*this;
+    this.js_pump_reaction_pending.set(false);
+    this.end_from_stream(Some(crate::webcore::streams::StreamError::JSValue(
+        jsc::strong::Optional::create(err, global_this),
+    )));
+    Ok(JSValue::UNDEFINED)
+}
+
+// Exported as *function* symbols so `Zig::GlobalObject::promiseHandlerID`'s
+// address comparison matches; a `static` fn-ptr export would export the data
+// slot's address, not the code address (see `Bun__FileSink__onResolveStream`).
+bun_jsc::jsc_promise_handler!(
+    pub(crate) fn on_resolve_input_stream_shim = "Bun__HTMLRewriter__onResolveInputStream"
+        => on_resolve_input_stream
+);
+bun_jsc::jsc_promise_handler!(
+    pub(crate) fn on_reject_input_stream_shim = "Bun__HTMLRewriter__onRejectInputStream"
+        => on_reject_input_stream
+);

@@ -293,14 +293,29 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                 first_import = false;
 
                 j.push_static(b"\n        {\n          \"path\": ");
-                // Write path with JSON escaping - chunk references (unique_keys) will be resolved
-                // by breakOutputIntoPieces and code() below
+                // Bundled imports use the target source's pretty path (same string as the
+                // "inputs" key). `record.path.text` is unreliable here: dedup can set
+                // `source_index` without rewriting the path. Externals/chunk refs fall through.
+                let import_path: &[u8] = 'path: {
+                    if record.source_index.is_valid()
+                        && record.source_index.get() != Index::RUNTIME.get()
+                    {
+                        let idx = record.source_index.get() as usize;
+                        if idx < sources.len() {
+                            let pretty = sources[idx].path.pretty;
+                            if !pretty.is_empty() {
+                                break 'path pretty;
+                            }
+                        }
+                    }
+                    record.path.text
+                };
                 {
                     let mut buf: Vec<u8> = Vec::new();
                     write!(
                         buf,
                         "{}",
-                        bfmt::format_json_string_utf8(record.path.text, Default::default())
+                        bfmt::format_json_string_utf8(import_path, Default::default())
                     )?;
                     j.push_owned(buf.into_boxed_slice());
                 }
@@ -309,7 +324,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                 j.push_static(b"\"");
 
                 // Add "original" field if different from path
-                if !record.original_path.is_empty() && record.original_path != record.path.text {
+                if !record.original_path.is_empty() && record.original_path != import_path {
                     j.push_static(b",\n          \"original\": ");
                     let mut buf: Vec<u8> = Vec::new();
                     write!(
@@ -460,7 +475,9 @@ enum JsonValue {
     Null,
     Bool(bool),
     Integer(i64),
-    Float(#[expect(dead_code)] f64),
+    /// The metafile only ever reads integers (byte counts), so a float is
+    /// validated and otherwise ignored.
+    Float,
     String(Box<[u8]>),
     Array(Vec<JsonValue>),
     Object(JsonObject),
@@ -699,7 +716,8 @@ impl<'a> JsonParser<'a> {
         }
         let s = &self.input[start..self.pos];
         if is_float {
-            Ok(JsonValue::Float(bun_core::fmt::parse_f64(s).ok_or(())?))
+            bun_core::fmt::parse_f64(s).ok_or(())?;
+            Ok(JsonValue::Float)
         } else {
             Ok(JsonValue::Integer(
                 bun_core::fmt::parse_int::<i64>(s, 10).map_err(|_| ())?,

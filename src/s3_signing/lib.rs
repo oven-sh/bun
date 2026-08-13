@@ -11,5 +11,4 @@ pub mod credentials;
 
 pub use acl::ACL;
 pub use credentials::*;
-pub use error::{ErrorCodeAndMessage, S3Error};
 pub use storage_class::StorageClass;

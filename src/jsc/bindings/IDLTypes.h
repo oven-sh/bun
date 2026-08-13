@@ -359,8 +359,6 @@ struct IDLDate : IDLType<WallTime> {
 
 struct IDLScheduledAction : IDLType<std::unique_ptr<ScheduledAction>> {
 };
-template<typename T> struct IDLSerializedScriptValue : IDLWrapper<T> {
-};
 template<typename T> struct IDLEventListener : IDLWrapper<T> {
 };
 

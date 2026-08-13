@@ -857,8 +857,8 @@ impl JSGlobalObject {
     pub fn queue_microtask(&self, function: JSValue, args: &[JSValue]) {
         self.queue_microtask_job(
             function,
-            args.first().copied().unwrap_or(JSValue::ZERO),
-            args.get(1).copied().unwrap_or(JSValue::ZERO),
+            args.first().copied().unwrap_or_default(),
+            args.get(1).copied().unwrap_or_default(),
         );
     }
 
@@ -1103,13 +1103,13 @@ impl JSGlobalObject {
     /// C++ shim into Rust callers (905 out-of-line `callq` sites in the
     /// release binary), and
     /// the FFI result is provably the same singleton — debug-asserted below
-    /// and in [`Self::bun_vm`]. Same-thread callers only; cross-thread paths
-    /// must use [`Self::bun_vm_concurrently`].
+    /// and in [`Self::bun_vm`]. JS thread only; another thread reaches a VM
+    /// through its [`VmHandle`](crate::VmHandle), never through a global.
     #[inline]
     pub fn bun_vm_ptr(&self) -> *mut VirtualMachine {
         debug_assert!(
             self.bun_vm_unsafe() == VirtualMachine::get_mut_ptr().cast::<c_void>(),
-            "bun_vm_ptr called off the JS thread; use bun_vm_concurrently",
+            "bun_vm_ptr called off the JS thread",
         );
         VirtualMachine::get_mut_ptr()
     }
@@ -1132,8 +1132,7 @@ impl JSGlobalObject {
     /// Reads the thread-local directly instead of calling
     /// `JSC__JSGlobalObject__bunVM` — cross-language LTO does not inline the
     /// C++ shim, and the two are address-equal by construction (asserted in
-    /// debug builds). Same-thread callers only; cross-thread paths must use
-    /// [`Self::bun_vm_concurrently`].
+    /// debug builds). JS thread only (see [`Self::bun_vm_ptr`]).
     #[inline]
     pub fn bun_vm(&self) -> &'static VirtualMachine {
         #[cfg(debug_assertions)]
@@ -1150,11 +1149,6 @@ impl JSGlobalObject {
             }
         }
         VirtualMachine::get()
-    }
-
-    /// We can't do the threadlocal check when queued from another thread
-    pub fn bun_vm_concurrently(&self) -> *mut VirtualMachine {
-        self.bun_vm_unsafe().cast::<VirtualMachine>()
     }
 
     pub fn handle_rejected_promises(&self) {
@@ -1479,7 +1473,14 @@ unsafe extern "C" fn Zig__GlobalObject__resolve(
     let (global, specifier, source) = unsafe { (&*global, *specifier, *source) };
     // SAFETY: C++ passes valid non-null pointers.
     let (res, query) = unsafe { (&mut *res, &mut *query) };
-    match VirtualMachine::resolve(res, global, specifier, source, Some(query), true) {
+    match VirtualMachine::resolve(
+        res,
+        global,
+        specifier,
+        source,
+        Some(query),
+        crate::virtual_machine::ResolveMode::Esm,
+    ) {
         Ok(()) => {}
         Err(_) => {
             debug_assert!(!res.success);

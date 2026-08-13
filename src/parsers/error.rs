@@ -8,6 +8,11 @@ pub enum Error {
     ParserError,
     #[error("UTF8Fail")]
     UTF8Fail,
+    /// The input's narrow encoding cannot hold the result (a Latin-1 XML
+    /// document with a character reference above U+00FF); parse it again
+    /// as UTF-8.
+    #[error("NeedsWiderEncoding")]
+    NeedsWiderEncoding,
     #[error("UnexpectedSyntax")]
     UnexpectedSyntax,
     #[error("JSONStringsMustUseDoubleQuotes")]
@@ -24,6 +29,7 @@ impl Error {
             Self::SyntaxError => "SyntaxError",
             Self::ParserError => "ParserError",
             Self::UTF8Fail => "UTF8Fail",
+            Self::NeedsWiderEncoding => "NeedsWiderEncoding",
             Self::UnexpectedSyntax => "UnexpectedSyntax",
             Self::JSONStringsMustUseDoubleQuotes => "JSONStringsMustUseDoubleQuotes",
             Self::Alloc(_) => "OutOfMemory",

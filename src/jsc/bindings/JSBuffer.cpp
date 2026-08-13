@@ -90,6 +90,7 @@ extern "C" size_t highway_memrmem(const uint8_t* haystack, size_t haystack_len, 
 extern "C" size_t highway_memmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" size_t highway_memrmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" size_t highway_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
+extern "C" size_t highway_last_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
 static constexpr size_t kHighwayNotFound = ~static_cast<size_t>(0);
 
 // export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String
@@ -405,8 +406,10 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, 0);
     }
 
-    // only JSC::JSUint8Array::create can throw and we control the ArrayBuffer passed in.
-    scope.assertNoException();
+    // JSUint8Array::create throws only on OOM — or with a termination request
+    // pending on this VM (a worker being stopped), which any exception check
+    // materialises. Either way there is no buffer.
+    RETURN_IF_EXCEPTION(scope, {});
     ASSERT(uint8Array);
 
     return JSC::JSValue::encode(uint8Array);
@@ -1604,10 +1607,6 @@ static int64_t lastIndexOf(const uint8_t* thisPtr, int64_t thisLength, const uin
 {
     int64_t haystackLen = std::min(thisLength, byteOffset + valueLength);
     if (haystackLen < valueLength) return -1;
-    if (valueLength == 1) {
-        auto span = std::span<const uint8_t>(thisPtr, static_cast<size_t>(haystackLen));
-        return WTF::reverseFind(span, valuePtr[0]);
-    }
     size_t result = highway_memrmem(thisPtr, static_cast<size_t>(haystackLen),
         valuePtr, static_cast<size_t>(valueLength));
     if (result == kHighwayNotFound) return -1;
@@ -1663,15 +1662,15 @@ static int64_t indexOfNumber(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     if (!computeIndexOfRange(byteLength, byteOffsetD, endD, 1, !last, false, &byteOffset, &searchEnd, &immediateResult))
         return immediateResult;
 
-    auto span = std::span<const uint8_t>(typedVector, searchEnd);
     if (last) {
-        span = span.subspan(0, byteOffset + 1);
-        return WTF::reverseFind(span, byteValue);
+        size_t len = byteOffset + 1;
+        size_t result = highway_last_index_of_char(typedVector, len, byteValue);
+        return result == len ? -1 : static_cast<int64_t>(result);
     }
-    span = span.subspan(byteOffset);
-    auto result = WTF::find<uint8_t>(span, byteValue);
-    if (result == WTF::notFound) return -1;
-    return result + byteOffset;
+    size_t len = searchEnd - byteOffset;
+    size_t result = highway_index_of_char(typedVector + byteOffset, len, byteValue);
+    if (result == len) return -1;
+    return static_cast<int64_t>(result + byteOffset);
 }
 
 // ucs2 and utf16le name the same encoding (the parser normalizes every alias
@@ -2390,30 +2389,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGl
 
     return jsBufferToString(lexicalGlobalObject, scope, castedThis, start, end - start, encoding);
 }
-
-// DOMJIT makes it slower! TODO: investigate why
-// JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferPrototypeToStringWithoutTypeChecks, JSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::JSUint8Array* thisValue, JSC::JSString* encodingValue));
-
-// JSC_DEFINE_JIT_OPERATION(jsBufferPrototypeToStringWithoutTypeChecks, JSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSUint8Array* thisValue, JSString* encodingValue))
-// {
-//     auto& vm = JSC::getVM(lexicalGlobalObject);
-//     IGNORE_WARNINGS_BEGIN("frame-address")
-//     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-//     IGNORE_WARNINGS_END
-//     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-
-//     std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encodingValue);
-//     if (!encoded) {
-//         auto scope = DECLARE_THROW_SCOPE(vm);
-
-//         throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
-//         return {};
-//     }
-
-//     auto encoding = encoded.value();
-
-//     return JSValue::decode(jsBufferToString(vm, lexicalGlobalObject, thisValue, 0, thisValue->byteLength(), encoding));
-// }
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/buffer.js#L962-L990
 // Only utf8Write/latin1Write/asciiWrite go through this strict JS wrapper in node;

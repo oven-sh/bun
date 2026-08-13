@@ -1199,20 +1199,26 @@ impl Interpreter {
                     let global_this = self
                         .global_this_ref()
                         .expect("global_this set on Js event-loop path");
-                    let buffered_stdout = self.get_buffered_stdout(global_this);
-                    let buffered_stderr = self.get_buffered_stderr(global_this);
+                    let buffers = self
+                        .get_buffered_stdout(global_this)
+                        .and_then(|out| Ok((out, self.get_buffered_stderr(global_this)?)));
                     self.keep_alive.with_mut(|k| k.disable());
                     self.deref_root_shell_and_io_if_needed(true);
                     let _entered = loop_.entered();
-                    if let Err(err) = resolve.call(
-                        global_this,
-                        JSValue::UNDEFINED,
-                        &[
-                            JSValue::js_number_from_int32(i32::from(exit_code)),
-                            buffered_stdout,
-                            buffered_stderr,
-                        ],
-                    ) {
+                    let called = buffers.and_then(|(buffered_stdout, buffered_stderr)| {
+                        resolve
+                            .call(
+                                global_this,
+                                JSValue::UNDEFINED,
+                                &[
+                                    JSValue::js_number_from_int32(i32::from(exit_code)),
+                                    buffered_stdout,
+                                    buffered_stderr,
+                                ],
+                            )
+                            .map(|_| ())
+                    });
+                    if let Err(err) = called {
                         global_this.report_active_exception_as_unhandled(err);
                     }
                     JSShellInterpreter::resolve_set_cached(
@@ -1344,6 +1350,23 @@ impl Interpreter {
 
         match this.cleanup_state.get() {
             CleanupState::NeedsFullCleanup => {
+                // The script is still in flight (e.g. `worker.terminate()`
+                // mid-command) and `Node` has no `Drop` for its raw-pointer
+                // resources: deinit every live `Cmd` (kills the child, frees
+                // the `ShellSubprocess`, readers, redirection fd). Slots stay
+                // occupied so the env walk below still sees pipeline-duped
+                // Cmd envs. Windows: leak-over-UAF, see
+                // `ShellSubprocess::abort_after_failed_start`.
+                #[cfg(not(windows))]
+                {
+                    let node_count = this.nodes.get().len();
+                    for i in 0..node_count {
+                        let id = NodeId(i as u32);
+                        if matches!(this.nodes.get()[id.idx()].kind(), StateKind::Cmd) {
+                            Cmd::deinit_from_finalizer(&this, id);
+                        }
+                    }
+                }
                 // A node owns `base.shell` iff it was created via `dupe_for_subshell`,
                 // i.e. its `base.shell` differs from its parent's.
                 {
@@ -1407,7 +1430,7 @@ impl Interpreter {
     pub(crate) fn get_buffered_stdout(
         &self,
         global_this: &crate::jsc::JSGlobalObject,
-    ) -> crate::jsc::JSValue {
+    ) -> bun_jsc::JsResult<crate::jsc::JSValue> {
         io_to_js_value(
             global_this,
             self.root_shell.with_mut(|rs| rs.buffered_stdout()),
@@ -1417,7 +1440,7 @@ impl Interpreter {
     pub(crate) fn get_buffered_stderr(
         &self,
         global_this: &crate::jsc::JSGlobalObject,
-    ) -> crate::jsc::JSValue {
+    ) -> bun_jsc::JsResult<crate::jsc::JSValue> {
         io_to_js_value(
             global_this,
             self.root_shell.with_mut(|rs| rs.buffered_stderr()),
@@ -1553,7 +1576,7 @@ impl Interpreter {
 fn io_to_js_value(
     global_this: &crate::jsc::JSGlobalObject,
     buf: *mut Vec<u8>,
-) -> crate::jsc::JSValue {
+) -> bun_jsc::JsResult<crate::jsc::JSValue> {
     // SAFETY: `buf` points into a live `ShellExecEnv` (root or borrowed).
     let bytelist = core::mem::take(unsafe { &mut *buf });
     // The moved-out `Vec<u8>` storage is handed to JSC directly; the
@@ -2294,7 +2317,6 @@ pub enum ParseFlagResult {
     Done,
     IllegalOption(*const [u8]),
     Unsupported(*const [u8]),
-    ShowUsage,
 }
 
 /// Returns just `name` and lets the caller's `fmt_error_arena` add the
@@ -2329,7 +2351,6 @@ pub(crate) fn parse_flags<'a, O: FlagParser>(
             ParseFlagResult::ContinueParsing => {}
             ParseFlagResult::IllegalOption(s) => return Err(ParseError::IllegalOption(s)),
             ParseFlagResult::Unsupported(s) => return Err(ParseError::Unsupported(s)),
-            ParseFlagResult::ShowUsage => return Err(ParseError::ShowUsage),
         }
         idx += 1;
     }
@@ -2569,6 +2590,8 @@ pub struct ShellTask {
     /// no-op`).
     pub task: WorkPoolTask,
     pub(crate) event_loop: EventLoopHandle,
+    /// How the pool thread bounces the task back to its owning loop.
+    pub(crate) poster: bun_jsc::ConcurrentPoster,
     pub(crate) keep_alive: bun_io::KeepAlive,
     /// Back-ref to the owning [`Interpreter`]. The high-tier dispatch
     /// (`runtime::dispatch::run_task`) recovers `&mut Interpreter` from this
@@ -2582,6 +2605,30 @@ pub struct ShellTask {
 }
 
 impl ShellTask {
+    /// A queued completion that will never run (`Taskable::release_unrun`):
+    /// drop the keep-alive `schedule` took, as `run_from_main_thread` would have.
+    pub(crate) fn unref_unrun(&mut self) {
+        self.keep_alive.unref(self.event_loop.as_event_loop_ctx());
+    }
+
+    /// A subtask created on a pool thread (`ls -R` discovering a directory):
+    /// it reports to the same loop as `parent`, whose poster was captured on
+    /// the JS thread — nothing here derives one from the VM.
+    pub(crate) fn new_child(parent: &ShellTask) -> Self {
+        ShellTask {
+            task: WorkPoolTask {
+                node: Default::default(),
+                callback: shell_task_unset_callback,
+            },
+            poster: parent.poster.clone(),
+            event_loop: parent.event_loop,
+            keep_alive: Default::default(),
+            interp: core::ptr::null_mut(),
+            concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(parent.event_loop),
+        }
+    }
+
+    /// JS thread (the interpreter's): derives the poster for `event_loop`.
     pub(crate) fn new(event_loop: EventLoopHandle) -> Self {
         ShellTask {
             task: WorkPoolTask {
@@ -2590,6 +2637,7 @@ impl ShellTask {
                 // fires if a caller forgets the `<C>` (debug-asserted there).
                 callback: shell_task_unset_callback,
             },
+            poster: bun_jsc::ConcurrentPoster::from_event_loop_handle(&event_loop),
             event_loop,
             keep_alive: Default::default(),
             interp: core::ptr::null_mut(),
@@ -2629,6 +2677,10 @@ impl ShellTask {
         unsafe {
             let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
             (*this).task.callback = shell_task_trampoline::<C>;
+            // The context lives in interpreter state a JS wrapper may own:
+            // counted until `on_finish`, so that VM waits for it (see
+            // `VmHandle::embedded_work_scheduled`).
+            (*this).poster.embedded_work_scheduled();
             WorkPool::schedule(&raw mut (*this).task);
         }
     }
@@ -2644,34 +2696,37 @@ impl ShellTask {
     /// [`schedule`](Self::schedule); not touched again on the worker thread
     /// after this returns.
     pub(crate) unsafe fn on_finish<C: ShellTaskCtx>(ctx: *mut C) {
-        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask, EventLoopTaskPtr};
+        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask};
         log!("ShellTask onFinish");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         // Stay on raw pointers: once `enqueue_task_concurrent` returns, the
         // main thread may already be touching `*this`, so no live `&mut`
         // into it may span that call. `this` is live and exclusively owned by
         // this thread until the enqueue below.
-        let (event_loop, task_ptr) = unsafe {
+        unsafe {
             let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
-            let event_loop = (*this).event_loop;
-            let task_ptr = match &mut (*this).concurrent_task {
+            let poster = (*this).poster.clone();
+            match &mut (*this).concurrent_task {
                 EventLoopTask::Js(ct) => {
                     // Tag resolved via `C: Taskable`.
                     ct.from(ctx, AutoDeinit::ManualDeinit);
-                    EventLoopTaskPtr {
-                        js: std::ptr::from_mut(ct),
-                    }
+                    // Counted work: the VM has not closed its handle.
+                    let bun_jsc::vm_handle::Posted::Queued =
+                        poster.post_js(core::ptr::NonNull::from(ct))
+                    else {
+                        unreachable!("VM handle closed with shell pool work outstanding");
+                    };
                 }
                 EventLoopTask::Mini(at) => {
                     // Pass the monomorphised callback explicitly.
-                    EventLoopTaskPtr {
-                        mini: at.from(this, shell_task_run_from_main_thread_mini::<C>),
-                    }
+                    let at = at.from(this, shell_task_run_from_main_thread_mini::<C>);
+                    poster.post_mini(core::ptr::NonNull::new(at).expect("intrusive task"));
                 }
-            };
-            (event_loop, task_ptr)
-        };
-        event_loop.enqueue_task_concurrent(task_ptr);
+            }
+            // The pool side is done with this context (`this` may already be
+            // freed by the main thread; the poster is ours).
+            poster.embedded_work_finished();
+        }
     }
 
     /// Unrefs the

@@ -690,7 +690,7 @@ pub fn did_connect() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// AsyncTaskTracker — stable surface (used by WorkTask / event_loop).
+// AsyncTaskTracker — stable surface (used by pool jobs / event_loop).
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Default, Copy, Clone)]
@@ -809,6 +809,9 @@ pub fn will_dispatch_async_call(global_object: &JSGlobalObject, call: AsyncCallT
 #[derive(Default)]
 pub struct TestReporterAgent {
     pub(crate) handle: *mut TestReporterHandle,
+    /// Shared `describe`/`test` ID counter for both the live
+    /// (`ScopeFunctions::call`) and retroactive reporting paths.
+    pub next_test_id: i32,
 }
 
 /// this enum is kept in sync with c++ InspectorTestReporterAgent.cpp `enum class BunTestStatus`
@@ -921,8 +924,11 @@ pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
         // — a forward-dep cycle. Dispatched through [`RuntimeHooks`].
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: `handle` is the live C++ agent just stored above.
-            unsafe {
-                (hooks.retroactively_report_discovered_tests)(dbg.test_reporter_agent.handle)
+            dbg.test_reporter_agent.next_test_id = unsafe {
+                (hooks.retroactively_report_discovered_tests)(
+                    dbg.test_reporter_agent.handle,
+                    dbg.test_reporter_agent.next_test_id,
+                )
             };
         }
     }

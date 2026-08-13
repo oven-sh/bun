@@ -1445,6 +1445,42 @@ describe("bundler", () => {
     },
   });
 
+  // Same shape through the bytecode path: the ESM module record must list
+  // exactly the bindings the printed clause has, or linking fails at startup.
+  itBundled("decorator_metadata/ExternalTypeOnlyImportBytecode", {
+    files: {
+      "/entry.ts": /* ts */ `
+            ${reflectMetadata}
+
+            import { ServerOptions } from "node:https";
+
+            function d1(..._: any[]) {}
+
+            class Config {
+                @d1 opts!: ServerOptions;
+            }
+
+            console.log(Reflect.getMetadata("design:type", Config.prototype, "opts") === Object);
+        `,
+      "/tsconfig.json": /* json */ `
+            {
+                "compilerOptions": {
+                    "experimentalDecorators": true,
+                    "emitDecoratorMetadata": true,
+                }
+            }
+        `,
+    },
+    bundling: true,
+    target: "bun",
+    format: "esm",
+    bytecode: true,
+    compile: true,
+    run: {
+      stdout: "true\n",
+    },
+  });
+
   // A missing export used both in metadata and as a value must keep the
   // build error; only fully metadata-guarded imports degrade to undefined.
   itBundled("decorator_metadata/MissingExportWithValueUseStillErrors", {

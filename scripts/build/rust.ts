@@ -686,6 +686,8 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // cargo step vs 4m36s for the linker-plugin-lto build (which defers
     // codegen to lld). ASAN builds don't need intra-Rust LTO; turn it off.
     env.CARGO_PROFILE_RELEASE_LTO = "off";
+    // With LTO off, `codegen-units = 1` only serializes each crate's LLVM pass over the doubled IR; nothing built with ASAN ships, so take cargo's release default instead.
+    env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "16";
   }
   if (cfg.assertions) {
     // Turn `debug_assert!()` / `#[cfg(debug_assertions)]` on in the release

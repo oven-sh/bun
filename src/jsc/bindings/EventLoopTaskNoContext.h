@@ -2,6 +2,7 @@
 
 #include "ZigGlobalObject.h"
 #include "root.h"
+#include "BunClientData.h"
 
 namespace Bun {
 
@@ -11,9 +12,14 @@ class EventLoopTaskNoContext {
 
 public:
     EventLoopTaskNoContext(JSC::JSGlobalObject* globalObject, Function<void()>&& task)
-        : m_createdInBunVm(defaultGlobalObject(globalObject)->bunVM())
+        : m_vmHandle(Bun__VmHandle__retainRef(WebCore::clientData(JSC::getVM(globalObject))->vmHandle))
         , m_task(WTF::move(task))
     {
+    }
+
+    ~EventLoopTaskNoContext()
+    {
+        Bun__VmHandle__release(m_vmHandle);
     }
 
     void performTask()
@@ -22,14 +28,15 @@ public:
         delete this;
     }
 
-    void* createdInBunVm() const { return m_createdInBunVm; }
+    // A reference to the creating VM's handle, since a pool task can outlive that VM.
+    const ::BunVmHandleRef* vmHandle() const { return m_vmHandle; }
 
 private:
-    void* m_createdInBunVm;
+    const ::BunVmHandleRef* m_vmHandle;
     Function<void()> m_task;
 };
 
 extern "C" void Bun__EventLoopTaskNoContext__performTask(EventLoopTaskNoContext* task);
-extern "C" void* Bun__EventLoopTaskNoContext__createdInBunVm(const EventLoopTaskNoContext* task);
+extern "C" const ::BunVmHandleRef* Bun__EventLoopTaskNoContext__vmHandle(const EventLoopTaskNoContext* task);
 
 } // namespace Bun

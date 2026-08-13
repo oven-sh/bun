@@ -1,8 +1,5 @@
 // @link "deps/zlib/libz.a"
 
-pub mod error;
-pub use error::{Error, Result};
-
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::mem::size_of;
 
@@ -38,8 +35,7 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
-#[allow(non_camel_case_types, unused_imports)]
-pub use bun_zlib_sys::shared::{Byte, Bytef, gzFile, struct_gzFile_s, uInt, uLong, uLongf, voidpf};
+pub use bun_zlib_sys::shared::{Bytef, uInt, uLong, uLongf};
 
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
@@ -156,8 +152,8 @@ pub fn crc32_bytes(crc: u32, data: &[u8]) -> u32 {
 }
 
 pub use bun_core::compress::State;
-pub type ZlibReaderArrayListState = State;
-pub type ZlibCompressorArrayListState = State;
+type ZlibReaderArrayListState = State;
+type ZlibCompressorArrayListState = State;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ZlibError {

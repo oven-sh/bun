@@ -110,10 +110,9 @@ pub struct ParseTask {
     pub(crate) module_type: options::ModuleType,
     pub(crate) emit_decorator_metadata: bool,
     pub(crate) experimental_decorators: bool,
-    /// BACKREF (LIFETIMES.tsv) — written through in
-    /// `on_complete`. `None` only in the `default()` placeholder; every
-    /// scheduled task has it set via `init` / `bundle_v2.rs` write-sites.
-    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>>>,
+    pub(crate) use_define_for_class_fields: bool,
+    // BACKREF; `None` only before enqueue (`Default`, runtime source).
+    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
     // Borrows package_json (resolver arena); valid for the bundle pass.
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
@@ -132,7 +131,7 @@ pub enum ParseTaskStage {
 /// The information returned to the Bundler thread when a parse finishes.
 pub(crate) struct Result {
     pub(crate) task: EventLoop::Task,
-    pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>>,
+    pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
     pub(crate) value: ResultValue,
     pub(crate) watcher_data: WatcherData,
     /// This is used for native onBeforeParsePlugins to store
@@ -264,6 +263,7 @@ impl ParseTask {
             module_type: resolve_result.module_type,
             emit_decorator_metadata: resolve_result.flags.emit_decorator_metadata(),
             experimental_decorators: resolve_result.flags.experimental_decorators(),
+            use_define_for_class_fields: resolve_result.flags.use_define_for_class_fields(),
             package_version,
             package_name,
             known_target,
@@ -319,6 +319,7 @@ impl Default for ParseTask {
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
             experimental_decorators: false,
+            use_define_for_class_fields: true,
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
@@ -556,6 +557,7 @@ pub mod parse_worker {
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
             experimental_decorators: false,
+            use_define_for_class_fields: true,
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
@@ -794,7 +796,12 @@ pub mod parse_worker {
                 let _trace = perf::trace("Bundler.ParseYAML");
                 let mut temp_log = Log::init();
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
-                    let root: Expr = bun_parsers::yaml::YAML::parse(source, &mut temp_log, bump)?;
+                    let root: Expr = bun_parsers::yaml::YAML::parse(
+                        source,
+                        &mut temp_log,
+                        bump,
+                        bun_parsers::yaml::CyclicAliases::Reject,
+                    )?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
@@ -817,6 +824,37 @@ pub mod parse_worker {
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
                     let root: Expr =
                         bun_parsers::json5::JSON5Parser::parse(source, &mut temp_log, bump)?;
+                    Ok(JSAst::init(
+                        js_parser::new_lazy_export_ast(
+                            bump,
+                            &mut topts.define,
+                            opts,
+                            &mut temp_log,
+                            root,
+                            source,
+                            b"",
+                        )?
+                        .unwrap(),
+                    ))
+                })();
+                let _ = temp_log.clone_to_with_recycled(log, true);
+                return result;
+            }
+            Loader::Xml => {
+                let _trace = perf::trace("Bundler.ParseXML");
+                let mut temp_log = Log::init();
+                let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
+                    bun_core::analytics::Features::xml_parse_inc();
+                    let rows: Expr = bun_parsers::xml::XML::parse(
+                        source,
+                        &mut temp_log,
+                        bump,
+                        bun_parsers::xml::Options {
+                            compact: true,
+                            encoding: bun_parsers::xml::InputEncoding::File,
+                        },
+                    )?;
+                    let root = bun_parsers::json::materialize(&rows, source, &mut temp_log, bump)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
@@ -858,7 +896,7 @@ pub mod parse_worker {
                     source,
                     Some(b"text/plain"),
                     None,
-                    topts.compile_to_standalone_html,
+                    topts.compile_mode.is_standalone_html(),
                 );
                 return Ok(ast);
             }
@@ -899,7 +937,7 @@ pub mod parse_worker {
                     source,
                     Some(b"text/html"),
                     None,
-                    topts.compile_to_standalone_html,
+                    topts.compile_mode.is_standalone_html(),
                 );
                 return Ok(ast);
             }
@@ -1318,7 +1356,7 @@ pub mod parse_worker {
                     source,
                     None,
                     Some(unique_key),
-                    topts.compile_to_standalone_html,
+                    topts.compile_mode.is_standalone_html(),
                 );
                 return Ok(ast);
             }
@@ -2437,6 +2475,7 @@ pub mod parse_worker {
         opts.features.minify_identifiers = topts.minify_identifiers;
         opts.features.minify_keep_names = topts.keep_names;
         opts.features.minify_whitespace = topts.minify_whitespace;
+        opts.use_define_for_class_fields = task.use_define_for_class_fields;
         opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
         // emitDecoratorMetadata implies legacy/experimental decorators, as it only
         // makes sense with TypeScript's legacy decorator system (reflect-metadata).
@@ -2800,15 +2839,27 @@ pub mod parse_worker {
             .any_loop_mut()
             .expect("BundleV2.linker.loop must be set before scheduling ParseTask")
         {
-            bun_event_loop::AnyEventLoop::Js { owner } => {
-                owner.enqueue_task_concurrent(
+            bun_event_loop::AnyEventLoop::Js { .. } => {
+                let ct =
                     bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
                         // SAFETY: `p` is the `result` Box leaked above; ownership
                         // transfers to `on_complete`, which deallocates it.
                         unsafe { on_complete(p) };
                         Ok(())
-                    }),
-                );
+                    });
+                let poster = worker
+                    .ctx
+                    .js_poster
+                    .as_ref()
+                    .expect("JS-owned bundle has a poster");
+                if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
+                    // Owning JS VM torn down mid-bundle: free the hop and the result.
+                    // SAFETY: refused ⇒ we own the task box and the leaked result.
+                    unsafe {
+                        bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
+                        drop(bun_core::heap::take(result));
+                    }
+                }
             }
             bun_event_loop::AnyEventLoop::Mini(mini) => {
                 // SAFETY: `result` is a valid heap pointer with `task` at the given offset;

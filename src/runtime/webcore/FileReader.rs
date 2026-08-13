@@ -101,7 +101,6 @@ impl Default for FileReader {
 }
 
 pub type IOReader = BufferedReader;
-pub const TAG: readable_stream::Tag = readable_stream::Tag::File;
 
 #[derive(strum::IntoStaticStr)]
 pub enum ReadDuringJSOnPullResult {
@@ -509,7 +508,9 @@ impl FileReader {
                     // A from_pipe() reader may arrive with IS_PAUSED set (lazy
                     // subprocess stdio); clear it so read() does not no-op.
                     self.reader().unpause();
-                    self.reader().read();
+                    // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+                    // the raw re-entrancy-safe entry (its dispatch runs user JS).
+                    unsafe { IOReader::read(self.reader.get()) };
                 }
             }
         }
@@ -597,7 +598,9 @@ impl FileReader {
         }
         if !self.reader().has_pending_read() {
             self.reader().unpause();
-            self.reader().read();
+            // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+            // the raw re-entrancy-safe entry (its dispatch runs user JS).
+            unsafe { IOReader::read(self.reader.get()) };
         }
     }
 
@@ -799,7 +802,7 @@ impl FileReader {
                             pending_buf[0..buffer.len()].copy_from_slice(&buffer);
                             self.pending.with_mut(|p| {
                                 p.result = streams::Result::IntoArrayAndDone(streams::IntoArray {
-                                    value: self.pending_value.get().get().unwrap_or(JSValue::ZERO),
+                                    value: self.pending_value.get().get().unwrap_or_default(),
                                     len: buffer.len() as u64, // @truncate
                                 })
                             });
@@ -825,7 +828,7 @@ impl FileReader {
                     self.buffered.with_mut(|b| b.clear());
 
                     let into_array = streams::IntoArray {
-                        value: self.pending_value.get().get().unwrap_or(JSValue::ZERO),
+                        value: self.pending_value.get().get().unwrap_or_default(),
                         len: buf.len() as u64, // @truncate
                     };
 
@@ -1003,7 +1006,9 @@ impl FileReader {
             let buffer_len = buffer.len();
             self.read_inside_on_pull
                 .set(ReadDuringJSOnPullResult::Js(buffer));
-            self.reader().read();
+            // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+            // the raw re-entrancy-safe entry (its dispatch runs user JS).
+            unsafe { IOReader::read(self.reader.get()) };
 
             // `replace` resets the field before matching, covering all return paths.
             let pulled = self
@@ -1240,7 +1245,9 @@ impl FileReader {
             self.reader().unpause();
             if !self.reader().is_done() && !self.reader().has_pending_read() {
                 // Kick off a new read if needed
-                self.reader().read();
+                // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+                // the raw re-entrancy-safe entry (its dispatch runs user JS).
+                unsafe { IOReader::read(self.reader.get()) };
             }
         } else {
             self.reader().pause();
@@ -1262,6 +1269,7 @@ pub type Source = readable_stream::NewSource<FileReader>;
 // `unsafe { (*ptr).method() }` scope and never hold `&mut Source` across other
 // `self.*` accesses.
 bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; }
+bun_core::impl_field_parent! { FileReader => Source.context; pub fn parent_const; }
 
 impl readable_stream::SourceContext for FileReader {
     const NAME: &'static str = "File";

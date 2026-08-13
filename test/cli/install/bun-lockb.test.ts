@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { copyFile, exists, open, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, runBunInstall, stderrForInstall, VerdaccioRegistry } from "harness";
+import { bunExe, bunEnv as env, isWindows, runBunInstall, VerdaccioRegistry } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -161,8 +161,7 @@ it("recovers from a corrupted binary lockfile instead of panicking", async () =>
     stderr: "pipe",
     env,
   });
-  const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-  const err = stderrForInstall(rawErr);
+  const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
 
   // The garbage `meta.id` deserialized from the corrupt lockfile used to
   // panic_bounds_check in Package::clone. Released Bun tolerates it: it
@@ -247,8 +246,7 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
     stderr: "pipe",
     env,
   });
-  const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-  const err = stderrForInstall(rawErr);
+  const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
 
   // The out-of-range flag byte must fail lockfile parsing so the install
   // falls back to a fresh resolve instead of consuming the bad byte.
@@ -306,8 +304,7 @@ it("rejects a binary lockfile whose package scripts flag byte is out of range", 
     stderr: "pipe",
     env,
   });
-  const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-  const err = stderrForInstall(rawErr);
+  const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
 
   expect(err).toContain("invalid package scripts");
   expect(err).toContain("Ignoring lockfile");
@@ -362,8 +359,7 @@ it("rejects a binary lockfile whose git resolved tag contains path separators", 
       stderr: "pipe",
       env: installEnv,
     });
-    const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-    const err = stderrForInstall(rawErr);
+    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(out).toBeDefined();
@@ -384,8 +380,7 @@ it("rejects a binary lockfile whose git resolved tag contains path separators", 
       stderr: "pipe",
       env: installEnv,
     });
-    const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-    const err = stderrForInstall(rawErr);
+    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
     expect(err).not.toContain("Invalid git dependency tag");
     expect(err).not.toContain("error:");
     expect(out).toBeDefined();
@@ -412,8 +407,7 @@ it("rejects a binary lockfile whose git resolved tag contains path separators", 
     stderr: "pipe",
     env: installEnv,
   });
-  const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-  const err = stderrForInstall(rawErr);
+  const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
 
   // The tampered resolved value must fail binary lockfile loading (the same
   // fail-closed rule the text lockfile parser applies) instead of flowing into

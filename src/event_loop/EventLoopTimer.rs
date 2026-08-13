@@ -178,12 +178,12 @@ impl EventLoopTimer {
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum Tag {
-    TimerCallback,
     TimeoutObject,
     ImmediateObject,
     StatWatcherScheduler,
     UpgradedDuplex,
     DNSResolver,
+    DnsSdConnection,
     WindowsNamedPipe,
     WTFTimer,
     PostgresSQLConnectionTimeout,
@@ -205,24 +205,18 @@ pub enum Tag {
 }
 
 impl Tag {
+    /// Whether `jest.useFakeTimers()` captures this timer. Only timers a
+    /// program schedules itself are faked; runtime-internal timeouts stay on
+    /// the real clock, as in Jest. A fakeable owner arms with
+    /// `AllowMockedTime` and has a release arm in `FakeTimers::clear`; every
+    /// other owner arms with `ForceRealTime`, the clock the real heap is
+    /// drained against.
     pub fn allow_fake_timers(self) -> bool {
-        match self {
-            Tag::WTFTimer // internal
-            | Tag::BunTest // for test timeouts
-            | Tag::EventLoopDelayMonitor // probably important
-            | Tag::StatWatcherScheduler
-            | Tag::GcRepeating // internal GC pacing
-            | Tag::QuicEndpoint
-            => false,
-            _ => true,
-        }
+        matches!(
+            self,
+            Tag::TimeoutObject | Tag::AbortSignalTimeout | Tag::CronJob
+        )
     }
-}
-
-pub struct TimerCallback {
-    pub callback: fn(*mut TimerCallback),
-    // Opaque user ctx; ownership stays with whoever installs the callback.
-    pub event_loop_timer: EventLoopTimer,
 }
 
 /// Stamp out one `unsafe fn $method(*const EventLoopTimer) -> *mut Self` per
@@ -264,8 +258,6 @@ macro_rules! impl_timer_owner {
         }
     };
 }
-
-crate::impl_timer_owner!(TimerCallback; from_timer_ptr => event_loop_timer);
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Default)]

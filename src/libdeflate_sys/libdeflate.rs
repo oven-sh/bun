@@ -3,23 +3,6 @@ use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 use std::sync::Once;
 
-#[repr(C)]
-pub struct Options {
-    pub(crate) sizeof_options: usize,
-    pub(crate) malloc_func: Option<unsafe extern "C" fn(usize) -> *mut c_void>,
-    pub(crate) free_func: Option<unsafe extern "C" fn(*mut c_void)>,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            sizeof_options: core::mem::size_of::<Options>(),
-            malloc_func: None,
-            free_func: None,
-        }
-    }
-}
-
 /// Valid `compression_level` range for `libdeflate_alloc_compressor`. Values
 /// outside this range make the allocator return NULL (indistinguishable from OOM),
 /// so callers must range-check first.
@@ -532,9 +515,6 @@ pub enum Encoding {
 
 unsafe extern "C" {
     pub(crate) safe fn libdeflate_alloc_decompressor() -> *mut Decompressor;
-    // NOT safe: `Options` carries caller-supplied `malloc_func`/`free_func`
-    // callbacks that libdeflate will invoke and write through.
-    pub fn libdeflate_alloc_decompressor_ex(options: *const Options) -> *mut Decompressor;
 }
 
 const LIBDEFLATE_SUCCESS: c_uint = 0;
@@ -570,14 +550,6 @@ unsafe extern "C" {
         actual_in_nbytes_ret: *mut usize,
         actual_out_nbytes_ret: *mut usize,
     ) -> Status;
-    pub fn libdeflate_zlib_decompress(
-        decompressor: *mut Decompressor,
-        in_: *const c_void,
-        in_nbytes: usize,
-        out: *mut c_void,
-        out_nbytes_avail: usize,
-        actual_out_nbytes_ret: *mut usize,
-    ) -> Status;
     pub(crate) fn libdeflate_zlib_decompress_ex(
         decompressor: *mut Decompressor,
         in_: *const c_void,
@@ -585,14 +557,6 @@ unsafe extern "C" {
         out: *mut c_void,
         out_nbytes_avail: usize,
         actual_in_nbytes_ret: *mut usize,
-        actual_out_nbytes_ret: *mut usize,
-    ) -> Status;
-    pub fn libdeflate_gzip_decompress(
-        decompressor: *mut Decompressor,
-        in_: *const c_void,
-        in_nbytes: usize,
-        out: *mut c_void,
-        out_nbytes_avail: usize,
         actual_out_nbytes_ret: *mut usize,
     ) -> Status;
     pub(crate) fn libdeflate_gzip_decompress_ex(
@@ -605,8 +569,6 @@ unsafe extern "C" {
         actual_out_nbytes_ret: *mut usize,
     ) -> Status;
     pub(crate) fn libdeflate_free_decompressor(decompressor: *mut Decompressor);
-    pub fn libdeflate_adler32(adler: u32, buffer: *const c_void, len: usize) -> u32;
-    pub fn libdeflate_crc32(crc: u32, buffer: *const c_void, len: usize) -> u32;
     pub(crate) fn libdeflate_set_memory_allocator(
         malloc_func: Option<unsafe extern "C" fn(usize) -> *mut c_void>,
         free_func: Option<unsafe extern "C" fn(*mut c_void)>,

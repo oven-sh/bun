@@ -48,6 +48,7 @@ pub mod wtf;
 // `bun_core ↔ bun_string` dep cycle. The `bun_string` crate is now a
 // one-line re-export shim over this module.
 // ──────────────────────────────────────────────────────────────────────────
+pub mod ip_address;
 pub mod string;
 pub use ::bstr::{BStr, BString, ByteSlice};
 pub use string::string_joiner::StringJoiner;
@@ -887,12 +888,8 @@ pub type OOM = AllocError;
 
 /// `bun.JSError` — the canonical JS error union. Tier-0 so every layer of
 /// the runtime can name it directly; `bun_jsc` re-exports
-/// it as `bun_jsc::JsError` and `bun_event_loop` re-exports it as `ErasedJsError` for
+/// it as `bun_jsc::JsError` and `bun_event_loop` exposes it (tier-0) for
 /// historical call sites.
-///
-/// `#[repr(u8)]` with explicit discriminants: `AnyTask` stores
-/// `fn(*mut c_void) -> Result<(), JsError>` and the dispatcher relies on the 1-byte layout
-/// surviving the type-erased round-trip.
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum JsError {
@@ -1124,14 +1121,6 @@ pub mod time {
     }
 }
 
-/// `bun.schema`. The full generated API types live in `bun_api` (tier-2);
-/// tier-0 cannot depend on that, so expose the one type tier-0 itself owns.
-pub mod schema {
-    pub mod api {
-        pub use crate::util::StringPointer;
-    }
-}
-
 pub use output as Output;
 
 // `crate::js_lexer` / `crate::js_printer` resolve to fmt.rs's local subsets.
@@ -1154,8 +1143,8 @@ pub use crate::string::immutable::{
     ends_with_char_or_is_zero_length, eql_any_comptime, eql_comptime, eql_comptime_utf16,
     format_escapes, has_prefix, has_prefix_case_insensitive, has_prefix_comptime,
     has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, index_of_t,
-    is_all_whitespace, is_ip_address, is_npm_package_name, is_npm_package_name_ignore_length,
-    is_on_char_boundary, is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_t,
+    is_all_whitespace, is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
+    is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_t,
     length_of_leading_whitespace_ascii, memmem, order, order_t, percent_encode_write, sort_asc,
     sort_desc, split, starts_with_case_insensitive_ascii, starts_with_char, str_utf8,
     to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix, trim_prefix_comptime,
@@ -1218,7 +1207,7 @@ pub(crate) mod strings_impl {
         }
         let mut size = input.len();
         let mut i = 0usize;
-        while let Some(pos) = ::bstr::ByteSlice::find(&input[i..], needle) {
+        while let Some(pos) = ::bun_highway::memmem(&input[i..], needle) {
             size = size - needle.len() + replacement.len();
             i += pos + needle.len();
         }
@@ -1237,7 +1226,7 @@ pub(crate) mod strings_impl {
         let mut o = 0usize;
         let mut count = 0usize;
         loop {
-            match ::bstr::ByteSlice::find(&input[i..], needle) {
+            match ::bun_highway::memmem(&input[i..], needle) {
                 Some(pos) => {
                     output[o..o + pos].copy_from_slice(&input[i..i + pos]);
                     o += pos;
@@ -1262,7 +1251,7 @@ pub(crate) mod strings_impl {
         }
         let mut out = Vec::with_capacity(replacement_size(input, needle, replacement));
         let mut i = 0usize;
-        while let Some(pos) = ::bstr::ByteSlice::find(&input[i..], needle) {
+        while let Some(pos) = ::bun_highway::memmem(&input[i..], needle) {
             out.extend_from_slice(&input[i..i + pos]);
             out.extend_from_slice(replacement);
             i += pos + needle.len();
@@ -2058,6 +2047,9 @@ pub(crate) mod strings_impl {
         if let Some(r) = starts_with_redacted_item(str, b"_password") {
             return Some(r);
         }
+        if let Some(r) = starts_with_redacted_item(str, b"password") {
+            return Some(r);
+        }
         if let Some(r) = starts_with_redacted_item(str, b"token") {
             return Some(r);
         }
@@ -2092,15 +2084,15 @@ pub(crate) mod strings_impl {
             return None;
         };
         let mut rest = &s[scheme_end..];
-        if let Some(nl) = rest.iter().position(|&b| b == b'\n') {
+        if let Some(nl) = crate::strings::index_of_char_usize(rest, b'\n') {
             rest = &rest[..nl];
         }
-        if let Some(end) = rest.iter().position(|&b| matches!(b, b'/' | b'?' | b'#')) {
+        if let Some(end) = crate::strings::index_of_any(rest, b"/?#") {
             rest = &rest[..end];
         }
-        let at = rest.iter().position(|&b| b == b'@')?;
+        let at = crate::strings::index_of_char_usize(rest, b'@')?;
         let userinfo = &rest[..at];
-        let colon = userinfo.iter().position(|&b| b == b':')?;
+        let colon = crate::strings::index_of_char_usize(userinfo, b':')?;
         // Reject empty password (`user:@host`).
         if colon == at - 1 {
             return None;
@@ -2168,7 +2160,7 @@ pub(crate) mod strings_impl {
     // Minimal code-unit trait so the generic basename impls can live at T0
     // without pulling `bun_paths::PathChar` (T1) down. `PathChar` and
     // `PathUnit` both add `: PathByte` as a supertrait and inherit `from_u8`.
-    pub trait PathByte: Copy + Eq + 'static {
+    pub trait PathByte: Copy + Eq + crate::NoUninit + 'static {
         fn from_u8(b: u8) -> Self;
     }
     impl PathByte for u8 {
@@ -2388,7 +2380,7 @@ pub mod ffi {
     /// re-exported as `bun_core::slice_to_nul`.
     #[inline]
     pub fn slice_to_nul(buf: &[u8]) -> &[u8] {
-        &buf[..buf.iter().position(|&b| b == 0).unwrap_or(buf.len())]
+        &buf[..crate::strings::index_of_char_usize(buf, 0).unwrap_or(buf.len())]
     }
 
     /// Heap-allocate a `T` filled with zero bytes. Safe by virtue of the
@@ -2438,7 +2430,7 @@ pub mod ffi {
         // `c_char` is a type alias for `i8`/`u8`; both are `bytemuck::Pod`, so
         // the byte-sized reinterpretation is a safe `cast_slice`.
         let b: &[u8] = bytemuck::cast_slice(s);
-        &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
+        &b[..crate::strings::index_of_char_usize(b, 0).unwrap_or(b.len())]
     }
 
     /// All-bits-zero value of `T` for `#[repr(C)]` FFI structs.
@@ -2567,6 +2559,9 @@ pub mod ffi {
     // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::pollfd {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::tm {}
     // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::Dl_info {}

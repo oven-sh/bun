@@ -2193,7 +2193,8 @@ impl StandaloneModuleGraph {
     /// The pages are clean file-backed COW, so any later read (lazy require,
     /// stack-trace source lookup) faults back in transparently from the
     /// executable on disk. Only applies when running as a compiled
-    /// standalone binary.
+    /// standalone binary; `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1`
+    /// skips the hint.
     pub fn hint_source_pages_dont_need() {
         #[cfg(windows)]
         {
@@ -2225,7 +2226,11 @@ impl StandaloneModuleGraph {
 
             #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
             {
-                if len == 0 {
+                if len == 0
+                    || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE
+                        .get()
+                        .unwrap_or(false)
+                {
                     return;
                 }
 

@@ -574,14 +574,12 @@ pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
         return false;
     }
 
-    for component in name.split(|&c| c == b'/') {
+    for component in strings::split(name, b"/") {
         if component.is_empty() || component == b"." || component == b".." {
             return false;
         }
-        for &c in component {
-            if c == b'\\' || c == b':' || c == 0 {
-                return false;
-            }
+        if strings::contains_any(component, b"\\:\0") {
+            return false;
         }
     }
 
@@ -610,7 +608,6 @@ pub trait VersionExt {
         buf: &[u8],
         builder: &mut SB,
     ) -> Result<Version, crate::Error>;
-    fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
     fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
     fn to_version(
         alias: String,
@@ -639,15 +636,6 @@ impl VersionExt for Version {
             literal: builder.append_string(self.literal.slice(buf)),
             value: self.value.clone_in(self.tag, buf, builder)?,
         })
-    }
-
-    fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
-        debug_assert!(lhs.tag == rhs.tag);
-        strings::cmp_strings_asc(
-            (),
-            lhs.literal.slice(string_buf),
-            rhs.literal.slice(string_buf),
-        )
     }
 
     fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {

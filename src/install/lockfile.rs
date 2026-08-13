@@ -863,6 +863,24 @@ impl Lockfile {
         self.packages.items_dependencies()[root_id as usize].contains(id)
     }
 
+    /// Is `id` a direct dependency of one of the `targets` workspaces?
+    pub fn is_dependency_of_workspace_in(
+        &self,
+        targets: &[crate::package_manager::UpdateTargetWorkspace],
+        id: DependencyID,
+    ) -> bool {
+        let pkg_id = self.get_workspace_pkg_if_workspace_dep(id);
+        if pkg_id == invalid_package_id {
+            return false;
+        }
+        let is_root =
+            self.packages.items_resolution()[pkg_id as usize].tag == crate::resolution::Tag::Root;
+        let hash = self.packages.items_name_hash()[pkg_id as usize];
+        let name =
+            self.packages.items_name()[pkg_id as usize].slice(self.buffers.string_bytes.as_slice());
+        targets.iter().any(|t| t.matches(is_root, hash, name))
+    }
+
     /// Is this a direct dependency of any workspace (including workspace root)?
     /// TODO make this faster by caching the workspace package ids
     pub(crate) fn is_workspace_dependency(&self, id: DependencyID) -> bool {
@@ -1020,6 +1038,7 @@ impl Lockfile {
             lockfile: &mut *new,
             mapping: &mut package_id_mapping,
             clone_queue: clone_queue_,
+            optional_peers: PendingResolutions::new(),
             log,
             old_preinstall_state,
             manager: &mut *manager,
@@ -1292,6 +1311,8 @@ impl Lockfile {
 
 pub struct Cloner<'a> {
     pub(crate) clone_queue: PendingResolutions,
+    /// Bound in `flush`, once `clone_queue` has decided which targets survive.
+    pub(crate) optional_peers: PendingResolutions,
     pub lockfile: &'a mut Lockfile,
     pub(crate) old: &'a mut Lockfile,
     pub(crate) mapping: &'a mut [PackageID],
@@ -1316,6 +1337,14 @@ impl<'a> Cloner<'a> {
             // `Package::clone` reads/writes through `cloner` exclusively.
             let new_id = old_package.clone(self)?;
             self.lockfile.buffers.resolutions[to_clone.resolve_id as usize] = new_id;
+        }
+
+        // bun.lock.rs binds these before hoisting; the hoist below has to see the same bindings.
+        for pending in self.optional_peers.drain(..) {
+            let mapping = self.mapping[pending.old_resolution as usize];
+            if (mapping as usize) < max_package_id {
+                self.lockfile.buffers.resolutions[pending.resolve_id as usize] = mapping;
+            }
         }
 
         // cloning finished, items in lockfile buffer might have a different order, meaning
@@ -1345,8 +1374,10 @@ impl<'a> Cloner<'a> {
 // ────────────────────────────────────────────────────────────────────────────
 
 impl Lockfile {
+    /// Re-hoists while a pass bound an optional peer late; a reload has that binding up front.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
-        self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)
+        while self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {}
+        Ok(())
     }
 
     pub(crate) fn filter(
@@ -1363,10 +1394,11 @@ impl Lockfile {
             install_root_dependencies,
             workspace_filters,
             packages_to_install,
-        )
+        )?;
+        Ok(())
     }
 
-    /// Sets `buffers.trees` and `buffers.hoisted_dependencies`
+    /// Sets `buffers.trees`/`hoisted_dependencies`; returns `Builder::late_bound_optional_peer`.
     pub(crate) fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
         log: &mut bun_ast::Log,
@@ -1376,7 +1408,7 @@ impl Lockfile {
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
-    ) -> Result<(), tree::SubtreeError> {
+    ) -> Result<bool, tree::SubtreeError> {
         let slice = self.packages.slice();
 
         // `tree::Builder` stores `lockfile: ParentRef<Lockfile>` so
@@ -1398,6 +1430,7 @@ impl Lockfile {
             workspace_filters,
             packages_to_install,
             pending_optional_peers: Default::default(),
+            late_bound_optional_peer: false,
             list: Default::default(),
             sort_buf: Default::default(),
         };
@@ -1416,9 +1449,10 @@ impl Lockfile {
         }
 
         let cleaned = builder.clean()?;
+        let late_bound_optional_peer = builder.late_bound_optional_peer;
         self.buffers.trees = cleaned.trees;
         self.buffers.hoisted_dependencies = cleaned.dep_ids;
-        Ok(())
+        Ok(late_bound_optional_peer)
     }
 }
 
@@ -1493,14 +1527,14 @@ impl Lockfile {
                     // above); `manifests` and `lockfile` are non-overlapping
                     // fields and nothing below resizes/relocates `manifests`
                     // while `manifest` is held.
-                    let scope = mgr_ref.options.scope_for_package_name(
-                        pkg_name.slice(self.buffers.string_bytes.as_slice()),
-                    );
+                    let pkg_name_str = pkg_name.slice(self.buffers.string_bytes.as_slice());
+                    let scope = mgr_ref.options.scope_for_package_name(pkg_name_str);
                     // SAFETY: `manifests` projected from `manager_ptr`; the
                     // call holds only that disjoint field.
                     let Some(manifest) = unsafe { &mut (*manager_ptr).manifests }.by_name_hash(
                         cache_ctx,
                         scope,
+                        pkg_name_str,
                         pkg_name_hash,
                         Install::ManifestLoad::LoadFromMemoryFallbackToDisk,
                         false,
@@ -1736,20 +1770,29 @@ impl<'a> Printer<'a> {
         // Capture the `'static` cwd slice
         // before borrowing `fs.fs` mutably.
         let top_level_dir = fs.top_level_dir;
-        let entries_option = fs.fs.read_directory(top_level_dir, None, 0, true)?;
-        let entries: &mut Fs::DirEntry = match entries_option {
-            Fs::EntriesOption::Entries(e) => &mut **e,
-            Fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
+        // Erase to raw so the `entries_mutex` reborrow below doesn't conflict
+        // with the `&mut self` borrow `read_directory` took.
+        let entries_option: *const Fs::EntriesOption =
+            fs.fs.read_directory(top_level_dir, None, 0, true)?;
+        // Copy the listing's basenames out under `entries_mutex`; `.data` must
+        // only be probed while the lock is held.
+        let entries = {
+            let _entries_lock = fs.fs.entries_mutex.lock_guard();
+            // SAFETY: BSSMap-owned slot; shared read under `entries_mutex`.
+            match unsafe { &*entries_option } {
+                Fs::EntriesOption::Entries(e) => {
+                    DotEnv::DirEntryKeys(e.data.iter().map(|(k, _)| Box::from(&**k)).collect())
+                }
+                Fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
+            }
         };
 
         let mut env_loader = DotEnv::Loader::init();
         env_loader.quiet = true;
 
         env_loader.load_process()?;
-        // `DotEnv::Loader::load` takes `impl DirEntryProbe` (bun_dotenv sits
-        // below `bun_resolver` in the crate graph); `Fs::DirEntry` impls it.
         env_loader.load(
-            &*entries,
+            &entries,
             &[] as &[&[u8]],
             DotEnv::DotEnvFileSuffix::Production,
             false,
@@ -2476,9 +2519,9 @@ macro_rules! string_builder {
 
 /// Trait implemented by `String` and `ExternalString` to support generic `append*`.
 /// Canonical def lives in
-/// `bun_semver::semver_string`; re-exported under the local name so generic
+/// `bun_semver::semver_string`; imported under the local name so generic
 /// bounds in this module (`append<T: StringBuilderType>`) are unchanged.
-pub use bun_semver::semver_string::BuilderStringType as StringBuilderType;
+use bun_semver::semver_string::BuilderStringType as StringBuilderType;
 
 impl<'a> StringBuilder<'a> {
     #[inline]
@@ -3071,12 +3114,8 @@ const MAX_DEFAULT_TRUSTED_DEPENDENCIES: usize = 512;
 /// --default` need not re-sort.
 pub static DEFAULT_TRUSTED_DEPENDENCIES_LIST: std::sync::LazyLock<Vec<&'static [u8]>> =
     std::sync::LazyLock::new(|| {
-        const DATA: &str = include_str!("default-trusted-dependencies.txt");
-        let mut names: Vec<&'static [u8]> = DATA
-            .split([' ', '\r', '\n', '\t'])
-            .filter(|s| !s.is_empty())
-            .map(str::as_bytes)
-            .collect();
+        const DATA: &[u8] = include_bytes!("default-trusted-dependencies.txt");
+        let mut names: Vec<&'static [u8]> = strings::tokenize_any(DATA, b" \r\n\t").collect();
         names.sort_unstable();
         debug_assert!(
             names.len() <= MAX_DEFAULT_TRUSTED_DEPENDENCIES,

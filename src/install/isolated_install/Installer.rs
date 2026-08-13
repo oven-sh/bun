@@ -96,11 +96,8 @@ pub struct Installer<'a> {
     /// round-trip via `Method::from_u8` at the load sites below.
     pub(crate) supported_backend: AtomicU8,
 
-    /// Value is the alias bytes the key hash was computed from; lookups must
-    /// compare it since truncated hashes can collide. Built before tasks
-    /// spawn and only read concurrently afterwards.
-    pub(crate) trusted_dependencies_from_update_requests:
-        ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>>,
+    /// Built before tasks spawn and only read concurrently afterwards.
+    pub(crate) trusted_dependencies_from_update_requests: ArrayHashMap<PackageID, ()>,
 
     /// Absolute path to the global virtual store (`<cache_dir>/links`). When
     /// non-null, npm/git/tarball entries are materialized once into this
@@ -279,24 +276,12 @@ impl<'a> Installer<'a> {
         let node_id = entry_node_ids[entry_id.get() as usize];
         let node_pkg_ids = store.nodes.items_pkg_id();
         let pkg_id = node_pkg_ids[node_id.get() as usize];
-        let patch_task_ptr = install::PatchTask::new_apply_patch_hash(
+        let mut patch_task = install::PatchTask::new_apply_patch_hash(
             self.manager_mut(),
             pkg_id,
             patch.contents_hash,
             patch.name_and_version_hash,
         );
-        // SAFETY: `new_apply_patch_hash` returns a freshly Box-allocated PatchTask;
-        // sole ownership lives in this scope.
-        struct PatchTaskGuard(*mut install::PatchTask);
-        impl Drop for PatchTaskGuard {
-            fn drop(&mut self) {
-                // SAFETY: exclusive owner; created by `heap::alloc` in `new_*`.
-                unsafe { install::PatchTask::destroy(self.0) };
-            }
-        }
-        let _guard = PatchTaskGuard(patch_task_ptr);
-        // SAFETY: exclusive owner — see above.
-        let patch_task = unsafe { &mut *patch_task_ptr };
         // Every peer variant shares one patched cache dir (named by the patch
         // contents hash, not the peer set). Once it exists, reuse it: rebuilding
         // it replaces the directory under earlier entries' running hardlink tasks.
@@ -800,7 +785,7 @@ impl Task {
         // lives outside the `Installer` allocation and `items_step()` is atomic.
         // This also avoids leaking the erased `'static` from
         // `*mut Installer<'static>` into a whole-struct borrow.
-        let store: &Store = unsafe { *core::ptr::addr_of!((*self.installer.as_ptr()).store) };
+        let store: &Store = unsafe { *core::ptr::addr_of!((*self.installer.as_const_ptr()).store) };
         store.entries.items_step()[self.entry_id.get() as usize]
             .store(next_step as u32, Ordering::Release);
 
@@ -925,7 +910,22 @@ impl Task {
                                         match hardlinker.link()? {
                                             sys::Result::Ok(()) => {}
                                             sys::Result::Err(err) => {
-                                                if err.get_errno() == sys::Errno::EXDEV {
+                                                // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
+                                                if matches!(
+                                                    err.get_errno(),
+                                                    sys::Errno::EXDEV
+                                                        | sys::Errno::EACCES
+                                                        | sys::Errno::EPERM
+                                                ) {
+                                                    // rewind the dir cursor the hardlink walk consumed (Windows restarts the scan itself)
+                                                    #[cfg(not(windows))]
+                                                    if let sys::Result::Err(err) =
+                                                        sys::set_file_offset(folder_dir, 0)
+                                                    {
+                                                        return Ok(Yield::failure(
+                                                            TaskError::LinkPackage(err),
+                                                        ));
+                                                    }
                                                     backend = InstallMethod::Copyfile;
                                                     continue 'backend;
                                                 }
@@ -1331,7 +1331,13 @@ impl Task {
                                 match hardlinker.link()? {
                                     sys::Result::Ok(()) => {}
                                     sys::Result::Err(err) => {
-                                        if err.get_errno() == sys::Errno::EXDEV {
+                                        // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
+                                        if matches!(
+                                            err.get_errno(),
+                                            sys::Errno::EXDEV
+                                                | sys::Errno::EACCES
+                                                | sys::Errno::EPERM
+                                        ) {
                                             installer.supported_backend.store(
                                                 InstallMethod::Copyfile as u8,
                                                 Ordering::Relaxed,
@@ -1364,6 +1370,10 @@ impl Task {
 
                             // fallthrough copyfile
                             _ => {
+                                // close the fd the failed hardlink attempt left behind
+                                if let Some(old) = cached_package_dir.take() {
+                                    old.close();
+                                }
                                 *cached_package_dir = match bun_sys::open_dir_for_iteration(
                                     cache_dir,
                                     pkg_cache_dir_subpath.slice(),
@@ -1629,8 +1639,7 @@ impl Task {
                     let (is_trusted, is_trusted_through_update_request) = 'brk: {
                         if installer
                             .trusted_dependencies_from_update_requests
-                            .get(&truncated_dep_name_hash)
-                            .is_some_and(|n| **n == *dep.name.slice(string_buf))
+                            .contains(&pkg_id)
                         {
                             break 'brk (true, true);
                         }
@@ -1709,8 +1718,16 @@ impl Task {
                             entry_scripts[self.entry_id.get() as usize].set(Some(clone));
 
                             if is_trusted_through_update_request {
-                                let trusted_dep_to_add: Box<[u8]> =
-                                    Box::from(dep.name.slice(string_buf));
+                                let (trusted_name, trusted_name_hash) =
+                                    if pkg_res.tag == ResolutionTag::Npm {
+                                        (
+                                            pkg_name.slice(string_buf),
+                                            pkg_name_hash as TruncatedPackageNameHash,
+                                        )
+                                    } else {
+                                        (dep.name.slice(string_buf), truncated_dep_name_hash)
+                                    };
+                                let trusted_dep_to_add: Box<[u8]> = Box::from(trusted_name);
 
                                 let _unlock = installer.trusted_dependencies_mutex.lock_guard();
 
@@ -1739,10 +1756,10 @@ impl Task {
                                 if trusted.is_none() {
                                     *trusted = Some(Default::default());
                                 }
-                                trusted.as_mut().unwrap().insert(
-                                    truncated_dep_name_hash,
-                                    Box::from(dep.name.slice(string_buf)),
-                                );
+                                trusted
+                                    .as_mut()
+                                    .unwrap()
+                                    .insert(trusted_name_hash, Box::from(trusted_name));
                             }
 
                             if first_index != 0 {

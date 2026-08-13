@@ -38,7 +38,7 @@ extern "C" void Request__setInternalEventCallback(void*, EncodedJSValue, JSC::JS
 extern "C" void Request__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" bool NodeHTTPResponse__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" void Server__setIdleTimeout(EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
-extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSValue, bool require_host_header, bool use_strict_method_validation, bool use_insecure_http_parser, bool http_allow_half_open);
+extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSValue, bool require_host_header, bool use_strict_method_validation, uint8_t lenient_http_flags, bool http_allow_half_open);
 extern "C" EncodedJSValue Server__setOnClientError(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setOnConnection(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setMaxHTTPHeaderSize(JSC::JSGlobalObject*, EncodedJSValue, uint64_t);
@@ -856,6 +856,9 @@ static constexpr uint32_t kAutoHeaderDate = 1 << 0;
 static constexpr uint32_t kAutoHeaderConnKeepAlive = 1 << 1;
 static constexpr uint32_t kAutoHeaderConnClose = 1 << 2;
 static constexpr uint32_t kAutoHeaderKeepAliveTimeout = 1 << 3;
+// Node's _storeHeader emits chunked Transfer-Encoding after Connection/Keep-Alive, so it
+// cannot ride in the flat array (written first). Carry as an auto-header bit, rendered last.
+static constexpr uint32_t kAutoHeaderTransferEncodingChunked = 1 << 4;
 
 // "Date: <IMF-fixdate>\r\n", rebuilt at most once per second. Hand-rolled
 // (not strftime) so the day/month names are locale-independent.
@@ -913,6 +916,13 @@ static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHe
     } else if (autoHeaderBits & kAutoHeaderConnClose) {
         static constexpr const char cl[] = "Connection: close\r\n";
         response->uWS::template AsyncSocket<isSSL>::write(cl, sizeof(cl) - 1);
+    }
+    if (autoHeaderBits & kAutoHeaderTransferEncodingChunked) {
+        static constexpr const char te[] = "Transfer-Encoding: chunked\r\n";
+        response->uWS::template AsyncSocket<isSSL>::write(te, sizeof(te) - 1);
+        // Same state the flat-array path sets when it sees the header, so uWS
+        // chunk-frames the body.
+        response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
     }
 }
 
@@ -1263,7 +1273,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
     JSValue serverValue = callFrame->uncheckedArgument(0);
     JSValue requireHostHeader = callFrame->uncheckedArgument(1);
     JSValue useStrictMethodValidation = callFrame->uncheckedArgument(2);
-    JSValue useInsecureHTTPParser = callFrame->uncheckedArgument(3);
+    JSValue lenientHttpFlags = callFrame->uncheckedArgument(3);
     JSValue maxHeaderSize = callFrame->uncheckedArgument(4);
     JSValue callback = callFrame->uncheckedArgument(5);
     JSValue onConnectionCallback = callFrame->argument(6);
@@ -1271,8 +1281,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
 
     double maxHeaderSizeNumber = maxHeaderSize.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    int32_t lenientBits = lenientHttpFlags.toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
-    Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), useInsecureHTTPParser.toBoolean(globalObject), httpAllowHalfOpen.toBoolean(globalObject));
+    Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), static_cast<uint8_t>(lenientBits & 0x3), httpAllowHalfOpen.toBoolean(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     Server__setMaxHTTPHeaderSize(globalObject, JSValue::encode(serverValue), maxHeaderSizeNumber);
@@ -1301,10 +1313,13 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetAppFlags, (JSGlobalObject * globalObject, Call
     JSValue serverValue = callFrame->uncheckedArgument(0);
     JSValue requireHostHeader = callFrame->uncheckedArgument(1);
     JSValue useStrictMethodValidation = callFrame->uncheckedArgument(2);
-    JSValue useInsecureHTTPParser = callFrame->uncheckedArgument(3);
+    JSValue lenientHttpFlags = callFrame->uncheckedArgument(3);
     JSValue httpAllowHalfOpen = callFrame->argument(4);
 
-    Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), useInsecureHTTPParser.toBoolean(globalObject), httpAllowHalfOpen.toBoolean(globalObject));
+    int32_t lenientBits = lenientHttpFlags.toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), static_cast<uint8_t>(lenientBits & 0x3), httpAllowHalfOpen.toBoolean(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsUndefined());

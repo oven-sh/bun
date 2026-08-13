@@ -103,6 +103,8 @@ pub enum Tag {
     Bun,
     /// A builtin module, such as `node:fs` or `bun:sqlite`
     Builtin,
+    /// `require('bindings')('<name>')`; path holds the addon name to resolve.
+    NativeBindings,
     /// An import to the internal runtime
     Runtime,
     /// A 'macro:' import namespace or 'with { type: "macro" }'

@@ -939,7 +939,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    pub(crate) fn is_external_pattern(&self, import_path: &[u8]) -> bool {
+    pub fn is_external_pattern(&self, import_path: &[u8]) -> bool {
         if self.opts.packages == options::Packages::External && is_package_path(import_path) {
             return true;
         }

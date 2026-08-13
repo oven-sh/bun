@@ -9114,7 +9114,6 @@ impl LowerUsingDeclarationsContext {
         let finally_stmts: &'a mut [Stmt] = if self.has_await_using {
             // for (var _dispose = __callDispose(stack, error, hasError); _dispose; _dispose = _dispose())
             //   try { await _dispose.result } catch (_reason) { _dispose.fail(_reason) }
-            // Awaiting here instead of inside the helper keeps the tick count identical to native code.
             let dispose_ref = p.generate_temp_ref(Some(b"_dispose"));
             let reason_ref = p.generate_temp_ref(Some(b"_reason"));
             scope.generated.append_slice(&[dispose_ref, reason_ref]);

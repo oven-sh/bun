@@ -64,8 +64,7 @@ export var __callDispose = (stack, error, hasError) => {
     (error = hasError
       ? new SuppressedError(e, error, "An error was suppressed during disposal")
       : ((hasError = true), e));
-  // Files lowered by older versions of Bun do `_promise && await _promise` on the
-  // return value, so the stepper is also awaitable and `then` drives the rest itself.
+  // `then` is what files lowered by older versions of Bun hit: they `await` the return value.
   let drive = () =>
     Promise.resolve(next.result).then(
       () => next() && drive(),

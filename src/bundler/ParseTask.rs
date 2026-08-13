@@ -418,10 +418,7 @@ export var __require = /* @__PURE__ */ (x =>
 // here so the runtime module exports a consistent shape across targets.
 // Bun's WebKit also has Symbol.asyncDispose, Symbol.dispose, and
 // SuppressedError, so no polyfills are needed.
-//
-// Keep in sync with src/runtime.bun.js and the loop `LowerUsingDeclarationsContext::finalize` emits:
-// wherever DisposeResources would await, `__callDispose` returns `next` with `next.result` to await;
-// the generated code then calls `next.fail(reason)` on rejection and `next()` to continue.
+// Keep in sync with src/runtime.bun.js and with `LowerUsingDeclarationsContext::finalize`.
 const RUNTIME_USING_BUN: &str = "\
 export var __using = (stack, value, async) => {
   if (value != null) {

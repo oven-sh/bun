@@ -2586,10 +2586,12 @@ fn parse_build_command_options(
                     ),
                 );
                 Global::crash();
-            } else {
-                opts.target = Some(api::Target::Bun);
             }
         }
+        // The main transpiler is the server graph. The default target (browser)
+        // would make the bundler reach for a client transpiler, which only Bake
+        // provides.
+        opts.target = Some(api::Target::Bun);
     }
 
     if args.flag(b"--react-fast-refresh") {

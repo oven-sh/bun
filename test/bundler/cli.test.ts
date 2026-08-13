@@ -518,6 +518,74 @@ describe("CLI argument error messages", () => {
   });
 });
 
+// `--server-components` bundles only the server graph: there is no framework
+// on the CLI, so nothing can register "use client" / "use server" boundaries.
+// Every case here used to crash the bundler instead of building or reporting.
+describe.concurrent("bun build --server-components", () => {
+  async function build(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("builds for bun when no --target is given", async () => {
+    using dir = tempDir("sc-default-target", { "server.ts": `console.log("server");` });
+    const { stdout, stderr, exitCode } = await build(dir, "--server-components", "server.ts");
+    expect(stderr).toBe("");
+    expect(stdout).toStartWith("// @bun\n");
+    expect(stdout).toContain('console.log("server")');
+    expect(exitCode).toBe(0);
+  });
+
+  test("rejects a client-side --target", async () => {
+    using dir = tempDir("sc-browser-target", { "server.ts": `console.log("server");` });
+    const { stdout, stderr, exitCode } = await build(dir, "--server-components", "--target=browser", "server.ts");
+    expect(stderr).toContain("Cannot use client-side --target");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("importing a 'use client' file is a build error, not a crash", async () => {
+    using dir = tempDir("sc-use-client", {
+      "server.ts": `import { Button } from "./client"; console.log(Button);`,
+      "client.ts": `"use client";\nexport function Button() { return "button"; }`,
+    });
+    const { stdout, stderr, exitCode } = await build(dir, "--server-components", "--target=bun", "server.ts");
+    expect(stderr).toContain('"use client" requires a framework with server components configured');
+    expect(stderr).toContain("client.ts");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a 'use server' entry point is a build error, not a crash", async () => {
+    using dir = tempDir("sc-use-server", {
+      "actions.ts": `"use server";\nexport async function save() { return "saved"; }`,
+    });
+    const { stdout, stderr, exitCode } = await build(dir, "--server-components", "--target=bun", "actions.ts");
+    expect(stderr).toContain('"use server" requires a framework with server components configured');
+    expect(stderr).toContain("actions.ts");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("directives are still plain strings without the flag", async () => {
+    using dir = tempDir("sc-flag-off", {
+      "server.ts": `import { Button } from "./client"; console.log(Button());`,
+      "client.ts": `"use client";\nexport function Button() { return "button"; }`,
+    });
+    const { stdout, stderr, exitCode } = await build(dir, "--target=bun", "server.ts");
+    expect(stderr).toBe("");
+    expect(stdout).toContain("button");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe.concurrent("modules that fail to print", () => {
   // A TOML dotted header builds an object nested arbitrarily deep without
   // recursing in the parser, so the printer's recursion guard is the first

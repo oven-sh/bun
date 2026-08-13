@@ -444,10 +444,9 @@ pub mod Jest {
         module.put(global_object, b"spyOn", spy_on);
         module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
 
-        let vi = JSValue::create_empty_object(global_object, 7 + fake_timers::TIMER_FNS_COUNT);
+        let vi = JSValue::create_empty_object(global_object, 6 + fake_timers::TIMER_FNS_COUNT);
         vi.put(global_object, b"fn", mock_fn);
         vi.put(global_object, b"mock", mock_module_fn);
-        vi.put(global_object, b"requireMock", require_mock_fn);
         vi.put(global_object, b"spyOn", spy_on);
         vi.put(global_object, b"restoreAllMocks", restore_all_mocks);
         vi.put(global_object, b"resetAllMocks", reset_all_mocks);

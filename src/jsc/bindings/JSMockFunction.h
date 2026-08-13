@@ -65,13 +65,15 @@ public:
 // the caller is responsible for checking for exceptions.
 JSC::JSObject* createAutoMockedFunction(JSC::JSGlobalObject* globalObject, JSC::JSValue originalValue);
 
-// Generate an auto-mock value from a module's real exports. For each own
-// data property of `exports` (enumerable and non-enumerable alike;
-// accessor/custom-slot properties are skipped so their getters are never
-// invoked):
+// Generate an auto-mock value from a module's real exports, following
+// jest-mock's `_getSlots` rules: own string property names (enumerable and
+// non-enumerable alike) collected up the prototype chain, stopping before
+// Object.prototype/Function.prototype. Accessors are skipped so getters are
+// never invoked, except when the owning object is an `__esModule` interop
+// object (esbuild/tsc-emitted CJS), whose getters are the exports. Per value:
 //   - function: replaced with a mock function that returns undefined (plus
-//     any of its own properties mocked recursively so static methods work)
-//   - plain object: recursively auto-mocked
+//     statics and `.prototype` methods mocked recursively)
+//   - plain object / class instance: recursively auto-mocked
 //   - primitives, arrays, other non-plain objects: preserved
 // Returns an empty JSValue on failure with an exception pending.
 //

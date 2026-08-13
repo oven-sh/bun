@@ -1395,35 +1395,18 @@ pub mod js_bundler {
 
     // NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by
     // `bun_bundler::bundle_v2::api::JSBundler` so that `BundleV2` can operate
-    // on them directly (`on_resolve_async`/`on_load_async`). `dispatch()` and
-    // `run_on_js_thread()` are also inherent methods there — they only need
-    // `bun_event_loop` types and the `Plugin` opaque, neither of which is a T6
-    // dependency. Only the JSC-aware bits (`on_defer`, `JSBundlerPlugin__*`
-    // C-ABI exports) live here.
+    // on them directly (`on_resolve`/`on_load`, reached through `post`).
+    // `dispatch()` and `run_on_js_thread()` are also inherent methods there —
+    // they only need `bun_event_loop` types and the `Plugin` opaque, neither of
+    // which is a T6 dependency. Only the JSC-aware bits (`on_defer`,
+    // `JSBundlerPlugin__*` C-ABI exports) live here.
     pub use bun_bundler::bundle_v2::api::JSBundler::{
         Load, LoadSuccess, LoadValue, MiniImportRecord, Resolve, ResolveSuccess, ResolveValue,
     };
     use bun_bundler::bundle_v2::{PluginLoadDeferred, PluginLoadSettled, PluginResolveSettled};
     use bun_bundler::post::post;
 
-    /// `&mut BundleV2` for the live backref stored on `Resolve`/`Load`.
-    ///
-    /// Centralises the `*mut BundleV2 → &mut` deref so the C++-called thunks
-    /// (`JSBundlerPlugin__onResolveAsync`, `on_defer`, `…__onLoadAsync`,
-    /// `…__addError`) stay safe at the call site. `bv2`
-    /// is the back-reference set in `Resolve::init`/`Load::init`; the
-    /// `BundleV2` heap allocation outlives every plugin callback (owner-
-    /// creates-child, single-JS-thread). The `BundleV2` storage is heap-
-    /// disjoint from `Resolve`/`Load`, so the returned `&mut` does not alias
-    /// the caller's `&mut Resolve`/`&mut Load`.
-    #[inline]
-    fn bv2_mut<'a>(bv2: *mut BundleV2<'static>) -> &'a mut BundleV2<'static> {
-        // SAFETY: see fn doc — live backref (owner-creates-child), single
-        // JS-thread, disjoint heap from the `Resolve`/`Load` callers borrow.
-        unsafe { &mut *bv2 }
-    }
-
-    /// `&mut Plugin` for the live `BundleV2` backref stored on `Resolve`/`Load`.
+    /// `&mut Plugin` for the `BundleV2` backref stored on `Resolve`/`Load`.
     ///
     /// Centralises the `Option<NonNull> → &mut T` deref so the three callers
     /// (`JSBundlerPlugin__onResolveAsync`, `on_defer`,
@@ -1434,8 +1417,14 @@ pub mod js_bundler {
     /// the caller's `&mut Resolve`/`&mut Load`.
     #[inline]
     fn bv2_plugin<'a>(bv2: *mut BundleV2<'static>) -> &'a mut Plugin {
+        // SAFETY: `bv2` is the backref set in `Resolve::init`/`Load::init`; the
+        // pass outlives every plugin callback. `plugins` is written before the
+        // first dispatch and never again, so reading just that field through a
+        // raw pointer is fine while the bundle thread (for `Bun.build`, a
+        // different thread) holds `&mut` to the rest of `*bv2`.
+        let plugins = unsafe { *core::ptr::addr_of!((*bv2).plugins) };
         // SAFETY: see fn doc — `plugins.is_some()`, disjoint heap.
-        unsafe { &mut *bv2_mut(bv2).plugins.unwrap().as_ptr() }
+        unsafe { &mut *plugins.expect("plugin callback without plugins").as_ptr() }
     }
 
     /// # Safety

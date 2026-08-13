@@ -41,7 +41,6 @@ use bun_resolver::{self as _resolver, Resolver};
 
 declare_scope!(ParseTask, hidden);
 
-#[allow(non_snake_case)]
 // the per-file parse arena is held as `bump: &'static Bump` (the
 // worker arena is pinned for the entire bundle pass — see `run_with_source_code`),
 // so `bump.alloc_*` / `ArenaString::into_bump_str` already yield `&'static`
@@ -60,6 +59,7 @@ declare_scope!(ParseTask, hidden);
 // ───────────────────────────────────────────────────────────────────────────
 // ContentsOrFd
 // ───────────────────────────────────────────────────────────────────────────
+
 #[derive(bun_core::EnumTag)]
 #[enum_tag(existing = ContentsOrFdTag)]
 pub enum ContentsOrFd {

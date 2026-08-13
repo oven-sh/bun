@@ -53,7 +53,10 @@ pub unsafe fn post<E: Event>(item: *mut E::Item) {
     // are touched, through raw pointers, so no reference to `*bv2` is formed.
     let any_loop = unsafe { *addr_of!((*bv2).linker.r#loop) }
         .expect("BundleV2.linker.loop must be set before work is posted to it");
-    // SAFETY: `linker.loop` is a backref to the loop that owns this bundle pass.
+    // SAFETY: `linker.loop` is a backref to the loop that owns this bundle pass
+    // and outlives it. The bundle thread may be ticking it concurrently; both
+    // arms below only push onto the loop's MPSC queue (the `Mini` arm also
+    // writes the node inside `*item`, which the caller owns) and wake it.
     match unsafe { &mut *any_loop.as_ptr() } {
         AnyEventLoop::Js { .. } => {
             let task = ConcurrentTask::from_callback(item, run_on_js_loop::<E>);

@@ -1087,7 +1087,7 @@ pub mod bv2_impl {
                 pub bv2: *mut BundleV2<'static>,
                 pub import_record: MiniImportRecord,
                 pub value: ResolveValue,
-                /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue.
+                /// Mini-loop queue node for `crate::post` (see `post::Event::NODE`).
                 pub(crate) task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
                 /// Links in the bundle's list of requests a plugin currently
                 /// holds (`Graph::outstanding_resolves`); bundle thread only.
@@ -1536,7 +1536,6 @@ pub mod bv2_impl {
             }
             // From bake where the loop running the bundle is also the loop running
             // the plugins.
-            // `any_loop_mut` centralises the BACKREF deref of `linker.r#loop`.
             let poster = self
                 .js_poster
                 .as_ref()
@@ -3753,13 +3752,13 @@ pub mod bv2_impl {
             })?;
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
-            // `bun.new(ServerComponentParseTask, …)` — heap-owned by the
-            // worker pool; freed via `bun.destroy` in `on_complete` after the
-            // result posts back to the bundle thread.
+            // Heap-allocated; the worker recovers it from its `task` link
+            // (`task_callback_wrap`) and posts a `parse_task::Result` back to
+            // the bundle thread.
             let task = bun_core::heap::into_raw(Box::new(ServerComponentParseTask {
                 data,
                 // SAFETY: `from_mut(self)` is the live bundle (write provenance for
-                // `on_complete`'s `assume_mut`) and outlives the task; `'a` erased to
+                // `ParseComplete::run`) and outlives the task; `'a` erased to
                 // `'static` for the BACKREF.
                 ctx: Some(unsafe {
                     bun_ptr::ParentRef::from_raw_mut(
@@ -6994,8 +6993,8 @@ pub mod bv2_impl {
                     // `on_load` (copy-for-bundling path) parks plugin asset bytes
                     // as `Cow::Owned` directly in this slot and gives the ParseTask
                     // a borrowed alias. The full-Source swap just moved that owner
-                    // into `result.source`; move it back so `parse_worker::on_complete`'s
-                    // `drop(heap::take(result))` doesn't free the buffer
+                    // into `result.source`; move it back so the graph, not the
+                    // `Result` that `ParseComplete::run` frees, owns the buffer
                     // `process_files_to_copy` will later `mem::take`.
                     if matches!(result.source.contents, std::borrow::Cow::Owned(_)) {
                         core::mem::swap(

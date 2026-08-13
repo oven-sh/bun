@@ -26,7 +26,7 @@ use crate::parse_task::{self, ParseComplete, ResultValue, Success, WatcherData};
 pub(crate) struct ServerComponentParseTask {
     pub task: ThreadPoolTask,
     pub data: Data,
-    // BACKREF (LIFETIMES.tsv) — written through in `on_complete`.
+    // BACKREF (LIFETIMES.tsv) — written through in `ParseComplete::run`.
     // `ParentRef` (write-provenance via `NonNull::from(&mut self)` at construction)
     // so deref sites are safe; `None` only for the FRU `Default` placeholder.
     pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
@@ -60,7 +60,7 @@ pub struct ClientEntryWrapper {
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // `ServerComponentParseTask` (heap-allocated, scheduled exactly once). Writes:
 // own fields + `Log` (local) + result is posted via
-// `ctx.loop_.enqueue_task_concurrent` (MPSC). Reads `ctx: &BundleV2` shared.
+// `post::<ParseComplete>` (MPSC). Reads `ctx: &BundleV2` shared.
 // `ServerComponentParseTask` is `Send` because `ctx: *mut BundleV2` is a
 // backref to a `Send` type and `Source`/`Data` payloads are bundle-arena
 // slices.
@@ -101,14 +101,6 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     });
     let result = bun_core::heap::into_raw(result);
 
-    // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
-    // of `linker.r#loop` is centralised in `LinkerContext::any_loop_mut`.
-    //
-    // The loop is effectively non-optional — `BundleV2::init`
-    // always sets `linker.r#loop` before scheduling any ServerComponentParseTask.
-    // Running `on_complete` inline on the worker thread would violate
-    // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
-    // bundler graph, which is owned by the main/bundler thread).
     // SAFETY: `result` is a fresh heap allocation that `ParseComplete::run`
     // (or `refused`) frees; `result.ctx` is the bundle this task belongs to.
     unsafe { crate::post::post::<ParseComplete>(result) };

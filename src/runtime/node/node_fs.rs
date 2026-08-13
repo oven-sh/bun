@@ -1411,8 +1411,7 @@ mod _async_tasks {
         path_buf: Box<[OSPathChar]>,
         src_len: usize,
         dest_len: usize,
-        /// Classification the directory scan already made for a reparse entry;
-        /// `None` makes `copy_single_file_sync` look at the entry itself.
+        /// Set when the directory scan already classified a reparse entry.
         #[cfg(windows)]
         kind: Option<CpEntryKind>,
         pub task: WorkPoolTask,
@@ -2075,8 +2074,7 @@ mod _async_tasks {
                     return false;
                 }
 
-                // Every reparse point is reported as `SymLink`; work out here,
-                // once, which of them are really directories to walk or files.
+                // Reparse points all come back as `SymLink`; classify them here, once.
                 #[cfg(windows)]
                 let reparse_kind =
                     (current.kind == crate::node::dirent::Kind::SymLink).then(|| {
@@ -4650,9 +4648,8 @@ impl CpEntryKind {
         }
     }
 
-    /// A walked entry that has the reparse attribute. The listing normally
-    /// carries its tag; only on a filesystem that leaves it out is `child`,
-    /// the entry's path, looked at.
+    /// A walked reparse entry. `child`, its path, is only consulted when the
+    /// listing did not include the tag.
     pub(crate) fn of_reparse_entry(
         entry: &DirIterator::IteratorResultW,
         child: &OSPathSliceZ,
@@ -8503,8 +8500,7 @@ impl NodeFS {
             dest_buf[dd] = paths::SEP as OSPathChar;
             dest_buf[dd + 1 + name_slice.len()] = 0;
 
-            // Every reparse point is reported as `SymLink`; work out here, once,
-            // which of them are really directories to walk or files.
+            // Reparse points all come back as `SymLink`; classify them here, once.
             #[cfg(windows)]
             let reparse_kind = (current.kind == sys::FileKind::SymLink).then(|| {
                 CpEntryKind::of_reparse_entry(

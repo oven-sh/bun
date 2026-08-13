@@ -58,9 +58,8 @@ impl IteratorResultWName {
 pub struct IteratorResultW {
     pub name: IteratorResultWName,
     pub(crate) kind: EntryKind,
-    /// `kind` is `SymLink` for every entry with `FILE_ATTRIBUTE_REPARSE_POINT`;
-    /// these say what the entry actually is. `reparse_tag` is 0 for anything
-    /// but a reparse point, and for one whose filesystem does not report tags.
+    /// `kind` is `SymLink` for any reparse point; these say which. The tag is 0
+    /// for non-reparse entries and on filesystems that do not report it.
     pub(crate) file_attributes: u32,
     pub(crate) reparse_tag: u32,
 }

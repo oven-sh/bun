@@ -977,6 +977,13 @@ if (isDockerEnabled()) {
   describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     const connect = () =>
       new SQL(`postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`, { max: 2 });
+    // The listening backend is the session whose last statement is our LISTEN.
+    const terminateListeningBackend = async (sql: SQL, channel: string) => {
+      const terminated = await sql`
+        SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE query = ${`LISTEN "${channel}"`}
+      `;
+      expect(terminated).toHaveLength(1);
+    };
 
     test("notify() round trips payloads, including empty and omitted", async () => {
       await container.ready;
@@ -1018,34 +1025,214 @@ if (isDockerEnabled()) {
       expect(got).toEqual(["committed", "barrier"]);
     });
 
-    test("unlisten() stops delivery at the server", async () => {
-      await container.ready;
-      await using sql = connect();
-      const got: string[] = [];
-      const barrier = gate();
-      const subscription = await sql.listen("e2e_unlisten", payload => got.push(payload));
-      await using _barrier = await sql.listen("e2e_barrier", barrier.open);
-      await subscription.unlisten();
-      await sql.notify("e2e_unlisten", "dropped");
-      await sql.notify("e2e_barrier", "go");
-      await barrier;
-      expect(got).toEqual([]);
-    });
+    // The LISTEN/NOTIFY tests of postgres.js (tests/index.js), adapted to the
+    // subscription object, with its delay() calls replaced by waiting for the
+    // deliveries themselves. Notifications to one connection arrive in order,
+    // so a later delivery proves an earlier notification was or was not
+    // delivered.
+    describe("ported from postgres.js", () => {
+      test("listen and notify", async () => {
+        await container.ready;
+        await using sql = connect();
+        const result = Promise.withResolvers<string>();
+        await sql.listen("pgjs_hello", result.resolve);
+        await sql.notify("pgjs_hello", "works");
+        expect(await result.promise).toBe("works");
+      });
 
-    test("reconnects after the listening backend is terminated", async () => {
-      await container.ready;
-      await using sql = connect();
-      const resubscribed = gate();
-      const got = Promise.withResolvers<string>();
-      await using _subscription = await sql.listen("e2e_reconnect", got.resolve, resubscribed.after(2));
-      // The listening backend is the session whose last statement is our LISTEN.
-      const terminated = await sql`
-        SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE query = ${'LISTEN "e2e_reconnect"'}
-      `;
-      expect(terminated).toHaveLength(1);
-      await resubscribed;
-      await sql.notify("e2e_reconnect", "after");
-      expect(await got.promise).toBe("after");
+      test("double listen", async () => {
+        await container.ready;
+        await using sql = connect();
+        let count = 0;
+        for (let i = 0; i < 2; i++) {
+          const received = Promise.withResolvers<string>();
+          await sql.listen("pgjs_hello", received.resolve);
+          await sql.notify("pgjs_hello", "world");
+          await received.promise;
+          count++;
+        }
+        await sql.listen("pgjs_weee", () => {});
+        expect(count).toBe(2);
+      });
+
+      test("multiple listeners work after a reconnect", async () => {
+        await container.ready;
+        await using sql = connect();
+        const xs: string[] = [];
+        let count = () => {};
+        const resubscribed = gate();
+        await sql.listen(
+          "pgjs_reconnect_multi",
+          x => {
+            xs.push("1" + x);
+            count();
+          },
+          resubscribed.after(2),
+        );
+        await sql.listen("pgjs_reconnect_multi", x => {
+          xs.push("2" + x);
+          count();
+        });
+
+        const a = gate();
+        count = a.after(2);
+        await sql.notify("pgjs_reconnect_multi", "a");
+        await a;
+        await terminateListeningBackend(sql, "pgjs_reconnect_multi");
+        await resubscribed;
+        const b = gate();
+        count = b.after(2);
+        await sql.notify("pgjs_reconnect_multi", "b");
+        await b;
+        expect(xs.join("")).toBe("1a2a1b2b");
+      });
+
+      test("listen and notify with weird name", async () => {
+        await container.ready;
+        await using sql = connect();
+        const channel = "wat-;.ø.§";
+        const got: string[] = [];
+        const first = gate();
+        const subscription = await sql.listen(channel, payload => {
+          got.push(payload);
+          first.open();
+        });
+        await sql.notify(channel, "works");
+        await first;
+        await subscription.unlisten();
+
+        const barrier = gate();
+        await sql.listen("pgjs_barrier", barrier.open);
+        await sql.notify(channel, "after unlisten");
+        await sql.notify("pgjs_barrier", "");
+        await barrier;
+        expect(got).toEqual(["works"]);
+      });
+
+      test("listen and notify with upper case", async () => {
+        await container.ready;
+        await using sql = connect();
+        const result = Promise.withResolvers<string>();
+        await sql.listen("withUpperChar", result.resolve);
+        await sql.notify("withUpperChar", "works");
+        expect(await result.promise).toBe("works");
+      });
+
+      test("listen reconnects", async () => {
+        await container.ready;
+        await using sql = connect();
+        const a = gate();
+        const b = gate();
+        const resolvers: Record<string, () => void> = { a: a.open, b: b.open };
+        let connects = 0;
+        const reconnected = gate();
+        await sql.listen(
+          "pgjs_reconnect",
+          x => resolvers[x]?.(),
+          () => {
+            if (++connects === 2) reconnected.open();
+          },
+        );
+        await sql.notify("pgjs_reconnect", "a");
+        await a;
+        await terminateListeningBackend(sql, "pgjs_reconnect");
+        await reconnected;
+        await sql.notify("pgjs_reconnect", "b");
+        await b;
+        expect(connects).toBe(2);
+      });
+
+      test("listen result reports correct connection state after reconnection", async () => {
+        await container.ready;
+        await using sql = connect();
+        const listeningPids = async () =>
+          (await sql`SELECT pid FROM pg_stat_activity WHERE query = ${'LISTEN "pgjs_state"'}`).map(
+            (row: { pid: number }) => row.pid,
+          );
+        const resubscribed = gate();
+        await sql.listen("pgjs_state", () => {}, resubscribed.after(2));
+        const [initialPid] = await listeningPids();
+        expect(initialPid).toBeNumber();
+
+        await terminateListeningBackend(sql, "pgjs_state");
+        await resubscribed;
+        // The terminated backend may still be winding down, so only require a new one.
+        expect((await listeningPids()).some(pid => pid !== initialPid)).toBe(true);
+      });
+
+      test("unlisten removes subscription", async () => {
+        await container.ready;
+        await using sql = connect();
+        const xs: string[] = [];
+        const a = gate();
+        const subscription = await sql.listen("pgjs_test", x => {
+          xs.push(x);
+          a.open();
+        });
+        await sql.notify("pgjs_test", "a");
+        await a;
+        await subscription.unlisten();
+
+        const barrier = gate();
+        await sql.listen("pgjs_barrier", barrier.open);
+        await sql.notify("pgjs_test", "b");
+        await sql.notify("pgjs_barrier", "");
+        await barrier;
+        expect(xs.join("")).toBe("a");
+      });
+
+      test("listen after unlisten", async () => {
+        await container.ready;
+        await using sql = connect();
+        const xs: string[] = [];
+        let received = () => {};
+        const listener = (x: string) => {
+          xs.push(x);
+          received();
+        };
+
+        const a = gate();
+        received = a.open;
+        const subscription = await sql.listen("pgjs_test", listener);
+        await sql.notify("pgjs_test", "a");
+        await a;
+        await subscription.unlisten();
+        await sql.notify("pgjs_test", "b");
+
+        const c = gate();
+        received = c.open;
+        await sql.listen("pgjs_test", listener);
+        await sql.notify("pgjs_test", "c");
+        await c;
+        expect(xs.join("")).toBe("ac");
+      });
+
+      test("multiple listeners and unlisten one", async () => {
+        await container.ready;
+        await using sql = connect();
+        const xs: string[] = [];
+        let count = () => {};
+        await sql.listen("pgjs_test", x => {
+          xs.push("1" + x);
+          count();
+        });
+        const s2 = await sql.listen("pgjs_test", x => {
+          xs.push("2" + x);
+          count();
+        });
+
+        const a = gate();
+        count = a.after(2);
+        await sql.notify("pgjs_test", "a");
+        await a;
+        await s2.unlisten();
+
+        const b = gate();
+        count = b.open;
+        await sql.notify("pgjs_test", "b");
+        await b;
+        expect(xs.join("")).toBe("1a2a1b");
+      });
     });
   });
 }

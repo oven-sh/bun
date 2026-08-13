@@ -818,7 +818,8 @@ impl Watcher {
                     bstr::BStr::new(root),
                     err.name()
                 );
-                self.unwatchable_roots.push(root.to_vec().into_boxed_slice());
+                self.unwatchable_roots
+                    .push(root.to_vec().into_boxed_slice());
                 false
             }
         }

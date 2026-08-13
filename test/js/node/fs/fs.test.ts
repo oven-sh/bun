@@ -1011,13 +1011,13 @@ describe("copyFileSync", () => {
 // async forms convert the destination into a work-pool thread's freshly pooled
 // path buffer, which tends to start a mapping, so they crashed the process
 // instead of failing with ENOENT. Runs in a child (it used to segfault) and
-// queues a batch per form so several pool threads each convert into their own
-// fresh buffer.
+// queues a batch per form: the pool keeps spawning threads while work is
+// queued, and each thread converts into a fresh buffer of its own.
 it.concurrent("copyFile to an empty destination path fails with ENOENT in every form", async () => {
   using dir = tempDir("fs-copyfile-empty-dest", { "src.txt": "x" });
   const script = `
     const fs = require("fs");
-    const N = 16;
+    const N = 64;
     const shape = e => ({ code: e.code, syscall: e.syscall, path: e.path });
     const unique = list => [...new Set(list.map(r => JSON.stringify(r)))].map(s => JSON.parse(s));
     const promiseForm = Promise.all(
@@ -1063,7 +1063,7 @@ it.concurrent("copyFile to an empty destination path fails with ENOENT in every 
         promises: [enoent],
         callback: [enoent],
         sync: enoent,
-        // fs.cp reaches the same copy routine for a file source, but reports
+        // A file source makes fs.cp call CopyFileW too on Windows. It reports
         // the parent mkdir on POSIX and copyfile on Windows, so only the code
         // is pinned.
         cpSync: { code: "ENOENT" },

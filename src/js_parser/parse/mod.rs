@@ -832,6 +832,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if opts.lexical_decl != LexicalDecl::AllowAll {
                     p.forbid_lexical_decl(token_range.loc);
                 }
+                if opts.is_switch_case_body {
+                    p.log().add_range_error(
+                        Some(p.source),
+                        token_range,
+                        b"\"using\" declarations are not allowed in \"case\" or \"default\" clauses unless wrapped in a block",
+                    );
+                }
                 // p.markSyntaxFeature(.using, token_range.loc);
                 opts.is_using_statement = true;
                 let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, opts)?;
@@ -890,6 +897,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // It's an "await using" declaration if we get here
                         if opts.lexical_decl != LexicalDecl::AllowAll {
                             p.forbid_lexical_decl(using_range.loc);
+                        }
+                        if opts.is_switch_case_body {
+                            p.log().add_range_error(
+                                Some(p.source),
+                                bun_ast::Range {
+                                    loc: token_range.loc,
+                                    len: using_range.end().start - token_range.loc.start,
+                                },
+                                b"\"await using\" declarations are not allowed in \"case\" or \"default\" clauses unless wrapped in a block",
+                            );
                         }
                         // p.markSyntaxFeature(.using, using_range.loc);
                         opts.is_using_statement = true;
@@ -1448,6 +1465,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut return_without_semicolon_start: i32 = -1;
         opts.lexical_decl = LexicalDecl::AllowAll;
+        opts.is_switch_case_body = false;
         let mut is_directive_prologue = true;
 
         loop {

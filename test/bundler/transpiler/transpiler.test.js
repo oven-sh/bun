@@ -5198,98 +5198,155 @@ describe("export of a block-scoped function declaration", () => {
   });
 });
 
+// A `using` / `await using` declaration placed directly in a `case` / `default`
+// clause is a SyntaxError (V8, JSC and tsc all reject it); it has to be wrapped
+// in a block. The parser reports it the same way for every loader and target.
 describe("using declarations in switch statements", () => {
-  const reparse = out => new Bun.Transpiler({ loader: "js" }).transformSync(out);
+  const usingError = {
+    message: '"using" declarations are not allowed in "case" or "default" clauses unless wrapped in a block',
+    length: "using".length,
+  };
+  const awaitUsingError = {
+    message: '"await using" declarations are not allowed in "case" or "default" clauses unless wrapped in a block',
+    length: "await using".length,
+  };
 
-  it("lowers by wrapping the entire switch in a single try/finally", () => {
-    const input =
-      "switch (dom()) {\n case 0:\n using d23 = { [Se]() {} };\n default:\n using d24 = { [ose]() {} };\n }";
-
-    for (const minifyWhitespace of [false, true]) {
-      const out = new Bun.Transpiler({ loader: "jsx", target: "node", minifyWhitespace }).transformSync(input);
-      expect(() => reparse(out)).not.toThrow();
-      expect(out).toMatch(/try\s*\{\s*switch\s*\(dom\(\)\)/);
-      expect(out.match(/finally/g)).toHaveLength(1);
+  // One entry per reported error ("length" is the underlined source range), [] when the code transpiles.
+  function parseErrors(code, options) {
+    try {
+      new Bun.Transpiler(options).transformSync(code);
+    } catch (e) {
+      return (e instanceof AggregateError ? e.errors : [e]).map(err => ({
+        message: err.message,
+        length: err.position.length,
+      }));
     }
-  });
+    return [];
+  }
 
-  it("lowers `await using` in switch cases the same way", () => {
-    const input = `async function f(x) {
-      switch (x()) {
-        case 0:
-          await using a = y();
-        default:
-          await using b = z();
+  describe.each(["js", "ts"])("loader %s", loader => {
+    it("rejects `using` directly in a case or default clause", () => {
+      expect(parseErrors("switch (x) { case 0: using a = b; }", { loader })).toEqual([usingError]);
+      expect(parseErrors("switch (x) { default: using a = b; }", { loader })).toEqual([usingError]);
+      expect(parseErrors("switch (x) { case 0: f(); using a = b; g(); }", { loader })).toEqual([usingError]);
+      expect(parseErrors("switch (x) {\n case 0:\n using a = b;\n default:\n using c = d;\n }", { loader })).toEqual([
+        usingError,
+        usingError,
+      ]);
+    });
+
+    it("rejects `await using` directly in a case or default clause", () => {
+      expect(parseErrors("async function f() { switch (x) { case 0: await using a = b; } }", { loader })).toEqual([
+        awaitUsingError,
+      ]);
+      expect(parseErrors("async function f() { switch (x) { default: await using a = b; } }", { loader })).toEqual([
+        awaitUsingError,
+      ]);
+      // Top-level await form of the declaration.
+      expect(parseErrors("switch (x) { case 0: await using a = b; }", { loader })).toEqual([awaitUsingError]);
+    });
+
+    it("rejects them for every target, including bun where using is not lowered", () => {
+      for (const target of ["browser", "node", "bun"]) {
+        expect(parseErrors("switch (x) { case 0: using a = b; }", { loader, target })).toEqual([usingError]);
+        expect(parseErrors("switch (x) { case 0: await using a = b; }", { loader, target })).toEqual([awaitUsingError]);
       }
-    }`;
-    const out = new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(input);
-    expect(() => reparse(out)).not.toThrow();
-    expect(out).toMatch(/try\s*\{\s*switch\s*\(x\(\)\)/);
-    expect(out.match(/finally/g)).toHaveLength(1);
-  });
+    });
 
-  it("keeps generated temp refs unique across sibling switches in the same scope", () => {
-    const input = `
-      switch (a()) { case 0: using x = { [s]() {} }; }
-      switch (b()) { case 1: using y = { [t]() {} }; }
-    `;
-    const out = new Bun.Transpiler({ loader: "js", target: "node", minifyWhitespace: true }).transformSync(input);
-    expect(() => reparse(out)).not.toThrow();
-    expect(out.match(/finally/g)).toHaveLength(2);
-  });
-
-  it("keeps case bindings const when combined with top-level using declarations", () => {
-    const input = `
-      using top = r();
-      switch (a()) {
-        case 0:
-          using x = { [s]() {} };
-        default:
-          using y = { [t]() {} };
+    it("still accepts using declarations nested anywhere inside a clause", () => {
+      const accepted = [
+        "switch (x) { case 0: { using a = b; } }",
+        "switch (x) { default: { await using a = b; } }",
+        "switch (x) { case 0: if (y) { using a = b; } }",
+        "switch (x) { case 0: try { await using a = b; } finally {} }",
+        "switch (x) { case 0: for (using a of b) c(a); }",
+        "switch (x) { case 0: for (await using a of b) c(a); }",
+        "switch (x) { case 0: for await (using a of b) c(a); }",
+        "switch (x) { case 0: function f() { using a = b; } }",
+        "switch (x) { case 0: (async () => { await using a = b; })(); }",
+        "switch (x) { case 0: class C { static { using a = b; } } }",
+        "switch (x) { case 0: { switch (y) { default: { using a = b; } } } }",
+      ];
+      for (const code of accepted) {
+        for (const target of ["browser", "bun"]) {
+          expect(parseErrors(code, { loader, target })).toEqual([]);
+        }
       }
-    `;
-    const out = new Bun.Transpiler({ loader: "js", target: "node", minifyWhitespace: true }).transformSync(input);
-    expect(() => reparse(out)).not.toThrow();
-    expect(out).toMatch(/const x\s*=\s*__using/);
-    expect(out).toMatch(/const y\s*=\s*__using/);
-    expect(out).not.toMatch(/var [xy]\b/);
+    });
+
+    it("still accepts `using` as an identifier in a clause", () => {
+      expect(
+        parseErrors(
+          "switch (x) { case 0: using; case 1: using(a); case 2: using = a; case 3: using.a = b; default: using\n a = b; }",
+          { loader },
+        ),
+      ).toEqual([]);
+      expect(
+        parseErrors(
+          "async function f() { switch (x) { case 0: await using; case 1: await using.a; default: await using\n a = b; } }",
+          { loader },
+        ),
+      ).toEqual([]);
+    });
   });
 
-  it("disposes at switch exit in reverse order and keeps bindings visible across cases", async () => {
+  it("a newline after `using` in a clause is an identifier statement, not a declaration", () => {
+    expect(new Bun.Transpiler({ loader: "js" }).transformSync("switch (x) {\n default:\n using\n a = b;\n }")).toBe(
+      "switch (x) {\n  default:\n    using;\n    a = b;\n}\n",
+    );
+  });
+
+  it("lowers a block-wrapped using in a clause for other targets and keeps it for bun", () => {
+    const code = "switch (x) { case 0: { using a = b; } }";
+    expect(new Bun.Transpiler({ loader: "js", target: "browser" }).transformSync(code)).toContain("__using");
+    expect(new Bun.Transpiler({ loader: "js", target: "bun" }).transformSync(code)).toContain("using a = b;");
+  });
+
+  it.concurrent("is reported as a syntax error when running the file", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "switch (1) {\n  case 1:\n    using a = null;\n}\nconsole.log('ran');"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(usingError.message);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  it.concurrent("block-wrapped declarations are disposed when their block exits", async () => {
     const source = `
       const order = [];
       function resource(name) {
         return { [Symbol.dispose]() { order.push("dispose " + name); } };
       }
-      function run(value) {
-        switch (value) {
-          case 0:
-            using a = resource("a");
-            order.push("case 0");
-          default:
-            using b = resource("b");
-            order.push("default sees a: " + (a !== undefined));
+      switch (0) {
+        case 0: {
+          using a = resource("a");
+          order.push("case 0");
         }
-        order.push("after switch");
+        default: {
+          using b = resource("b");
+          order.push("default");
+        }
       }
-      run(0);
+      order.push("after switch");
       console.log(JSON.stringify(order));
     `;
 
-    const lowered = new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(source);
+    const lowered = new Bun.Transpiler({ loader: "js", target: "browser" }).transformSync(source);
     expect(lowered).toContain("__using");
 
-    using dir = tempDir("using-switch-lowering", { "lowered.mjs": lowered });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "lowered.mjs"],
+      cmd: [bunExe(), "-e", lowered],
       env: bunEnv,
-      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual(["case 0", "default sees a: true", "dispose b", "dispose a", "after switch"]);
+    expect(JSON.parse(stdout)).toEqual(["case 0", "dispose a", "default", "dispose b", "after switch"]);
     expect(exitCode).toBe(0);
   });
 });

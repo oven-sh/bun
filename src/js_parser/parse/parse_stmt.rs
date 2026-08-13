@@ -377,6 +377,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         _ => {
                             let mut stmt_opts = ParseStatementOptions {
                                 lexical_decl: LexicalDecl::AllowAll,
+                                is_switch_case_body: true,
                                 ..Default::default()
                             };
                             body.push(p.parse_stmt(&mut stmt_opts)?);

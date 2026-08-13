@@ -4005,7 +4005,6 @@ CREATE TABLE ${table_name} (
         });
 
       let pooled: Promise<void>;
-      let beforeRelease: number[];
       {
         // released however this block exits: closing the pool above waits for outstanding
         // reservations, so a leaked one would report any failure in here as a timeout
@@ -4015,14 +4014,16 @@ CREATE TABLE ${table_name} (
         // max is 1 and that connection is reserved, so this cannot run until the block releases it
         pooled = track(sql`select 2 as x`);
         const third = track(reserved`select 3 as x`);
-
         await Promise.all([first, third]);
-        beforeRelease = [...resolved];
+
+        // one more round trip: a connection handed back to the pool when 1 or 3 finished would
+        // have run the pooled query by now, and 2 would show up here ahead of 4
+        await track(reserved`select 4 as x`);
+        expect(resolved).toEqual([1, 3, 4]);
       }
 
       await pooled;
-      expect(beforeRelease).toEqual([1, 3]);
-      expect(resolved).toEqual([1, 3, 2]);
+      expect(resolved).toEqual([1, 3, 4, 2]);
     });
 
     test("keeps process alive when it should", async () => {

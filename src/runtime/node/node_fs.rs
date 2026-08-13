@@ -9157,26 +9157,45 @@ impl NodeFS {
         }
     }
 
-    /// Creates the directory a directory is being copied to. It may already
-    /// exist as a directory (the copy then merges into it); with
-    /// `create_parents` (`CpFlags::create_dest_parents`) its missing parents
-    /// are created too, otherwise a missing parent fails with ENOENT.
+    /// Creates `dest` for a directory being copied. It may already exist as a
+    /// directory (the copy then merges into it); with `create_parents`
+    /// (`CpFlags::create_dest_parents`) its missing parents are created too,
+    /// otherwise a missing parent fails with ENOENT and a parent that is not a
+    /// directory with ENOTDIR.
     fn cp_mkdir_dest(&mut self, dest: &OSPathSliceZ, create_parents: bool) -> Maybe<()> {
         if create_parents {
             return self
                 .mkdir_recursive_os_path(dest, args::Mkdir::DEFAULT_MODE, false)
                 .map(|_| ());
         }
-        match mkdir_os_path(dest, args::Mkdir::DEFAULT_MODE) {
-            Ok(()) => Ok(()),
-            Err(err)
-                if matches!(err.get_errno(), E::EEXIST | E::EISDIR)
-                    && directory_exists_at_os_path(FD::INVALID, dest).unwrap_or(false) =>
-            {
-                Ok(())
-            }
-            Err(err) => Err(err.with_path(self.os_path_into_sync_error_buf(dest))),
+        let err = match mkdir_os_path(dest, args::Mkdir::DEFAULT_MODE) {
+            Ok(()) => return Ok(()),
+            Err(err) => err,
+        };
+        if matches!(err.get_errno(), E::EEXIST | E::EISDIR)
+            && directory_exists_at_os_path(FD::INVALID, dest).unwrap_or(false)
+        {
+            return Ok(());
         }
+        #[cfg(windows)]
+        let err = if err.get_errno() == E::ENOENT && Self::cp_dest_parent_is_not_a_directory(dest) {
+            sys::Error::from_code(E::ENOTDIR, sys::Tag::mkdir)
+        } else {
+            err
+        };
+        Err(err.with_path(self.os_path_into_sync_error_buf(dest)))
+    }
+
+    /// `CreateDirectoryW` reports a parent that is a file the same way as a
+    /// missing one (`PATH_NOT_FOUND`, so ENOENT), where POSIX `mkdir` reports
+    /// ENOTDIR.
+    #[cfg(windows)]
+    fn cp_dest_parent_is_not_a_directory(dest: &OSPathSliceZ) -> bool {
+        let parent = paths::dirname_w(dest.as_slice());
+        let mut buf = paths::os_path_buffer_pool::get();
+        buf[..parent.len()].copy_from_slice(parent);
+        buf[parent.len()] = 0;
+        sys::exists_os_path(OSPathSliceZ::from_buf(&buf[..], parent.len()), true)
     }
 
     /// Shared `dest_fd:` block from the mac/linux/freebsd branches of

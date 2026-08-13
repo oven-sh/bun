@@ -12,7 +12,9 @@ use core::sync::atomic::Ordering;
 
 #[cfg(target_os = "macos")]
 use bun_core::Output;
-use bun_sys::{self, Fd, FdExt as _};
+#[cfg(unix)]
+use bun_sys::FdExt as _;
+use bun_sys::{self, Fd};
 
 #[cfg(not(windows))]
 use crate::posix_spawn::posix_spawn;

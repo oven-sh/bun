@@ -8,8 +8,8 @@ use bun_http_types::Method::Method;
 use crate::socket_context::BunSocketContextOptions;
 use crate::web_socket::c::uws_ws;
 use crate::{
-    ListenSocket as UwsListenSocket, Opcode, Request, SendStatus, WebSocketBehavior, us_socket_t,
-    uws_res,
+    LIBUS_SOCKET_DESCRIPTOR, ListenSocket as UwsListenSocket, Opcode, Request, SendStatus,
+    WebSocketBehavior, us_socket_t, uws_res,
 };
 
 // This file provides Rust bindings for the uWebSockets App class.
@@ -281,6 +281,31 @@ impl<const SSL: bool> App<SSL> {
                 config.host,
                 u16::try_from(config.port).expect("int cast"),
                 config.options,
+                handler,
+                user_data,
+            )
+        }
+    }
+
+    /// Accept on `fd`, a descriptor something else already bound (node:cluster's
+    /// shared listen handle). The listen socket takes ownership of `fd` when the
+    /// handler receives a non-null socket; otherwise the caller still owns it.
+    pub fn listen_fd(
+        &mut self,
+        handler: c::uws_listen_handler,
+        user_data: *mut c_void,
+        fd: LIBUS_SOCKET_DESCRIPTOR,
+        options: i32,
+    ) {
+        // Callers supply the C-ABI shim directly.
+        // SAFETY: self is a valid app; `fd` is a plain value and `handler`/`user_data`
+        // are only invoked synchronously inside this call.
+        unsafe {
+            c::uws_app_listen_fd(
+                Self::SSL_FLAG,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
+                fd,
+                options,
                 handler,
                 user_data,
             )
@@ -597,6 +622,14 @@ pub mod c {
             app: *mut uws_app_t,
             host: *const c_char,
             port: u16,
+            options: i32,
+            handler: uws_listen_handler,
+            user_data: *mut c_void,
+        );
+        pub(crate) fn uws_app_listen_fd(
+            ssl: i32,
+            app: *mut uws_app_t,
+            fd: LIBUS_SOCKET_DESCRIPTOR,
             options: i32,
             handler: uws_listen_handler,
             user_data: *mut c_void,

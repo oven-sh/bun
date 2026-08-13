@@ -5811,8 +5811,7 @@ static void JSC__JSValue__forEachOwnPropertyImpl(JSC::EncodedJSValue JSValue0, J
 
         JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
         iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), property.isPrivateName());
-        // Propagate exceptions from callbacks; the next iteration's
-        // tryClearException() would otherwise swallow them.
+        // Propagate exceptions from callbacks.
         RETURN_IF_EXCEPTION(scope, void());
     }
     properties.releaseData();

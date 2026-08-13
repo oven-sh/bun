@@ -8,13 +8,15 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
 import { rm } from "fs/promises";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 import { pathToFileURL } from "url";
 
 const gitEnv = {
   ...bunEnv,
   GIT_CONFIG_NOSYSTEM: "1",
+  // an empty file rather than the null device: git on Windows rejects NUL here
+  GIT_CONFIG_GLOBAL: join(tempDirWithFiles("git-deps-gitconfig", { gitconfig: "" }), "gitconfig"),
   GIT_AUTHOR_NAME: "Test",
   GIT_AUTHOR_EMAIL: "test@example.com",
   GIT_COMMITTER_NAME: "Test",

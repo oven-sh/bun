@@ -2353,19 +2353,14 @@ Socket.prototype.pause = function pause() {
 Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, tls) {
   const socket = connection._handle;
   if (!socket || isNamedPipeSocket(socket) || connection.encrypted || hasUnflushedWrites(connection)) {
-    // Nothing to adopt (generic Duplex, or a Windows named pipe, which has no
-    // us_socket_t; the client path routes pipes the same way), TLS over TLS
-    // (the fd belongs to the outer SSL layer), or pending plain writes that
-    // must flush first: run the TLS engine over the stream itself.
+    // No fd to adopt (Duplex, named pipe), TLS over TLS, or plain writes still queued: TLS engine over the stream.
     attachServerTLSEngine(this, connection, tls);
     this[kupgraded] = connection;
     return;
   }
   this[kupgraded] = connection;
   if (connection.connecting) {
-    // Adoption needs the established socket, so wait for it the way the
-    // client path does; a connection that fails first takes the wrap down
-    // with it, as adoptServerTLS does for one destroyed in the meantime.
+    // upgradeTLS needs an established socket: adopt once connected; a failed connect closes the wrap instead.
     const onConnect = () => {
       connection.removeListener("close", onClose);
       process.nextTick(adoptServerTLS, this, connection, tls);
@@ -2395,32 +2390,24 @@ function attachServerTLSEngine(self, connection, tls) {
   self._handle = result;
 }
 
-// The deferred half of the server-side wrap. Runs a tick after the wrap (or
-// after the connection's 'connect'), so that writes the user queued on the
-// plain connection in between are seen below.
+// Deferred a tick so plain writes made by later 'connection' listeners are seen below.
 function adoptServerTLS(self, connection, tls) {
   if (self.destroyed || connection.destroyed) {
     self.destroy();
     return;
   }
-  // Re-read: a connection that was still connecting when wrapped may have
-  // swapped handles (family autoselection) or turned out to be a named pipe.
+  // Re-read: family autoselection swaps handles while connecting, and the result may be a pipe.
   const handle = connection._handle;
   if (!handle) {
     self.destroy();
     return;
   }
-  // Queued plain writes (a user 'connection' listener runs after the
-  // server's) must flush before any TLS output, so they, like a pipe, take
-  // the stream-level engine.
   if (isNamedPipeSocket(handle) || hasUnflushedWrites(connection)) {
     attachServerTLSEngine(self, connection, tls);
     self.emit(kUpgradeAttached);
     return;
   }
-  // Bytes that already arrived before the wrap were pulled off the fd into
-  // the connection's readable buffer; hand them to the TLS engine so the
-  // handshake doesn't stall.
+  // Bytes already pulled off the fd (the ClientHello) go to the TLS engine.
   const pending = connection.read();
   let result;
   try {
@@ -2432,10 +2419,7 @@ function adoptServerTLS(self, connection, tls) {
       initialData: pending || undefined,
     });
   } catch (err) {
-    // The constructor already returned, so a throw here would be an uncaught
-    // exception. Reachable when the native socket closed under a connection
-    // that is not destroyed yet (peer reset with unread bytes still buffered):
-    // the handle object survives but has nothing left to adopt.
+    // e.g. the peer reset a connection that still had unread bytes: the handle outlives the native socket.
     self._handle = null;
     self.destroy(err);
     return;

@@ -1,4 +1,5 @@
 import {
+  cloudFilesAvailable,
   convertToPlaceholder,
   exposePlaceholders,
   isReparsePoint,
@@ -46,27 +47,30 @@ for (const [name, copy] of impls) {
     // A cloud-file placeholder carries FILE_ATTRIBUTE_REPARSE_POINT but is a
     // regular file (lstat says so, which is why the native single-file copy is
     // used for it); node copies its contents, while this used to produce a
-    // symlink pointing back at the source. The fixture needs bun:ffi, which is
-    // unavailable on Windows arm64.
-    test.if(isWindows && !isArm64)("single file that is a reparse point but not a link", async () => {
-      await using basename = tempDir("cp", {
-        "from/a.txt": "a",
-      });
-      using _syncRoot = registerSyncRoot(basename + "\\from");
-      convertToPlaceholder(basename + "\\from\\a.txt");
-      using _exposed = exposePlaceholders();
-      expect(isReparsePoint(basename + "\\from\\a.txt")).toBe(true);
+    // symlink pointing back at the source. The fixture needs bun:ffi (absent
+    // on Windows arm64) and the Cloud Files platform.
+    test.if(isWindows && !isArm64 && cloudFilesAvailable())(
+      "single file that is a reparse point but not a link",
+      async () => {
+        await using basename = tempDir("cp", {
+          "from/a.txt": "a",
+        });
+        using _syncRoot = registerSyncRoot(basename + "\\from");
+        convertToPlaceholder(basename + "\\from\\a.txt");
+        using _exposed = exposePlaceholders();
+        expect(isReparsePoint(basename + "\\from\\a.txt")).toBe(true);
 
-      await copy(basename + "/from/a.txt", basename + "/to.txt");
+        await copy(basename + "/from/a.txt", basename + "/to.txt");
 
-      const stat = fs.lstatSync(basename + "/to.txt");
-      expect({
-        isFile: stat.isFile(),
-        isSymbolicLink: stat.isSymbolicLink(),
-        reparsePoint: isReparsePoint(basename + "\\to.txt"),
-        content: fs.readFileSync(basename + "/to.txt", "utf8"),
-      }).toEqual({ isFile: true, isSymbolicLink: false, reparsePoint: false, content: "a" });
-    });
+        const stat = fs.lstatSync(basename + "/to.txt");
+        expect({
+          isFile: stat.isFile(),
+          isSymbolicLink: stat.isSymbolicLink(),
+          reparsePoint: isReparsePoint(basename + "\\to.txt"),
+          content: fs.readFileSync(basename + "/to.txt", "utf8"),
+        }).toEqual({ isFile: true, isSymbolicLink: false, reparsePoint: false, content: "a" });
+      },
+    );
 
     test("refuse to copy directory with 'recursive: false'", async () => {
       await using basename = tempDir("cp", {

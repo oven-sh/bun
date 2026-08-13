@@ -10,9 +10,12 @@
  *
  * - `setNonLinkReparsePoint()` stamps a file or directory with a custom tag
  *   (FSCTL_SET_REPARSE_POINT needs nothing but write access to the entry).
+ *   Works on any NTFS volume; the data of a tagged file is unreadable, though,
+ *   since no driver owns the tag, so only tagged directories are copyable.
  * - `registerSyncRoot()` + `convertToPlaceholder()` create real cloud-file
  *   placeholders through the Cloud Files API (cldapi.dll), hydrated and in
- *   sync, so they stay readable without a sync provider running.
+ *   sync, so they stay readable without a sync provider running. Gate their
+ *   use on `cloudFilesAvailable()`.
  *
  * Windows hides the reparse attribute of cloud placeholders from processes
  * that have not declared themselves placeholder-aware (executables run from
@@ -23,6 +26,9 @@
  * arm64: gate callers with `isWindows && !isArm64`.
  */
 import { dlopen, ptr } from "bun:ffi";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const INVALID_HANDLE_VALUE = 0xffffffffffffffffn;
 const GENERIC_READ = 0x80000000;
@@ -41,53 +47,62 @@ const CF_HYDRATION_POLICY_FULL = 2;
 const CF_POPULATION_POLICY_ALWAYS_FULL = 3;
 const CF_CONVERT_FLAG_MARK_IN_SYNC = 1;
 
-function loadLibraries() {
-  return {
-    kernel32: dlopen("kernel32.dll", {
+function memoize<T>(load: () => T): () => T {
+  let value: T | undefined;
+  return () => (value ??= load());
+}
+
+const kernel32 = memoize(
+  () =>
+    dlopen("kernel32.dll", {
       CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "u64" },
       CloseHandle: { args: ["u64"], returns: "i32" },
       DeviceIoControl: { args: ["u64", "u32", "ptr", "u32", "ptr", "u32", "ptr", "ptr"], returns: "i32" },
       GetFileAttributesW: { args: ["ptr"], returns: "u32" },
       GetLastError: { args: [], returns: "u32" },
     }).symbols,
-    ntdll: dlopen("ntdll.dll", {
+);
+
+const ntdll = memoize(
+  () =>
+    dlopen("ntdll.dll", {
       RtlSetProcessPlaceholderCompatibilityMode: { args: ["i8"], returns: "i8" },
     }).symbols,
-    cldapi: dlopen("cldapi.dll", {
+);
+
+const cldapi = memoize(
+  () =>
+    dlopen("cldapi.dll", {
       CfRegisterSyncRoot: { args: ["ptr", "ptr", "ptr", "u32"], returns: "i32" },
       CfUnregisterSyncRoot: { args: ["ptr"], returns: "i32" },
       CfConvertToPlaceholder: { args: ["u64", "ptr", "u32", "u32", "ptr", "ptr"], returns: "i32" },
     }).symbols,
-  };
-}
-
-let libraries: ReturnType<typeof loadLibraries> | undefined;
-const lib = () => (libraries ??= loadLibraries());
+);
 
 const wide = (s: string) => Buffer.from(s + "\0", "utf16le");
 const hresult = (hr: number) => "0x" + (hr >>> 0).toString(16);
 
 function withHandle<T>(path: string, access: number, flags: number, fn: (handle: number | bigint) => T): T {
-  const { kernel32 } = lib();
+  const k32 = kernel32();
   const pathW = wide(path);
-  const handle = kernel32.CreateFileW(ptr(pathW), access >>> 0, FILE_SHARE_ALL, null, OPEN_EXISTING, flags, null);
+  const handle = k32.CreateFileW(ptr(pathW), access >>> 0, FILE_SHARE_ALL, null, OPEN_EXISTING, flags, null);
   if (handle === INVALID_HANDLE_VALUE) {
-    throw new Error(`CreateFileW(${path}) failed: Win32 error ${kernel32.GetLastError()}`);
+    throw new Error(`CreateFileW(${path}) failed: Win32 error ${k32.GetLastError()}`);
   }
   try {
     return fn(handle);
   } finally {
-    kernel32.CloseHandle(handle);
+    k32.CloseHandle(handle);
   }
 }
 
 /** `GetFileAttributesW` of the entry itself; a reparse point is not followed. */
 export function fileAttributes(path: string): number {
-  const { kernel32 } = lib();
+  const k32 = kernel32();
   const pathW = wide(path);
-  const attributes = kernel32.GetFileAttributesW(ptr(pathW));
+  const attributes = k32.GetFileAttributesW(ptr(pathW));
   if (attributes === INVALID_FILE_ATTRIBUTES) {
-    throw new Error(`GetFileAttributesW(${path}) failed: Win32 error ${kernel32.GetLastError()}`);
+    throw new Error(`GetFileAttributesW(${path}) failed: Win32 error ${k32.GetLastError()}`);
   }
   return attributes;
 }
@@ -103,7 +118,7 @@ export function isReparsePoint(path: string): boolean {
  * cloud and projected-file-system directories have.
  */
 export function setNonLinkReparsePoint(path: string): void {
-  const { kernel32 } = lib();
+  const k32 = kernel32();
   const isDirectory = (fileAttributes(path) & FILE_ATTRIBUTE_DIRECTORY) !== 0;
   const payload = Buffer.from("bun test reparse point");
   // REPARSE_GUID_DATA_BUFFER: tag, data length, reserved, GUID, data.
@@ -114,7 +129,7 @@ export function setNonLinkReparsePoint(path: string): void {
   payload.copy(buffer, 24);
   const bytesReturned = Buffer.alloc(4);
   withHandle(path, GENERIC_WRITE, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, handle => {
-    const ok = kernel32.DeviceIoControl(
+    const ok = k32.DeviceIoControl(
       handle,
       FSCTL_SET_REPARSE_POINT,
       ptr(buffer),
@@ -124,7 +139,7 @@ export function setNonLinkReparsePoint(path: string): void {
       ptr(bytesReturned),
       null,
     );
-    if (!ok) throw new Error(`FSCTL_SET_REPARSE_POINT(${path}) failed: Win32 error ${kernel32.GetLastError()}`);
+    if (!ok) throw new Error(`FSCTL_SET_REPARSE_POINT(${path}) failed: Win32 error ${k32.GetLastError()}`);
   });
 }
 
@@ -133,23 +148,24 @@ export function setNonLinkReparsePoint(path: string): void {
  * Disposing restores the previous mode.
  */
 export function exposePlaceholders(): Disposable {
-  const { ntdll } = lib();
-  const previous = ntdll.RtlSetProcessPlaceholderCompatibilityMode(PHCM_EXPOSE_PLACEHOLDERS);
+  const nt = ntdll();
+  const previous = nt.RtlSetProcessPlaceholderCompatibilityMode(PHCM_EXPOSE_PLACEHOLDERS);
   if (previous < 0) throw new Error(`RtlSetProcessPlaceholderCompatibilityMode failed: ${previous}`);
   return {
     [Symbol.dispose]() {
-      ntdll.RtlSetProcessPlaceholderCompatibilityMode(previous);
+      nt.RtlSetProcessPlaceholderCompatibilityMode(previous);
     },
   };
 }
 
 /**
  * Registers the existing directory `root` as a Cloud Files sync root so that
- * entries below it can become placeholders. Dispose before deleting `root`:
- * unregistering needs the directory to still exist.
+ * entries below it can become placeholders; the directory itself gets a cloud
+ * reparse tag too. Dispose before deleting `root`: unregistering needs the
+ * directory to still exist.
  */
 export function registerSyncRoot(root: string): Disposable {
-  const { cldapi } = lib();
+  const cf = cldapi();
   const rootW = wide(root);
   const providerName = wide("bun test");
   const providerVersion = wide("1.0");
@@ -164,7 +180,7 @@ export function registerSyncRoot(root: string): Disposable {
   policies.writeUInt32LE(policies.length, 0);
   policies.writeUInt16LE(CF_HYDRATION_POLICY_FULL, 4);
   policies.writeUInt16LE(CF_POPULATION_POLICY_ALWAYS_FULL, 8);
-  const hr = cldapi.CfRegisterSyncRoot(
+  const hr = cf.CfRegisterSyncRoot(
     ptr(rootW),
     ptr(registration),
     ptr(policies),
@@ -173,7 +189,7 @@ export function registerSyncRoot(root: string): Disposable {
   if (hr !== 0) throw new Error(`CfRegisterSyncRoot(${root}) failed: ${hresult(hr)}`);
   return {
     [Symbol.dispose]() {
-      const hr = cldapi.CfUnregisterSyncRoot(ptr(rootW));
+      const hr = cf.CfUnregisterSyncRoot(ptr(rootW));
       if (hr !== 0) throw new Error(`CfUnregisterSyncRoot(${root}) failed: ${hresult(hr)}`);
     },
   };
@@ -185,10 +201,10 @@ export function registerSyncRoot(root: string): Disposable {
  * contents (or children) stay on disk.
  */
 export function convertToPlaceholder(path: string): void {
-  const { cldapi } = lib();
+  const cf = cldapi();
   const identity = Buffer.from(path);
   withHandle(path, GENERIC_READ | GENERIC_WRITE, FILE_FLAG_BACKUP_SEMANTICS, handle => {
-    const hr = cldapi.CfConvertToPlaceholder(
+    const hr = cf.CfConvertToPlaceholder(
       handle,
       ptr(identity),
       identity.length,
@@ -199,3 +215,21 @@ export function convertToPlaceholder(path: string): void {
     if (hr !== 0) throw new Error(`CfConvertToPlaceholder(${path}) failed: ${hresult(hr)}`);
   });
 }
+
+/**
+ * Whether this machine lets us create placeholders: cldapi.dll is present, the
+ * cloud filter is running and the current user may register a sync root. Found
+ * out by registering (and unregistering) one on a scratch directory, once.
+ * Only call on Windows x64, where the ffi fixtures work at all.
+ */
+export const cloudFilesAvailable = memoize((): boolean => {
+  const scratch = mkdtempSync(join(realpathSync.native(tmpdir()), "cloud-files-probe-"));
+  try {
+    registerSyncRoot(scratch)[Symbol.dispose]();
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});

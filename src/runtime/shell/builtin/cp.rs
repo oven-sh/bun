@@ -581,8 +581,7 @@ impl ShellCpTask {
         }
     }
 
-    /// Same entry (`cp d/f d`, hard links), or the same file behind a symlink
-    /// on either side (`cp f link-to-f`): what cp(1) refuses as the same file.
+    /// One entry under two names (hard links too), or one file behind a symlink on either side.
     fn is_same_file(src: &bun_core::ZStr, tgt: &bun_core::ZStr) -> bool {
         fn same_inode(a: &bun_sys::Stat, b: &bun_sys::Stat) -> bool {
             // An inode number of 0 means the filesystem reports no identity.

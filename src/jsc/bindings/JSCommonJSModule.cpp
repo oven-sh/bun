@@ -1404,9 +1404,12 @@ void RequireResolveFunctionPrototype::finishCreation(JSC::VM& vm)
 //     ...
 //   });
 //
-// Returns the text between the wrapper's braces (for transpiler output that
-// begins with the newline after `{`, so line numbers survive re-wrapping), or a
-// null String when the source is not in this shape.
+// Both put the closing `})` on a line of its own (or directly after `{` for an
+// empty module) and only ever follow it with `;` and `//` comment lines, such as
+// the inline source map the inspector appends. Returns the text between the
+// wrapper's braces (for transpiler output that begins with the newline after
+// `{`, so line numbers survive re-wrapping), or a null String when the source is
+// not in this shape, in which case callers leave the transpiler's wrapper alone.
 static WTF::String commonJSModuleBodyWithoutWrapper(const WTF::String& source)
 {
     unsigned headerStart = 0;
@@ -1424,6 +1427,23 @@ static WTF::String commonJSModuleBodyWithoutWrapper(const WTF::String& source)
     if (bodyStart == WTF::notFound || bodyEnd == WTF::notFound || bodyEnd <= bodyStart)
         return String();
     bodyStart += 1;
+    if (bodyEnd != bodyStart && source[bodyEnd - 1] != '\n')
+        return String();
+
+    for (unsigned i = bodyEnd + 2; i < source.length();) {
+        if (source.hasInfixStartingAt("//"_s, i)) {
+            auto lineEnd = source.find('\n', i);
+            if (lineEnd == WTF::notFound)
+                break;
+            i = lineEnd + 1;
+            continue;
+        }
+        auto c = source[i];
+        if (c != ';' && !isASCIIWhitespace(c))
+            return String();
+        i++;
+    }
+
     return source.substring(bodyStart, bodyEnd - bodyStart);
 }
 
@@ -1432,9 +1452,16 @@ static WTF::String commonJSModuleBodyWithoutWrapper(const WTF::String& source)
 // ResolvedSource into a SourceProvider must go through here, otherwise the
 // user's wrapper ends up enclosing the transpiler's function expression, which
 // is then never called.
-static void applyOverriddenModuleWrapper(Zig::GlobalObject* globalObject, ResolvedSource& source, bool isBuiltIn)
+static void applyOverriddenModuleWrapper(Zig::GlobalObject* globalObject, JSValue filename, ResolvedSource& source, bool isBuiltIn)
 {
     if (!globalObject->hasOverriddenModuleWrapper) [[likely]]
+        return;
+
+    // `bun -e` / stdin code is transpiled without the wrapper and evaluated as
+    // a script by evaluateCommonJSModuleOnce (Node runs it as a script too,
+    // outside Module.wrapper), so there is nothing to swap out. Wrapping it
+    // would turn the whole program into a function expression nothing calls.
+    if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename)))
         return;
 
     auto transpiled = source.source_code.toWTFString(BunString::ZeroCopy);
@@ -1463,7 +1490,7 @@ void JSCommonJSModule::evaluate(
 {
     auto& vm = JSC::getVM(globalObject);
 
-    applyOverriddenModuleWrapper(globalObject, source, isBuiltIn);
+    applyOverriddenModuleWrapper(globalObject, this->m_filename.get(), source, isBuiltIn);
 
     auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
     this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
@@ -1567,7 +1594,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
         }
 
-        applyOverriddenModuleWrapper(globalObject, source, isBuiltIn);
+        applyOverriddenModuleWrapper(globalObject, filename, source, isBuiltIn);
 
         auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
         if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {

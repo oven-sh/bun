@@ -529,6 +529,17 @@ console.log("survived", require("./late.js"));`,
       expect(await runFixture(dir, ["-r", "./preload.cjs", "./main.cjs"])).toEqual({ ran: true, filename: "main.cjs" });
     });
 
+    test("assigning the wrapper in a preload keeps -e code running", async () => {
+      using dir = tempDir("module-wrapper-eval", {
+        "set-wrapper.cjs": setWrapper,
+      });
+      // -e code is evaluated as a script, not through the wrapper. The IIFE
+      // makes the source look like wrapped output, so the eval entry point has
+      // to be recognized by identity rather than by shape.
+      const code = `(function () { module.exports = 1; console.log(JSON.stringify({ ran: true })); })();`;
+      expect(await runFixture(dir, ["-r", "./set-wrapper.cjs", "-e", code])).toEqual({ ran: true });
+    });
+
     test("mutating Module.wrapper in place applies to imported CommonJS", async () => {
       using dir = tempDir("module-wrapper-mutate", {
         "main.mjs": /* js */ `
@@ -550,30 +561,45 @@ console.log("survived", require("./late.js"));`,
         "main.mjs": /* js */ `
           import { createRequire } from "node:module";
           const require = createRequire(import.meta.url);
-          const { success, logs } = await Bun.build({
-            entrypoints: ["./src/dep.cjs"],
-            outdir: "./out",
-            target: "bun",
-            format: "cjs",
-          });
-          if (!success) throw new AggregateError(logs);
-          const header = (await Bun.file("./out/dep.js").text()).split("\\n", 3);
+          async function build(outdir, footer) {
+            const { success, logs } = await Bun.build({
+              entrypoints: ["./src/dep.cjs"],
+              outdir,
+              target: "bun",
+              format: "cjs",
+              footer,
+            });
+            if (!success) throw new AggregateError(logs);
+            return outdir + "/dep.js";
+          }
+          const plain = await build("./out/plain");
+          const commentFooter = await build("./out/comment-footer", "// comment after the wrapper");
+          const codeFooter = await build("./out/code-footer", "var afterTheWrapper = 1;");
+          const header = (await Bun.file(plain).text()).split("\\n", 3);
+
           require("./set-wrapper.cjs");
-          const viaRequire = require("./out/dep.js");
-          delete require.cache[require.resolve("./out/dep.js")];
-          const viaImport = (await import("./out/dep.js")).default;
-          console.log(JSON.stringify({ header, viaRequire, viaImport, wrapped: globalThis.wrapped }));
+          const results = {};
+          for (const [name, file] of Object.entries({ plain, commentFooter, codeFooter })) {
+            const viaRequire = require(file);
+            delete require.cache[require.resolve(file)];
+            const viaImport = (await import(file)).default;
+            results[name] = { viaRequire, viaImport, wrapped: globalThis.wrapped.splice(0) };
+          }
+          console.log(JSON.stringify({ header, ...results }));
         `,
       });
+      const loaded = { viaRequire: { bundled: true }, viaImport: { bundled: true } };
       expect(await runFixture(dir, ["main.mjs"])).toEqual({
         header: [
           "#!/usr/bin/env bun",
           "// @bun @bun-cjs",
           expect.stringContaining("(function(exports, require, module, __filename, __dirname) {"),
         ],
-        viaRequire: { bundled: true },
-        viaImport: { bundled: true },
-        wrapped: ["dep.js", "dep.js"],
+        plain: { ...loaded, wrapped: ["dep.js", "dep.js"] },
+        commentFooter: { ...loaded, wrapped: ["dep.js", "dep.js"] },
+        // Code after the wrapper is not something the wrapper swap can
+        // understand, so the file keeps its own wrapper instead of breaking.
+        codeFooter: { ...loaded, wrapped: [] },
       });
     });
   });

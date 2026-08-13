@@ -22,7 +22,7 @@ use bun_spawn::{self, Process};
 
 #[cfg(target_os = "macos")]
 use {
-    bun_core::Error,
+    crate::Error,
     bun_jsc::virtual_machine::VirtualMachine,
     bun_spawn::{
         EventLoopHandle, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _, Stdio,
@@ -33,7 +33,7 @@ use {
 
 declare_scope!(WebViewHost, hidden);
 
-pub struct HostProcess {
+pub(crate) struct HostProcess {
     // Intrusive refcount (`.deref()` called in on_process_exit); kept raw
     // because the refcount, not this struct, owns the allocation.
     process: NonNull<Process>,
@@ -51,7 +51,7 @@ static INSTANCE: core::sync::atomic::AtomicPtr<HostProcess> =
 /// WebContent/GPU/Network helpers are XPC-connected to the child — when the
 /// child dies they get connection-invalidated and exit.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__WebViewHost__kill() {
+extern "C" fn Bun__WebViewHost__kill() {
     // SAFETY: single-threaded access (JS thread only).
     unsafe {
         if let Some(i) = INSTANCE
@@ -73,7 +73,7 @@ pub(crate) extern "C" fn Bun__WebViewHost__kill() {
 /// owns it; re-returning a fd usockets may have already closed would be a
 /// use-after-close. Rust only owns process lifetime (watch + kill).
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__WebViewHost__ensure(
+extern "C" fn Bun__WebViewHost__ensure(
     global: &JSGlobalObject,
     stdout_inherit: bool,
     stderr_inherit: bool,
@@ -133,7 +133,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (vm, stdout_inherit, stderr_inherit);
-        return Err(bun_core::err!("Unsupported"));
+        return Err(crate::Error::Unsupported);
     }
     #[cfg(target_os = "macos")]
     {
@@ -196,7 +196,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
         // per-thread `jsc::EventLoop`.
         let event_loop = unsafe { EventLoopHandle::init((*vm).event_loop().cast()) };
         let process =
-            NonNull::new(spawned.to_process(event_loop, false)).expect("toProcess returned null");
+            NonNull::new(spawned.to_process(event_loop)).expect("toProcess returned null");
         let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess { process }));
         // SAFETY: `self_ptr` is a freshly-allocated, exclusively-owned Box that
         // owns `process` and outlives it.
@@ -223,7 +223,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
                     drop(bun_core::heap::take(self_ptr));
                 }
                 // fd0_guard (declared at the top) closes fds[0]; don't double-close here.
-                return Err(bun_core::err!("WatchFailed"));
+                return Err(crate::Error::WatchFailed);
             }
         }
         INSTANCE.store(self_ptr, core::sync::atomic::Ordering::Relaxed);

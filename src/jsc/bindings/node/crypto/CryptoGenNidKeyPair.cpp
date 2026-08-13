@@ -25,22 +25,9 @@ extern "C" void Bun__NidKeyPairJobCtx__runTask(NidKeyPairJobCtx* ctx, JSGlobalOb
     ctx->runTask(globalObject, keyCtx);
 }
 
-extern "C" void Bun__NidKeyPairJobCtx__runFromJS(NidKeyPairJobCtx* ctx, JSGlobalObject* globalObject, EncodedJSValue callback)
+extern "C" void Bun__NidKeyPairJobCtx__runFromJS(NidKeyPairJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
 {
-    ctx->runFromJS(globalObject, JSValue::decode(callback));
-}
-
-extern "C" NidKeyPairJob* Bun__NidKeyPairJob__create(JSGlobalObject* globalObject, NidKeyPairJobCtx* ctx, EncodedJSValue callback);
-NidKeyPairJob* NidKeyPairJob::create(JSGlobalObject* globalObject, NidKeyPairJobCtx&& ctx, JSValue callback)
-{
-    NidKeyPairJobCtx* ctxCopy = new NidKeyPairJobCtx(WTF::move(ctx));
-    return Bun__NidKeyPairJob__create(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
-extern "C" void Bun__NidKeyPairJob__schedule(NidKeyPairJob* job);
-void NidKeyPairJob::schedule()
-{
-    Bun__NidKeyPairJob__schedule(this);
+    *out = ctx->runFromJS(globalObject);
 }
 
 extern "C" void Bun__NidKeyPairJob__createAndSchedule(JSGlobalObject* globalObject, NidKeyPairJobCtx* ctx, EncodedJSValue callback);
@@ -71,6 +58,8 @@ std::optional<NidKeyPairJobCtx> NidKeyPairJobCtx::fromJS(JSGlobalObject* globalO
         id = EVP_PKEY_X25519;
     } else if (typeView == "x448"_s) {
         id = EVP_PKEY_X448;
+    } else if (int pqcNid = pqcKeyTypeToNid(typeView)) {
+        id = pqcNid;
     } else {
         UNREACHABLE();
     }

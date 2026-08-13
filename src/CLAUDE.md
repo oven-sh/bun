@@ -17,7 +17,7 @@ Conventions:
 - `cargo check -p <crate>` for fast iteration; `bun bd` builds and links everything.
 - Don't `.unwrap()` a fallible path that user input or the OS can hit at runtime — return the error. `.unwrap()` is for invariants you can prove.
 - The C ABI / syscall boundary uses `bun_sys::Maybe<T>` (= `Result<T, bun_sys::Error>`); ordinary Rust code uses `Result<T, E>` with `?`.
-- `bun_core::Error` is a lightweight interned `NonZeroU16` error code; `bun_sys::Error` is the rich syscall error (errno + syscall tag + path). `From<bun_sys::Error> for bun_core::Error` exists.
+- Each crate defines its own `Error` enum (a `thiserror::Error` at `<crate>/error.rs`, re-exported as `crate::Error` + `crate::Result`). Errno codes nest via `Sys(#[from] bun_errno::SystemErrno)`; OOM via `Alloc(#[from] bun_alloc::AllocError)`. `bun_sys::Error` is the rich syscall error (errno + syscall tag + path); `From<bun_sys::Error> for bun_errno::SystemErrno` exists for `?`-chaining.
 - NEVER add comments to deleted code blocks.
 - Do not add comments that reference context from the transcript.
 - Avoid adding comments where not necessary.
@@ -101,19 +101,26 @@ let s = bun_core::String::from_js(value, global)?;
 let err = s.to_error_instance(global);
 ```
 
-`bun_core::strings` is the SIMD-backed `&[u8]` toolkit. Use it instead of
-`std::str` / `std::iter` for searching and comparing byte slices:
+`bun_core::strings` is the SIMD-backed `&[u8]` toolkit (Google Highway kernels
+with runtime CPU dispatch). Byte and substring search **must** go through it —
+`str::find`/`contains`/`split*`, `slice::windows`, `memchr::*` and
+`bstr::ByteSlice::find*` are denied in `clippy.toml`, and the byte-literal forms
+of `<[u8]>::contains`, `iter().position/rposition/any(|b| b == b'x')` and
+`.split(|b| ..)` are rejected by `test/internal/source-lints/byte-search.test.ts`:
 
 ```rust
 use bun_core::strings;
 
-strings::index_of(haystack, needle)      // Option<usize>
+strings::index_of_char_usize(s, b'x')    // Option<usize>   (not .iter().position())
+strings::index_of_any(s, b"\r\n")        // Option<usize>   first byte in set
+strings::last_index_of_char(s, b'x')     // Option<usize>   (not .iter().rposition())
+strings::contains_char(s, b'x')          // bool            (not .contains(&b'x'))
+strings::count_char(s, b'\n')            // usize
+strings::index_of(haystack, needle)      // Option<usize>   substring (memmem)
 strings::contains(haystack, needle)      // bool
-strings::eql(a, b)                       // bool
-strings::starts_with(s, prefix)          // bool
-strings::ends_with(s, suffix)            // bool
+strings::split(s, b",") / split_any(s, b" \t") / tokenize(s, b" ") / split_once_char(s, b'=')
+strings::eql(a, b)                       // bool  (== / starts_with / ends_with are memcmp and fine as-is)
 strings::has_prefix_comptime(s, b"x")    // 'static comparand
-strings::has_suffix_comptime(s, b"x")
 strings::first_non_ascii(s)              // Option<u32>
 strings::to_utf16_alloc(...)             // encoding conversions
 ```
@@ -161,16 +168,15 @@ let url = URL::from_utf8(href)?;                  // Option<NonNull<URL>>
 
 url.protocol()   // bun_core::String
 url.pathname()   // bun_core::String
-url.search()     // bun_core::String
+url.host()       // bun_core::String — the hostname WITHOUT the port (opposite of JS `host`!)
 url.port()       // u32 (u32::MAX = unset; otherwise u16 range)
-
-// NOTE: host()/hostname() are SWAPPED relative to JS:
-url.host()       // hostname WITHOUT port  (opposite of JS!)
-url.hostname()   // hostname WITH port     (opposite of JS!)
 ```
 
-`URL::href_from_string`, `URL::file_url_from_string`, `URL::path_from_file_url`
-do whole-string conversions.
+`URL::href_from_js`, `URL::file_url_from_string`, `URL::path_from_file_url`
+do whole-string conversions. The JSC-free shim `bun_url::whatwg::URL` exposes
+`hostname()`, which returns the host WITH the port (also the opposite of JS
+`hostname`) — so `bun_jsc::URL::host` and `bun_url::whatwg::URL::hostname`
+are effectively swapped relative to their JS namesakes.
 
 ## MIME Types (`bun_http_types::MimeType`)
 

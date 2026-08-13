@@ -6,19 +6,12 @@ use crate::properties::{Property, PropertyId, PropertyIdTag};
 use crate::{DeclarationList, PropertyHandlerContext};
 use bun_alloc::ArenaVecExt as _;
 
-// The `RectShorthand`/`SizeShorthand` marker traits stay (some
-// callers name `<T as RectShorthand>::Value`). The rect-shorthand structs
-// below are stamped out by `define_rect_shorthand!` (struct + PROPERTY_FIELD_MAP
-// + deep_clone/eql + parse/to_css + RectShorthand impl); the size-shorthand
+// The rect-shorthand structs
+// below are stamped out by `define_rect_shorthand!` (struct
+// + deep_clone/eql + parse/to_css); the size-shorthand
 // structs keep hand-written bodies and get parse/to_css from
 // `impl_size_shorthand!`. Both macros live in the parent `properties/mod.rs`
 // (shared with `border.rs`).
-pub trait RectShorthand {
-    type Value;
-}
-pub trait SizeShorthand {
-    type Value;
-}
 
 impl_size_shorthand!(InsetBlock, LengthPercentageOrAuto, block_start, block_end);
 impl_size_shorthand!(
@@ -70,7 +63,7 @@ impl_size_shorthand!(
 // Shorthand value types
 // ──────────────────────────────────────────────────────────────────────────
 //
-// Trait impls (`RectShorthand` / `SizeShorthand`) provide default
+// Trait impls (`RectShorthand`) provide default
 // `parse`/`to_css`. A `#[derive]` could replace the manual impls.
 //
 // `implementDeepClone` / `implementEql` are field-wise reflection helpers →
@@ -95,88 +88,56 @@ define_rect_shorthand! {
 #[derive(Clone, PartialEq)]
 pub struct InsetBlock {
     /// The block start value.
-    pub block_start: LengthPercentageOrAuto,
+    pub(crate) block_start: LengthPercentageOrAuto,
     /// The block end value.
-    pub block_end: LengthPercentageOrAuto,
+    pub(crate) block_end: LengthPercentageOrAuto,
 }
 
 impl InsetBlock {
     // TODO: bring this back
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"inset-block");
-
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("block_start", PropertyIdTag::InsetBlockStart),
-        ("block_end", PropertyIdTag::InsetBlockEnd),
-    ];
-}
-impl SizeShorthand for InsetBlock {
-    type Value = LengthPercentageOrAuto;
 }
 
 /// A value for the [inset-inline](https://drafts.csswg.org/css-logical/#propdef-inset-inline) shorthand property.
 #[derive(Clone, PartialEq)]
 pub struct InsetInline {
     /// The inline start value.
-    pub inline_start: LengthPercentageOrAuto,
+    pub(crate) inline_start: LengthPercentageOrAuto,
     /// The inline end value.
-    pub inline_end: LengthPercentageOrAuto,
+    pub(crate) inline_end: LengthPercentageOrAuto,
 }
 
 impl InsetInline {
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("inline_start", PropertyIdTag::InsetInlineStart),
-        ("inline_end", PropertyIdTag::InsetInlineEnd),
-    ];
-
     // TODO: bring this back
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"inset-inline");
-}
-impl SizeShorthand for InsetInline {
-    type Value = LengthPercentageOrAuto;
 }
 
 /// A value for the [margin-block](https://drafts.csswg.org/css-logical/#propdef-margin-block) shorthand property.
 #[derive(Clone, PartialEq)]
 pub struct MarginBlock {
     /// The block start value.
-    pub block_start: LengthPercentageOrAuto,
+    pub(crate) block_start: LengthPercentageOrAuto,
     /// The block end value.
-    pub block_end: LengthPercentageOrAuto,
+    pub(crate) block_end: LengthPercentageOrAuto,
 }
 
 impl MarginBlock {
     // TODO: bring this back
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"margin-block");
-
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("block_start", PropertyIdTag::MarginBlockStart),
-        ("block_end", PropertyIdTag::MarginBlockEnd),
-    ];
-}
-impl SizeShorthand for MarginBlock {
-    type Value = LengthPercentageOrAuto;
 }
 
 /// A value for the [margin-inline](https://drafts.csswg.org/css-logical/#propdef-margin-inline) shorthand property.
 #[derive(Clone, PartialEq)]
 pub struct MarginInline {
     /// The inline start value.
-    pub inline_start: LengthPercentageOrAuto,
+    pub(crate) inline_start: LengthPercentageOrAuto,
     /// The inline end value.
-    pub inline_end: LengthPercentageOrAuto,
+    pub(crate) inline_end: LengthPercentageOrAuto,
 }
 
 impl MarginInline {
     // TODO: bring this back
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"margin-inline");
-
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("inline_start", PropertyIdTag::MarginInlineStart),
-        ("inline_end", PropertyIdTag::MarginInlineEnd),
-    ];
-}
-impl SizeShorthand for MarginInline {
-    type Value = LengthPercentageOrAuto;
 }
 
 define_rect_shorthand! {
@@ -192,44 +153,28 @@ define_rect_shorthand! {
 #[derive(Clone, PartialEq)]
 pub struct PaddingBlock {
     /// The block start value.
-    pub block_start: LengthPercentageOrAuto,
+    pub(crate) block_start: LengthPercentageOrAuto,
     /// The block end value.
-    pub block_end: LengthPercentageOrAuto,
+    pub(crate) block_end: LengthPercentageOrAuto,
 }
 
 impl PaddingBlock {
     // TODO: bring this back
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"padding-block");
-
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("block_start", PropertyIdTag::PaddingBlockStart),
-        ("block_end", PropertyIdTag::PaddingBlockEnd),
-    ];
-}
-impl SizeShorthand for PaddingBlock {
-    type Value = LengthPercentageOrAuto;
 }
 
 /// A value for the [padding-inline](https://drafts.csswg.org/css-logical/#propdef-padding-inline) shorthand property.
 #[derive(Clone, PartialEq)]
 pub struct PaddingInline {
     /// The inline start value.
-    pub inline_start: LengthPercentageOrAuto,
+    pub(crate) inline_start: LengthPercentageOrAuto,
     /// The inline end value.
-    pub inline_end: LengthPercentageOrAuto,
+    pub(crate) inline_end: LengthPercentageOrAuto,
 }
 
 impl PaddingInline {
     // TODO: bring this back
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"padding-inline");
-
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("inline_start", PropertyIdTag::PaddingInlineStart),
-        ("inline_end", PropertyIdTag::PaddingInlineEnd),
-    ];
-}
-impl SizeShorthand for PaddingInline {
-    type Value = LengthPercentageOrAuto;
 }
 
 define_rect_shorthand! {
@@ -245,44 +190,28 @@ define_rect_shorthand! {
 #[derive(Clone, PartialEq)]
 pub struct ScrollMarginBlock {
     /// The block start value.
-    pub block_start: LengthPercentageOrAuto,
+    pub(crate) block_start: LengthPercentageOrAuto,
     /// The block end value.
-    pub block_end: LengthPercentageOrAuto,
+    pub(crate) block_end: LengthPercentageOrAuto,
 }
 
 impl ScrollMarginBlock {
     // TODO: bring this back
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin-block");
-
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("block_start", PropertyIdTag::ScrollMarginBlockStart),
-        ("block_end", PropertyIdTag::ScrollMarginBlockEnd),
-    ];
-}
-impl SizeShorthand for ScrollMarginBlock {
-    type Value = LengthPercentageOrAuto;
 }
 
 /// A value for the [scroll-margin-inline](https://drafts.csswg.org/css-scroll-snap/#propdef-scroll-margin-inline) shorthand property.
 #[derive(Clone, PartialEq)]
 pub struct ScrollMarginInline {
     /// The inline start value.
-    pub inline_start: LengthPercentageOrAuto,
+    pub(crate) inline_start: LengthPercentageOrAuto,
     /// The inline end value.
-    pub inline_end: LengthPercentageOrAuto,
+    pub(crate) inline_end: LengthPercentageOrAuto,
 }
 
 impl ScrollMarginInline {
     // TODO: bring this back
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin-inline");
-
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("inline_start", PropertyIdTag::ScrollMarginInlineStart),
-        ("inline_end", PropertyIdTag::ScrollMarginInlineEnd),
-    ];
-}
-impl SizeShorthand for ScrollMarginInline {
-    type Value = LengthPercentageOrAuto;
 }
 
 define_rect_shorthand! {
@@ -298,44 +227,28 @@ define_rect_shorthand! {
 #[derive(Clone, PartialEq)]
 pub struct ScrollPaddingBlock {
     /// The block start value.
-    pub block_start: LengthPercentageOrAuto,
+    pub(crate) block_start: LengthPercentageOrAuto,
     /// The block end value.
-    pub block_end: LengthPercentageOrAuto,
+    pub(crate) block_end: LengthPercentageOrAuto,
 }
 
 impl ScrollPaddingBlock {
     // TODO: bring this back
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding-block");
-
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("block_start", PropertyIdTag::ScrollPaddingBlockStart),
-        ("block_end", PropertyIdTag::ScrollPaddingBlockEnd),
-    ];
-}
-impl SizeShorthand for ScrollPaddingBlock {
-    type Value = LengthPercentageOrAuto;
 }
 
 /// A value for the [scroll-padding-inline](https://drafts.csswg.org/css-scroll-snap/#propdef-scroll-padding-inline) shorthand property.
 #[derive(Clone, PartialEq)]
 pub struct ScrollPaddingInline {
     /// The inline start value.
-    pub inline_start: LengthPercentageOrAuto,
+    pub(crate) inline_start: LengthPercentageOrAuto,
     /// The inline end value.
-    pub inline_end: LengthPercentageOrAuto,
+    pub(crate) inline_end: LengthPercentageOrAuto,
 }
 
 impl ScrollPaddingInline {
     // TODO: bring this back
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding-inline");
-
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("inline_start", PropertyIdTag::ScrollPaddingInlineStart),
-        ("inline_end", PropertyIdTag::ScrollPaddingInlineEnd),
-    ];
-}
-impl SizeShorthand for ScrollPaddingInline {
-    type Value = LengthPercentageOrAuto;
 }
 
 define_rect_shorthand! {
@@ -482,16 +395,16 @@ pub trait SizeHandlerSpec {
 
 /// Generic margin/padding/inset/scroll-* handler.
 pub struct SizeHandler<S: SizeHandlerSpec> {
-    pub top: Option<LengthPercentageOrAuto>,
-    pub bottom: Option<LengthPercentageOrAuto>,
-    pub left: Option<LengthPercentageOrAuto>,
-    pub right: Option<LengthPercentageOrAuto>,
-    pub block_start: Option<Property>,
-    pub block_end: Option<Property>,
-    pub inline_start: Option<Property>,
-    pub inline_end: Option<Property>,
-    pub has_any: bool,
-    pub category: PropertyCategory,
+    pub(crate) top: Option<LengthPercentageOrAuto>,
+    pub(crate) bottom: Option<LengthPercentageOrAuto>,
+    pub(crate) left: Option<LengthPercentageOrAuto>,
+    pub(crate) right: Option<LengthPercentageOrAuto>,
+    pub(crate) block_start: Option<Property>,
+    pub(crate) block_end: Option<Property>,
+    pub(crate) inline_start: Option<Property>,
+    pub(crate) inline_end: Option<Property>,
+    pub(crate) has_any: bool,
+    pub(crate) category: PropertyCategory,
     _spec: core::marker::PhantomData<S>,
 }
 
@@ -550,7 +463,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         }
     }
 
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &Property,
         dest: &mut DeclarationList,
@@ -807,7 +720,11 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         true
     }
 
-    pub fn finalize(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    pub(crate) fn finalize(
+        &mut self,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
         self.flush(dest, context);
     }
 

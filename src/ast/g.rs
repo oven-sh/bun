@@ -10,7 +10,6 @@ use crate::{ExprData, ExprNodeList, LocRef, StmtNodeList, StoreSlice, StoreStr, 
 /// Downstream crates address the flag enum via `G::FnFlags::IsExport` etc.;
 /// re-export the enum + set type here.
 pub use crate::flags::Function as FnFlags;
-pub use crate::flags::FunctionSet as FnFlagsSet;
 
 // All `&'ast mut [T]` arena slices are `StoreSlice<T>` (lifetime-
 // erased arena-slice newtype). 'ast/'bump can be threaded crate-wide later by
@@ -202,7 +201,7 @@ impl Property {
         self.class_static_block.as_deref_mut()
     }
 
-    pub fn deep_clone(
+    pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
     ) -> core::result::Result<Property, bun_alloc::AllocError> {
@@ -305,7 +304,7 @@ impl Default for Fn {
 }
 
 impl Fn {
-    pub fn deep_clone(
+    pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
     ) -> core::result::Result<Fn, bun_alloc::AllocError> {
@@ -353,7 +352,7 @@ impl Default for Arg {
 }
 
 impl Arg {
-    pub fn deep_clone(
+    pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
     ) -> core::result::Result<Arg, bun_alloc::AllocError> {

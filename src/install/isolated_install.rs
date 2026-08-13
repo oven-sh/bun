@@ -3,11 +3,11 @@
 // machine drives.
 // ───────────────────────────────────────────────────────────────────────────
 #[path = "isolated_install/FileCloner.rs"]
-pub mod file_cloner;
+pub(crate) mod file_cloner;
 #[path = "isolated_install/FileCopier.rs"]
 pub mod file_copier;
 #[path = "isolated_install/Hardlinker.rs"]
-pub mod hardlinker;
+pub(crate) mod hardlinker;
 #[path = "isolated_install/Installer.rs"]
 pub mod installer;
 #[path = "isolated_install/Store.rs"]
@@ -15,7 +15,7 @@ pub mod store;
 #[path = "isolated_install/Symlinker.rs"]
 pub mod symlinker;
 
-pub use file_copier::FileCopier;
+pub(crate) use file_copier::FileCopier;
 pub use store::Store;
 /// Alias so `crate::isolated_install::store::EntryId` (used by
 /// `TaskCallbackContext` in lib.rs) resolves to the real `entry::Id` newtype.
@@ -152,7 +152,7 @@ impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
         id: Task::Id,
         name: &[u8],
         resolution: &Resolution,
-        err: bun_core::Error,
+        err: crate::Error,
         url: &[u8],
     ) {
         ctx.on_package_download_error(id, name, resolution, err, url);
@@ -169,11 +169,11 @@ impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
 
 struct Wait<'a, 'b> {
     installer: &'a mut store::Installer<'b>,
-    err: Option<bun_core::Error>,
+    err: Option<crate::Error>,
 }
 
 impl<'a, 'b> Wait<'a, 'b> {
-    pub(crate) fn is_done(&mut self) -> bool {
+    fn is_done(&mut self) -> bool {
         // `Installer.manager` is a BACKREF raw pointer; `manager_mut()`
         // materializes the unique `&mut PackageManager` for this main-thread
         // tick without aliasing `&mut Installer`.
@@ -1028,6 +1028,10 @@ pub(crate) fn install_isolated_packages(
             let new_entry_parents: Vec<store::entry::Id> = vec![entry.entry_parent_id];
 
             let hoisted = 'hoisted: {
+                if !manager.options.hoist {
+                    break 'hoisted false;
+                }
+
                 if new_entry_dep_id == invalid_dependency_id {
                     break 'hoisted false;
                 }
@@ -1166,7 +1170,6 @@ pub(crate) fn install_isolated_packages(
 
             let pkgs = lockfile.packages.slice();
             let pkg_names = pkgs.items_name();
-            let pkg_name_hashes = pkgs.items_name_hash();
             let pkg_resolutions = pkgs.items_resolution();
             let pkg_metas = pkgs.items_meta();
 
@@ -1265,24 +1268,16 @@ pub(crate) fn install_isolated_packages(
                                 // Over-excludes the rare "trusted but actually no
                                 // scripts" case in exchange for not needing a
                                 // lockfile-format change.
-                                let (dep_name, dep_name_hash) = if dep_id != invalid_dependency_id {
-                                    (
-                                        dependencies[dep_id as usize].name.slice(string_buf),
-                                        dependencies[dep_id as usize].name_hash,
-                                    )
+                                let dep_name = if dep_id != invalid_dependency_id {
+                                    dependencies[dep_id as usize].name.slice(string_buf)
                                 } else {
-                                    (
-                                        pkg_names[pkg_id as usize].slice(string_buf),
-                                        pkg_name_hashes[pkg_id as usize],
-                                    )
+                                    pkg_names[pkg_id as usize].slice(string_buf)
                                 };
                                 if lockfile.has_trusted_dependency(
                                     dep_name,
                                     pkg_names[pkg_id as usize].slice(string_buf),
                                     pkg_res,
-                                ) || trusted_from_update
-                                    .get(&(dep_name_hash as crate::TruncatedPackageNameHash))
-                                    .is_some_and(|n| **n == *dep_name)
+                                ) || trusted_from_update.contains(&pkg_id)
                                 {
                                     break 'eligible false;
                                 }
@@ -1916,6 +1911,22 @@ pub(crate) fn install_isolated_packages(
         break 'is_new_bun_modules true;
     };
 
+    // Remove the fallback a previous install with hoisting on left behind.
+    // `delete_tree` succeeds on a missing tree, so any error here is real.
+    if !manager.options.hoist && !is_new_bun_modules {
+        use bun_sys::FdExt as _;
+        if let Err(err) =
+            Fd::cwd().delete_tree(paths::path_literal!("node_modules/.bun/node_modules"))
+        {
+            Output::err(
+                err,
+                "hoist is disabled, but the existing './node_modules/.bun/node_modules' could not be removed",
+                format_args!(""),
+            );
+            Global::exit(1);
+        }
+    }
+
     {
         // Conditionally initialized (only when progress is shown); definite-
         // initialization analysis guarantees no use before assignment.
@@ -2009,11 +2020,6 @@ pub(crate) fn install_isolated_packages(
         let installed = DynamicBitSet::init_empty(lockfile.packages.len())?;
         let trusted_dependencies_from_update_requests =
             manager.find_trusted_dependencies_from_update_requests();
-        // Reuse the `NonNull` already stored in `manager.scripts_node` rather
-        // than taking a fresh `&mut scripts_node` below — a second `&mut` from
-        // the local would pop the stored raw's Stacked Borrows tag, and the
-        // run-tasks tick callback dereferences that raw via `scripts_node_mut()`.
-        let scripts_node_ptr = manager.scripts_node;
         // `Installer.manager` is a BACKREF raw pointer; copying `manager_ptr`
         // does not move `manager`, so the body keeps using `manager` via the
         // shadow-reborrow below.
@@ -2025,11 +2031,6 @@ pub(crate) fn install_isolated_packages(
             installed,
             install_node: if show_progress {
                 Some(&mut install_node)
-            } else {
-                None
-            },
-            scripts_node: if show_progress {
-                scripts_node_ptr
             } else {
                 None
             },
@@ -2416,8 +2417,17 @@ pub(crate) fn install_isolated_packages(
                                 patch_info.name_and_version_hash(),
                             ) {
                                 Ok(()) => {}
-                                Err(e) if e == bun_core::err!(OutOfMemory) => {
+                                Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     return Err(AllocError);
+                                }
+                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                    // .monotonic is okay because an error means the task isn't
+                                    // running on another thread.
+                                    entry_steps[entry_id.get() as usize]
+                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                    installer
+                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    continue;
                                 }
                                 Err(err) => {
                                     // error.InvalidURL
@@ -2466,8 +2476,17 @@ pub(crate) fn install_isolated_packages(
                                 patch_info.name_and_version_hash(),
                             ) {
                                 Ok(()) => {}
-                                Err(e) if e == bun_core::err!(OutOfMemory) => {
+                                Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     bun_core::out_of_memory()
+                                }
+                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                    // .monotonic is okay because an error means the task isn't
+                                    // running on another thread.
+                                    entry_steps[entry_id.get() as usize]
+                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                    installer
+                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    continue;
                                 }
                                 Err(err) => {
                                     Output::err(
@@ -2510,8 +2529,17 @@ pub(crate) fn install_isolated_packages(
                                 patch_info.name_and_version_hash(),
                             ) {
                                 Ok(()) => {}
-                                Err(e) if e == bun_core::err!(OutOfMemory) => {
+                                Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     bun_core::out_of_memory()
+                                }
+                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                    // .monotonic is okay because an error means the task isn't
+                                    // running on another thread.
+                                    entry_steps[entry_id.get() as usize]
+                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                    installer
+                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    continue;
                                 }
                                 Err(err) => {
                                     Output::err(

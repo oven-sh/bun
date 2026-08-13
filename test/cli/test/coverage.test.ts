@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
 
 test("coverage crash", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "demo.test.ts": `class Y {
   #hello
 }`,
@@ -21,7 +21,7 @@ test("coverage crash", () => {
 });
 
 test("lcov coverage reporter", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "demo2.ts": `
 import { Y } from "./demo1";
 
@@ -132,7 +132,7 @@ test("imports the module but never calls add", () => {
 });
 
 test("coverage excludes node_modules directory", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "node_modules/pi/index.js": `
     export const pi = 3.14;
     `,
@@ -155,7 +155,7 @@ test("coverage excludes node_modules directory", () => {
 });
 
 test("coveragePathIgnorePatterns - single pattern string", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = "ignore-me.ts"
@@ -215,7 +215,7 @@ Ran 1 test across 1 file."
 });
 
 test("coveragePathIgnorePatterns - partial coverage without nan", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = "ignore-me.ts"
@@ -280,7 +280,7 @@ Ran 1 test across 1 file."
 });
 
 test("coveragePathIgnorePatterns - array of patterns", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = ["utils/**", "*.config.ts"]
@@ -345,7 +345,7 @@ Ran 1 test across 1 file."
 });
 
 test("coveragePathIgnorePatterns - glob patterns", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = ["**/*.spec.ts", "test-utils/**"]
@@ -414,7 +414,7 @@ Ran 1 test across 2 files."
 });
 
 test("coveragePathIgnorePatterns - lcov reporter", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = "ignore-me.ts"
@@ -483,7 +483,7 @@ end_of_record"
 });
 
 test("coveragePathIgnorePatterns - invalid config type", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = 123
@@ -522,7 +522,7 @@ Invalid Bunfig: failed to load bunfig"
 });
 
 test("coveragePathIgnorePatterns - invalid array item", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = ["valid-pattern", 123]
@@ -561,7 +561,7 @@ Invalid Bunfig: failed to load bunfig"
 });
 
 test("coveragePathIgnorePatterns - empty array", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = []
@@ -614,7 +614,7 @@ Ran 1 test across 1 file."
 });
 
 test("coveragePathIgnorePatterns - ignore all files", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = "**"

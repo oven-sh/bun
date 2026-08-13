@@ -666,8 +666,8 @@ describe("bun", () => {
   test("each script gets the npm_* env of its own package and script", async () => {
     const printEnv = `${bunExe()} print-env.js`;
     const printEnvJs = `
-      const { npm_package_name, npm_package_version, npm_package_json, npm_lifecycle_event, npm_lifecycle_script, npm_command } = process.env;
-      console.log(JSON.stringify({ npm_package_name, npm_package_version, npm_package_json, npm_lifecycle_event, npm_lifecycle_script, npm_command }));
+      const { npm_package_name, npm_package_version, npm_package_json, npm_package_config_port, npm_lifecycle_event, npm_lifecycle_script, npm_command } = process.env;
+      console.log(JSON.stringify({ npm_package_name, npm_package_version, npm_package_json, npm_package_config_port, npm_lifecycle_event, npm_lifecycle_script, npm_command }));
     `;
     using dir = tempDir("filter-npm-env", {
       packages: {
@@ -676,6 +676,7 @@ describe("bun", () => {
           "package.json": JSON.stringify({
             name: "pkg-a",
             version: "1.0.0",
+            config: { port: "8080" },
             scripts: { prepresent: printEnv, present: printEnv },
           }),
         },
@@ -717,28 +718,23 @@ describe("bun", () => {
         `${x.npm_package_name} ${x.npm_lifecycle_event}` < `${y.npm_package_name} ${y.npm_lifecycle_event}` ? -1 : 1,
       );
     const packageJson = (pkg: string) => join(String(dir), "packages", pkg, "package.json").replaceAll("\\", "/");
+    const pkgA = {
+      npm_package_name: "pkg-a",
+      npm_package_version: "1.0.0",
+      npm_package_json: packageJson("a"),
+      npm_package_config_port: "8080",
+      npm_lifecycle_script: printEnv,
+      npm_command: "run-script",
+    };
     expect({ envs, exitCode }).toEqual({
       envs: [
-        {
-          npm_package_name: "pkg-a",
-          npm_package_version: "1.0.0",
-          npm_package_json: packageJson("a"),
-          npm_lifecycle_event: "prepresent",
-          npm_lifecycle_script: printEnv,
-          npm_command: "run-script",
-        },
-        {
-          npm_package_name: "pkg-a",
-          npm_package_version: "1.0.0",
-          npm_package_json: packageJson("a"),
-          npm_lifecycle_event: "present",
-          npm_lifecycle_script: printEnv,
-          npm_command: "run-script",
-        },
+        { ...pkgA, npm_lifecycle_event: "prepresent" },
+        { ...pkgA, npm_lifecycle_event: "present" },
         {
           npm_package_name: "pkg-b",
           npm_package_version: "2.0.0",
           npm_package_json: packageJson("b"),
+          // pkg-b has no "config", so pkg-a's npm_package_config_port must not reach it.
           npm_lifecycle_event: "present",
           npm_lifecycle_script: printEnv,
           npm_command: "run-script",

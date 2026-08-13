@@ -132,7 +132,11 @@ _bun_completions() {
         -l|--loader)
             [[ "${cur_word}" =~ (:) ]] && {
                 local cut_colon_forward="${cur_word%%:*}"
-                COMPREPLY=( $(compgen -W "${cut_colon_forward}:jsx ${cut_colon_forward}:js ${cut_colon_forward}:json ${cut_colon_forward}:tsx ${cut_colon_forward}:ts ${cut_colon_forward}:css" -- "${cut_colon_forward}:${cur_word##*:}") );
+                local loader loaders="";
+                for loader in js jsx ts tsx json toml yaml json5 xml text md css html wasm napi sqlite file; do
+                    loaders+=" ${cut_colon_forward}:${loader}";
+                done
+                COMPREPLY=( $(compgen -W "${loaders}" -- "${cut_colon_forward}:${cur_word##*:}") );
             }
             return;;
     esac

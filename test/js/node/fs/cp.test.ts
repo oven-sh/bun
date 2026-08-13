@@ -173,6 +173,23 @@ for (const [name, copy] of impls) {
       }
     }
 
+    // A directory tree goes through the JS port on Linux and Windows, whose
+    // parent mkdir reports EEXIST (as node's cpSync does; node's promises.cp
+    // reports ENOENT), and through the native copy on macOS, which reports
+    // ENOENT. Either way nothing may be created.
+    test("directory into a dangling symlink parent fails", async () => {
+      await using basename = tempDir("cp", {
+        "from/a.txt": "a",
+        "from/sub/b.txt": "b",
+      });
+      fs.symlinkSync("missing", basename + "/dangling");
+
+      const e = await copyShouldThrow(basename + "/from", basename + "/dangling/out", { recursive: true });
+      expect(["ENOENT", "EEXIST"]).toContain(e.code);
+
+      expect(fs.readdirSync(String(basename)).sort()).toEqual(["dangling", "from"]);
+    });
+
     test("single file into missing nested directories creates them", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",
@@ -181,6 +198,22 @@ for (const [name, copy] of impls) {
       await copy(basename + "/from/a.txt", basename + "/to/deeper/a.txt");
 
       assertContent(basename + "/to/deeper/a.txt", "a");
+    });
+
+    // Once the parent has been created the destination is opened again, and
+    // that attempt's error is the one to report: with a trailing slash Linux
+    // fails it with EISDIR, which is also what node reports. It used to report
+    // the first attempt's ENOENT, and created a directory named x as well.
+    test.skipIf(!isLinux)("single file to a path with a trailing slash reports the retried open's error", async () => {
+      await using basename = tempDir("cp", {
+        "from/a.txt": "a",
+      });
+
+      const e = await copyShouldThrow(basename + "/from/a.txt", basename + "/newdir/x/");
+      expect(e.code).toBe("EISDIR");
+
+      // The parent was created, as for any destination, but nothing inside it.
+      expect(fs.readdirSync(basename + "/newdir")).toEqual([]);
     });
 
     test("symlinks - single file", async () => {

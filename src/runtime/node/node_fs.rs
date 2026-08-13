@@ -9140,14 +9140,15 @@ impl NodeFS {
 
     /// Shared `dest_fd:` block from the mac/linux/freebsd branches of
     /// `copy_single_file_sync`. Tries `open(dest, flags, mode)`; on ENOENT
-    /// creates the parent directory and retries once. An EEXIST from here
-    /// always means `dest` itself exists (the `cp` callers skip the file on it).
+    /// creates the parent directory and retries once, reporting the last
+    /// `open` attempt's error. An EEXIST from here always means `dest` itself
+    /// exists (the `cp` callers skip the file on it).
     #[cfg_attr(windows, allow(dead_code))]
     fn cp_open_dest_with_mkdir(&mut self, dest: &ZStr, flags: i32, mode: Mode) -> Maybe<FD> {
         // PORT: extracted from the mac/linux/freebsd arms of `copy_single_file_sync`
         // only — there `OSPathSliceZ == ZStr`. Taking `&ZStr` keeps the body
         // monomorphic (and lets it type-check on Windows where it's dead code).
-        let err = match Syscall::open(dest, flags, mode) {
+        let mut err = match Syscall::open(dest, flags, mode) {
             Ok(result) => return Ok(result),
             Err(err) => err,
         };
@@ -9164,11 +9165,10 @@ impl NodeFS {
                 ..Default::default()
             });
             match mkdir_result {
-                Ok(_) => {
-                    if let Ok(result) = Syscall::open(dest, flags, mode) {
-                        return Ok(result);
-                    }
-                }
+                Ok(_) => match Syscall::open(dest, flags, mode) {
+                    Ok(result) => return Ok(result),
+                    Err(retry_err) => err = retry_err,
+                },
                 // A dangling symlink holds the parent's name: this EEXIST is not
                 // about `dest`, which callers would take it for.
                 Err(mkdir_err) if mkdir_err.get_errno() == E::EEXIST => {}

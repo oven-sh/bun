@@ -335,7 +335,7 @@ impl Default for ParseTask {
 // two callbacks fire for the same `ParseTask` concurrently — the IO→worker
 // hand-off in `run_from_thread_pool_impl` reschedules sequentially). Writes:
 // `ParseTask.{stage, source_index, ...}` (own fields); result is sent via
-// `ctx.loop_.enqueue_task_concurrent` (MPSC queue). Reads `ctx: &BundleV2`
+// `post::<ParseComplete>` (MPSC queue). Reads `ctx: &BundleV2`
 // shared (`Worker::get`, `ctx.graph.pool`, `ctx.transpiler.options`).
 // `ParseTask` is `Send` because its non-auto-`Send` fields are bundle-
 // lifetime arena slices / backref pointers (`ctx`, `path`, `contents`).

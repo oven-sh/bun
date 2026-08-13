@@ -21,7 +21,7 @@ pub mod w_path_buffer_pool {
         PathBufferPoolT::<WPathBuffer>::get()
     }
     #[inline]
-    pub fn put(buf: Box<WPathBuffer>) {
+    pub(crate) fn put(buf: Box<WPathBuffer>) {
         PathBufferPoolT::<WPathBuffer>::put(buf)
     }
 }
@@ -106,7 +106,7 @@ pub fn is_absolute_windows_wtf16(p: &[u16]) -> bool {
 /// rejects a third leading separator, and requires BOTH server and share
 /// tokens — otherwise returns `b""`.
 #[inline]
-pub(crate) fn disk_designator_windows(p: &[u8]) -> &[u8] {
+fn disk_designator_windows(p: &[u8]) -> &[u8] {
     &p[..crate::path::disk_designator_len_windows::<u8>(p)]
 }
 
@@ -267,8 +267,7 @@ pub fn join_sep_maybe_z<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
 /// `dirname` semantics (Option, trailing-slash handling, root preservation)
 /// use `bun_core::dirname`.
 pub fn dirname_simple(p: &[u8]) -> &[u8] {
-    p.iter()
-        .rposition(|&c| c == b'/' || (cfg!(windows) && c == b'\\'))
+    crate::resolve_path::last_index_of_sep(p)
         .map(|i| &p[..i])
         .unwrap_or(b"")
 }
@@ -282,7 +281,7 @@ pub use bun_core::strings::{PathByte, basename, basename_posix, basename_windows
 /// and basenames whose only `.` is at index 0 report no extension.
 pub fn extension(p: &[u8]) -> &[u8] {
     let filename = basename(p);
-    match filename.iter().rposition(|&c| c == b'.') {
+    match strings::last_index_of_char(filename, b'.') {
         Some(dot) if dot > 0 => &filename[dot..],
         _ => &p[p.len()..],
     }
@@ -293,7 +292,7 @@ pub fn extension(p: &[u8]) -> &[u8] {
 /// leading dot (`.gitignore` → `.gitignore`).
 pub fn stem(p: &[u8]) -> &[u8] {
     let filename = basename(p);
-    match filename.iter().rposition(|&c| c == b'.') {
+    match strings::last_index_of_char(filename, b'.') {
         Some(0) => p,
         Some(dot) => &filename[..dot],
         None => filename,
@@ -357,7 +356,8 @@ pub use path_buffer_pool::os_path_buffer_pool;
 #[path = "Path.rs"]
 pub mod path;
 pub use path::{
-    AbsPath, AutoAbsPath, AutoRelPath, Path, PathUnit, RelPath, options as path_options,
+    AbsPath, AutoAbsPath, AutoAbsPathChecked, AutoRelPath, Path, PathUnit, RelPath,
+    options as path_options,
 };
 
 /// Generic surface for the `buf` parameter on path-builder helpers
@@ -462,7 +462,8 @@ pub mod windows {
 
     /// Per-width long-path prefix so `Path::<U, ..>::from_long_path` stays width-generic.
     #[inline]
-    pub fn long_path_prefix_for<U: crate::path::PathUnit>() -> &'static [U] {
+    #[cfg(windows)]
+    pub(crate) fn long_path_prefix_for<U: crate::path::PathUnit>() -> &'static [U] {
         U::LONG_PATH_PREFIX
     }
 }
@@ -539,7 +540,7 @@ pub mod fs {
 
     impl FileSystem {
         #[inline]
-        pub fn instance_loaded() -> bool {
+        pub(crate) fn instance_loaded() -> bool {
             INSTANCE_LOADED.load(Ordering::Relaxed)
         }
 
@@ -579,15 +580,14 @@ pub mod fs {
             }
         }
 
-        /// Writes `.<hex(hash|nanos)>-<HEX(counter)>.<extname>\0` into `buf` and returns
+        /// Writes `.<hex(hash^nanos)>-<HEX(counter)>.<extname>\0` into `buf` and returns
         /// the NUL-terminated borrow. Static (no `&self`).
         pub fn tmpname<'b>(
             extname: &[u8],
             buf: &'b mut [u8],
             hash: u64,
         ) -> crate::Result<&'b mut ZStr> {
-            let hex_value: u64 =
-                (u128::from(hash) | (bun_core::time::nano_timestamp() as u128)) as u64;
+            let hex_value: u64 = hash ^ (bun_core::time::nano_timestamp() as u64);
 
             let len = buf.len();
             let mut cursor = &mut buf[..];
@@ -643,7 +643,7 @@ pub mod fs {
         pub fn find_extname(path: &[u8]) -> &[u8] {
             let start = last_index_of_sep(path).map(|i| i + 1).unwrap_or(0);
             let base = &path[start..];
-            if let Some(dot) = base.iter().rposition(|&c| c == b'.') {
+            if let Some(dot) = crate::strings::last_index_of_char(base, b'.') {
                 if dot > 0 {
                     return &base[dot..];
                 }
@@ -667,7 +667,7 @@ pub mod fs {
                 // "/index" -> "index"
                 return PathName::init(self.dir).base;
             }
-            debug_assert!(!self.base.contains(&b'/'));
+            debug_assert!(!crate::strings::contains_char(self.base, b'/'));
             // /bar/foo.js -> foo
             self.base
         }
@@ -738,7 +738,7 @@ pub mod fs {
             }
 
             // Strip off the extension
-            if let Some(dot) = base.iter().rposition(|&c| c == b'.') {
+            if let Some(dot) = crate::strings::last_index_of_char(base, b'.') {
                 ext = &base[dot..];
                 base = &base[0..dot];
             } else {
@@ -835,7 +835,7 @@ pub mod fs {
             }
         }
 
-        pub const EMPTY: Path<'static> = Path {
+        pub(crate) const EMPTY: Path<'static> = Path {
             pretty: b"",
             text: b"",
             namespace: b"file",
@@ -912,7 +912,7 @@ pub mod fs {
         #[inline]
         pub fn assert_pretty_is_valid(&self) {
             #[cfg(all(windows, debug_assertions))]
-            if self.pretty.contains(&b'\\') {
+            if crate::strings::contains_char(self.pretty, b'\\') {
                 panic!(
                     "Expected pretty file path to have only forward slashes, got '{}'",
                     bstr::BStr::new(self.pretty)
@@ -966,8 +966,7 @@ pub mod fs {
         /// Checks for `<sep>node_modules<sep>` in the
         /// parsed dir component (`name.dir`, NOT `text`).
         pub fn is_node_module(&self) -> bool {
-            use bstr::ByteSlice;
-            self.name().dir.rfind(crate::NODE_MODULES_NEEDLE).is_some()
+            crate::strings::contains(self.name().dir, crate::NODE_MODULES_NEEDLE)
         }
 
         /// Key used to identify this path in the incremental graph: the real

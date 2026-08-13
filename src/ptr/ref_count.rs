@@ -48,8 +48,9 @@ fn dump_stack_hook(trace: Option<&StoredTrace>, ret_addr: usize) {
 /// subslice so the result stays `&'static str`.
 /// `"a::b::Foo<c::Bar>"` → `"Foo<c::Bar>"`.
 fn type_base_name(name: &'static str) -> &'static str {
-    let end = name.find('<').unwrap_or(name.len());
-    match name[..end].rfind("::") {
+    let bytes = name.as_bytes();
+    let end = bun_core::strings::index_of_char_usize(bytes, b'<').unwrap_or(bytes.len());
+    match bun_core::strings::last_index_of(&bytes[..end], b"::") {
         Some(i) => &name[i + 2..],
         None => name,
     }
@@ -293,7 +294,7 @@ impl<T: RefCounted> RefCount<T> {
 
     /// # Safety
     /// `self_` must point to a live `T`.
-    pub unsafe fn deref_with_context(self_: *mut T, ctx: T::DestructorCtx) {
+    pub(crate) unsafe fn deref_with_context(self_: *mut T, ctx: T::DestructorCtx) {
         // SAFETY: caller contract
         let count = unsafe { &*T::get_ref_count(self_) };
         #[cfg(debug_assertions)]
@@ -616,6 +617,52 @@ pub unsafe trait CellRefCounted: Sized {
             unsafe { Self::destroy(this) };
         }
     }
+
+    /// Safe [`ref_`](Self::ref_) for a `NonNull<Self>` handle.
+    ///
+    /// The `unsafe trait` contract guarantees `this` points to a live
+    /// intrusively-refcounted `Self`; [`BackRef`](crate::BackRef) turns that
+    /// into a shared borrow without the caller spelling `unsafe`.
+    #[inline]
+    fn ref_nn(this: NonNull<Self>) {
+        crate::BackRef::from(this).ref_();
+    }
+
+    /// Safe [`deref`](Self::deref) for a `NonNull<Self>` handle.
+    ///
+    /// The single audited `unsafe` lives here in `bun_ptr`, beside the trait
+    /// contract that makes it sound, so callers holding a `NonNull` never
+    /// re-derive the raw-pointer provenance themselves.
+    #[inline]
+    fn deref_nn(this: NonNull<Self>) {
+        // SAFETY: `CellRefCounted` impl contract — `this` is a live,
+        // heap-allocated `Self` whose allocation `destroy` knows how to free;
+        // `NonNull` guarantees non-null. The caller owns one ref.
+        unsafe { Self::deref(this.as_ptr()) };
+    }
+}
+
+/// Run `before(&*this)` then reclaim `this` as a `Box<T>` and drop it.
+///
+/// Intended as the body of a `#[ref_count(destroy = …)]` target, where the
+/// wrapper needs to detach/invalidate itself before field `Drop` impls run.
+/// The raw-pointer deref is audited here once so per-type `destroy` bodies in
+/// callers stay `unsafe`-free.
+///
+/// Callers must only pass a pointer that originated from
+/// `Box::into_raw` / `heap::into_raw` and is the sole remaining owner — the
+/// same precondition as [`CellRefCounted::destroy`], which is the only
+/// sanctioned call site.
+#[inline]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub fn destroy_box_with<T>(this: *mut T, before: impl FnOnce(&T)) {
+    debug_assert!(!this.is_null());
+    // SAFETY: `CellRefCounted::destroy` contract — `this` is the sole live
+    // owner of a `Box`-allocated `T`; `before` only observes it shared.
+    unsafe {
+        before(&*this);
+        drop(Box::from_raw(this));
+    }
 }
 
 /// No-op [`DebugDataOps`] for [`CellRefCounted`] types — they carry no
@@ -623,7 +670,7 @@ pub unsafe trait CellRefCounted: Sized {
 /// a stub.
 #[cfg(debug_assertions)]
 #[doc(hidden)]
-pub struct NoopDebugData;
+struct NoopDebugData;
 
 #[cfg(debug_assertions)]
 impl DebugDataOps for NoopDebugData {
@@ -716,7 +763,7 @@ impl<T: AnyRefCounted> RefPtr<T> {
     }
 
     /// Decrement the reference count, and destroy the object if the count is 0.
-    pub fn deref_with_context(&self, ctx: T::DestructorCtx) {
+    pub(crate) fn deref_with_context(&self, ctx: T::DestructorCtx) {
         #[cfg(debug_assertions)]
         {
             // SAFETY: data is live (we hold a ref)
@@ -843,7 +890,7 @@ impl<T: AnyRefCounted> RefPtr<T> {
     ///
     /// # Safety
     /// `raw_ptr` must point to a live `T` and the caller must own one ref.
-    pub unsafe fn take_ref(raw_ptr: *mut T) -> Self {
+    pub(crate) unsafe fn take_ref(raw_ptr: *mut T) -> Self {
         #[cfg(debug_assertions)]
         {
             // SAFETY: caller contract
@@ -871,7 +918,7 @@ impl<T: AnyRefCounted> RefPtr<T> {
 
     /// # Safety
     /// `raw_ptr` must point to a live `T` and the caller must hold/own a ref.
-    pub unsafe fn unchecked_and_unsafe_init(raw_ptr: *mut T, ret_addr: usize) -> Self {
+    pub(crate) unsafe fn unchecked_and_unsafe_init(raw_ptr: *mut T, ret_addr: usize) -> Self {
         let _ = ret_addr;
         Self {
             // SAFETY: caller contract — raw_ptr is non-null and live
@@ -1022,7 +1069,7 @@ pub struct DebugData<Count> {
 #[cfg(debug_assertions)]
 impl<Count> DebugData<Count> {
     // was `pub const EMPTY` — std HashMap::new() is non-const.
-    pub fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         Self {
             magic: MAGIC_VALID,
             lock: bun_core::Mutex::new(()),

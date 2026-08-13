@@ -64,7 +64,7 @@ macro_rules! debug {
 }
 
 pub struct Installer<'a> {
-    pub trusted_dependencies_mutex: Mutex,
+    pub(crate) trusted_dependencies_mutex: Mutex,
     /// BACKREF. Raw pointer (not `&'a mut`) for the same
     /// reason as `manager`: `Task::run` executes concurrently on the thread
     /// pool and each task derefs this field; a `&'a mut` would assert
@@ -73,47 +73,38 @@ pub struct Installer<'a> {
     /// narrowed via `addr_of_mut!`). Never null. Read via `lockfile()`.
     pub lockfile: *mut Lockfile,
 
-    pub summary: InstallSummary,
-    pub installed: Bitset,
-    pub install_node: Option<&'a mut ProgressNode>,
-    /// Stored as `NonNull` (not `&mut`)
-    /// because `PackageManager.scripts_node` already holds a raw pointer to the
-    /// same stack local; materializing a second long-lived `&mut` here would
-    /// invalidate that pointer's provenance under Stacked Borrows. Currently
-    /// unread on the Rust side — kept for layout/port parity.
-    pub scripts_node: Option<core::ptr::NonNull<ProgressNode>>,
-    pub is_new_bun_modules: bool,
+    pub(crate) summary: InstallSummary,
+    pub(crate) installed: Bitset,
+    pub(crate) install_node: Option<&'a mut ProgressNode>,
+    pub(crate) is_new_bun_modules: bool,
 
     /// BACKREF. Raw pointer (not `&'a mut`) because
     /// `Task::run`/`Task::callback` execute concurrently on the thread pool
     /// and each derefs this field; a `&'a mut` here would assert exclusivity
     /// every concurrent task violates. Never null. Access via `manager()` /
     /// `manager_mut()` (main thread only for `_mut`).
-    pub manager: *mut PackageManager,
-    pub command_ctx: Command::Context<'a>,
+    pub(crate) manager: *mut PackageManager,
+    pub(crate) command_ctx: Command::Context<'a>,
 
-    pub store: &'a Store,
+    pub(crate) store: &'a Store,
 
-    pub task_queue: UnboundedQueue<Task>, // intrusive via .next
-    pub tasks: Box<[Task]>,
+    pub(crate) task_queue: UnboundedQueue<Task>, // intrusive via .next
+    pub(crate) tasks: Box<[Task]>,
 
     /// Stable Rust has no
     /// generic atomic-enum, so store the `#[repr(u8)]` discriminant and
     /// round-trip via `Method::from_u8` at the load sites below.
-    pub supported_backend: AtomicU8,
+    pub(crate) supported_backend: AtomicU8,
 
-    /// Value is the alias bytes the key hash was computed from; lookups must
-    /// compare it since truncated hashes can collide. Built before tasks
-    /// spawn and only read concurrently afterwards.
-    pub trusted_dependencies_from_update_requests:
-        ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>>,
+    /// Built before tasks spawn and only read concurrently afterwards.
+    pub(crate) trusted_dependencies_from_update_requests: ArrayHashMap<PackageID, ()>,
 
     /// Absolute path to the global virtual store (`<cache_dir>/links`). When
     /// non-null, npm/git/tarball entries are materialized once into this
     /// directory and `node_modules/.bun/<storepath>` becomes a symlink into
     /// it, so warm installs are O(packages) symlinks instead of O(files)
     /// clonefile work.
-    pub global_store_path: Option<&'a ZStr>,
+    pub(crate) global_store_path: Option<&'a ZStr>,
 
     /// Per-process suffix for staging global-store entries. Each entry is
     /// built under `<cache>/links/<storepath>-<hash>.tmp-<this>/` (package
@@ -121,19 +112,19 @@ pub struct Installer<'a> {
     /// they resolve identically after the rename) and renamed into place as
     /// the final step. The directory existing at its final path is the only
     /// completeness signal the warm-hit check needs.
-    pub global_store_tmp_suffix: u64,
+    pub(crate) global_store_tmp_suffix: u64,
 }
 
 impl<'a> Installer<'a> {
     // BACKREF accessors — `manager` points outside `Self`; see field doc.
     #[inline]
-    pub fn manager(&self) -> &'a PackageManager {
+    pub(crate) fn manager(&self) -> &'a PackageManager {
         // SAFETY: BACKREF — never null; pointee outlives `'a`.
         unsafe { &*self.manager }
     }
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn manager_mut(&self) -> &'a mut PackageManager {
+    pub(crate) fn manager_mut(&self) -> &'a mut PackageManager {
         // SAFETY: BACKREF — never null; disjoint from `*self`. Return is `'a`
         // (not elided) so `start_task` can hold it across `&mut self.tasks[i]`
         // — same field-disjoint shape the prior `&'a mut` field permitted.
@@ -158,7 +149,7 @@ impl<'a> Installer<'a> {
     }
 
     /// Called from main thread
-    pub fn start_task(&mut self, entry_id: StoreEntryId) {
+    pub(crate) fn start_task(&mut self, entry_id: StoreEntryId) {
         let manager = self.manager_mut();
         let task = &mut self.tasks[entry_id.get() as usize];
         debug_assert!(matches!(
@@ -177,7 +168,7 @@ impl<'a> Installer<'a> {
             .schedule(thread_pool::Batch::from(&raw mut task.task));
     }
 
-    pub fn on_package_extracted(&mut self, task_id: crate::package_manager_task::Id) {
+    pub(crate) fn on_package_extracted(&mut self, task_id: crate::package_manager_task::Id) {
         if let Some(removed) = self.manager_mut().task_queue.remove(&task_id) {
             let store = self.store;
 
@@ -230,7 +221,7 @@ impl<'a> Installer<'a> {
     /// Without this, the upfront pending-task slot for each waiting entry is
     /// never released and the install loop blocks forever on
     /// `pendingTaskCount() == 0`.
-    pub fn on_package_download_error(
+    pub(crate) fn on_package_download_error(
         &mut self,
         task_id: crate::package_manager_task::Id,
         name: &[u8],
@@ -274,7 +265,7 @@ impl<'a> Installer<'a> {
         }
     }
 
-    pub fn apply_package_patch(
+    pub(crate) fn apply_package_patch(
         &mut self,
         entry_id: StoreEntryId,
         patch: &PatchInfoPatch,
@@ -285,24 +276,12 @@ impl<'a> Installer<'a> {
         let node_id = entry_node_ids[entry_id.get() as usize];
         let node_pkg_ids = store.nodes.items_pkg_id();
         let pkg_id = node_pkg_ids[node_id.get() as usize];
-        let patch_task_ptr = install::PatchTask::new_apply_patch_hash(
+        let mut patch_task = install::PatchTask::new_apply_patch_hash(
             self.manager_mut(),
             pkg_id,
             patch.contents_hash,
             patch.name_and_version_hash,
         );
-        // SAFETY: `new_apply_patch_hash` returns a freshly Box-allocated PatchTask;
-        // sole ownership lives in this scope.
-        struct PatchTaskGuard(*mut install::PatchTask);
-        impl Drop for PatchTaskGuard {
-            fn drop(&mut self) {
-                // SAFETY: exclusive owner; created by `heap::alloc` in `new_*`.
-                unsafe { install::PatchTask::destroy(self.0) };
-            }
-        }
-        let _guard = PatchTaskGuard(patch_task_ptr);
-        // SAFETY: exclusive owner — see above.
-        let patch_task = unsafe { &mut *patch_task_ptr };
         // Every peer variant shares one patched cache dir (named by the patch
         // contents hash, not the peer set). Once it exists, reuse it: rebuilding
         // it replaces the directory under earlier entries' running hardlink tasks.
@@ -323,7 +302,7 @@ impl<'a> Installer<'a> {
     }
 
     /// Called from main thread
-    pub fn on_task_fail(&mut self, entry_id: StoreEntryId, err: &TaskError) {
+    pub(crate) fn on_task_fail(&mut self, entry_id: StoreEntryId, err: &TaskError) {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         let entries = &self.store.entries;
@@ -446,12 +425,12 @@ impl<'a> Installer<'a> {
         self.resume_unblocked_tasks();
     }
 
-    pub fn decrement_pending_tasks(&mut self) {
+    pub(crate) fn decrement_pending_tasks(&mut self) {
         self.manager_mut().decrement_pending_tasks();
     }
 
     /// Called from main thread
-    pub fn on_task_blocked(&mut self, entry_id: StoreEntryId) {
+    pub(crate) fn on_task_blocked(&mut self, entry_id: StoreEntryId) {
         // race condition (fixed now): task decides it is blocked because one of its dependencies
         // has not finished. before the task can mark itself as blocked, the dependency finishes its
         // install, causing the task to never finish because resumeUnblockedTasks is called before
@@ -501,7 +480,7 @@ impl<'a> Installer<'a> {
     }
 
     /// Called from main thread
-    pub fn on_task_complete(&mut self, entry_id: StoreEntryId, state: CompleteState) {
+    pub(crate) fn on_task_complete(&mut self, entry_id: StoreEntryId, state: CompleteState) {
         if Environment::CI_ASSERT {
             // .monotonic is okay because we should have already synchronized with the completed
             // task thread by virtue of popping from the `UnboundedQueue`.
@@ -570,7 +549,7 @@ impl<'a> Installer<'a> {
     // `entry_steps[entry_id.get() as usize].load(.monotonic)`
     // and
     // `entry_steps[entry_id.get() as usize].store(.symlink_dependency_binaries, .monotonic)`
-    pub fn resume_unblocked_tasks(&mut self) {
+    pub(crate) fn resume_unblocked_tasks(&mut self) {
         let entries = &self.store.entries;
         let entry_steps = entries.items_step();
 
@@ -624,18 +603,18 @@ fn download_error_reason(e: crate::Error) -> &'static [u8] {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct Task {
-    pub entry_id: StoreEntryId,
+    pub(crate) entry_id: StoreEntryId,
     /// BACKREF: `Installer` owns `tasks[]` and outlives every `Task`. Stored as
     /// `BackRef` so worker-thread read sites use safe `Deref`/`get()` instead of
     /// per-site raw-pointer derefs. Constructed with a `NonNull::dangling()`
     /// placeholder (never dereferenced) and patched to the real address before
     /// any `start_task` call — see `isolated_install.rs`.
-    pub installer: bun_ptr::BackRef<Installer<'static>>,
+    pub(crate) installer: bun_ptr::BackRef<Installer<'static>>,
 
-    pub task: thread_pool::Task,
-    pub next: bun_threading::Link<Task>, // INTRUSIVE: bun.UnboundedQueue(Task, .next) link
+    pub(crate) task: thread_pool::Task,
+    pub(crate) next: bun_threading::Link<Task>, // INTRUSIVE: bun.UnboundedQueue(Task, .next) link
 
-    pub result: Result,
+    pub(crate) result: Result,
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`.
@@ -660,8 +639,8 @@ pub enum Result {
 }
 
 pub struct DownloadError {
-    pub err: crate::Error,
-    pub url: Box<[u8]>,
+    pub(crate) err: crate::Error,
+    pub(crate) url: Box<[u8]>,
 }
 
 pub enum TaskError {
@@ -763,7 +742,7 @@ impl Step {
     }
 }
 
-pub enum Yield {
+pub(crate) enum Yield {
     Yield,
     // Kept raw (semantically `&mut package::scripts::List`): borrow of
     // `entry_scripts`, owned by the store entry — see `Result::RunScripts`.
@@ -774,7 +753,7 @@ pub enum Yield {
 }
 
 impl Yield {
-    pub fn failure(e: TaskError) -> Yield {
+    pub(crate) fn failure(e: TaskError) -> Yield {
         Yield::Fail(e)
     }
 }
@@ -806,7 +785,7 @@ impl Task {
         // lives outside the `Installer` allocation and `items_step()` is atomic.
         // This also avoids leaking the erased `'static` from
         // `*mut Installer<'static>` into a whole-struct borrow.
-        let store: &Store = unsafe { *core::ptr::addr_of!((*self.installer.as_ptr()).store) };
+        let store: &Store = unsafe { *core::ptr::addr_of!((*self.installer.as_const_ptr()).store) };
         store.entries.items_step()[self.entry_id.get() as usize]
             .store(next_step as u32, Ordering::Release);
 
@@ -931,7 +910,22 @@ impl Task {
                                         match hardlinker.link()? {
                                             sys::Result::Ok(()) => {}
                                             sys::Result::Err(err) => {
-                                                if err.get_errno() == sys::Errno::EXDEV {
+                                                // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
+                                                if matches!(
+                                                    err.get_errno(),
+                                                    sys::Errno::EXDEV
+                                                        | sys::Errno::EACCES
+                                                        | sys::Errno::EPERM
+                                                ) {
+                                                    // rewind the dir cursor the hardlink walk consumed (Windows restarts the scan itself)
+                                                    #[cfg(not(windows))]
+                                                    if let sys::Result::Err(err) =
+                                                        sys::set_file_offset(folder_dir, 0)
+                                                    {
+                                                        return Ok(Yield::failure(
+                                                            TaskError::LinkPackage(err),
+                                                        ));
+                                                    }
                                                     backend = InstallMethod::Copyfile;
                                                     continue 'backend;
                                                 }
@@ -1337,7 +1331,13 @@ impl Task {
                                 match hardlinker.link()? {
                                     sys::Result::Ok(()) => {}
                                     sys::Result::Err(err) => {
-                                        if err.get_errno() == sys::Errno::EXDEV {
+                                        // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
+                                        if matches!(
+                                            err.get_errno(),
+                                            sys::Errno::EXDEV
+                                                | sys::Errno::EACCES
+                                                | sys::Errno::EPERM
+                                        ) {
                                             installer.supported_backend.store(
                                                 InstallMethod::Copyfile as u8,
                                                 Ordering::Relaxed,
@@ -1370,6 +1370,10 @@ impl Task {
 
                             // fallthrough copyfile
                             _ => {
+                                // close the fd the failed hardlink attempt left behind
+                                if let Some(old) = cached_package_dir.take() {
+                                    old.close();
+                                }
                                 *cached_package_dir = match bun_sys::open_dir_for_iteration(
                                     cache_dir,
                                     pkg_cache_dir_subpath.slice(),
@@ -1510,6 +1514,7 @@ impl Task {
                         let mut symlinker = Symlinker {
                             dest: dest.into_sep::<{ PathSeparators::ANY }>(),
                             target: target.into_sep::<{ PathSeparators::ANY }>(),
+                            #[cfg(windows)]
                             fallback_junction_target: dep_store_path
                                 .into_sep::<{ PathSeparators::ANY }>(),
                         };
@@ -1634,8 +1639,7 @@ impl Task {
                     let (is_trusted, is_trusted_through_update_request) = 'brk: {
                         if installer
                             .trusted_dependencies_from_update_requests
-                            .get(&truncated_dep_name_hash)
-                            .is_some_and(|n| **n == *dep.name.slice(string_buf))
+                            .contains(&pkg_id)
                         {
                             break 'brk (true, true);
                         }
@@ -1674,11 +1678,11 @@ impl Task {
                                         },
                                         version_buf: lockfile.buffers.string_bytes.as_slice(),
                                     },
-                                    lockfile.buffers.resolutions.as_slice(),
+                                    pkg_resolutions_lists[pkg_id as usize]
+                                        .get(lockfile.buffers.resolutions.as_slice()),
                                     pkg_metas,
                                     manager.options.cpu,
                                     manager.options.os,
-                                    None,
                                 )
                         {
                             break 'enqueue_lifecycle_scripts;
@@ -1714,8 +1718,16 @@ impl Task {
                             entry_scripts[self.entry_id.get() as usize].set(Some(clone));
 
                             if is_trusted_through_update_request {
-                                let trusted_dep_to_add: Box<[u8]> =
-                                    Box::from(dep.name.slice(string_buf));
+                                let (trusted_name, trusted_name_hash) =
+                                    if pkg_res.tag == ResolutionTag::Npm {
+                                        (
+                                            pkg_name.slice(string_buf),
+                                            pkg_name_hash as TruncatedPackageNameHash,
+                                        )
+                                    } else {
+                                        (dep.name.slice(string_buf), truncated_dep_name_hash)
+                                    };
+                                let trusted_dep_to_add: Box<[u8]> = Box::from(trusted_name);
 
                                 let _unlock = installer.trusted_dependencies_mutex.lock_guard();
 
@@ -1744,10 +1756,10 @@ impl Task {
                                 if trusted.is_none() {
                                     *trusted = Some(Default::default());
                                 }
-                                trusted.as_mut().unwrap().insert(
-                                    truncated_dep_name_hash,
-                                    Box::from(dep.name.slice(string_buf)),
-                                );
+                                trusted
+                                    .as_mut()
+                                    .unwrap()
+                                    .insert(trusted_name_hash, Box::from(trusted_name));
                             }
 
                             if first_index != 0 {
@@ -1949,7 +1961,7 @@ impl Task {
     }
 
     /// Called from task thread
-    pub unsafe fn callback(task: *mut thread_pool::Task) {
+    pub(crate) unsafe fn callback(task: *mut thread_pool::Task) {
         // SAFETY: task points to Task.task field
         let this: &mut Task = unsafe { &mut *bun_core::from_field_ptr!(Task, task, task) };
 
@@ -2049,24 +2061,22 @@ pub enum PatchInfo {
     Patch(PatchInfoPatch),
 }
 
-pub struct PatchInfoRemove {
-    pub name_and_version_hash: u64,
-}
+pub struct PatchInfoRemove {}
 
 pub struct PatchInfoPatch {
-    pub name_and_version_hash: u64,
-    pub contents_hash: u64,
+    pub(crate) name_and_version_hash: u64,
+    pub(crate) contents_hash: u64,
 }
 
 impl PatchInfo {
-    pub fn contents_hash(&self) -> Option<u64> {
+    pub(crate) fn contents_hash(&self) -> Option<u64> {
         match self {
             PatchInfo::None | PatchInfo::Remove(_) => None,
             PatchInfo::Patch(patch) => Some(patch.contents_hash),
         }
     }
 
-    pub fn name_and_version_hash(&self) -> Option<u64> {
+    pub(crate) fn name_and_version_hash(&self) -> Option<u64> {
         match self {
             PatchInfo::None | PatchInfo::Remove(_) => None,
             PatchInfo::Patch(patch) => Some(patch.name_and_version_hash),
@@ -2075,7 +2085,7 @@ impl PatchInfo {
 }
 
 impl<'a> Installer<'a> {
-    pub fn package_patch_info(
+    pub(crate) fn package_patch_info(
         &self,
         pkg_name: SemverString,
         pkg_name_hash: PackageNameHash,
@@ -2135,15 +2145,13 @@ impl<'a> Installer<'a> {
             .patched_dependencies_to_remove
             .contains_key(&name_and_version_hash)
         {
-            return Ok(PatchInfo::Remove(PatchInfoRemove {
-                name_and_version_hash,
-            }));
+            return Ok(PatchInfo::Remove(PatchInfoRemove {}));
         }
 
         Ok(PatchInfo::None)
     }
 
-    pub fn link_to_hidden_node_modules(&self, entry_id: StoreEntryId) {
+    pub(crate) fn link_to_hidden_node_modules(&self, entry_id: StoreEntryId) {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
@@ -2180,12 +2188,15 @@ impl<'a> Installer<'a> {
             bstr::BStr::new(pkg_name.slice(string_buf)),
         ));
 
+        #[cfg(windows)]
         let mut full_target = AutoAbsPath::init_top_level_dir();
+        #[cfg(windows)]
         self.append_store_path(&mut full_target, entry_id);
 
         let mut symlinker = Symlinker {
             dest: hidden_hoisted_node_modules.into_sep::<{ PathSeparators::ANY }>(),
             target: target.into_sep::<{ PathSeparators::ANY }>(),
+            #[cfg(windows)]
             fallback_junction_target: full_target.into_sep::<{ PathSeparators::ANY }>(),
         };
 
@@ -2252,7 +2263,7 @@ impl<'a> Installer<'a> {
         None
     }
 
-    pub fn link_dependency_bins(&self, parent_entry_id: StoreEntryId) -> crate::Result<()> {
+    pub(crate) fn link_dependency_bins(&self, parent_entry_id: StoreEntryId) -> crate::Result<()> {
         let lockfile = self.lockfile();
         let store = self.store;
 
@@ -2386,7 +2397,7 @@ impl<'a> Installer<'a> {
     /// instead of being materialized under the project's `node_modules/.bun/`.
     /// Root, workspace, folder, symlink, and patched packages always stay
     /// project-local because their contents are mutable / project-specific.
-    pub fn entry_uses_global_store(&self, entry_id: StoreEntryId) -> bool {
+    pub(crate) fn entry_uses_global_store(&self, entry_id: StoreEntryId) -> bool {
         if self.global_store_path.is_none() {
             return false;
         }
@@ -2398,7 +2409,7 @@ impl<'a> Installer<'a> {
     /// (no trailing `/node_modules`). Pass `.staging` to get the per-process
     /// temp sibling that the build steps write into; the final `binaries`
     /// step renames staging → final.
-    pub fn append_global_store_entry_path(
+    pub(crate) fn append_global_store_entry_path(
         &self,
         buf: &mut impl paths::PathLike,
         entry_id: StoreEntryId,
@@ -2426,7 +2437,7 @@ impl<'a> Installer<'a> {
     /// staging path; every link inside is relative to the entry directory, so
     /// they resolve identically after the rename. The final directory
     /// existing is the only completeness signal — no separate stamp file.
-    pub fn commit_global_store_entry(&self, entry_id: StoreEntryId) -> sys::Result<()> {
+    pub(crate) fn commit_global_store_entry(&self, entry_id: StoreEntryId) -> sys::Result<()> {
         if !self.entry_uses_global_store(entry_id) {
             return sys::Result::Ok(());
         }
@@ -2494,7 +2505,7 @@ impl<'a> Installer<'a> {
 
     /// Project-local path `node_modules/.bun/<storepath>` (the symlink that
     /// points at the global virtual-store entry). Relative to top-level dir.
-    pub fn append_local_store_entry_path(
+    pub(crate) fn append_local_store_entry_path(
         &self,
         buf: &mut impl paths::PathLike,
         entry_id: StoreEntryId,
@@ -2509,7 +2520,7 @@ impl<'a> Installer<'a> {
     /// Create the project-level symlink `node_modules/.bun/<storepath>` →
     /// `<cache>/links/<storepath>-<hash>`. This is the only per-install
     /// filesystem write for a warm global-store hit.
-    pub fn link_project_to_global_store(&self, entry_id: StoreEntryId) -> sys::Result<()> {
+    pub(crate) fn link_project_to_global_store(&self, entry_id: StoreEntryId) -> sys::Result<()> {
         let mut dest = AutoPath::init_top_level_dir();
         self.append_local_store_entry_path(&mut dest, entry_id);
 
@@ -2587,7 +2598,7 @@ impl<'a> Installer<'a> {
         do_symlink(dest.slice_z(), target_abs.slice_z())
     }
 
-    pub fn append_store_node_modules_path(
+    pub(crate) fn append_store_node_modules_path(
         &self,
         buf: &mut impl paths::PathLike,
         entry_id: StoreEntryId,
@@ -2629,7 +2640,7 @@ impl<'a> Installer<'a> {
     /// location of the entry's `node_modules` directory: the global virtual
     /// store for global-eligible entries, or the project-local `.bun/` path
     /// otherwise. See `Which` for when to pass `.staging` vs `.final`.
-    pub fn append_real_store_node_modules_path(
+    pub(crate) fn append_real_store_node_modules_path(
         &self,
         buf: &mut impl paths::PathLike,
         entry_id: StoreEntryId,
@@ -2645,7 +2656,7 @@ impl<'a> Installer<'a> {
 
     /// `appendStorePath` resolved to the entry's *physical* location. See
     /// `Which` for when to pass `.staging` vs `.final`.
-    pub fn append_real_store_path(
+    pub(crate) fn append_real_store_path(
         &self,
         buf: &mut impl paths::PathLike,
         entry_id: StoreEntryId,
@@ -2664,7 +2675,7 @@ impl<'a> Installer<'a> {
         self.append_store_path(buf, entry_id);
     }
 
-    pub fn append_store_path(&self, buf: &mut impl paths::PathLike, entry_id: StoreEntryId) {
+    pub(crate) fn append_store_path(&self, buf: &mut impl paths::PathLike, entry_id: StoreEntryId) {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         let entries = &self.store.entries;
@@ -2745,7 +2756,7 @@ impl<'a> Installer<'a> {
     ///                                               ^ this one
     /// Need to know this to avoid collisions with dependencies
     /// with the same name as the package.
-    pub fn entry_store_node_modules_package_name<'b>(
+    pub(crate) fn entry_store_node_modules_package_name<'b>(
         &'b self,
         dep_id: DependencyID,
         pkg_id: PackageID,

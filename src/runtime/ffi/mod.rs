@@ -17,7 +17,7 @@ mod ffi_body;
 /// the codegen-expected path so the dispatch table links without forcing the
 /// generator to special-case `ffi/ffi.rs`.
 pub mod ffi {
-    pub use super::ffi_body::bun__ffi__cc;
+    pub(crate) use super::ffi_body::bun__ffi__cc;
 }
 
 #[path = "FFIObject.rs"]
@@ -76,7 +76,7 @@ mod dom_call_slowpath {
     // exceptions), so no `to_js_host_call` mapping.
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
-    pub(super) fn FFI__ptr__slowpath(
+    fn FFI__ptr__slowpath(
         global: *mut JSGlobalObject,
         this_value: JSValue,
         arguments_ptr: *const JSValue,

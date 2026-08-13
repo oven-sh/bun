@@ -269,7 +269,7 @@ impl Ref {
         matches!(self.tag(), RefTag::SourceContentsSlice)
     }
     #[inline]
-    pub fn is_source_index_null(i: u32) -> bool {
+    pub(crate) fn is_source_index_null(i: u32) -> bool {
         i == Self::INNER_MASK as u32 // maxInt(u31)
     }
 
@@ -286,7 +286,7 @@ impl Ref {
     /// `new`/`init`/`pack` this equals the raw `self.0` (user bits are 0 there),
     /// so wyhash output is unchanged vs the pre-shrink layout.
     #[inline]
-    pub const fn as_u64(self) -> u64 {
+    pub(crate) const fn as_u64(self) -> u64 {
         self.0 & !Self::USER_BITS_MASK
     }
 
@@ -298,18 +298,18 @@ impl Ref {
     // identity (eq/hash/as_u64/inner_index) so `id.ref_` remains a valid
     // symbol-map key regardless of flag state.
     #[inline]
-    pub const fn user_bit(self, n: u32) -> bool {
+    pub(crate) const fn user_bit(self, n: u32) -> bool {
         debug_assert!(n < 3);
         (self.0 >> (28 + n)) & 1 != 0
     }
     #[inline]
-    pub fn set_user_bit(&mut self, n: u32, v: bool) {
+    pub(crate) fn set_user_bit(&mut self, n: u32, v: bool) {
         debug_assert!(n < 3);
         let bit = 1u64 << (28 + n);
         self.0 = (self.0 & !bit) | ((v as u64) << (28 + n));
     }
     #[inline]
-    pub const fn with_user_bit(mut self, n: u32, v: bool) -> Ref {
+    pub(crate) const fn with_user_bit(mut self, n: u32, v: bool) -> Ref {
         debug_assert!(n < 3);
         let bit = 1u64 << (28 + n);
         self.0 = (self.0 & !bit) | ((v as u64) << (28 + n));
@@ -321,7 +321,7 @@ impl Ref {
     /// `can_be_removed_if_unused`/`call_can_be_unwrapped_if_unused` bits don't
     /// leak across node kinds.
     #[inline]
-    pub const fn without_user_bits(self) -> Ref {
+    pub(crate) const fn without_user_bits(self) -> Ref {
         Ref(self.0 & !Self::USER_BITS_MASK)
     }
     /// Replace the identity bits with those of `self` while keeping `src`'s
@@ -408,64 +408,6 @@ pub struct PathContentsPair {
 type Str = &'static [u8];
 // `Str` is a lifetime-erased byte-slice alias; see the module-level OWNERSHIP
 // note for the real ownership story.
-
-// ───────────────────────────────────────────────────────────────────────────
-// api — hand-written slice of `bun.schema.api` consumed by
-// `Kind/Location/Data/Msg/Log::to_api`. The full
-// peechy → .rs codegen (`bun_api`) will supersede this; field shapes are kept
-// faithful so the generated diff stays reviewable. Lives here (not `bun_api`)
-// ───────────────────────────────────────────────────────────────────────────
-pub mod api {
-    /// `MessageLevel` — u32 enum, 1-based; `None` = 0.
-    #[repr(u32)]
-    #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
-    pub enum MessageLevel {
-        #[default]
-        None = 0,
-        Err = 1,
-        Warn = 2,
-        Note = 3,
-        Info = 4,
-        Debug = 5,
-    }
-
-    #[derive(Clone, Default, Debug)]
-    pub struct Location {
-        pub file: Vec<u8>,
-        pub namespace: Vec<u8>,
-        pub line: i32,
-        pub column: i32,
-        pub line_text: Vec<u8>,
-        pub offset: u32,
-    }
-
-    #[derive(Clone, Default, Debug)]
-    pub struct MessageData {
-        pub text: Option<Vec<u8>>,
-        pub location: Option<Location>,
-    }
-
-    #[derive(Clone, Default, Debug)]
-    pub struct MessageMeta {
-        pub resolve: Option<Vec<u8>>,
-        pub build: Option<bool>,
-    }
-
-    #[derive(Clone, Default, Debug)]
-    pub struct Message {
-        pub level: MessageLevel,
-        pub data: MessageData,
-        pub notes: Box<[MessageData]>,
-        pub on: MessageMeta,
-    }
-
-    #[derive(Clone, Default, Debug)]
-    pub struct Log {
-        pub warnings: u32,
-        pub errors: u32,
-        pub msgs: Box<[Message]>,
-    }
-}
 
 /// `[]const u8` parameter shim — accepts `&str` / `&[u8]` (any lifetime)
 /// and erases to the crate-wide `Str` (`&'static [u8]`) lie so callers in either
@@ -617,16 +559,6 @@ impl Kind {
             Kind::Verbose => b"verbose",
         }
     }
-
-    #[inline]
-    pub fn to_api(self) -> api::MessageLevel {
-        match self {
-            Kind::Err => api::MessageLevel::Err,
-            Kind::Warn => api::MessageLevel::Warn,
-            Kind::Note => api::MessageLevel::Note,
-            _ => api::MessageLevel::Debug,
-        }
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -634,6 +566,7 @@ impl Kind {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
+#[repr(transparent)]
 pub struct Loc {
     pub start: i32,
 }
@@ -746,7 +679,7 @@ impl Default for Location {
 }
 
 impl Location {
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
         cost += self.file.len();
         cost += self.namespace.len();
@@ -764,14 +697,14 @@ impl Location {
         }
     }
 
-    pub fn clone(&self) -> Location {
+    pub(crate) fn clone(&self) -> Location {
         // The trait `Clone` impl above does the deep-dupe (so the duped bytes
         // outlive the original `Source.contents`); this inherent shim forwards
         // to it.
         <Self as Clone>::clone(self)
     }
 
-    pub fn clone_with_builder(&self, _string_builder: &mut StringBuilder) -> Location {
+    pub(crate) fn clone_with_builder(&self, _string_builder: &mut StringBuilder) -> Location {
         // The local
         // `StringBuilder` stub above is a no-op that returns its input, so a
         // `Cow::Borrowed(append(s))` would alias `self`'s storage and dangle
@@ -786,17 +719,6 @@ impl Location {
             length: self.length,
             line_text: self.line_text.as_deref().map(|t| Cow::Owned(t.to_vec())),
             offset: self.offset,
-        }
-    }
-
-    pub fn to_api(&self) -> api::Location {
-        api::Location {
-            file: self.file.to_vec(),
-            namespace: self.namespace.to_vec(),
-            line: self.line,
-            column: self.column,
-            line_text: self.line_text.as_deref().unwrap_or(b"").to_vec(),
-            offset: self.offset as u32, // @truncate
         }
     }
 
@@ -922,7 +844,7 @@ impl Default for Data {
 }
 
 impl Data {
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
         cost += self.text.len();
         if let Some(loc) = &self.location {
@@ -970,7 +892,7 @@ impl Data {
         }
     }
 
-    pub fn clone_with_builder(&self, builder: &mut StringBuilder) -> Data {
+    pub(crate) fn clone_with_builder(&self, builder: &mut StringBuilder) -> Data {
         Data {
             text: if !self.text.is_empty() {
                 // The local `StringBuilder`
@@ -997,14 +919,7 @@ impl Data {
         }
     }
 
-    pub fn to_api(&self) -> api::MessageData {
-        api::MessageData {
-            text: Some(self.text.to_vec()),
-            location: self.location.as_ref().map(|l| l.to_api()),
-        }
-    }
-
-    pub fn write_format<const ENABLE_ANSI_COLORS: bool>(
+    pub(crate) fn write_format<const ENABLE_ANSI_COLORS: bool>(
         &self,
         to: &mut impl fmt::Write,
         kind: Kind,
@@ -1153,7 +1068,7 @@ impl BabyString {
     }
 
     #[inline]
-    pub const fn offset(self) -> u16 {
+    pub(crate) const fn offset(self) -> u16 {
         self.0 as u16
     }
 
@@ -1204,7 +1119,7 @@ impl Default for Msg {
 }
 
 impl Msg {
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
         cost += self.data.memory_cost();
         for note in self.notes.iter() {
@@ -1236,7 +1151,11 @@ impl Msg {
         }
     }
 
-    pub fn clone_with_builder(&self, notes: &mut [Data], builder: &mut StringBuilder) -> Msg {
+    pub(crate) fn clone_with_builder(
+        &self,
+        notes: &mut [Data],
+        builder: &mut StringBuilder,
+    ) -> Msg {
         Msg {
             kind: self.kind,
             data: self.data.clone_with_builder(builder),
@@ -1253,37 +1172,6 @@ impl Msg {
             },
             redact_sensitive_information: self.redact_sensitive_information,
         }
-    }
-
-    pub fn to_api(&self) -> api::Message {
-        let mut notes = vec![api::MessageData::default(); self.notes.len()].into_boxed_slice();
-        for (i, note) in self.notes.iter().enumerate() {
-            notes[i] = note.to_api();
-        }
-        api::Message {
-            level: self.kind.to_api(),
-            data: self.data.to_api(),
-            notes,
-            on: api::MessageMeta {
-                resolve: if let Metadata::Resolve(r) = &self.metadata {
-                    Some(r.specifier.slice(&self.data.text).to_vec())
-                } else {
-                    // NON-NULL empty string so peechy `MessageMeta.encode`
-                    // still emits field-ID 1; `None` would skip the field
-                    // entirely on the wire.
-                    Some(Vec::new())
-                },
-                build: Some(matches!(self.metadata, Metadata::Build)),
-            },
-        }
-    }
-
-    pub fn to_api_from_list(list: &[Msg]) -> Box<[api::Message]> {
-        let mut out_list = Vec::with_capacity(list.len());
-        for item in list {
-            out_list.push(item.to_api());
-        }
-        out_list.into_boxed_slice()
     }
 
     // No explicit Drop body needed beyond field drops.
@@ -1360,7 +1248,7 @@ impl Default for Range {
 /// Moved into logger to break logger→js_parser. Includes the full Unicode
 /// `isIdentifierStart/Continue` tables (via `bun_core::identifier`) and
 /// `\u{...}` escape skipping.
-pub fn range_of_identifier(contents: &[u8], loc: Loc) -> Range {
+pub(crate) fn range_of_identifier(contents: &[u8], loc: Loc) -> Range {
     if loc.start < 0 || (loc.start as usize) >= contents.len() {
         return Range::NONE;
     }
@@ -1439,10 +1327,6 @@ impl Range {
         loc: Loc::EMPTY,
         len: 0,
     };
-
-    pub fn contains(self, k: i32) -> bool {
-        k >= self.loc.start && k < self.loc.start + self.len
-    }
 
     pub fn is_empty(self) -> bool {
         self.len == 0 && self.loc.start == Loc::EMPTY.start
@@ -1620,21 +1504,6 @@ impl Log {
         (self.warnings + self.errors) > 0
     }
 
-    pub fn to_api(&self) -> api::Log {
-        let mut warnings: u32 = 0;
-        let mut errors: u32 = 0;
-        for msg in &self.msgs {
-            errors += (msg.kind == Kind::Err) as u32;
-            warnings += (msg.kind == Kind::Warn) as u32;
-        }
-
-        api::Log {
-            warnings,
-            errors,
-            msgs: Msg::to_api_from_list(&self.msgs),
-        }
-    }
-
     pub fn init() -> Log {
         let level = DEFAULT_LOG_LEVEL.load();
         Log {
@@ -1648,13 +1517,6 @@ impl Log {
     #[inline]
     pub fn new() -> Log {
         Log::init()
-    }
-
-    pub fn init_comptime() -> Log {
-        Log {
-            msgs: Vec::new(),
-            ..Default::default()
-        }
     }
 
     #[inline]
@@ -2285,7 +2147,7 @@ impl Log {
         }
     }
 
-    pub fn print_with_enable_ansi_colors<const ENABLE_ANSI_COLORS: bool>(
+    pub(crate) fn print_with_enable_ansi_colors<const ENABLE_ANSI_COLORS: bool>(
         &self,
         to: &mut impl fmt::Write,
     ) -> fmt::Result {
@@ -2495,11 +2357,11 @@ impl Default for Source {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct ErrorPosition {
-    pub line_start: usize,
-    pub line_end: usize,
-    pub column_count: usize,
-    pub line_count: usize,
+struct ErrorPosition {
+    pub(crate) line_start: usize,
+    pub(crate) line_end: usize,
+    pub(crate) column_count: usize,
+    pub(crate) line_count: usize,
 }
 
 /// Scanner state shared by [`Source::init_error_position`] and
@@ -2659,7 +2521,7 @@ impl LineColumnTracker {
 
     /// [`Source::init_error_position`], resuming from the previous call's
     /// offset when possible instead of rescanning from the start.
-    pub fn error_position(&mut self, source: &Source, offset_loc: Loc) -> ErrorPosition {
+    pub(crate) fn error_position(&mut self, source: &Source, offset_loc: Loc) -> ErrorPosition {
         debug_assert!(!offset_loc.is_empty());
         let contents: &[u8] = &source.contents;
         let offset = clamp_error_offset(contents, offset_loc);
@@ -2819,7 +2681,7 @@ impl Source {
         Range { loc, len: 0 }
     }
 
-    pub fn init_error_position(&self, offset_loc: Loc) -> ErrorPosition {
+    pub(crate) fn init_error_position(&self, offset_loc: Loc) -> ErrorPosition {
         debug_assert!(!offset_loc.is_empty());
         let contents: &[u8] = &self.contents;
         let offset = clamp_error_offset(contents, offset_loc);
@@ -2915,7 +2777,7 @@ pub fn source_from_file(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys
 /// Read `path` (relative to `dir_fd`) into memory and wrap it in a `Source`.
 ///
 /// MOVE_DOWN from `bun_sys::File::to_source_at` (T1 cannot name T2).
-pub(crate) fn source_from_file_at(
+fn source_from_file_at(
     dir_fd: bun_sys::Fd,
     path: &bun_core::ZStr,
     opts: ToSourceOptions,
@@ -3028,7 +2890,6 @@ pub mod flags {
     #[derive(EnumSetType, Debug)]
     pub enum JSXElement {
         IsKeyAfterSpread,
-        HasAnyDynamic,
     }
     pub type JSXElementBitset = EnumSet<JSXElement>;
 
@@ -3130,12 +2991,12 @@ impl<T: 'static> DebugOnlyDisabler<T> {
         });
     }
     #[inline]
-    pub fn disable() {
+    pub(crate) fn disable() {
         #[cfg(debug_assertions)]
         debug_disabler_state::DISABLED.with(|d| d.borrow_mut().push(core::any::TypeId::of::<T>()));
     }
     #[inline]
-    pub fn enable() {
+    pub(crate) fn enable() {
         #[cfg(debug_assertions)]
         debug_disabler_state::DISABLED.with(|d| {
             let mut v = d.borrow_mut();
@@ -3248,11 +3109,11 @@ static DATA_STORE_OVERRIDE: core::cell::Cell<*const bun_alloc::Arena> =
     core::cell::Cell::new(core::ptr::null());
 
 #[inline]
-pub(crate) fn data_store_override() -> *const bun_alloc::Arena {
+fn data_store_override() -> *const bun_alloc::Arena {
     DATA_STORE_OVERRIDE.get()
 }
 #[inline]
-pub(crate) fn set_data_store_override(p: *const bun_alloc::Arena) {
+fn set_data_store_override(p: *const bun_alloc::Arena) {
     DATA_STORE_OVERRIDE.set(p);
 }
 
@@ -3290,7 +3151,7 @@ pub fn data_store_dupe_str(bytes: &[u8]) -> &'static [u8] {
 }
 
 /// RAII scope for [`store_ast_alloc_heap`]: `enter()` on construction,
-/// `reset()` via [`Self::reset`], `exit()` on drop.
+/// `exit()` on drop.
 #[must_use = "side-arena heap lives until this guard drops"]
 pub struct StoreAstAllocHeap(());
 impl StoreAstAllocHeap {
@@ -3298,10 +3159,6 @@ impl StoreAstAllocHeap {
     pub fn new() -> Self {
         store_ast_alloc_heap::enter();
         Self(())
-    }
-    #[inline]
-    pub fn reset(&self) {
-        store_ast_alloc_heap::reset();
     }
 }
 impl Drop for StoreAstAllocHeap {
@@ -3352,21 +3209,29 @@ pub fn initialize_store_or_reset() {
 
 /// RAII guard that pins the thread-local `disable_reset` flag on both AST
 /// `Store`s for its scope.
-#[must_use = "disable_reset is cleared on drop; bind to a named local"]
-pub struct DisableStoreReset(());
+#[must_use = "disable_reset is restored on drop; bind to a named local"]
+pub struct DisableStoreReset {
+    prev_expr: bool,
+    prev_stmt: bool,
+}
 impl DisableStoreReset {
     #[inline]
     pub fn new() -> Self {
+        let prev_expr = expr::data::Store::disable_reset();
+        let prev_stmt = stmt::data::Store::disable_reset();
         expr::data::Store::set_disable_reset(true);
         stmt::data::Store::set_disable_reset(true);
-        Self(())
+        Self {
+            prev_expr,
+            prev_stmt,
+        }
     }
 }
 impl Drop for DisableStoreReset {
     #[inline]
     fn drop(&mut self) {
-        expr::data::Store::set_disable_reset(false);
-        stmt::data::Store::set_disable_reset(false);
+        expr::data::Store::set_disable_reset(self.prev_expr);
+        stmt::data::Store::set_disable_reset(self.prev_stmt);
     }
 }
 

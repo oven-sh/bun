@@ -88,36 +88,35 @@ pub(crate) enum ContentsOrFdTag {
 pub struct ParseTask {
     // lifetime-erased `'static` — paths borrow from `DirnameStore`
     // (process-lifetime BSS string pool); see `bun_resolver::fs::Path<'a>`.
-    pub path: Fs::Path<'static>,
-    pub secondary_path_for_commonjs_interop: Option<Fs::Path<'static>>,
-    pub contents_or_fd: ContentsOrFd,
-    pub external_free_function: ExternalFreeFunction,
-    pub side_effects: bun_ast::SideEffects,
-    pub loader: Option<Loader>,
-    pub jsx: options::jsx::Pragma,
-    pub source_index: Index,
+    pub(crate) path: Fs::Path<'static>,
+    pub(crate) secondary_path_for_commonjs_interop: Option<Fs::Path<'static>>,
+    pub(crate) contents_or_fd: ContentsOrFd,
+    pub(crate) external_free_function: ExternalFreeFunction,
+    pub(crate) side_effects: bun_ast::SideEffects,
+    pub(crate) loader: Option<Loader>,
+    pub(crate) jsx: options::jsx::Pragma,
+    pub(crate) source_index: Index,
     pub task: ThreadPoolLib::Task,
 
     // Split this into a different task so that we don't accidentally run the
     // tasks for io on the threads that are meant for parsing.
-    pub io_task: ThreadPoolLib::Task,
+    pub(crate) io_task: ThreadPoolLib::Task,
 
     // Used for splitting up the work between the io and parse steps.
-    pub stage: ParseTaskStage,
+    pub(crate) stage: ParseTaskStage,
 
-    pub tree_shaking: bool,
-    pub known_target: options::Target,
-    pub module_type: options::ModuleType,
-    pub emit_decorator_metadata: bool,
-    pub experimental_decorators: bool,
-    /// BACKREF (LIFETIMES.tsv) — written through in
-    /// `on_complete`. `None` only in the `default()` placeholder; every
-    /// scheduled task has it set via `init` / `bundle_v2.rs` write-sites.
-    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>>>,
+    pub(crate) tree_shaking: bool,
+    pub(crate) known_target: options::Target,
+    pub(crate) module_type: options::ModuleType,
+    pub(crate) emit_decorator_metadata: bool,
+    pub(crate) experimental_decorators: bool,
+    pub(crate) use_define_for_class_fields: bool,
+    // BACKREF; `None` only before enqueue (`Default`, runtime source).
+    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
     // Borrows package_json (resolver arena); valid for the bundle pass.
-    pub package_version: ast::StoreStr,
-    pub package_name: ast::StoreStr,
-    pub is_entry_point: bool,
+    pub(crate) package_version: ast::StoreStr,
+    pub(crate) package_name: ast::StoreStr,
+    pub(crate) is_entry_point: bool,
 }
 
 pub enum ParseTaskStage {
@@ -130,28 +129,28 @@ pub enum ParseTaskStage {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// The information returned to the Bundler thread when a parse finishes.
-pub struct Result {
-    pub task: EventLoop::Task,
-    pub ctx: bun_ptr::ParentRef<BundleV2<'static>>,
-    pub value: ResultValue,
-    pub watcher_data: WatcherData,
+pub(crate) struct Result {
+    pub(crate) task: EventLoop::Task,
+    pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
+    pub(crate) value: ResultValue,
+    pub(crate) watcher_data: WatcherData,
     /// This is used for native onBeforeParsePlugins to store
     /// a function pointer and context pointer to free the
     /// returned source code by the plugin.
-    pub external: ExternalFreeFunction,
+    pub(crate) external: ExternalFreeFunction,
 }
 // `Result` lives in a bump arena (no Drop on free); boxing the large arm
 // would leak the heap allocation. The size diff is acceptable.
 #[allow(clippy::large_enum_variant)]
-pub enum ResultValue {
+pub(crate) enum ResultValue {
     Success(Success),
     Err(ResultError),
     Empty { source_index: Index },
 }
 
-pub struct WatcherData {
-    pub fd: Fd,
-    pub dir_fd: Fd,
+pub(crate) struct WatcherData {
+    pub(crate) fd: Fd,
+    pub(crate) dir_fd: Fd,
 }
 
 impl WatcherData {
@@ -162,30 +161,30 @@ impl WatcherData {
     };
 }
 
-pub struct Success {
-    pub ast: JSAst<'static>,
-    pub source: Source,
-    pub log: Log,
-    pub use_directive: UseDirective,
-    pub side_effects: bun_ast::SideEffects,
+pub(crate) struct Success {
+    pub(crate) ast: JSAst<'static>,
+    pub(crate) source: Source,
+    pub(crate) log: Log,
+    pub(crate) use_directive: UseDirective,
+    pub(crate) side_effects: bun_ast::SideEffects,
 
     /// Used by "file" loader files.
-    pub unique_key_for_additional_file: ast::StoreStr,
+    pub(crate) unique_key_for_additional_file: ast::StoreStr,
     /// Used by "file" loader files.
-    pub content_hash_for_additional_file: u64,
+    pub(crate) content_hash_for_additional_file: u64,
 
-    pub loader: Loader,
+    pub(crate) loader: Loader,
 
     /// The package name from package.json, used for barrel optimization.
-    pub package_name: ast::StoreStr,
+    pub(crate) package_name: ast::StoreStr,
 }
 
-pub struct ResultError {
-    pub err: AnyError,
-    pub step: Step,
-    pub log: Log,
-    pub target: options::Target,
-    pub source_index: Index,
+pub(crate) struct ResultError {
+    pub(crate) err: AnyError,
+    pub(crate) step: Step,
+    pub(crate) log: Log,
+    pub(crate) target: options::Target,
+    pub(crate) source_index: Index,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -217,12 +216,12 @@ impl ParseTask {
     /// tasks and outlives all of them. Also requires `ctx` to be initialized
     /// (`init()` was called); debug-asserted.
     #[inline]
-    pub unsafe fn ctx<'r>(&self) -> &'r BundleV2<'static> {
+    pub(crate) unsafe fn ctx<'r>(&self) -> &'r BundleV2<'static> {
         // SAFETY: caller upholds: bundle outlives `'r`. `expect` enforces init().
         unsafe { bun_ptr::detach_lifetime_ref(self.ctx.expect("ParseTask.ctx unset").get()) }
     }
 
-    pub fn init(
+    pub(crate) fn init(
         resolve_result: &_resolver::Result,
         source_index: Index,
         // Take `*mut` so the stored BACKREF retains
@@ -264,6 +263,7 @@ impl ParseTask {
             module_type: resolve_result.module_type,
             emit_decorator_metadata: resolve_result.flags.emit_decorator_metadata(),
             experimental_decorators: resolve_result.flags.experimental_decorators(),
+            use_define_for_class_fields: resolve_result.flags.use_define_for_class_fields(),
             package_version,
             package_name,
             known_target,
@@ -288,7 +288,7 @@ impl ParseTask {
     /// Re-export of `parse_worker::get_runtime_source` as an associated fn so
     /// callers can spell it `ParseTask::get_runtime_source`.
     #[inline]
-    pub fn get_runtime_source(target: options::Target) -> RuntimeSource {
+    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource {
         parse_worker::get_runtime_source(target)
     }
 }
@@ -319,6 +319,7 @@ impl Default for ParseTask {
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
             experimental_decorators: false,
+            use_define_for_class_fields: true,
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
@@ -345,7 +346,7 @@ impl Default for ParseTask {
 /// # Safety
 /// `task` must point at the `io_task` intrusive field of a live `ParseTask`
 /// scheduled by the thread pool, with provenance over the full `ParseTask`.
-pub(crate) unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
+unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` points to `ParseTask.io_task` (intrusive field) — only
     // ever invoked by the thread pool against a `ParseTask` it scheduled, so
     // provenance covers the full `ParseTask` and the `&mut` is unique per the
@@ -358,7 +359,7 @@ pub(crate) unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
 /// # Safety
 /// `task` must point at the `task` intrusive field of a live `ParseTask`
 /// scheduled by the thread pool, with provenance over the full `ParseTask`.
-pub(crate) unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
+unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` points to `ParseTask.task` (intrusive field) — see
     // `io_task_callback` for the dispatch invariant.
     let parse_task = unsafe { &mut *bun_core::from_field_ptr!(ParseTask, task, task) };
@@ -369,9 +370,9 @@ pub(crate) unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
 // RuntimeSource
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct RuntimeSource {
-    pub parse_task: ParseTask,
-    pub source: Source,
+pub(crate) struct RuntimeSource {
+    pub(crate) parse_task: ParseTask,
+    pub(crate) source: Source,
 }
 
 // When the `require` identifier is visited, it is replaced with e_require_call_target
@@ -556,6 +557,7 @@ pub mod parse_worker {
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
             experimental_decorators: false,
+            use_define_for_class_fields: true,
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
@@ -580,7 +582,7 @@ pub mod parse_worker {
         RuntimeSource { parse_task, source }
     }
 
-    pub fn get_runtime_source(target: options::Target) -> RuntimeSource {
+    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource {
         get_runtime_source_comptime(target)
     }
 
@@ -632,9 +634,9 @@ pub mod parse_worker {
     // FileLoaderHash
     // ───────────────────────────────────────────────────────────────────────────
 
-    pub struct FileLoaderHash {
-        pub key: ast::StoreStr,
-        pub content_hash: u64,
+    pub(crate) struct FileLoaderHash {
+        pub(crate) key: ast::StoreStr,
+        pub(crate) content_hash: u64,
     }
 
     // ───────────────────────────────────────────────────────────────────────────
@@ -794,7 +796,12 @@ pub mod parse_worker {
                 let _trace = perf::trace("Bundler.ParseYAML");
                 let mut temp_log = Log::init();
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
-                    let root: Expr = bun_parsers::yaml::YAML::parse(source, &mut temp_log, bump)?;
+                    let root: Expr = bun_parsers::yaml::YAML::parse(
+                        source,
+                        &mut temp_log,
+                        bump,
+                        bun_parsers::yaml::CyclicAliases::Reject,
+                    )?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
@@ -817,6 +824,37 @@ pub mod parse_worker {
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
                     let root: Expr =
                         bun_parsers::json5::JSON5Parser::parse(source, &mut temp_log, bump)?;
+                    Ok(JSAst::init(
+                        js_parser::new_lazy_export_ast(
+                            bump,
+                            &mut topts.define,
+                            opts,
+                            &mut temp_log,
+                            root,
+                            source,
+                            b"",
+                        )?
+                        .unwrap(),
+                    ))
+                })();
+                let _ = temp_log.clone_to_with_recycled(log, true);
+                return result;
+            }
+            Loader::Xml => {
+                let _trace = perf::trace("Bundler.ParseXML");
+                let mut temp_log = Log::init();
+                let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
+                    bun_core::analytics::Features::xml_parse_inc();
+                    let rows: Expr = bun_parsers::xml::XML::parse(
+                        source,
+                        &mut temp_log,
+                        bump,
+                        bun_parsers::xml::Options {
+                            compact: true,
+                            encoding: bun_parsers::xml::InputEncoding::File,
+                        },
+                    )?;
+                    let root = bun_parsers::json::materialize(&rows, source, &mut temp_log, bump)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
@@ -858,7 +896,7 @@ pub mod parse_worker {
                     source,
                     Some(b"text/plain"),
                     None,
-                    topts.compile_to_standalone_html,
+                    topts.compile_mode.is_standalone_html(),
                 );
                 return Ok(ast);
             }
@@ -899,7 +937,7 @@ pub mod parse_worker {
                     source,
                     Some(b"text/html"),
                     None,
-                    topts.compile_to_standalone_html,
+                    topts.compile_mode.is_standalone_html(),
                 );
                 return Ok(ast);
             }
@@ -1318,7 +1356,7 @@ pub mod parse_worker {
                     source,
                     None,
                     Some(unique_key),
-                    topts.compile_to_standalone_html,
+                    topts.compile_mode.is_standalone_html(),
                 );
                 return Ok(ast);
             }
@@ -1592,14 +1630,14 @@ pub mod parse_worker {
 
     #[repr(C)]
     pub struct OnBeforeParseArguments {
-        pub struct_size: usize,
-        pub context: *mut OnBeforeParsePlugin<'static, 'static>, // FFI (LIFETIMES.tsv)
-        pub path_ptr: *const u8,
-        pub path_len: usize,
-        pub namespace_ptr: *const u8,
-        pub namespace_len: usize,
-        pub default_loader: Loader,
-        pub external: *mut c_void, // FFI (LIFETIMES.tsv)
+        pub(crate) struct_size: usize,
+        pub(crate) context: *mut OnBeforeParsePlugin<'static, 'static>, // FFI (LIFETIMES.tsv)
+        pub(crate) path_ptr: *const u8,
+        pub(crate) path_len: usize,
+        pub(crate) namespace_ptr: *const u8,
+        pub(crate) namespace_len: usize,
+        pub(crate) default_loader: Loader,
+        pub(crate) external: *mut c_void, // FFI (LIFETIMES.tsv)
     }
 
     impl Default for OnBeforeParseArguments {
@@ -1619,21 +1657,21 @@ pub mod parse_worker {
 
     #[repr(C)]
     pub struct BunLogOptions {
-        pub struct_size: usize,
-        pub message_ptr: *const u8,
-        pub message_len: usize,
-        pub path_ptr: *const u8,
-        pub path_len: usize,
-        pub source_line_text_ptr: *const u8,
-        pub source_line_text_len: usize,
-        pub level: bun_ast::Level,
+        pub(crate) struct_size: usize,
+        pub(crate) message_ptr: *const u8,
+        pub(crate) message_len: usize,
+        pub(crate) path_ptr: *const u8,
+        pub(crate) path_len: usize,
+        pub(crate) source_line_text_ptr: *const u8,
+        pub(crate) source_line_text_len: usize,
+        pub(crate) level: bun_ast::Level,
         // Field order matches `packages/bun-native-bundler-plugin-api/bundler_plugin.h`
         // `BunLogOptions` (`line, lineEnd, column, columnEnd`) — verified by the
         // `assert_ffi_layout!` offset checks below.
-        pub line: i32,
-        pub line_end: i32,
-        pub column: i32,
-        pub column_end: i32,
+        pub(crate) line: i32,
+        pub(crate) line_end: i32,
+        pub(crate) column: i32,
+        pub(crate) column_end: i32,
     }
 
     impl Default for BunLogOptions {
@@ -1677,7 +1715,7 @@ pub mod parse_worker {
     );
 
     impl BunLogOptions {
-        pub(crate) fn source_line_text(&self) -> &[u8] {
+        fn source_line_text(&self) -> &[u8] {
             if !self.source_line_text_ptr.is_null() && self.source_line_text_len > 0 {
                 // SAFETY: genuine FFI — ptr/len are populated by a third-party native
                 // plugin per `bundler_plugin.h`'s `BunLogOptions` ABI. Non-null and
@@ -1694,7 +1732,7 @@ pub mod parse_worker {
             b""
         }
 
-        pub(crate) fn path(&self) -> &[u8] {
+        fn path(&self) -> &[u8] {
             if !self.path_ptr.is_null() && self.path_len > 0 {
                 // SAFETY: genuine FFI — ptr/len are populated by a third-party native
                 // plugin per `bundler_plugin.h`'s `BunLogOptions` ABI. Non-null and
@@ -1706,7 +1744,7 @@ pub mod parse_worker {
             b""
         }
 
-        pub(crate) fn message(&self) -> &[u8] {
+        fn message(&self) -> &[u8] {
             if !self.message_ptr.is_null() && self.message_len > 0 {
                 // SAFETY: genuine FFI — ptr/len are populated by a third-party native
                 // plugin per `bundler_plugin.h`'s `BunLogOptions` ABI. Non-null and
@@ -1718,7 +1756,7 @@ pub mod parse_worker {
             b""
         }
 
-        pub(crate) fn append(&self, log: &mut Log, namespace: &'static [u8]) {
+        fn append(&self, log: &mut Log, namespace: &'static [u8]) {
             // `Location.{file,line_text}`
             // are `&'static [u8]` here; `Log::dupe` copies into Log-owned storage
             // (freed when the Log drops) and returns a lifetime-erased borrow —
@@ -1767,7 +1805,7 @@ pub mod parse_worker {
         /// `args_` and `log_options_`, when non-null, must point at live
         /// `OnBeforeParseArguments` / `BunLogOptions` for the duration of the
         /// call (the native-plugin FFI contract).
-        pub(crate) unsafe extern "C" fn log_fn(
+        unsafe extern "C" fn log_fn(
             args_: *mut OnBeforeParseArguments,
             log_options_: *mut BunLogOptions,
         ) {
@@ -1787,7 +1825,7 @@ pub mod parse_worker {
     }
 
     #[repr(C)]
-    pub(crate) struct OnBeforeParseResultWrapper {
+    struct OnBeforeParseResultWrapper {
         pub original_source: *const u8,
         pub original_source_len: usize,
         pub original_source_fd: Fd,
@@ -1801,18 +1839,18 @@ pub mod parse_worker {
 
     #[repr(C)]
     pub struct OnBeforeParseResult {
-        pub struct_size: usize,
-        pub source_ptr: *const u8,
-        pub source_len: usize,
-        pub loader: Loader,
+        pub(crate) struct_size: usize,
+        pub(crate) source_ptr: *const u8,
+        pub(crate) source_len: usize,
+        pub(crate) loader: Loader,
 
-        pub fetch_source_code_fn:
+        pub(crate) fetch_source_code_fn:
             unsafe extern "C" fn(*mut OnBeforeParseArguments, *mut OnBeforeParseResult) -> i32,
 
-        pub user_context: *mut c_void,
-        pub free_user_context: Option<extern "C" fn(*mut c_void)>,
+        pub(crate) user_context: *mut c_void,
+        pub(crate) free_user_context: Option<extern "C" fn(*mut c_void)>,
 
-        pub log: unsafe extern "C" fn(*mut OnBeforeParseArguments, *mut BunLogOptions),
+        pub(crate) log: unsafe extern "C" fn(*mut OnBeforeParseArguments, *mut BunLogOptions),
     }
 
     impl OnBeforeParseResult {
@@ -1820,9 +1858,7 @@ pub mod parse_worker {
         /// `result` must be the `.result` field of a live
         /// `OnBeforeParseResultWrapper`, with provenance covering the wrapper
         /// (derived via `addr_of_mut!(wrapper.result)`).
-        pub(crate) unsafe fn get_wrapper(
-            result: *mut OnBeforeParseResult,
-        ) -> *mut OnBeforeParseResultWrapper {
+        unsafe fn get_wrapper(result: *mut OnBeforeParseResult) -> *mut OnBeforeParseResultWrapper {
             // SAFETY: result points to OnBeforeParseResultWrapper.result (always
             // constructed that way in `OnBeforeParsePlugin::run`).
             let wrapper =
@@ -1838,7 +1874,7 @@ pub mod parse_worker {
     /// `args` and `result_ptr` must point at the live `OnBeforeParseArguments`
     /// / `OnBeforeParseResultWrapper.result` set up by `OnBeforeParsePlugin::run`
     /// (the native-plugin FFI contract).
-    pub(crate) unsafe extern "C" fn fetch_source_code(
+    unsafe extern "C" fn fetch_source_code(
         args: *mut OnBeforeParseArguments,
         result_ptr: *mut OnBeforeParseResult,
     ) -> i32 {
@@ -1928,7 +1964,7 @@ pub mod parse_worker {
     /// constructed by `OnBeforeParsePlugin::run` (called from C++ with that
     /// pointer).
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn OnBeforeParseResult__reset(this: *mut OnBeforeParseResult) {
+    unsafe extern "C" fn OnBeforeParseResult__reset(this: *mut OnBeforeParseResult) {
         // SAFETY: `this` is the wrapper's `.result` field (caller contract).
         let wrapper = unsafe { OnBeforeParseResult::get_wrapper(this) };
         // SAFETY: called from C++ with valid ptr embedded in wrapper. Operate on
@@ -1952,7 +1988,7 @@ pub mod parse_worker {
     /// `this` must point at the live `OnBeforeParsePlugin` set up by
     /// `OnBeforeParsePlugin::run` (called from C++ with that pointer).
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn OnBeforeParsePlugin__isDone(
+    unsafe extern "C" fn OnBeforeParsePlugin__isDone(
         this: *mut OnBeforeParsePlugin<'_, '_>,
     ) -> i32 {
         // SAFETY: called from C++ with valid ptr. Read via raw pointers
@@ -1982,7 +2018,7 @@ pub mod parse_worker {
     }
 
     impl<'a, 'b: 'a> OnBeforeParsePlugin<'a, 'b> {
-        pub fn run(
+        pub(crate) fn run(
             &mut self,
             plugin: &bundler::JSBundlerPlugin,
             from_plugin: &mut bool,
@@ -2053,15 +2089,6 @@ pub mod parse_worker {
                 result_ptr,
                 should_continue_running,
             );
-            if cfg!(feature = "debug_logs") {
-                scoped_log!(
-                    ParseTask,
-                    "callOnBeforeParsePlugins({}:{}) = {}",
-                    bstr::BStr::new(self.file_path.namespace),
-                    bstr::BStr::new(self.file_path.text),
-                    count
-                );
-            }
             if count > 0 {
                 if let Some(e) = self.deferred_error {
                     if let Some(free_user_context) = wrapper.result.free_user_context {
@@ -2448,6 +2475,7 @@ pub mod parse_worker {
         opts.features.minify_identifiers = topts.minify_identifiers;
         opts.features.minify_keep_names = topts.keep_names;
         opts.features.minify_whitespace = topts.minify_whitespace;
+        opts.use_define_for_class_fields = task.use_define_for_class_fields;
         opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
         // emitDecoratorMetadata implies legacy/experimental decorators, as it only
         // makes sense with TypeScript's legacy decorator system (reflect-metadata).
@@ -2811,15 +2839,27 @@ pub mod parse_worker {
             .any_loop_mut()
             .expect("BundleV2.linker.loop must be set before scheduling ParseTask")
         {
-            bun_event_loop::AnyEventLoop::Js { owner } => {
-                owner.enqueue_task_concurrent(
+            bun_event_loop::AnyEventLoop::Js { .. } => {
+                let ct =
                     bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
                         // SAFETY: `p` is the `result` Box leaked above; ownership
                         // transfers to `on_complete`, which deallocates it.
                         unsafe { on_complete(p) };
                         Ok(())
-                    }),
-                );
+                    });
+                let poster = worker
+                    .ctx
+                    .js_poster
+                    .as_ref()
+                    .expect("JS-owned bundle has a poster");
+                if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
+                    // Owning JS VM torn down mid-bundle: free the hop and the result.
+                    // SAFETY: refused ⇒ we own the task box and the leaked result.
+                    unsafe {
+                        bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
+                        drop(bun_core::heap::take(result));
+                    }
+                }
             }
             bun_event_loop::AnyEventLoop::Mini(mini) => {
                 // SAFETY: `result` is a valid heap pointer with `task` at the given offset;
@@ -2872,7 +2912,7 @@ pub mod parse_worker {
     /// (or `ServerComponentParseTask`'s equivalent). Ownership transfers to
     /// this fn, which deallocates `result` before returning. Must run on the
     /// main/bundler thread (it dereferences `result.ctx` mutably).
-    pub unsafe fn on_complete(result: *mut Result) {
+    pub(crate) unsafe fn on_complete(result: *mut Result) {
         // SAFETY: result allocated via heap::alloc above; uniquely owned here.
         let r = unsafe { &mut *result };
         let ctx = r.ctx;
@@ -2889,4 +2929,4 @@ pub mod parse_worker {
     }
 } // end mod parse_worker
 
-pub use parse_worker::{FileLoaderHash, OnBeforeParsePlugin, get_runtime_source, on_complete};
+pub(crate) use parse_worker::on_complete;

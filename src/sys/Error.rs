@@ -125,7 +125,7 @@ impl Error {
     /// `from_libuv` left at default `false`.
     #[cfg(windows)]
     #[inline]
-    pub fn from_uv_rc64(
+    pub(crate) fn from_uv_rc64(
         rc: crate::windows::libuv::ReturnCodeI64,
         syscall_tag: Tag,
     ) -> Option<Error> {
@@ -243,8 +243,9 @@ impl Error {
     /// preserves every other field — chained on a libuv-sourced error
     /// (`from_libuv=true`, errno in the 4000-range) it must keep `from_libuv`
     /// so `name()`/`msg()` still route through the uv→errno mapper.
+    #[cfg(windows)]
     #[inline]
-    pub fn with_dest(&self, dest: &[u8]) -> Error {
+    pub(crate) fn with_dest(&self, dest: &[u8]) -> Error {
         Error {
             errno: self.errno,
             syscall: self.syscall,
@@ -329,6 +330,13 @@ impl Error {
         let e = self.resolve_system_errno()?;
         // strum::IntoStaticStr — variant name (e.g., "ENOENT").
         Some((<&'static str>::from(e), e))
+    }
+
+    /// (code, uv_strerror label) pair, e.g. `("ENOENT", "no such file or
+    /// directory")` — the pieces of Node's `UVException` message.
+    pub fn uv_code_label(&self) -> Option<(&'static str, &'static str)> {
+        let (code, system_errno) = self.get_error_code_tag_name()?;
+        Some((code, libuv_error_map::LIBUV_ERROR_MAP[system_errno]))
     }
 
     pub fn msg(&self) -> Option<&'static [u8]> {

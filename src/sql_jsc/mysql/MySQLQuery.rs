@@ -1,6 +1,3 @@
-use core::ffi::c_void;
-use core::marker::PhantomData;
-
 use crate::error::ThrowSqlError;
 use crate::jsc::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
 use bun_core::String as BunString;
@@ -8,11 +5,10 @@ use bun_core::String as BunString;
 use super::my_sql_value::Value;
 use bun_sql::mysql::mysql_param::Param;
 use bun_sql::mysql::mysql_request;
-use bun_sql::mysql::mysql_types::FieldType;
-use bun_sql::mysql::protocol::any_mysql_error::{self as any_mysql_error, AnyMySQLError};
+use bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError;
 use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
 use bun_sql::mysql::protocol::new_writer::{NewWriter, WriterContext};
-use bun_sql::mysql::protocol::prepared_statement::{self as prepared_statement, ExecuteParams};
+use bun_sql::mysql::protocol::prepared_statement;
 use bun_sql::mysql::query_status::Status;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
@@ -230,22 +226,6 @@ impl MySQLQuery {
         )?;
         // `defer execute.deinit()` — `params: Vec<Value>` drops at end of scope.
 
-        // Thunks bridging the higher-tier `Value` into the lower-tier `ExecuteParams`
-        // hooks (which can't name `Value` directly across crates).
-        fn is_null_thunk(ctx: *mut c_void, i: usize) -> bool {
-            // SAFETY: `ctx` is `params.as_ptr()` and `i < params.len()` (asserted by
-            // the `len` field passed alongside, checked in `Execute::write_internal`).
-            unsafe { matches!(*ctx.cast::<Value>().add(i), Value::Null) }
-        }
-        fn to_data_thunk(
-            ctx: *mut c_void,
-            i: usize,
-            ft: FieldType,
-        ) -> Result<bun_sql::shared::Data, any_mysql_error::Error> {
-            // SAFETY: same as `is_null_thunk`.
-            unsafe { (*ctx.cast::<Value>().add(i)).to_data(ft) }
-        }
-
         let execute = prepared_statement::Execute {
             statement_id: statement.statement_id,
             flags: 0,
@@ -254,13 +234,7 @@ impl MySQLQuery {
             new_params_bind_flag: statement
                 .execution_flags
                 .contains(ExecutionFlags::NEED_TO_SEND_PARAMS),
-            params: ExecuteParams {
-                len: params.len(),
-                ctx: params.as_ptr().cast_mut().cast::<c_void>(),
-                is_null: is_null_thunk,
-                to_data: to_data_thunk,
-                _marker: PhantomData,
-            },
+            params: &params,
         };
 
         let mut packet = writer.start(0)?;
@@ -442,7 +416,7 @@ impl MySQLQuery {
 
     /// Takes ownership of `query` (caller must have already ref'd it, e.g. via
     /// `JSValue.toBunString`). `cleanup()` will deref it exactly once.
-    pub fn init(query: BunString, bigint: bool, simple: bool) -> Self {
+    pub(crate) fn init(query: BunString, bigint: bool, simple: bool) -> Self {
         Self {
             statement: core::ptr::null_mut(),
             query,
@@ -451,7 +425,7 @@ impl MySQLQuery {
         }
     }
 
-    pub fn run_query(
+    pub(crate) fn run_query(
         &mut self,
         connection: &MySQLConnection,
         global_object: &JSGlobalObject,
@@ -480,12 +454,12 @@ impl MySQLQuery {
     }
 
     #[inline]
-    pub fn set_result_mode(&mut self, result_mode: SQLQueryResultMode) {
+    pub(crate) fn set_result_mode(&mut self, result_mode: SQLQueryResultMode) {
         self.flags.set_result_mode(result_mode);
     }
 
     #[inline]
-    pub fn result(&mut self, is_last_result: bool) -> bool {
+    pub(crate) fn result(&mut self, is_last_result: bool) -> bool {
         if self.status == Status::Success || self.status == Status::Fail {
             return false;
         }
@@ -498,7 +472,7 @@ impl MySQLQuery {
         true
     }
 
-    pub fn fail(&mut self) -> bool {
+    pub(crate) fn fail(&mut self) -> bool {
         if self.status == Status::Fail || self.status == Status::Success {
             return false;
         }
@@ -507,7 +481,7 @@ impl MySQLQuery {
         true
     }
 
-    pub fn cleanup(&mut self) {
+    pub(crate) fn cleanup(&mut self) {
         if !self.statement.is_null() {
             let s = self.statement;
             self.statement = core::ptr::null_mut();
@@ -521,12 +495,12 @@ impl MySQLQuery {
     }
 
     #[inline]
-    pub fn is_completed(&self) -> bool {
+    pub(crate) fn is_completed(&self) -> bool {
         self.status == Status::Success || self.status == Status::Fail
     }
 
     #[inline]
-    pub fn is_running(&self) -> bool {
+    pub(crate) fn is_running(&self) -> bool {
         match self.status {
             Status::Running | Status::Binding | Status::PartialResponse => true,
             Status::Success | Status::Fail | Status::Pending => false,
@@ -534,12 +508,12 @@ impl MySQLQuery {
     }
 
     #[inline]
-    pub fn is_pending(&self) -> bool {
+    pub(crate) fn is_pending(&self) -> bool {
         self.status == Status::Pending
     }
 
     #[inline]
-    pub fn is_being_prepared(&self) -> bool {
+    pub(crate) fn is_being_prepared(&self) -> bool {
         self.status == Status::Pending
             && self
                 .get_statement()
@@ -547,27 +521,27 @@ impl MySQLQuery {
     }
 
     #[inline]
-    pub fn is_pipelined(&self) -> bool {
+    pub(crate) fn is_pipelined(&self) -> bool {
         self.flags.pipelined()
     }
 
     #[inline]
-    pub fn is_simple(&self) -> bool {
+    pub(crate) fn is_simple(&self) -> bool {
         self.flags.simple()
     }
 
     #[inline]
-    pub fn is_bigint_supported(&self) -> bool {
+    pub(crate) fn is_bigint_supported(&self) -> bool {
         self.flags.bigint()
     }
 
     #[inline]
-    pub fn get_result_mode(&self) -> SQLQueryResultMode {
+    pub(crate) fn get_result_mode(&self) -> SQLQueryResultMode {
         self.flags.result_mode()
     }
 
     #[inline]
-    pub fn mark_as_prepared(&mut self) {
+    pub(crate) fn mark_as_prepared(&mut self) {
         if self.status == Status::Pending {
             if let Some(statement) = self.get_statement() {
                 if statement.status == my_sql_statement::Status::Parsing
@@ -582,7 +556,7 @@ impl MySQLQuery {
 
     #[inline]
     #[allow(clippy::mut_from_ref)] // goes through a raw intrusive pointer; see SAFETY note below
-    pub fn get_statement(&self) -> Option<&mut MySQLStatement> {
+    pub(crate) fn get_statement(&self) -> Option<&mut MySQLStatement> {
         // SAFETY: when non-null, `self.statement` is a live boxed `MySQLStatement`
         // kept alive by the intrusive ref we hold. Returning `&mut` permits
         // shared mutation through the intrusive pointer; the

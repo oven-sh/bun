@@ -5,6 +5,11 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
+
 const dir = mkdtempSync(join(tmpdir(), "archive-leak-"));
 
 const files = {
@@ -26,8 +31,8 @@ for (let round = 0; round < 20; round++) {
   }
 
   Bun.gc(true);
-  const rss = process.memoryUsage.rss();
-  console.log(`Round ${round + 1}: RSS = ${formatMB(rss)}`);
+  const rssNow = rss();
+  console.log(`Round ${round + 1}: RSS = ${formatMB(rssNow)}`);
 }
 
 rmSync(dir, { recursive: true });

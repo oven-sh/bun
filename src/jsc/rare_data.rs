@@ -34,7 +34,7 @@ use super::uuid::UUID;
 //   - `cron_jobs` / `node_fs_stat_watcher_scheduler`
 //     → erased `*mut c_void` slots; high tier lazy-inits.
 //   - the `bun test --isolate` watcher/server registries → moved to
-//     `bun_runtime::jsc_hooks::IsolationHandles` so the entries keep their
+//     `bun_runtime::jsc_hooks::ActiveHandles` so the entries keep their
 //     concrete types.
 //   - `stdin/stdout/stderr_store` → erased `*mut blob::Store` constructed via
 //     `__bun_stdio_blob_store_new` (link-time extern).
@@ -74,7 +74,7 @@ impl Default for HotMapEntry {
 }
 
 impl HotMap {
-    pub fn init() -> HotMap {
+    pub(crate) fn init() -> HotMap {
         HotMap {
             _map: StringArrayHashMap::new(),
         }
@@ -114,8 +114,8 @@ impl HotMap {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct EntropyCache {
-    pub cache: [u8; Self::SIZE],
-    pub index: usize,
+    pub(crate) cache: [u8; Self::SIZE],
+    pub(crate) index: usize,
 }
 impl Default for EntropyCache {
     fn default() -> Self {
@@ -126,13 +126,10 @@ impl Default for EntropyCache {
     }
 }
 impl EntropyCache {
-    pub const BUFFERED_UUIDS_COUNT: usize = 16;
+    pub(crate) const BUFFERED_UUIDS_COUNT: usize = 16;
     pub const SIZE: usize = Self::BUFFERED_UUIDS_COUNT * 128;
 
-    pub fn init(&mut self) {
-        self.fill();
-    }
-    pub fn fill(&mut self) {
+    pub(crate) fn fill(&mut self) {
         bun_boringssl::rand_bytes(&mut self.cache);
         self.index = 0;
     }
@@ -145,7 +142,7 @@ impl EntropyCache {
         self.index += 16;
         r
     }
-    pub fn slice(&mut self, len: usize) -> &mut [u8] {
+    pub(crate) fn slice(&mut self, len: usize) -> &mut [u8] {
         if len > self.cache.len() {
             return &mut [];
         }
@@ -171,7 +168,7 @@ pub(crate) type CleanupHookFunction = extern "C" fn(*mut c_void);
 #[derive(Clone, Copy)]
 pub struct CleanupHook {
     pub ctx: *mut c_void,
-    pub func: CleanupHookFunction,
+    pub(crate) func: CleanupHookFunction,
     // Conceptually a borrow of the JSGlobalObject (JSC_BORROW per
     // LIFETIMES.tsv); a raw ptr avoids threading a lifetime param through
     // `RareData`.
@@ -179,7 +176,7 @@ pub struct CleanupHook {
 }
 
 impl CleanupHook {
-    pub(crate) fn from(
+    fn from(
         global_this: &JSGlobalObject,
         ctx: *mut c_void,
         func: CleanupHookFunction,
@@ -197,55 +194,55 @@ impl CleanupHook {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct RareData {
-    pub boring_ssl_engine: Option<*mut boring::ENGINE>,
+    pub(crate) boring_ssl_engine: Option<*mut boring::ENGINE>,
 
     /// Erased `*mut webcore::blob::Store` (intrusive-refcounted on the runtime
     /// side). Constructed via `__bun_stdio_blob_store_new`; high tier casts back.
     /// `mode` is cached so [`Bun__Process__getStdinFdType`] doesn't have to
     /// re-stat.
     pub stderr_store: Option<NonNull<c_void>>,
-    pub stderr_mode: Mode,
+    pub(crate) stderr_mode: Mode,
     pub stdin_store: Option<NonNull<c_void>>,
-    pub stdin_mode: Mode,
+    pub(crate) stdin_mode: Mode,
     pub stdout_store: Option<NonNull<c_void>>,
-    pub stdout_mode: Mode,
+    pub(crate) stdout_mode: Mode,
 
-    pub entropy_cache: Option<Box<EntropyCache>>,
+    pub(crate) entropy_cache: Option<Box<EntropyCache>>,
 
-    pub hot_map: Option<HotMap>,
+    pub(crate) hot_map: Option<HotMap>,
     /// `Vec<*mut bun_runtime::api::cron::CronJob>` — only stored/iterated here.
     pub cron_jobs: Vec<*mut c_void>,
 
     // TODO: make this per JSGlobalObject instead of global
     // This does not handle ShadowRealm correctly!
-    pub cleanup_hooks: Vec<CleanupHook>,
+    pub(crate) cleanup_hooks: Vec<CleanupHook>,
 
-    pub file_polls: Option<Box<FilePollStore>>,
+    pub(crate) file_polls: Option<Box<FilePollStore>>,
 
     /// Embedded socket groups for kinds that aren't tied to a Listener / server.
     /// Lazily linked into the loop on first socket; never separately allocated.
-    pub spawn_ipc_group: SocketGroup,
+    pub(crate) spawn_ipc_group: SocketGroup,
     /// `bun test --parallel` IPC channel (worker ↔ coordinator). Survives the
     /// per-file isolation swap so the worker keeps its link to the coordinator.
-    pub test_parallel_ipc_group: SocketGroup,
+    pub(crate) test_parallel_ipc_group: SocketGroup,
     /// `Bun.connect` client sockets — one group per VM (not per connection).
-    pub bun_connect_group_tcp: SocketGroup,
-    pub bun_connect_group_tls: SocketGroup,
+    pub(crate) bun_connect_group_tcp: SocketGroup,
+    pub(crate) bun_connect_group_tls: SocketGroup,
     /// SQL drivers — TCP and TLS share one group each per VM. STARTTLS adopts
     /// from the `_tcp` group into `_tls` without reallocating a context.
-    pub postgres_group: SocketGroup,
-    pub postgres_tls_group: SocketGroup,
-    pub mysql_group_: SocketGroup,
-    pub mysql_tls_group: SocketGroup,
-    pub valkey_group_: SocketGroup,
-    pub valkey_tls_group: SocketGroup,
+    pub(crate) postgres_group: SocketGroup,
+    pub(crate) postgres_tls_group: SocketGroup,
+    pub(crate) mysql_group_: SocketGroup,
+    pub(crate) mysql_tls_group: SocketGroup,
+    pub(crate) valkey_group_: SocketGroup,
+    pub(crate) valkey_tls_group: SocketGroup,
     /// `new WebSocket(...)` client. Upgrade phase (HTTP handshake) and connected
     /// phase (frame I/O) live in separate kinds so the handshake handler doesn't
     /// have to runtime-branch on state.
-    pub ws_upgrade_group_: SocketGroup,
-    pub ws_upgrade_tls_group: SocketGroup,
-    pub ws_client_group_: SocketGroup,
-    pub ws_client_tls_group: SocketGroup,
+    pub(crate) ws_upgrade_group_: SocketGroup,
+    pub(crate) ws_upgrade_tls_group: SocketGroup,
+    pub(crate) ws_client_group_: SocketGroup,
+    pub(crate) ws_client_tls_group: SocketGroup,
 
     /// `ssl_ctx_cache.getOrCreate(&.{})` — i.e. the default-trust-store client
     /// CTX. Cached separately so the hot `tls:true` / `wss://` path skips even the
@@ -253,23 +250,26 @@ pub struct RareData {
     /// `bun_runtime` (it calls `SSLContextCache::get_or_create_opts`).
     pub default_client_ssl_ctx: Option<*mut SslCtx>,
 
-    pub mime_types: Option<mime_type::Map>,
+    pub(crate) mime_types: Option<mime_type::Map>,
 
     /// `bun_runtime::node::StatWatcherScheduler` — erased `RefPtr` payload;
     /// lazy-init in `bun_runtime::node::node_fs_stat_watcher`.
-    pub node_fs_stat_watcher_scheduler: Option<NonNull<c_void>>,
+    pub(crate) node_fs_stat_watcher_scheduler: Option<NonNull<c_void>>,
 
     /// `bun_runtime::node::memory_pressure::MemoryPressureWatcher` — erased
     /// `Box`; lazy-init on the first `process.on("memoryPressure", ...)` listener.
-    pub memory_pressure_watcher: Option<NonNull<c_void>>,
+    pub(crate) memory_pressure_watcher: Option<NonNull<c_void>>,
 
     /// Watch-mode restart needs to RST every listen socket so the new process
     /// can rebind without `EADDRINUSE`. Written on the JS thread; drained on
     /// the watcher thread — hence the mutex (PORTING.md §Concurrency: lock
     /// owns the data, no sidecar `Mutex<()>`).
-    pub listening_sockets_for_watch_mode: Mutex<Vec<Fd>>,
+    pub(crate) listening_sockets_for_watch_mode: Mutex<Vec<Fd>>,
 
-    pub temp_pipe_read_buffer: Option<Box<PipeReadBuffer>>,
+    pub(crate) temp_pipe_read_buffer: Option<Box<PipeReadBuffer>>,
+
+    /// `node:http2` PADDED DATA scratch; see [`Self::take_h2_padded_frame_buffer`].
+    h2_padded_frame_buffer: Option<Box<H2PaddedFrameBuffer>>,
 
     // There is intentionally no `aws_signature_cache` field — storage lives in
     // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static; it
@@ -279,11 +279,11 @@ pub struct RareData {
     pub s3_default_client: Strong,
     /// Per-VM, like Node's quic `BindingData` (node/src/quic/bindingdata.h).
     pub node_quic_callbacks: Strong,
-    pub default_csrf_secret: Box<[u8]>,
+    pub(crate) default_csrf_secret: Box<[u8]>,
 
     /// Owned NUL-terminated buffer. `len()` includes the trailing 0;
     /// [`Self::tls_default_ciphers`] strips it.
-    pub tls_default_ciphers: Option<Box<[u8]>>,
+    pub(crate) tls_default_ciphers: Option<Box<[u8]>>,
 
     // proxy_env_storage moved to VirtualMachine — see comment there on why
     // lazy RareData creation raced with worker spawn.
@@ -329,6 +329,7 @@ impl Default for RareData {
             memory_pressure_watcher: None,
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             temp_pipe_read_buffer: None,
+            h2_padded_frame_buffer: None,
             s3_default_client: Strong::empty(),
             node_quic_callbacks: Strong::empty(),
             default_csrf_secret: Box::default(),
@@ -347,9 +348,9 @@ impl Default for RareData {
 /// Three fixed-size tiers, lazily allocated on first use. Safe because JS is single-threaded.
 #[derive(Default)]
 pub struct PathBuf {
-    pub small: Option<Box<[u8; 2 * MAX_PATH_BYTES]>>,
-    pub medium: Option<Box<[u8; 8 * MAX_PATH_BYTES]>>,
-    pub large: Option<Box<[u8; 32 * MAX_PATH_BYTES]>>,
+    pub(crate) small: Option<Box<[u8; 2 * MAX_PATH_BYTES]>>,
+    pub(crate) medium: Option<Box<[u8; 8 * MAX_PATH_BYTES]>>,
+    pub(crate) large: Option<Box<[u8; 32 * MAX_PATH_BYTES]>>,
 }
 
 impl PathBuf {
@@ -385,6 +386,9 @@ impl PathBuf {
 // remains a stable path for existing callers.
 pub use bun_event_loop::PipeReadBuffer;
 
+/// One max-size HTTP/2 PADDED DATA frame payload (pad-length byte + data + padding).
+pub type H2PaddedFrameBuffer = [u8; 16384];
+
 // ──────────────────────────────────────────────────────────────────────────
 // ProxyEnvStorage
 // ──────────────────────────────────────────────────────────────────────────
@@ -411,14 +415,14 @@ impl ProxyEnvStorage {
 #[derive(Default)]
 pub struct ProxyEnvSlots {
     #[allow(non_snake_case)]
-    pub HTTP_PROXY: Option<Arc<RefCountedEnvValue>>,
-    pub http_proxy: Option<Arc<RefCountedEnvValue>>,
+    pub(crate) HTTP_PROXY: Option<Arc<RefCountedEnvValue>>,
+    pub(crate) http_proxy: Option<Arc<RefCountedEnvValue>>,
     #[allow(non_snake_case)]
-    pub HTTPS_PROXY: Option<Arc<RefCountedEnvValue>>,
-    pub https_proxy: Option<Arc<RefCountedEnvValue>>,
+    pub(crate) HTTPS_PROXY: Option<Arc<RefCountedEnvValue>>,
+    pub(crate) https_proxy: Option<Arc<RefCountedEnvValue>>,
     #[allow(non_snake_case)]
-    pub NO_PROXY: Option<Arc<RefCountedEnvValue>>,
-    pub no_proxy: Option<Arc<RefCountedEnvValue>>,
+    pub(crate) NO_PROXY: Option<Arc<RefCountedEnvValue>>,
+    pub(crate) no_proxy: Option<Arc<RefCountedEnvValue>>,
 }
 
 pub struct Slot<'a> {
@@ -497,7 +501,7 @@ impl ProxyEnvSlots {
     /// Bump refcounts on all non-null values so a worker can share the
     /// parent's strings. Caller passes the parent's locked guard — the `Arc`
     /// load + clone is not atomic with respect to `Bun__setEnvValue`'s drop.
-    pub fn clone_from(&mut self, parent: &ProxyEnvSlots) {
+    pub(crate) fn clone_from(&mut self, parent: &ProxyEnvSlots) {
         // Arc::clone bumps the refcount.
         self.HTTP_PROXY.clone_from(&parent.HTTP_PROXY);
         self.http_proxy.clone_from(&parent.http_proxy);
@@ -512,7 +516,7 @@ impl ProxyEnvSlots {
     /// map and the reffed storage agree — defense-in-depth in case the map
     /// clone captured a snapshot the storage doesn't hold a ref on (e.g. an
     /// initial-environ value later overwritten by the setter).
-    pub fn sync_into(&self, map: &mut bun_dotenv::Map) {
+    pub(crate) fn sync_into(&self, map: &mut bun_dotenv::Map) {
         macro_rules! sync_one {
             ($name:literal, $field:ident) => {
                 if let Some(val) = &self.$field {
@@ -617,7 +621,7 @@ macro_rules! for_each_socket_group {
 }
 
 impl RareData {
-    pub fn release_js_handles(&mut self) {
+    pub(crate) fn release_js_handles(&mut self) {
         self.s3_default_client.deinit();
         self.node_quic_callbacks.deinit();
     }
@@ -638,7 +642,7 @@ impl RareData {
     }
 
     // ── lazy-init: hot_map ─────────────────────────────────────────────────
-    pub fn hot_map(&mut self) -> &mut HotMap {
+    pub(crate) fn hot_map(&mut self) -> &mut HotMap {
         self.hot_map.get_or_insert_with(HotMap::init)
     }
 
@@ -664,6 +668,20 @@ impl RareData {
             .get_or_insert_with(bun_core::boxed_zeroed::<PipeReadBuffer>)
     }
 
+    /// Take the padded-frame scratch out of its slot (lazily allocated). By value rather
+    /// than borrowed: the socket write it feeds can re-enter JS and reach this path
+    /// again, and that nested caller then finds the slot empty and allocates its own.
+    pub fn take_h2_padded_frame_buffer(&mut self) -> Box<H2PaddedFrameBuffer> {
+        self.h2_padded_frame_buffer
+            .take()
+            .unwrap_or_else(bun_core::boxed_zeroed::<H2PaddedFrameBuffer>)
+    }
+
+    /// Hand a taken buffer back; the slot keeps the first one returned.
+    pub fn put_back_h2_padded_frame_buffer(&mut self, buffer: Box<H2PaddedFrameBuffer>) {
+        self.h2_padded_frame_buffer.get_or_insert(buffer);
+    }
+
     pub fn boring_engine(&mut self) -> *mut boring::ENGINE {
         // The raw `ENGINE_new()` result is cached without a null check:
         // `EVP_DigestInit_ex` tolerates a NULL engine, so OOM here degrades to
@@ -685,7 +703,7 @@ impl RareData {
         &self.default_csrf_secret
     }
 
-    pub fn tls_default_ciphers(&self) -> Option<&[u8]> {
+    pub(crate) fn tls_default_ciphers(&self) -> Option<&[u8]> {
         // The stored buffer is NUL-terminated (set_tls_default_ciphers
         // appends 0); the trailing NUL is stripped from the returned slice's
         // length. Callers needing a C string can still take `.as_ptr()` — the
@@ -695,7 +713,7 @@ impl RareData {
             .map(|s| &s[..s.len() - 1])
     }
 
-    pub fn set_tls_default_ciphers(&mut self, ciphers: &[u8]) {
+    pub(crate) fn set_tls_default_ciphers(&mut self, ciphers: &[u8]) {
         // Old value (if any) drops here via Box<[u8]> Drop.
         let mut owned = Vec::with_capacity(ciphers.len() + 1);
         owned.extend_from_slice(ciphers);
@@ -729,7 +747,7 @@ impl RareData {
         self.spawn_sync_event_loop_.as_mut().unwrap()
     }
 
-    pub fn mime_type_from_string(&mut self, str_: &[u8]) -> Option<mime_type::MimeType> {
+    pub(crate) fn mime_type_from_string(&mut self, str_: &[u8]) -> Option<mime_type::MimeType> {
         let table = self
             .mime_types
             .get_or_insert_with(|| bun_core::handle_oom(mime_type::create_hash_table()));
@@ -739,11 +757,11 @@ impl RareData {
     }
 
     // ── watch-mode listen sockets ─────────────────────────────────────────
-    pub fn add_listening_socket_for_watch_mode(&self, socket: Fd) {
+    pub(crate) fn add_listening_socket_for_watch_mode(&self, socket: Fd) {
         self.listening_sockets_for_watch_mode.lock().push(socket);
     }
 
-    pub fn remove_listening_socket_for_watch_mode(&self, socket: Fd) {
+    pub(crate) fn remove_listening_socket_for_watch_mode(&self, socket: Fd) {
         let mut sockets = self.listening_sockets_for_watch_mode.lock();
         if let Some(i) = sockets.iter().position(|s| *s == socket) {
             sockets.swap_remove(i);
@@ -840,18 +858,20 @@ impl RareData {
     }
 
     // ── close_all_socket_groups ───────────────────────────────────────────
-    /// Drain every embedded socket group. Must run BEFORE JSC teardown — closeAll
-    /// fires on_close → JS callbacks → needs a live VM. RareData.deinit() runs
-    /// after `WebWorker__teardownJSCVM`, so doing the closeAll
-    /// there would dispatch into freed JSC heap.
-    pub fn close_all_socket_groups(&mut self, vm: &VirtualMachine) {
-        // closeAll() dispatches on_close into JS while the VM is still alive, so a
-        // handler can call Bun.connect/postgres/etc. and re-populate a group we
-        // just drained. Loop until every group is observed empty in the same pass
-        // (bounded — each retry only happens if a JS callback opened a *new*
-        // socket, and the cap stops a deliberately-spinning on_close from wedging
-        // teardown; the post-close force-drain in close_all handles whatever's
-        // left after the cap).
+    /// Drain every embedded socket group. Runs in teardown's stop phase (script
+    /// already forbidden) and must run BEFORE JSC teardown: native close paths
+    /// release Strong handles and touch heap-owned state. RareData.deinit() runs
+    /// after `WebWorker__teardownJSCVM`, so doing the closeAll there would touch
+    /// freed JSC heap.
+    pub(crate) fn close_all_socket_groups(
+        &mut self,
+        vm: &VirtualMachine,
+    ) -> crate::virtual_machine::SweepResult {
+        // A native close path can cascade (closing one socket completes or
+        // fails another, whose own close lands in a group already drained), so
+        // loop until every group is observed empty in the same pass — bounded;
+        // the post-close force-drain in close_all handles whatever is left
+        // after the cap.
         // Walk the loop's linked-group list rather than just our 14 embedded
         // fields: Listener/uWS-App groups own their own SocketGroup, and accepted
         // sockets land *there*, not in RareData. Iterating only the embedded
@@ -868,12 +888,18 @@ impl RareData {
             }
             rounds += 1;
         }
+        let result = if rounds > 0 {
+            crate::virtual_machine::SweepResult::Stopped
+        } else {
+            crate::virtual_machine::SweepResult::Idle
+        };
         // us_socket_close pushes to loop->data.closed_head; loop_post() normally
         // frees it on the next tick. We're past the last tick, so drain it now —
         // every us_socket_t is libc-allocated and otherwise becomes an LSAN leak
         // (the only pointer into it lives in mimalloc-backed RareData, which LSAN
         // can't trace once we unregister the root region).
         vm.uws_loop_mut().drain_closed_sockets();
+        result
     }
 }
 
@@ -961,14 +987,14 @@ impl RareData {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(i32)]
-pub(crate) enum StdinFdType {
+enum StdinFdType {
     File = 0,
     Pipe = 1,
     Socket = 2,
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> StdinFdType {
+extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> StdinFdType {
     let rare = vm.as_mut().rare_data();
     // The store is type-erased here, so `stderr/stdout/stdin()` cache `mode`
     // alongside the pointer.
@@ -1046,9 +1072,9 @@ fn get_tls_default_ciphers_from_js(
 
 impl Drop for RareData {
     fn drop(&mut self) {
-        // temp_pipe_read_buffer / spawn_sync_event_loop_ / s3_default_client /
-        // default_csrf_secret / cleanup_hooks / cron_jobs / path_buf /
-        // tls_default_ciphers:
+        // temp_pipe_read_buffer / h2_padded_frame_buffer / spawn_sync_event_loop_ /
+        // s3_default_client / default_csrf_secret / cleanup_hooks / cron_jobs /
+        // path_buf / tls_default_ciphers:
         // all dropped automatically via field Drop.
 
         if let Some(engine) = self.boring_ssl_engine.take() {
@@ -1075,6 +1101,15 @@ impl Drop for RareData {
             __bun_stdio_blob_store_deinit(store.as_ptr().cast());
         }
 
+        self.detach_socket_groups_from_loop();
+    }
+}
+
+impl RareData {
+    /// Detach every embedded socket group from the thread's uSockets loop
+    /// (asserting each is empty). A thread teardown calls this before it frees
+    /// that loop; `Drop` calls it for every other owner. Idempotent.
+    pub(crate) fn detach_socket_groups_from_loop(&mut self) {
         // closeAllSocketGroups() must have already run (before JSC teardown) so
         // these are empty; deinit() asserts that in debug.
         for_each_socket_group!(self, |g| {
@@ -1088,6 +1123,7 @@ impl Drop for RareData {
                 // loop has already unlinked it (close_all_socket_groups ran),
                 // so destroy reduces to the empty-list debug asserts.
                 unsafe { SocketGroup::destroy(std::ptr::from_mut::<SocketGroup>(g)) };
+                g.loop_ = core::ptr::null_mut();
             }
         });
     }

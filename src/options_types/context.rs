@@ -228,6 +228,7 @@ pub struct BundlerOptions {
     pub compile_autoload_tsconfig: bool,
     pub compile_autoload_package_json: bool,
     pub compile_executable_path: Option<Box<[u8]>>,
+    pub compile_assets: Vec<Box<[u8]>>,
     pub windows: bundle_enums::WindowsOptions,
     pub allow_unresolved: Option<Vec<Box<[u8]>>>,
 }
@@ -278,6 +279,7 @@ impl Default for BundlerOptions {
             compile_autoload_tsconfig: false,
             compile_autoload_package_json: false,
             compile_executable_path: None,
+            compile_assets: Vec::new(),
             windows: bundle_enums::WindowsOptions::default(),
             allow_unresolved: None,
         }
@@ -330,10 +332,11 @@ pub fn try_get<'a>() -> Option<&'a ContextData> {
 
 pub struct DebugOptions {
     pub dump_environment_variables: bool,
-    pub dump_limits: bool,
-    pub fallback_only: bool,
     pub silent: bool,
     pub hot_reload: HotReload,
+    /// `--watch-kill-signal`: signal whose JS handlers run before a `--watch`
+    /// reload (node delivers this signal to its watched child; default SIGTERM).
+    pub watch_kill_signal: bun_core::SignalCode,
     pub global_cache: GlobalCache,
     pub offline_mode_setting: Option<OfflineMode>,
     pub run_in_bun: bool,
@@ -356,10 +359,9 @@ impl Default for DebugOptions {
     fn default() -> Self {
         Self {
             dump_environment_variables: false,
-            dump_limits: false,
-            fallback_only: false,
             silent: false,
             hot_reload: HotReload::None,
+            watch_kill_signal: bun_core::SignalCode::DEFAULT,
             global_cache: GlobalCache::auto,
             offline_mode_setting: None,
             run_in_bun: false,
@@ -440,6 +442,10 @@ pub struct TestOptions {
     /// and only every Nth file (starting from M-1) is run. index is
     /// 1-based; both are validated at parse time so `1 <= index <= count`.
     pub shard: Option<Shard>,
+    /// `bun test --timings=<path>...`: per-file durations (ms), merged across files; the first is where `--update-timings` writes.
+    pub timings_files: Vec<Box<[u8]>>,
+    /// `bun test --update-timings`: merge this run's measured per-file durations into `timings_file`.
+    pub update_timings: bool,
 
     pub reporters: Reporters,
     pub reporter_outfile: Option<Box<[u8]>>,
@@ -504,6 +510,8 @@ impl Default for TestOptions {
             test_worker: false,
             changed: None,
             shard: None,
+            timings_files: Vec::new(),
+            update_timings: false,
             reporters: Reporters::default(),
             reporter_outfile: None,
         }

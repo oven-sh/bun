@@ -40,7 +40,7 @@ use core::ffi::{c_char, c_void};
 // See docs/PORTING.md §JSC types and src/codegen/generate-classes.ts for the
 // symbol-naming contract the macros uphold.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_jsc_macros::{JsClass, codegen_cached_accessors, host_call, host_fn};
+pub use bun_jsc_macros::{JsAffine, JsClass, codegen_cached_accessors, host_call, host_fn};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Submodules. Each `#[path]` points at the actual PascalCase / snake_case
@@ -51,7 +51,7 @@ pub use error::{Error as CrateError, Result as CrateResult};
 #[path = "CommonAbortReason.rs"]
 pub mod common_abort_reason;
 #[path = "CustomGetterSetter.rs"]
-pub mod custom_getter_setter;
+pub(crate) mod custom_getter_setter;
 #[path = "ErrorCode.rs"]
 pub mod error_code;
 #[path = "Errorable.rs"]
@@ -59,7 +59,7 @@ pub mod errorable;
 #[path = "EventType.rs"]
 pub mod event_type;
 #[path = "GetterSetter.rs"]
-pub mod getter_setter;
+pub(crate) mod getter_setter;
 #[path = "JSCell.rs"]
 pub mod js_cell;
 #[path = "JSErrorCode.rs"]
@@ -93,74 +93,38 @@ pub mod zig_stack_frame_code;
 #[path = "ZigStackFramePosition.rs"]
 pub mod zig_stack_frame_position;
 
-/// `bun.schema.api` types that reference `ZigStackFramePosition` (this crate)
-/// and so cannot live in `bun_options_types::schema::api` without a dep cycle.
-pub mod schema_api {
-    use crate::ZigStackFramePosition;
+/// Owned snapshots of a [`ZigException`] (see `ZigException::add_to_error_list`),
+/// collected into an [`ExceptionList`](virtual_machine::ExceptionList) so callers
+/// such as the `Bun.serve` development error page can report errors after the
+/// JSC exception itself is gone.
+pub mod exception_list {
+    use crate::{JSErrorCode, JSRuntimeType, ZigStackFrameCode, ZigStackFramePosition};
 
-    /// Non-exhaustive stack-frame scope tag. Newtype keeps any-u8 FFI-safe.
-    #[repr(transparent)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub struct StackFrameScope(pub u8);
-
-    impl StackFrameScope {
-        pub const NONE: Self = Self(0);
-    }
-
-    /// Line/column position of a stack frame (FFI layout shared with C++).
-    pub type StackFramePosition = ZigStackFramePosition;
-
-    /// One captured stack frame: function name, file, position, and scope (FFI layout shared with C++).
-    #[derive(Clone)]
     pub struct StackFrame {
-        /// function_name
         pub function_name: Box<[u8]>,
-        /// file
+        /// Source URL, remapped relative to the project root / origin.
         pub file: Box<[u8]>,
-        /// position
-        pub position: StackFramePosition,
-        /// scope
-        pub scope: StackFrameScope,
+        pub position: ZigStackFramePosition,
+        pub code_type: ZigStackFrameCode,
     }
 
-    impl Default for StackFrame {
-        fn default() -> Self {
-            Self {
-                function_name: Box::default(),
-                file: Box::default(),
-                position: StackFramePosition::INVALID,
-                scope: StackFrameScope::NONE,
-            }
-        }
-    }
-
-    /// A line of source text with its line number, used for error previews.
-    #[derive(Clone, Default)]
     pub struct SourceLine {
-        /// line
+        /// 0-based.
         pub line: i32,
-        /// text
         pub text: Box<[u8]>,
     }
 
-    /// A captured stack trace: frames plus the source lines used to render previews.
-    #[derive(Clone, Default)]
+    #[derive(Default)]
     pub struct StackTrace {
-        /// source_lines
         pub source_lines: Vec<SourceLine>,
-        /// frames
         pub frames: Vec<StackFrame>,
     }
 
-    /// Lives here (not `bun_options_types::schema::api`) because `stack`'s
-    /// [`StackTrace`] transitively names `ZigStackFramePosition` from this
-    /// crate; the `bun_options_types` copy omits `stack` to avoid the cycle.
-    #[derive(Clone, Default)]
     pub struct JsException {
         pub name: Box<[u8]>,
         pub message: Box<[u8]>,
-        pub runtime_type: u16,
-        pub code: u16,
+        pub runtime_type: JSRuntimeType,
+        pub code: JSErrorCode,
         pub stack: StackTrace,
     }
 }
@@ -180,8 +144,6 @@ pub mod deprecated_strong;
 pub mod dom_url;
 #[path = "Exception.rs"]
 pub mod exception;
-#[path = "ipc.rs"]
-pub mod ipc;
 #[path = "JSArray.rs"]
 pub mod js_array;
 #[path = "JSBigInt.rs"]
@@ -414,13 +376,12 @@ pub use self::dom_url::DOMURL;
 pub use self::js_big_int::JSBigInt;
 
 pub use self::common_abort_reason::{CommonAbortReason, CommonAbortReasonExt};
-pub use self::custom_getter_setter::CustomGetterSetter;
+pub(crate) use self::custom_getter_setter::CustomGetterSetter;
 /// Some drafts spell this `jsc::ErrCode` — keep both until call-sites converge.
 pub use self::error_code::ErrorCode as ErrCode;
 pub use self::error_code::{ErrorBuilder, ErrorCode};
 pub use self::errorable::Errorable;
 pub use self::event_type::EventType;
-pub use self::getter_setter::GetterSetter;
 pub use self::js_cell::{JSCell, JsCell};
 pub use self::js_error_code::{DOMExceptionCode, JSErrorCode};
 pub use self::js_map::JSMap;
@@ -484,6 +445,8 @@ pub mod js_array_iterator;
 pub mod js_global_object;
 #[path = "JSPropertyIterator.rs"]
 pub mod js_property_iterator;
+#[path = "NodeCompileCache.rs"]
+pub mod node_compile_cache;
 #[path = "SystemError.rs"]
 pub mod system_error;
 #[path = "URL.rs"]
@@ -513,23 +476,22 @@ pub mod bun_heap_profiler;
 pub mod bun_string_jsc;
 #[path = "comptime_string_map_jsc.rs"]
 pub mod comptime_string_map_jsc;
-#[path = "ConcurrentPromiseTask.rs"]
-pub mod concurrent_promise_task;
 #[path = "EventLoopHandle.rs"]
 pub mod event_loop_handle;
 #[path = "FFI.rs"]
 pub mod ffi;
 #[path = "JSCScheduler.rs"]
 pub mod jsc_scheduler;
-#[path = "JSONLineBuffer.rs"]
-pub mod json_line_buffer;
 #[path = "ProcessAutoKiller.rs"]
 pub mod process_auto_killer;
-#[path = "WorkTask.rs"]
-pub mod work_task;
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
 pub fn initialize(eval_mode: bool) {
+    initialize_with(eval_mode, false);
+}
+
+/// `short_lived_globals`: `bun test --isolate`/`--parallel`, where each file gets a fresh global and per-global JIT code is discarded with it.
+pub fn initialize_with(eval_mode: bool, short_lived_globals: bool) {
     // The counter lives in `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
@@ -548,6 +510,7 @@ pub fn initialize(eval_mode: bool) {
             on_jsc_invalid_env_var,
             eval_mode,
             one_shot,
+            short_lived_globals,
         )
     };
 }
@@ -613,10 +576,10 @@ pub type JsResult<T> = core::result::Result<T, JsError>;
 
 bun_core::oom_from_alloc!(JsError);
 
-impl From<bun_event_loop::ErasedJsError> for JsError {
+impl From<bun_core::JsError> for JsError {
     #[inline]
-    fn from(e: bun_event_loop::ErasedJsError) -> Self {
-        use bun_event_loop::ErasedJsError as E;
+    fn from(e: bun_core::JsError) -> Self {
+        use bun_core::JsError as E;
         match e {
             E::Thrown => JsError::Thrown,
             E::OutOfMemory => JsError::OutOfMemory,
@@ -625,17 +588,17 @@ impl From<bun_event_loop::ErasedJsError> for JsError {
     }
 }
 
-impl From<JsTerminated> for bun_event_loop::ErasedJsError {
+impl From<JsTerminated> for bun_core::JsError {
     #[inline]
     fn from(_: JsTerminated) -> Self {
-        bun_event_loop::ErasedJsError::Terminated
+        bun_core::JsError::Terminated
     }
 }
 
-impl From<JsError> for bun_event_loop::ErasedJsError {
+impl From<JsError> for bun_core::JsError {
     #[inline]
     fn from(e: JsError) -> Self {
-        use bun_event_loop::ErasedJsError as E;
+        use bun_core::JsError as E;
         match e {
             JsError::Thrown => E::Thrown,
             JsError::OutOfMemory => E::OutOfMemory,
@@ -689,6 +652,27 @@ impl<T> JsResultExt for JsResult<T> {
             if e != JsError::Terminated {
                 global.report_uncaught_exception_from_error(e);
             }
+        }
+    }
+}
+
+/// The one sanctioned way to turn a `JsResult<JSValue>` into a bare `JSValue`:
+/// **only in host-function / getter return position**, where JSC's convention
+/// is that an empty value means "the exception is pending on the VM". Anywhere
+/// else (a promise settlement, a callback argument, a property store) an empty
+/// `JSValue` is not a value — carry the `JsResult` to that boundary instead
+/// (`JSPromise::settle`, `?`). `unwrap_or(JSValue::ZERO)` is banned by
+/// test/internal/source-lints for that reason.
+pub trait HostReturn {
+    fn or_pending_exception(self) -> JSValue;
+}
+
+impl HostReturn for JsResult<JSValue> {
+    #[inline]
+    fn or_pending_exception(self) -> JSValue {
+        match self {
+            Ok(v) => v,
+            Err(_) => JSValue::ZERO,
         }
     }
 }
@@ -831,9 +815,9 @@ pub mod __macro_support {
     }
 }
 
-// Compile-time smoke test for the proc-macros (no runtime body — just asserts
-// the expansions type-check against the real `JSGlobalObject`/`CallFrame`/
-// `JSValue`/`JsResult` shapes and that the `JsClass` trait impl wires up).
+// Compile-time smoke test for the `host_fn` proc-macro (no runtime body —
+// just asserts the expansion type-checks against the real
+// `JSGlobalObject`/`CallFrame`/`JSValue`/`JsResult` shapes).
 #[cfg(test)]
 mod __macro_smoke {
     use super::{CallFrame, JSGlobalObject, JSValue, JsResult};
@@ -842,43 +826,12 @@ mod __macro_smoke {
     fn smoke_free(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::UNDEFINED)
     }
-
-    #[crate::JsClass(no_construct)]
-    pub struct Smoke {
-        n: u32,
-    }
-    impl Smoke {
-        // Required by the `construct` hook when `no_construct` is omitted; kept
-        // here so a future flip exercises it.
-        pub fn constructor(_g: &JSGlobalObject, _f: &CallFrame) -> JsResult<*mut Smoke> {
-            Err(super::JsError::Thrown)
-        }
-        #[crate::host_fn(getter)]
-        pub fn get_n(&self, _g: &JSGlobalObject) -> JsResult<JSValue> {
-            Ok(JSValue::js_number_from_int32(self.n as i32))
-        }
-        #[crate::host_fn(setter)]
-        pub fn set_n(&mut self, _g: &JSGlobalObject, _v: JSValue) -> JsResult<bool> {
-            Ok(true)
-        }
-        #[crate::host_fn(method)]
-        pub fn do_thing(&mut self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
-            Ok(JSValue::UNDEFINED)
-        }
-    }
-
-    // Assert the trait impl exists.
-    fn _assert_js_class<T: crate::JsClass>() {}
-    fn _wired() {
-        _assert_js_class::<Smoke>();
-    }
 }
 
 // JSC Classes Bindings — re-exported from their per-type modules (declared
 // above with `#[path = "…"] pub mod …;`). These were previously placeholder
 // newtypes; the real opaque-FFI structs now live in their own files and are
 // surfaced here at the crate root.
-pub use self::cached_bytecode::CachedBytecode;
 pub use self::dom_form_data::DOMFormData;
 pub use self::url::URL;
 pub use self::zig_stack_frame::ZigStackFrame;
@@ -943,7 +896,6 @@ pub mod resolved_source_tag {
         pub const Javascript: Self = Self(0);
         pub const PackageJsonTypeModule: Self = Self(1);
         pub const PackageJsonTypeCommonjs: Self = Self(2);
-        pub const File: Self = Self(5);
         pub const Esm: Self = Self(6);
         pub const JsonForObjectLoader: Self = Self(7);
         /// Generate an object with `default` set to all the exports, including a `default` property.
@@ -955,7 +907,7 @@ pub mod resolved_source_tag {
 
         /// Map a canonical builtin-module specifier (e.g. `b"node:fs"`) to its
         /// InternalModuleRegistry tag (`(1 << 9) | id`).
-        pub fn try_from_name(name: &[u8]) -> Option<Self> {
+        pub(crate) fn try_from_name(name: &[u8]) -> Option<Self> {
             INTERNAL_MODULE_TAG.get(name).copied()
         }
 
@@ -1039,6 +991,10 @@ pub enum BuiltinName {
     type_,
     signal,
     cmd,
+    /// Private name (`$internal` in builtins); user code cannot set it.
+    internal,
+    /// Private name (`$sharedFd` in builtins); user code cannot set it.
+    sharedFd,
 }
 
 #[allow(non_upper_case_globals)]
@@ -1047,11 +1003,10 @@ impl BuiltinName {
     // streams.rs / fetch.rs / TextDecoder.rs / pretty_format.rs use these).
     pub const Method: Self = Self::method;
     pub const Headers: Self = Self::headers;
-    pub const Status: Self = Self::status;
     pub const Url: Self = Self::url;
     pub const Body: Self = Self::body;
     pub const Data: Self = Self::data;
-    pub const InspectCustom: Self = Self::inspectCustom;
+    pub(crate) const InspectCustom: Self = Self::inspectCustom;
     pub const HighWaterMark: Self = Self::highWaterMark;
     pub const Path: Self = Self::path;
     pub const Stream: Self = Self::stream;
@@ -1059,11 +1014,7 @@ impl BuiltinName {
     pub const Error: Self = Self::error;
     pub const Encoding: Self = Self::encoding;
     pub const Type: Self = Self::type_;
-    pub const Signal: Self = Self::signal;
 
-    pub fn has(property: &[u8]) -> bool {
-        Self::get(property).is_some()
-    }
     pub fn get(property: &[u8]) -> Option<BuiltinName> {
         BUILTIN_NAME_MAP.get(property).copied()
     }
@@ -1232,16 +1183,16 @@ pub struct GregorianDateTime {
     pub day: i32,
     pub hour: i32,
     pub minute: i32,
-    pub second: i32,
+    pub(crate) second: i32,
     pub weekday: i32,
 }
 
 /// Options for `JSGlobalObject::validate_object`.
 #[derive(Default, Copy, Clone)]
 pub struct ValidateObjectOpts {
-    pub allow_array: bool,
-    pub allow_function: bool,
-    pub nullable: bool,
+    pub(crate) allow_array: bool,
+    pub(crate) allow_function: bool,
+    pub(crate) nullable: bool,
 }
 
 /// `BunPluginTarget` is defined once
@@ -1387,8 +1338,13 @@ pub use self::saved_source_map as SavedSourceMap;
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "VirtualMachine.rs"]
 pub mod virtual_machine;
+#[path = "VmHandle.rs"]
+pub mod vm_handle;
 pub use self::virtual_machine as VirtualMachine;
 pub use self::virtual_machine::InitOptions as VirtualMachineInitOptions;
+pub use self::vm_handle::{
+    ConcurrentPoster, LoopHandle, LoopKind, Postable, Posted, VmHandle, post_job,
+};
 
 #[path = "ModuleLoader.rs"]
 pub mod module_loader;
@@ -1403,7 +1359,6 @@ pub use self::hot_reloader::{HotReloader, ImportWatcher, NewHotReloader, WatchRe
 
 #[path = "RuntimeTranspilerCache.rs"]
 pub mod runtime_transpiler_cache;
-pub use self::runtime_transpiler_cache::RuntimeTranspilerCache;
 
 #[path = "RuntimeTranspilerStore.rs"]
 pub mod runtime_transpiler_store;
@@ -1426,15 +1381,14 @@ pub use self::js_property_iterator::{
 #[path = "event_loop.rs"]
 pub mod event_loop;
 pub use self::event_loop as EventLoop;
-#[path = "any_task_job.rs"]
-pub mod any_task_job;
-pub use self::any_task_job::{AnyTaskJob, AnyTaskJobCtx};
+pub mod job;
 pub use self::event_loop::{
-    AnyEventLoop, AnyTask, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentPromiseTask,
-    ConcurrentTask, CppTask, DeferredTaskQueue, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
-    GarbageCollectionController, JsTerminated, JsTerminatedResult, ManagedTask, MiniEventLoop,
-    PosixSignalHandle, PosixSignalTask, Task, WorkPool, WorkPoolTask, WorkTask, WorkTaskContext,
+    AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask,
+    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, JsTerminated,
+    JsTerminatedResult, ManagedTask, MiniEventLoop, PosixSignalHandle, PosixSignalTask, Task,
+    WorkPool, WorkPoolTask,
 };
+pub use self::job::{Completion, Job, JobContext, JsPtr, JsSide, JsThread, Protected};
 #[cfg(unix)]
 pub type PlatformEventLoop = bun_uws::Loop;
 #[cfg(not(unix))]
@@ -1443,7 +1397,7 @@ pub type PlatformEventLoop = bun_io::Loop;
 pub use self::array_buffer::JSTypedArrayBytesDeallocator;
 /// Deprecated: Use `bun_core::ZigString`
 #[deprecated]
-pub type ZigString = bun_core::ZigString;
+pub(crate) type ZigString = bun_core::ZigString;
 /// `ZigString.Slice` — re-exported under the path dependents expect.
 pub type ZigStringSlice = bun_core::ZigStringSlice;
 
@@ -1481,10 +1435,7 @@ pub mod webcore {
 /// hoisted to this tier; full `bun.api.node` lives in `bun_runtime::node`.
 #[allow(non_snake_case)]
 pub mod Node {
-    /// `bun.api.node.ErrorCode` — the Node-compat `ERR_*` codes; the
-    /// `node::ErrorCode` alias resolves directly to [`crate::ErrorCode`]
-    /// (LAYERING: avoids a
-    /// `bun_jsc → bun_runtime` cycle for `DeferredError` / `node_error_binding`).
+    /// `bun.api.node.ErrorCode` — the Node-compat `ERR_*` codes.
     pub use crate::ErrorCode;
     pub use crate::node_path::*;
 }
@@ -1510,7 +1461,7 @@ pub fn mark_binding() {
 
 /// Like [`mark_binding`], with a class-name prefix.
 #[inline]
-pub fn mark_member_binding(class: &'static str, src: &core::panic::Location<'static>) {
+pub(crate) fn mark_member_binding(class: &'static str, src: &core::panic::Location<'static>) {
     if bun_core::env::IS_DEBUG && bun_core::Global::JSC_SCOPE.is_visible() {
         bun_core::Global::JSC_SCOPE.log(format_args!(
             "[jsc] {} ({}:{})\n",
@@ -1702,7 +1653,7 @@ impl ZigStringJsc for bun_core::ZigString {
             let _ = global
                 .err(
                     crate::ErrorCode::STRING_TOO_LONG,
-                    format_args!("Cannot create a string longer than 2^32-1 characters"),
+                    format_args!("Cannot create a string longer than 2147483647 characters"),
                 )
                 .throw();
             return JSValue::ZERO;
@@ -1737,7 +1688,7 @@ impl ZigStringJsc for bun_core::ZigString {
             let _ = global
                 .err(
                     crate::ErrorCode::STRING_TOO_LONG,
-                    format_args!("Cannot create a string longer than 2^32-1 characters"),
+                    format_args!("Cannot create a string longer than 2147483647 characters"),
                 )
                 .throw();
             return JSValue::ZERO;
@@ -1921,10 +1872,6 @@ pub struct Ref {
 }
 
 impl Ref {
-    pub fn init() -> Ref {
-        Ref::default()
-    }
-
     pub fn unref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
         if !self.has {
             return;
@@ -1972,6 +1919,7 @@ unsafe extern "C" {
         cb: extern "C" fn(name: *const u8, len: usize),
         eval_mode: bool,
         one_shot_startup: bool,
+        short_lived_globals: bool,
     );
 }
 

@@ -55,18 +55,18 @@ pub type PidFdType = ();
 
 #[derive(Default, Clone, Copy)]
 pub struct WinTimeval {
-    pub sec: i64,
-    pub usec: i64,
+    pub(crate) sec: i64,
+    pub(crate) usec: i64,
 }
 
 #[derive(Default, Clone, Copy)]
 pub struct WinRusage {
-    pub utime: WinTimeval,
-    pub stime: WinTimeval,
-    pub maxrss: u64,
+    pub(crate) utime: WinTimeval,
+    pub(crate) stime: WinTimeval,
+    pub(crate) maxrss: u64,
     // ixrss, idrss, isrss, minflt, majflt, nswap: always zero — omitted
-    pub inblock: u64,
-    pub oublock: u64,
+    pub(crate) inblock: u64,
+    pub(crate) oublock: u64,
     // msgsnd, msgrcv, nsignals, nvcsw, nivcsw: always zero — omitted
 }
 
@@ -135,7 +135,7 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     let Ok(memory) = bun_sys::windows::GetProcessMemoryInfo(process_pid) else {
         return usage_info;
     };
-    usage_info.maxrss = (memory.PeakWorkingSetSize / 1024) as u64;
+    usage_info.maxrss = memory.PeakWorkingSetSize as u64;
 
     usage_info
 }
@@ -194,9 +194,15 @@ impl RusageFields for libc::rusage {
     fn stime_usec(&self) -> i64 {
         self.ru_stime.tv_usec as i64
     }
+    /// Bytes. `ru_maxrss` is bytes on Apple platforms but kilobytes on
+    /// Linux/BSD.
     #[inline]
     fn maxrss(&self) -> f64 {
-        self.ru_maxrss as f64
+        if cfg!(target_vendor = "apple") {
+            self.ru_maxrss as f64
+        } else {
+            (self.ru_maxrss as f64) * 1024.0
+        }
     }
     #[inline]
     fn ixrss(&self) -> f64 {
@@ -343,6 +349,9 @@ pub struct PosixSpawnOptions {
     /// no-orphans mode is enabled (see `ParentDeathWatchdog`), else 0 (no
     /// PDEATHSIG). Not exposed to JS yet.
     pub linux_pdeathsig: Option<u8>,
+    /// Linux only. Directory fd of a cgroup the child starts inside
+    /// (`CLONE_INTO_CGROUP`, else a pre-exec `cgroup.procs` write). Caller owns the fd.
+    pub cgroup_fd: Option<Fd>,
 }
 
 impl Default for PosixSpawnOptions {
@@ -368,6 +377,7 @@ impl Default for PosixSpawnOptions {
             pty_slave_fd: -1,
             pseudoconsole: (),
             linux_pdeathsig: None,
+            cgroup_fd: None,
         }
     }
 }
@@ -452,7 +462,8 @@ pub struct PosixSpawnResult {
     pub stdin: Option<Fd>,
     pub stdout: Option<Fd>,
     pub stderr: Option<Fd>,
-    pub ipc: Option<Fd>,
+    #[cfg(not(windows))]
+    pub(crate) ipc: Option<Fd>,
     pub extra_pipes: Vec<ExtraPipe>,
     pub memfds: [bool; 3],
     // ESRCH can happen when requesting the pidfd
@@ -507,7 +518,7 @@ impl PosixSpawnResult {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
+    pub(crate) fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
         if crate::waiter_thread_flag::get() {
             return Err(bun_sys::Error::from_code(
                 bun_sys::E::ENOSYS,
@@ -586,9 +597,9 @@ impl PosixSpawnResult {
 
 // Apple `<spawn.h>` extensions not exported by the `libc` crate.
 #[cfg(target_os = "macos")]
-pub(crate) const POSIX_SPAWN_CLOEXEC_DEFAULT: i32 = 0x4000; // _POSIX_SPAWN_CLOEXEC_DEFAULT
+const POSIX_SPAWN_CLOEXEC_DEFAULT: i32 = 0x4000; // _POSIX_SPAWN_CLOEXEC_DEFAULT
 #[cfg(target_os = "macos")]
-pub(crate) const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC
+const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC
 
 /// RAII fd cleanup for `spawn_process_posix`. On *every* exit it sets
 /// CLOEXEC on `to_set_cloexec`, then closes `to_close_at_end`; on error
@@ -699,6 +710,7 @@ pub unsafe fn spawn_process_posix(
     attr.new_process_group = options.new_process_group;
     attr.uid = options.uid;
     attr.gid = options.gid;
+    attr.cgroup_fd = options.cgroup_fd.map_or(-1, |fd| fd.native());
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
@@ -771,7 +783,12 @@ pub unsafe fn spawn_process_posix(
                 }
             }
             PosixStdio::Inherit => {
-                actions.inherit(fileno)?;
+                // A closed slot would inherit whatever fd is created later at that number (e.g. the ipc socketpair); libuv gives it /dev/null.
+                if bun_sys::get_fcntl_flags(fileno).is_err() {
+                    actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
+                } else {
+                    actions.inherit(fileno)?;
+                }
             }
             PosixStdio::Ipc | PosixStdio::Ignore => {
                 actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;

@@ -153,6 +153,11 @@ export class ClassDefinition {
    */
   forBind?: boolean;
   /**
+   * Parent of the generated prototype object. "Error" puts Error.prototype in
+   * the chain so instances satisfy `instanceof Error`. Default: Object.prototype.
+   */
+  prototypeBase?: "Error";
+  /**
    * ## IMPORTANT
    * You _must_ free the pointer to your native class!
    *
@@ -239,8 +244,6 @@ export class ClassDefinition {
   hasPendingActivity?: boolean;
   isEventEmitter?: boolean;
   supportsObjectCreate?: boolean;
-
-  getInternalProperties?: boolean;
 
   custom?: Record<string, CustomField>;
 

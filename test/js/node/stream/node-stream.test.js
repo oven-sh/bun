@@ -1,6 +1,6 @@
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
-import { bunEnv, bunExe, isGlibcVersionAtLeast, isMacOS, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
@@ -199,8 +199,8 @@ describe("createReadStream", () => {
     });
   });
 
-  it("should emit readable on end", () => {
-    expect([join(import.meta.dir, "emit-readable-on-end.js")]).toRun();
+  it("should emit readable on end", async () => {
+    expect(await bunRun(join(import.meta.dir, "emit-readable-on-end.js"))).toSpawn();
   });
 });
 
@@ -386,6 +386,41 @@ it("Readable.fromWeb", async () => {
     chunks.push(chunk);
   }
   expect(Buffer.concat(chunks).toString()).toBe("Hello World!\n");
+});
+
+// fromWeb assigns stream.$bunNativePtr on the node Readable. When user code grafts
+// ReadableStream.prototype into the node stream prototype chain, that put used to
+// reach ReadableStream's private custom setter with the Readable as the receiver,
+// writing a JSValue through a type-confused pointer into the Readable's own
+// property storage (observable below as a clobbered Symbol(kCapture) slot).
+it("Readable.fromWeb with ReadableStream.prototype grafted into the prototype chain", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Readable } = require("node:stream");
+        const { EventEmitter } = require("node:events");
+        const snap = o => Object.fromEntries(Reflect.ownKeys(o).map(k => [String(k), Object.prototype.toString.call(o[k])]));
+        const before = snap(Readable.fromWeb(new Response("x").body));
+        Object.setPrototypeOf(EventEmitter.prototype, ReadableStream.prototype);
+        const stream = Readable.fromWeb(new Response("y").body);
+        const after = snap(stream);
+        for (const key in before) {
+          if (before[key] !== after[key]) throw new Error("clobbered own slot " + key + ": " + before[key] + " -> " + after[key]);
+        }
+        const chunks = [];
+        for await (const chunk of stream) chunks.push(chunk);
+        console.log("read:" + Buffer.concat(chunks).toString());
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("read:y\n");
+  expect(exitCode).toBe(0);
 });
 
 // An error from the underlying web stream must surface on the node Readable as an
@@ -832,6 +867,50 @@ describe("webstreams adapters (Node v26 sync)", () => {
     }
     await pipe;
     expect(writes).toBe(TOTAL);
+  });
+
+  // newStreamWritableFromWritableStream's write() decodes string chunks that
+  // reach _write undecoded, using TypedArrayPrototypeGetBuffer/ByteOffset/
+  // ByteLength from internal/primordials. Those three were missing from
+  // Bun's primordials, so this path threw "TypedArrayPrototypeGetBuffer is
+  // not a function" where Node hands the sink a plain Uint8Array.
+  it("Writable.fromWeb _write decodes non-utf8 string chunks like Node", async () => {
+    const chunks = [];
+    const ws = new WritableStream({
+      write(chunk) {
+        chunks.push(chunk);
+      },
+    });
+    const w = Writable.fromWeb(ws);
+    await new Promise((resolve, reject) => {
+      w._write("68656c6c6f", "hex", err => (err ? reject(err) : resolve()));
+    });
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].constructor).toBe(Uint8Array);
+    expect(chunks[0]).toEqual(new Uint8Array([0x68, 0x65, 0x6c, 0x6c, 0x6f]));
+  });
+
+  it("Duplex.fromWeb _write decodes non-utf8 string chunks like Node", async () => {
+    const chunks = [];
+    const pair = {
+      readable: new ReadableStream({
+        start(controller) {
+          controller.close();
+        },
+      }),
+      writable: new WritableStream({
+        write(chunk) {
+          chunks.push(chunk);
+        },
+      }),
+    };
+    const d = Duplex.fromWeb(pair);
+    await new Promise((resolve, reject) => {
+      d._write("aGVsbG8=", "base64", err => (err ? reject(err) : resolve()));
+    });
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].constructor).toBe(Uint8Array);
+    expect(chunks[0]).toEqual(new Uint8Array([0x68, 0x65, 0x6c, 0x6c, 0x6f]));
   });
 
   // Upstream: v26 newStreamWritableFromWritableStream writev done() shape —

@@ -1,15 +1,13 @@
-use core::ptr::NonNull;
-
-use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
+use crate::{JSGlobalObject, JsResult};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
-#[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
+#[allow(improper_ctypes)] // `Shared` is opaque to C++ (`BunVmHandleRef`)
 unsafe extern "C" {
     fn Bun__EventLoopTaskNoContext__performTask(task: *mut EventLoopTaskNoContext);
-    safe fn Bun__EventLoopTaskNoContext__createdInBunVm(
+    safe fn Bun__EventLoopTaskNoContext__vmHandle(
         task: &EventLoopTaskNoContext,
-    ) -> *mut VirtualMachine;
+    ) -> *const crate::vm_handle::Shared;
 }
 
 bun_opaque::opaque_ffi! {
@@ -19,6 +17,15 @@ bun_opaque::opaque_ffi! {
 
 impl Taskable for CppTask {
     const TAG: TaskTag = task_tag::CppTask;
+    /// Delete the `WebCore::EventLoopTask` — its captured `Ref`s drop against
+    /// the still-live heap.
+    unsafe fn release_unrun(this: *mut Self) {
+        unsafe extern "C" {
+            fn Bun__deleteEventLoopTask(task: *mut CppTask);
+        }
+        // SAFETY: fn contract; every CppTask payload is a heap EventLoopTask.
+        unsafe { Bun__deleteEventLoopTask(this) }
+    }
 }
 
 impl CppTask {
@@ -47,21 +54,20 @@ impl EventLoopTaskNoContext {
         unsafe { Bun__EventLoopTaskNoContext__performTask(this) }
     }
 
-    /// Get the VM that created this task. `VirtualMachine` is process-lifetime
-    /// (PORTING.md §Global mutable state), so a [`BackRef`] is the right
-    /// non-owning handle: callers project `&VirtualMachine` via `Deref` and
-    /// route mutation through the VM's safe interior accessors (e.g.
-    /// `event_loop_shared()`).
-    pub fn get_vm(&self) -> Option<bun_ptr::BackRef<VirtualMachine>> {
-        NonNull::new(Bun__EventLoopTaskNoContext__createdInBunVm(self)).map(bun_ptr::BackRef::from)
+    /// The handle of the VM this task was created in (a reference the C++
+    /// task holds for its lifetime).
+    pub(crate) fn vm_handle(&self) -> crate::vm_handle::BorrowedRef {
+        // SAFETY: C++ stores a `BunVmHandleRef` from `Bun__VmHandle__retainRef`
+        // for the task's whole lifetime.
+        unsafe { crate::VmHandle::borrow_ref(Bun__EventLoopTaskNoContext__vmHandle(self)) }
     }
 }
 
 /// A task created from C++ code that runs inside the workpool, usually via ScriptExecutionContext.
 #[repr(C)]
 pub struct ConcurrentCppTask {
-    pub cpp_task: *mut EventLoopTaskNoContext,
-    pub workpool_task: WorkPoolTask,
+    pub(crate) cpp_task: *mut EventLoopTaskNoContext,
+    pub(crate) workpool_task: WorkPoolTask,
 }
 
 bun_threading::owned_task!(ConcurrentCppTask, workpool_task);
@@ -73,25 +79,26 @@ impl ConcurrentCppTask {
         let cpp_task = self.cpp_task;
         // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref`
         // is the centralised non-null deref proof. Valid until `run` consumes it.
-        let maybe_vm = EventLoopTaskNoContext::opaque_ref(cpp_task).get_vm();
+        // Clone before `run` consumes (and frees) the C++ task that holds the reference.
+        let handle: crate::VmHandle = EventLoopTaskNoContext::opaque_ref(cpp_task)
+            .vm_handle()
+            .clone();
         drop(self);
         // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
         // `opaque_ref` above proved it non-null and it has not yet been freed — `run` consumes it here.
         unsafe { EventLoopTaskNoContext::run(cpp_task) };
-        if let Some(vm) = maybe_vm {
-            vm.event_loop_shared().unref_concurrently();
-        }
+        handle.unref_keep_alive(crate::LoopKind::Regular);
     }
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoContext) {
+extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoContext) {
     crate::mark_binding!();
     // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref` is
     // the centralised non-null deref proof. C++ just handed it over.
-    if let Some(vm) = EventLoopTaskNoContext::opaque_ref(cpp_task).get_vm() {
-        vm.event_loop_shared().ref_concurrently();
-    }
+    EventLoopTaskNoContext::opaque_ref(cpp_task)
+        .vm_handle()
+        .ref_keep_alive(crate::LoopKind::Regular);
     WorkPool::schedule_new(ConcurrentCppTask {
         cpp_task,
         workpool_task: WorkPoolTask::default(),

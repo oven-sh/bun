@@ -14,7 +14,9 @@ use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{PackageID, Resolution};
 use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
 use bun_semver::{self as Semver, String as SemverString};
-use bun_sys::{self as sys, Dir, Fd, FdDirExt, File};
+#[cfg(windows)]
+use bun_sys::FdDirExt;
+use bun_sys::{self as sys, Dir, Fd, File};
 
 use crate::bun_progress::Node as ProgressNode;
 
@@ -32,7 +34,7 @@ impl PackageManager {
     /// an owning `Dir` would close the cached fd when the caller drops it.
     /// Callers that need `Dir` methods should use `Dir::borrow(&fd)`.
     #[inline]
-    pub fn get_cache_directory(&mut self) -> Fd {
+    pub(crate) fn get_cache_directory(&mut self) -> Fd {
         get_cache_directory(self)
     }
 
@@ -55,12 +57,12 @@ impl PackageManager {
     }
 
     #[inline]
-    pub fn get_cache_directory_and_abs_path(&mut self) -> (Fd, AbsPath) {
+    pub(crate) fn get_cache_directory_and_abs_path(&mut self) -> (Fd, AbsPath) {
         get_cache_directory_and_abs_path(self)
     }
 
     #[inline]
-    pub fn get_temporary_directory(&mut self) -> &'static TemporaryDirectory {
+    pub(crate) fn get_temporary_directory(&mut self) -> &'static TemporaryDirectory {
         get_temporary_directory(self)
     }
 }
@@ -89,7 +91,7 @@ pub fn get_cache_directory(this: &mut PackageManager) -> Fd {
 /// `this` must be valid for reads and writes for the call's duration, and the
 /// caller must hold no live borrow that overlaps the fields listed above.
 #[inline]
-pub unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
+pub(crate) unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
     // SAFETY: caller contract — `cache_directory` is disjoint from any
     // borrow the caller holds.
     if let Some(d) = unsafe { (*this).cache_directory.as_ref() } {
@@ -126,9 +128,10 @@ pub fn get_temporary_directory(this: &mut PackageManager) -> &'static TemporaryD
 }
 
 pub struct TemporaryDirectory {
-    pub handle: Dir,
-    pub path: ZBox,
-    pub name: &'static [u8],
+    pub(crate) handle: Dir,
+    #[cfg(windows)]
+    pub(crate) path: ZBox,
+    pub(crate) name: &'static [u8],
 }
 
 // `TemporaryDirectory` is auto-`Send + Sync`: `Dir` wraps `Fd` (an integer),
@@ -180,7 +183,11 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     let tmpname =
         FileSystem::tmpname(b"hm", &mut tmpbuf, bun_core::fast_random()).expect("unreachable");
 
-    let mut timer = if manager.options.log_level != LogLevel::Silent {
+    let mut timer = if manager.options.log_level != LogLevel::Silent
+        && !bun_core::env_var::feature_flag::BUN_DISABLE_SLOW_FILESYSTEM_WARNING
+            .get()
+            .unwrap_or(false)
+    {
         Some(bun_core::time::Timer::start())
     } else {
         None
@@ -269,8 +276,8 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         break;
     }
 
-    if manager.options.log_level != LogLevel::Silent {
-        let elapsed = timer.as_mut().unwrap().read();
+    if let Some(timer) = timer.as_mut() {
+        let elapsed = timer.read();
         if elapsed > bun_core::time::NS_PER_MS * 100 {
             let mut path_buf = PathBuffer::uninit();
             let cache_dir_path: &[u8] = match sys::get_fd_path(cache_directory_fd, &mut path_buf) {
@@ -284,7 +291,9 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         }
     }
 
+    #[cfg(windows)]
     let mut buf = PathBuffer::uninit();
+    #[cfg(windows)]
     let temp_dir_path = match sys::get_fd_path_z(Fd::from_std_dir(&tempdir), &mut buf) {
         Ok(p) => p,
         Err(err) => {
@@ -300,6 +309,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     TemporaryDirectory {
         handle: tempdir,
         name: temp_dir_name,
+        #[cfg(windows)]
         path: ZBox::from_bytes(temp_dir_path.as_bytes()),
     }
 }
@@ -363,14 +373,12 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
 
 pub struct CacheDir {
     pub path: Vec<u8>,
-    pub is_node_modules: bool,
 }
 
 pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Options>) -> CacheDir {
     if let Some(dir) = env.get(b"BUN_INSTALL_CACHE_DIR") {
         return CacheDir {
             path: FileSystem::instance().abs(&[dir]).to_vec(),
-            is_node_modules: false,
         };
     }
 
@@ -378,7 +386,6 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
         if !opts.cache_directory.is_empty() {
             return CacheDir {
                 path: FileSystem::instance().abs(&[opts.cache_directory]).to_vec(),
-                is_node_modules: false,
             };
         }
     }
@@ -387,7 +394,6 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
         let parts: [&[u8]; 3] = [dir, b"install/", b"cache/"];
         return CacheDir {
             path: FileSystem::instance().abs(&parts).to_vec(),
-            is_node_modules: false,
         };
     }
 
@@ -395,7 +401,6 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
         let parts: [&[u8]; 4] = [dir, b".bun/", b"install/", b"cache/"];
         return CacheDir {
             path: FileSystem::instance().abs(&parts).to_vec(),
-            is_node_modules: false,
         };
     }
 
@@ -403,13 +408,11 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
         let parts: [&[u8]; 4] = [dir, b".bun/", b"install/", b"cache/"];
         return CacheDir {
             path: FileSystem::instance().abs(&parts).to_vec(),
-            is_node_modules: false,
         };
     }
 
     let fallback_parts: [&[u8]; 1] = [b"node_modules/.bun-cache"];
     CacheDir {
-        is_node_modules: true,
         path: FileSystem::instance().abs(&fallback_parts).to_vec(),
     }
 }
@@ -911,8 +914,8 @@ pub fn path_for_resolution<'a>(
 pub struct CacheDirAndSubpath<'a> {
     /// Borrowed view: the descriptor is owned by the `PackageManager` singleton
     /// (or is `Fd::cwd()`); callers must not close it.
-    pub cache_dir: Fd,
-    pub cache_dir_subpath: &'a ZStr,
+    pub(crate) cache_dir: Fd,
+    pub(crate) cache_dir_subpath: &'a ZStr,
 }
 
 /// this is copy pasted from `installPackageWithNameAndResolution()`
@@ -1025,7 +1028,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
 
 // ─────────────────────────── package.json / lockfile ──────────────────────────
 
-pub fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
+pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
     let package_json_file = match Dir::cwd().create_file_z(
         z_static(b"package.json\0"),
         sys::CreateFlags {
@@ -1260,9 +1263,9 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
 
 // ────────────────────────────── formatters ────────────────────────────────────
 
-pub struct CacheVersion;
+pub(crate) struct CacheVersion;
 impl CacheVersion {
-    pub const CURRENT: usize = 1;
+    pub(crate) const CURRENT: usize = 1;
 }
 
 // ────────────────────────────── helpers ───────────────────────────────────────

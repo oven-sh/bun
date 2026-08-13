@@ -94,13 +94,12 @@ pub struct ConsoleObject {
     error_writer_backing: Output::QuietWriterAdapter,
     writer_backing: Output::QuietWriterAdapter,
 
-    pub default_indent: u16,
+    pub(crate) default_indent: u16,
 
     counts: Counter,
 
     // The writer adapters above hold raw pointers into `{stderr,stdout}_buffer`;
-    // moving the struct would dangle them. `PhantomPinned` opts out of `Unpin`
-    // so `Pin<Box<Self>>` (returned by `init`) actually enforces that.
+    // moving the struct would dangle them, so opt out of `Unpin`.
     _pin: core::marker::PhantomPinned,
 }
 
@@ -112,56 +111,11 @@ impl core::fmt::Display for ConsoleObject {
 }
 
 impl ConsoleObject {
-    // `adapt_to_new_api(&mut self.stderr_buffer)` captures a raw
-    // pointer into the buffer field, so the struct is self-referential once
-    // initialized. The previous out-param shape (`&mut MaybeUninit<Self>`)
-    // still let the caller move the value afterwards (e.g.
-    // `Box::new(unsafe { mu.assume_init() })`), which is exactly what
-    // `VirtualMachine` needs to do — and that move would dangle both
-    // adapter pointers.
-    //
-    // Instead, allocate the storage here and return it pinned:
-    // `Pin<Box<Self>>` puts the 8 KiB of buffers at a stable heap address
-    // before the adapters are wired up, and the `Pin` makes the
-    // "must not move" invariant a type-system fact rather than a comment.
-    // `VirtualMachine.console` stores the raw pointer (`*mut c_void`), so
-    // callers leak via `heap::alloc(Pin::into_inner_unchecked(..))` — the
-    // VM owns it for the process lifetime.
-    pub fn init(
-        error_writer: Output::StreamType,
-        writer: Output::StreamType,
-    ) -> core::pin::Pin<Box<ConsoleObject>> {
-        let mut out = Box::new(ConsoleObject {
-            stderr_buffer: [0; 4096],
-            stdout_buffer: [0; 4096],
-            error_writer_backing: Output::QuietWriterAdapter::uninit(),
-            writer_backing: Output::QuietWriterAdapter::uninit(),
-            default_indent: 0,
-            counts: Counter::default(),
-            _pin: core::marker::PhantomPinned,
-        });
-        let p: *mut ConsoleObject = &raw mut *out;
-        // SAFETY: `out` is heap-allocated at its final address; the adapters
-        // store raw pointers into `out.{stderr,stdout}_buffer`, which remain
-        // valid for the box's lifetime. We split the borrow through a raw
-        // pointer because `adapt_to_new_api` would otherwise hold a unique
-        // borrow of one field while we assign another.
-        unsafe {
-            (*p).error_writer_backing = error_writer
-                .quiet_writer()
-                .adapt_to_new_api(&mut (*p).stderr_buffer);
-            (*p).writer_backing = writer
-                .quiet_writer()
-                .adapt_to_new_api(&mut (*p).stdout_buffer);
-        }
-        Box::into_pin(out)
-    }
-
-    /// Out-param variant kept for callers that already own pinned storage
-    /// (e.g. a static / arena slot). The address of `*out` MUST be stable for
-    /// the value's entire lifetime — moving it afterwards leaves the writer
-    /// adapters dangling. Prefer [`init`](Self::init) for new code.
-    pub fn init_in_place(
+    /// `adapt_to_new_api(&mut self.stderr_buffer)` captures a raw pointer into
+    /// the buffer field, so the struct is self-referential once initialized:
+    /// the address of `*out` MUST be stable for the value's entire lifetime —
+    /// moving it afterwards leaves the writer adapters dangling.
+    pub(crate) fn init_in_place(
         out: &mut core::mem::MaybeUninit<ConsoleObject>,
         error_writer: Output::StreamType,
         writer: Output::StreamType,
@@ -193,13 +147,13 @@ impl ConsoleObject {
 
     /// Returns the buffered stderr writer interface.
     #[inline]
-    pub fn error_writer(&mut self) -> &mut bun_core::io::Writer {
+    pub(crate) fn error_writer(&mut self) -> &mut bun_core::io::Writer {
         self.error_writer_backing.new_interface()
     }
 
     /// Returns the buffered stdout writer interface.
     #[inline]
-    pub fn writer(&mut self) -> &mut bun_core::io::Writer {
+    pub(crate) fn writer(&mut self) -> &mut bun_core::io::Writer {
         self.writer_backing.new_interface()
     }
 }
@@ -222,7 +176,7 @@ impl MessageLevel {
     /// and routes through here. Unknown values fold to `Log` — nothing
     /// branches on the unknown case, so the clamp is behavior-preserving.
     #[inline]
-    pub const fn from_raw(raw: u32) -> Self {
+    pub(crate) const fn from_raw(raw: u32) -> Self {
         match raw {
             0 => Self::Log,
             1 => Self::Warning,
@@ -258,7 +212,7 @@ impl MessageType {
     /// fold unknown discriminants to `Log` so the
     /// FFI boundary never constructs an invalid enum value.
     #[inline]
-    pub const fn from_raw(raw: u32) -> Self {
+    pub(crate) const fn from_raw(raw: u32) -> Self {
         match raw {
             0 => Self::Log,
             1 => Self::Dir,
@@ -883,29 +837,27 @@ impl<'a> TablePrinter<'a> {
         row: &CollectedRow,
         cell_text: &[u8],
     ) {
-        writer.write_all("│".as_bytes()).ok();
+        let _ = writer.write_all("│".as_bytes());
         {
             let needed = columns[0].width.saturating_sub(row.key.width());
 
             // Right-align the number column
-            writer
-                .splat_byte_all(b' ', (needed + PADDING) as usize)
-                .ok();
+            let _ = writer.splat_byte_all(b' ', (needed + PADDING) as usize);
             match &row.key {
                 RowKey::Str { text, .. } => {
-                    writer.write_all(text.slice()).ok();
+                    let _ = writer.write_all(text.slice());
                 }
                 RowKey::Num(value) => {
-                    write!(writer, "{value}").ok();
+                    let _ = write!(writer, "{value}");
                 }
             }
-            writer.splat_byte_all(b' ', PADDING as usize).ok();
+            let _ = writer.splat_byte_all(b' ', PADDING as usize);
         }
 
         for col_idx in 1..columns.len() {
             let col = &columns[col_idx];
 
-            writer.write_all("│".as_bytes()).ok();
+            let _ = writer.write_all("│".as_bytes());
 
             let cell = if col_idx == self.values_col_idx {
                 row.values_cell
@@ -915,21 +867,17 @@ impl<'a> TablePrinter<'a> {
 
             match cell {
                 None => {
-                    writer
-                        .splat_byte_all(b' ', (col.width + PADDING * 2) as usize)
-                        .ok();
+                    let _ = writer.splat_byte_all(b' ', (col.width + PADDING * 2) as usize);
                 }
                 Some(cell) => {
                     let needed = col.width.saturating_sub(cell.width);
-                    writer.splat_byte_all(b' ', PADDING as usize).ok();
-                    writer.write_all(cell.text(cell_text)).ok();
-                    writer
-                        .splat_byte_all(b' ', (needed + PADDING) as usize)
-                        .ok();
+                    let _ = writer.splat_byte_all(b' ', PADDING as usize);
+                    let _ = writer.write_all(cell.text(cell_text));
+                    let _ = writer.splat_byte_all(b' ', (needed + PADDING) as usize);
                 }
             }
         }
-        writer.write_all("│\n".as_bytes()).ok();
+        let _ = writer.write_all("│\n".as_bytes());
     }
 
     pub fn print_table<const ENABLE_ANSI_COLORS: bool>(
@@ -1073,51 +1021,49 @@ impl<'a> TablePrinter<'a> {
                 );
             }
 
-            writer.write_all("┌".as_bytes()).ok();
+            let _ = writer.write_all("┌".as_bytes());
             for (i, col) in columns.iter().enumerate() {
                 if i > 0 {
-                    writer.write_all("┬".as_bytes()).ok();
+                    let _ = writer.write_all("┬".as_bytes());
                 }
-                Self::write_string_n_times(
+                let _ = Self::write_string_n_times(
                     writer,
                     "─".as_bytes(),
                     (col.width + PADDING * 2) as usize,
-                )
-                .ok();
+                );
             }
 
-            writer.write_all("┐\n│".as_bytes()).ok();
+            let _ = writer.write_all("┐\n│".as_bytes());
 
             for (i, col) in columns.iter().enumerate() {
                 if i > 0 {
-                    writer.write_all("│".as_bytes()).ok();
+                    let _ = writer.write_all("│".as_bytes());
                 }
                 let len = col.name.visible_width_exclude_ansi_colors(false);
                 let needed = (col.width as usize).saturating_sub(len);
-                writer.splat_byte_all(b' ', 1).ok();
+                let _ = writer.splat_byte_all(b' ', 1);
                 if ENABLE_ANSI_COLORS {
-                    writer.write_all(pfmt!("<r><b>", true).as_bytes()).ok();
+                    let _ = writer.write_all(pfmt!("<r><b>", true).as_bytes());
                 }
-                write!(writer, "{}", col.name).ok();
+                let _ = write!(writer, "{}", col.name);
                 if ENABLE_ANSI_COLORS {
-                    writer.write_all(pfmt!("<r>", true).as_bytes()).ok();
+                    let _ = writer.write_all(pfmt!("<r>", true).as_bytes());
                 }
-                writer.splat_byte_all(b' ', needed + PADDING as usize).ok();
+                let _ = writer.splat_byte_all(b' ', needed + PADDING as usize);
             }
 
-            writer.write_all("│\n├".as_bytes()).ok();
+            let _ = writer.write_all("│\n├".as_bytes());
             for (i, col) in columns.iter().enumerate() {
                 if i > 0 {
-                    writer.write_all("┼".as_bytes()).ok();
+                    let _ = writer.write_all("┼".as_bytes());
                 }
-                Self::write_string_n_times(
+                let _ = Self::write_string_n_times(
                     writer,
                     "─".as_bytes(),
                     (col.width + PADDING * 2) as usize,
-                )
-                .ok();
+                );
             }
-            writer.write_all("┤\n".as_bytes()).ok();
+            let _ = writer.write_all("┤\n".as_bytes());
         }
 
         // render pass: replay each row's pre-formatted cell bytes
@@ -1127,23 +1073,21 @@ impl<'a> TablePrinter<'a> {
 
         // print the table bottom border
         {
-            writer.write_all("└".as_bytes()).ok();
-            Self::write_string_n_times(
+            let _ = writer.write_all("└".as_bytes());
+            let _ = Self::write_string_n_times(
                 writer,
                 "─".as_bytes(),
                 (columns[0].width + PADDING * 2) as usize,
-            )
-            .ok();
+            );
             for column in columns[1..].iter() {
-                writer.write_all("┴".as_bytes()).ok();
-                Self::write_string_n_times(
+                let _ = writer.write_all("┴".as_bytes());
+                let _ = Self::write_string_n_times(
                     writer,
                     "─".as_bytes(),
                     (column.width + PADDING * 2) as usize,
-                )
-                .ok();
+                );
             }
-            writer.write_all("┘\n".as_bytes()).ok();
+            let _ = writer.write_all("┘\n".as_bytes());
         }
 
         Ok(())
@@ -1162,13 +1106,13 @@ impl<'a> TablePrinter<'a> {
 /// recover `&mut Self` from the `*mut io::Writer` they receive (same pattern as
 /// `Output::QuietWriterAdapter::new_interface`).
 #[repr(C)]
-pub(crate) struct DynWriteAdapter<'a> {
+struct DynWriteAdapter<'a> {
     head: bun_core::io::Writer,
     inner: &'a mut dyn bun_io::Write,
 }
 
 impl<'a> DynWriteAdapter<'a> {
-    pub(crate) fn new(inner: &'a mut dyn bun_io::Write) -> Self {
+    fn new(inner: &'a mut dyn bun_io::Write) -> Self {
         Self {
             head: bun_core::io::Writer {
                 write_all: Self::thunk_write_all,
@@ -1180,7 +1124,7 @@ impl<'a> DynWriteAdapter<'a> {
 
     /// Reborrow as the `io::Writer` head.
     #[inline]
-    pub(crate) fn interface(&mut self) -> &mut bun_core::io::Writer {
+    fn interface(&mut self) -> &mut bun_core::io::Writer {
         // SAFETY: `head` is the first `#[repr(C)]` field, so `&mut self.head`
         // and `&mut *self as *mut io::Writer` are the same address; the thunks
         // below cast back to `*mut Self`.
@@ -1290,9 +1234,9 @@ pub enum Colon {
 
 pub struct ErrorDisplayLevelFormatter {
     pub name: BunString,
-    pub level: ErrorDisplayLevel,
-    pub enable_colors: bool,
-    pub colon: Colon,
+    pub(crate) level: ErrorDisplayLevel,
+    pub(crate) enable_colors: bool,
+    pub(crate) colon: Colon,
 }
 
 impl core::fmt::Display for ErrorDisplayLevelFormatter {
@@ -1330,7 +1274,7 @@ impl core::fmt::Display for ErrorDisplayLevelFormatter {
 }
 
 impl ErrorDisplayLevel {
-    pub fn formatter(
+    pub(crate) fn formatter(
         self,
         error_name: BunString,
         enable_colors: bool,
@@ -1679,33 +1623,33 @@ pub mod formatter {
         /// the backing storage goes away. A `&'a`
         /// slice cannot express that without forcing `'a` to outlive locals;
         /// `RawSlice` carries the outlives-holder invariant instead.
-        pub remaining_values: bun_ptr::RawSlice<JSValue>,
+        pub(crate) remaining_values: bun_ptr::RawSlice<JSValue>,
         pub map: visited::Map,
         /// Pooled backing for `map`. `None` until the first cell that can have
         /// circular refs is formatted; `Drop` returns it to `visited::Pool`.
         /// Raw pointer (not `Box`) because `visited::Pool` owns the
         /// `heap::alloc`/`from_raw` lifecycle.
-        pub map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
-        pub hide_native: bool,
-        pub indent: u32,
+        pub(crate) map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
+        pub(crate) hide_native: bool,
+        pub(crate) indent: u32,
         pub depth: u16,
-        pub max_depth: u16,
+        pub(crate) max_depth: u16,
         pub quote_strings: bool,
         pub quote_keys: bool,
-        pub failed: bool,
-        pub estimated_line_length: usize,
-        pub always_newline_scope: bool,
+        pub(crate) failed: bool,
+        pub(crate) estimated_line_length: usize,
+        pub(crate) always_newline_scope: bool,
         pub single_line: bool,
         pub ordered_properties: bool,
-        pub custom_formatted_object: CustomFormattedObject,
-        pub disable_inspect_custom: bool,
-        pub stack_check: StackCheck,
-        pub can_throw_stack_overflow: bool,
-        pub error_display_level: ErrorDisplayLevel,
+        pub(crate) custom_formatted_object: CustomFormattedObject,
+        pub(crate) disable_inspect_custom: bool,
+        pub(crate) stack_check: StackCheck,
+        pub(crate) can_throw_stack_overflow: bool,
+        pub(crate) error_display_level: ErrorDisplayLevel,
         /// If `ArrayBuffer`-like objects contain ASCII text, the buffer is
         /// printed as a string. Set true in the error printer so that
         /// `ShellError` prints a more readable message.
-        pub format_buffer_as_text: bool,
+        pub(crate) format_buffer_as_text: bool,
     }
 
     impl<'a> Formatter<'a> {
@@ -1780,13 +1724,13 @@ pub mod formatter {
         /// dereference site and reset it to `EMPTY` before the backing storage
         /// is released (RawSlice invariant).
         #[inline]
-        pub fn remaining(&self) -> &[JSValue] {
+        pub(crate) fn remaining(&self) -> &[JSValue] {
             self.remaining_values.slice()
         }
 
         /// Drop the first queued `%`-format argument.
         #[inline]
-        pub fn advance_remaining(&mut self) {
+        pub(crate) fn advance_remaining(&mut self) {
             let s = self.remaining_values;
             self.remaining_values = bun_ptr::RawSlice::new(&s.slice()[1..]);
         }
@@ -1817,7 +1761,7 @@ pub mod formatter {
     }
 
     impl Formatter<'_> {
-        pub fn good_time_for_a_new_line(&mut self) -> bool {
+        pub(crate) fn good_time_for_a_new_line(&mut self) -> bool {
             if self.estimated_line_length > 80 {
                 self.reset_line();
                 return true;
@@ -1825,7 +1769,7 @@ pub mod formatter {
             false
         }
 
-        pub fn reset_line(&mut self) {
+        pub(crate) fn reset_line(&mut self) {
             self.estimated_line_length = (self.indent as usize) * 2;
         }
 
@@ -1843,7 +1787,7 @@ pub mod formatter {
     /// provenance without the `&shared → *const → *mut` cast that would be UB
     /// under Stacked Borrows.
     pub struct ZigFormatter<'a, 'b> {
-        pub formatter: Cell<Option<&'a mut Formatter<'b>>>,
+        pub(crate) formatter: Cell<Option<&'a mut Formatter<'b>>>,
         pub value: JSValue,
     }
 
@@ -1929,7 +1873,7 @@ pub mod formatter {
         /// the cause-chain guard in `VirtualMachine::print_error_instance`)
         /// don't each open-code two `unsafe` operations.
         #[inline]
-        pub fn node_data_mut(node: &mut core::ptr::NonNull<PoolNode>) -> &mut Map {
+        pub(crate) fn node_data_mut(node: &mut core::ptr::NonNull<PoolNode>) -> &mut Map {
             // SAFETY: `Map::INIT` is `Some`, so `data` is initialized for
             // every node from `Pool::get_node()`; the caller owns `node`
             // exclusively until `Pool::release`, so forming `&mut` is sound.
@@ -1984,7 +1928,7 @@ pub mod formatter {
     }
 
     impl Tag {
-        pub fn is_primitive(self) -> bool {
+        pub(crate) fn is_primitive(self) -> bool {
             matches!(
                 self,
                 Tag::String
@@ -1999,7 +1943,7 @@ pub mod formatter {
             )
         }
 
-        pub fn can_have_circular_references(self) -> bool {
+        pub(crate) fn can_have_circular_references(self) -> bool {
             matches!(
                 self,
                 Tag::Function
@@ -2058,7 +2002,7 @@ pub mod formatter {
         pub fn get(value: JSValue, global_this: &JSGlobalObject) -> JsResult<TagResult> {
             Tag::get(value, global_this)
         }
-        pub fn is_primitive(self) -> bool {
+        pub(crate) fn is_primitive(self) -> bool {
             self.tag().is_primitive()
         }
         pub fn tag(self) -> Tag {
@@ -2174,7 +2118,7 @@ pub mod formatter {
             Self::get_advanced(value, global_this, TagOptions::empty())
         }
 
-        pub fn get_advanced(
+        pub(crate) fn get_advanced(
             value: JSValue,
             global_this: &JSGlobalObject,
             opts: TagOptions,
@@ -2726,15 +2670,15 @@ pub mod formatter {
     // PERF: dynamic dispatch rather than monomorphization — profile if hot.
     pub struct WrappedWriter<'w> {
         pub ctx: &'w mut dyn bun_io::Write,
-        pub failed: bool,
-        pub estimated_line_length: &'w mut usize,
+        pub(crate) failed: bool,
+        pub(crate) estimated_line_length: &'w mut usize,
     }
 
     impl<'w> WrappedWriter<'w> {
         /// Mirror of `Formatter::add_for_new_line` routed through the borrowed
         /// `estimated_line_length` so callers don't need a second `&mut self`
         /// on the parent `Formatter` while a `WrappedWriter` is live.
-        pub fn add_for_new_line(&mut self, len: usize) {
+        pub(crate) fn add_for_new_line(&mut self, len: usize) {
             *self.estimated_line_length = self.estimated_line_length.saturating_add(len);
         }
 
@@ -2742,13 +2686,13 @@ pub mod formatter {
         /// `estimated_line_length`. Takes the current `Formatter::indent` by
         /// value so the caller can pass `self.indent` (a disjoint field
         /// borrow) while this `WrappedWriter` is live.
-        pub fn reset_line(&mut self, indent: u32) {
+        pub(crate) fn reset_line(&mut self, indent: u32) {
             *self.estimated_line_length = (indent as usize) * 2;
         }
 
         /// Mirror of `Formatter::good_time_for_a_new_line` routed through the
         /// borrowed `estimated_line_length`.
-        pub fn good_time_for_a_new_line(&mut self, indent: u32) -> bool {
+        pub(crate) fn good_time_for_a_new_line(&mut self, indent: u32) -> bool {
             if *self.estimated_line_length > 80 {
                 self.reset_line(indent);
                 return true;
@@ -2758,7 +2702,7 @@ pub mod formatter {
 
         /// Mirror of `Formatter::print_comma` routed through the wrapped
         /// `ctx` writer + borrowed `estimated_line_length`.
-        pub fn print_comma<const ENABLE_ANSI_COLORS: bool>(&mut self) {
+        pub(crate) fn print_comma<const ENABLE_ANSI_COLORS: bool>(&mut self) {
             if self
                 .ctx
                 .write_all(pfmt!("<r><d>,<r>", ENABLE_ANSI_COLORS).as_bytes())
@@ -2771,7 +2715,7 @@ pub mod formatter {
 
         /// Mirror of `Formatter::write_indent` routed through the wrapped
         /// `ctx` writer. Takes the current `Formatter::indent` by value.
-        pub fn write_indent(&mut self, indent: u32) {
+        pub(crate) fn write_indent(&mut self, indent: u32) {
             let mut total_remain: u32 = indent;
             while total_remain > 0 {
                 let written: u8 = total_remain.min(32) as u8;
@@ -2787,13 +2731,13 @@ pub mod formatter {
             }
         }
 
-        pub fn print(&mut self, args: core::fmt::Arguments<'_>) {
+        pub(crate) fn print(&mut self, args: core::fmt::Arguments<'_>) {
             if self.ctx.write_fmt(args).is_err() {
                 self.failed = true;
             }
         }
 
-        pub fn space(&mut self) {
+        pub(crate) fn space(&mut self) {
             *self.estimated_line_length += 1;
             if self.ctx.write_all(b" ").is_err() {
                 self.failed = true;
@@ -2802,7 +2746,7 @@ pub mod formatter {
 
         // `fmt_len` (the length ignoring formatted values) is a runtime
         // argument computed by the `pretty!` macro.
-        pub fn pretty<const ENABLE_ANSI_COLOR: bool>(
+        pub(crate) fn pretty<const ENABLE_ANSI_COLOR: bool>(
             &mut self,
             fmt_len: usize,
             args: core::fmt::Arguments<'_>,
@@ -2814,19 +2758,19 @@ pub mod formatter {
         }
 
         #[inline]
-        pub fn write_all(&mut self, buf: &[u8]) {
+        pub(crate) fn write_all(&mut self, buf: &[u8]) {
             if self.ctx.write_all(buf).is_err() {
                 self.failed = true;
             }
         }
 
         #[inline]
-        pub fn write_string(&mut self, str: &ZigString) {
+        pub(crate) fn write_string(&mut self, str: &ZigString) {
             self.print(format_args!("{str}"));
         }
 
         #[inline]
-        pub fn write_16_bit(&mut self, input: &[u16]) {
+        pub(crate) fn write_16_bit(&mut self, input: &[u16]) {
             // `format_utf16_type` requires `impl fmt::Write + Sized`; route through
             // the `Display` adapter so we go via `bun_io::Write::write_fmt` instead.
             self.print(format_args!(
@@ -2846,10 +2790,7 @@ pub mod formatter {
     /// conflict with the `&self` borrow `Formatter::write_indent` takes.
     /// `self.indent` is a disjoint field read, so passing it by value here
     /// keeps the borrow checker happy.
-    pub(super) fn write_indent_n(
-        indent: u32,
-        writer: &mut dyn bun_io::Write,
-    ) -> bun_io::Result<()> {
+    fn write_indent_n(indent: u32, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
         let mut total_remain: u32 = indent;
         while total_remain > 0 {
             let written: u8 = total_remain.min(32) as u8;
@@ -2860,11 +2801,11 @@ pub mod formatter {
     }
 
     impl Formatter<'_> {
-        pub fn write_indent(&self, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
+        pub(crate) fn write_indent(&self, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
             write_indent_n(self.indent, writer)
         }
 
-        pub fn print_comma<const ENABLE_ANSI_COLORS: bool>(
+        pub(crate) fn print_comma<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
             writer: &mut dyn bun_io::Write,
         ) -> bun_io::Result<()> {
@@ -2878,22 +2819,22 @@ pub mod formatter {
     // MapIterator / SetIterator / PropertyIterator (forEach callback contexts)
     // ───────────────────────────────────────────────────────────────────────
 
-    pub struct MapIteratorCtx<
+    pub(crate) struct MapIteratorCtx<
         'a,
         'b,
         const C: bool,
         const IS_ITERATOR: bool,
         const SINGLE_LINE: bool,
     > {
-        pub formatter: &'a mut Formatter<'b>,
-        pub writer: &'a mut dyn bun_io::Write,
-        pub count: usize,
+        pub(crate) formatter: &'a mut Formatter<'b>,
+        pub(crate) writer: &'a mut dyn bun_io::Write,
+        pub(crate) count: usize,
     }
 
     impl<'a, 'b, const C: bool, const IS_ITERATOR: bool, const SINGLE_LINE: bool>
         MapIteratorCtx<'a, 'b, C, IS_ITERATOR, SINGLE_LINE>
     {
-        pub extern "C" fn for_each(
+        pub(crate) extern "C" fn for_each(
             _: *mut jsc::VM,
             global_object: &JSGlobalObject,
             ctx: *mut c_void,
@@ -2983,14 +2924,14 @@ pub mod formatter {
         }
     }
 
-    pub struct SetIteratorCtx<'a, 'b, const C: bool, const SINGLE_LINE: bool> {
-        pub formatter: &'a mut Formatter<'b>,
-        pub writer: &'a mut dyn bun_io::Write,
-        pub is_first: bool,
+    pub(crate) struct SetIteratorCtx<'a, 'b, const C: bool, const SINGLE_LINE: bool> {
+        pub(crate) formatter: &'a mut Formatter<'b>,
+        pub(crate) writer: &'a mut dyn bun_io::Write,
+        pub(crate) is_first: bool,
     }
 
     impl<'a, 'b, const C: bool, const SINGLE_LINE: bool> SetIteratorCtx<'a, 'b, C, SINGLE_LINE> {
-        pub extern "C" fn for_each(
+        pub(crate) extern "C" fn for_each(
             _: *mut jsc::VM,
             global_object: &JSGlobalObject,
             ctx: *mut c_void,
@@ -3037,17 +2978,17 @@ pub mod formatter {
         }
     }
 
-    pub struct PropertyIteratorCtx<'a, 'b, const C: bool> {
-        pub formatter: &'a mut Formatter<'b>,
-        pub writer: &'a mut dyn bun_io::Write,
-        pub i: usize,
-        pub single_line: bool,
-        pub always_newline: bool,
-        pub parent: JSValue,
+    pub(crate) struct PropertyIteratorCtx<'a, 'b, const C: bool> {
+        pub(crate) formatter: &'a mut Formatter<'b>,
+        pub(crate) writer: &'a mut dyn bun_io::Write,
+        pub(crate) i: usize,
+        pub(crate) single_line: bool,
+        pub(crate) always_newline: bool,
+        pub(crate) parent: JSValue,
     }
 
     impl<'a, 'b, const C: bool> PropertyIteratorCtx<'a, 'b, C> {
-        pub fn handle_first_property(
+        pub(crate) fn handle_first_property(
             &mut self,
             global_this: &JSGlobalObject,
             value: JSValue,
@@ -3255,7 +3196,7 @@ pub mod formatter {
             Some(tag)
         }
 
-        pub extern "C" fn for_each(
+        pub(crate) extern "C" fn for_each(
             global_this: &JSGlobalObject,
             ctx_ptr: *mut c_void,
             key: *mut ZigString,
@@ -3384,7 +3325,7 @@ pub mod formatter {
         }
 
         #[inline(never)]
-        pub fn print_as<const ENABLE_ANSI_COLORS: bool>(
+        pub(crate) fn print_as<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
             format: Tag,
             writer_: &mut dyn bun_io::Write,
@@ -5756,10 +5697,31 @@ pub mod formatter {
             }
             self.print_as::<ENABLE_ANSI_COLORS>(result.tag.tag(), writer, value, result.cell)
         }
+
+        /// Format a single value into `writer`, propagating a JS exception
+        /// thrown while inspecting it (e.g. a throwing `[inspect.custom]`).
+        /// Use this instead of the `Display` adapter ([`ZigFormatter`]) when a
+        /// `JsResult` caller needs the error: `Display` can only report
+        /// `fmt::Error`, which panics inside `io::Write::write_fmt` when the
+        /// sink itself did not fail.
+        pub fn format_value<const ENABLE_ANSI_COLORS: bool>(
+            &mut self,
+            value: JSValue,
+            writer: &mut dyn bun_io::Write,
+        ) -> JsResult<()> {
+            self.stack_check.update();
+            let one = [value];
+            self.remaining_values = bun_ptr::RawSlice::new(&one);
+            let global = self.global_this;
+            let result = Tag::get(value, global)
+                .and_then(|tag| self.format::<ENABLE_ANSI_COLORS>(tag, writer, value, global));
+            self.remaining_values = bun_ptr::RawSlice::EMPTY;
+            result
+        }
     }
 
     /// Abstracts over `{d}` vs `{f}` and `n`-suffix for `write_typed_array`.
-    pub trait TypedArrayElement: Copy {
+    trait TypedArrayElement: Copy {
         const IS_BIGINT: bool;
         type Display: core::fmt::Display;
         fn display(self) -> Self::Display;
@@ -5813,7 +5775,7 @@ pub mod formatter {
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__count(
+pub(crate) extern "C" fn Bun__ConsoleObject__count(
     _console: *mut ConsoleObject,
     global_this: &JSGlobalObject,
     ptr: *const u8,
@@ -5854,7 +5816,7 @@ pub extern "C" fn Bun__ConsoleObject__count(
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__countReset(
+pub(crate) extern "C" fn Bun__ConsoleObject__countReset(
     _console: *mut ConsoleObject,
     global_this: &JSGlobalObject,
     ptr: *const u8,
@@ -5880,7 +5842,7 @@ thread_local! {
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__time(
+pub(crate) extern "C" fn Bun__ConsoleObject__time(
     _console: *mut ConsoleObject,
     _global: &JSGlobalObject,
     chars: *const u8,
@@ -5903,7 +5865,7 @@ pub extern "C" fn Bun__ConsoleObject__time(
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__timeEnd(
+pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
     _console: *mut ConsoleObject,
     _global: &JSGlobalObject,
     chars: *const u8,
@@ -5936,7 +5898,7 @@ pub extern "C" fn Bun__ConsoleObject__timeEnd(
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__timeLog(
+pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     _console: *mut ConsoleObject,
     global: &JSGlobalObject,
     chars: *const u8,
@@ -6033,7 +5995,7 @@ console_noop_hooks!(str: Bun__ConsoleObject__profile, Bun__ConsoleObject__profil
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
+pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
     _console: *mut ConsoleObject,
     global_this: &JSGlobalObject,
     _chars: *const u8,
@@ -6064,7 +6026,7 @@ console_noop_hooks!(
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
+pub(crate) extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
     ctype: *mut ConsoleObject,
     // Taking the
     // exhaustive Rust enums by value at the C ABI would be UB on an

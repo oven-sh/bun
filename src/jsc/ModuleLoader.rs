@@ -211,8 +211,8 @@ pub struct LoaderHooks {
     pub resolve_embedded_node_file:
         unsafe fn(vm: *mut VirtualMachine, in_out_str: *mut bun_core::String) -> bool,
     /// `VirtualMachine.resolveMaybeNeedsTrailingSlash(res, global, specifier,
-    /// source, query_string?, is_esm, is_a_file_path, is_user_require_resolve)`
-    /// — the resolution path behind
+    /// source, query_string?, mode, is_a_file_path)` — the resolution path
+    /// behind
     /// `Bun__resolveSync` / `Zig__GlobalObject__resolve` / `import.meta.resolve`.
     /// Body reaches into `transpiler.resolver.resolveAndAutoInstall`, the
     /// `PluginRunner`, `ObjectURLRegistry`, and `ServerEntryPoint` (all
@@ -227,9 +227,8 @@ pub struct LoaderHooks {
         specifier: bun_core::String,
         source: bun_core::String,
         query_string: *mut bun_core::String,
-        is_esm: bool,
+        mode: crate::virtual_machine::ResolveMode,
         is_a_file_path: bool,
-        is_user_require_resolve: bool,
     ) -> bool,
     /// `Bun__transpileVirtualModule` body —
     /// transpiles plugin-provided source through the per-thread `BufferPrinter`

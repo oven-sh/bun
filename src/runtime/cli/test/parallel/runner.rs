@@ -94,6 +94,26 @@ pub(crate) fn run_as_coordinator(
     if !ctx.test_options.randomize {
         sorted.sort_by(|a, b| bun_core::order(a.as_bytes(), b.as_bytes()));
     }
+    // With --timings the contiguous chunks are cut by total duration instead
+    // of file count, and each chunk is dispatched slowest-first (cache hits
+    // depend on which worker runs a file, not the order within the worker).
+    let mut costs: Option<Vec<u64>> = None;
+    let ranges: Vec<FileRange> = match reporter.timings.as_ref() {
+        Some(t) if !t.is_empty() && !ctx.test_options.randomize => {
+            let ranges = t.partition(&sorted, k);
+            for r in &ranges {
+                t.sort_slowest_first(&mut sorted[r.lo as usize..r.hi as usize]);
+            }
+            costs = Some(t.costs(&sorted));
+            ranges
+        }
+        _ => (0..k)
+            .map(|idx| FileRange {
+                lo: idx * n / k,
+                hi: (idx + 1) * n / k,
+            })
+            .collect(),
+    };
 
     let mut workers: Vec<Worker> = Vec::with_capacity(k as usize);
     // Populate fully BEFORE constructing Coordinator so it can hold
@@ -105,10 +125,7 @@ pub(crate) fn run_as_coordinator(
             // BACKREF (LIFETIMES.tsv: *const Coordinator<'static>) — patched below
             coord: core::ptr::null(),
             idx,
-            range: FileRange {
-                lo: idx * n / k,
-                hi: (idx + 1) * n / k,
-            },
+            range: ranges[idx as usize],
             out: WorkerPipe::new(core::ptr::null()),
             err: WorkerPipe::new(core::ptr::null()),
             process: None,
@@ -118,6 +135,7 @@ pub(crate) fn run_as_coordinator(
             captured: Vec::new(),
             alive: false,
             exit_status: None,
+            reap_pending: false,
         });
         let w: *mut Worker = workers.last_mut().unwrap();
         // SAFETY: w points into workers; Vec will not reallocate (capacity == k)
@@ -136,6 +154,7 @@ pub(crate) fn run_as_coordinator(
         },
         reporter,
         files: sorted,
+        costs,
         // SAFETY: FileSystem singleton is initialized before any test runner code runs.
         cwd: FileSystem::get().top_level_dir,
         argv,
@@ -166,7 +185,7 @@ pub(crate) fn run_as_coordinator(
         live_workers: 0,
         crashed_files: Vec::new(),
         aborted: None,
-        bailed: false,
+        stop_reason: None,
         last_printed_dot: false,
         #[cfg(windows)]
         windows_job: Coordinator::create_windows_kill_on_close_job(),
@@ -216,6 +235,7 @@ pub(crate) fn run_as_coordinator(
         }
     }
     if let Some(code) = coord.aborted {
+        coord.reporter.write_timings_if_needed();
         Output::flush();
         Global::exit(code);
     }
@@ -252,7 +272,11 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     );
     argv.push(lit(b"test\0"));
     argv.push(lit(b"--test-worker\0"));
-    argv.push(lit(b"--isolate\0"));
+    argv.push(if opts.isolate {
+        lit(b"--isolate\0")
+    } else {
+        lit(b"--no-isolate\0")
+    });
 
     argv.push(print_z(format_args!(
         "--timeout={}",
@@ -429,6 +453,7 @@ fn api_loader_tag_name(l: bun_options_types::schema::api::Loader) -> &'static st
         L::yaml => "yaml",
         L::json5 => "json5",
         L::md => "md",
+        L::xml => "xml",
         L::_none => "_none",
     }
 }
@@ -498,7 +523,7 @@ impl<'a> WorkerLoop<'a> {
     fn begin(&mut self) {
         // SAFETY: vm pointer is valid for the worker's lifetime.
         let vm = unsafe { &mut *self.vm };
-        if !self.cmds.channel.adopt(vm, Fd::from_uv(3)) {
+        if !Channel::adopt(&raw mut self.cmds.channel, vm, Fd::from_uv(3)) {
             bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
             Global::exit(1);
         }
@@ -533,8 +558,7 @@ impl<'a> WorkerLoop<'a> {
             let before = *self.reporter.summary();
             let before_unhandled = self.reporter.jest.unhandled_errors_between_tests;
 
-            // Workers always run with --isolate; every file is its own
-            // complete run from the preload's perspective.
+            // A worker never knows which file is its last, so preload-level hooks wrap every file (with or without --isolate).
             if let Err(err) = TestCommand::run(
                 self.reporter,
                 vm,
@@ -546,12 +570,16 @@ impl<'a> WorkerLoop<'a> {
             ) {
                 test_command::handle_top_level_test_error_before_javascript_start(&err);
             }
-            crate::jsc_hooks::close_isolation_handles(vm);
-            vm.swap_global_for_test_isolation();
-            self.reporter
-                .jest
-                .bun_test_root
-                .reset_hook_scope_for_test_isolation();
+            if vm.test_isolation_enabled {
+                crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
+                vm.swap_global_for_test_isolation();
+                self.reporter
+                    .jest
+                    .bun_test_root
+                    .reset_hook_scope_for_test_isolation();
+            } else {
+                Global::mimalloc_cleanup(false);
+            }
             self.reporter.jest.default_timeout_override = u32::MAX;
 
             if let Some(junit) = &mut self.reporter.reporters.junit {
@@ -606,8 +634,8 @@ pub(crate) fn run_as_worker(
 ) -> ! {
     // SAFETY: caller guarantees `vm` is a valid live VM pointer for the duration.
     let vm_ref = unsafe { &mut *vm };
-    vm_ref.test_isolation_enabled = true;
-    vm_ref.auto_killer.enabled = true;
+    vm_ref.test_isolation_enabled = ctx.test_options.isolate;
+    vm_ref.auto_killer.enabled = ctx.test_options.isolate;
 
     // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`
     // reader was dropped from the GC path (see web_worker.rs, which wires its
@@ -642,10 +670,10 @@ pub(crate) fn run_as_worker(
     worker_flush_aggregates(wloop.reporter, vm_ref, ctx, &mut wloop.cmds);
     // Drain any backpressure-buffered frames before exit so the coordinator
     // sees repeat_bufs / junit_chunk / coverage_chunk.
-    while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done {
+    while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done.get() {
         // SAFETY: event_loop pointer is valid while vm lives.
         unsafe { (*vm_ref.event_loop()).tick() };
-        if !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done {
+        if !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done.get() {
             break;
         }
         // SAFETY: event_loop pointer is valid while vm lives.

@@ -85,6 +85,8 @@ mod _impl {
         // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
         // centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
+        /// How the pool thread delivers a finished write to the VM.
+        pub loop_handle: bun_jsc::LoopHandle,
         pub stream: JsCell<Context>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         // TODO: Strong self-ref on the wrapper → JsRef per PORTING.md §JSC (Strong back-ref to own wrapper leaks)
@@ -146,8 +148,8 @@ mod _impl {
             };
             Ok(Box::new(Self {
                 ref_count: Cell::new(1),
-                // JSC_BORROW backref — the global outlives this m_ctx payload.
                 global_this: bun_ptr::BackRef::new(global_this),
+                loop_handle: global_this.bun_vm().loop_handle(),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
@@ -537,6 +539,10 @@ mod _impl {
                     self.next_out = ptr::null_mut();
                 }
             }
+        }
+
+        pub fn flush_value_is_valid(flush: u32) -> bool {
+            flush <= 3
         }
 
         pub fn set_flush(&mut self, flush: c_int) {

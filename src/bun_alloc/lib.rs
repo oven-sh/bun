@@ -214,7 +214,6 @@ pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 // ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
 //
 //   MimallocArena            → prefer `bun_alloc::Arena` (= bumpalo::Bump)
-//   NullableAllocator        → prefer `Option<&Arena>` or drop the param
 //   MaxHeapAllocator         → debug-only cap (single-allocation arena)
 //   heap_breakdown           → macOS malloc_zone_* per-tag heaps (debug builds)
 //   basic                    → `impl GlobalAlloc for Mimalloc` above is the canonical impl
@@ -226,8 +225,6 @@ pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 //
 #[path = "MaxHeapAllocator.rs"]
 pub mod max_heap_allocator;
-#[path = "NullableAllocator.rs"]
-pub mod nullable_allocator;
 pub mod stack_fallback;
 
 /// Raw alloc/free matching the `#[global_allocator]` (`mi_*` normally, libc under ASAN).
@@ -271,8 +268,7 @@ pub mod default_alloc {
     /// # Safety
     /// `ptr` must be null or a live allocation from the default allocator.
     #[inline]
-    #[cfg(any(debug_assertions, bun_asan))]
-    pub(crate) unsafe fn usable_size(ptr: *const c_void) -> usize {
+    pub unsafe fn usable_size(ptr: *const c_void) -> usize {
         if ptr.is_null() {
             return 0;
         }
@@ -356,7 +352,6 @@ pub mod default_alloc {
 }
 
 pub use max_heap_allocator::MaxHeapAllocator;
-pub use nullable_allocator::NullableAllocator;
 pub use stack_fallback::ArenaPtr;
 
 #[path = "MimallocArena.rs"]
@@ -1615,6 +1610,14 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
     if p == libc::MAP_FAILED {
         crate::out_of_memory();
     }
+    // Under THP `enabled=always` the first write to each 2 MiB stretch would
+    // fault a whole huge page, turning this demand-faulted arena into ~4 MiB of
+    // RSS. Per-VMA opt-out (not `PR_SET_THP_DISABLE`, which children inherit).
+    // SAFETY: `p..p+len` is the mapping created above.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    unsafe {
+        libc::madvise(p, len, libc::MADV_NOHUGEPAGE);
+    }
     // LSan only scans data/BSS, stacks, and malloc-tracked heap for live
     // pointers. This anonymous mapping is none of those, so any `Box`/`Vec`
     // whose owning pointer lives inside a `bss_*!` singleton (e.g. the
@@ -1763,7 +1766,7 @@ const OVERFLOW_GROUP_MAX: usize = 4095;
 const OVERFLOW_GROUP_SLOTS: usize = OVERFLOW_GROUP_MAX + 1;
 type OverflowUsedSize = u16;
 
-pub struct OverflowGroup<Block> {
+struct OverflowGroup<Block> {
     // 16 million files should be good enough for anyone
     // ...right?
     pub(crate) used: OverflowUsedSize,
@@ -1820,7 +1823,7 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
 // Const-generic arithmetic (deriving COUNT from another const param) requires
 // `feature(generic_const_exprs)` on stable Rust, so COUNT is pinned per instantiation site.
 
-pub struct OverflowListBlock<ValueType, const COUNT: usize> {
+struct OverflowListBlock<ValueType, const COUNT: usize> {
     pub(crate) used: u32,
     // Only `[0..used]` is initialized; writes are raw (no drop glue).
     pub items: [MaybeUninit<ValueType>; COUNT],
@@ -1879,7 +1882,7 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
     }
 
     #[inline]
-    pub fn len(&self) -> u32 {
+    fn len(&self) -> u32 {
         self.count
     }
 
@@ -1965,14 +1968,14 @@ const BSS_LIST_CHUNK_SIZE: usize = 256;
 
 /// The per-store overflow-block size is `count / 4`; this shared constant must
 /// be >= the largest store's, i.e. the filename store's `8192 / 4`.
-pub const BSS_OVERFLOW_BLOCK_SIZE: usize = 2048;
+const BSS_OVERFLOW_BLOCK_SIZE: usize = 2048;
 
 /// `#[repr(C)]` with `prev` before `data` so the inline `BSSList::tail` block's
 /// scalar fields cluster at the front of the singleton mapping (see the layout
 /// note on [`BSSList`]). Heap-allocated overflow blocks don't care about page
 /// locality; the constraint is on the inline-tail instance.
 #[repr(C)]
-pub struct BSSListOverflowBlock<ValueType> {
+struct BSSListOverflowBlock<ValueType> {
     pub(crate) used: AtomicU16,
     pub(crate) prev: Option<Box<BSSListOverflowBlock<ValueType>>>,
     // Only `[0..used]` is initialized.
@@ -2128,15 +2131,17 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
         // `&mut *this` formed below does not alias a live guard borrow.
         let _guard = unsafe { (*this).mutex.lock() };
-        // SAFETY: inner mutex held ⇒ this thread has exclusive access.
-        let this = unsafe { &mut *this };
-        if this.used as usize > Self::MAX_INDEX {
-            this.append_overflow_uninit()
-        } else {
-            let index = this.used as usize;
-            this.used += 1;
-            // SAFETY: `index <= MAX_INDEX < COUNT` checked above.
-            Ok(unsafe { this.backing_buf.as_mut_ptr().add(index) })
+        // SAFETY: the inner mutex is held, so this call has exclusive access
+        // to `*this` (the receiver is raw precisely so nothing exclusive is
+        // formed before the lock); `index <= MAX_INDEX < COUNT` is checked.
+        unsafe {
+            if (*this).used as usize > Self::MAX_INDEX {
+                (*this).append_overflow_uninit()
+            } else {
+                let index = (*this).used as usize;
+                (*this).used += 1;
+                Ok((*this).backing_buf.as_mut_ptr().add(index))
+            }
         }
     }
 }
@@ -2410,8 +2415,6 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     ) -> core::result::Result<&'a [u8], AllocError> {
         // SAFETY: see `append`.
         let _guard = unsafe { (*this).mutex.lock() };
-        // SAFETY: inner mutex held ⇒ this thread has exclusive access.
-        let this_ref = unsafe { &mut *this };
 
         // `do_append` only reads `slice` via `BSSAppendable::copy_into` (copies
         // into `self.backing_buf` / a fresh heap alloc) and returns raw parts
@@ -2419,7 +2422,10 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // buffer's borrow does not escape.
         let (ptr, len) = if value.len() <= 256 {
             let mut scratch = [0u8; 256];
-            this_ref.do_append(&crate::copy_lowercase(value, &mut scratch[..value.len()]))?
+            // SAFETY: inner mutex held ⇒ this thread has exclusive access.
+            unsafe {
+                (*this).do_append(&crate::copy_lowercase(value, &mut scratch[..value.len()]))?
+            }
         } else {
             // Slow path: input >256 bytes (rare). Use a one-shot heap temp via
             // mimalloc directly (PORTING.md forbids `Vec` in hot allocators).
@@ -2429,7 +2435,8 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             }
             // SAFETY: `p` is a fresh allocation of `value.len()` bytes; sole owner.
             let tmp = unsafe { core::slice::from_raw_parts_mut(p, value.len()) };
-            let r = this_ref.do_append(&crate::copy_lowercase(value, tmp));
+            // SAFETY: inner mutex held ⇒ this thread has exclusive access.
+            let r = unsafe { (*this).do_append(&crate::copy_lowercase(value, tmp)) };
             // SAFETY: `p` was allocated by `mi_malloc` above.
             unsafe { mimalloc::mi_free(p.cast()) };
             r?

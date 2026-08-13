@@ -10,11 +10,8 @@ use core::ptr::NonNull;
 use bun_alloc::Arena; // = bumpalo::Bump
 use bun_collections::ArrayHashMap;
 use bun_core::Output;
-use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
-// peechy batch 2 landed: `bun_options_types::schema::api` now provides
-// {StringMap, DotEnvBehavior, SourceMapMode, TransformOptions}.
-// Alias as `bun_schema` so existing field paths resolve unchanged.
 use bun_core::{ZStr, strings};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
 use bun_options_types::schema as bun_schema;
 use bun_paths::{self as paths, PathBuffer};
 
@@ -375,9 +372,9 @@ impl SplitBundlerOptions {
                 // be resolved before the first bundle task can begin.
                 // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachineRef`
                 // live for the lifetime of the global object.
-                global.bun_vm().as_mut().wait_for_promise(promise);
+                global.bun_vm().as_mut().wait_for_promise(promise)?;
                 match promise.unwrap(global.vm(), bun_jsc::PromiseUnwrapMode::MarkHandled) {
-                    bun_jsc::PromiseResult::Pending => unreachable!(),
+                    bun_jsc::PromiseResult::Pending => unreachable!("wait_for_promise returned Ok"),
                     bun_jsc::PromiseResult::Fulfilled(_val) => {}
                     bun_jsc::PromiseResult::Rejected(err) => {
                         return Err(global.throw_value(err));
@@ -1396,7 +1393,7 @@ pub(crate) use super::HmrRuntime;
 fn hmr_runtime_init(code: &'static ZStr) -> HmrRuntime {
     HmrRuntime {
         code,
-        line_count: u32::try_from(code.as_bytes().iter().filter(|&&b| b == b'\n').count()).unwrap(),
+        line_count: u32::try_from(strings::count_char(code.as_bytes(), b'\n')).unwrap(),
     }
 }
 

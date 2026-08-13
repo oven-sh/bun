@@ -121,8 +121,9 @@ fn dlsym<T>(_handle: *mut c_void, _symbol: &core::ffi::CStr) -> Option<T> {
     None
 }
 
-// Clone/Copy: bitwise OK — `handle` is a leaked dlopen handle held for the
-// process lifetime (never dlclosed); the rest are resolved fn pointers.
+// Clone/Copy: bitwise OK — resolved fn pointers plus a framework-static
+// `*const CFStringRef`; the dlopen handle they came from is leaked (never
+// dlclosed), so copies stay valid for the process lifetime.
 #[derive(Clone, Copy)]
 pub struct CoreFoundation {
     pub(crate) array_create: unsafe extern "C" fn(
@@ -153,13 +154,13 @@ pub struct CoreFoundation {
     pub(crate) run_loop_default_mode: *const CFStringRef,
 }
 
-// SAFETY: `handle` is a leaked dlopen handle (never dlclosed) and `run_loop_default_mode` points at a process-static CFStringRef
-// inside the loaded framework. Everything else is a resolved fn pointer.
-// Sharing/sending bitwise copies across threads is sound.
+// SAFETY: `run_loop_default_mode` points at a process-static CFStringRef
+// inside the loaded (never-dlclosed) framework; every other field is a
+// resolved fn pointer. Sharing/sending bitwise copies across threads is sound.
 unsafe impl Send for CoreFoundation {}
-// SAFETY: all fields are immutable process-lifetime data (leaked dlopen handle,
-// framework-static `*const CFStringRef`, resolved fn pointers); none provide
-// interior mutability, so concurrent `&CoreFoundation` access is sound.
+// SAFETY: all fields are immutable process-lifetime data (framework-static
+// `*const CFStringRef`, resolved fn pointers); none provide interior
+// mutability, so concurrent `&CoreFoundation` access is sound.
 unsafe impl Sync for CoreFoundation {}
 
 impl CoreFoundation {
@@ -168,8 +169,8 @@ impl CoreFoundation {
     }
 }
 
-// Clone/Copy: bitwise OK — `handle` is a leaked dlopen handle held for the
-// process lifetime (never dlclosed); the rest are resolved fn pointers.
+// Clone/Copy: bitwise OK — resolved fn pointers (from a leaked, never-dlclosed
+// dlopen handle) plus a `u64` sentinel.
 #[derive(Clone, Copy)]
 pub struct CoreServices {
     pub(crate) fs_event_stream_create: unsafe extern "C" fn(
@@ -190,15 +191,6 @@ pub struct CoreServices {
     // libuv set it to -1 so the actual value is this
     pub(crate) k_fs_event_stream_event_id_since_now: FSEventStreamEventId,
 }
-
-// SAFETY: `handle` is a leaked dlopen handle (never dlclosed); the rest are
-// resolved fn pointers and a u64 sentinel. Sharing/sending across threads is
-// sound.
-unsafe impl Send for CoreServices {}
-// SAFETY: all fields are immutable process-lifetime data (leaked dlopen handle,
-// resolved fn pointers, a `u64` constant); none provide interior mutability, so
-// concurrent `&CoreServices` access is sound.
-unsafe impl Sync for CoreServices {}
 
 impl CoreServices {
     pub fn get() -> CoreServices {
@@ -407,12 +399,17 @@ impl FSEventsLoop {
             if task.is_null() {
                 break;
             }
-            // SAFETY: task is a valid *mut ConcurrentTask from the queue
-            let task = unsafe { &mut *task };
-            task.task.run();
-            if task.auto_delete {
-                // SAFETY: was heap-allocated in enqueue_task_concurrent
-                drop(unsafe { bun_core::heap::take(std::ptr::from_mut::<ConcurrentTask>(task)) });
+            // SAFETY: task is a valid *mut ConcurrentTask from the queue; this
+            // thread owns it exclusively once popped. Scoped accesses so no
+            // reference is live when the node is freed below.
+            let auto_delete = unsafe {
+                (*task).task.run();
+                (*task).auto_delete
+            };
+            if auto_delete {
+                // SAFETY: was heap-allocated in enqueue_task_concurrent; freed
+                // through the queue pointer (allocation provenance).
+                drop(unsafe { bun_core::heap::take(task) });
             }
         }
     }

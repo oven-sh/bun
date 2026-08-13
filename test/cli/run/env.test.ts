@@ -1163,3 +1163,87 @@ test.skipIf(!isASAN || isWindows)(".env with a huge lying st_size does not abort
   // 1099511627792 bytes failed", SIGABRT) without ever reaching app.js.
   expect({ stdout, exitCode }).toEqual({ stdout: "reached user code\n", exitCode: 0 });
 });
+
+// https://github.com/oven-sh/bun/issues/6338
+// Node.js does not auto-load .env files, so bun invoked as `node` (via `--bun`)
+// must not either. Tools like Vite re-read `.env.{mode}` themselves and treat
+// anything already in process.env as a higher-priority shell override.
+describe("node shim (argv0=node) does not auto-load .env files", () => {
+  const files = {
+    ".env": "PUBLICPATH=/\nVITE_PUBLIC_PATH=/dev\n",
+    ".env.production": "PUBLICPATH=/app\nVITE_PUBLIC_PATH=/app\n",
+    "check.js": `console.log(JSON.stringify({
+      PUBLICPATH: process.env.PUBLICPATH ?? null,
+      VITE_PUBLIC_PATH: process.env.VITE_PUBLIC_PATH ?? null,
+    }));`,
+    "package.json": JSON.stringify({ name: "p", scripts: { check: "node ./check.js" } }),
+  };
+  const testEnv = {
+    ...bunEnv,
+    NODE_ENV: undefined,
+    PUBLICPATH: undefined,
+    VITE_PUBLIC_PATH: undefined,
+  };
+
+  test.concurrent("argv0=node leaves .env keys unset", async () => {
+    using dir = tempDir("dotenv-as-node", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "check.js"],
+      argv0: "node",
+      cwd: String(dir),
+      env: testEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ PUBLICPATH: null, VITE_PUBLIC_PATH: null });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("argv0=node still honors explicit --env-file", async () => {
+    using dir = tempDir("dotenv-as-node-explicit", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--env-file=.env.production", "check.js"],
+      argv0: "node",
+      cwd: String(dir),
+      env: testEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ PUBLICPATH: "/app", VITE_PUBLIC_PATH: "/app" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("`bun --bun run <script>` does not leak .env into the node-shimmed child", async () => {
+    using dir = tempDir("dotenv-bun-run", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--bun", "run", "--silent", "check"],
+      cwd: String(dir),
+      env: testEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ PUBLICPATH: null, VITE_PUBLIC_PATH: null });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("`bun check.js` (not node shim) still auto-loads .env", async () => {
+    using dir = tempDir("dotenv-direct", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "check.js"],
+      cwd: String(dir),
+      env: testEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ PUBLICPATH: "/", VITE_PUBLIC_PATH: "/dev" });
+    expect(exitCode).toBe(0);
+  });
+});

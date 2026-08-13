@@ -2167,6 +2167,7 @@ const SPECIAL_JS_CHAR: u8 = 8;
 const MAX_SUBSHELL_DEPTH: u32 = 128;
 pub const LEX_JS_OBJREF_PREFIX: &[u8] = b"\x08__bun_";
 pub const LEX_JS_STRING_PREFIX: &[u8] = b"\x08__bunstr_";
+pub const LEX_JS_REF_TERMINATOR: u8 = SPECIAL_JS_CHAR;
 
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
 pub enum StringEncoding {
@@ -2197,7 +2198,7 @@ pub(crate) enum RedirectDirection {
 }
 
 #[derive(Clone, Copy)]
-pub struct BacktrackSnapshot<'bump, const ENCODING: StringEncoding> {
+struct BacktrackSnapshot<'bump, const ENCODING: StringEncoding> {
     chars: ShellCharIter<'bump, ENCODING>,
     j: u32,
     word_start: u32,
@@ -3358,6 +3359,15 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 return None;
             }
 
+            if i >= bytes.len() || bytes[i] != LEX_JS_REF_TERMINATOR {
+                let mut e = Vec::new();
+                write!(&mut e, "Invalid {} (unterminated)", name)
+                    .expect("infallible: in-memory write");
+                self.add_error(&e);
+                return None;
+            }
+            i += 1;
+
             let idx = match bun_core::parse_int::<usize>(&digit_buf[..digit_buf_count as usize], 10)
             {
                 Ok(n) => n,
@@ -3375,12 +3385,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
             // Bump the cursor
             let new_idx = self.chars.cursor_pos() + i;
-            let prev_ascii_char: Option<u8> = if digit_buf_count == 1 {
-                None
-            } else {
-                Some((digit_buf[digit_buf_count as usize - 2]) & 0x7F)
-            };
-            let cur_ascii_char: u8 = digit_buf[digit_buf_count as usize - 1] & 0x7F;
+            let prev_ascii_char: Option<u8> = Some(digit_buf[digit_buf_count as usize - 1] & 0x7F);
+            let cur_ascii_char: u8 = LEX_JS_REF_TERMINATOR;
             self.bump_cursor_ascii(new_idx, prev_ascii_char, cur_ascii_char);
 
             return Some(idx);

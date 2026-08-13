@@ -1,4 +1,3 @@
-import { LoaderKeys } from "../api/schema";
 import NodeErrors from "../jsc/bindings/ErrorCode.ts";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
@@ -89,10 +88,35 @@ replacements.push({
   to: "extends __no_intrinsic__%1",
 });
 
-// These enums map to $<enum>IdToLabel and $<enum>LabelToId
+// These enums map to $<enum>IdToLabel and $<enum>LabelToId (ids start at 1)
 // Make sure to define in ./builtins.d.ts
 export const enums = {
-  Loader: LoaderKeys,
+  // Ids are the `bun_options_types::schema::api::Loader` discriminants
+  // (JSBundler passes those numbers to BundlerPlugin.ts).
+  Loader: [
+    "jsx",
+    "js",
+    "ts",
+    "tsx",
+    "css",
+    "file",
+    "json",
+    "jsonc",
+    "toml",
+    "wasm",
+    "napi",
+    "base64",
+    "dataurl",
+    "text",
+    "bunsh",
+    "sqlite",
+    "sqlite_embedded",
+    "html",
+    "yaml",
+    "json5",
+    "md",
+    "xml",
+  ],
   ImportKind: [
     "entry-point-run",
     "entry-point-build",
@@ -105,16 +129,6 @@ export const enums = {
     "internal",
   ],
 };
-
-// These identifiers have typedef but not present at runtime (converted with replacements)
-// If they are present in the bundle after runtime, we warn at the user.
-// TODO: implement this check.
-export const warnOnIdentifiersNotPresentAtRuntime = [
-  //
-  "OutOfMemoryError",
-  "notImplementedIssue",
-  "notImplementedIssueFn",
-];
 
 // These are passed to --define to the bundler
 const debug = process.argv[2] === "--debug=ON";
@@ -135,13 +149,9 @@ export const define: Record<string, string> = {
 
 // ------------------------------ //
 
-for (const name in enums) {
-  const value = enums[name];
-  if (typeof value !== "object") throw new Error("Invalid enum object " + name + " defined in " + import.meta.file);
-  if (typeof value === null) throw new Error("Invalid enum object " + name + " defined in " + import.meta.file);
-  const keys = Array.isArray(value) ? value : Object.keys(value).filter(k => !k.match(/^[0-9]+$/));
+for (const [name, keys] of Object.entries(enums)) {
   define[`$${name}IdToLabel`] = "[" + keys.map(k => `"${k}"`).join(", ") + "]";
-  define[`$${name}LabelToId`] = "{" + keys.map(k => `"${k}": ${keys.indexOf(k) + 1}`).join(", ") + "}";
+  define[`$${name}LabelToId`] = "{" + keys.map((k, i) => `"${k}": ${i + 1}`).join(", ") + "}";
 }
 
 for (const name of globalsToPrefix) {

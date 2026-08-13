@@ -15,7 +15,8 @@ use crate::defines::Define;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, WrapMode,
+    Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, StatementScope,
+    WrapMode,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -117,7 +118,7 @@ impl<'a> Default for Options<'a> {
             keep_names: true,
             ignore_dce_annotations: false,
             preserve_unused_imports_ts: false,
-            use_define_for_class_fields: false,
+            use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
             features: RuntimeFeatures::default(),
             tree_shaking: false,
@@ -246,6 +247,10 @@ impl<'a> Options<'a> {
             hasher.update(b"no_dce");
         }
 
+        if !self.use_define_for_class_fields {
+            hasher.update(b"udfcf=0");
+        }
+
         self.features.hash_for_runtime_transpiler(hasher);
     }
 
@@ -264,7 +269,7 @@ impl<'a> Options<'a> {
             keep_names: true,
             ignore_dce_annotations: false,
             preserve_unused_imports_ts: false,
-            use_define_for_class_fields: false,
+            use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
             features: RuntimeFeatures::default(),
             tree_shaking: false,
@@ -414,7 +419,7 @@ impl<'a> Parser<'a> {
 
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
-            is_module_scope: true,
+            scope: StatementScope::Module,
             ..Default::default()
         };
 
@@ -695,7 +700,7 @@ impl<'a> Parser<'a> {
 
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
-            is_module_scope: true,
+            scope: StatementScope::Module,
             ..Default::default()
         };
         let mut parse_tracer = bun_core::perf::trace("JSParser::parse");
@@ -894,8 +899,7 @@ impl<'a> Parser<'a> {
                                 let _local = S::Local {
                                     kind: local.kind,
                                     is_export: local.is_export,
-                                    was_ts_import_equals: local.was_ts_import_equals,
-                                    was_commonjs_export: local.was_commonjs_export,
+                                    origin: local.origin,
                                     decls: G::DeclList::init_one(G::Decl {
                                         binding: decl.binding,
                                         value: decl.value,
@@ -1926,6 +1930,7 @@ impl<'a> Parser<'a> {
                     None,
                     b"import_",
                     true,
+                    js_ast::PartTag::Runtime,
                 )
                 .expect("unreachable");
             }
@@ -1958,6 +1963,7 @@ impl<'a> Parser<'a> {
                     None,
                     b"",
                     false,
+                    js_ast::PartTag::JsxImport,
                 )
                 .expect("unreachable");
             }
@@ -1972,6 +1978,7 @@ impl<'a> Parser<'a> {
                     None,
                     b"",
                     false,
+                    js_ast::PartTag::JsxImport,
                 )
                 .expect("unreachable");
             }

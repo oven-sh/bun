@@ -15,17 +15,6 @@ use bun_sys::{self as sys, Fd, Tag};
 // `bun_sys::EntryKind` (and as `crate::node::types::DirentKind`).
 use bun_sys::EntryKind;
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IteratorError {
-    #[error("AccessDenied")]
-    AccessDenied,
-    #[error("SystemResources")]
-    SystemResources,
-    /// posix.UnexpectedError
-    #[error("Unexpected")]
-    Unexpected,
-}
-
 pub struct IteratorResult {
     /// `RawSlice` invariant: borrows the iterator's `getdents` buffer
     /// (streaming-iterator contract — invalidated on next `next()` call).
@@ -407,7 +396,7 @@ mod platform {
                 // instead of dereferencing the raw `*const dirent64`.
                 let name_off = entry_idx + offset_of!(libc::dirent64, d_name);
                 let region = &self.buf.0[name_off..next_index];
-                let nul = region.iter().position(|&b| b == 0).unwrap_or(region.len());
+                let nul = bun_core::strings::index_of_char_usize(region, 0).unwrap_or(region.len());
                 let name = &region[..nul];
 
                 // skip . and .. entries

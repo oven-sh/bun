@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -532,6 +532,15 @@ describe("worker event", () => {
   });
 });
 
+test("terminate() of a running, idle worker resolves 1 like Node", async () => {
+  const worker = new Worker(
+    `const { parentPort } = require("worker_threads"); parentPort.on("message", () => {}); parentPort.postMessage("ready");`,
+    { eval: true },
+  );
+  await once(worker, "message");
+  expect(await worker.terminate()).toBe(1);
+});
+
 describe("environmentData", () => {
   test("can pass a value to a child", async () => {
     setEnvironmentData("foo", new Map([["hello", "world"]]));
@@ -630,14 +639,11 @@ describe("getHeapSnapshot", () => {
   // uncaught_exception return handled=true so spin() continues to
   // fireEarlyMessages (the call resolves with real data). Under `bun -e`
   // it rejects — see the test-worker-heapdump-failure.js vendored test for
-  // subprocess coverage. The two cases below take the shutdown() path
-  // directly so they exercise the m_pendingTasks abandon drain regardless.
-  test.each([
-    ["entry not found", undefined],
-    ["unsettled top-level await", "await new Promise(() => {})"],
-  ])("rejects ERR_WORKER_NOT_RUNNING when called before a worker that fails to start (%s)", async (_, src) => {
-    const worker =
-      src === undefined ? new Worker("/nonexistent/__bun_worker_path__.js") : new Worker(src, { eval: true });
+  // subprocess coverage. A worker whose entry is not found takes the
+  // shutdown() path directly, so it exercises the m_pendingTasks abandon drain
+  // regardless.
+  test("rejects ERR_WORKER_NOT_RUNNING when called before a worker that fails to start", async () => {
+    const worker = new Worker("/nonexistent/__bun_worker_path__.js");
     worker.on("error", () => {});
     // Called immediately (m_state still Pending) so the task queues into
     // m_pendingTasks; dispatchExit drains it on the parent thread when the
@@ -938,6 +944,42 @@ test("MessagePort.hasRef() reports actual loop-ref state", () => {
   expect(port1.hasRef()).toBe(false);
   port1.ref();
   expect(port1.hasRef()).toBe(true);
+  port1.close();
+});
+
+// In a node worker only parentPort receives what the parent posts; the global
+// scope's `self.onmessage` is not a channel there (as in node). Libraries that
+// install both a parentPort listener and self.onmessage as a node/web shim
+// must see one delivery, not two.
+test("a parent message reaches parentPort only, not self.onmessage, in a node worker", async () => {
+  const w = new Worker(
+    `const { parentPort } = require("node:worker_threads");
+     let count = 0;
+     parentPort.on("message", () => { count++; });
+     self.onmessage = () => { count += 100; };
+     parentPort.on("message", () => setImmediate(() => parentPort.postMessage(count)));`,
+    { eval: true },
+  );
+  w.postMessage("x");
+  const [count] = await once(w, "message");
+  await w.terminate();
+  expect(count).toBe(1);
+});
+
+// node's setupPortReferencing tracks 'message' listeners only: a 'messageerror'
+// handler alone neither starts the port nor keeps the loop alive.
+test("onmessageerror alone does not ref the port", () => {
+  const { port1 } = new MessageChannel();
+  port1.onmessageerror = () => {};
+  const errorOnly = port1.hasRef();
+  port1.onmessage = () => {};
+  const withMessage = port1.hasRef();
+  port1.onmessage = null;
+  expect({ errorOnly, withMessage, afterClearingMessage: port1.hasRef() }).toEqual({
+    errorOnly: false,
+    withMessage: true,
+    afterClearingMessage: false,
+  });
   port1.close();
 });
 
@@ -1419,6 +1461,46 @@ test("*Internal introspection methods are DontEnum on Worker.prototype", () => {
   expect(enumerable).not.toContain("cpuUsageInternal");
 });
 
+test("env: process.env reads in a worker module are evaluated at runtime against the worker's env", async () => {
+  using dir = tempDir("worker-threads-env-runtime-reads", {
+    "worker.js": `
+      const { parentPort } = require("node:worker_threads");
+      const inherited = process.env.BUN_TEST_WT_ENV_KEY;
+      process.env["BUN_TEST_WT_ENV_KEY"] = "assigned-in-worker";
+      const assigned = process.env.BUN_TEST_WT_ENV_KEY;
+      parentPort.postMessage({ inherited, assigned, nodeEnv: process.env.NODE_ENV });
+    `,
+    "main.js": `
+      const { Worker } = require("node:worker_threads");
+      const worker = new Worker(require("node:path").join(__dirname, "worker.js"), {
+        env: { BUN_TEST_WT_ENV_KEY: "from-worker-option", NODE_ENV: "production" },
+      });
+      worker.on("error", err => { console.error(err); process.exit(1); });
+      worker.on("message", msg => {
+        console.log(JSON.stringify(msg));
+        worker.terminate();
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: { ...bunEnv, BUN_TEST_WT_ENV_KEY: "from-parent-process", NODE_ENV: "development" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    message: stdout ? JSON.parse(stdout) : stdout,
+    stderr: exitCode === 0 ? "" : stderr,
+    exitCode,
+  }).toEqual({
+    message: { inherited: "from-worker-option", assigned: "assigned-in-worker", nodeEnv: "production" },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide one", () => {
   async function run(mode: string) {
     const proc = Bun.spawn({
@@ -1459,37 +1541,55 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     });
   });
 
-  // An accessor installed via defineProperty lands on the base object, but reads hit
-  // the store first — so the store entry must go, or the getter is shadowed. (Node
-  // rejects accessors on process.env entirely; bun allows them on the regular map,
-  // so the shared map matches the regular one rather than diverging from it.)
-  it("does not let the store shadow an accessor defined on process.env", async () => {
+  // Node's EnvDefiner rejects an accessor descriptor on process.env for every env
+  // store, so the SHARE_ENV map must answer exactly like the regular one. An
+  // accessor is also unrepresentable here: it would land on the base object while
+  // reads hit the store first, so the getter would be silently shadowed.
+  it("rejects an accessor defined on process.env, on both the regular and shared map", async () => {
     const proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `const { Worker, SHARE_ENV } = require("worker_threads");
          const probe = \`process.env.FOO = "old";
-           Object.defineProperty(process.env, "FOO", { get: () => "new", configurable: true });
-           const count = Object.keys(process.env).filter(k => k === "FOO").length;
-           const read = process.env.FOO;
-           delete process.env.FOO;
-           ({ read, count, afterDelete: process.env.FOO ?? null })\`;
+           let err = null;
+           try {
+             Object.defineProperty(process.env, "FOO", { get: () => "new", configurable: true });
+           } catch (e) {
+             err = { code: e.code, name: e.constructor.name, message: e.message };
+           }
+           ({ err, read: process.env.FOO })\`;
          const regular = eval(probe);
          const w = new Worker(
            'const { parentPort } = require("worker_threads"); parentPort.postMessage(eval(' + JSON.stringify(probe) + '));',
            { eval: true, env: SHARE_ENV },
          );
-         w.on("message", shared => console.log(JSON.stringify({ regular, shared })));`,
+         w.on("message", shared => console.log(JSON.stringify({ regular, shared })));
+         // Surface a worker that dies before posting, instead of exiting 0 with
+         // no output and reporting as an unrelated JSON parse error.
+         w.on("error", e => { console.error("worker error: " + (e && e.stack || e)); process.exit(1); });
+         w.on("exit", code => { if (code !== 0) { console.error("worker exited " + code); process.exit(1); } });`,
       ],
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // count === 1: defineProperty on an existing enumerable key keeps it enumerable.
-    const want = { read: "new", count: 1, afterDelete: null };
-    expect(JSON.parse(stdout)).toEqual({ regular: want, shared: want });
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Same code/class/message node v26.3.0 throws; the assignment stands unchanged.
+    const want = {
+      err: {
+        code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY",
+        name: "TypeError",
+        message: "'process.env' does not accept an accessor(getter/setter) descriptor",
+      },
+      read: "old",
+    };
+    // One combined object so a dead child shows its stderr and exit code rather
+    // than surfacing as a parse error on empty stdout.
+    expect({ parsed: stdout ? JSON.parse(stdout) : stdout, stderr, exitCode }).toEqual({
+      parsed: { regular: want, shared: want },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // node roots a main-founded SHARE_ENV tree at its RealEnvStore, so a worker writing
@@ -1755,4 +1855,733 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim()).toBe("yes,unset");
   expect(exitCode).toBe(0);
+});
+
+test("terminating a worker stops the workers it spawned", async () => {
+  // The leaf heartbeats to the main thread over a MessagePort routed through the
+  // middle worker. Terminating the middle worker must stop the leaf, which the main
+  // thread observes as its end of the channel closing.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Worker, MessageChannel } = require("worker_threads");
+        const { port1, port2 } = new MessageChannel();
+        const middle = new Worker(
+          \`const { Worker, workerData, parentPort } = require("worker_threads");
+           const leaf = new Worker(
+             'const { workerData } = require("worker_threads");' +
+             'setInterval(() => workerData.port.postMessage("beat"), 5);',
+             { eval: true, workerData: { port: workerData.port }, transferList: [workerData.port] });
+           leaf.on("online", () => parentPort.postMessage("leaf-online"));\`,
+          { eval: true, workerData: { port: port2 }, transferList: [port2] },
+        );
+        let beats = 0;
+        port1.on("message", () => { beats++; });
+        middle.on("message", async m => {
+          if (m !== "leaf-online") return;
+          while (beats === 0) await new Promise(r => setImmediate(r));
+          port1.on("close", () => {
+            console.log("leaf port closed");
+            port1.close();
+          });
+          await middle.terminate();
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe("leaf port closed");
+  expect(exitCode).toBe(0);
+});
+
+// parentPort is a real MessagePort entangled with the parent Worker's public
+// port, so it follows Node's lifecycle: a 'message' listener keeps the thread
+// alive, and close()/unref() let it exit.
+test("parentPort.close() ends a worker that is only listening for messages", async () => {
+  const w = new Worker(
+    `const { parentPort } = require("worker_threads");
+     parentPort.on("message", m => { parentPort.postMessage("got " + m); if (m === "close") parentPort.close(); });`,
+    { eval: true },
+  );
+  const messages: string[] = [];
+  w.on("message", m => messages.push(m));
+  const exited = new Promise<number>(resolve => w.on("exit", resolve));
+  w.postMessage("hello");
+  w.postMessage("close");
+  expect(await exited).toBe(0);
+  expect(messages).toEqual(["got hello", "got close"]);
+});
+
+test("parentPort.unref() lets a listening worker exit", async () => {
+  const w = new Worker(
+    `const { parentPort } = require("worker_threads");
+     parentPort.on("message", () => {});
+     parentPort.unref();`,
+    { eval: true },
+  );
+  const exited = new Promise<number>(resolve => w.on("exit", resolve));
+  expect(await exited).toBe(0);
+});
+
+test("receiveMessageOnPort distinguishes an undefined message from an empty queue", () => {
+  const { port1, port2 } = new MessageChannel();
+  port1.postMessage(undefined);
+  port1.postMessage(0);
+  expect(receiveMessageOnPort(port2)).toEqual({ message: undefined });
+  expect(receiveMessageOnPort(port2)).toEqual({ message: 0 });
+  expect(receiveMessageOnPort(port2)).toBeUndefined();
+  port1.close();
+  port2.close();
+});
+
+// A message the parent posts at construction is delivered only after the
+// worker's entry module has evaluated (Node's ordering). Delivered early, an
+// uncaught throw from the listener raced the still-loading entry and the exit
+// handler's exitCode was overwritten.
+test("parent messages are delivered after the worker's entry evaluated; exit handler's exitCode wins", async () => {
+  const w = new Worker(
+    `const { parentPort } = require("worker_threads");
+     parentPort.once("message", () => {
+       process.on("exit", () => { process.exitCode = 0; });
+       throw new Error("ok");
+     });`,
+    { eval: true },
+  );
+  const errors: string[] = [];
+  w.on("error", e => errors.push(e.message));
+  const exited = new Promise<number>(resolve => w.on("exit", resolve));
+  w.postMessage(0);
+  expect(await exited).toBe(0);
+  expect(errors).toEqual(["ok"]);
+});
+
+// node: assigning a non-function to parentPort.onmessage clears the handler and
+// releases the ref the previous handler took, so the worker can exit.
+test("parentPort.onmessage = <not a function> lets the worker exit", async () => {
+  const w = new Worker(
+    `const { parentPort } = require("worker_threads");
+     parentPort.onmessage = () => { throw new Error("must not be called"); };
+     parentPort.onmessage = "fhqwhgads";`,
+    { eval: true },
+  );
+  const exited = new Promise<number>(resolve => w.on("exit", resolve));
+  w.postMessage(2);
+  expect(await exited).toBe(0);
+});
+
+// #15408: a worker whose top-level await has not settled is started (Node) —
+// its parentPort listener registered before the await receives messages, and
+// the await keeps running in the normal event loop.
+test("parentPort messages are delivered while a top-level await is pending", async () => {
+  const w = new Worker(
+    `import { parentPort } from "worker_threads";
+     parentPort.on("message", m => { parentPort.postMessage("got " + m); if (m === "bye") process.exit(0); });
+     await new Promise(() => {});`,
+    { eval: true },
+  );
+  const replies: string[] = [];
+  w.on("message", m => {
+    replies.push(m);
+    if (m === "got hi") w.postMessage("bye");
+  });
+  const exited = new Promise<number>(resolve => w.on("exit", resolve));
+  w.postMessage("hi");
+  expect(await exited).toBe(0);
+  expect(replies).toEqual(["got hi", "got bye"]);
+});
+
+// A top-level await that rejects while other work keeps the loop alive fails the
+// worker at rejection time (Node), not when the loop eventually drains.
+// (Subprocess: inside `bun test` a worker's uncaught error counts as handled.)
+test("a top-level await rejecting while the loop is alive fails the worker then", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("worker_threads");
+       const w = new Worker(
+         'setInterval(() => {}, 1000); await new Promise((_, reject) => setTimeout(() => reject(new Error("late")), 5));',
+         { eval: true },
+       );
+       w.on("error", e => console.log("error: " + e.message));
+       w.on("exit", c => console.log("exit " + c));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("error: late\nexit 1\n");
+  expect(exitCode).toBe(0);
+});
+
+// Static imports that are still being read/transpiled are loading, not a
+// top-level await: 'online' and message delivery wait for the graph to execute.
+test("a file worker's static imports load before it counts as started", async () => {
+  using dir = tempDir("worker-static-import-start", {
+    "dep.js": `export const listeners = [];\n${"// filler\n".repeat(2000)}`,
+    "w.js": `import { listeners } from "./dep.js";
+import { parentPort } from "worker_threads";
+parentPort.on("message", m => parentPort.postMessage("got " + m + " " + listeners.length));`,
+  });
+  const w = new Worker(join(String(dir), "w.js"));
+  const reply = new Promise<string>(resolve => w.on("message", resolve));
+  w.postMessage("hi");
+  expect(await reply).toBe("got hi 0");
+  await w.terminate();
+});
+
+// ─── worker teardown vs. work still in flight ────────────────────────────────
+// Each of these terminates a worker (or exits the process) while some off-thread
+// or cross-thread work of that worker is still pending. They exercise the
+// refusal / wait paths of VM teardown; a broken build crashes or trips ASAN
+// rather than failing an assertion.
+describe("terminate with work in flight", () => {
+  test("a transpile queued on the thread pool that starts after terminate()", async () => {
+    using dir = tempDir("worker-terminate-transpile", {
+      // large enough that the pool job is still queued/running at terminate
+      "big.ts": Array.from({ length: 4000 }, (_, i) => `export const v${i}: number = ${i};`).join("\n"),
+      "w.js": `require("worker_threads").parentPort.postMessage("go"); import("./big.ts").then(() => {});`,
+    });
+    for (let i = 0; i < 8; i++) {
+      const w = new Worker(join(String(dir), "w.js"));
+      await new Promise(r => w.once("message", r));
+      expect(await w.terminate()).toBe(1);
+    }
+  });
+
+  test("a SubtleCrypto digest still on the work queue at terminate()", async () => {
+    for (let i = 0; i < 4; i++) {
+      const w = new Worker(
+        `const { parentPort } = require("worker_threads");
+         crypto.subtle.digest("SHA-256", new Uint8Array(64 << 20)).then(() => {});
+         parentPort.postMessage("go");`,
+        { eval: true },
+      );
+      await new Promise(r => w.once("message", r));
+      expect(await w.terminate()).toBe(1);
+    }
+  });
+
+  test("an async zlib job on the thread pool at terminate()", async () => {
+    for (let i = 0; i < 4; i++) {
+      const w = new Worker(
+        `const { parentPort } = require("worker_threads");
+         const zlib = require("zlib");
+         const buf = Buffer.alloc(32 << 20, "a");
+         zlib.deflate(buf, () => {});
+         zlib.brotliCompress(buf.subarray(0, 4 << 20), () => {});
+         parentPort.postMessage("go");`,
+        { eval: true },
+      );
+      await new Promise(r => w.once("message", r));
+      expect(await w.terminate()).toBe(1);
+    }
+  });
+
+  test("a fetch whose body is still streaming at terminate(), then process exit", async () => {
+    // Subprocess: the exiting main thread must not touch the dead worker's fetch.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("worker_threads");
+         const server = Bun.serve({
+           port: 0,
+           fetch() {
+             // never-ending chunked body
+             return new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(1024)); return Bun.sleep(5); } }));
+           },
+         });
+         const w = new Worker(
+           'const { parentPort, workerData } = require("worker_threads");' +
+           'fetch(workerData).then(async r => { const rd = r.body.getReader(); await rd.read(); parentPort.postMessage("streaming"); for (;;) await rd.read(); });',
+           { eval: true, workerData: "http://127.0.0.1:" + server.port + "/" },
+         );
+         w.once("message", async () => {
+           await w.terminate();
+           server.stop(true);
+           console.log("exiting");
+           process.exit(0);
+         });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("exiting\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("the main thread exits while a worker is mid-way through sqlite statements", async () => {
+    using dir = tempDir("worker-sqlite-main-exit", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("worker_threads");
+         const w = new Worker(
+           'const { DatabaseSync } = require("node:sqlite"); const { Database } = require("bun:sqlite");' +
+           'const a = new DatabaseSync("a.db"); a.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS t (x)");' +
+           'const b = new Database("b.db"); b.run("PRAGMA journal_mode=WAL"); b.run("CREATE TABLE IF NOT EXISTS t (x)");' +
+           'const ins = a.prepare("INSERT INTO t VALUES (?)");' +
+           'require("worker_threads").parentPort.postMessage("busy");' +
+           'for (let i = 0; ; i++) { ins.run(i); b.run("INSERT INTO t VALUES (?)", [i]); }',
+           { eval: true },
+         );
+         // Posted right before the worker enters its endless insert loop.
+         w.once("message", () => process.exit(0));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    expect(await proc.exited).toBe(0);
+  });
+
+  test("a fetch still in flight when the main thread exits", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        // The server never responds; exit once both requests have reached it.
+        `let seen = 0;
+         const server = Bun.serve({ port: 0, fetch: () => { if (++seen === 2) { console.log("exiting"); process.exit(0); } return new Promise(() => {}); } });
+         fetch("http://127.0.0.1:" + server.port + "/").catch(() => {});
+         fetch("http://127.0.0.1:" + server.port + "/").catch(() => {});`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("exiting\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A JS preload's modules are not the entry: the worker counts as started (online,
+// parent messages delivered) only once its own entry graph has executed.
+test("a worker with a preload is not started before its entry module runs", async () => {
+  using dir = tempDir("worker-preload-start", {
+    "setup.js": `globalThis.setupRan = true;`,
+    "dep.js": `export const dep = 1;\n${"// filler\n".repeat(3000)}`,
+    "w.mjs": `import { dep } from "./dep.js";
+import { parentPort } from "worker_threads";
+parentPort.on("message", m => parentPort.postMessage(["got", m, dep, globalThis.setupRan === true]));`,
+  });
+  const w = new Worker(join(String(dir), "w.mjs"), { preload: join(String(dir), "setup.js") });
+  const reply = new Promise(resolve => w.on("message", resolve));
+  w.postMessage("hi");
+  expect(await reply).toEqual(["got", "hi", 1, true]);
+  await w.terminate();
+});
+
+// Releasing the last keep-alive from an immediate (after the tick, before the
+// poll) must be noticed before the loop parks.
+test("closing the only ref'd port from setImmediate lets the process exit", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { port1 } = new MessageChannel();
+       port1.onmessage = () => {};
+       setImmediate(() => { port1.close(); console.log("closed"); });`,
+    ],
+    // Without the idle GC timer nothing else would ever wake a parked loop.
+    env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("closed\n");
+  expect(exitCode).toBe(0);
+});
+
+// Node's setupPortReferencing: the parent side of parentPort keeps the parent
+// alive while the Worker has 'message' listeners, independently of unref().
+test("an unref'ed worker with a 'message' listener still delivers to the parent", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("worker_threads");
+       const w = new Worker('require("worker_threads").parentPort.postMessage("hello"); setTimeout(() => {}, 1000);', { eval: true });
+       w.unref();
+       w.on("message", m => { console.log(m); process.exit(0); });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("hello\n");
+  expect(exitCode).toBe(0);
+});
+
+// A Bun.build whose plugin never answers, in a worker that is terminated: the
+// build is cancelled with the worker, and the process-wide bundle thread stays
+// usable for the parent.
+test("terminating a worker mid-Bun.build (plugin pending) does not wedge the bundler", async () => {
+  using dir = tempDir("worker-build-cancel", {
+    "entry.js": `import "./dep.js"; console.log("entry");`,
+    "dep.js": `console.log("dep");`,
+    "w.js": `
+      const { parentPort } = require("worker_threads");
+      Bun.build({
+        entrypoints: ["./entry.js"],
+        // onLoad never answers; it tells the parent once the bundler is waiting on it.
+        plugins: [{ name: "hang", setup(b) { b.onLoad({ filter: /dep\\.js$/ }, () => { parentPort.postMessage("pending"); return new Promise(() => {}); }); } }],
+      }).then(() => parentPort.postMessage("built"), e => parentPort.postMessage("failed"));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("worker_threads");
+       const w = new Worker("./w.js");
+       w.once("message", async m => {
+         console.log("worker:", m);
+         await w.terminate();
+         const out = await Bun.build({ entrypoints: ["./entry.js"] });
+         console.log("parent build:", out.success, out.outputs.length > 0);
+         process.exit(0);
+       });`,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("worker: pending\nparent build: true true\n");
+  expect(exitCode).toBe(0);
+});
+
+// The worker gets its own copies of options.argv/execArgv strings (they live in
+// the parent's WorkerOptions); empty strings included.
+test("worker argv/execArgv option strings, read repeatedly in the worker", async () => {
+  const src = `const { parentPort } = require("node:worker_threads");
+    for (let i = 0; i < 200; i++) { process.argv; process.execArgv }
+    parentPort.postMessage({ argv: process.argv.slice(2), execArgv: process.execArgv })`;
+  const ws = Array.from(
+    { length: 4 },
+    (_, i) => new Worker(src, { eval: true, argv: ["", "a" + i, "\u00fc\u2603", ""], execArgv: ["", "--x"] }),
+  );
+  const got = await Promise.all(ws.map(w => new Promise(res => w.once("message", res))));
+  expect(got).toEqual([0, 1, 2, 3].map(i => ({ argv: ["", "a" + i, "\u00fc\u2603", ""], execArgv: ["", "--x"] })));
+  await Promise.all(ws.map(w => w.terminate()));
+});
+
+// A build whose plugin answers slowly (async setup + async onLoad) is in every
+// possible phase when the worker goes away; each must cancel, not wait on the
+// worker's JS thread for an answer that will never come.
+test("terminate()/exit while Bun.build with a slow plugin is mid-flight in the worker", async () => {
+  using dir = tempDir("worker-build-slow-plugin", {
+    "entry.ts":
+      Array.from({ length: 20 }, (_, i) => `export * as n${i} from "./m${i}.ts"`).join("\n") +
+      `\nimport data from "virtual:data"\nexport { data }\n`,
+    ...Object.fromEntries(
+      Array.from({ length: 20 }, (_, i) => [
+        `m${i}.ts`,
+        `import { v as a } from "./m${(i + 1) % 20}.ts"\nexport const v: number = ${i}\nexport function f${i}(x: number) { return x + a }\n`,
+      ]),
+    ),
+  });
+  const workerSrc = `
+    import { join } from "node:path";
+    const SRC = process.env.SRC, OUT = process.env.OUT;
+    const slow = { name: "slow", setup(build) {
+      build.onResolve({ filter: /^virtual:data$/ }, () => ({ path: "data", namespace: "virt" }));
+      build.onLoad({ filter: /.*/, namespace: "virt" }, async () => { await Bun.sleep(5 + Math.random() * 40); return { contents: "export default 1", loader: "js" } });
+      return Bun.sleep(Math.random() * 30);
+    } };
+    let n = 0;
+    const one = () => Bun.build({ entrypoints: [join(SRC, "entry.ts")], outdir: join(OUT, String(n++)), plugins: [slow] });
+    self.onmessage = e => { if (e.data === "exit") process.exit(0) };
+    let inflight = 0;
+    (function pump() { while (inflight < 3) { inflight++; Promise.resolve().then(one).catch(() => {}).finally(() => { inflight--; setImmediate(pump) }) } })();
+    postMessage("busy");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const url = URL.createObjectURL(new Blob([${JSON.stringify(workerSrc)}]));
+       for (let r = 0; r < 6; r++) {
+         const door = r % 2 ? "exit" : "terminate";
+         const ws = Array.from({ length: 1 + (r % 3) }, (_, i) => new Worker(url, { env: { ...process.env, OUT: process.env.OUT + "/r" + r + "w" + i } }));
+         await Promise.all(ws.map(w => new Promise(res => { w.onmessage = e => e.data === "busy" && res(); w.addEventListener("close", res) })));
+         await Bun.sleep((r * 11) % 60);
+         const closed = ws.map(w => new Promise(res => w.addEventListener("close", res)));
+         for (const w of ws) { if (door === "terminate") w.terminate(); else w.postMessage("exit") }
+         await Promise.all(closed);
+       }
+       console.log("PASS");`,
+    ],
+    env: { ...bunEnv, SRC: String(dir), OUT: join(String(dir), "out") },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("PASS\n");
+  expect(exitCode).toBe(0);
+}, 60_000);
+
+// The IPC channel belongs to the process; a worker in a forked child sees the
+// inherited NODE_CHANNEL_FD but must not open a second endpoint on it (Node:
+// process.send is undefined in worker threads).
+test("a worker inside a process with an IPC channel has no process.send of its own", async () => {
+  using dir = tempDir("worker-no-ipc", {
+    "main.js": `
+      if (process.argv[2] === "child") {
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(
+          'const { parentPort } = require("node:worker_threads"); parentPort.postMessage({ send: typeof process.send, connected: process.connected, channel: typeof process.channel });',
+          { eval: true },
+        );
+        w.once("message", m => {
+          process.send({ worker: m, main: { send: typeof process.send, connected: process.connected } });
+          w.terminate().then(() => process.exit(0));
+        });
+      } else {
+        const { fork } = require("node:child_process");
+        const child = fork(__filename, ["child"]);
+        child.on("message", m => console.log(JSON.stringify(m)));
+        child.on("exit", code => process.exit(code));
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout.trim())).toEqual({
+    worker: { send: "undefined", connected: false, channel: "undefined" },
+    main: { send: "function", connected: true },
+  });
+  expect(exitCode).toBe(0);
+});
+
+describe("VM teardown ordering", () => {
+  // The exiting main thread must not park the process-wide HTTP thread while a
+  // child can still start a request: the child then waits for a hand-back that
+  // never comes and the parent waits for the child.
+  test("process.exit() while a worker keeps starting fetches", async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("worker_threads");
+         const w = new Worker(
+           'const { workerData, parentPort } = require("worker_threads");' +
+           'parentPort.postMessage("ready");' +
+           '(async () => { for (;;) { fetch(workerData.url).catch(() => {}); await 1; } })();',
+           { eval: true, workerData: { url: "${server.url.href}" } });
+         w.once("message", () => setImmediate(() => process.exit(0)));`,
+      ],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    expect(await proc.exited).toBe(0);
+  });
+
+  // A shell `cp` hands its copy to an fs.cp task on the pool; the pool part is
+  // over then, not when the JS-thread continuation runs.
+  test("process.exit() with a shell cp in flight", async () => {
+    const files: Record<string, Buffer> = {};
+    for (let i = 0; i < 60; i++) files[`src/f${i}.bin`] = Buffer.alloc(512 * 1024, 120);
+    using dir = tempDir("exit-shell-cp", files);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+         Bun.$\`cp -R src dst\`.then(() => {});
+         // Exit once the copy is visibly under way.
+         (function poll() {
+           fs.existsSync("dst") && fs.readdirSync("dst").length > 0 ? process.exit(0) : setImmediate(poll);
+         })();`,
+      ],
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    expect(await proc.exited).toBe(0);
+  });
+
+  // An S3 upload aborted by its worker's teardown must not retry onto the
+  // closed VM: the retry would complete on the HTTP thread against a dead handle.
+  test("terminating a worker mid S3 upload does not retry onto the dead VM", async () => {
+    let first = true;
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        if (first) {
+          first = false;
+          return new Promise(() => {}); // the upload terminate() interrupts
+        }
+        return new Response("no", { status: 503 }); // any retry fails fast
+      },
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("worker_threads");
+         const w = new Worker(
+           'const { workerData, parentPort } = require("worker_threads");' +
+           'const s3 = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", endpoint: workerData.url, retry: 3 });' +
+           // writer(): a MultiPartUpload, whose single-send failure path retries.
+           'const wr = s3.file("key").writer({ retry: 3 }); wr.write(Buffer.alloc(1024 * 1024)); wr.end().catch(() => {});' +
+           'parentPort.postMessage("uploading");',
+           { eval: true, workerData: { url: "${server.url.href}" } });
+         w.once("message", async () => {
+           console.log("exit", await w.terminate());
+           // Outlive any retry the HTTP thread would complete.
+           setTimeout(() => process.exit(0), 500);
+         });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("exit 1\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A native completion on the worker's own loop (here: a dns lookup finishing)
+// after the parent requested termination must not settle a promise with the
+// empty value its interrupted JS conversion produced.
+test("terminate() while dns lookups keep completing in the worker", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("worker_threads");
+       const w = new Worker(
+         'const dns = require("dns"); const { parentPort } = require("worker_threads");' +
+         'let n = 0;' +
+         '(function go() { dns.lookup("localhost", () => {}); dns.promises.lookup("localhost").catch(() => {}); if (++n === 50) parentPort.postMessage("going"); setImmediate(go); })();',
+         { eval: true });
+       w.once("message", async () => { console.log("exit", await w.terminate()); process.exit(0); });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("exit 1\n");
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+// What a worker's own handlers may observe of its stop, in what order. Every
+// callback the worker could run appends a tag to a shared log the parent reads
+// after the thread is gone, so ordering is checked from outside the dying VM.
+//  - terminate(): the stop is not the worker's choice — no 'exit' handler, no
+//    resource 'close'/'error' handler, nothing at all runs after the request.
+//  - process.exit() from inside a callback: 'exit' handlers run exactly once and
+//    are the last script the worker runs; resources are closed natively after
+//    that, so none of their handlers follow.
+// In both the parent's loop returns to idle afterwards (nothing the worker held
+// keeps it alive) — the test process exiting at all is that check.
+describe("worker stop ordering as seen by the worker's own handlers", () => {
+  const TAG = {
+    exitHandler: 1,
+    serverClose: 2,
+    socketClose: 3,
+    socketError: 4,
+    udpClose: 5,
+    watcherClose: 6,
+    intervalTick: 7,
+    streamCancel: 8,
+    portClose: 9,
+    beforeExit: 10,
+    afterExitCall: 11,
+    ready: 12,
+  } as const;
+  const workerSource = (door: "terminate" | "exit") => `
+    const { workerData, parentPort } = require("node:worker_threads");
+    const log = workerData.log;
+    const put = tag => { const i = Atomics.add(log, 0, 1) + 1; if (i < log.length) Atomics.store(log, i, tag); };
+    process.on("exit", () => put(${TAG.exitHandler}));
+    process.on("beforeExit", () => put(${TAG.beforeExit}));
+    const net = require("node:net"), dgram = require("node:dgram"), fs = require("node:fs"), os = require("node:os");
+    const server = net.createServer(() => {}).listen(0, "127.0.0.1");
+    server.on("close", () => put(${TAG.serverClose}));
+    const udp = dgram.createSocket("udp4"); udp.bind(0, "127.0.0.1"); udp.on("close", () => put(${TAG.udpClose}));
+    const watcher = fs.watch(os.tmpdir(), () => {}); watcher.on("close", () => put(${TAG.watcherClose}));
+    setInterval(() => put(${TAG.intervalTick}), 1).unref();
+    const { port1, port2 } = new MessageChannel(); port1.on("message", () => {}); port1.on("close", () => put(${TAG.portClose})); globalThis.keepPeer = port2;
+    Bun.serve({ port: 0, development: false, fetch: () => new Response("x") });
+    new ReadableStream({ pull() {}, cancel() { put(${TAG.streamCancel}); } }).getReader().read();
+    server.on("listening", () => {
+      const sock = net.connect(server.address().port, "127.0.0.1");
+      sock.on("close", () => put(${TAG.socketClose}));
+      sock.on("error", () => put(${TAG.socketError}));
+      sock.on("connect", () => {
+        put(${TAG.ready});
+        parentPort.postMessage("ready");
+        ${door === "exit" ? `parentPort.on("message", () => { process.exit(7); put(${TAG.afterExitCall}); });` : `parentPort.on("message", () => {});`}
+      });
+    });
+  `;
+
+  async function run(door: "terminate" | "exit") {
+    const log = new Int32Array(new SharedArrayBuffer(4 * 256));
+    const w = new Worker(workerSource(door), { eval: true, workerData: { log } });
+    const errors: unknown[] = [];
+    w.on("error", e => errors.push(e));
+    const exited = once(w, "exit").then(([code]) => code as number);
+    await once(w, "message"); // "ready": every resource is up
+    let code: number;
+    if (door === "terminate") {
+      const t = w.terminate();
+      code = await exited;
+      // terminate() resolves the same code the 'exit' event carried.
+      expect(await t).toBe(code);
+    } else {
+      w.postMessage("go");
+      code = await exited;
+    }
+    const n = Math.min(Atomics.load(log, 0), log.length - 1);
+    const tags = Array.from(log.slice(1, 1 + n)).filter(t => t !== TAG.intervalTick);
+    return { code, tags, errors };
+  }
+
+  test("terminate(): nothing of the worker's runs after the request", async () => {
+    const { code, tags, errors } = await run("terminate");
+    expect(errors).toEqual([]);
+    // Only what ran before the parent asked: the "ready" marker. No 'exit'
+    // handler (not the worker's choice), no close/error/cancel handler.
+    expect(tags).toEqual([TAG.ready]);
+    expect(code).toBe(1);
+  });
+
+  test("process.exit() inside a callback: 'exit' handlers are the last script; no resource handler follows", async () => {
+    const { code, tags, errors } = await run("exit");
+    expect(errors).toEqual([]);
+    // ready → the 'exit' handler once → nothing: the statement after
+    // process.exit() never runs, and closing the server/socket/udp/watcher/
+    // port/stream natively afterwards dispatches none of their handlers.
+    expect(tags).toEqual([TAG.ready, TAG.exitHandler]);
+    expect(code).toBe(7);
+  });
 });

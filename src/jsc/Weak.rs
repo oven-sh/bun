@@ -91,6 +91,18 @@ impl<T> Default for Weak<T> {
 }
 
 impl<T> Weak<T> {
+    /// A weak handle with no finalize callback. `get()` reads `None` from the
+    /// moment GC reaps the referent, before any sweep runs cell destructors.
+    pub fn create_passive(value: JSValue, global_this: &JSGlobalObject) -> Self {
+        if value.is_empty() {
+            return Self::default();
+        }
+        Self {
+            r#ref: Some(WeakImpl::init(global_this, value, WeakRefType::None, None)),
+            _ctx: PhantomData,
+        }
+    }
+
     pub fn create(
         value: JSValue,
         global_this: &JSGlobalObject,

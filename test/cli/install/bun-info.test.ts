@@ -398,7 +398,11 @@ test.skipIf(!isASAN)(
     });
     const dir = tempDirWithFiles("bun-info-lsan", {
       "package.json": JSON.stringify({ name: "test", version: "1.0.0" }),
-      "bunfig.toml": `[install]\nregistry = "http://localhost:${server.port}/"\n`,
+      "bunfig.toml": Bun.TOML.stringify({
+        install: {
+          registry: `http://localhost:${server.port}/`,
+        },
+      }),
     });
     await using proc = spawn({
       cmd: [bunExe(), "info", "leakpkg", "name"],

@@ -1,8 +1,5 @@
 // @link "deps/zlib/libz.a"
 
-pub mod error;
-pub use error::{Error, Result};
-
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::mem::size_of;
 
@@ -38,8 +35,7 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
-#[allow(non_camel_case_types, unused_imports)]
-pub use bun_zlib_sys::shared::{Byte, Bytef, gzFile, struct_gzFile_s, uInt, uLong, uLongf, voidpf};
+pub use bun_zlib_sys::shared::{Bytef, uInt, uLong, uLongf};
 
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
@@ -156,8 +152,8 @@ pub fn crc32_bytes(crc: u32, data: &[u8]) -> u32 {
 }
 
 pub use bun_core::compress::State;
-pub type ZlibReaderArrayListState = State;
-pub type ZlibCompressorArrayListState = State;
+type ZlibReaderArrayListState = State;
+type ZlibCompressorArrayListState = State;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ZlibError {
@@ -191,7 +187,7 @@ pub struct ZlibReaderArrayList<'a> {
     pub(crate) state: ZlibReaderArrayListState,
     /// Decompression-bomb guard: `read_all` errors instead of growing the
     /// output past this many bytes. Defaults to unbounded.
-    pub max_output_size: usize,
+    pub(crate) max_output_size: usize,
 }
 
 impl<'a> Drop for ZlibReaderArrayList<'a> {
@@ -257,7 +253,7 @@ impl<'a> ZlibReaderArrayList<'a> {
             internal_state: core::ptr::null_mut(),
             user_data: (&raw mut *zlib_reader).cast::<c_void>(),
 
-            data_type: DataType::Unknown,
+            data_type: DataType::Unknown as c_int,
             adler: 0,
             reserved: 0,
         };
@@ -754,7 +750,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
             internal_state: core::ptr::null_mut(),
             user_data: (&raw mut *zlib_reader).cast::<c_void>(),
 
-            data_type: DataType::Unknown,
+            data_type: DataType::Unknown as c_int,
             adler: 0,
             reserved: 0,
         };
@@ -1169,7 +1165,7 @@ fn new_zstream() -> zStream_struct {
         free_func: Some(ZlibAllocator::free),
         internal_state: core::ptr::null_mut(),
         user_data: core::ptr::null_mut(),
-        data_type: DataType::Unknown,
+        data_type: DataType::Unknown as c_int,
         adler: 0,
         reserved: 0,
     }

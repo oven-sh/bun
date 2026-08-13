@@ -279,6 +279,10 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("keeps the data parameter alive", async () => {
       await checkSameOutput("test_v8_function_template");
     });
+    it("SetClassName propagates to GetFunction result", async () => {
+      const out = await checkSameOutput("test_v8_function_template_set_class_name");
+      expect(out).toContain("MyNamedClass");
+    });
   });
 
   describe("Function", () => {
@@ -341,9 +345,90 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     });
   });
 
+  describe("ReturnValue", () => {
+    it("keeps the returned value alive when the scope it was created in closes", async () => {
+      await checkSameOutput("test_v8_return_value_from_inner_scope");
+    });
+  });
+
   describe("MaybeLocal", () => {
     it("correctly handles ToLocal and ToLocalChecked operations", async () => {
       await checkSameOutput("test_v8_maybe_local");
+    });
+  });
+
+  describe("Integer", () => {
+    it("can create and read back int32 values", async () => {
+      await checkSameOutput("test_v8_integer");
+    });
+  });
+
+  describe("Object::DefineOwnProperty", () => {
+    it("applies PropertyAttribute flags to the defined property", async () => {
+      await checkSameOutput("test_v8_define_own_property");
+    });
+  });
+
+  describe("BigInt", () => {
+    it("BigInt::New creates a JS bigint with the given int64 value", async () => {
+      await checkSameOutput("test_v8_bigint");
+    });
+  });
+
+  describe("String::NewFromUtf8Literal", () => {
+    it("creates strings from C string literals (ASCII and UTF-8)", async () => {
+      await checkSameOutput("test_v8_string_from_utf8_literal");
+    });
+  });
+
+  describe("PrototypeTemplate / Template::Set / SetNativeDataProperty", () => {
+    it("prototype methods and native accessors are reachable on instances", async () => {
+      await checkSameOutput("test_v8_prototype_template");
+    });
+  });
+
+  describe("ArrayBuffer / TypedArray", () => {
+    it("can create an ArrayBuffer and read through its BackingStore", async () => {
+      await checkSameOutput("test_v8_arraybuffer");
+    });
+    it("can create Uint8Array/Uint32Array views with offset and length", async () => {
+      await checkSameOutput("test_v8_typedarray");
+    });
+  });
+
+  describe("Function::Call / NewInstance", () => {
+    it("Function::Call forwards recv and argv", async () => {
+      await checkSameOutput("test_v8_function_call");
+    });
+    it("Function::NewInstance constructs via a FunctionTemplate", async () => {
+      await checkSameOutput("test_v8_function_new_instance");
+    });
+    it("FunctionTemplate::GetFunction returns the same function on repeat calls", async () => {
+      await checkSameOutput("test_v8_getfunction_memoized");
+    });
+  });
+
+  describe("Map", () => {
+    it("Map::Set and Map::Delete mutate the underlying JS Map", async () => {
+      await checkSameOutput("test_v8_map");
+    });
+  });
+
+  describe("Exception", () => {
+    it("Exception::Error/TypeError create throwable Error objects", async () => {
+      await checkSameOutput("test_v8_exception");
+    });
+  });
+
+  describe("Aligned internal fields", () => {
+    it("round-trips pointers through Set/GetAlignedPointerInInternalField", async () => {
+      await checkSameOutput("test_v8_aligned_pointer_in_internal_field");
+    });
+  });
+
+  describe("CpuProfiler", () => {
+    it("Start/Stop returns a profile with a root node", async () => {
+      await checkSameOutput("test_v8_cpu_profiler");
     });
   });
 

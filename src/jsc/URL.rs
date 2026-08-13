@@ -75,8 +75,8 @@ impl URL {
 
     /// Returns the host WITHOUT the port.
     ///
-    /// Note that this does NOT match JS behavior, which returns the host with the port. See
-    /// `hostname` for the JS equivalent of `host`.
+    /// Note that this does NOT match JS behavior, which returns the host with the port. The
+    /// with-port form lives on the JSC-free shim as `bun_url::whatwg::URL::hostname`.
     ///
     /// ```text
     /// URL("http://example.com:8080").host() => "example.com"

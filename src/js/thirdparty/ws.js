@@ -1577,7 +1577,8 @@ class WebSocketServer extends EventEmitter {
       return;
     }
 
-    if (req.headers.upgrade.toLowerCase() !== "websocket") {
+    const upgrade = req.headers.upgrade;
+    if (upgrade === undefined || upgrade.toLowerCase() !== "websocket") {
       const message = "Invalid Upgrade header";
       abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
       return;
@@ -1615,26 +1616,7 @@ class WebSocketServer extends EventEmitter {
 
     // TODO: add perMessageDeflate options
 
-    // const secWebSocketExtensions = req.headers["sec-websocket-extensions"];
     const extensions = {};
-
-    // if (secWebSocketExtensions !== undefined) {
-    // console.log(secWebSocketExtensions);
-    // const perMessageDeflate = new PerMessageDeflate(this.options.perMessageDeflate, true, this.options.maxPayload);
-
-    // try {
-    //   const offers = extension.parse(secWebSocketExtensions);
-
-    //   if (offers[PerMessageDeflate.extensionName]) {
-    //     perMessageDeflate.accept(offers[PerMessageDeflate.extensionName]);
-    //     extensions[PerMessageDeflate.extensionName] = perMessageDeflate;
-    //   }
-    // } catch (err) {
-    //   const message = "Invalid or unacceptable Sec-WebSocket-Extensions header";
-    //   abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
-    //   return;
-    // }
-    // }
 
     //
     // Optionally call external client verification handler.

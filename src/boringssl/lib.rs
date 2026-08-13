@@ -44,12 +44,7 @@ pub fn load() {
 // Remove once the bindgen pipeline lands these in the sys crate.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `#define SSL_DEFAULT_CIPHER_LIST "ALL"`
-pub(crate) const SSL_DEFAULT_CIPHER_LIST: &core::ffi::CStr = c"ALL";
-
-use boring::{
-    CRYPTO_BUFFER_POOL, CRYPTO_BUFFER_POOL_new, SSL_CTX_set_cipher_list, SSL_CTX_set0_buffer_pool,
-};
+use boring::{CRYPTO_BUFFER_POOL, CRYPTO_BUFFER_POOL_new, SSL_CTX_set0_buffer_pool};
 
 std::thread_local! {
     // One pool per thread, lazily allocated on the first `ssl_ctx_setup()`
@@ -58,8 +53,7 @@ std::thread_local! {
         const { Cell::new(ptr::null_mut()) };
 }
 
-/// Install the per-thread `CRYPTO_BUFFER_POOL` and set the cipher list to
-/// BoringSSL's `SSL_DEFAULT_CIPHER_LIST` (`"ALL"`).
+/// Install the per-thread `CRYPTO_BUFFER_POOL`.
 ///
 /// # Safety
 /// `ctx` must be a live `SSL_CTX*`.
@@ -67,13 +61,12 @@ pub unsafe fn ssl_ctx_setup(ctx: *mut boring::SSL_CTX) {
     AUTO_CRYPTO_BUFFER_POOL.with(|pool| {
         // SAFETY: caller guarantees `ctx` is a live `SSL_CTX*`; the pool pointer
         // is either freshly returned by `CRYPTO_BUFFER_POOL_new` or a previously
-        // stored thread-local pool, and `SSL_DEFAULT_CIPHER_LIST` is a valid C string.
+        // stored thread-local pool.
         unsafe {
             if pool.get().is_null() {
                 pool.set(CRYPTO_BUFFER_POOL_new());
             }
             SSL_CTX_set0_buffer_pool(ctx, pool.get());
-            let _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST.as_ptr());
         }
     });
 }
@@ -101,30 +94,38 @@ pub unsafe fn ssl_ctx_setup(ctx: *mut boring::SSL_CTX) {
 // into the process, including pthreads locks. Failing to meet these constraints
 // may result in deadlocks, crashes, or memory corruption.
 
+// Routed through `default_alloc` (mimalloc, or libc under `cfg(bun_asan)`)
+// rather than `mimalloc` directly. The BoringSSL build already drops
+// `BORINGSSL_REQUIRE_MEMORY_HOOKS` under ASAN so Mach-O/COFF fall back to
+// libc, but on ELF the weak hook symbols still resolve to these definitions;
+// hard-coding mimalloc here put every `OPENSSL_malloc` allocation outside
+// LeakSanitizer's scanned set and any libc-backed allocation reachable only
+// via one (an SSL's ex_data array, the per-SSL session-sink owner it holds)
+// was reported as a leak at exit.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn OPENSSL_memory_alloc(size: usize) -> *mut c_void {
-    bun_alloc::mimalloc::mi_malloc(size)
+    bun_alloc::default_alloc::malloc(size)
 }
 
 // BoringSSL always expects memory to be zero'd
 /// # Safety
-/// `ptr` must be non-null and have been returned by `OPENSSL_memory_alloc`
-/// (i.e. `mi_malloc`); BoringSSL guarantees both for this hook.
+/// `ptr` must be non-null and returned by `OPENSSL_memory_alloc`; BoringSSL
+/// guarantees both for this hook.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn OPENSSL_memory_free(ptr: *mut c_void) {
     // SAFETY: BoringSSL guarantees ptr is non-null and was returned by
-    // OPENSSL_memory_alloc above (i.e. mi_malloc).
+    // OPENSSL_memory_alloc above.
     unsafe {
-        let len = bun_alloc::usable_size(ptr.cast());
+        let len = bun_alloc::default_alloc::usable_size(ptr);
         ptr::write_bytes(ptr.cast::<u8>(), 0, len);
-        bun_alloc::mimalloc::mi_free(ptr);
+        bun_alloc::default_alloc::free(ptr);
     }
 }
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn OPENSSL_memory_get_size(ptr: *const c_void) -> usize {
-    // ptr was returned by mi_malloc (or is null, which usable_size handles).
-    bun_alloc::usable_size(ptr.cast())
+    // SAFETY: ptr was returned by OPENSSL_memory_alloc (null-safe).
+    unsafe { bun_alloc::default_alloc::usable_size(ptr) }
 }
 
 pub use bun_sys::posix::INET6_ADDRSTRLEN;
@@ -194,7 +195,7 @@ fn eq_nocase(a: &[u8], b: &[u8]) -> bool {
 
 /// Wildcard interpretation for [`match_hostname`]'s left-most label.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Wildcards {
+enum Wildcards {
     /// No wildcard expansion: a `*` is matched literally.
     None,
     /// Full-label `*` only (OpenSSL `X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS`).
@@ -208,7 +209,7 @@ pub enum Wildcards {
 /// Options for [`match_hostname`]. Each defaults to the stricter setting so
 /// callers opt in explicitly.
 #[derive(Clone, Copy)]
-pub struct MatchOpts {
+struct MatchOpts {
     pub wildcards: Wildcards,
     /// A full-label `*` may span multiple host labels
     /// (OpenSSL `X509_CHECK_FLAG_MULTI_LABEL_WILDCARDS`).
@@ -221,7 +222,7 @@ pub struct MatchOpts {
 impl MatchOpts {
     /// Node.js lib/tls.js `check()` — the matcher behind `tls.connect`,
     /// `https`, and undici `fetch`.
-    pub const TLS_CHECK: Self = Self {
+    const TLS_CHECK: Self = Self {
         wildcards: Wildcards::Anywhere,
         multi_label_wildcards: false,
         strip_trailing_dot: true,
@@ -264,7 +265,7 @@ fn openssl_valid_pattern(pattern: &[u8]) -> bool {
 /// hostname matcher every native TLS client and `X509Certificate#checkHost`
 /// share; [`MatchOpts`] selects between Node.js lib/tls.js `check()` semantics
 /// and OpenSSL `X509_check_host` semantics where they differ.
-pub fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool {
+fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool {
     let (pattern, hostname) = if opts.strip_trailing_dot {
         (unfqdn(pattern), unfqdn(hostname))
     } else {
@@ -401,7 +402,7 @@ fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
 
 pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
     let hostname = unfqdn(hostname);
-    let host_is_ip = strings::is_ip_address(hostname);
+    let host_is_ip = bun_core::ip_address::is_ip_address(hostname);
     let mut has_dns_san = false;
 
     match x509.subject_alt_names() {
@@ -582,16 +583,37 @@ pub unsafe extern "C" fn Bun__X509__checkHost(
     0
 }
 
+/// Node's `IsSafeAltName` for IA5/Latin-1 entries: true when `name` contains
+/// only printable ASCII with no `"`, `\\`, `,`, or `'`, so it can be rendered
+/// in a subjectAltName list without JSON-style quoting.
+#[inline]
+fn is_safe_alt_name(name: &[u8]) -> bool {
+    name.iter()
+        .all(|&c| matches!(c, b' '..=b'~') && !matches!(c, b'"' | b'\\' | b',' | b'\''))
+}
+
 /// Certificate name bytes (IA5 / Latin-1) for error messages.
 struct NameBytes<'a>(&'a [u8]);
 
 impl core::fmt::Display for NameBytes<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         use core::fmt::Write;
-        for &byte in self.0 {
-            f.write_char(char::from(byte))?;
+        if is_safe_alt_name(self.0) {
+            for &byte in self.0 {
+                f.write_char(char::from(byte))?;
+            }
+            return Ok(());
         }
-        Ok(())
+        f.write_char('"')?;
+        for &byte in self.0 {
+            match byte {
+                b'\\' => f.write_str("\\\\")?,
+                b'"' => f.write_str("\\\"")?,
+                b' '..=b'~' if byte != b',' => f.write_char(char::from(byte))?,
+                _ => write!(f, "\\u00{byte:02x}")?,
+            }
+        }
+        f.write_char('"')
     }
 }
 
@@ -685,7 +707,7 @@ pub fn write_server_identity_mismatch_reason(
     const NO_DNS: &str = "Cert does not contain a DNS name";
     let hostname = unfqdn(hostname);
     let host = NameBytes(hostname);
-    let host_is_ip = strings::is_ip_address(hostname);
+    let host_is_ip = bun_core::ip_address::is_ip_address(hostname);
 
     let Some(x509) = ssl_ptr.peer_leaf_certificate() else {
         return out.write_str(NO_DNS);
@@ -724,4 +746,35 @@ pub fn check_server_identity(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> bool
     ssl_ptr
         .peer_leaf_certificate()
         .is_some_and(|x509| check_x509_server_identity(x509, hostname))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NameBytes, is_safe_alt_name};
+
+    #[test]
+    fn safe_alt_name_matches_node() {
+        assert!(is_safe_alt_name(b"good.example.com"));
+        assert!(is_safe_alt_name(b"http://example.com/a%2Cb"));
+        assert!(is_safe_alt_name(b" ~"));
+        for &c in b"\"\\,'" {
+            assert!(!is_safe_alt_name(&[c]));
+        }
+        assert!(!is_safe_alt_name(b"ab\x1f"));
+        assert!(!is_safe_alt_name(b"ab\x7f"));
+        assert!(!is_safe_alt_name(b"ex\xe4mple.com"));
+    }
+
+    #[test]
+    fn name_bytes_quoting() {
+        let fmt = |s: &[u8]| NameBytes(s).to_string();
+        assert_eq!(fmt(b"good.example.com"), "good.example.com");
+        assert_eq!(
+            fmt(b"good.example.com, DNS:evil.example.com"),
+            r#""good.example.com\u002c DNS:evil.example.com""#
+        );
+        assert_eq!(fmt(b"\"quoted\""), r#""\"quoted\"""#);
+        assert_eq!(fmt(b"ex\xe4mple.com"), r#""ex\u00e4mple.com""#);
+        assert_eq!(fmt(b"a\\b"), r#""a\\b""#);
+    }
 }

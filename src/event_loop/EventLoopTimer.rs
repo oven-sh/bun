@@ -178,12 +178,12 @@ impl EventLoopTimer {
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum Tag {
-    TimerCallback,
     TimeoutObject,
     ImmediateObject,
     StatWatcherScheduler,
     UpgradedDuplex,
     DNSResolver,
+    DnsSdConnection,
     WindowsNamedPipe,
     WTFTimer,
     PostgresSQLConnectionTimeout,
@@ -213,16 +213,11 @@ impl Tag {
             | Tag::StatWatcherScheduler
             | Tag::GcRepeating // internal GC pacing
             | Tag::QuicEndpoint
+            | Tag::DnsSdConnection // internal lookup pacing
             => false,
             _ => true,
         }
     }
-}
-
-pub struct TimerCallback {
-    pub callback: fn(*mut TimerCallback),
-    // Opaque user ctx; ownership stays with whoever installs the callback.
-    pub event_loop_timer: EventLoopTimer,
 }
 
 /// Stamp out one `unsafe fn $method(*const EventLoopTimer) -> *mut Self` per
@@ -264,8 +259,6 @@ macro_rules! impl_timer_owner {
         }
     };
 }
-
-crate::impl_timer_owner!(TimerCallback; from_timer_ptr => event_loop_timer);
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Default)]

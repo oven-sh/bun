@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, isLinux, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, isLinux, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
@@ -290,7 +290,9 @@ describe.concurrent("bunshell cp -R replaces an existing destination with the co
     using dir = setup("self");
 
     expect(await cp(dir, "cp -R link .")).toEqual({
-      exitCode: 1,
+      // The error names the source path, which the builtin on Windows holds back as
+      // a possible EBUSY and then reports without failing the command (#37943).
+      exitCode: isWindows ? 0 : 1,
       stderr: `cp: Invalid argument: ${at(dir, "link")}\n`,
     });
     expect(entry(at(dir, "link"))).toEqual({ isLink: true, reads: "new" });

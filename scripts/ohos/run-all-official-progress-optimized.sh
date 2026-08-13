@@ -117,18 +117,29 @@ _BASE_TMP="${TMPDIR:-/tmp}"
 PDIR="${_BASE_TMP}/bun_test_progress_$$"
 START_SECONDS=$SECONDS
 
+# ── vendored node 测试排除开关 ──
+# SKIP_VENDORED_NODE_TESTS=1（默认）: 仅跑原有口径（*.test.* / *.spec.*，isTestStrict），
+#   排除 js/node/test/{parallel,sequential}、js/bun/test/parallel、js/node/cluster/test-*
+#   ——这些是 vendored Node 原版测试（test-*.js），bun test 无法独立运行，全部 FAIL 0/0，
+#   只产生文件级噪声并拉长运行（3,829 文件 ≈ +2h52m）。
+# SKIP_VENDORED_NODE_TESTS=0: 跑全部 case（对齐上游 CI runner.node.mjs 的 isTest 规则）。
+SKIP_VENDORED_NODE_TESTS=${SKIP_VENDORED_NODE_TESTS:-1}
+export SKIP_VENDORED_NODE_TESTS
+
 # ── 依赖检查 ──
 {
 echo "========== All Official Tests (optimized) =========="
 echo "Bun: $($BUN --version 2>/dev/null)"
 echo "Date: $(date)"
 echo "Parallel: $PARALLEL | Timeout: ${TMOUT}s (bundler: ${TMOUT_BUNDLER}s) | Retries: ${RETRIES}"
+echo "VendoredNodeTests: $([ "$SKIP_VENDORED_NODE_TESTS" = "1" ] && echo "EXCLUDED (original scope only)" || echo "INCLUDED (full upstream isTest)")"
 echo ""
 } | tee "$REPORT" >/dev/null
 
 mkdir -p "$PDIR"
 
-# ── 测试文件收集（与上游 CI runner.node.mjs 的 isTest 规则一致） ──
+# ── 测试文件收集（默认排除 vendored node 测试；SKIP_VENDORED_NODE_TESTS=0 时
+#    与上游 CI runner.node.mjs 的 isTest 规则一致） ──
 # isNodeTest:   js/node/test/{parallel,sequential}/ + js/bun/test/parallel/ 下所有 JS
 # isClusterTest: js/node/cluster/test-*.ts
 # isTestStrict: *.test.* / *.spec.*（JS 扩展名）
@@ -138,12 +149,15 @@ mkdir -p "$PDIR"
 "$BUN" -e '
 const { readdirSync } = require("fs");
 const { join, basename, dirname } = require("path");
+const skipVendored = process.env.SKIP_VENDORED_NODE_TESTS !== "0";
 const isJs = p => /\.(c|m)?(j|t)sx?$/.test(basename(p));
 const isNodeTest = p => {
+  if (skipVendored) return false;
   const u = p.replaceAll("\\", "/");
   return (u.includes("js/node/test/parallel/") || u.includes("js/node/test/sequential/") || u.includes("js/bun/test/parallel/")) && isJs(p);
 };
 const isClusterTest = p => {
+  if (skipVendored) return false;
   const u = p.replaceAll("\\", "/");
   return u.includes("js/node/cluster/test-") && u.endsWith(".ts");
 };

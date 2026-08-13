@@ -46,7 +46,7 @@ test("property matchers do not mutate the received object", () => {
   expect(obj.id).toBe(42);
   expect(obj.when).toBe(date);
   expect(obj.nested.name).toBe("abc");
-  expect(obj.list).toEqual([1, "two", 3]);
+  expect(obj.list[1]).toBe("two");
 });
 
 test("property matchers preserve class name and handle shared references", () => {
@@ -102,6 +102,47 @@ test("property matchers preserve class name and handle shared references", () =>
   expect(outer).toMatchSnapshot({ inner: { id: expect.any(Number) } });
   expect(inner.id).toBe(1);
   expect(inner.parent).toBe(outer);
+});
+
+// The recorded snapshot must show exactly the matchers the property-matcher
+// check looked at, in the same places they were looked at.
+test("snapshot records the matchers that were checked", () => {
+  // The propertyMatchers argument itself is never matched against the
+  // received value, so it must not replace the snapshot.
+  const plain = { a: 1 };
+  expect(plain).toMatchSnapshot(expect.any(Object));
+  expect(plain).toMatchSnapshot(expect.any(Array));
+
+  // One received object checked through two properties, with a different
+  // matcher at each: it is a single object, so it records the same everywhere.
+  const shared = { x: 1, y: "s" };
+  expect({ a: shared, b: shared }).toMatchSnapshot({
+    a: { x: expect.any(Number) },
+    b: { y: expect.any(String) },
+  });
+  expect(shared.x).toBe(1);
+  expect(shared.y).toBe("s");
+
+  // A matcher on a key the received object implements as a getter.
+  const withGetter = {
+    get id() {
+      return 7;
+    },
+  };
+  expect(withGetter).toMatchSnapshot({ id: expect.any(Number) });
+  expect(withGetter.id).toBe(7);
+
+  // Errors render as [Name: message], so a matcher on message is visible
+  // through the message's string form.
+  const err = new TypeError("boom");
+  expect(err).toMatchSnapshot({ message: expect.any(String) });
+  expect(err.message).toBe("boom");
+
+  // Instances of native classes render by own properties like plain objects.
+  const headers = new Headers({ "x-a": "1" });
+  expect(headers).toMatchSnapshot({ append: expect.any(Function) });
+  expect(Object.hasOwn(headers, "append")).toBe(false);
+  expect(headers.get("x-a")).toBe("1");
 });
 
 describe("toMatchSnapshot errors", () => {

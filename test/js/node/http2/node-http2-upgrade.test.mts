@@ -136,6 +136,43 @@ describe("HTTP/2 upgrade via net.Server", () => {
   });
 });
 
+describe("HTTP/2 upgrade — the raw socket is taken over", () => {
+  // https://github.com/oven-sh/bun/issues/32242
+  test("nothing surfaces on the raw socket once it has been handed to the TLS layer", async () => {
+    const rawSocketHandedOver = Promise.withResolvers<() => { emitted: number; buffered: number }>();
+    const h2Server = http2.createSecureServer(TLS, (_req, res) => {
+      res.writeHead(200);
+      res.end("ok");
+    });
+    h2Server.on("error", () => {});
+    const netServer = net.createServer(socket => {
+      // A listener left over from before the hand-over (a protocol sniffer,
+      // say) must not see the TLS traffic, and none of it may pile up in the
+      // raw socket's readable buffer either.
+      let emitted = 0;
+      socket.on("data", chunk => (emitted += chunk.length));
+      h2Server.emit("connection", socket);
+      rawSocketHandedOver.resolve(() => ({ emitted, buffered: socket.readableLength }));
+    });
+    const port = await new Promise<number>(resolve => {
+      netServer.listen(0, "127.0.0.1", () => resolve((netServer.address() as net.AddressInfo).port));
+    });
+
+    const client = connectClient(port);
+    try {
+      const result = await request(client, "GET", "/");
+      const surfacedOnRawSocket = await rawSocketHandedOver.promise;
+      assert.deepStrictEqual(
+        { status: result.status, body: result.body, ...surfacedOnRawSocket() },
+        { status: 200, body: "ok", emitted: 0, buffered: 0 },
+      );
+    } finally {
+      client.close();
+      netServer.close();
+    }
+  });
+});
+
 describe("HTTP/2 upgrade — multiple requests on one connection", () => {
   test("three sequential requests share the same session", async () => {
     let count = 0;

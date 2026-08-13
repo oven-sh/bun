@@ -4342,8 +4342,7 @@ pub mod args {
         pub(crate) recursive: bool,
         pub(crate) error_on_exist: bool,
         pub(crate) force: bool,
-        /// Create the missing parent directories of `dest` (`fs.cp` does;
-        /// the shell's `cp`, like cp(1), fails with ENOENT instead).
+        /// `fs.cp` creates the missing parents of `dest`; cp(1), and so the shell builtin, does not.
         pub(crate) create_dest_parents: bool,
     }
 
@@ -9157,11 +9156,7 @@ impl NodeFS {
         }
     }
 
-    /// Creates `dest` for a directory being copied. It may already exist as a
-    /// directory (the copy then merges into it); with `create_parents`
-    /// (`CpFlags::create_dest_parents`) its missing parents are created too,
-    /// otherwise a missing parent fails with ENOENT and a parent that is not a
-    /// directory with ENOTDIR.
+    /// Creates the destination of a copied directory; an existing directory there is merged into.
     fn cp_mkdir_dest(&mut self, dest: &OSPathSliceZ, create_parents: bool) -> Maybe<()> {
         if create_parents {
             return self
@@ -9186,9 +9181,7 @@ impl NodeFS {
         Err(err.with_path(self.os_path_into_sync_error_buf(dest)))
     }
 
-    /// `CreateDirectoryW` reports a parent that is a file the same way as a
-    /// missing one (`PATH_NOT_FOUND`, so ENOENT), where POSIX `mkdir` reports
-    /// ENOTDIR.
+    /// `CreateDirectoryW` fails with `PATH_NOT_FOUND` (ENOENT) where POSIX `mkdir` would say ENOTDIR.
     #[cfg(windows)]
     fn cp_dest_parent_is_not_a_directory(dest: &OSPathSliceZ) -> bool {
         let parent = paths::dirname_w(dest.as_slice());
@@ -9200,10 +9193,7 @@ impl NodeFS {
 
     /// Shared `dest_fd:` block from the mac/linux/freebsd branches of
     /// `copy_single_file_sync`.
-    /// Tries `open(dest, flags, mode)`; on ENOENT with `create_parents`
-    /// (`CpFlags::create_dest_parents`) creates the parent directory and
-    /// retries once. Any other error is annotated with `dest` copied into
-    /// `sync_error_buf`.
+    /// Opens `dest`; with `create_parents`, an ENOENT is retried once after creating its parent.
     #[cfg_attr(windows, allow(dead_code))]
     fn cp_open_dest(
         &mut self,

@@ -1457,8 +1457,6 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     if (JSValue compileFunction = this->m_overriddenCompile.get()) {
         auto& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
-        // setterUnderscoreCompile stores whatever was assigned, primitives
-        // included, so this has to be the JSValue overload, not asCell().
         JSC::CallData callData = JSC::getCallData(compileFunction);
         if (callData.type == JSC::CallData::Type::None) {
             throwTypeError(globalObject, scope, "module._compile is not a function"_s);

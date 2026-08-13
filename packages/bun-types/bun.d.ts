@@ -1085,10 +1085,10 @@ declare module "bun" {
       format?: "object" | "svg" | "text" | "data-url" | "image";
       /** Pixel scale (px per module) for `format: "image"`. Defaults to 8. */
       scale?: number;
-      /** Light (background) color. CSS color for SVG, `#rrggbb[aa]` for image. */
-      light?: string;
-      /** Dark (foreground) color. CSS color for SVG, `#rrggbb[aa]` for image. */
-      dark?: string;
+      /** Light (background) color, in any form accepted by {@link Bun.color}. Defaults to white. */
+      light?: Bun.ColorInput;
+      /** Dark (foreground) color, in any form accepted by {@link Bun.color}. Defaults to black. */
+      dark?: Bun.ColorInput;
       /** Swap light/dark for `format: "text"`. */
       invert?: boolean;
     }
@@ -1130,21 +1130,21 @@ declare module "bun" {
      * await Bun.QR.generate("https://bun.com", { format: "image" }).write("qr.png");
      * ```
      */
-    export function generate(data: string | NodeJS.TypedArray | ArrayBuffer | DataView): QRCode;
+    export function generate(data: string | Bun.BufferSource): QRCode;
     export function generate(
-      data: string | NodeJS.TypedArray | ArrayBuffer | DataView,
+      data: string | Bun.BufferSource,
       options: GenerateOptions & { format: "svg" | "text" | "data-url" },
     ): string;
     export function generate(
-      data: string | NodeJS.TypedArray | ArrayBuffer | DataView,
+      data: string | Bun.BufferSource,
       options: GenerateOptions & { format: "image" },
     ): Bun.Image;
     export function generate(
-      data: string | NodeJS.TypedArray | ArrayBuffer | DataView,
+      data: string | Bun.BufferSource,
       options: GenerateOptions & { format?: "object" },
     ): QRCode;
     export function generate(
-      data: string | NodeJS.TypedArray | ArrayBuffer | DataView,
+      data: string | Bun.BufferSource,
       options?: GenerateOptions,
     ): QRCode | string | Bun.Image;
 
@@ -1160,7 +1160,7 @@ declare module "bun" {
      * Bun.QR.parse(qr).text; // "hello"
      * ```
      */
-    export function parse(input: QRCode | { matrix: ArrayBufferView; size?: number } | ArrayBufferView): ParseResult;
+    export function parse(input: QRCode | { matrix: Bun.BufferSource; size?: number } | Bun.BufferSource): ParseResult;
   }
 
   /**

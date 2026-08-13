@@ -124,16 +124,25 @@ describe("Bun.QR", () => {
       expect(svg4).toContain('viewBox="0 0 29 29"');
     });
 
-    test("light/dark colors", () => {
+    test("light/dark accept any Bun.color input", () => {
       const svg = Bun.QR.generate("x", { format: "svg", light: "#abcdef", dark: "red" });
       expect(svg).toContain('fill="#abcdef"');
-      expect(svg).toContain('fill="red"');
+      expect(svg).toContain('fill="#ff0000"');
+
+      const svg2 = Bun.QR.generate("x", {
+        format: "svg",
+        light: [255, 0, 128],
+        dark: { r: 0, g: 0, b: 0, a: 0.5 },
+      });
+      expect(svg2).toContain('fill="#ff0080"');
+      expect(svg2).toContain('fill="#00000080"');
+
+      const svg3 = Bun.QR.generate("x", { format: "svg", dark: 0x336699 });
+      expect(svg3).toContain('fill="#336699"');
     });
 
-    test("color values are XML-escaped", () => {
-      const svg = Bun.QR.generate("x", { format: "svg", dark: '"/><script>' });
-      expect(svg).not.toContain("<script>");
-      expect(svg).toContain("&quot;");
+    test("unparseable color throws", () => {
+      expect(() => Bun.QR.generate("x", { format: "svg", dark: "not a color" })).toThrow(TypeError);
     });
   });
 
@@ -190,6 +199,18 @@ describe("Bun.QR", () => {
     test("scale option validation", () => {
       expect(() => Bun.QR.generate("x", { format: "image", scale: 0 })).toThrow(RangeError);
       expect(() => Bun.QR.generate("x", { format: "image", scale: 2000 })).toThrow(RangeError);
+    });
+
+    test("rejects images that would exceed the pixel cap", () => {
+      expect(() => Bun.QR.generate("x", { format: "image", scale: 1024, border: 1024 })).toThrow(RangeError);
+      expect(() =>
+        Bun.QR.generate(Buffer.alloc(2953, 0xff), {
+          format: "image",
+          errorCorrection: "L",
+          boostErrorCorrection: false,
+          scale: 1024,
+        }),
+      ).toThrow(RangeError);
     });
   });
 

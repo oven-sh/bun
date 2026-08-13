@@ -1393,21 +1393,46 @@ fn gf_inv(x: u8) -> u8 {
     r
 }
 
-fn parse_segments(data: &[u8], version: u8) -> Result<Vec<u8>, DecodeError> {
-    let total_bits = data.len() * 8;
-    let mut pos: usize = 0;
-    let read = |pos: usize, n: usize| -> u32 {
+/// Bounds-checked MSB-first bit reader over the data codewords.
+struct BitReader<'a> {
+    data: &'a [u8],
+    total_bits: usize,
+    pos: usize,
+}
+
+impl<'a> BitReader<'a> {
+    fn new(data: &'a [u8]) -> Self {
+        Self {
+            data,
+            total_bits: data.len() * 8,
+            pos: 0,
+        }
+    }
+
+    fn remaining(&self) -> usize {
+        self.total_bits - self.pos
+    }
+
+    fn take(&mut self, n: usize) -> Result<u32, DecodeError> {
+        if n > self.remaining() {
+            return Err(DecodeError::InvalidStructure);
+        }
         let mut v: u32 = 0;
         for i in 0..n {
-            let bit = (data[(pos + i) >> 3] >> (7 - ((pos + i) & 7))) & 1;
+            let bit_pos = self.pos + i;
+            let bit = (self.data[bit_pos >> 3] >> (7 - (bit_pos & 7))) & 1;
             v = (v << 1) | u32::from(bit);
         }
-        v
-    };
+        self.pos += n;
+        Ok(v)
+    }
+}
+
+fn parse_segments(data: &[u8], version: u8) -> Result<Vec<u8>, DecodeError> {
+    let mut r = BitReader::new(data);
     let mut out = Vec::new();
-    while pos + 4 <= total_bits {
-        let mode = read(pos, 4);
-        pos += 4;
+    while r.remaining() >= 4 {
+        let mode = r.take(4)?;
         if mode == 0 {
             break;
         }
@@ -1420,90 +1445,70 @@ fn parse_segments(data: &[u8], version: u8) -> Result<Vec<u8>, DecodeError> {
             _ => return Err(DecodeError::InvalidStructure),
         };
         if m == Mode::Eci {
-            // Skip the ECI designator; we emit bytes as-is.
-            if pos + 8 > total_bits {
-                return Err(DecodeError::InvalidStructure);
+            // Skip the designator; bytes are emitted as-is regardless of ECI.
+            let first = r.take(8)?;
+            if first & 0x80 != 0 {
+                r.take(if first & 0xC0 == 0x80 { 8 } else { 16 })?;
             }
-            let first = read(pos, 8);
-            let take = if first & 0x80 == 0 {
-                8
-            } else if first & 0xC0 == 0x80 {
-                16
-            } else {
-                24
-            };
-            if pos + take > total_bits {
-                return Err(DecodeError::InvalidStructure);
-            }
-            pos += take;
             continue;
         }
-        let cc_bits = usize::from(m.char_count_bits(version));
-        if pos + cc_bits > total_bits {
-            return Err(DecodeError::InvalidStructure);
-        }
-        let count = read(pos, cc_bits) as usize;
-        pos += cc_bits;
+        let count = r.take(usize::from(m.char_count_bits(version)))? as usize;
         match m {
             Mode::Byte => {
-                if pos + count * 8 > total_bits {
-                    return Err(DecodeError::InvalidStructure);
-                }
                 for _ in 0..count {
-                    out.push(read(pos, 8) as u8);
-                    pos += 8;
+                    out.push(r.take(8)? as u8);
                 }
             }
             Mode::Numeric => {
                 let mut left = count;
                 while left >= 3 {
-                    if pos + 10 > total_bits {
+                    let v = r.take(10)?;
+                    if v >= 1000 {
                         return Err(DecodeError::InvalidStructure);
                     }
-                    let v = read(pos, 10);
-                    pos += 10;
                     out.push(b'0' + (v / 100) as u8);
                     out.push(b'0' + ((v / 10) % 10) as u8);
                     out.push(b'0' + (v % 10) as u8);
                     left -= 3;
                 }
                 if left == 2 {
-                    let v = read(pos, 7);
-                    pos += 7;
+                    let v = r.take(7)?;
+                    if v >= 100 {
+                        return Err(DecodeError::InvalidStructure);
+                    }
                     out.push(b'0' + (v / 10) as u8);
                     out.push(b'0' + (v % 10) as u8);
                 } else if left == 1 {
-                    let v = read(pos, 4);
-                    pos += 4;
+                    let v = r.take(4)?;
+                    if v >= 10 {
+                        return Err(DecodeError::InvalidStructure);
+                    }
                     out.push(b'0' + v as u8);
                 }
             }
             Mode::Alphanumeric => {
                 let mut left = count;
                 while left >= 2 {
-                    if pos + 11 > total_bits {
+                    let v = r.take(11)?;
+                    if v >= 45 * 45 {
                         return Err(DecodeError::InvalidStructure);
                     }
-                    let v = read(pos, 11);
-                    pos += 11;
                     out.push(ALNUM_CHARSET[(v / 45) as usize]);
                     out.push(ALNUM_CHARSET[(v % 45) as usize]);
                     left -= 2;
                 }
                 if left == 1 {
-                    let v = read(pos, 6);
-                    pos += 6;
+                    let v = r.take(6)?;
+                    if v >= 45 {
+                        return Err(DecodeError::InvalidStructure);
+                    }
                     out.push(ALNUM_CHARSET[v as usize]);
                 }
             }
             Mode::Kanji => {
-                // Emit Shift-JIS bytes (2 per char); caller decodes if needed.
+                // Emitted as Shift-JIS byte pairs.
                 for _ in 0..count {
-                    if pos + 13 > total_bits {
-                        return Err(DecodeError::InvalidStructure);
-                    }
-                    let v = read(pos, 13);
-                    pos += 13;
+                    let v = r.take(13)?;
                     let mut w = (v / 0xC0) << 8 | (v % 0xC0);
                     w += if w < 0x1F00 { 0x8140 } else { 0xC140 };
                     out.push((w >> 8) as u8);
@@ -1609,5 +1614,34 @@ mod tests {
         let qr = QrCode::encode_binary(&data, Ecc::Medium).unwrap();
         let decoded = decode_matrix(qr.modules(), usize::from(qr.size())).unwrap();
         assert_eq!(decoded.bytes, data);
+    }
+
+    #[test]
+    fn parse_segments_rejects_adversarial_input() {
+        // alnum mode, count=1 (9 bits), value 63 → out of the 45-entry table.
+        assert_eq!(
+            parse_segments(&[0x20, 0x0F, 0xE0], 1),
+            Err(DecodeError::InvalidStructure)
+        );
+        // alnum mode, count=2, pair value 2047 → 2047/45 == 45, out of table.
+        assert_eq!(
+            parse_segments(&[0x20, 0x1F, 0xFF, 0x80], 1),
+            Err(DecodeError::InvalidStructure)
+        );
+        // numeric mode, count=3, triple value 1023 → not a valid digit group.
+        assert_eq!(
+            parse_segments(&[0x10, 0x0F, 0xFF, 0xC0], 1),
+            Err(DecodeError::InvalidStructure)
+        );
+        // byte mode, count=4, but only one payload byte follows.
+        assert_eq!(
+            parse_segments(&[0x40, 0x4A, 0xB0], 1),
+            Err(DecodeError::InvalidStructure)
+        );
+        // numeric mode, count=2, stream ends before the 7-bit tail.
+        assert_eq!(
+            parse_segments(&[0x10, 0x08], 1),
+            Err(DecodeError::InvalidStructure)
+        );
     }
 }

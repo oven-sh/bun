@@ -210,6 +210,85 @@ fn zero_if_none(component: f32) -> f32 {
     if component.is_nan() { 0.0 } else { component }
 }
 
+/// Parse any `Bun.color` input (CSS color string, packed number, `[r,g,b(,a)]`
+/// array, or `{r,g,b(,a)}` object) to an sRGB `RGBA`. Returns `None` for
+/// unparseable input; throws only for invalid array/object shapes.
+pub fn js_color_input_to_rgba(
+    global: &JSGlobalObject,
+    input: JSValue,
+) -> JsResult<Option<bun_css::values::color::RGBA>> {
+    use bun_css as css;
+    use bun_css::CssColor;
+    use bun_css::values::color::RGBA;
+
+    if input.is_number() {
+        let int: u32 = input.to_int64() as u32;
+        let alpha = if int > 0x00ff_ffff {
+            (int >> 24) as u8
+        } else {
+            255
+        };
+        return Ok(Some(RGBA {
+            alpha,
+            red: ((int >> 16) & 0xff) as u8,
+            green: ((int >> 8) & 0xff) as u8,
+            blue: (int & 0xff) as u8,
+        }));
+    }
+    if input.js_type().is_array_like() {
+        let len = input.get_length(global)?;
+        if len != 3 && len != 4 {
+            return Err(global.throw(format_args!("Expected array length 3 or 4")));
+        }
+        let r = color_int_from_js(global, input.get_index(global, 0)?, "[0]")?;
+        let g = color_int_from_js(global, input.get_index(global, 1)?, "[1]")?;
+        let b = color_int_from_js(global, input.get_index(global, 2)?, "[2]")?;
+        let a = if len == 4 {
+            color_int_from_js(global, input.get_index(global, 3)?, "[3]")?
+        } else {
+            255
+        };
+        return Ok(Some(RGBA {
+            alpha: u8::try_from(a).expect("clamped to 0..=255"),
+            red: u8::try_from(r).expect("clamped to 0..=255"),
+            green: u8::try_from(g).expect("clamped to 0..=255"),
+            blue: u8::try_from(b).expect("clamped to 0..=255"),
+        }));
+    }
+    if input.is_object() {
+        let r = color_int_from_js(global, input.get(global, b"r")?.unwrap_or(JSValue::ZERO), "r")?;
+        let g = color_int_from_js(global, input.get(global, b"g")?.unwrap_or(JSValue::ZERO), "g")?;
+        let b = color_int_from_js(global, input.get(global, b"b")?.unwrap_or(JSValue::ZERO), "b")?;
+        let a: u8 = match input.get_truthy(global, b"a")? {
+            Some(a_value) if a_value.is_number() => {
+                ((a_value.as_number().clamp(0.0, 1.0) * 255.0).round()) as u8
+            }
+            _ => 255,
+        };
+        return Ok(Some(RGBA {
+            alpha: a,
+            red: u8::try_from(r).expect("clamped to 0..=255"),
+            green: u8::try_from(g).expect("clamped to 0..=255"),
+            blue: u8::try_from(b).expect("clamped to 0..=255"),
+        }));
+    }
+    if !input.is_string() {
+        return Ok(None);
+    }
+    let slice = input.to_slice(global)?;
+    let arena = Arena::new();
+    let mut parser_input = css::ParserInput::new(slice.slice(), &arena);
+    let mut parser = css::Parser::new(
+        &mut parser_input,
+        None,
+        css::css_parser::ParserOpts::default(),
+        None,
+    );
+    Ok(CssColor::parse(&mut parser)
+        .ok()
+        .and_then(|c| RGBA::try_from_css_color(&c)))
+}
+
 pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_ast::symbol::Map as SymbolMap;
     use bun_core::Utf8Bytes;

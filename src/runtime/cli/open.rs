@@ -459,6 +459,13 @@ impl EditorContext {
 
     pub(crate) fn auto_detect_editor(&mut self, env: &mut dot_env::Loader) {
         if self.editor.is_none() {
+            if self.name.is_empty() {
+                // `[debug] editor` from bunfig.toml. The CLI context is
+                // process-lifetime, so the slice satisfies `name: &'static`.
+                if let Some(ctx) = bun_options_types::context::try_get() {
+                    self.name = &ctx.debug.editor;
+                }
+            }
             self.detect_editor(env);
         }
     }

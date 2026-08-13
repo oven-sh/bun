@@ -1418,6 +1418,68 @@ test("off() removes a pending once() listener", () => {
   port2.close();
 });
 
+// node invokes node-style listeners with `this` bound to the port (the same
+// `this` EventTarget hands the on()/once() wrappers). The wrappers used to call
+// the user's function bare, so `this` was undefined. Covers the three ways a
+// wrapper gets invoked: a native MessageEvent, a native close Event, and emit().
+test("on()/once() listeners are called with `this` bound to the port", async () => {
+  const { port1, port2 } = new MessageChannel();
+  const calls: unknown[] = [];
+  const { promise: messaged, resolve: onMessaged } = Promise.withResolvers<void>();
+  const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+
+  port1.on("message", function (this: unknown, data) {
+    calls.push(["on message", this === port1, data]);
+  });
+  port1.once("message", function (this: unknown, data) {
+    calls.push(["once message", this === port1, data]);
+    onMessaged();
+  });
+  port1.on("close", function (this: unknown) {
+    calls.push(["on close", this === port1]);
+  });
+  port1.once("close", function (this: unknown) {
+    calls.push(["once close", this === port1]);
+    onClosed();
+  });
+  port1.on("custom", function (this: unknown, arg) {
+    calls.push(["on custom", this === port1, arg]);
+  });
+  port1.once("custom", function (this: unknown, arg) {
+    calls.push(["once custom", this === port1, arg]);
+  });
+
+  port1.emit("custom", 42);
+  port2.postMessage("hi");
+  await messaged;
+  port1.close();
+  await closed;
+  port2.close();
+
+  expect(calls).toEqual([
+    ["on custom", true, 42],
+    ["once custom", true, 42],
+    ["on message", true, "hi"],
+    ["once message", true, "hi"],
+    ["on close", true],
+    ["once close", true],
+  ]);
+});
+
+test("parentPort.on() listeners are called with `this` bound to parentPort", async () => {
+  const w = new Worker(
+    `const { parentPort } = require("node:worker_threads");
+     parentPort.once("message", function (data) {
+       this.postMessage({ data, thisIsParentPort: this === parentPort });
+     });`,
+    { eval: true },
+  );
+  w.postMessage("ping");
+  const [reply] = await once(w, "message");
+  await w.terminate();
+  expect(reply).toEqual({ data: "ping", thisIsParentPort: true });
+});
+
 test("close(cb) interleaves with other close listeners in registration order", async () => {
   // node's mechanism is `this.once('close', cb)`, so cb interleaves with other
   // close listeners in the order they were registered (verified against node).

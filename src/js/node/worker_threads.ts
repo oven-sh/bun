@@ -128,9 +128,10 @@ function injectFakeEmitter(Class) {
     return event.detail;
   }
 
+  // EventTarget calls the wrapper with `this` = the port; node's listeners see the port as `this` too.
   function wrapped(run, listener) {
     return function (event) {
-      return listener(run(event));
+      return listener.$call(this, run(event));
     };
   }
 
@@ -197,7 +198,7 @@ function injectFakeEmitter(Class) {
     // a listener that already fired.
     function onceWrapper(ev) {
       registryFor(target, false)?.get(event)?.delete(listener);
-      return wrapper(ev);
+      return wrapper.$call(this, ev);
     }
     register(this, event, listener, onceWrapper, { once: true });
     return this;

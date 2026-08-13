@@ -1,5 +1,5 @@
 import assert from "assert";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import {
   bunEnv,
@@ -69,6 +69,121 @@ describe("Bun.build", () => {
     expect(build.outputs[0].kind).toBe("entry-point");
     expect(build.outputs[1].kind).toBe("bytecode");
     expect(await bunRun(build.outputs[0].path)).toSpawn("world");
+  });
+
+  describe("bytecode output does not leak the .jsc sidecar when the module is released", () => {
+    // Loading the entry point reads its .jsc sidecar into a fresh buffer. Whatever happens to the
+    // module afterwards, that buffer has to be freed once the module is released, or the process
+    // grows by one sidecar per load. Every variant below reads the sidecar on each load:
+    //  - require() transpiles on the JS thread and import() on the RuntimeTranspilerStore thread
+    //    pool; both hand the sidecar to the module's SourceProvider, which is released with the
+    //    module.
+    //  - import() of a file that require() already put in require.cache reads the file (and the
+    //    sidecar) again, then reuses the existing module, so that copy is discarded right away.
+    //  - An overridden module._compile only receives the source text, so the sidecar is discarded
+    //    right away as well.
+    //
+    // Many statements per function make the sidecar large (~640 KB) relative to the minified
+    // source (~110 KB) while keeping each load cheap: JSC decodes function bodies lazily and the
+    // functions are never called.
+    const FUNCTIONS = 8;
+    const STATEMENTS = 1000;
+    const LOADS = 60;
+    const variants = [
+      { name: "require()", load: "require(path)" },
+      { name: "import()", load: "(await import(path)).default" },
+      {
+        name: "require() followed by import() of the same file",
+        load: "(require(path), (await import(path)).default)",
+      },
+      {
+        name: "require() with an overridden module._compile",
+        setup: `
+          const Module = require("module");
+          const defaultLoader = Module._extensions[".js"];
+          Module._extensions[".js"] = function (module, filename) {
+            module._compile = function () {
+              this.exports = new Array(${FUNCTIONS});
+            };
+            return defaultLoader(module, filename);
+          };
+        `,
+        load: "require(path)",
+      },
+    ];
+
+    let dir: string;
+    let sidecarMB: number;
+    beforeAll(async () => {
+      let moduleSource = "";
+      for (let f = 0; f < FUNCTIONS; f++) {
+        moduleSource += `function f${f}(a, b) {\n  let x = a;\n`;
+        for (let i = 0; i < STATEMENTS; i++) moduleSource += `  x = x * ${i + 2} + b - ${i};\n`;
+        moduleSource += `  return x;\n}\n`;
+      }
+      moduleSource += `module.exports = [${Array.from({ length: FUNCTIONS }, (_, f) => `f${f}`).join(", ")}];\n`;
+
+      const fixtures: Record<string, string> = {};
+      variants.forEach(({ setup = "", load }, i) => {
+        fixtures[`fixture-${i}.js`] = `
+          const path = require.resolve("./out/index.js");
+          const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          if (!require("fs").readFileSync(path, "utf8").startsWith("// @bun @bytecode")) throw new Error("build output is not tagged as bytecode");
+          ${setup}
+          async function loadAndRelease() {
+            const mod = ${load};
+            if (mod.length !== ${FUNCTIONS}) throw new Error("module did not evaluate");
+            const entry = require.cache[path];
+            if (entry) entry.children = [];
+            delete require.cache[path];
+            module.children = [];
+          }
+          (async () => {
+            for (let i = 0; i < 3; i++) await loadAndRelease();
+            Bun.gc(true);
+            const baseline = rss();
+            for (let i = 0; i < ${LOADS}; i++) await loadAndRelease();
+            Bun.gc(true);
+            console.log(((rss() - baseline) / 1024 / 1024).toFixed(1));
+          })();
+        `;
+      });
+      dir = tempDirWithFiles("bun-build-api-bytecode-leak", { "index.js": moduleSource, ...fixtures });
+
+      const build = await Bun.build({
+        entrypoints: [join(dir, "index.js")],
+        outdir: join(dir, "out"),
+        target: "bun",
+        bytecode: true,
+        minify: true,
+      });
+      expect(build.outputs.map(output => output.kind)).toEqual(["entry-point", "bytecode"]);
+      sidecarMB = build.outputs[1].size / 1024 / 1024;
+      expect(sidecarMB).toBeGreaterThan(0.5);
+    }, 30000); // generating the bytecode takes ~1.5s in a debug build
+
+    variants.forEach(({ name }, i) => {
+      test(
+        name,
+        async () => {
+          const result = await bunRun(["--smol", "run", join(dir, `fixture-${i}.js`)], {
+            // Under ASAN, freed allocations sit in the quarantine (256 MB by default) and still
+            // count towards RSS, which would hide the difference between freeing the sidecars and
+            // leaking them. Ignored by non-ASAN builds.
+            ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+          });
+          expect(result).toSpawn();
+
+          const growthMB = Number(result.stdout);
+          console.log(`${name}: sidecar ${sidecarMB.toFixed(2)} MB x ${LOADS} loads, RSS grew ${growthMB} MB`);
+          // Leaking retains at least one sidecar per load (LOADS * sidecarMB, ~37 MB). When they
+          // are freed, the growth is allocator noise plus whatever the last load still holds
+          // (under 10 MB in a debug build).
+          expect(growthMB).toBeLessThan((LOADS * sidecarMB) / 2);
+        },
+        30000, // ~2s each in a debug build
+      );
+    });
   });
 
   test("passing undefined doesnt segfault", () => {

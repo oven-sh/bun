@@ -22,6 +22,13 @@ class GlobalObject;
 
 JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL);
 JSC::SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin);
+
+// Frees `bytecode_cache` if the ResolvedSource still owns it, i.e. a `.jsc`
+// sidecar blob that is being discarded without reaching SourceProvider::create
+// (which takes the blob over and clears `bytecode_cache_needs_free`). No-op for
+// blobs borrowed from the Node compile cache or a standalone executable.
+void freeOwnedBytecodeCache(ResolvedSource& resolvedSource);
+
 class SourceProvider final : public JSC::SourceProvider {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SourceProvider);
     using Base = JSC::SourceProvider;

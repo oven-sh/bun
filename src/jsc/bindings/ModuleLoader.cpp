@@ -57,10 +57,15 @@ public:
 
     ~ResolvedSourceCodeHolder()
     {
-        if (res->success && res->result.value.source_code.tag == BunStringTag::WTFStringImpl && res->result.value.needsDeref) {
+        if (!res->success)
+            return;
+        if (res->result.value.source_code.tag == BunStringTag::WTFStringImpl && res->result.value.needsDeref) {
             res->result.value.needsDeref = false;
             res->result.value.source_code.impl.wtf->deref();
         }
+        // Still set only if no SourceProvider was created for this source, e.g.
+        // createCommonJSModule() found the module already in the require map.
+        Zig::freeOwnedBytecodeCache(res->result.value);
     }
 
     ErrorableResolvedSource* res;

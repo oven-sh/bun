@@ -127,6 +127,11 @@ typedef struct ResolvedSource {
     uint32_t tag;
     bool needsDeref;
     bool already_bundled;
+    // When true, bytecode_cache is a Rust Box<[u8]> (a .jsc sidecar) that whoever holds
+    // this struct must free: Zig::SourceProvider::create hands it to the CachedBytecode,
+    // Zig::freeOwnedBytecodeCache releases it otherwise. When false, bytecode_cache
+    // borrows process-lifetime memory (Node compile cache, standalone executable).
+    bool bytecode_cache_needs_free;
     // -- Bytecode cache fields --
     uint8_t* bytecode_cache;
     size_t bytecode_cache_size;

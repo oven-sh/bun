@@ -41,6 +41,15 @@ pub struct ResolvedSource {
     /// This is for source_code
     pub source_code_needs_deref: bool,
     pub already_bundled: bool,
+    /// `bytecode_cache` is a `heap::into_raw`'d `Box<[u8]>` of `bytecode_cache_size`
+    /// bytes (a `.jsc` sidecar read by the transpiler) that whoever holds this struct
+    /// must free: `Zig::SourceProvider::create` hands it to the `JSC::CachedBytecode`
+    /// destructor, [`OwnedResolvedSource`] frees it if dropped before that.
+    ///
+    /// When `false`, `bytecode_cache` borrows memory owned elsewhere for the life of
+    /// the process (a Node compile cache entry, the bytecode section of a
+    /// `bun build --compile` executable) and must never be freed.
+    pub bytecode_cache_needs_free: bool,
 
     // -- Bytecode cache fields --
     pub bytecode_cache: *mut u8,
@@ -66,6 +75,7 @@ impl Default for ResolvedSource {
             tag: Tag::Javascript,
             source_code_needs_deref: true,
             already_bundled: false,
+            bytecode_cache_needs_free: false,
             bytecode_cache: core::ptr::null_mut(),
             bytecode_cache_size: 0,
             module_info: core::ptr::null_mut(),
@@ -86,7 +96,8 @@ impl Default for ResolvedSource {
 //
 // Hold the in-flight value as `OwnedResolvedSource`; the only way to extract
 // the raw `ResolvedSource` for FFI is `into_ffi()` (consumes, forgets). If the
-// owner is dropped instead, every contained `BunString` is `deref()`d.
+// owner is dropped instead, every contained `BunString` is `deref()`d and an
+// owned `bytecode_cache` blob (`bytecode_cache_needs_free`) is freed.
 //
 // The `module_info` pointer (a `Box<ModuleInfoDeserialized>` leaked via
 // `heap::into_raw`) is intentionally NOT freed here — its ownership protocol
@@ -142,5 +153,18 @@ impl Drop for OwnedResolvedSource {
         self.0.specifier.deref();
         self.0.source_url.deref();
         self.0.bytecode_origin_path.deref();
+        if self.0.bytecode_cache_needs_free {
+            // SAFETY: the flag is only set by the `.jsc` sidecar producers, which
+            // store the `heap::into_raw` pointer and length of a `Box<[u8]>` in
+            // `bytecode_cache` / `bytecode_cache_size`, and it is cleared by
+            // whoever takes the blob over (`Zig::SourceProvider::create`), so
+            // this owner is the unique holder of the allocation.
+            unsafe {
+                bun_core::heap::destroy(core::ptr::slice_from_raw_parts_mut(
+                    self.0.bytecode_cache,
+                    self.0.bytecode_cache_size,
+                ));
+            }
+        }
     }
 }

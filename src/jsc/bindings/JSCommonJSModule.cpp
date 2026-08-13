@@ -1472,6 +1472,9 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
             source.needsDeref = false;
             source.source_code.deref();
         }
+        // The overridden _compile only gets the source text; no SourceProvider
+        // is created, so a .jsc sidecar blob has nowhere else to go.
+        Zig::freeOwnedBytecodeCache(source);
         // Remove the wrapper from the source string, since the transpiler has added it.
         auto trimStart = sourceString.find('\n');
         WTF::String sourceStringWithoutWrapper;

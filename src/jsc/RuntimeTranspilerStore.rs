@@ -1050,6 +1050,7 @@ impl TranspilerJob {
                 already_bundled: true,
                 bytecode_cache,
                 bytecode_cache_size,
+                bytecode_cache_needs_free: !bytecode_cache.is_null(),
                 is_commonjs_module,
                 tag: this_tag,
                 ..Default::default()

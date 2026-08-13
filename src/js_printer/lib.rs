@@ -3740,12 +3740,8 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EString(e) => {
-                    // A TOML date/time literal prints as the `Temporal.*.from`
-                    // call that reconstructs it. The bundler rewrites these in
-                    // `to_lazy_export_ast` before printing; this arm serves
-                    // the unrenamed transform paths, where `globalThis.` keeps
-                    // a same-module `var Temporal` (a TOML key of that name)
-                    // from capturing the reference.
+                    // Only reached on the `--no-bundle` data-loader path, which has
+                    // no symbol table; the bundler lowers these to a real call first.
                     if let Some(kind) = e.toml_datetime {
                         let wrap = level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall);
                         if wrap {

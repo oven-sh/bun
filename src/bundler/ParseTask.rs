@@ -867,7 +867,7 @@ pub mod parse_worker {
                             source,
                             b"",
                         )?
-                        .unwrap(),
+                        .ok_or(AnyError::ParserError)?,
                     ))
                 })();
                 let _ = temp_log.clone_to_with_recycled(log, true);

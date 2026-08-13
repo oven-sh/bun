@@ -139,11 +139,13 @@ describe("given a source file with syntax errors", () => {
   });
 });
 
-// TinyCC reports a diagnostic through a callback; cc() stores the text and
-// throws it later. The wrapper path used to build the Error around the stored
-// bytes without copying them (cc() freed them on return, so the message reached
-// JS with its first bytes replaced by allocator metadata, a use after free
-// under ASan) and read them as Latin-1 although TinyCC echoes UTF-8 source.
+// TinyCC reports each diagnostic through a callback; cc() stores the text and
+// throws it later. Two things used to mangle it on the way to JS: the callbacks
+// dropped leading bytes outside 0x21..0x7e (a diagnostic starts with the source
+// path exactly as it was passed in), and the wrapper path built the Error around
+// the stored bytes without copying them (cc() freed them on return, so the
+// message arrived with its first bytes replaced by allocator metadata, a use
+// after free under ASan) and read them as Latin-1 although TinyCC echoes UTF-8.
 describe("TinyCC diagnostics thrown by cc()", () => {
   // On Mach-O, TinyCC prefixes C symbols with "_" and reports them that way;
   // asm labels are taken verbatim, so the one below supplies the prefix itself.
@@ -152,6 +154,9 @@ describe("TinyCC diagnostics thrown by cc()", () => {
   // One spawned fixture covers both places cc() can fail:
   // - unresolved.c compiles but does not link, so the diagnostic is collected
   //   and thrown under a "N errors while compiling" header;
+  // - " relative.c" has a syntax error and is passed by its relative name, so
+  //   its diagnostic starts with a space (a non-ASCII name would do as well,
+  //   but TinyCC's narrow open() cannot find one on Windows);
   // - clash.c defines JSFunctionCall, the entry point of the wrapper cc()
   //   compiles around every symbol, so the user's C compiles and the wrapper
   //   does not, and that diagnostic is thrown on its own;
@@ -164,6 +169,7 @@ describe("TinyCC diagnostics thrown by cc()", () => {
         int bun_test_missing_symbol(int);
         int add(int a, int b) { return bun_test_missing_symbol(a) + b; }
       `,
+      " relative.c": "int add(int a, int b) { return a  b; }\n",
       "clash.c": /* c */ `
         int JSFunctionCall(int a) { return a + 1; }
       `,
@@ -175,21 +181,25 @@ describe("TinyCC diagnostics thrown by cc()", () => {
         import { cc } from "bun:ffi";
         import path from "path";
 
-        function messageOf(file, symbols) {
+        const add = { add: { args: ["int", "int"], returns: "int" } };
+
+        function messageOf(source, symbols) {
           try {
-            cc({ source: path.join(import.meta.dir, file), symbols });
+            cc({ source, symbols });
           } catch (error) {
             return error.message;
           }
           return "cc() did not throw";
         }
 
+        const unresolvedSource = path.join(import.meta.dir, "unresolved.c");
         console.log(
           JSON.stringify({
-            source: path.join(import.meta.dir, "unresolved.c"),
-            unresolved: messageOf("unresolved.c", { add: { args: ["int", "int"], returns: "int" } }),
-            clash: messageOf("clash.c", { JSFunctionCall: { args: ["int"], returns: "int" } }),
-            nonascii: messageOf("nonascii.c", { "y ñ": { args: ["int", "int"], returns: "int" } }),
+            unresolvedSource,
+            unresolved: messageOf(unresolvedSource, add),
+            relative: messageOf(" relative.c", add),
+            clash: messageOf(path.join(import.meta.dir, "clash.c"), { JSFunctionCall: { args: ["int"], returns: "int" } }),
+            nonascii: messageOf(path.join(import.meta.dir, "nonascii.c"), { "y ñ": { args: ["int", "int"], returns: "int" } }),
           }),
         );
       `,
@@ -213,7 +223,8 @@ describe("TinyCC diagnostics thrown by cc()", () => {
     // but it is not asserted empty: debug builds print benign warnings.
     expect({ messages, stderr, exitCode }).toMatchObject({
       messages: {
-        unresolved: `1 errors while compiling ${messages.source}\ntcc: error: unresolved reference to '${symbolPrefix}bun_test_missing_symbol'\n`,
+        unresolved: `1 errors while compiling ${messages.unresolvedSource}\ntcc: error: unresolved reference to '${symbolPrefix}bun_test_missing_symbol'\n`,
+        relative: "1 errors while compiling  relative.c\n relative.c:1: error: ';' expected (got 'b')\n",
         clash: expect.stringMatching(/^<string>:\d+: error: .*'JSFunctionCall'$/),
         nonascii: expect.stringMatching(/^<string>:\d+: error: .*'ñ'/),
       },

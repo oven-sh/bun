@@ -7453,7 +7453,6 @@ pub fn kevent(
     }
 }
 
-
 /// `clonefileat` — macOS-only CoW copy relative to directory fds. On
 /// non-Darwin returns ENOTSUP so callers can fall back to a manual copy.
 #[cfg(not(target_os = "macos"))]

@@ -264,6 +264,19 @@ describe.concurrent("bunshell cp -R copies symlinks as written", () => {
     expect(lstatSync(join(out, "junction")).isSymbolicLink()).toBe(true);
     expect(realpathSync(join(out, "junction"))).toBe(realpathSync(join(String(dir), "src", "inner")));
   });
+
+  // `\\localhost\C$\...` is the administrative-share spelling of a local path, as in the node:fs cp tests.
+  test.skipIf(!isWindows)("a directory link to a UNC path is copied as written", async () => {
+    using dir = setup("unc", src => {
+      const inner = realpathSync(join(src, "inner"));
+      symlinkSync(`\\\\localhost\\${inner[0]}$\\${inner.slice(3)}`, join(src, "share"), "dir");
+    });
+    const out = join(String(dir), "out");
+
+    expect(await cp(String(dir), "cp -R src out")).toEqual(copied);
+    expect(readlinkSync(join(out, "share"))).toBe(readlinkSync(join(String(dir), "src", "share")));
+    expect(readFileSync(join(out, "share", "target"), "utf8")).toBe("target\n");
+  });
 });
 
 function expectSortedOutput(expected: string) {

@@ -8565,36 +8565,36 @@ impl NodeFS {
         let mut dest_buf = paths::path_buffer_pool::get();
         let dest = strings::from_wpath(&mut dest_buf[..], dest.as_slice());
 
-        let result = if !is_dir {
-            Syscall::symlink(target, dest)
-        } else if paths::is_absolute(target.as_bytes()) {
-            sys::symlink_or_junction(dest, target, None)
-        } else {
-            // A junction needs an absolute target; resolve the link from the copy's own directory.
-            let mut junction_buf = paths::path_buffer_pool::get();
-            let junction_buf_len = junction_buf.len();
-            let Some(junction_target) =
-                paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Windows>(
-                    paths::resolve_path::dirname::<paths::platform::Windows>(dest.as_bytes()),
-                    &mut junction_buf[..junction_buf_len - 1],
-                    &[target.as_bytes()],
+        let flags = if is_dir { uv::UV_FS_SYMLINK_DIR } else { 0 };
+        let result = match Syscall::symlink_uv(target, dest, flags) {
+            Err(err) if is_dir && err.get_errno() != E::EEXIST && err.get_errno() != E::ENOENT => {
+                // Junctions need an absolute target: the link resolved from the copy's directory.
+                let mut junction_buf = paths::path_buffer_pool::get();
+                let junction_buf_len = junction_buf.len();
+                let Some(junction_target) =
+                    paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Windows>(
+                        dest.as_bytes(),
+                        &mut junction_buf[..junction_buf_len - 1],
+                        &[b"..", target.as_bytes()],
+                    )
+                else {
+                    return Err(sys::Error {
+                        errno: E::ENAMETOOLONG as _,
+                        syscall: sys::Tag::symlink,
+                        path: dest.as_bytes().into(),
+                        ..Default::default()
+                    });
+                };
+                let junction_target_len = junction_target.len();
+                junction_buf[junction_target_len] = 0;
+                // SAFETY: NUL written at `junction_buf[junction_target_len]`.
+                Syscall::symlink_uv(
+                    ZStr::from_buf(&junction_buf[..], junction_target_len),
+                    dest,
+                    uv::UV_FS_SYMLINK_JUNCTION,
                 )
-            else {
-                return Err(sys::Error {
-                    errno: E::ENAMETOOLONG as _,
-                    syscall: sys::Tag::symlink,
-                    path: dest.as_bytes().into(),
-                    ..Default::default()
-                });
-            };
-            let junction_target_len = junction_target.len();
-            junction_buf[junction_target_len] = 0;
-            // SAFETY: NUL written at `junction_buf[junction_target_len]`.
-            sys::symlink_or_junction(
-                dest,
-                target,
-                Some(ZStr::from_buf(&junction_buf[..], junction_target_len)),
-            )
+            }
+            result => result,
         };
         result.map_err(|err| err.with_path(dest.as_bytes()))
     }

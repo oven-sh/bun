@@ -358,13 +358,16 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
     moduleGraph.esm = moduleGraph.esm.map(a => a.replaceAll("\\", "/").replaceAll(realCwd, "<cwd>"));
     moduleGraph.main = moduleGraph.main.replaceAll("\\", "/").replaceAll(realCwd, "<cwd>");
     moduleGraph.cwd = moduleGraph.cwd.replaceAll("\\", "/").replaceAll(realCwd, "<cwd>");
+    // "bun" is in cjs because server.ts's `import { serve } from "bun"` is lowered to a require("bun").
     expect(moduleGraph).toMatchInlineSnapshot(`
       {
         "argv": [
           "${path.basename(process.execPath)}",
           "server.ts",
         ],
-        "cjs": [],
+        "cjs": [
+          "bun",
+        ],
         "cwd": "<cwd>",
         "esm": [
           "<cwd>/index.html",

@@ -486,10 +486,8 @@ unsafe fn init_runtime_state(
                                 id: bun_resolver::install_types::DependencyID,
                                 err: &'static str,
                             ) {
-                                // `Queue` is JS-thread-affine. A VM-less
-                                // caller (bundler worker auto-install) has no
-                                // async module waiting on this dependency and
-                                // reports the failure through its own log.
+                                // `Queue` is JS-thread-affine; VM-less
+                                // callers have no async module waiting.
                                 if VirtualMachine::get_or_null().is_none() {
                                     return;
                                 }

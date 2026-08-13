@@ -235,24 +235,21 @@ pub(crate) fn do_send(
         }
     }
     // serialize() already detached a non-keepOpen net.Socket; if it is not sent after all, close it here (node: postSend on error).
-    let close_detached = |global_object: &JSGlobalObject, target: JSValue| {
+    let close_detached = |global_object: &JSGlobalObject, target: JSValue| -> JsResult<()> {
         if target.is_object() {
-            match target.get(global_object, "close") {
-                Ok(Some(f)) if f.is_callable() => {
-                    if let Err(e) = f.call(global_object, target, &[]) {
-                        global_object.report_active_exception_as_unhandled(e);
-                    }
+            if let Some(f) = target.get(global_object, "close")? {
+                if f.is_callable() {
+                    f.call(global_object, target, &[])?;
                 }
-                Ok(_) => {}
-                Err(e) => global_object.report_active_exception_as_unhandled(e),
             }
         }
+        Ok(())
     };
 
     #[cfg(not(windows))]
     if let Some(e) = dup_err {
         use bun_jsc::SysErrorJsc as _;
-        close_detached(global_object, pause_target);
+        close_detached(global_object, pause_target)?;
         return do_send_err(global_object, callback, e.to_js(global_object), from);
     }
 
@@ -268,7 +265,7 @@ pub(crate) fn do_send(
     }
     if zig_handle.is_none() {
         message = original_message;
-        close_detached(global_object, pause_target);
+        close_detached(global_object, pause_target)?;
         pause_target = JSValue::UNDEFINED;
     }
 
@@ -279,19 +276,15 @@ pub(crate) fn do_send(
         && !pause_target.is_undefined()
         && pause_target.is_object()
     {
-        match pause_target.get(global_object, "pause") {
-            Ok(Some(f)) if f.is_callable() => {
-                if let Err(e) = f.call(global_object, pause_target, &[]) {
-                    global_object.report_active_exception_as_unhandled(e);
-                }
+        if let Some(f) = pause_target.get(global_object, "pause")? {
+            if f.is_callable() {
+                f.call(global_object, pause_target, &[])?;
             }
-            Ok(_) => {}
-            Err(e) => global_object.report_active_exception_as_unhandled(e),
         }
     }
 
     if status == SerializeAndSendResult::Failure {
-        close_detached(global_object, pause_target);
+        close_detached(global_object, pause_target)?;
         let ex = global_object.create_type_error_instance(format_args!("process.send() failed"));
         ex.put(
             global_object,

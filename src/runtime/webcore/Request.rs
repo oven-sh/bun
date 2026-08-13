@@ -1673,13 +1673,14 @@ impl InternalJSEventCallback {
 
     pub(crate) fn trigger(&mut self, event_type: EventType, global_this: &JSGlobalObject) -> bool {
         if let Some(callback) = self.function.get() {
-            let _ = callback
-                .call(
-                    global_this,
-                    JSValue::UNDEFINED,
-                    &[JSValue::js_number(event_type as i32 as f64)],
-                )
-                .map_err(|err| global_this.report_active_exception_as_unhandled(err));
+            // Fired from the response's abort/timeout callbacks, which go on to
+            // tear the request down: a top-level call, reported here.
+            global_this.bun_vm().event_loop_mut().run_callback(
+                callback,
+                global_this,
+                JSValue::UNDEFINED,
+                &[JSValue::js_number(event_type as i32 as f64)],
+            );
             return true;
         }
         false

@@ -1539,7 +1539,13 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
             on_unref_source_map_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp)
         }
         DevHandlerId::NotFound => on_not_found(unsafe { &mut *dev }, unsafe { &mut *req }, resp),
-        DevHandlerId::Request => on_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp),
+        DevHandlerId::Request => {
+            // The catch-all route can reach a framework request handler; this
+            // trampoline folds what bundling for it left pending.
+            if let Err(err) = on_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp) {
+                let _ = bun_jsc::task::fold_at_loop_entry(unsafe { &*dev }.vm().global(), err);
+            }
+        }
     }
 }
 
@@ -5123,7 +5129,7 @@ impl From<framework_router::OpaqueFileIdOptional> for OpaqueFileIdOrOptional {
     }
 }
 
-fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
+fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) -> JsResult<()> {
     let mut params: framework_router::MatchedParams = Default::default();
     if let Some(route_index) = dev.router.match_slow(req.url(), &mut params) {
         let route_bundle_index = dev
@@ -5137,14 +5143,10 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
             route_bundle_index,
         };
         let rbi = ctx.route_bundle_index;
-        match ensure_route_is_bundled(dev, rbi, &mut ctx) {
-            Ok(()) => {}
-            Err(e @ jsc::JsError::Thrown) => {
-                dev.vm().global().report_active_exception_as_unhandled(e)
-            }
+        return match ensure_route_is_bundled(dev, rbi, &mut ctx) {
             Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
-        }
-        return;
+            bundled => bundled,
+        };
     }
 
     if !dev
@@ -5159,10 +5161,11 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
             .as_mut()
             .expect("infallible: server bound")
             .on_request(req, resp);
-        return;
+        return Ok(());
     }
 
     send_built_in_not_found(&mut resp);
+    Ok(())
 }
 
 impl DevServer {
@@ -5189,8 +5192,11 @@ impl DevServer {
         let rbi = ctx.route_bundle_index;
         match ensure_route_is_bundled(self, rbi, &mut ctx) {
             Ok(()) => {}
-            Err(e @ jsc::JsError::Thrown) => {
-                self.vm().global().report_active_exception_as_unhandled(e)
+            Err(jsc::JsError::Thrown) => {
+                // TODO(one-fold): reached from Bun.serve's HTML-bundle route
+                // (uWS request trampoline via StaticRouteLike); reported here
+                // until that path carries JsResult.
+                let _ = bun_jsc::task::fold_at_loop_entry(self.vm().global(), jsc::JsError::Thrown);
             }
             Err(jsc::JsError::OutOfMemory) => return Err(AllocError),
         }

@@ -173,6 +173,16 @@ for (const [name, copy] of impls) {
       }
     }
 
+    test("single file into missing nested directories creates them", async () => {
+      await using basename = tempDir("cp", {
+        "from/a.txt": "a",
+      });
+
+      await copy(basename + "/from/a.txt", basename + "/to/deeper/a.txt");
+
+      assertContent(basename + "/to/deeper/a.txt", "a");
+    });
+
     test("symlinks - single file", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",

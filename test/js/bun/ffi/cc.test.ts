@@ -1090,12 +1090,17 @@ describe("double <-> JSValue conversions", () => {
 describe.concurrent("64-bit integer arguments (i64, u64, i64_fast, u64_fast)", () => {
   const cannotConvert = (type: string) => `TypeError: bun:ffi cannot convert argument to '${type}'`;
 
-  // The wrapper cc() compiles decodes numbers inline and hands everything else to a slow path that
-  // used to assume it was given a BigInt: any other value (undefined, null, an object, ...) hit an
-  // assertion in debug builds and reached C as INT64_MIN / 0 in release builds. The slow path is
-  // now the engine's conversion, the one dlopen()/CFunction symbols use, so the fixture runs one
-  // input matrix through a cc() wrapper and through a CFunction over the very same C functions and
-  // the two tables must agree. Runs in a subprocess because the unfixed debug build aborts.
+  // The wrapper cc() compiles decodes int32-tagged and double-encoded numbers inline and hands
+  // everything else to a slow path that used to assume it was given a BigInt: any other value
+  // (undefined, null, an object, ...) hit an assertion in debug builds and reached C as INT64_MIN
+  // or 0 in release builds. The slow path is now the engine's conversion, the one dlopen() and
+  // CFunction symbols use for every argument, so the fixture runs one input matrix through a cc()
+  // wrapper and through a CFunction over the very same C functions and the two tables must agree.
+  // The matrix covers what reaches the slow path (BigInts and non-numbers) plus one input per
+  // inline branch; the inline branches themselves are not under test here, and for u64 the
+  // double-encoded branch is known to differ from the engine for negative and non-finite numbers
+  // (tracked separately), which is why no such input is in the matrix. Runs in a subprocess
+  // because the unfixed debug build aborts.
   it("accepts what dlopen accepts and throws a TypeError for the rest", async () => {
     using dir = tempDir("bun-ffi-cc-int64-args", {
       "int64.c": /* c */ `
@@ -1105,14 +1110,18 @@ describe.concurrent("64-bit integer arguments (i64, u64, i64_fast, u64_fast)", (
         unsigned long long echo_u64_fast(unsigned long long x) { return x; }
 
         static int native_calls = 0;
-        long long add_i64(long long a, long long b) { native_calls++; return a + b; }
+        /* Two 64-bit parameters of different types: the TypeError names the one that was rejected. */
+        long long add_i64_u64(long long a, unsigned long long b) { native_calls++; return a + (long long)b; }
+        /* A 64-bit parameter between two parameters that are converted inline. */
+        double mixed(int a, long long b, double c) { native_calls++; return a * 1000000 + b * 1000 + c; }
         int take_native_calls(void) { int calls = native_calls; native_calls = 0; return calls; }
 
         void* address_of_echo_i64(void) { return (void*)&echo_i64; }
         void* address_of_echo_u64(void) { return (void*)&echo_u64; }
         void* address_of_echo_i64_fast(void) { return (void*)&echo_i64_fast; }
         void* address_of_echo_u64_fast(void) { return (void*)&echo_u64_fast; }
-        void* address_of_add_i64(void) { return (void*)&add_i64; }
+        void* address_of_add_i64_u64(void) { return (void*)&add_i64_u64; }
+        void* address_of_mixed(void) { return (void*)&mixed; }
       `,
       "fixture.js": /* js */ `
         import { cc, CFunction } from "bun:ffi";
@@ -1125,7 +1134,8 @@ describe.concurrent("64-bit integer arguments (i64, u64, i64_fast, u64_fast)", (
           echo_u64: { args: ["u64"], returns: "u64" },
           echo_i64_fast: { args: ["i64_fast"], returns: "i64" },
           echo_u64_fast: { args: ["u64_fast"], returns: "u64" },
-          add_i64: { args: ["i64", "i64"], returns: "i64" },
+          add_i64_u64: { args: ["i64", "u64"], returns: "i64" },
+          mixed: { args: ["i32", "i64", "f64"], returns: "f64" },
         };
         const { symbols: compiled } = cc({
           source: path.join(import.meta.dir, "int64.c"),
@@ -1175,13 +1185,19 @@ describe.concurrent("64-bit integer arguments (i64, u64, i64_fast, u64_fast)", (
             for (const label in inputs) table[name][label] = outcome(symbols[name], inputs[label]);
           }
           compiled.take_native_calls();
-          table.add_i64 = {
-            both_valid: outcome(symbols.add_i64, 1, 2),
-            second_invalid: outcome(symbols.add_i64, 1, undefined),
-            first_invalid: outcome(symbols.add_i64, {}, 2),
-            valid_after_invalid: outcome(symbols.add_i64, 3, 4n),
-            native_calls: compiled.take_native_calls(),
+          table.add_i64_u64 = {
+            both_valid: outcome(symbols.add_i64_u64, 1, 2),
+            first_invalid: outcome(symbols.add_i64_u64, {}, 2),
+            second_invalid: outcome(symbols.add_i64_u64, 1, undefined),
+            both_invalid: outcome(symbols.add_i64_u64, undefined, undefined),
+            valid_after_invalid: outcome(symbols.add_i64_u64, 3, 4n),
           };
+          table.mixed = {
+            valid: outcome(symbols.mixed, 1, 2, 0.5),
+            bigint: outcome(symbols.mixed, 1, -2n, 0.5),
+            invalid: outcome(symbols.mixed, 1, null, 0.5),
+          };
+          table.native_calls = compiled.take_native_calls();
           return table;
         }
 
@@ -1219,14 +1235,22 @@ describe.concurrent("64-bit integer arguments (i64, u64, i64_fast, u64_fast)", (
       echo_u64: echo("u64", false),
       echo_i64_fast: echo("i64_fast", true),
       echo_u64_fast: echo("u64_fast", false),
-      add_i64: {
+      add_i64_u64: {
         both_valid: "3",
-        second_invalid: cannotConvert("i64"),
         first_invalid: cannotConvert("i64"),
+        second_invalid: cannotConvert("u64"),
+        // Arguments are converted left to right, so the first rejected one is the one reported.
+        both_invalid: cannotConvert("i64"),
         valid_after_invalid: "7",
-        // A rejected argument stops the call before C is entered: only the two valid calls ran.
-        native_calls: 2,
       },
+      mixed: {
+        valid: "1002000.5",
+        bigint: "998000.5",
+        invalid: cannotConvert("i64"),
+      },
+      // A rejected argument stops the call before C is entered: only the four valid multi-argument
+      // calls above reached the native functions.
+      native_calls: 4,
     };
 
     // On a crash there is no JSON; report the process output instead so the failure shows it.

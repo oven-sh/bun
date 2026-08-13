@@ -125,23 +125,22 @@ extern "C" void Bun__JSCFFICallbackClose(JSC::EncodedJSValue callbackValue)
         callback->close();
 }
 
-// JSVALUE_TO_INT64_SLOW for the wrappers cc() compiles (src/runtime/ffi/FFI.h). The wrapper decodes
-// numbers inline; everything else (a BigInt, or a value that is not a number at all) gets the same
-// conversion a dlopen()'d symbol's i64/u64/i64_fast/u64_fast argument gets, TypeError included.
-// Both signednesses come back as the raw 64 bits of the argument slot; the wrapper casts.
-extern "C" int64_t Bun__FFI__jsValueToInt64Slow(JSC::JSGlobalObject* globalObject, int32_t abiType, bool* threw, JSC::EncodedJSValue encodedValue)
+// JSVALUE_TO_SLOT_SLOW for the wrappers cc() compiles (src/runtime/ffi/FFI.h): the conversion a
+// dlopen()'d symbol's argument of the same type gets, for the values the wrapper does not decode
+// inline. `abiType` is an ABIType discriminant, which is also the engine's tag (static_asserts
+// above). A rejected value leaves the engine's TypeError pending and reports it through `threw`.
+// No string arena is passed: nothing would free a transcoded string once the native call is over,
+// so a type that would need one (`cstring` given a JS string) throws instead.
+extern "C" uint64_t Bun__FFI__jsValueToSlotSlow(JSC::JSGlobalObject* globalObject, int32_t abiType, bool* threw, JSC::EncodedJSValue encodedValue)
 {
-    auto type = static_cast<JSC::FFI::Type>(abiType);
-    ASSERT(type == JSC::FFI::Type::Int64 || type == JSC::FFI::Type::Uint64 || type == JSC::FFI::Type::Int64Fast || type == JSC::FFI::Type::Uint64Fast);
-
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     uint64_t slot = 0;
-    JSC::FFI::writeSlotFromJSValue(globalObject, globalObject->ffiContext(), type, JSC::JSValue::decode(encodedValue), slot, nullptr);
+    JSC::FFI::writeSlotFromJSValue(globalObject, globalObject->ffiContext(), static_cast<JSC::FFI::Type>(abiType), JSC::JSValue::decode(encodedValue), slot, nullptr);
     if (scope.exception()) [[unlikely]] {
         *threw = true;
         return 0;
     }
-    return static_cast<int64_t>(slot);
+    return slot;
 }

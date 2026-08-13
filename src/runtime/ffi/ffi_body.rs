@@ -153,16 +153,16 @@ fn create_jsc_ffi_function(
 mod exposed_to_ffi {
     use super::{JSGlobalObject, JSValue};
     unsafe extern "C" {
-        /// `JSCFFIBridge.cpp`: converts an `i64`/`u64`/`i64_fast`/`u64_fast` argument the inline
-        /// paths in `FFI.h` don't handle (BigInts, and non-numbers, which throw) with the same
-        /// conversion dlopen()'d symbols use.
-        #[link_name = "Bun__FFI__jsValueToInt64Slow"]
-        pub(super) fn JSVALUE_TO_INT64_SLOW(
+        /// `JSCFFIBridge.cpp`: the engine's conversion (the one dlopen()'d symbols use) for an
+        /// argument of type `abi_type`; the `ToC::Fallible` conversions in `FFI.h` call it for the
+        /// values they don't decode inline.
+        #[link_name = "Bun__FFI__jsValueToSlotSlow"]
+        pub(super) fn JSVALUE_TO_SLOT_SLOW(
             global: *mut JSGlobalObject,
             abi_type: i32,
             threw: *mut bool,
             value: JSValue,
-        ) -> i64;
+        ) -> u64;
         #[link_name = "JSC__JSValue__fromInt64NoTruncate"]
         pub(super) fn INT64_TO_JSVALUE(global: *mut JSGlobalObject, i: i64) -> JSValue;
         #[link_name = "JSC__JSValue__fromUInt64NoTruncate"]
@@ -2070,7 +2070,7 @@ impl Function {
         CompilerRT::define(state);
         // Only the wrapper is compiled with these; the user's own C (`CompileC::compile`) must not
         // see them.
-        state.define_symbols(ABIType::TAG_DEFINES);
+        state.define_symbols(&ABIType::tag_defines());
 
         // SAFETY: source_code was NUL-terminated above
         if state
@@ -2633,8 +2633,8 @@ impl CompilerRT {
 
         state
             .add_symbol(
-                zstr!("JSVALUE_TO_INT64_SLOW"),
-                exposed_to_ffi::JSVALUE_TO_INT64_SLOW as *const c_void,
+                zstr!("JSVALUE_TO_SLOT_SLOW"),
+                exposed_to_ffi::JSVALUE_TO_SLOT_SLOW as *const c_void,
             )
             .expect("unreachable");
         state

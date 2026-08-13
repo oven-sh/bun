@@ -107,44 +107,66 @@ bun_core::comptime_string_map! {
 // ToCFormatter / ToJSFormatter. Indexed by `self as usize`.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// How a generated wrapper turns an argument's JSValue into the C parameter; the functions named
+/// here are defined in `FFI.h`.
+enum ToC {
+    /// Written out by [`ToCFormatter`] itself, or not an argument type.
+    Special,
+    /// `f(arg)`: decodes the JSValue's bits and cannot fail.
+    Infallible(&'static str),
+    /// `f(JS_GLOBAL_OBJECT, ABI_TYPE_*, &threw, arg)`: decodes the common encodings inline and
+    /// hands everything else to the engine's converter (`JSVALUE_TO_SLOT_SLOW`), which throws for
+    /// values the type does not accept. The wrapper runs these conversions before the native call
+    /// and returns as soon as one of them threw.
+    Fallible(&'static str),
+}
+
 struct AbiRow {
     c_type: &'static [u8],
-    to_c_macro: Option<&'static str>,
+    /// `#define`d to the variant's discriminant, which is also the engine's tag for the type, when
+    /// a wrapper is compiled (`Function::compile`), so `FFI.h` and the generated code can name the
+    /// type they ask the engine's converter for.
+    tag_define: &'static str,
+    to_c: ToC,
     to_js: Option<(&'static str, &'static str)>,
 }
 
+const ABI_TYPE_COUNT: usize = 22;
+
 #[rustfmt::skip]
-static ABI_TABLE: [AbiRow; 22] = {
+static ABI_TABLE: [AbiRow; ABI_TYPE_COUNT] = {
+    use ToC::*;
     const fn r(
         c_type: &'static [u8],
-        to_c_macro: Option<&'static str>,
+        tag_define: &'static str,
+        to_c: ToC,
         to_js: Option<(&'static str, &'static str)>,
     ) -> AbiRow {
-        AbiRow { c_type, to_c_macro, to_js }
+        AbiRow { c_type, tag_define, to_c, to_js }
     }
     [
-    /* Char      */ r(b"char",       Some("JSVALUE_TO_INT32("),                                                   Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Int8T     */ r(b"int8_t",     Some("JSVALUE_TO_INT32("),                                                   Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Uint8T    */ r(b"uint8_t",    Some("JSVALUE_TO_INT32("),                                                   Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Int16T    */ r(b"int16_t",    Some("JSVALUE_TO_INT32("),                                                   Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Uint16T   */ r(b"uint16_t",   Some("JSVALUE_TO_INT32("),                                                   Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Int32T    */ r(b"int32_t",    Some("JSVALUE_TO_INT32("),                                                   Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Uint32T   */ r(b"uint32_t",   Some("JSVALUE_TO_INT32("),                                                   Some(("UINT32_TO_JSVALUE(", ")"))),
-    /* Int64T    */ r(b"int64_t",    Some("JSVALUE_TO_INT64(JS_GLOBAL_OBJECT, ABI_TYPE_INT64, &threw, "),         Some(("INT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
-    /* Uint64T   */ r(b"uint64_t",   Some("JSVALUE_TO_UINT64(JS_GLOBAL_OBJECT, ABI_TYPE_UINT64, &threw, "),       Some(("UINT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
-    /* Double    */ r(b"double",     Some("JSVALUE_TO_DOUBLE("),                                                  Some(("DOUBLE_TO_JSVALUE(", ")"))),
-    /* Float     */ r(b"float",      Some("JSVALUE_TO_FLOAT("),                                                   Some(("FLOAT_TO_JSVALUE(", ")"))),
-    /* Bool      */ r(b"bool",       Some("JSVALUE_TO_BOOL("),                                                    Some(("BOOLEAN_TO_JSVALUE(", ")"))),
-    /* Ptr       */ r(b"void*",      Some("JSVALUE_TO_PTR("),                                                     Some(("PTR_TO_JSVALUE(", ")"))),
-    /* Void      */ r(b"void",       None,                                                                        None),
-    /* CString   */ r(b"void*",      Some("JSVALUE_TO_PTR("),                                                     Some(("PTR_TO_JSVALUE(", ")"))),
-    /* I64Fast   */ r(b"int64_t",    Some("JSVALUE_TO_INT64(JS_GLOBAL_OBJECT, ABI_TYPE_INT64_FAST, &threw, "),    Some(("INT64_TO_JSVALUE(JS_GLOBAL_OBJECT, (int64_t)", ")"))),
-    /* U64Fast   */ r(b"uint64_t",   Some("JSVALUE_TO_UINT64(JS_GLOBAL_OBJECT, ABI_TYPE_UINT64_FAST, &threw, "),  Some(("UINT64_TO_JSVALUE(JS_GLOBAL_OBJECT, ", ")"))),
-    /* Function  */ r(b"void*",      Some("JSVALUE_TO_PTR("),                                                     Some(("PTR_TO_JSVALUE(", ")"))),
-    /* NapiEnv   */ r(b"napi_env",   None,                                                                        None),
-    /* NapiValue */ r(b"napi_value", None,                                                                        Some(("((EncodedJSValue) {.asNapiValue = ", " } )"))),
-    /* Buffer    */ r(b"void*",      Some("JSVALUE_TO_TYPED_ARRAY_VECTOR("),                                      None),
-    /* BufferLen */ r(b"uint64_t",   None,                                                                        None),
+    /* Char      */ r(b"char",       "ABI_TYPE_CHAR",          Infallible("JSVALUE_TO_INT32"),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Int8T     */ r(b"int8_t",     "ABI_TYPE_I8",            Infallible("JSVALUE_TO_INT32"),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Uint8T    */ r(b"uint8_t",    "ABI_TYPE_U8",            Infallible("JSVALUE_TO_INT32"),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Int16T    */ r(b"int16_t",    "ABI_TYPE_I16",           Infallible("JSVALUE_TO_INT32"),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Uint16T   */ r(b"uint16_t",   "ABI_TYPE_U16",           Infallible("JSVALUE_TO_INT32"),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Int32T    */ r(b"int32_t",    "ABI_TYPE_I32",           Infallible("JSVALUE_TO_INT32"),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Uint32T   */ r(b"uint32_t",   "ABI_TYPE_U32",           Infallible("JSVALUE_TO_INT32"),               Some(("UINT32_TO_JSVALUE(", ")"))),
+    /* Int64T    */ r(b"int64_t",    "ABI_TYPE_I64",           Fallible("JSVALUE_TO_INT64"),                 Some(("INT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
+    /* Uint64T   */ r(b"uint64_t",   "ABI_TYPE_U64",           Fallible("JSVALUE_TO_UINT64"),                Some(("UINT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
+    /* Double    */ r(b"double",     "ABI_TYPE_F64",           Infallible("JSVALUE_TO_DOUBLE"),              Some(("DOUBLE_TO_JSVALUE(", ")"))),
+    /* Float     */ r(b"float",      "ABI_TYPE_F32",           Infallible("JSVALUE_TO_FLOAT"),               Some(("FLOAT_TO_JSVALUE(", ")"))),
+    /* Bool      */ r(b"bool",       "ABI_TYPE_BOOL",          Infallible("JSVALUE_TO_BOOL"),                Some(("BOOLEAN_TO_JSVALUE(", ")"))),
+    /* Ptr       */ r(b"void*",      "ABI_TYPE_PTR",           Infallible("JSVALUE_TO_PTR"),                 Some(("PTR_TO_JSVALUE(", ")"))),
+    /* Void      */ r(b"void",       "ABI_TYPE_VOID",          Special,                                      None),
+    /* CString   */ r(b"void*",      "ABI_TYPE_CSTRING",       Infallible("JSVALUE_TO_PTR"),                 Some(("PTR_TO_JSVALUE(", ")"))),
+    /* I64Fast   */ r(b"int64_t",    "ABI_TYPE_I64_FAST",      Fallible("JSVALUE_TO_INT64"),                 Some(("INT64_TO_JSVALUE(JS_GLOBAL_OBJECT, (int64_t)", ")"))),
+    /* U64Fast   */ r(b"uint64_t",   "ABI_TYPE_U64_FAST",      Fallible("JSVALUE_TO_UINT64"),                Some(("UINT64_TO_JSVALUE(JS_GLOBAL_OBJECT, ", ")"))),
+    /* Function  */ r(b"void*",      "ABI_TYPE_FUNCTION",      Infallible("JSVALUE_TO_PTR"),                 Some(("PTR_TO_JSVALUE(", ")"))),
+    /* NapiEnv   */ r(b"napi_env",   "ABI_TYPE_NAPI_ENV",      Special,                                      None),
+    /* NapiValue */ r(b"napi_value", "ABI_TYPE_NAPI_VALUE",    Special,                                      Some(("((EncodedJSValue) {.asNapiValue = ", " } )"))),
+    /* Buffer    */ r(b"void*",      "ABI_TYPE_BUFFER",        Infallible("JSVALUE_TO_TYPED_ARRAY_VECTOR"),  None),
+    /* BufferLen */ r(b"uint64_t",   "ABI_TYPE_BUFFER_LENGTH", Special,                                      None),
     ]
 };
 
@@ -161,16 +183,11 @@ impl ABIType {
     /// See [`ABI_TYPE_LABEL`].
     pub(crate) const LABEL: &'static __ComptimeStringMap_ABI_TYPE_LABEL = &ABI_TYPE_LABEL;
 
-    /// Preprocessor definitions the generated wrappers (`Function::compile`) are compiled with:
-    /// the tags the `to_c` conversions in [`ABI_TABLE`] hand to `JSVALUE_TO_INT64_SLOW` (see
-    /// `FFI.h`), which passes them on to the engine's converter; the engine's type tags are these
-    /// same discriminants.
-    pub(crate) const TAG_DEFINES: &'static [(&'static str, i64)] = &[
-        ("ABI_TYPE_INT64", ABIType::Int64T as i64),
-        ("ABI_TYPE_UINT64", ABIType::Uint64T as i64),
-        ("ABI_TYPE_INT64_FAST", ABIType::I64Fast as i64),
-        ("ABI_TYPE_UINT64_FAST", ABIType::U64Fast as i64),
-    ];
+    /// The `ABI_TYPE_*` preprocessor definitions every generated wrapper is compiled with, one per
+    /// variant; see [`AbiRow::tag_define`].
+    pub(crate) fn tag_defines() -> [(&'static str, i64); ABI_TYPE_COUNT] {
+        core::array::from_fn(|i| (ABI_TABLE[i].tag_define, i as i64))
+    }
 
     /// Returns `None` for out-of-range discriminants.
     #[inline]
@@ -220,14 +237,9 @@ impl ABIType {
         matches!(self, ABIType::Double | ABIType::Float)
     }
 
-    /// Argument conversions that may throw (see `JSVALUE_TO_INT64_SLOW` in `FFI.h`). The
-    /// generated wrapper converts these into locals first and returns before the native call if
-    /// one of them threw.
+    /// See [`ToC::Fallible`].
     pub(crate) fn arg_conversion_can_throw(self) -> bool {
-        matches!(
-            self,
-            ABIType::Int64T | ABIType::Uint64T | ABIType::I64Fast | ABIType::U64Fast
-        )
+        matches!(self.row().to_c, ToC::Fallible(_))
     }
 
     pub(crate) fn to_c(self, symbol: &[u8]) -> ToCFormatter<'_> {
@@ -264,17 +276,21 @@ pub struct ToCFormatter<'a> {
 impl fmt::Display for ToCFormatter<'_> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         let row = self.tag.row();
-        let Some(macro_) = row.to_c_macro else {
-            return match self.tag {
+        let symbol = BStr::new(self.symbol);
+        match row.to_c {
+            ToC::Infallible(function) => write!(writer, "{function}({symbol})"),
+            ToC::Fallible(function) => write!(
+                writer,
+                "{function}(JS_GLOBAL_OBJECT, {}, &threw, {symbol})",
+                row.tag_define
+            ),
+            ToC::Special => match self.tag {
                 ABIType::Void => Ok(()),
                 ABIType::NapiEnv => writer.write_str("((napi_env)&Bun__thisFFIModuleNapiEnv)"),
-                ABIType::NapiValue => write!(writer, "{}.asNapiValue", BStr::new(self.symbol)),
+                ABIType::NapiValue => write!(writer, "{symbol}.asNapiValue"),
                 _ => unreachable!(),
-            };
-        };
-        writer.write_str(macro_)?;
-        fmt::Display::fmt(BStr::new(self.symbol), writer)?;
-        writer.write_str(")")
+            },
+        }
     }
 }
 

@@ -253,6 +253,24 @@ describe("closeAllConnections", () => {
     }
   });
 
+  test("is a no-op when no connections are established", async () => {
+    const server = createServer((req, res) => res.end("ok"));
+    try {
+      const port = await listen(server);
+
+      // No client has connected yet: must not throw and must not affect the listener.
+      expect(() => server.closeAllConnections()).not.toThrow();
+      expect(server.listening).toBe(true);
+
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      expect(await res.text()).toBe("ok");
+      expect(res.status).toBe(200);
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
   test("destroys every tracked connection", async () => {
     const server = createServer((req, res) => res.end("ok"));
     const serverSockets: Socket[] = [];

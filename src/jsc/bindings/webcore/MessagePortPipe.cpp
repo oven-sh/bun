@@ -234,10 +234,8 @@ void MessagePortPipe::attach(uint8_t side, ScriptExecutionContextIdentifier ctxI
     }
     if (wakeCtx)
         scheduleDrain(side, wakeCtx);
-    // Peer already closed: notify again now that this side is receiving. The task runs
-    // after the drain scheduled above, so a peerClosed() that earlier left the port
-    // open because messages were still queued (see MessagePort::peerClosed) now
-    // delivers whatever is left and completes the close.
+    // Peer already closed: notify again now that this side is receiving. The task runs after the
+    // drain scheduled above, so a close that peerClosed() deferred behind queued messages completes.
     if (m_sides[1 - side].state.load(std::memory_order_acquire) & Closed)
         notifyPeerClosed(side);
 }

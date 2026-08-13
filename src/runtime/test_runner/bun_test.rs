@@ -1299,8 +1299,9 @@ impl BunTest {
 
         let handle_status: HandleUncaughtExceptionResult = match self.phase {
             Phase::Collection => self.collection.handle_uncaught_exception(user_data),
-            Phase::Done => HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests,
-            Phase::Execution => self.execution.handle_uncaught_exception(user_data),
+            // Once done, every entry is stale; Execution still knows which test body (if any)
+            // the error came from, e.g. a todo that settles while the loop drains after the file.
+            Phase::Execution | Phase::Done => self.execution.handle_uncaught_exception(user_data),
         };
 
         bun_core::scoped_log!(bun_test_group, "onUncaughtException -> {}", <&'static str>::from(handle_status));
@@ -1959,10 +1960,14 @@ impl ExecutionEntry {
                 .test_entry
                 .is_some_and(|p| core::ptr::eq(p.as_ptr().cast_const(), self));
             sequence.result = if is_test_entry {
-                if self.has_done_parameter {
-                    Execution::Result::FailBecauseTimeoutWithDoneCallback
-                } else {
-                    Execution::Result::FailBecauseTimeout
+                match self.base.mode {
+                    // Mirrors the todo arm of Execution::handle_uncaught_exception: a todo body
+                    // (only run under --todo) that never finishes is still a failing todo; only a
+                    // passing one fails the run. `.failing` is intentionally not mapped: a timeout
+                    // still fails a failing test.
+                    ScopeMode::Todo => Execution::Result::Todo,
+                    _ if self.has_done_parameter => Execution::Result::FailBecauseTimeoutWithDoneCallback,
+                    _ => Execution::Result::FailBecauseTimeout,
                 }
             } else if self.has_done_parameter {
                 Execution::Result::FailBecauseHookTimeoutWithDoneCallback

@@ -370,6 +370,7 @@ class PooledPostgresConnection extends BasePooledConnection<$ZigGeneratedClasses
       case "ERR_POSTGRES_INVALID_SERVER_SIGNATURE":
       case "ERR_POSTGRES_INVALID_SERVER_KEY":
       case "ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2":
+      case "ERR_POSTGRES_SASL_ITERATION_COUNT_TOO_HIGH":
         // we can't retry these are authentication errors
         return true;
       default:

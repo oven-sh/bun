@@ -47,6 +47,8 @@ function exchangeFor(user: string): PromiseWithResolvers<Exchange> {
   if (!entry) exchanges.set(user, (entry = Promise.withResolvers<Exchange>()));
   return entry;
 }
+/** How many times each user has sent a StartupMessage, i.e. how often the pool dialed. */
+const startupsByUser = new Map<string, number>();
 
 const { port, server } = await listeningServer(socket => {
   const exchange: Exchange = { proofs: 0, proofValid: null };
@@ -66,6 +68,7 @@ const { port, server } = await listeningServer(socket => {
       const startup = pgParseStartupMessage(buffered);
       if (!startup) return;
       user = startup.params.user;
+      startupsByUser.set(user, (startupsByUser.get(user) ?? 0) + 1);
       iterations = Number(user.slice(1));
       buffered = startup.rest;
       socket.write(pgAuthenticationSASL());
@@ -180,4 +183,33 @@ test.concurrent.each([10_000_001, 2_147_483_647])(
 test.concurrent("postgres: SCRAM-SHA-256 rejects server-first i=0 as a malformed message", async () => {
   const { error, proofs } = await handshake(0);
   expect({ code: error?.code, proofs }).toEqual({ code: "ERR_POSTGRES_INVALID_MESSAGE", proofs: 0 });
+});
+
+// The advertised count is baked into the role's stored password, so dialing
+// again cannot help: like the other authentication errors, the pool reports
+// the stored error to later connect attempts instead of redoing the handshake.
+test.concurrent("postgres: the pool does not redial after a too-high iteration count", async () => {
+  const user = "i10000002";
+  const db = new SQL({
+    url: `postgres://${user}:${PASSWORD}@127.0.0.1:${port}/db?sslmode=disable`,
+    max: 1,
+    connectionTimeout: 30,
+  });
+  try {
+    const codes: string[] = [];
+    for (let attempt = 0; attempt < 2; attempt++) {
+      codes.push(
+        await db.connect().then(
+          () => "connected",
+          (e: any) => e.code,
+        ),
+      );
+    }
+    expect({ codes, startups: startupsByUser.get(user) }).toEqual({
+      codes: ["ERR_POSTGRES_SASL_ITERATION_COUNT_TOO_HIGH", "ERR_POSTGRES_SASL_ITERATION_COUNT_TOO_HIGH"],
+      startups: 1,
+    });
+  } finally {
+    await db.close({ timeout: 0 });
+  }
 });

@@ -657,12 +657,8 @@ pub fn add_pre_exit_callback(function: ExitFn) {
     }
 }
 
-/// Callbacks run at the very top of `exit()` — BEFORE any heap teardown or the
-/// ASAN `libc_exit` that poisons freed memory. Used by `bun_watcher` to stop
-/// its background threads so they can't touch process-global singletons (the
-/// resolver's `BSSMap` dir cache) after the exit path frees/poisons them.
-/// `bun_watcher` sits above `bun_core`, so it registers its hook here rather
-/// than us calling into it (layering).
+/// Run at the very top of `exit()`, before any heap teardown. `bun_watcher`
+/// registers its `stop_all_for_exit` here (it sits above `bun_core`).
 static EARLY_EXIT_CALLBACKS: crate::Mutex<Vec<ExitFn>> = crate::Mutex::new(Vec::new());
 
 pub fn add_early_exit_callback(function: ExitFn) {
@@ -673,10 +669,7 @@ pub fn add_early_exit_callback(function: ExitFn) {
 }
 
 fn run_early_exit_callbacks() {
-    // Snapshot under lock, run outside it — same pattern as
-    // `run_exit_callbacks`. Callbacks can block (e.g. `stop_all_for_exit`
-    // waits on each watcher's mutex); don't hold a non-recursive lock across
-    // them.
+    // Snapshot under lock, run outside it; callbacks can block.
     let cbs: Vec<ExitFn> = EARLY_EXIT_CALLBACKS.lock().clone();
     for callback in &cbs {
         callback();
@@ -730,18 +723,12 @@ pub fn exit(code: u32) -> ! {
     // MOVE_DOWN: bun_crash_handler::sleep_forever_if_another_thread_is_crashing → bun_core.
     crate::sleep_forever_if_another_thread_is_crashing();
 
-    // Stop background threads (e.g. the file watcher) before tearing the heap
-    // down. Under ASAN, `libc_exit` below runs the leak/teardown pass which
-    // poisons freed memory; a live watcher thread would then touch the
-    // resolver's BSSMap singleton and trip use-after-poison. No-op when no
-    // watcher is active. `bun_watcher` registers its `stop_all_for_exit` hook
-    // here because it sits above `bun_core`.
+    // Stop background threads (the file watcher) before the heap teardown /
+    // ASAN poison below can pull memory out from under them.
     run_early_exit_callbacks();
 
-    // Test-only (debug builds): linger after stopping watchers but before the
-    // heap teardown/poison so the `hot-reload-exit-race` regression test's
-    // delayed `bust_dir_cache` has time to land — on freed memory when the fix
-    // is absent, harmlessly when it's present (watchers already stopped above).
+    // Test-only linger so the hot-reload-exit-race test's delayed
+    // bust_dir_cache lands before the process dies.
     #[cfg(debug_assertions)]
     if let Some(ms) = crate::env_var::BUN_INTERNAL_GLOBALEXIT_LINGER_MS.get() {
         if ms != 0 {

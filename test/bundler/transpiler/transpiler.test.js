@@ -5342,15 +5342,12 @@ describe("await using lowering", () => {
     expect(native.split("\n").length).toBeGreaterThan(10);
 
     // Transpiled output imports the helpers from "bun:wrap"; the bundle inlines them.
+    const runs = [runScript(bunExe(), "lowered.mjs", cwd), runScript(bunExe(), "bundled.mjs", cwd)];
     const node = nodeExe();
-    const [loweredOutput, bundledOutput, bundledOutputInNode] = await Promise.all([
-      runScript(bunExe(), "lowered.mjs", cwd),
-      runScript(bunExe(), "bundled.mjs", cwd),
-      node ? runScript(node, "bundled.mjs", cwd) : native,
-    ]);
-    expect(loweredOutput).toBe(native);
-    expect(bundledOutput).toBe(native);
-    expect(bundledOutputInNode).toBe(native);
+    if (node) runs.push(runScript(node, "bundled.mjs", cwd));
+    for (const output of await Promise.all(runs)) {
+      expect(output).toBe(native);
+    }
   });
 
   it("files lowered by older versions of Bun still dispose through the current bun:wrap", async () => {

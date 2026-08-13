@@ -6340,6 +6340,81 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
   });
 });
 
+// On success node calls a void operation's callback with exactly one argument,
+// `null`. Visible through arguments.length, e.g. multi-argument promisify
+// wrappers. toStrictEqual is what tells [null] apart from [null, undefined].
+describe("a void operation's callback receives the same arguments as in node", () => {
+  type Callback = (...args: unknown[]) => void;
+  function argumentsPassedTo(run: (cb: Callback) => void): Promise<unknown[]> {
+    const { promise, resolve } = Promise.withResolvers<unknown[]>();
+    run((...args) => resolve(args));
+    return promise;
+  }
+  async function withFd(dir: string, run: (fd: number, cb: Callback) => void): Promise<unknown[]> {
+    const fd = openSync(join(dir, "file.txt"), "r+");
+    try {
+      return await argumentsPassedTo(cb => run(fd, cb));
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  // Every case runs in a fresh directory holding file.txt and an empty subdir/.
+  const voidOps: Record<string, (dir: string) => Promise<unknown[]>> = {
+    access: dir => argumentsPassedTo(cb => fs.access(join(dir, "file.txt"), cb)),
+    appendFile: dir => argumentsPassedTo(cb => fs.appendFile(join(dir, "file.txt"), "more", cb)),
+    writeFile: dir => argumentsPassedTo(cb => fs.writeFile(join(dir, "written.txt"), "data", cb)),
+    copyFile: dir => argumentsPassedTo(cb => fs.copyFile(join(dir, "file.txt"), join(dir, "copy.txt"), cb)),
+    rename: dir => argumentsPassedTo(cb => fs.rename(join(dir, "file.txt"), join(dir, "renamed.txt"), cb)),
+    link: dir => argumentsPassedTo(cb => fs.link(join(dir, "file.txt"), join(dir, "hardlink.txt"), cb)),
+    unlink: dir => argumentsPassedTo(cb => fs.unlink(join(dir, "file.txt"), cb)),
+    rm: dir => argumentsPassedTo(cb => fs.rm(join(dir, "file.txt"), cb)),
+    "rm (recursive)": dir => argumentsPassedTo(cb => fs.rm(join(dir, "subdir"), { recursive: true }, cb)),
+    rmdir: dir => argumentsPassedTo(cb => fs.rmdir(join(dir, "subdir"), cb)),
+    mkdir: dir => argumentsPassedTo(cb => fs.mkdir(join(dir, "created"), cb)),
+    "mkdir (recursive, directory already exists)": dir =>
+      argumentsPassedTo(cb => fs.mkdir(join(dir, "subdir"), { recursive: true }, cb)),
+    truncate: dir => argumentsPassedTo(cb => fs.truncate(join(dir, "file.txt"), cb)),
+    chmod: dir => argumentsPassedTo(cb => fs.chmod(join(dir, "file.txt"), 0o644, cb)),
+    // uid/gid -1 leaves ownership unchanged, so these succeed unprivileged.
+    chown: dir => argumentsPassedTo(cb => fs.chown(join(dir, "file.txt"), -1, -1, cb)),
+    lchown: dir => argumentsPassedTo(cb => fs.lchown(join(dir, "file.txt"), -1, -1, cb)),
+    utimes: dir => argumentsPassedTo(cb => fs.utimes(join(dir, "file.txt"), 1, 1, cb)),
+    lutimes: dir => argumentsPassedTo(cb => fs.lutimes(join(dir, "file.txt"), 1, 1, cb)),
+    fchmod: dir => withFd(dir, (fd, cb) => fs.fchmod(fd, 0o644, cb)),
+    fchown: dir => withFd(dir, (fd, cb) => fs.fchown(fd, -1, -1, cb)),
+    fsync: dir => withFd(dir, (fd, cb) => fs.fsync(fd, cb)),
+    fdatasync: dir => withFd(dir, (fd, cb) => fs.fdatasync(fd, cb)),
+    ftruncate: dir => withFd(dir, (fd, cb) => fs.ftruncate(fd, cb)),
+    futimes: dir => withFd(dir, (fd, cb) => fs.futimes(fd, 1, 1, cb)),
+    close: dir => argumentsPassedTo(cb => fs.close(openSync(join(dir, "file.txt"), "r"), cb)),
+  };
+  if (fs.lchmod) {
+    voidOps.lchmod = dir => argumentsPassedTo(cb => fs.lchmod(join(dir, "file.txt"), 0o644, cb));
+  }
+
+  it.each(Object.entries(voidOps))("%s calls back with [null]", async (_name, run) => {
+    using dir = tempDir("fs-callback-arguments", { "file.txt": "data" });
+    mkdirSync(join(String(dir), "subdir"));
+    expect(await run(String(dir))).toStrictEqual([null]);
+  });
+
+  it("mkdir (recursive) still passes the first directory it created", async () => {
+    using dir = tempDir("fs-callback-arguments-mkdir", {});
+    const first = join(String(dir), "a");
+    const args = await argumentsPassedTo(cb => fs.mkdir(join(first, "b", "c"), { recursive: true }, cb));
+    expect(args).toStrictEqual([null, path.toNamespacedPath(first)]);
+  });
+
+  // node implements fs.cp with util.callbackify, so it is the one operation
+  // whose callback gets the (undefined) result as a second argument.
+  it("cp calls back with [null, undefined]", async () => {
+    using dir = tempDir("fs-callback-arguments-cp", { "file.txt": "data" });
+    const args = await argumentsPassedTo(cb => fs.cp(join(String(dir), "file.txt"), join(String(dir), "copy.txt"), cb));
+    expect(args).toStrictEqual([null, undefined]);
+  });
+});
+
 describe("fs.Utf8Stream", () => {
   // A write started from the reopen 'ready' listener is still in flight when the
   // reopen path announces 'drain'; the write's own completion is what must emit it.

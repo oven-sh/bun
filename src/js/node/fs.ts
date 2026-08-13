@@ -47,8 +47,17 @@ function ensureCallback(callback) {
 //
 // function () { callback(null); }
 //
+// The resolved value must not reach the callback: node's void operations call
+// back with `null` alone (FSReqCallback::Resolve drops an undefined result),
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc#L736-L741
 function nullcallback(callback) {
-  return FunctionPrototypeBind.$call(callback, undefined, null);
+  return FunctionPrototypeBind.$call(callOnceWithNull, undefined, callback);
+}
+function callOnceWithNull(callback) {
+  callback(null);
+}
+function callOnceWithNullThen(callback, value) {
+  callback(null, value);
 }
 const FunctionPrototypeBind = nullcallback.bind;
 
@@ -207,7 +216,12 @@ var access = function access(path, mode, callback) {
 
     callback = ensureCallback(callback);
 
-    fs.mkdir(path, options).then(nullcallback(callback), callback);
+    fs.mkdir(path, options).then(function (firstDirCreated) {
+      // Only a recursive mkdir that created something resolves with a path;
+      // node passes it along and otherwise calls back with `null` alone.
+      if (firstDirCreated === undefined) callback(null);
+      else callback(null, firstDirCreated);
+    }, callback);
   },
   mkdtemp = function mkdtemp(prefix, options, callback) {
     if ($isCallable(options)) {
@@ -1003,7 +1017,10 @@ function cp(src, dest, options, callback) {
   dest = getValidatedFsPath(dest, "dest");
   callback = guardCallback(callback);
 
-  promises.cp(src, dest, options).then(callOnceWithNull.bind(null, callback), callback);
+  // Unlike the other void operations, node's fs.cp is util.callbackify(cpFn),
+  // so a successful copy calls back with (null, undefined):
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L1098
+  promises.cp(src, dest, options).then(callOnceWithNullThen.bind(null, callback), callback);
 }
 
 function _toUnixTimestamp(time: any, name = "time") {
@@ -1034,12 +1051,6 @@ function onOpendirStatFulfilled(callback, path, result, stats) {
 }
 function onOpendirStatRejected(callback, path, err) {
   process.nextTick(callback, typeof err?.errno === "number" ? opendirStatError(err, path) : err);
-}
-function callOnceWithNull(callback) {
-  callback(null);
-}
-function callOnceWithNullThen(callback, value) {
-  callback(null, value);
 }
 
 function opendirSync(path, options) {

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { chmodSync, existsSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -103,9 +103,10 @@ test.skipIf(!isLinux)("Bun.openInEditor survives re-entrant calls from option ge
 });
 
 // On Linux, JSC uses SIGPWR to suspend/resume threads for GC and the libpas
-// scavenger. Bun.openInEditor spawns a detached thread that goes through
-// bun.spawnSync, whose signal-forwarding setup must not touch SIGPWR or the
-// process is terminated the next time GC/scavenger fires.
+// scavenger. Bun.openInEditor runs its editor spawn on a detached thread;
+// that spawn must not disturb process-wide signal handling (it used to go
+// through bun.spawnSync's signal forwarding) or the process is terminated
+// the next time GC/scavenger fires.
 test.skipIf(!isLinux)("Bun.openInEditor does not break GC signal handling", async () => {
   const sleep = ["/usr/bin/sleep", "/bin/sleep"].find(p => existsSync(p));
   expect(sleep).toBeDefined();
@@ -151,4 +152,153 @@ test.skipIf(!isLinux)("Bun.openInEditor does not break GC signal handling", asyn
   });
 
   await Promise.all(runs);
+});
+
+// The editor thread used to go through bun.spawnSync, which installs the
+// process-wide signal-forwarding handlers meant for `bun run` (they redirect
+// SIGINT/SIGTERM/SIGUSR2/... to the child) for as long as the editor runs,
+// while the user's program keeps running on the main thread. The fixtures
+// below open a fake editor that records its pid in the "file" it is asked to
+// open and then stays alive until the test kills it, so the assertions run
+// while the editor is definitely up.
+const fakeEditorFiles = {
+  // Bun.openInEditor(file, { editor }) runs `editor file`; after the exec the
+  // sleep keeps the shell's pid, so the recorded pid is the one to kill.
+  "fake-editor.sh": '#!/bin/sh\necho $$ > "$1"\nexec sleep 30\n',
+  "wait-for-editor.js": `
+    import { readFileSync } from "node:fs";
+    export async function waitForEditorPid(pidFile) {
+      for (;;) {
+        let text = "";
+        try { text = readFileSync(pidFile, "utf8"); } catch {}
+        if (/^\\d+\\n$/.test(text)) return Number(text);
+        await Bun.sleep(5);
+      }
+    }
+  `,
+};
+
+// https://github.com/oven-sh/bun/issues/31194
+test.concurrent.skipIf(!isLinux)("Bun.openInEditor does not change the process's signal dispositions", async () => {
+  using dir = tempDir("open-in-editor-sigcgt", {
+    ...fakeEditorFiles,
+    "run.js": `
+      import { readFileSync } from "node:fs";
+      import { waitForEditorPid } from "./wait-for-editor.js";
+      // SigCgt is the bitmask of signals this process has a handler for.
+      const caught = () => readFileSync("/proc/self/status", "utf8").match(/^SigCgt:\\s*([0-9a-f]+)/m)[1];
+      const [editor, pidFile] = process.argv.slice(2);
+
+      const before = caught();
+      Bun.openInEditor(pidFile, { editor });
+      const pid = await waitForEditorPid(pidFile);
+      const during = caught();
+      process.kill(pid, "SIGTERM");
+      console.log(JSON.stringify({ before, during }));
+    `,
+  });
+  const editor = join(String(dir), "fake-editor.sh");
+  chmodSync(editor, 0o755);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.js", editor, join(String(dir), "editor.pid")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  const { before, during } = JSON.parse(stdout);
+  const changed = BigInt("0x" + before) ^ BigInt("0x" + during);
+  const changedSignals = Array.from({ length: 64 }, (_, i) => i + 1).filter(sig => changed & (1n << BigInt(sig - 1)));
+  expect(changedSignals).toEqual([]);
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/31194
+test.concurrent.skipIf(isWindows)(
+  "a process.on signal handler still runs while an editor opened by Bun.openInEditor is up",
+  async () => {
+    using dir = tempDir("open-in-editor-signal-handler", {
+      ...fakeEditorFiles,
+      "run.js": `
+      import { waitForEditorPid } from "./wait-for-editor.js";
+      const [editor, pidFile] = process.argv.slice(2);
+      const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+      const handled = new Promise(resolve => process.on("SIGUSR2", () => resolve("handler ran")));
+      Bun.openInEditor(pidFile, { editor });
+      const pid = await waitForEditorPid(pidFile);
+
+      process.kill(process.pid, "SIGUSR2");
+      // Forwarding would deliver the signal to the editor instead, and sleep
+      // dies from SIGUSR2; otherwise our handler runs. Wait for either.
+      const forwarded = (async () => {
+        while (alive(pid)) await Bun.sleep(5);
+        return "signal was forwarded to the editor";
+      })();
+      const outcome = await Promise.race([handled, forwarded]);
+      if (alive(pid)) process.kill(pid, "SIGTERM");
+      console.log(outcome);
+    `,
+    });
+    const editor = join(String(dir), "fake-editor.sh");
+    chmodSync(editor, 0o755);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js", editor, join(String(dir), "editor.pid")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("handler ran\n");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  },
+);
+
+// Terminal editors are opened through `xdg-open` on Linux, with the editor
+// binary as the first argument and the file as the last. The opener is a bare
+// name, so the editor spawn has to look it up on PATH; the spawnSync path
+// exec'd it relative to cwd and silently failed.
+test.concurrent.skipIf(!isLinux)("Bun.openInEditor finds the xdg-open opener on PATH", async () => {
+  using dir = tempDir("open-in-editor-opener", {
+    // Records the editor binary into the file argument; never runs the editor.
+    "bin/xdg-open": '#!/bin/sh\nfor file; do :; done\necho "opened $1" > "$file"\n',
+    // Only its basename matters: it selects the vim (opener-based) argv shape.
+    "vim": "",
+    "run.js": `
+      import { readFileSync } from "node:fs";
+      const [editor, marker] = process.argv.slice(2);
+      Bun.openInEditor(marker, { editor });
+      for (;;) {
+        let text = "";
+        try { text = readFileSync(marker, "utf8"); } catch {}
+        if (text.endsWith("\\n")) break;
+        await Bun.sleep(5);
+      }
+      process.stdout.write(readFileSync(marker, "utf8"));
+    `,
+  });
+  chmodSync(join(String(dir), "bin", "xdg-open"), 0o755);
+  const editor = join(String(dir), "vim");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.js", editor, join(String(dir), "opened.txt")],
+    env: { ...bunEnv, PATH: `${join(String(dir), "bin")}:${bunEnv.PATH}` },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe(`opened ${editor}\n`);
+  expect(exitCode).toBe(0);
 });

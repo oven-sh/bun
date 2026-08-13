@@ -7722,8 +7722,7 @@ impl H2FrameParser {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Ends our side of the stream with an empty END_STREAM DATA frame, which is what node's
-    /// `Http2Stream::SubmitTrailers` sends for any trailer block that encodes to no fields.
+    /// Empty END_STREAM DATA frame: what node sends in place of a trailer block with no fields.
     fn send_no_trailers(&self, stream: &mut Stream) {
         stream.wait_for_trailers = false;
         let _ = self.send_data(stream, b"", true, JSValue::UNDEFINED, false, false);

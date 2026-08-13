@@ -352,11 +352,8 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
-    /// Returns the underlying OS file descriptor (or Windows SOCKET) for this
-    /// response's socket, regardless of SSL. Unlike `get_native_handle`, which
-    /// returns the OpenSSL `SSL*` pointer for TLS connections, this always
-    /// goes straight to `us_socket_get_fd` so the value is a real descriptor
-    /// suitable for `getsockopt`/`setsockopt`.
+    /// Real OS fd (Windows: SOCKET) via `us_socket_get_fd`, unlike
+    /// `get_native_handle`, which returns the `SSL*` pointer for TLS.
     pub fn get_fd(&mut self) -> Fd {
         // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
         us_socket_t::opaque_mut(self.downcast_socket()).get_fd()
@@ -888,9 +885,7 @@ impl AnyResponse {
         }
     }
 
-    /// Returns the underlying OS file descriptor for this response's socket,
-    /// bypassing SSL so the result is a real `us_socket_get_fd` value.
-    /// HTTP/3 multiplexes streams over one UDP socket — no per-response fd.
+    /// Real OS fd, bypassing SSL. H3 has no per-response fd (one UDP socket).
     pub fn get_fd(self) -> Fd {
         match self {
             AnyResponse::H3(_) => bun_core::Fd::INVALID,

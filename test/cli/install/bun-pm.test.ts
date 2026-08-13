@@ -260,7 +260,15 @@ it("should list aliased dependencies", async () => {
 it("should list only trusted dependencies with --trusted", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
-  await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${root_url}/"\n`);
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: `${root_url}/`,
+      },
+    }),
+  );
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -336,7 +344,15 @@ it("should list only trusted dependencies with --trusted", async () => {
 it("should list only trusted dependencies with --all --trusted", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
-  await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${root_url}/"\n`);
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: `${root_url}/`,
+      },
+    }),
+  );
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -400,7 +416,13 @@ it("should list trusted transitive dependencies under untrusted parents with --a
   // trusted transitive dep lives under an untrusted parent folder.
   await writeFile(
     join(package_dir, "bunfig.toml"),
-    `[install]\ncache = false\nregistry = "${root_url}/"\nlinker = "isolated"\n`,
+    Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: `${root_url}/`,
+        linker: "isolated",
+      },
+    }),
   );
   await writeFile(
     join(package_dir, "package.json"),
@@ -458,7 +480,15 @@ it("should list trusted transitive dependencies under untrusted parents with --a
 it("should list nothing with --trusted when no dependencies are trusted", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
-  await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${root_url}/"\n`);
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: `${root_url}/`,
+      },
+    }),
+  );
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({

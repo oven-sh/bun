@@ -26,7 +26,7 @@ pub use bun_js_parser::defines::{
 };
 
 /// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`.
-pub type DefineDataInit<'a> = Options<'a>;
+pub(crate) type DefineDataInit<'a> = Options<'a>;
 /// Alias for `ExprData` so `options.rs` can write `DefineValue::EUndefined(..)`.
 pub(crate) use bun_ast::ExprData as DefineValue;
 
@@ -41,14 +41,8 @@ fn defines_path() -> FsPath<'static> {
     p
 }
 
-pub type Data = DefineData;
-
 // ══════════════════════════════════════════════════════════════════════════
-// `bun_dotenv::DefineStore` impls. dotenv (T2) calls through the link-interface
-// handle; bundler (T5) owns the concrete `E::String` + `DefineData` construction.
-// `to_string` is a
-// `StringHashMap<DefineData>` (= UserDefines), `to_json` is a
-// `StringHashMap<Box<[u8]>>` (= RawDefines / framework defaults).
+// `process.env.*` → define entries
 // ══════════════════════════════════════════════════════════════════════════
 
 fn env_string_store_put(
@@ -76,101 +70,41 @@ fn env_string_store_put(
     Ok(())
 }
 
-/// Moved up from
-/// `bun_dotenv` so it can name `DefineData` / `E::String` directly instead of
-/// dispatching through a vtable — it only reads `loader.map.map.{keys,values}()`,
-/// all of which are public.
-///
-/// `to_json` is the framework-defaults `RawDefines` map; `to_string` is the
-/// per-env `UserDefinesArray`.
-pub fn copy_env_for_define(
+/// Copies `process.env.*` entries from the dotenv loader into `to_string`
+/// according to `behavior` (all of them, or only those starting with `prefix`).
+pub(crate) fn copy_env_for_define(
     env: &bun_dotenv::Loader,
-    to_json: &mut RawDefines,
     to_string: &mut UserDefinesArray,
-    framework_defaults_keys: &[&[u8]],
-    framework_defaults_values: &[&[u8]],
     behavior: bun_dotenv::DotEnvBehavior,
     prefix: &[u8],
     bump: &bun_alloc::Arena,
 ) -> Result<(), crate::Error> {
     use bun_dotenv::DotEnvBehavior;
-    const INVALID_HASH: u64 = u64::MAX - 1;
-    let mut string_map_hashes: Vec<u64> = vec![INVALID_HASH; framework_defaults_keys.len()];
-
-    // Frameworks determine an allowlist of values
     const PROCESS_ENV: &[u8] = b"process.env.";
-    for (i, &key) in framework_defaults_keys.iter().enumerate() {
-        if key.len() > PROCESS_ENV.len() && &key[..PROCESS_ENV.len()] == PROCESS_ENV {
-            let hashable_segment = &key[PROCESS_ENV.len()..];
-            string_map_hashes[i] = bun_wyhash::hash(hashable_segment);
-        }
+
+    if behavior == DotEnvBehavior::Disable || behavior == DotEnvBehavior::LoadAllWithoutInlining {
+        return Ok(());
+    }
+    if behavior == DotEnvBehavior::Prefix {
+        debug_assert!(!prefix.is_empty());
     }
 
-    // With per-entry copies no pre-sizing
-    // pass is needed — emit directly. PERF: was single-buffer key arena; now per-entry Vec reuse.
-    if behavior != DotEnvBehavior::Disable && behavior != DotEnvBehavior::LoadAllWithoutInlining {
-        if behavior == DotEnvBehavior::Prefix {
-            debug_assert!(!prefix.is_empty());
+    let mut key_buf: Vec<u8> = Vec::new();
+    // borrowck — iterate parallel slices instead of `iterator()` so the
+    // map borrow stays shared while we write into the define store.
+    let keys = env.map.map.keys();
+    let values = env.map.map.values();
+    for (k, v) in keys.iter().zip(values.iter()) {
+        if k.is_empty() {
+            continue;
         }
-
-        // When `behavior == .prefix` and NO env key starts
-        // with `prefix`, the entire second walk (including the framework-hash `else` arm)
-        // must be skipped. Pre-scan for a prefix match before emitting.
-        let any_prefix_match = if behavior == DotEnvBehavior::Prefix {
-            env.map
-                .map
-                .keys()
-                .iter()
-                .any(|k| bun_core::strings::starts_with(k, prefix))
-        } else {
-            true
-        };
-
-        if any_prefix_match {
-            let mut key_buf: Vec<u8> = Vec::new();
-            // borrowck — iterate parallel slices instead of `iterator()` so the
-            // map borrow stays shared while we write into the define stores.
-            let keys = env.map.map.keys();
-            let values = env.map.map.values();
-            for (k, v) in keys.iter().zip(values.iter()) {
-                if k.is_empty() {
-                    continue;
-                }
-                let value: &[u8] = &v.value;
-
-                if behavior == DotEnvBehavior::Prefix {
-                    if bun_core::strings::starts_with(k, prefix) {
-                        key_buf.clear();
-                        key_buf.extend_from_slice(PROCESS_ENV);
-                        key_buf.extend_from_slice(k);
-                        env_string_store_put(to_string, bump, &key_buf, value)?;
-                    } else {
-                        let hash = bun_wyhash::hash(k);
-                        debug_assert!(hash != INVALID_HASH);
-                        if let Some(key_i) = string_map_hashes.iter().position(|&h| h == hash) {
-                            env_string_store_put(
-                                to_string,
-                                bump,
-                                framework_defaults_keys[key_i],
-                                value,
-                            )?;
-                        }
-                    }
-                } else {
-                    key_buf.clear();
-                    key_buf.extend_from_slice(PROCESS_ENV);
-                    key_buf.extend_from_slice(k);
-                    env_string_store_put(to_string, bump, &key_buf, value)?;
-                }
-            }
+        if behavior == DotEnvBehavior::Prefix && !bun_core::strings::starts_with(k, prefix) {
+            continue;
         }
-    }
-
-    for (i, &key) in framework_defaults_keys.iter().enumerate() {
-        let value = framework_defaults_values[i];
-        if !to_string.contains_key(key) && !to_json.contains_key(key) {
-            to_json.get_or_put_value(key, Box::<[u8]>::from(value))?;
-        }
+        key_buf.clear();
+        key_buf.extend_from_slice(PROCESS_ENV);
+        key_buf.extend_from_slice(k);
+        env_string_store_put(to_string, bump, &key_buf, &v.value)?;
     }
 
     Ok(())
@@ -381,7 +315,7 @@ impl DefineDataExt for DefineData {
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<DefineData, crate::Error> {
-        let mut key_splitter = key.split(|b| *b == b'.');
+        let mut key_splitter = strings::split(key, b".");
         while let Some(part) = key_splitter.next() {
             if !js_lexer::is_identifier(part) {
                 if strings::eql(part, key) {
@@ -409,7 +343,7 @@ impl DefineDataExt for DefineData {
         }
 
         // check for nested identifiers
-        let mut value_splitter = value_str.split(|b| *b == b'.');
+        let mut value_splitter = strings::split(value_str, b".");
         let mut is_ident = true;
 
         while let Some(part) = value_splitter.next() {

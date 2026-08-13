@@ -586,13 +586,15 @@ function createBlob(arr: number[]): Blob {
 describe("structuredClone with ArrayBuffer larger than serialization buffer capacity", () => {
   // The serialization buffer is a WTF::Vector<uint8_t> capped at 2GiB. Cloning an
   // ArrayBuffer at or above that size must throw DataCloneError instead of aborting.
-  // Run in a subprocess so the ~2GiB allocation does not bloat the test runner.
-  for (const [label, expr] of [
-    ["ArrayBuffer", "new ArrayBuffer(2 ** 31)"],
-    ["resizable ArrayBuffer", "new ArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })"],
-    ["SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31)"],
-    ["growable SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })"],
-    ["Uint8Array", "new Uint8Array(2 ** 31)"],
+  // SharedArrayBuffer shares its backing store (no serialization copy), so it
+  // succeeds regardless of size. Run in a subprocess so the ~2GiB allocation
+  // does not bloat the test runner.
+  for (const [label, expr, expected] of [
+    ["ArrayBuffer", "new ArrayBuffer(2 ** 31)", "DataCloneError"],
+    ["resizable ArrayBuffer", "new ArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })", "DataCloneError"],
+    ["SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31)", "SHARED"],
+    ["growable SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })", "SHARED"],
+    ["Uint8Array", "new Uint8Array(2 ** 31)", "DataCloneError"],
   ] as const) {
     test(label, async () => {
       const script = `
@@ -604,8 +606,8 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
           process.exit(0);
         }
         try {
-          structuredClone(buf);
-          console.log("UNEXPECTED_SUCCESS");
+          const cloned = structuredClone(buf);
+          console.log(cloned instanceof SharedArrayBuffer && cloned.byteLength === buf.byteLength ? "SHARED" : "UNEXPECTED_SUCCESS");
         } catch (e) {
           console.log(e.name);
         }
@@ -617,7 +619,7 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(["DataCloneError", "SKIP"]).toContain(stdout.trim());
+      expect([expected, "SKIP"]).toContain(stdout.trim());
       expect(exitCode).toBe(0);
     });
   }

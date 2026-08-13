@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { createPrivateKey, X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -139,5 +140,84 @@ test("opened reports the X509 code name for validationErrorCode", async () => {
   expect({ code: info.validationErrorCode, reason: info.validationErrorReason }).toEqual({
     code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
     reason: "unable to get local issuer certificate",
+  });
+});
+
+test("connect() with the default verifyPeer refuses an unverifiable certificate before a pending stream reaches the server", async () => {
+  const script = `
+    import { createPrivateKey } from "node:crypto";
+    import { readFileSync } from "node:fs";
+    import { connect, listen } from "node:quic";
+
+    const cert = readFileSync(${JSON.stringify(join(keysDir, "agent1-cert.pem"))});
+    const key = createPrivateKey(readFileSync(${JSON.stringify(join(keysDir, "agent1-key.pem"))}));
+
+    let streamsReceived = 0;
+    const server = await listen(
+      serverSession => {
+        serverSession.onerror = () => {};
+        serverSession.opened.catch(() => {});
+        serverSession.closed.catch(() => {});
+        serverSession.onstream = stream => {
+          streamsReceived++;
+          stream.closed.catch(() => {});
+          try {
+            const w = stream.writer;
+            w.writeSync(new Uint8Array([streamsReceived]));
+            w.endSync();
+          } catch {}
+        };
+      },
+      { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"] },
+    );
+
+    const session = await connect(server.address, { alpn: "quic-test", servername: "agent1" });
+    session.onerror = () => {};
+    const openedError = session.opened.then(() => undefined, e => e);
+    const closedSettled = session.closed.then(() => {}, () => {});
+    const pending = await session.createBidirectionalStream({ body: Buffer.alloc(1024, 97) });
+    pending.closed.catch(() => {});
+    const err = await openedError;
+    await closedSettled;
+
+    const probe = await connect(server.address, { alpn: "quic-test", servername: "agent1", verifyPeer: "manual" });
+    probe.onerror = () => {};
+    await probe.opened;
+    const stream = await probe.createBidirectionalStream({ body: Buffer.from("probe") });
+    const chunks = [];
+    for await (const batch of stream) chunks.push(...batch);
+    await probe.close();
+
+    console.log(
+      JSON.stringify({
+        code: err?.code,
+        message: err?.message,
+        echoed: [...Buffer.concat(chunks)],
+        streamsReceived,
+      }),
+    );
+    process.exit(0);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({
+      code: "ERR_QUIC_TRANSPORT_ERROR",
+      message:
+        "QUIC transport error 0: Peer certificate validation failed: unable to get local issuer certificate [UNABLE_TO_GET_ISSUER_CERT_LOCALLY]",
+      echoed: [1],
+      streamsReceived: 1,
+    }),
+    stderr: expect.stringContaining(
+      "ExperimentalWarning: quic is an experimental feature and might change at any time",
+    ),
+    exitCode: 0,
   });
 });

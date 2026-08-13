@@ -100,7 +100,7 @@ impl InternalSocket {
         matches!(self, InternalSocket::Detached)
     }
     #[inline]
-    pub fn is_named_pipe(&self) -> bool {
+    pub(crate) fn is_named_pipe(&self) -> bool {
         #[cfg(windows)]
         return matches!(self, InternalSocket::Pipe(_));
         #[cfg(not(windows))]
@@ -343,6 +343,18 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             detached => {},
             duplex d => d.close(),
             pipe p => p.close(),
+        )
+    }
+
+    /// The JS wrapper that owns this socket is being finalized: whatever the
+    /// close below unwinds must not reach back into JS objects.
+    pub fn prepare_for_finalize(&self) {
+        on_socket!(self.socket;
+            connected _s => {},
+            connecting _c => {},
+            detached => {},
+            duplex d => d.abandon_js_side(),
+            pipe _p => {},
         )
     }
 
@@ -722,6 +734,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             None,
             ext_size,
             handle.native() as LIBUS_SOCKET_DESCRIPTOR,
+            0,
             is_ipc,
         );
         if raw.is_null() {

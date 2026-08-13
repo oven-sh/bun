@@ -12,7 +12,6 @@ use bun_core::MutableString;
 use bun_sys::Fd as FD;
 
 use crate::dir_info::DirInfoRef;
-use crate::fs as Fs;
 use crate::options;
 use crate::package_json::PackageJSON;
 use crate::resolver::Dependency;
@@ -72,7 +71,7 @@ impl<'a> PathPairIter<'a> {
 }
 
 impl PathPair {
-    pub fn iter(&mut self) -> PathPairIter<'_> {
+    pub(crate) fn iter(&mut self) -> PathPairIter<'_> {
         PathPairIter {
             ctx: self,
             index: 0,
@@ -92,8 +91,6 @@ pub struct Result {
     pub jsx: options::jsx::Pragma,
 
     pub package_json: Option<*const PackageJSON>,
-
-    pub diff_case: Option<Fs::file_system::entry::lookup::DifferentCase<'static>>,
 
     // If present, any ES6 imports to this file can be considered to have no side
     // effects. This means they should be removed if unused.
@@ -117,7 +114,6 @@ impl Default for Result {
             path_pair: PathPair::default(),
             jsx: options::jsx::Pragma::default(),
             package_json: None,
-            diff_case: None,
             primary_side_effects_data: SideEffects::HasSideEffects,
             module_type: options::ModuleType::Unknown,
             dirname_fd: FD::INVALID,
@@ -131,45 +127,67 @@ impl Default for Result {
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
     pub struct ResultFlags: u8 {
+        // Bits 0..=1 encode [`ExternalKind`]; write via `set_external_kind`.
         const IS_EXTERNAL = 1 << 0;
-        const IS_EXTERNAL_AND_REWRITE_IMPORT_PATH = 1 << 1;
+        const REWRITE_IMPORT_PATH = 1 << 1;
         const IS_STANDALONE_MODULE = 1 << 2;
         // This is true when the package was loaded from within the node_modules directory.
         const IS_FROM_NODE_MODULES = 1 << 3;
         const EMIT_DECORATOR_METADATA = 1 << 5;
         const EXPERIMENTAL_DECORATORS = 1 << 6;
-        // _padding: u1
+        /// tsconfig `"useDefineForClassFields": false` was set explicitly.
+        const SET_SEMANTICS_FOR_CLASS_FIELDS = 1 << 7;
     }
 }
 
-// Convenience accessors with field-style names.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExternalKind {
+    #[default]
+    NotExternal,
+    External,
+    /// External, and the import specifier should be rewritten to the resolved path.
+    ExternalRewritePath,
+}
+
 impl ResultFlags {
     #[inline]
     pub fn is_external(self) -> bool {
         self.contains(Self::IS_EXTERNAL)
     }
     #[inline]
-    pub fn set_is_external(&mut self, v: bool) {
-        self.set(Self::IS_EXTERNAL, v)
+    pub fn external_kind(self) -> ExternalKind {
+        debug_assert!(
+            !self.contains(Self::REWRITE_IMPORT_PATH) || self.contains(Self::IS_EXTERNAL)
+        );
+        if !self.contains(Self::IS_EXTERNAL) {
+            ExternalKind::NotExternal
+        } else if self.contains(Self::REWRITE_IMPORT_PATH) {
+            ExternalKind::ExternalRewritePath
+        } else {
+            ExternalKind::External
+        }
     }
     #[inline]
-    pub fn is_external_and_rewrite_import_path(self) -> bool {
-        self.contains(Self::IS_EXTERNAL_AND_REWRITE_IMPORT_PATH)
+    pub(crate) fn set_external_kind(&mut self, kind: ExternalKind) {
+        self.set(
+            Self::IS_EXTERNAL,
+            !matches!(kind, ExternalKind::NotExternal),
+        );
+        self.set(
+            Self::REWRITE_IMPORT_PATH,
+            matches!(kind, ExternalKind::ExternalRewritePath),
+        );
     }
     #[inline]
-    pub fn set_is_external_and_rewrite_import_path(&mut self, v: bool) {
-        self.set(Self::IS_EXTERNAL_AND_REWRITE_IMPORT_PATH, v)
-    }
-    #[inline]
-    pub fn is_standalone_module(self) -> bool {
+    pub(crate) fn is_standalone_module(self) -> bool {
         self.contains(Self::IS_STANDALONE_MODULE)
     }
     #[inline]
-    pub fn is_from_node_modules(self) -> bool {
+    pub(crate) fn is_from_node_modules(self) -> bool {
         self.contains(Self::IS_FROM_NODE_MODULES)
     }
     #[inline]
-    pub fn set_is_from_node_modules(&mut self, v: bool) {
+    pub(crate) fn set_is_from_node_modules(&mut self, v: bool) {
         self.set(Self::IS_FROM_NODE_MODULES, v)
     }
     #[inline]
@@ -177,7 +195,7 @@ impl ResultFlags {
         self.contains(Self::EMIT_DECORATOR_METADATA)
     }
     #[inline]
-    pub fn set_emit_decorator_metadata(&mut self, v: bool) {
+    pub(crate) fn set_emit_decorator_metadata(&mut self, v: bool) {
         self.set(Self::EMIT_DECORATOR_METADATA, v)
     }
     #[inline]
@@ -185,8 +203,17 @@ impl ResultFlags {
         self.contains(Self::EXPERIMENTAL_DECORATORS)
     }
     #[inline]
-    pub fn set_experimental_decorators(&mut self, v: bool) {
+    pub(crate) fn set_experimental_decorators(&mut self, v: bool) {
         self.set(Self::EXPERIMENTAL_DECORATORS, v)
+    }
+    /// Effective `useDefineForClassFields`; `false` only when tsconfig set it to `false`.
+    #[inline]
+    pub fn use_define_for_class_fields(self) -> bool {
+        !self.contains(Self::SET_SEMANTICS_FOR_CLASS_FIELDS)
+    }
+    #[inline]
+    pub(crate) fn set_use_define_for_class_fields(&mut self, v: bool) {
+        self.set(Self::SET_SEMANTICS_FOR_CLASS_FIELDS, !v)
     }
 }
 
@@ -204,7 +231,7 @@ impl Result {
     /// for the ARENA-backed pointer — same invariant as
     /// [`dir_info::DirInfo::package_json`].
     #[inline]
-    pub fn package_json_ref(&self) -> Option<&'static PackageJSON> {
+    pub(crate) fn package_json_ref(&self) -> Option<&'static PackageJSON> {
         Self::deref_package_json(self.package_json)
     }
 
@@ -212,7 +239,9 @@ impl Result {
     /// already mutably borrowed (e.g. while iterating `path_pair`). Takes the
     /// `Copy` field directly so the borrow checker only sees a field read.
     #[inline]
-    pub fn deref_package_json(ptr: Option<*const PackageJSON>) -> Option<&'static PackageJSON> {
+    pub(crate) fn deref_package_json(
+        ptr: Option<*const PackageJSON>,
+    ) -> Option<&'static PackageJSON> {
         // SAFETY: ARENA — every `*const PackageJSON` stored in
         // `Result::package_json` is interned in the resolver's process-lifetime
         // PackageJSON cache (or a `'static` fallback-module literal); never
@@ -251,31 +280,16 @@ impl Result {
 }
 
 pub struct DirEntryResolveQueueItem {
-    pub result: allocators::Result,
+    pub(crate) result: allocators::Result,
     // NOTE: `RawSlice<u8>` (not `&'static [u8]`) — these point into the
     // threadlocal `dir_info_uncached_path` buffer and are consumed before
     // `dir_info_cached_maybe_log` returns. `RawSlice` is `repr(transparent)`
     // over `*const [u8]` so the bit-level zero-init invariant for `Bufs` is
     // unchanged (the array slot is `MaybeUninit`-wrapped), and read sites use
     // safe `.slice()` instead of an open-coded raw-ptr deref.
-    pub unsafe_path: bun_ptr::RawSlice<u8>,
-    pub safe_path: bun_ptr::RawSlice<u8>,
-    pub fd: FD,
-}
-
-impl Default for DirEntryResolveQueueItem {
-    fn default() -> Self {
-        Self {
-            result: allocators::Result {
-                hash: 0,
-                index: allocators::NOT_FOUND,
-                status: allocators::ItemStatus::Unknown,
-            },
-            unsafe_path: bun_ptr::RawSlice::EMPTY,
-            safe_path: bun_ptr::RawSlice::EMPTY,
-            fd: FD::INVALID,
-        }
-    }
+    pub(crate) unsafe_path: bun_ptr::RawSlice<u8>,
+    pub(crate) safe_path: bun_ptr::RawSlice<u8>,
+    pub(crate) fd: FD,
 }
 
 // `bun_alloc::Result` doesn't derive Clone (yet); all its fields are Copy, so
@@ -296,9 +310,9 @@ impl Clone for DirEntryResolveQueueItem {
 }
 
 pub struct DebugLogs {
-    pub what: Vec<u8>,
-    pub indent: MutableString,
-    pub notes: Vec<bun_ast::Data>,
+    pub(crate) what: Vec<u8>,
+    pub(crate) indent: MutableString,
+    pub(crate) notes: Vec<bun_ast::Data>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -320,18 +334,18 @@ impl DebugLogs {
     // deinit → Drop (only frees `notes`)
 
     #[cold]
-    pub fn increase_indent(&mut self) {
+    pub(crate) fn increase_indent(&mut self) {
         self.indent.append(b" ").expect("unreachable");
     }
 
     #[cold]
-    pub fn decrease_indent(&mut self) {
+    pub(crate) fn decrease_indent(&mut self) {
         let new_len = self.indent.list.len() - 1;
         self.indent.list.truncate(new_len);
     }
 
     #[cold]
-    pub fn add_note(&mut self, text: Vec<u8>) {
+    pub(crate) fn add_note(&mut self, text: Vec<u8>) {
         let len = self.indent.len();
         let final_text = if len > 0 {
             let mut __text = Vec::with_capacity(text.len() + len);
@@ -348,7 +362,7 @@ impl DebugLogs {
     }
 
     #[cold]
-    pub fn add_note_fmt(&mut self, args: core::fmt::Arguments<'_>) {
+    pub(crate) fn add_note_fmt(&mut self, args: core::fmt::Arguments<'_>) {
         let mut buf = Vec::new();
         write!(&mut buf, "{}", args).expect("unreachable");
         self.add_note(buf);
@@ -356,15 +370,14 @@ impl DebugLogs {
 }
 
 pub struct MatchResult {
-    pub path_pair: PathPair,
-    pub dirname_fd: FD,
-    pub file_fd: FD,
-    pub is_node_module: bool,
-    pub package_json: Option<*const PackageJSON>,
-    pub diff_case: Option<Fs::file_system::entry::lookup::DifferentCase<'static>>,
-    pub dir_info: Option<DirInfoRef>,
-    pub module_type: options::ModuleType,
-    pub is_external: bool,
+    pub(crate) path_pair: PathPair,
+    pub(crate) dirname_fd: FD,
+    pub(crate) file_fd: FD,
+    pub(crate) is_node_module: bool,
+    pub(crate) package_json: Option<*const PackageJSON>,
+    pub(crate) dir_info: Option<DirInfoRef>,
+    pub(crate) module_type: options::ModuleType,
+    pub(crate) is_external: bool,
 }
 
 impl Default for MatchResult {
@@ -375,7 +388,6 @@ impl Default for MatchResult {
             file_fd: FD::INVALID,
             is_node_module: false,
             package_json: None,
-            diff_case: None,
             dir_info: None,
             module_type: options::ModuleType::Unknown,
             is_external: false,
@@ -398,7 +410,7 @@ pub enum MatchStatus {
 
 impl MatchStatus {
     #[inline]
-    pub fn is_success(&self) -> bool {
+    pub(crate) fn is_success(&self) -> bool {
         matches!(self, MatchStatus::Success)
     }
 }
@@ -435,9 +447,7 @@ pub enum PendingResolutionTag {
 pub struct LoadResult {
     /// Interned in `DirnameStore`/`FilenameStore` (process-lifetime singletons),
     /// so the `'static` borrow is genuine.
-    pub path: &'static [u8],
-    pub diff_case: Option<Fs::file_system::entry::lookup::DifferentCase<'static>>,
-    pub dirname_fd: FD,
-    pub file_fd: FD,
-    pub dir_info: Option<DirInfoRef>,
+    pub(crate) path: &'static [u8],
+    pub(crate) dirname_fd: FD,
+    pub(crate) file_fd: FD,
 }

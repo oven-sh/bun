@@ -7,10 +7,9 @@ use bun_sys::{self, Fd, FdExt};
 
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::node::types::FdJsc;
-use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::file_sink::{self, FileSink};
 use crate::webcore::sink;
-use crate::webcore::streams::SignalHandler;
+use crate::webcore::streams::SourceHandle;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
@@ -51,7 +50,7 @@ impl<'a> Writable<'a> {
     /// borrow. Single JS-mutator thread — no concurrent `&mut FileSink`.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub(in crate::api) fn pipe_sink_mut(pipe: &NonNull<FileSink>) -> &mut FileSink {
+    fn pipe_sink_mut(pipe: &NonNull<FileSink>) -> &mut FileSink {
         // SAFETY: see fn doc — +1-intrusive-ref'd, heap-disjoint, single-thread.
         unsafe { &mut *pipe.as_ptr() }
     }
@@ -90,7 +89,7 @@ impl<'a> Writable<'a> {
         unsafe { &mut *buffer.as_ptr() }
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Writable::Pipe(pipe) => Self::pipe_sink(*pipe).memory_cost(),
             Writable::Buffer(buffer) => buffer.memory_cost(),
@@ -99,7 +98,7 @@ impl<'a> Writable<'a> {
         }
     }
 
-    pub fn has_pending_activity(&self) -> bool {
+    pub(crate) fn has_pending_activity(&self) -> bool {
         match self {
             Writable::Pipe(_) => false,
 
@@ -109,7 +108,7 @@ impl<'a> Writable<'a> {
         }
     }
 
-    pub fn r#ref(&mut self) {
+    pub(crate) fn r#ref(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
                 Self::pipe_sink(*pipe).update_ref(true);
@@ -121,7 +120,7 @@ impl<'a> Writable<'a> {
         }
     }
 
-    pub fn unref(&mut self) {
+    pub(crate) fn unref(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
                 Self::pipe_sink(*pipe).update_ref(false);
@@ -136,10 +135,8 @@ impl<'a> Writable<'a> {
     // When the stream has closed we need to be notified to prevent a use-after-free
     // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
     //
-    // Note: deriving the parent from `&mut self` would be out-of-provenance
-    // (the `&mut` only covers the `stdin` field). Instead the `SignalHandler`
-    // impl is on `Subprocess` and hands us the parent directly; field accesses
-    // here are disjoint and sequential so a plain `&Subprocess` suffices.
+    // Parent comes via `SourceHandle::Subprocess` (the whole `*mut Subprocess`), not `&mut self`
+    // on the `stdin` field; accesses are disjoint so `&Subprocess` suffices.
     pub fn on_close(process: &Subprocess<'a>, _: Option<bun_sys::Error>) {
         if let Some(this_jsvalue) = process.this_value.get().try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
@@ -168,9 +165,8 @@ impl<'a> Writable<'a> {
         // act, so this must be the final access.
         process.on_stdin_destroyed();
     }
-    pub fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
 
-    pub fn init(
+    pub(crate) fn init(
         stdio: &mut Stdio,
         event_loop: &EventLoop,
         subprocess: &mut Subprocess<'a>,
@@ -427,7 +423,7 @@ impl<'a> Writable<'a> {
                 {
                     // `Writable::init()` already called `subprocess.ref()` and
                     // set `deref_on_stdin_destroyed`. `on_attached_process_exit()`
-                    // → `writer.close()` → `pipe.signal` → `Writable::on_close`
+                    // → `writer.close()` → `pipe.source` → `Writable::on_close`
                     // → `on_stdin_destroyed()` balances that ref, so a ref-count
                     // drop across this call is expected (previously these
                     // writes were clobbered by the struct-literal reassignment
@@ -468,10 +464,10 @@ impl<'a> Writable<'a> {
                         subprocess.ref_();
                         subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, true));
                     }
-                    if pipe.signal.get().ptr
-                        == NonNull::new(subprocess.as_ctx_ptr().cast::<c_void>())
+                    let parent_ptr = subprocess.as_ctx_ptr().cast::<Subprocess<'static>>();
+                    if matches!(*pipe.source.get(), SourceHandle::Subprocess(p) if p.as_const_ptr() == parent_ptr.cast_const())
                     {
-                        pipe.signal.with_mut(|s| s.clear());
+                        pipe.source.with_mut(|s| s.clear());
                     }
                     // Rust `FileSink::to_js_with_destructor` takes its own
                     // per-wrapper +1; release the enum's create-time +1 (see
@@ -498,14 +494,14 @@ impl<'a> Writable<'a> {
             }
         }
 
-        // The signal back-pointer is the `*mut Subprocess` (see SignalHandler
-        // impl below / `to_js`); compare against that, not the `stdin` address.
-        let parent_ptr = NonNull::new(subprocess.as_ctx_ptr().cast::<c_void>());
+        // Source back-pointer is the `*mut Subprocess`, not the `stdin` address.
+        let parent_ptr = subprocess.as_ctx_ptr().cast::<Subprocess<'static>>();
         match subprocess.stdin.replace(Writable::Ignore) {
             Writable::Pipe(pipe_nn) => {
                 let pipe = Self::pipe_sink_mut(&pipe_nn);
-                if pipe.signal.get().ptr == parent_ptr {
-                    pipe.signal.with_mut(|s| s.clear());
+                if matches!(*pipe.source.get(), SourceHandle::Subprocess(p) if p.as_const_ptr() == parent_ptr.cast_const())
+                {
+                    pipe.source.with_mut(|s| s.clear());
                 }
 
                 Self::pipe_release(pipe_nn);
@@ -547,17 +543,4 @@ impl<'a> Writable<'a> {
             Writable::Inherit => {}
         }
     }
-}
-
-// Note: registering the `*mut Writable` and recovering the parent inside the
-// callback would be out-of-provenance (the `&mut Writable` formed by the
-// vtable thunk only carries provenance for the `stdin` field). Register the
-// `*mut Subprocess` instead — `signal.ptr` carries whole-allocation provenance
-// and `on_close`/`finalize`/`to_js` raw-project `stdin` from it.
-impl<'a> SignalHandler for Subprocess<'a> {
-    fn on_close(&mut self, err: Option<bun_sys::Error>) {
-        Writable::on_close(self, err)
-    }
-    fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
-    fn on_start(&mut self) {}
 }

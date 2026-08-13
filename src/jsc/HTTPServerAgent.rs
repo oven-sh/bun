@@ -72,14 +72,6 @@ impl Default for Route {
     }
 }
 
-impl Route {
-    pub fn params(&self) -> &[BunString] {
-        // SAFETY: param_names points to param_names_len contiguous BunString
-        // values (or is `(null, 0)`, which `ffi::slice` tolerates).
-        unsafe { bun_core::ffi::slice(self.param_names, self.param_names_len) }
-    }
-}
-
 impl Drop for Route {
     fn drop(&mut self) {
         if !self.param_names.is_null() {
@@ -105,64 +97,9 @@ bun_opaque::opaque_ffi! {
     pub struct InspectorHTTPServerAgent;
 }
 
-// `safe fn`: `InspectorHTTPServerAgent` is an `opaque_ffi!` ZST handle
-// (`!Freeze` via `UnsafeCell`); `BunString` is `#[repr(C)]` and read-only
-// across the call. `&mut`/`&` are ABI-identical to non-null `*mut`/`*const`.
-// Remaining args are by-value scalars / `#[repr(u8)]` enums.
-unsafe extern "C" {
-    pub safe fn Bun__HTTPServerAgent__notifyRequestWillBeSent(
-        agent: &mut InspectorHTTPServerAgent,
-        request_id: RequestId,
-        server_id: ServerId,
-        route_id: RouteId,
-        url: &BunString,
-        full_url: &BunString,
-        method: HTTPMethod,
-        headers_json: &BunString,
-        params_json: &BunString,
-        has_body: bool,
-        timestamp: f64,
-    );
-    pub safe fn Bun__HTTPServerAgent__notifyResponseReceived(
-        agent: &mut InspectorHTTPServerAgent,
-        request_id: RequestId,
-        server_id: ServerId,
-        status_code: i32,
-        status_text: &BunString,
-        headers_json: &BunString,
-        has_body: bool,
-        timestamp: f64,
-    );
-    pub safe fn Bun__HTTPServerAgent__notifyBodyChunkReceived(
-        agent: &mut InspectorHTTPServerAgent,
-        request_id: RequestId,
-        server_id: ServerId,
-        flags: i32,
-        chunk: &BunString,
-        timestamp: f64,
-    );
-    pub safe fn Bun__HTTPServerAgent__notifyRequestFinished(
-        agent: &mut InspectorHTTPServerAgent,
-        request_id: RequestId,
-        server_id: ServerId,
-        timestamp: f64,
-        duration: f64,
-    );
-    pub safe fn Bun__HTTPServerAgent__notifyRequestHandlerException(
-        agent: &mut InspectorHTTPServerAgent,
-        request_id: RequestId,
-        server_id: ServerId,
-        message: &BunString,
-        url: &BunString,
-        line: i32,
-        timestamp: f64,
-    );
-
-    // `Bun__HTTPServerAgent__notifyServer{Started,Stopped,RoutesUpdated}` are
-    // `[[ZIG_EXPORT(nothrow)]]` — declared once in `crate::cpp::raw` (cppbind),
-    // called below with explicit casts to the codegen's opaque param types.
-}
-
+// `Bun__HTTPServerAgent__notifyServer{Started,Stopped,RoutesUpdated}` are
+// `[[ZIG_EXPORT(nothrow)]]` — declared once in `crate::cpp::raw` (cppbind),
+// called below with explicit casts to the codegen's opaque param types.
 impl InspectorHTTPServerAgent {
     /// # Safety
     /// `server_instance` is forwarded to C++ as an opaque token; caller must
@@ -236,7 +173,7 @@ impl InspectorHTTPServerAgent {
 // #region C++ entry points
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServerAgent) {
+pub(crate) extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServerAgent) {
     // SAFETY: VM singleton is process-lifetime.
     let vm = VirtualMachine::get().as_mut();
     if let Some(debugger) = &mut vm.debugger {
@@ -248,7 +185,5 @@ pub extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServ
 
 // Typedefs from HTTPServer.json
 pub type ServerId = crate::debugger::DebuggerId;
-pub type RequestId = i32;
 pub type RouteId = i32;
 pub type HotReloadId = i32;
-pub type HTTPMethod = bun_http::Method;

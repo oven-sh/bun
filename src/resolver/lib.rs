@@ -52,8 +52,9 @@ pub use tsconfig_json::TSConfigJSON;
 pub use ::bun_install_types::resolver_hooks as install_types;
 pub use resolver::{AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver};
 pub use result::{
-    DebugLogs, DirEntryResolveQueueItem, FlushMode, LoadResult, MatchResult, MatchStatus, PathPair,
-    PendingResolution, PendingResolutionTag, Result, ResultFlags, ResultUnion,
+    DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
+    MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
+    ResultUnion,
 };
 pub use standalone_module_graph::StandaloneModuleGraph;
 
@@ -181,13 +182,13 @@ pub mod fs {
     // Global mutable singleton.
     // `RacyCell` is the alias-safe static cell — `init()` is the only writer,
     // serialized at startup; readers go through `instance()`.
-    pub(crate) static INSTANCE: bun_core::RacyCell<core::mem::MaybeUninit<FileSystem>> =
+    static INSTANCE: bun_core::RacyCell<core::mem::MaybeUninit<FileSystem>> =
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
     pub static INSTANCE_LOADED: AtomicBool = AtomicBool::new(false);
 
     // Windows uses `HANDLE` (no monotone ordering); tracked POSIX-only.
     #[cfg(not(windows))]
-    pub(crate) static MAX_FD: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
+    static MAX_FD: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
 
     static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
 
@@ -204,7 +205,7 @@ pub mod fs {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
                 .unwrap_or(0);
-            let hex_value: u64 = (u128::from(hash) | nanos) as u64;
+            let hex_value: u64 = hash ^ (nanos as u64);
 
             let len = buf.len();
             let mut cursor = &mut buf[..];
@@ -264,7 +265,7 @@ pub mod fs {
         /// the singleton even if already loaded — used by the router test
         /// harness which `chdir`s between fixtures and needs a fresh
         /// `top_level_dir`.
-        pub fn init_with_force<const FORCE: bool>(
+        pub(crate) fn init_with_force<const FORCE: bool>(
             top_level_dir: Option<&[u8]>,
         ) -> crate::CrateResult<*mut FileSystem> {
             // SAFETY: single-threaded startup; called from
@@ -333,7 +334,7 @@ pub mod fs {
         /// Highest fd seen via `set_max_fd`.
         #[inline]
         #[cfg(not(windows))]
-        pub fn max_fd() -> bun_sys::RawFd {
+        pub(crate) fn max_fd() -> bun_sys::RawFd {
             MAX_FD.load(Ordering::Relaxed)
         }
 
@@ -372,7 +373,7 @@ pub mod fs {
 
         /// Like `abs`, but interns the joined path into `DirnameStore` and
         /// returns the `'static` copy.
-        pub fn abs_alloc(
+        pub(crate) fn abs_alloc(
             &self,
             parts: &[&[u8]],
         ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
@@ -630,7 +631,7 @@ pub mod fs {
                 // If `pretty` contains no backslashes it is already POSIX-style.
                 // Short-circuiting preserves the `pretty.ptr == text.ptr` aliasing
                 // optimisation inside `dupe_alloc` and avoids a fresh FilenameStore alloc.
-                if !self.pretty.iter().any(|&b| b == b'\\') {
+                if !bun_core::strings::contains_char(self.pretty, b'\\') {
                     return self.dupe_alloc(alloc);
                 }
                 let mut new = self.clone();
@@ -686,8 +687,8 @@ pub mod fs {
     // Canonical definitions live in `fs.rs` (mounted as `crate::fs_full`).
     // Re-exported here so the public path `bun_resolver::fs::*` is preserved.
     pub use crate::fs_full::{
-        DifferentCase, DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver,
-        EntryLookup, FilenameStoreAppender, dir_entry,
+        DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver, EntryLookup,
+        FilenameStoreAppender, dir_entry,
     };
 
     use bun_core::Generation;
@@ -739,14 +740,16 @@ pub mod fs {
     /// only needs the temp-dir path, which routes via `tmpdir_path`.
     pub struct RealFsTmpfile {
         pub fd: bun_sys::Fd,
-        pub dir_fd: bun_sys::Fd,
+        #[cfg(not(windows))]
+        pub(crate) dir_fd: bun_sys::Fd,
         #[cfg(windows)]
-        pub existing_path: Box<[u8]>,
+        pub(crate) existing_path: Box<[u8]>,
     }
     impl Default for RealFsTmpfile {
         fn default() -> Self {
             Self {
                 fd: bun_sys::Fd::INVALID,
+                #[cfg(not(windows))]
                 dir_fd: bun_sys::Fd::INVALID,
                 #[cfg(windows)]
                 existing_path: Box::default(),
@@ -759,7 +762,7 @@ pub mod fs {
             bun_sys::File::borrow(&self.fd)
         }
 
-        pub fn close(&mut self) {
+        pub(crate) fn close(&mut self) {
             if self.fd.is_valid() {
                 let _ = bun_sys::close(self.fd);
                 self.fd = bun_sys::Fd::INVALID;
@@ -882,6 +885,41 @@ pub mod fs {
     impl EntriesOption {
         // Payload is `&'static mut DirEntry`; auto-deref coerces to `&DirEntry` / `&mut DirEntry`.
         bun_core::enum_unwrap!(pub EntriesOption, Entries => fn entries / entries_mut -> DirEntry);
+
+        /// Probe the cached listing for `query` and return the lookup plus the
+        /// listing fd, in one `entries_mutex` critical section. A
+        /// stale-generation re-read rewrites the slot's `DirEntry` (and frees
+        /// the old map's buckets) in place under that lock, so the map must
+        /// not be walked after unlock; the returned entry pointer is
+        /// EntryStore-owned and stays valid. The caller must NOT already hold
+        /// `entries_mutex` (it is non-recursive).
+        pub(crate) fn lookup(
+            &self,
+            query: &[u8],
+        ) -> (Option<crate::fs_full::EntryLookup<'static>>, Fd) {
+            let _lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            match self {
+                EntriesOption::Entries(entries) => {
+                    // SAFETY: ARENA — the `DirEntry` is a process-lifetime
+                    // BSSMap slot (see the enum doc), so widening the local
+                    // reborrow to `'static` is sound.
+                    let entries: &'static DirEntry =
+                        unsafe { &*core::ptr::from_ref::<DirEntry>(&**entries) };
+                    (entries.get(query), entries.fd)
+                }
+                EntriesOption::Err(_) => (None, Fd::INVALID),
+            }
+        }
+
+        /// Listing dir + fd snapshot under `entries_mutex` (watch
+        /// registration); `None` when the slot holds a read error.
+        pub(crate) fn dir_and_fd(&self) -> Option<(&'static [u8], Fd)> {
+            let _lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            match self {
+                EntriesOption::Entries(entries) => Some((entries.dir, entries.fd)),
+                EntriesOption::Err(_) => None,
+            }
+        }
     }
 
     // SAFETY: ARENA — `EntriesOption` holds an unbounded `&mut DirEntry` (whose `data`
@@ -896,7 +934,7 @@ pub mod fs {
     /// Fixed-capacity (2048-entry) BSS-backed hash map for the directory-entry
     /// cache. Keys are not stored — only their hashes — so lookups cannot
     /// recover key bytes (`BSSMapInner` is the keyless inner shape).
-    pub(crate) type EntriesOptionMap = bun_alloc::BSSMapInner<EntriesOption, 2048, true>;
+    type EntriesOptionMap = bun_alloc::BSSMapInner<EntriesOption, 2048, true>;
 
     // Per-monomorphization singleton storage for `EntriesOption.Map`.
     bun_alloc::bss_map_inner! { pub entries_option_map : EntriesOption, 2048, true }
@@ -943,15 +981,18 @@ pub mod fs {
         pub fn get(&mut self, key: &[u8]) -> Option<&mut EntriesOption> {
             self.inner().get(key)
         }
-        pub fn get_or_put(&mut self, key: &[u8]) -> crate::CrateResult<bun_alloc::Result> {
+        pub(crate) fn get_or_put(&mut self, key: &[u8]) -> crate::CrateResult<bun_alloc::Result> {
             self.inner()
                 .get_or_put(key)
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
         }
-        pub fn at_index(&mut self, index: bun_alloc::IndexType) -> Option<&mut EntriesOption> {
+        pub(crate) fn at_index(
+            &mut self,
+            index: bun_alloc::IndexType,
+        ) -> Option<&mut EntriesOption> {
             self.inner().at_index(index)
         }
-        pub fn put(
+        pub(crate) fn put(
             &mut self,
             result: &mut bun_alloc::Result,
             value: EntriesOption,
@@ -964,10 +1005,10 @@ pub mod fs {
                 .map(std::ptr::from_mut::<EntriesOption>)
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
         }
-        pub fn mark_not_found(&mut self, result: bun_alloc::Result) {
+        pub(crate) fn mark_not_found(&mut self, result: bun_alloc::Result) {
             self.inner().mark_not_found(result)
         }
-        pub fn remove(&mut self, key: &[u8]) -> bool {
+        pub(crate) fn remove(&mut self, key: &[u8]) -> bool {
             self.inner().remove(key)
         }
     }
@@ -985,29 +1026,31 @@ pub mod fs {
         /// this directly (`rfs.entries.get_or_put(..)`); modeled as the wrapper
         /// `EntriesMap` (bun_alloc has no BSSMap equivalent).
         pub entries: EntriesMap,
-        pub cwd: &'static [u8],
-        pub file_limit: usize,
-        pub file_quota: usize,
+        pub(crate) cwd: &'static [u8],
+        #[cfg(not(windows))]
+        pub(crate) file_limit: usize,
     }
 
     impl RealFS {
         /// Raise RLIMIT_NOFILE and
         /// record the resulting fd budget so `need_to_close_files` can decide
         /// whether to cache directory fds.
-        pub fn init(cwd: &'static [u8]) -> RealFS {
+        pub(crate) fn init(cwd: &'static [u8]) -> RealFS {
             let file_limit = Self::adjust_ulimit().expect("unreachable");
+            #[cfg(windows)]
+            let _ = file_limit;
             RealFS {
                 entries_mutex: Mutex::default(),
                 entries: EntriesMap::new(),
                 cwd,
+                #[cfg(not(windows))]
                 file_limit,
-                file_quota: file_limit,
             }
         }
 
         /// Port of `RealFS.adjustUlimit` — always try to max out how many
         /// files we can keep open.
-        pub fn adjust_ulimit() -> crate::CrateResult<usize> {
+        pub(crate) fn adjust_ulimit() -> crate::CrateResult<usize> {
             #[cfg(not(unix))]
             {
                 Ok(usize::MAX)
@@ -1043,7 +1086,7 @@ pub mod fs {
         }
 
         /// `open(path, O_DIRECTORY)`.
-        pub fn open_dir(&self, unsafe_dir_string: &[u8]) -> crate::CrateResult<Fd> {
+        pub(crate) fn open_dir(&self, unsafe_dir_string: &[u8]) -> crate::CrateResult<Fd> {
             #[cfg(windows)]
             {
                 // NtCreateFile with FILE_DIRECTORY_FILE/FILE_LIST_DIRECTORY so
@@ -1302,7 +1345,7 @@ pub mod fs {
 
         /// Evicts `file_path` from the directory-entry cache; returns whether
         /// an entry was removed.
-        pub fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
+        pub(crate) fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
             // `entries` is the process-global
             // BSSMap singleton and `remove` mutates it; callers (transpiler /
             // hot-reloader / VM) reach this without `RESOLVER_MUTEX`, so take
@@ -1317,7 +1360,7 @@ pub mod fs {
         /// readlink to populate an `EntryCache`. Windows: `GetFileAttributesW` +
         /// (if reparse point) `CreateFileW`-follow + `GetFinalPathNameByHandle`
         /// realpath.
-        pub fn kind(
+        pub(crate) fn kind(
             &mut self,
             dir_: &[u8],
             base: &[u8],
@@ -1513,7 +1556,7 @@ pub mod fs {
         /// Whether cached file descriptors should be closed eagerly instead
         /// of kept open (fd budget exceeded or fd-storing disabled).
         #[inline]
-        pub fn need_to_close_files(&self) -> bool {
+        pub(crate) fn need_to_close_files(&self) -> bool {
             if !bun_core::feature_flags::STORE_FILE_DESCRIPTORS {
                 return true;
             }
@@ -1536,27 +1579,12 @@ pub mod fs {
         }
 
         /// Index lookup with generation-check
-        /// re-read (open + readdir + cache replace) when the cached listing is stale.
-        ///
-        /// Takes `entries_mutex` for the whole lookup: the generation-stale branch
-        /// drops the existing `DirEntry` (and the bucket allocation behind its
-        /// `data` map) in place, and the route loaders iterate that map under the
-        /// same lock. Call [`entries_at_locked`](Self::entries_at_locked) instead
-        /// from inside a critical section that already holds `entries_mutex`.
-        pub fn entries_at(
-            &mut self,
-            index: bun_alloc::IndexType,
-            generation: Generation,
-        ) -> Option<&mut EntriesOption> {
-            // `MutexGuard` stores the mutex by raw pointer (see `EntriesGuard`),
-            // so holding it does not keep `&mut self` borrowed.
-            let _g = self.entries_mutex.lock_guard();
-            self.entries_at_locked(index, generation)
-        }
-
-        /// [`entries_at`](Self::entries_at) for call sites that already hold
-        /// `entries_mutex` (the mutex is non-recursive).
-        pub fn entries_at_locked(
+        /// re-read (open + readdir + cache replace) when the cached listing is
+        /// stale. The generation-stale branch drops the existing `DirEntry`
+        /// (and the bucket allocation behind its `data` map) in place, and
+        /// every `.data` reader holds `entries_mutex` for the probe, so the
+        /// caller must already hold it (the mutex is non-recursive).
+        pub(crate) fn entries_at_locked(
             &mut self,
             index: bun_alloc::IndexType,
             generation: Generation,
@@ -1567,7 +1595,7 @@ pub mod fs {
             );
             // erase to raw immediately so re-borrowing `&mut self` for
             // `open_dir`/`readdir`/`read_directory_error` doesn't conflict.
-            // `entries_mutex` held (by `entries_at` or the caller); sole `&mut` to this slot.
+            // `entries_mutex` held by the caller; sole `&mut` to this slot.
             let result_ptr = std::ptr::from_mut::<EntriesOption>(self.entries.at_index(index)?);
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
@@ -1750,21 +1778,14 @@ pub mod fs {
             }
 
             Ok(ModKey {
-                inode: stat.st_ino,
                 size: stat.st_size as u64,
                 mtime,
-                mode: stat.st_mode as bun_sys::Mode,
             })
         }
     }
 
     pub mod file_system {
         pub use super::{DirEntry, DirnameStore, Entry, EntryKind, FilenameStore, RealFS};
-        pub mod entry {
-            pub mod lookup {
-                pub use crate::fs::DifferentCase;
-            }
-        }
         pub mod real_fs {
             pub use crate::fs::EntriesOption;
         }
@@ -1791,7 +1812,7 @@ pub mod dir_entry_accessor {
 
     #[derive(Clone, Copy)]
     pub struct DirEntryHandle {
-        pub value: Option<&'static DirEntry>,
+        pub(crate) value: Option<&'static DirEntry>,
     }
 
     impl AccessorHandle for DirEntryHandle {
@@ -1826,11 +1847,11 @@ pub mod dir_entry_accessor {
     }
 
     pub struct DirEntryIterResult {
-        pub name: DirEntryNameWrapper,
-        pub kind: bun_sys::FileKind,
+        pub(crate) name: DirEntryNameWrapper,
+        pub(crate) kind: bun_sys::FileKind,
         /// Resolver-cached real path of a symlink entry's target
         /// (`Interned::EMPTY` for non-symlinks).
-        pub symlink_target: bun_ptr::Interned,
+        pub(crate) symlink_target: bun_ptr::Interned,
     }
 
     pub(crate) struct DirEntryNameWrapper {
@@ -1847,7 +1868,7 @@ pub mod dir_entry_accessor {
 
     impl DirEntryNameWrapper {
         #[inline]
-        pub(crate) fn slice(&self) -> &[u8] {
+        fn slice(&self) -> &[u8] {
             // BACKREF — see field comment. The GlobWalker consumes
             // `name_slice()` before advancing the iterator or reopening the
             // directory, so the pointee `Box<[u8]>` is still alive here.
@@ -1879,14 +1900,17 @@ pub mod dir_entry_accessor {
                     return Ok(None);
                 };
                 // BACKREF: ARENA — `*mut Entry` points into the EntryStore
-                // BSSList singleton ('static lifetime); `RealFS.entries_mutex`
-                // serializes access. `BackRef::from(NonNull)` + `Deref` keeps
-                // the read site safe.
+                // BSSList singleton ('static lifetime). This iterator holds a
+                // live `.data` iterator across calls, which `entries_mutex`
+                // cannot cover; it is only sound on the single-threaded CLI
+                // glob walk (`bun run --filter`), before any concurrent
+                // resolver exists to rewrite the map.
                 let entry = bun_ptr::BackRef::<Entry>::from(
                     core::ptr::NonNull::new(*val).expect("EntryStore slot"),
                 );
                 let fs: *mut Implementation = &raw mut FS::instance().fs;
-                // SAFETY: entries_mutex held; fs points at the process-global RealFS.
+                // SAFETY: fs points at the process-global RealFS; the lazy-stat
+                // rewrite inside `kind()` is serialized on the per-entry mutex.
                 let kind = unsafe { entry.kind(fs, true) };
                 let fskind = match kind {
                     EntryKind::File => bun_sys::FileKind::File,
@@ -2048,7 +2072,7 @@ pub mod cache {
     }
 
     impl Set {
-        pub fn init() -> Set {
+        pub(crate) fn init() -> Set {
             Set {
                 fs: Fs {
                     shared_buffer: MutableString::init(0).expect("unreachable"),
@@ -2064,22 +2088,11 @@ pub mod cache {
     /// File-read cache: shared read buffers plus flags controlling buffer
     /// reuse and streaming reads.
     pub struct Fs {
-        pub shared_buffer: MutableString,
-        pub macro_shared_buffer: MutableString,
+        pub(crate) shared_buffer: MutableString,
+        pub(crate) macro_shared_buffer: MutableString,
 
         pub use_alternate_source_cache: bool,
-        pub stream: bool,
-    }
-
-    impl Default for Fs {
-        fn default() -> Self {
-            Self {
-                shared_buffer: MutableString::init(0).expect("unreachable"),
-                macro_shared_buffer: MutableString::init(0).expect("unreachable"),
-                use_alternate_source_cache: false,
-                stream: false,
-            }
-        }
+        pub(crate) stream: bool,
     }
 
     /// Optional external destructor (`function(ctx)`) for foreign-owned
@@ -2393,14 +2406,8 @@ pub mod cache {
                 }
                 _ => {
                     let shared = self.shared_buffer();
-                    match fs_mod::read_file_contents(
-                        file_handle,
-                        path,
-                        use_shared_buffer,
-                        shared,
-                        stream,
-                    )
-                    .map(Contents::from)
+                    match fs_mod::read_file_contents(file_handle, use_shared_buffer, shared, stream)
+                        .map(Contents::from)
                     {
                         Ok(c) => c,
                         Err(err) => {

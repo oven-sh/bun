@@ -12,7 +12,7 @@ use bun_core::{pretty, pretty_error, pretty_errorln};
 
 // ─── compiling submodules ────────────────────────────────────────────────────
 #[path = "ci_info.rs"]
-pub mod ci_info;
+pub(crate) mod ci_info;
 /// CI-provider detection table, copied from watson/ci-info@4.0.0; maintained by
 /// hand. Keep in sync with the vendors.json upstream.
 pub(crate) mod ci_info_generated {
@@ -214,7 +214,7 @@ pub mod add_completions;
 #[path = "colon_list_type.rs"]
 pub mod colon_list_type;
 #[path = "discord_command.rs"]
-pub mod discord_command;
+pub(crate) mod discord_command;
 #[path = "shell_completions.rs"]
 pub mod shell_completions;
 #[path = "which_npm_client.rs"]
@@ -279,6 +279,10 @@ pub mod test {
     #[path = "ChangedFilesFilter.rs"]
     pub mod changed_files_filter;
 
+    /// `bun test --timings` / `--update-timings`: per-file duration table.
+    #[path = "Timings.rs"]
+    pub mod timings;
+
     /// `bun test --parallel`: process-pool coordinator/worker entry points.
     /// Thin façade re-exporting from `parallel::runner`.
     #[path = "ParallelRunner.rs"]
@@ -321,7 +325,7 @@ pub mod create_command;
 #[path = "exec_command.rs"]
 pub mod exec_command;
 #[path = "fuzzilli_command.rs"]
-pub mod fuzzilli_command;
+pub(crate) mod fuzzilli_command;
 #[path = "install_command.rs"]
 pub mod install_command;
 #[path = "repl_command.rs"]
@@ -331,7 +335,7 @@ pub mod upgrade_command;
 // MOVE_UP: `--analyze` branch + `Cli.log_` access of
 // `bun_install::update_package_json_and_install{,_catch_error}` — see file header.
 #[path = "add_command.rs"]
-pub mod add_command;
+pub(crate) mod add_command;
 #[path = "audit_command.rs"]
 pub mod audit_command;
 #[path = "filter_arg.rs"]
@@ -347,9 +351,9 @@ pub mod outdated_command;
 #[path = "pack_command.rs"]
 pub mod pack_command;
 #[path = "patch_command.rs"]
-pub mod patch_command;
+pub(crate) mod patch_command;
 #[path = "patch_commit_command.rs"]
-pub mod patch_commit_command;
+pub(crate) mod patch_commit_command;
 #[path = "pm_pkg_command.rs"]
 pub mod pm_pkg_command;
 #[path = "pm_trusted_command.rs"]
@@ -360,17 +364,17 @@ pub mod pm_version_command;
 #[path = "pm_view_command.rs"]
 pub mod pm_view_command;
 #[path = "pm_why_command.rs"]
-pub mod pm_why_command;
+pub(crate) mod pm_why_command;
 #[path = "publish_command.rs"]
 pub mod publish_command;
 #[path = "remove_command.rs"]
-pub mod remove_command;
+pub(crate) mod remove_command;
 #[path = "scan_command.rs"]
 pub mod scan_command;
 #[path = "unlink_command.rs"]
 pub mod unlink_command;
 #[path = "update_command.rs"]
-pub mod update_command;
+pub(crate) mod update_command;
 #[path = "update_interactive_command.rs"]
 pub mod update_interactive_command;
 #[path = "why_command.rs"]
@@ -389,7 +393,7 @@ pub use ::bun_clap::concat_params;
 /// `OnceLock` lives in `bun_core` (single source of truth); this accessor
 /// remains so existing `crate::cli::start_time()` callers don't churn.
 #[inline]
-pub(crate) fn start_time() -> i128 {
+fn start_time() -> i128 {
     bun_core::start_time()
 }
 
@@ -399,6 +403,19 @@ pub(crate) fn start_time() -> i128 {
 // leaking. The mutex provides exclusion between `get_title`/`set_title`.
 pub(crate) static Bun__Node__ProcessTitle: bun_threading::Guarded<Option<Box<[u8]>>> =
     bun_threading::Guarded::new(None);
+
+#[allow(non_upper_case_globals)]
+/// `--redirect-warnings=<path>` — process warnings are appended to this file
+/// instead of stderr (Node's flag; NODE_REDIRECT_WARNINGS is handled by the
+/// C++ consumer as the fallback). Set once during CLI parse.
+pub(crate) static Bun__Node__RedirectWarnings: std::sync::OnceLock<Box<[u8]>> =
+    std::sync::OnceLock::new();
+
+#[allow(non_upper_case_globals)]
+/// `--disable-warning=<code-or-type>` (repeatable) — warnings whose `code`
+/// or `name` matches an entry are suppressed. Set once during CLI parse.
+pub(crate) static Bun__Node__DisabledWarnings: std::sync::OnceLock<Vec<Box<[u8]>>> =
+    std::sync::OnceLock::new();
 
 /// Backing storage for [`cli_arena`]. Written exactly once in [`Cli::start`]
 /// during single-threaded process startup (before `Command::start`, hence
@@ -412,7 +429,7 @@ pub(crate) static Bun__Node__ProcessTitle: bun_threading::Guarded<Option<Box<[u8
 /// hot `bun <file>` / `bun run <script>` path (via `cli_dupe` / `cli_dupe_z` /
 /// `runner_arena`), so a `LazyLock` there faults a fresh cold page on every
 /// `bun` invocation; a plain cell is the correct shape.
-pub(crate) static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc::Arena>> =
+static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc::Arena>> =
     bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
 /// Process-lifetime arena for one-shot CLI commands; allocations live until
@@ -425,7 +442,7 @@ pub(crate) static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc
 /// main thread, which is where the arena is constructed). Do not call from
 /// worker/watcher threads.
 #[inline]
-pub(crate) fn cli_arena() -> &'static bun_alloc::Arena {
+fn cli_arena() -> &'static bun_alloc::Arena {
     // SAFETY: `CLI_ARENA` is written exactly once in `Cli::start` during
     // single-threaded startup, before `Command::start` runs and therefore
     // before any caller of `cli_arena()` / `cli_dupe` / `cli_dupe_z` exists.
@@ -446,7 +463,7 @@ pub(crate) fn cli_dupe(s: &[u8]) -> &'static [u8] {
 /// a stable address; only the `Box` value moves into the table). Use when the
 /// caller already owns a large buffer (e.g. tarball, request body) so
 /// [`cli_dupe`]'s memcpy + transient double-peak is avoided. Thread-safe.
-pub(crate) fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
+fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
     static ADOPTED: bun_threading::Guarded<Vec<Box<[u8]>>> =
         bun_threading::Guarded::new(Vec::new());
     let (ptr, len) = (b.as_ptr(), b.len());
@@ -460,7 +477,7 @@ pub(crate) fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
 /// Dupe `s` into the process-lifetime CLI arena with a trailing NUL and
 /// return the C-string pointer (for argv/envp construction).
 #[inline]
-pub(crate) fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
+fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
     let buf: &'static mut [u8] = cli_arena().alloc_slice_fill_default(s.len() + 1);
     buf[..s.len()].copy_from_slice(s);
     // buf[s.len()] is already 0 (Default for u8).
@@ -480,7 +497,7 @@ thread_local! {
 /// startup.order cluster and faults a fresh page on every `bun` invocation.
 /// The write happens before any
 /// thread is spawned, so a bare cell is the correct shape.
-pub(crate) static CMD: bun_core::RacyCell<Option<command::Tag>> = bun_core::RacyCell::new(None);
+static CMD: bun_core::RacyCell<Option<command::Tag>> = bun_core::RacyCell::new(None);
 
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
 /// to pretend to be node.js by always choosing RunCommand with a relative filepath.
@@ -490,8 +507,7 @@ pub(crate) static CMD: bun_core::RacyCell<Option<command::Tag>> = bun_core::Racy
 pub use bun_install::PRETEND_TO_BE_NODE;
 
 /// This is set `true` during `Command.which()` if argv0 is "bunx"
-pub(crate) static IS_BUNX_EXE: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
+static IS_BUNX_EXE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 bun_core::declare_scope!(CLI, hidden);
 
@@ -513,7 +529,7 @@ impl colon_list_type::ColonListValue for &'static [u8] {
 }
 
 #[cold]
-pub(crate) fn invalid_target(diag: &mut bun_clap::Diagnostic, _target: &[u8]) -> ! {
+fn invalid_target(diag: &mut bun_clap::Diagnostic, _target: &[u8]) -> ! {
     let _ = diag.report(Output::error_writer(), bun_clap::Error::InvalidArgument);
     Global::exit(1);
 }
@@ -574,17 +590,6 @@ pub mod cli {
 }
 pub use cli as Cli;
 
-// ─── debug_flags (resolve/print breakpoints) ─────────────────────────────────
-pub mod debug_flags {
-    // `Vec<&'static [u8]>` (not `&'static [&[u8]]`) so `parse()` can
-    // hand off ownership of the argv-borrowed list without leaking the backing
-    // storage. Each `&'static [u8]` element is a process-lifetime argv slice.
-    pub(crate) static RESOLVE_BREAKPOINTS: std::sync::OnceLock<Vec<&'static [u8]>> =
-        std::sync::OnceLock::new();
-    pub(crate) static PRINT_BREAKPOINTS: std::sync::OnceLock<Vec<&'static [u8]>> =
-        std::sync::OnceLock::new();
-}
-
 // ─── HelpCommand ─────────────────────────────────────────────────────────────
 pub mod help_command {
     use super::*;
@@ -601,7 +606,7 @@ pub mod help_command {
     }
 
     // someone will get mad at me for this
-    pub(crate) const PACKAGES_TO_REMOVE_FILLER: &[&str] = &[
+    const PACKAGES_TO_REMOVE_FILLER: &[&str] = &[
         "moment",
         "underscore",
         "jquery",
@@ -614,7 +619,7 @@ pub mod help_command {
         "babel-core",
         "@parcel/core",
     ];
-    pub(crate) const PACKAGES_TO_ADD_FILLER: &[&str] = &[
+    const PACKAGES_TO_ADD_FILLER: &[&str] = &[
         "elysia",
         "@shumai/shumai",
         "hono",
@@ -626,11 +631,10 @@ pub mod help_command {
         "zod",
         "tailwindcss",
     ];
-    pub(crate) const PACKAGES_TO_X_FILLER: &[&str] = &[
+    const PACKAGES_TO_X_FILLER: &[&str] = &[
         "bun-repl", "next", "vite", "prisma", "nuxi", "prettier", "eslint",
     ];
-    pub(crate) const PACKAGES_TO_CREATE_FILLER: &[&str] =
-        &["next-app", "vite", "astro", "svelte", "elysia"];
+    const PACKAGES_TO_CREATE_FILLER: &[&str] = &["next-app", "vite", "astro", "svelte", "elysia"];
 
     /// Emits the `pretty!`/`pretty_error!` call directly instead of
     /// expanding to a bare literal — `pretty!` captures its template as
@@ -685,7 +689,7 @@ pub mod help_command {
 
     // Tag/Reason lack `ConstParamTy` in lower-tier crates, so `reason` is a
     // runtime arg.
-    pub fn print_with_reason(reason: Reason, show_all_flags: bool) {
+    pub(crate) fn print_with_reason(reason: Reason, show_all_flags: bool) {
         let mut rand = bun_core::rand::DefaultPrng::init(
             u64::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast"),
         );
@@ -744,7 +748,7 @@ Join our Discord community:      <blue>https://bun.com/discord<r>\n"
     }
 
     #[cold]
-    pub(crate) fn exec_with_reason(reason: Reason) -> ! {
+    fn exec_with_reason(reason: Reason) -> ! {
         print_with_reason(reason, false);
         if reason == Reason::InvalidCommand {
             Global::exit(1);
@@ -793,7 +797,7 @@ pub mod command {
     /// `Argv` only exposes `.get(i)` / `.iter() -> &[u8]`; several call
     /// sites need a sliceable `&[&ZStr]`.
     #[inline]
-    pub(super) fn argv_zslice() -> Vec<&'static bun_core::ZStr> {
+    fn argv_zslice() -> Vec<&'static bun_core::ZStr> {
         let a = bun::argv();
         (0..a.len()).map(|i| a.get(i).unwrap()).collect()
     }
@@ -825,7 +829,7 @@ pub mod command {
     // `bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG` so node-mode argv parsing
     // stays silent on unknown flags.
     // ──────────────────
-    pub(crate) fn is_bun_x(argv0: &[u8]) -> bool {
+    fn is_bun_x(argv0: &[u8]) -> bool {
         #[cfg(windows)]
         {
             return strings::ends_with(argv0, b"bunx.exe") || strings::ends_with(argv0, b"bunx");
@@ -836,7 +840,7 @@ pub mod command {
         }
     }
 
-    pub(crate) fn is_node(argv0: &[u8]) -> bool {
+    fn is_node(argv0: &[u8]) -> bool {
         #[cfg(windows)]
         {
             return strings::ends_with(argv0, b"node.exe") || strings::ends_with(argv0, b"node");
@@ -861,7 +865,7 @@ pub mod command {
     /// ambiguous (bare name like `run`/`x`, a leading `-flag`, a `node`/`bunx`
     /// shim, no args at all) falls through to `which()` unchanged.
     #[inline]
-    pub(super) fn looks_like_run_entrypoint(arg: &[u8]) -> bool {
+    fn looks_like_run_entrypoint(arg: &[u8]) -> bool {
         // Empty or option-like: let `which()`'s leading-flag skip loop handle it.
         let Some(&first) = arg.first() else {
             return false;
@@ -892,11 +896,11 @@ pub mod command {
         }
         // Has a `.` in the basename — `foo.js`, `dir/foo.ts`, `.dotfile`, …
         // (no subcommand keyword contains a `.`).
-        let basename = match arg.iter().rposition(|&b| b == b'/' || b == b'\\') {
+        let basename = match strings::last_index_of_any(arg, b"/\\") {
             Some(i) => &arg[i + 1..],
             None => arg,
         };
-        basename.contains(&b'.')
+        strings::contains_char(basename, b'.')
     }
 
     /// `#[inline(never)]`: argv→`Tag` classification, called once from
@@ -906,7 +910,7 @@ pub mod command {
     /// in) in the front-loaded startup window, rather than letting fat-LTO
     /// inline-and-scatter it through cold code.
     #[inline(never)]
-    pub(crate) fn which() -> Tag {
+    fn which() -> Tag {
         let argv = bun::argv();
         let mut iter = argv.iter();
         let Some(argv0) = iter.next() else {
@@ -950,6 +954,9 @@ pub mod command {
             && first_arg_name[0] == b'-'
             && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
         {
+            // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
+            // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
+            // that and boot the legacy `bun repl` implementation instead.
             match iter.next() {
                 Some(n) => first_arg_name = n,
                 None => return Tag::AutoCommand,
@@ -1118,7 +1125,7 @@ pub mod command {
     /// would otherwise make it an inlining candidate, scattering those callees.
     #[track_caller]
     #[inline(never)]
-    pub fn create_context_data(
+    pub(crate) fn create_context_data(
         cmd: Tag,
         log: &mut bun_ast::Log,
     ) -> crate::Result<&'static mut ContextData> {
@@ -1151,7 +1158,7 @@ pub mod command {
 
         Ok(ctx)
     }
-    pub use create_context_data as init;
+    pub(crate) use create_context_data as init;
 
     /// Full subcommand dispatch.
     ///
@@ -1169,7 +1176,7 @@ pub mod command {
     /// / `exec_auto_or_run` adjacent), instead of fat-LTO inlining it into
     /// `Cli::start` and re-scattering the per-tag tail calls.
     #[inline(never)]
-    pub fn start(log: &mut bun_ast::Log) -> crate::Result<()> {
+    pub(crate) fn start(log: &mut bun_ast::Log) -> crate::Result<()> {
         // WebView host subprocess entry. Must be before StandaloneModuleGraph,
         // before JSC init, before anything that touches a JS engine. The child
         // runs CFRunLoopRun() as its real main loop — no Bun runtime past this.
@@ -2283,7 +2290,7 @@ pub use command as Command;
 // NOT `#[cold]` — `bun --version` is the most-benchmarked startup path, and
 // `#[cold]` relocates the body to `.text.unlikely` ~40 MB past the
 // startup.order cluster. The symbol is listed in src/startup.order instead.
-pub fn print_version_and_exit() -> ! {
+pub(crate) fn print_version_and_exit() -> ! {
     // The version string is plain ASCII (no `<tag>` markup), so bypass
     // `Output::pretty(format_args!(..))` — that path renders the `Arguments`
     // into a heap `String`, then runs the runtime `<tag>` rewriter into a
@@ -2297,7 +2304,7 @@ pub fn print_version_and_exit() -> ! {
 }
 
 #[cold]
-pub fn print_revision_and_exit() -> ! {
+pub(crate) fn print_revision_and_exit() -> ! {
     // See `print_version_and_exit` — plain bytes, no `<tag>` rewrite needed.
     let w = Output::writer();
     let _ = w.write_all(Global::package_json_version_with_revision.as_bytes());

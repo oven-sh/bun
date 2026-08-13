@@ -15,7 +15,8 @@ use crate::defines::Define;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, WrapMode,
+    Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, StatementScope,
+    WrapMode,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -51,16 +52,16 @@ macro_rules! init_p {
 }
 
 pub struct Parser<'a> {
-    pub options: Options<'a>,
-    pub lexer: js_lexer::Lexer<'a>,
+    pub(crate) options: Options<'a>,
+    pub(crate) lexer: js_lexer::Lexer<'a>,
     /// Raw pointer alias of `lexer.log`. Rust
     /// cannot hold two live `&'a mut Log`, so both the parser- and lexer-side
     /// handles are `NonNull` and dereferenced at use sites (see `log_mut` /
     /// `Lexer::log()`). The pointee outlives `'a` (see `init`).
-    pub log: core::ptr::NonNull<bun_ast::Log>,
-    pub source: &'a bun_ast::Source,
-    pub define: &'a Define,
-    pub bump: &'a Arena,
+    pub(crate) log: core::ptr::NonNull<bun_ast::Log>,
+    pub(crate) source: &'a bun_ast::Source,
+    pub(crate) define: &'a Define,
+    pub(crate) bump: &'a Arena,
 }
 
 pub struct Options<'a> {
@@ -117,7 +118,7 @@ impl<'a> Default for Options<'a> {
             keep_names: true,
             ignore_dce_annotations: false,
             preserve_unused_imports_ts: false,
-            use_define_for_class_fields: false,
+            use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
             features: RuntimeFeatures::default(),
             tree_shaking: false,
@@ -246,12 +247,16 @@ impl<'a> Options<'a> {
             hasher.update(b"no_dce");
         }
 
+        if !self.use_define_for_class_fields {
+            hasher.update(b"udfcf=0");
+        }
+
         self.features.hash_for_runtime_transpiler(hasher);
     }
 
     // Used to determine if `joinWithComma` should be called in `visitStmts`. We do this
     // to avoid changing line numbers too much to make source mapping more readable
-    pub fn runtime_merge_adjacent_expression_statements(&self) -> bool {
+    pub(crate) fn runtime_merge_adjacent_expression_statements(&self) -> bool {
         self.bundle
     }
 
@@ -264,7 +269,7 @@ impl<'a> Options<'a> {
             keep_names: true,
             ignore_dce_annotations: false,
             preserve_unused_imports_ts: false,
-            use_define_for_class_fields: false,
+            use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
             features: RuntimeFeatures::default(),
             tree_shaking: false,
@@ -414,7 +419,7 @@ impl<'a> Parser<'a> {
 
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
-            is_module_scope: true,
+            scope: StatementScope::Module,
             ..Default::default()
         };
 
@@ -508,7 +513,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    pub fn to_lazy_export_ast(
+    pub(crate) fn to_lazy_export_ast(
         &mut self,
         expr: Expr,
         runtime_api_call: &'static [u8],
@@ -695,7 +700,7 @@ impl<'a> Parser<'a> {
 
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
-            is_module_scope: true,
+            scope: StatementScope::Module,
             ..Default::default()
         };
         let mut parse_tracer = bun_core::perf::trace("JSParser::parse");
@@ -894,8 +899,7 @@ impl<'a> Parser<'a> {
                                 let _local = S::Local {
                                     kind: local.kind,
                                     is_export: local.is_export,
-                                    was_ts_import_equals: local.was_ts_import_equals,
-                                    was_commonjs_export: local.was_commonjs_export,
+                                    origin: local.origin,
                                     decls: G::DeclList::init_one(G::Decl {
                                         binding: decl.binding,
                                         value: decl.value,
@@ -1429,64 +1433,6 @@ impl<'a> Parser<'a> {
                     continue 'outer_part_loop;
                 }
             }
-        } else if p.options.bundle && parts.is_empty() {
-            // This flag is disabled because it breaks circular export * as from
-            //
-            //  entry.js:
-            //
-            //    export * from './foo';
-            //
-            //  foo.js:
-            //
-            //    export const foo = 123
-            //    export * as ns from './foo'
-            //
-            // This is permanently disabled (see the circular-export breakage above).
-            if false {
-                // If the file only contains "export * from './blah'
-                // we pretend the file never existed in the first place.
-                // the semantic difference here is in export default statements
-                // note: export_star_import_records are not filled in yet
-
-                if !before.is_empty() && p.import_records.len() == 1 {
-                    let export_star_redirect: Option<&S::ExportStar> = 'brk: {
-                        let mut export_star: Option<&S::ExportStar> = None;
-                        for part in before.iter() {
-                            for stmt in part.stmts.iter() {
-                                match &stmt.data {
-                                    js_ast::StmtData::SExportStar(star) => {
-                                        if star.alias.is_some() {
-                                            break 'brk None;
-                                        }
-
-                                        if export_star.is_some() {
-                                            break 'brk None;
-                                        }
-
-                                        export_star = Some(&**star);
-                                    }
-                                    js_ast::StmtData::SEmpty(_) | js_ast::StmtData::SComment(_) => {
-                                    }
-                                    _ => {
-                                        break 'brk None;
-                                    }
-                                }
-                            }
-                        }
-                        export_star
-                    };
-
-                    if let Some(star) = export_star_redirect {
-                        return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
-                            import_records: p.import_records.move_to_baby_list(p.arena),
-                            redirect_import_record_index: Some(star.import_record_index),
-                            named_imports: core::mem::take(&mut *p.named_imports),
-                            named_exports: core::mem::take(&mut p.named_exports),
-                            ..js_ast::Ast::empty_in(p.arena)
-                        })));
-                    }
-                }
-            }
         }
 
         // Analyze cross-part dependencies for tree shaking and code splitting.
@@ -1984,6 +1930,7 @@ impl<'a> Parser<'a> {
                     None,
                     b"import_",
                     true,
+                    js_ast::PartTag::Runtime,
                 )
                 .expect("unreachable");
             }
@@ -2016,6 +1963,7 @@ impl<'a> Parser<'a> {
                     None,
                     b"",
                     false,
+                    js_ast::PartTag::JsxImport,
                 )
                 .expect("unreachable");
             }
@@ -2030,6 +1978,7 @@ impl<'a> Parser<'a> {
                     None,
                     b"",
                     false,
+                    js_ast::PartTag::JsxImport,
                 )
                 .expect("unreachable");
             }

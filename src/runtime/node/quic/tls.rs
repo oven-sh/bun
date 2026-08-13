@@ -65,7 +65,7 @@ fn tls13_policy_for_ciphers(ciphers: &[u8]) -> Option<c_int> {
     let mut has_128 = false;
     let mut has_256 = false;
     let mut has_chacha = false;
-    for name in ciphers.split(|&b| b == b':') {
+    for name in bun_core::strings::split(ciphers, b":") {
         if name == TLS13_AES_128_GCM_SHA256 {
             has_128 = true;
         } else if name == TLS13_AES_256_GCM_SHA384 {

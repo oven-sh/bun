@@ -306,7 +306,7 @@ impl TimerHeap {
     /// `v` is a valid, exclusively-owned node not currently in any heap
     /// (its `IntrusiveField` links are null).
     #[inline]
-    pub(crate) unsafe fn insert(&mut self, v: *mut EventLoopTimer) {
+    unsafe fn insert(&mut self, v: *mut EventLoopTimer) {
         // SAFETY: forwarded — see fn contract.
         unsafe { self.0.insert(v) };
     }
@@ -314,7 +314,7 @@ impl TimerHeap {
     /// # Safety
     /// `v` is a node currently in *this* heap.
     #[inline]
-    pub(crate) unsafe fn remove(&mut self, v: *mut EventLoopTimer) {
+    unsafe fn remove(&mut self, v: *mut EventLoopTimer) {
         // SAFETY: forwarded — see fn contract.
         unsafe { self.0.remove(v) };
     }
@@ -348,14 +348,14 @@ pub(crate) type TimeoutMap = ArrayHashMap<i32, *mut EventLoopTimer>;
 
 #[derive(Default)]
 pub struct Maps {
-    pub set_timeout: TimeoutMap,
-    pub set_interval: TimeoutMap,
-    pub set_immediate: TimeoutMap,
+    pub(crate) set_timeout: TimeoutMap,
+    pub(crate) set_interval: TimeoutMap,
+    pub(crate) set_immediate: TimeoutMap,
 }
 
 impl Maps {
     #[inline]
-    pub(crate) fn get(&mut self, kind: Kind) -> &mut TimeoutMap {
+    fn get(&mut self, kind: Kind) -> &mut TimeoutMap {
         match kind {
             Kind::SetTimeout => &mut self.set_timeout,
             Kind::SetInterval => &mut self.set_interval,
@@ -369,7 +369,7 @@ impl Maps {
 // depends on `TimerHeap` (defined above). Now that `pub mod test_runner` is
 // declared in lib.rs, re-export so `All.fake_timers` and the test_runner
 // host fns see the same nominal type.
-pub use crate::test_runner::timers::fake_timers::FakeTimers;
+pub(crate) use crate::test_runner::timers::fake_timers::FakeTimers;
 
 // ─── DateHeaderTimer / EventLoopDelayMonitor (struct-only) ───────────────────
 // Method bodies (`enable`/`run`) call `vm.timer.*` and `vm.uws_loop()` which
@@ -377,7 +377,7 @@ pub use crate::test_runner::timers::fake_timers::FakeTimers;
 // is real so `All` embeds them by value with the correct layout.
 
 pub struct DateHeaderTimer {
-    pub event_loop_timer: EventLoopTimer,
+    pub(crate) event_loop_timer: EventLoopTimer,
 }
 impl Default for DateHeaderTimer {
     fn default() -> Self {
@@ -431,10 +431,10 @@ pub struct EventLoopDelayMonitor {
     // the histogram object can be GC'd while `monitorEventLoopDelay` is active.
     // Needs JsRef-style rooting.
     js_histogram: JSValue,
-    pub event_loop_timer: EventLoopTimer,
-    pub resolution_ms: i32,
-    pub last_fire_ns: u64,
-    pub enabled: bool,
+    pub(crate) event_loop_timer: EventLoopTimer,
+    pub(crate) resolution_ms: i32,
+    pub(crate) last_fire_ns: u64,
+    pub(crate) enabled: bool,
 }
 impl Default for EventLoopDelayMonitor {
     fn default() -> Self {
@@ -453,7 +453,7 @@ impl EventLoopDelayMonitor {
         crate::jsc_hooks::timer_all()
     }
 
-    pub(crate) fn enable(
+    fn enable(
         &mut self,
         _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         histogram: JSValue,
@@ -479,7 +479,7 @@ impl EventLoopDelayMonitor {
         unsafe { (*Self::timer_all()).insert(elt) };
     }
 
-    pub(crate) fn disable(&mut self, _vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
+    fn disable(&mut self, _vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
         if !self.enabled {
             return;
         }
@@ -600,36 +600,36 @@ pub(crate) unsafe fn js_timer_flags_ptr(
 /// A timer created by WTF code and invoked by Bun's event loop.
 #[path = "WTFTimer.rs"]
 pub mod wtf_timer;
-pub use wtf_timer::WTFTimer;
+pub(crate) use wtf_timer::WTFTimer;
 
 // ─── All ─────────────────────────────────────────────────────────────────────
 
-pub struct All {
-    pub last_id: i32,
-    pub thread_id: std::thread::ThreadId,
-    pub timers: TimerHeap,
-    pub active_timer_count: i32,
+pub(crate) struct All {
+    pub(crate) last_id: i32,
+    pub(crate) thread_id: std::thread::ThreadId,
+    pub(crate) timers: TimerHeap,
+    pub(crate) active_timer_count: i32,
     #[cfg(windows)]
-    pub uv_timer: bun_sys::windows::libuv::Timer,
+    pub(crate) uv_timer: bun_sys::windows::libuv::Timer,
     /// Whether we have emitted a warning for passing a negative timeout duration
-    pub warned_negative_number: bool,
+    pub(crate) warned_negative_number: bool,
     /// Whether we have emitted a warning for passing NaN for the timeout duration
-    pub warned_not_number: bool,
+    pub(crate) warned_not_number: bool,
     /// Incremented when timers are scheduled or rescheduled. See
     /// TimerObjectInternals.epoch. Masked to 25 bits on increment.
-    pub epoch: u32,
-    pub immediate_ref_count: i32,
+    pub(crate) epoch: u32,
+    pub(crate) immediate_ref_count: i32,
     #[cfg(windows)]
-    pub uv_idle: bun_sys::windows::libuv::uv_idle_t,
-    pub event_loop_delay: EventLoopDelayMonitor,
-    pub fake_timers: FakeTimers,
-    pub maps: Maps,
-    pub date_header_timer: DateHeaderTimer,
-    pub wtf_timers: Guarded<TimerHeap>,
+    pub(crate) uv_idle: bun_sys::windows::libuv::uv_idle_t,
+    pub(crate) event_loop_delay: EventLoopDelayMonitor,
+    pub(crate) fake_timers: FakeTimers,
+    pub(crate) maps: Maps,
+    pub(crate) date_header_timer: DateHeaderTimer,
+    pub(crate) wtf_timers: Guarded<TimerHeap>,
 }
 
 impl All {
-    pub fn init() -> Self {
+    pub(crate) fn init() -> Self {
         Self {
             last_id: 1,
             thread_id: std::thread::current().id(),
@@ -660,7 +660,7 @@ impl All {
     }
 
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn insert(&mut self, timer: *mut EventLoopTimer) {
+    pub(crate) fn insert(&mut self, timer: *mut EventLoopTimer) {
         self.assert_js_thread();
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         let tag = unsafe { (*timer).tag };
@@ -695,6 +695,25 @@ impl All {
         }
     }
 
+    /// The owning thread's JSC VM is gone (nothing schedules a WTFTimer any
+    /// more) and the timeout objects are drained: hand the embedded
+    /// `uv_timer_t`/`uv_idle_t` to `uv_close` so their nodes leave the loop's
+    /// handle queue when the teardown closes the loop — before this struct's
+    /// storage is freed.
+    #[cfg(windows)]
+    pub(crate) fn close_loop_handles_for_vm_teardown(&mut self) {
+        unsafe extern "C" fn timer_closed(_: *mut uv::Timer) {}
+        unsafe extern "C" fn idle_closed(_: *mut uv::uv_idle_t) {}
+        if !self.uv_timer.data.is_null() {
+            self.uv_timer.stop();
+            self.uv_timer.close(timer_closed);
+        }
+        if !self.uv_idle.data.is_null() {
+            self.uv_idle.stop();
+            self.uv_idle.close(idle_closed);
+        }
+    }
+
     /// Lazily `uv_timer_init` the
     /// per-`All` libuv timer, then (re)start it for the soonest deadline
     /// across both heaps. On Windows there is no epoll/kqueue fallback; this
@@ -715,6 +734,10 @@ impl All {
                 bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast::<core::ffi::c_void>();
             self.uv_timer.unref();
         }
+        debug_assert!(
+            !self.uv_timer.is_closing(),
+            "timer scheduled after teardown closed the heap's uv timer"
+        );
 
         let reg_next = self.timers.peek().map(|timer| {
             // SAFETY: `peek` returns a live heap node.
@@ -788,7 +811,7 @@ impl All {
     }
 
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn remove(&mut self, timer: *mut EventLoopTimer) {
+    pub(crate) fn remove(&mut self, timer: *mut EventLoopTimer) {
         self.assert_js_thread();
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         // Note (§Forbidden aliased-&mut): `TimerHeap::remove` forms a
@@ -818,7 +841,7 @@ impl All {
     /// `timer` must point to a live `EventLoopTimer` with whole-container
     /// provenance for its tag (see [`js_timer_flags_ptr`]).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn update(&mut self, timer: *mut EventLoopTimer, time: &Timespec) {
+    pub(crate) fn update(&mut self, timer: *mut EventLoopTimer, time: &Timespec) {
         self.assert_js_thread();
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         // Read `state` via raw deref so we don't hold a `&mut *timer` across
@@ -846,7 +869,7 @@ impl All {
     }
 
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn wtf_arm(&mut self, timer: *mut EventLoopTimer, time: &Timespec) {
+    fn wtf_arm(&mut self, timer: *mut EventLoopTimer, time: &Timespec) {
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         debug_assert!(unsafe { (*timer).tag } == EventLoopTimerTag::WTFTimer);
         {
@@ -869,7 +892,7 @@ impl All {
     }
 
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn wtf_disarm(&mut self, timer: *mut EventLoopTimer) {
+    fn wtf_disarm(&mut self, timer: *mut EventLoopTimer) {
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         debug_assert!(unsafe { (*timer).tag } == EventLoopTimerTag::WTFTimer);
         let mut wtf = self.wtf_timers.lock();
@@ -942,7 +965,7 @@ impl All {
     // Forwards `vm` to `__bun_fire_timer` without dereferencing it;
     // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn get_timeout(
+    pub(crate) fn get_timeout(
         &mut self,
         spec: &mut Timespec,
         has_pending_immediate: bool,
@@ -1043,7 +1066,7 @@ impl All {
     // Forwards `vm` to `__bun_fire_timer` without dereferencing it;
     // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn drain_timers(&mut self, vm: *mut () /* erased *mut VirtualMachine */) {
+    pub(crate) fn drain_timers(&mut self, vm: *mut () /* erased *mut VirtualMachine */) {
         // Note (§Forbidden aliased-&mut): fired handlers re-enter `vm.timer`
         // (e.g. setInterval reschedule → `vm.timer.update(...)`, `cancel()` →
         // `vm.timer.remove(...)`). In Rust those re-entrant calls resolve to
@@ -1093,7 +1116,7 @@ impl All {
     // documented in `# Safety` above. Cannot be `&mut` without breaking the
     // out-of-file call sites that hold raw pointers.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn increment_immediate_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
+    pub(crate) fn increment_immediate_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
         let old = self.immediate_ref_count;
         let new = old + delta;
         self.immediate_ref_count = new;
@@ -1143,7 +1166,7 @@ impl All {
     // documented in `# Safety` above. Cannot be `&mut` without breaking the
     // out-of-file call sites that hold raw pointers.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn increment_timer_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
+    pub(crate) fn increment_timer_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
         let old = self.active_timer_count;
         let new = old + delta;
         debug_assert!(new >= 0);
@@ -1170,9 +1193,47 @@ impl All {
         let _ = uws_loop;
     }
 
-    /// VM-teardown pass: `cancel()` every `TimeoutObject` / `ImmediateObject`
-    /// still linked in `timers` / `fake_timers.timers` so the in-heap `+1` ref
-    /// and the JS pin (`this_value` Strong) are released before the GC sweep.
+    /// VM teardown, after `cancel_all_timeout_objects`: unlink every timer still
+    /// in either heap, whatever its kind. Owners keep their nodes (now
+    /// `CANCELLED`, which their own `state == ACTIVE` checks respect); nothing
+    /// can fire afterwards even if the loop turns again.
+    ///
+    /// # Safety
+    /// `this` is the live per-thread `All`; JS thread; never on a VM that keeps running.
+    pub(crate) unsafe fn disarm_all_for_vm_teardown(this: *mut Self) {
+        let mut nodes: Vec<*mut EventLoopTimer> = Vec::new();
+        let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
+        // SAFETY: fn contract.
+        let roots = unsafe { [(*this).timers.0.root, (*this).fake_timers.timers.0.root] };
+        for root in roots {
+            if !root.is_null() {
+                stack.push(root);
+            }
+        }
+        while let Some(node) = stack.pop() {
+            // SAFETY: intrusive-heap invariant — reachable nodes are live while linked.
+            let (child, next) = unsafe { ((*node).heap.child, (*node).heap.next) };
+            if !child.is_null() {
+                stack.push(child);
+            }
+            if !next.is_null() {
+                stack.push(next);
+            }
+            nodes.push(node);
+        }
+        for node in nodes {
+            // SAFETY: collected from the live heap above; `remove` relinks the
+            // others but every node stays a valid allocation owned elsewhere.
+            unsafe { (*this).remove(node) };
+        }
+    }
+
+    /// VM-teardown / `--isolate` file-swap pass: `cancel()` every
+    /// `TimeoutObject` / `ImmediateObject` still linked in `timers` /
+    /// `fake_timers.timers` so the in-heap `+1` ref and the JS pin
+    /// (`this_value` Strong) are released before the GC sweep, and discard
+    /// every `AbortSignal.timeout()` timer through its signal so the signal
+    /// stops reporting an active timer.
     ///
     /// # Safety
     /// JS thread only, with the TLS `RuntimeState` still installed and `vm`
@@ -1180,8 +1241,8 @@ impl All {
     /// (`Zig__GlobalObject__destructOnExit` / `WebWorker__teardownJSCVM`) and
     /// BEFORE `runtime_state` is nulled — the GC sweep frees the
     /// `TimeoutObject` boxes whose `event_loop_timer` fields the heap nodes
-    /// alias.
-    pub unsafe fn cancel_all_timeout_objects(
+    /// alias, and the `AbortSignal`s that own the `AbortSignalTimeout` boxes.
+    pub(crate) unsafe fn cancel_all_timeout_objects(
         this: *mut Self,
         vm: *mut crate::jsc::virtual_machine::VirtualMachine,
     ) {
@@ -1240,29 +1301,18 @@ impl All {
             unsafe { (*internals).cancel(vm) };
         }
 
-        // `AbortSignal.timeout()` boxes form a refcount cycle: the C++
-        // `AbortSignal` owns `m_timeout` (raw `*mut Timeout`) and the Timeout
-        // holds a `+1` on the signal. Neither can release first, so a pending
-        // timeout at exit leaks both. Unlink the timer (so the eventual
-        // `~AbortSignal` → `cancelTimer` → `Timeout::deinit` re-cancel is a
-        // no-op against the already-destroyed heap) and release the `+1`; the
-        // box itself is freed via `cancelTimer()` either now (if this was the
-        // last ref) or at `lastChanceToFinalize` when the JS wrapper is
-        // collected.
+        // `AbortSignal.timeout()` boxes are owned by the C++ `AbortSignal`, so
+        // each one is handed back to its signal, which unlinks and frees it and
+        // clears `m_timeout`. Only unlinking the node here would leave every
+        // observed signal's wrapper (under `--isolate`: the retired global its
+        // listeners close over) pinned by `isReachableFromOpaqueRoots` for the
+        // rest of the process; see `Timeout::discard`.
         for t in signal_timeouts {
-            // SAFETY: each `t` was collected from the live heap above; the
-            // `+1` we release here is the one keeping the signal (and thus
-            // the box, via `m_timeout`) pinned. JS thread.
-            unsafe {
-                if (*t).event_loop_timer.state == EventLoopTimerState::ACTIVE {
-                    (*this).remove(core::ptr::addr_of_mut!((*t).event_loop_timer));
-                }
-                let signal = (*t).signal;
-                (*t).signal = core::ptr::null_mut();
-                if !signal.is_null() {
-                    crate::jsc::abort_signal::AbortSignal::opaque_ref(signal).unref();
-                }
-            }
+            // SAFETY: each `t` was collected from the live heap above, so its
+            // box (and therefore its owning signal) is still alive; JS thread;
+            // no borrow of `*this` is held across the call (`discard` re-enters
+            // `remove` through `timer_remove`). `t` is freed by the call.
+            unsafe { AbortSignalTimeout::discard(t) };
         }
     }
 }
@@ -1308,7 +1358,7 @@ impl Default for ID {
 }
 impl ID {
     #[inline]
-    pub(crate) fn async_id(self) -> u64 {
+    fn async_id(self) -> u64 {
         // Layout: 8 bytes, `id` (i32) then `kind` (u32). Reassemble via
         // native-endian byte concat so the value is stable on every supported
         // target without relying on struct-layout reinterpretation.

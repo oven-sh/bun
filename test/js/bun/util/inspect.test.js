@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -802,4 +802,129 @@ it("CustomEvent", () => {
       BUBBLING_PHASE: 3,
     }"
   `);
+});
+
+describe.skipIf(!isASAN)("object mutated while being formatted", () => {
+  it("does not read freed property tables", async () => {
+    const fixture = `
+      function makeParent() {
+        const p = {};
+        for (let i = 0; i < 8; i++) p["k" + i] = i;
+        return p;
+      }
+      // Enough added properties to cross several PropertyTable capacity
+      // doublings; each rehash frees the previous index vector.
+      const addMany = o => { for (let i = 0; i < 256; i++) o["n" + i] = i; };
+      const custom = Symbol.for("nodejs.util.inspect.custom");
+
+      {
+        // inspect.custom on a nested value adds properties to the parent mid-walk.
+        const p = makeParent();
+        let fired = 0;
+        p.a = { [custom]() { if (!fired++) addMany(p); return "a"; } };
+        p.z = 1;
+        const s = Bun.inspect(p);
+        console.log("custom add:", s.includes("z: 1"));
+      }
+      {
+        // Same mutation through console.log instead of Bun.inspect.
+        const p = makeParent();
+        let fired = 0;
+        p.a = { [custom]() { if (!fired++) addMany(p); return "a"; } };
+        p.z = 1;
+        console.log(p);
+      }
+      {
+        // Deleting parent properties mid-walk.
+        const p = makeParent();
+        let fired = 0;
+        p.a = { [custom]() { if (!fired++) { for (let i = 0; i < 8; i++) delete p["k" + i]; } return "a"; } };
+        p.z = 1;
+        const s = Bun.inspect(p);
+        console.log("custom delete:", s.includes("z: 1"));
+      }
+      {
+        // A getter on a built-in subclass (Map.size) is another way the
+        // formatter runs user code for a nested value.
+        const p = makeParent();
+        let fired = 0;
+        class M extends Map { get size() { if (!fired++) addMany(p); return super.size; } }
+        p.a = new M([[1, 2]]);
+        p.z = 1;
+        const s = Bun.inspect(p);
+        console.log("map size getter:", s.includes("z: 1"), fired > 0);
+      }
+      {
+        // An object with no own properties is formatted by fast-walking its
+        // prototype's structure; mutating the prototype mid-walk rehashes it.
+        const proto = makeParent();
+        let fired = 0;
+        proto.a = { [custom]() { if (!fired++) addMany(proto); return "a"; } };
+        proto.z = 1;
+        const s = Bun.inspect(Object.create(proto));
+        console.log("prototype walk:", s.includes("z: 1"), fired > 0);
+      }
+      {
+        // Allocation churn + GC inside the hook, with object-valued siblings
+        // formatted afterwards: catches a snapshot that is invisible to GC.
+        const p = makeParent();
+        let fired = 0;
+        p.a = { [custom]() {
+          if (!fired++) {
+            addMany(p);
+            const junk = [];
+            for (let i = 0; i < 200; i++) { const o = {}; for (let j = 0; j < 20; j++) o["q" + j] = j; junk.push(o); }
+            Bun.gc(true);
+          }
+          return "a";
+        } };
+        for (let i = 0; i < 30; i++) p["s" + i] = { v: i };
+        p.z = 1;
+        const s = Bun.inspect(p);
+        console.log("gc churn:", s.includes("z: 1") && s.includes("v: 29"));
+      }
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: {
+        ...bunEnv,
+        ...(isWindows ? {} : { Malloc: "1" }),
+        // Skip symbolizing a failure report; symbolization of the debug
+        // binary takes longer than the test timeout.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe(
+      [
+        "custom add: true",
+        // console.log dump of the mutated parent: properties added by the
+        // inspect.custom hook mid-format are not shown (the walk snapshots
+        // the properties up front, like Node).
+        "{",
+        "  k0: 0,",
+        "  k1: 1,",
+        "  k2: 2,",
+        "  k3: 3,",
+        "  k4: 4,",
+        "  k5: 5,",
+        "  k6: 6,",
+        "  k7: 7,",
+        "  a: a,",
+        "  z: 1,",
+        "}",
+        "custom delete: true",
+        "map size getter: true true",
+        "prototype walk: true true",
+        "gc churn: true",
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).not.toContain("AddressSanitizer");
+    expect(exitCode).toBe(0);
+  });
 });

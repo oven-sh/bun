@@ -35,9 +35,6 @@
 
 namespace WebCore {
 
-class Blob;
-class ScriptExecutionContext;
-class URLRegistrable;
 class URLSearchParams;
 
 class DOMURL final : public RefCounted<DOMURL>, public CanMakeWeakPtr<DOMURL>, public URLDecomposition {
@@ -65,11 +62,6 @@ public:
         return m_url.string();
     }
 
-    static String createObjectURL(ScriptExecutionContext&, Blob&);
-    static void revokeObjectURL(ScriptExecutionContext&, const String&);
-
-    static String createPublicURL(ScriptExecutionContext&, URLRegistrable&);
-
     size_t memoryCost() const
     {
         return sizeof(DOMURL) + m_url.string().sizeInBytes();
@@ -80,7 +72,7 @@ public:
     }
 
 private:
-    static ExceptionOr<Ref<DOMURL>> create(const String& url, const URL& base);
+    static ExceptionOr<Ref<DOMURL>> create(const String& url, const URL& base, const String& baseInput);
     DOMURL(URL&& completeURL);
 
     URL fullURL() const final

@@ -153,10 +153,16 @@ fn create_jsc_ffi_function(
 mod exposed_to_ffi {
     use super::{JSGlobalObject, JSValue};
     unsafe extern "C" {
-        #[link_name = "JSC__JSValue__toInt64"]
-        pub(super) fn JSVALUE_TO_INT64(value: JSValue) -> i64;
-        #[link_name = "JSC__JSValue__toUInt64NoTruncate"]
-        pub(super) fn JSVALUE_TO_UINT64(value: JSValue) -> u64;
+        /// `JSCFFIBridge.cpp`: converts an `i64`/`u64`/`i64_fast`/`u64_fast` argument the inline
+        /// paths in `FFI.h` don't handle (BigInts, and non-numbers, which throw) with the same
+        /// conversion dlopen()'d symbols use.
+        #[link_name = "Bun__FFI__jsValueToInt64Slow"]
+        pub(super) fn JSVALUE_TO_INT64_SLOW(
+            global: *mut JSGlobalObject,
+            abi_type: i32,
+            threw: *mut bool,
+            value: JSValue,
+        ) -> i64;
         #[link_name = "JSC__JSValue__fromInt64NoTruncate"]
         pub(super) fn INT64_TO_JSVALUE(global: *mut JSGlobalObject, i: i64) -> JSValue;
         #[link_name = "JSC__JSValue__fromUInt64NoTruncate"]
@@ -2062,6 +2068,9 @@ impl Function {
         }
 
         CompilerRT::define(state);
+        // Only the wrapper is compiled with these; the user's own C (`CompileC::compile`) must not
+        // see them.
+        state.define_symbols(ABIType::TAG_DEFINES);
 
         // SAFETY: source_code was NUL-terminated above
         if state
@@ -2145,12 +2154,6 @@ impl Function {
               ZIG_REPR_TYPE JSFunctionCall(void* JS_GLOBAL_OBJECT, void* callFrame) {\n",
         )?;
 
-        if self.needs_handle_scope() {
-            writer.write_all(
-                b"  void* handleScope = NapiHandleScope__open(&Bun__thisFFIModuleNapiEnv, false);\n",
-            )?;
-        }
-
         if !self.arg_types.is_empty() {
             writer.write_all(b"  LOAD_ARGUMENTS_FROM_CALL_FRAME;\n")?;
             for (i, arg) in self.arg_types.iter().enumerate() {
@@ -2195,6 +2198,36 @@ impl Function {
         // );
 
         let mut arg_buf = [0u8; 512];
+        arg_buf[0..3].copy_from_slice(b"arg");
+
+        // Conversions that can throw come first: once one of them has thrown, the native function
+        // must not be entered and no handle scope may have been opened.
+        let mut declared_threw = false;
+        for (i, arg) in self.arg_types.iter().enumerate() {
+            if !arg.arg_conversion_can_throw() {
+                continue;
+            }
+            if !declared_threw {
+                declared_threw = true;
+                writer.write_all(b"  bool threw = false;\n")?;
+            }
+            let length_buf = bun_core::fmt::print_int(&mut arg_buf[3..], i);
+            let arg_name = &arg_buf[0..3 + length_buf];
+            writer.write_all(b"  ")?;
+            arg.param_typename(writer)?;
+            write!(
+                writer,
+                " converted{} = {};\n  if (threw) return ValueEmpty.asZigRepr;\n",
+                i,
+                arg.to_c(arg_name)
+            )?;
+        }
+
+        if self.needs_handle_scope() {
+            writer.write_all(
+                b"  void* handleScope = NapiHandleScope__open(&Bun__thisFFIModuleNapiEnv, false);\n",
+            )?;
+        }
 
         writer.write_all(b"    ")?;
         if self.return_type != ABIType::Void {
@@ -2203,7 +2236,6 @@ impl Function {
         }
         write!(writer, "{}(", BStr::new(self.base_name.as_bytes()))?;
         first = true;
-        arg_buf[0..3].copy_from_slice(b"arg");
         for (i, arg) in self.arg_types.iter().enumerate() {
             if !first {
                 writer.write_all(b", ")?;
@@ -2213,7 +2245,9 @@ impl Function {
 
             let length_buf = bun_core::fmt::print_int(&mut arg_buf[3..], i);
             let arg_name = &arg_buf[0..3 + length_buf];
-            if arg.needs_a_cast_in_c() {
+            if arg.arg_conversion_can_throw() {
+                write!(writer, "converted{}", i)?;
+            } else if arg.needs_a_cast_in_c() {
                 write!(writer, "{}", arg.to_c(arg_name))?;
             } else {
                 writer.write_all(arg_name)?;
@@ -2600,13 +2634,7 @@ impl CompilerRT {
         state
             .add_symbol(
                 zstr!("JSVALUE_TO_INT64_SLOW"),
-                WORKAROUND.jsvalue_to_int64 as *const c_void,
-            )
-            .expect("unreachable");
-        state
-            .add_symbol(
-                zstr!("JSVALUE_TO_UINT64_SLOW"),
-                WORKAROUND.jsvalue_to_uint64 as *const c_void,
+                exposed_to_ffi::JSVALUE_TO_INT64_SLOW as *const c_void,
             )
             .expect("unreachable");
         state
@@ -2625,15 +2653,11 @@ impl CompilerRT {
 }
 
 struct MyFunctionSStructWorkAround {
-    jsvalue_to_int64: unsafe extern "C" fn(JSValue) -> i64,
-    jsvalue_to_uint64: unsafe extern "C" fn(JSValue) -> u64,
     int64_to_jsvalue: unsafe extern "C" fn(*mut JSGlobalObject, i64) -> JSValue,
     uint64_to_jsvalue: unsafe extern "C" fn(*mut JSGlobalObject, u64) -> JSValue,
 }
 
 static WORKAROUND: MyFunctionSStructWorkAround = MyFunctionSStructWorkAround {
-    jsvalue_to_int64: exposed_to_ffi::JSVALUE_TO_INT64,
-    jsvalue_to_uint64: exposed_to_ffi::JSVALUE_TO_UINT64,
     int64_to_jsvalue: exposed_to_ffi::INT64_TO_JSVALUE,
     uint64_to_jsvalue: exposed_to_ffi::UINT64_TO_JSVALUE,
 };

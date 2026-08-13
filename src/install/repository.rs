@@ -722,9 +722,7 @@ impl RepositoryExt for Repository {
                     &[folder_name.as_bytes()],
                 );
 
-                // `clone --bare` sets no fetch refspec, so name heads/tags explicitly.
-                // `--prune` drops refs renamed away upstream; otherwise a rename into a
-                // nested name (`release` -> `release/1.0`) fails the fetch forever.
+                // Bare clones have no fetch refspec; --prune clears refs renamed upstream.
                 if let Err(err) = exec(
                     env,
                     &[
@@ -767,8 +765,7 @@ impl RepositoryExt for Repository {
                         b"core.longpaths=true",
                         b"--quiet",
                         b"--bare",
-                        // The refresh above fetches from `origin`; don't let
-                        // `clone.defaultRemoteName` pick a different name.
+                        // The refresh fetches "origin" by name; ignore clone.defaultRemoteName.
                         b"-o",
                         b"origin",
                         url,

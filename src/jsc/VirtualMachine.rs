@@ -295,8 +295,7 @@ pub struct VirtualMachine {
     pub(crate) resolved_path_dups: Vec<Box<[u8]>>,
     pub pending_internal_promise: Option<*mut JSInternalPromise>,
     pub pending_internal_promise_is_protected: bool,
-    /// The `hot_reload_counter` generation whose entry-point failure has been
-    /// reported; see [`entry_point_failure_reported`](Self::entry_point_failure_reported).
+    /// See [`entry_point_failure_reported`](Self::entry_point_failure_reported).
     pending_internal_promise_reported_at: u32,
     pub(crate) hot_reload_deferred: bool,
     pub entry_point_result: EntryPointResult,
@@ -1525,10 +1524,8 @@ impl VirtualMachine {
             // and exit, like node's fatal-exception path. Main thread only:
             // process_exit() RETURNS on a worker, so the panic would fire; a
             // worker falls through and exits 1 below (e.g. a beforeExit throw).
-            // Not under --hot/--watch: there the loop draining (which is what
-            // armed this) is not the end of the run, the watcher keeps it going
-            // and reloads, so the error is reported below and the process goes
-            // on watching, as it does for an error in the first generation.
+            // Under --hot/--watch the drain that armed this was not the end of
+            // the run: report below and keep watching.
             if self.exit_on_uncaught_exception
                 && self.is_main_thread()
                 && !self.is_watcher_enabled()
@@ -3677,12 +3674,9 @@ impl VirtualMachine {
         (self.on_unhandled_rejection)(self, global_object, reason);
     }
 
-    /// Whether the failure of the current entry-point load (this hot-reload
-    /// generation's) has been reported already. A CommonJS entry's top-level
-    /// throw is reported from the throw site (`Bun__VM__reportEntryPointThrow`),
-    /// before the module loader rejects the entry promise with it; whoever then
-    /// observes that rejection (the run command, a worker's `spin`, the hot
-    /// reloader) consults this so it is reported exactly once.
+    /// Whether this hot-reload generation's entry-point failure was reported
+    /// already: a CommonJS entry's throw is reported from the throw site
+    /// (`Bun__VM__reportEntryPointThrow`) before the entry promise rejects with it.
     pub fn entry_point_failure_reported(&self) -> bool {
         self.pending_internal_promise_reported_at == self.hot_reload_counter
     }

@@ -146,23 +146,16 @@ pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSVal
     false
 }
 
-/// Called by JSCommonJSModule.cpp when the entry point, evaluating as CommonJS,
-/// threw out of its top level; the module loader is about to reject the entry
-/// promise with it. Node runs a CommonJS entry synchronously, so its throw is
-/// the uncaught exception right there, ahead of anything the entry queued
-/// before throwing; observing the rejection instead (what the run command and a
-/// worker's `spin` do for an ESM entry) would drain those microtasks first. So
-/// the throw is reported here, `entry_point_failure_reported` tells the code
-/// observing the rejection that it was, and with no handler the main thread
-/// exits here, as it would have on the rejection (a worker's
-/// `on_unhandled_rejection` has requested the worker's stop by the time
-/// `uncaught_exception` returns).
+/// Called by JSCommonJSModule.cpp when a CommonJS entry point threw out of its
+/// top level, before the module loader rejects the entry promise with it (which
+/// the run command and a worker's `spin` would only see after the microtasks the
+/// entry queued have run). Node's synchronous CJS runner reports it right here;
+/// unhandled, the main thread exits as the rejection path would have, and a
+/// worker's `on_unhandled_rejection` has requested its stop.
 // HOST_EXPORT(Bun__VM__reportEntryPointThrow, c)
 pub fn report_entry_point_throw(this: &mut VirtualMachine, error: JSValue) {
     let is_main_thread = this.worker_ref().is_none();
-    // The test runner reports a test file's top-level throw itself, as that
-    // file's failure, when it observes the rejection (test_command.rs). Workers
-    // started by a test file are ordinary workers.
+    // The test runner reports a test file's throw itself (test_command.rs).
     if is_main_thread
         && bun_jsc::virtual_machine::isBunTest.load(core::sync::atomic::Ordering::Relaxed)
     {

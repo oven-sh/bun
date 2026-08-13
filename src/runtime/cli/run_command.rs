@@ -1432,17 +1432,11 @@ impl Run<'_> {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
                 let promise = unsafe { &mut *promise };
                 if promise.status() == PromiseStatus::Rejected {
-                    // A CommonJS entry's top-level throw was already reported
-                    // from the throw site (`Bun__VM__reportEntryPointThrow`),
-                    // which exits unless a handler took it or --hot/--watch keeps
-                    // the process alive. What gets here unreported is an ESM
-                    // entry's rejection (or a load failure), which Node too
-                    // reports with origin "unhandledRejection".
-                    //
-                    // Either way, keep the process alive instead of hard-exiting
-                    // when --hot/--watch is on or a user `uncaughtException`
-                    // handler swallowed the error; the core run-loop below does
-                    // the actual waiting.
+                    // A CommonJS entry's throw was reported from the throw site,
+                    // which exited unless a handler or --hot/--watch kept the
+                    // process alive; an unreported rejection is an ESM entry's
+                    // (origin "unhandledRejection", as in Node). Kept alive, the
+                    // core run-loop below does the waiting.
                     let keep_alive = vm.entry_point_failure_reported() || {
                         vm.mark_entry_point_failure_reported();
                         // SAFETY: `vm.jsc_vm` set in `init`; FFI takes `*mut`.
@@ -1629,12 +1623,11 @@ fn dump_build_error(vm: &mut VirtualMachine) {
 }
 
 /// Cold tail shared by the rejected-entry-point and load-failure paths in
-/// `Run::start` and by a CommonJS entry's top-level throw, reported while the
-/// entry is still evaluating (`hw_exports::report_entry_point_throw`): flag the
-/// exit code, run `on_exit`, optionally print the "unhandled error" sourcemap
-/// note + version string, then hard-exit. Hoisted out (and parked in
-/// `.text.unlikely` on linux) so the linker keeps it off the `.text.hot`
-/// fault-around window the `require('fs')` startup path pulls in.
+/// `Run::start` and by `hw_exports::report_entry_point_throw`: flag the exit
+/// code, run `on_exit`, optionally print the "unhandled error" sourcemap note +
+/// version string, then hard-exit. Hoisted out (and parked in `.text.unlikely`
+/// on linux) so the linker keeps it off the `.text.hot` fault-around window the
+/// `require('fs')` startup path pulls in.
 #[cold]
 #[inline(never)]
 #[cfg_attr(

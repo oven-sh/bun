@@ -1591,11 +1591,9 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                                 globalObject->requireMap()->remove(globalObject, moduleObject->filename());
                                 RETURN_IF_EXCEPTION(scope, {});
 
-                                // The entry point's own top-level throw is reported right here, as
-                                // Node's synchronous CJS runner reports it: surfacing it as the entry
-                                // promise's rejection would first run the microtasks the entry queued
-                                // before throwing. Does not return when the throw is fatal on the
-                                // main thread.
+                                // The entry's own throw is reported now, as Node's synchronous CJS
+                                // runner would; left to surface as the entry promise's rejection, the
+                                // microtasks queued before it would run first. Exits if fatal on the main thread.
                                 auto key = Bun::toString(moduleKey.string());
                                 if (Bun__isBunMain(globalObject, &key)) [[unlikely]] {
                                     Bun__VM__reportEntryPointThrow(globalObject->bunVM(), JSValue::encode(exception->value()));

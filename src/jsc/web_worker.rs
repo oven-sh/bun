@@ -845,11 +845,8 @@ impl WebWorker {
         let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
             Ok(p) => p,
             Err(_) => {
-                // The worker may have stopped itself during the load, and then
-                // its exit code is already decided: process.exit() ran, or a
-                // CommonJS entry's top-level throw went unhandled (reported from
-                // the throw site, see `entry_point_failure_reported`; that set
-                // code 1 and ran the 'exit' handlers, which may have changed it).
+                // A process.exit() or an unhandled entry throw during the load
+                // already chose the code (the latter via the 'exit' handlers).
                 if !self.exit_called.load(Ordering::Relaxed) && !vm.entry_point_failure_reported() {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
@@ -868,14 +865,9 @@ impl WebWorker {
         // loop turn: a rejection (immediate, or a top-level await rejecting
         // later) is the entry's uncaught error at that moment — the worker stops
         // unless a handler took it — and is reported exactly once. The loader
-        // marks this promise handled, so nothing else would report it.
-        //
-        // A CommonJS entry's top-level throw was reported from the throw site
-        // instead (`Bun__VM__reportEntryPointThrow`, same rule as the main
-        // thread); unhandled, it stopped the worker inside the load above, so
-        // seeing its rejection here means a handler took it. What is reported
-        // here is an ESM entry's rejection, origin "unhandledRejection" as in
-        // Node.
+        // marks this promise handled, so nothing else would report it. A CommonJS
+        // entry's throw was already reported from the throw site (unhandled, it
+        // ended the load above); what is reported here is an ESM rejection.
         let mut entry_rejection_seen = vm.entry_point_failure_reported();
         let mut observe_entry = |vm: &VirtualMachine| -> EntryOutcome {
             // SAFETY: `promise` is a live JSC heap cell, rooted below for the loop's duration.

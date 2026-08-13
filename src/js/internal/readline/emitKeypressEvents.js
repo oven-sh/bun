@@ -9,7 +9,7 @@ const { SafeStringIterator, Symbol } = primordials;
 const { charLengthAt, CSI, emitKeys } = require("internal/readline/utils");
 const { kSawKeyPress } = require("internal/readline/interface");
 
-const { clearTimeout, setTimeout } = require("node:timers");
+const { clearTimeout, setTimeout } = require("internal/timers");
 const { kEscape } = CSI;
 
 const { StringDecoder } = require("node:string_decoder");

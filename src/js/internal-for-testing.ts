@@ -557,6 +557,9 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
 
 export const timerInternals = {
   timerClockMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.timerClockMs", 0),
+  // The timers built-in modules schedule their own deadlines with; unlike the
+  // globals they are not touched by jest.useFakeTimers().
+  internalTimers: require("internal/timers"),
 };
 
 // Raw datagram descriptor helpers for tests that need an unbound fd (which

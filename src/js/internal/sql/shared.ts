@@ -6,6 +6,7 @@ const {
   SQLQueryFlags,
   symbols: { _strings, _values },
 } = require("internal/sql/query");
+const { setTimeout, clearTimeout } = require("internal/timers");
 
 declare global {
   interface NumberConstructor {

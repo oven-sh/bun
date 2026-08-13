@@ -1,6 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use super::Kind;
+use super::{EventLoopTimerTag, Kind};
 
 /// `jsc.Codegen.JSTimeout` — the `.classes.ts` codegen module for this type.
 ///
@@ -24,22 +24,32 @@ pub mod js {
     );
 }
 
-// Struct + `RefCounted`/`Default` impls + the forwarder host-fns
+// Struct + `RefCounted` impl + the forwarder host-fns
 // (`to_primitive`/`do_ref`/`do_unref`/`has_ref`/`get_destroyed`/`dispose`/
 // `constructor`/`finalize`/`ref_`/`deref`/`deinit`/`init_with`) — see
 // `impl_timer_object!` in `super` (timer/mod.rs).
-super::impl_timer_object!(TimeoutObject, TimeoutObject, "Timeout");
+super::impl_timer_object!(TimeoutObject, "Timeout");
 
 impl TimeoutObject {
+    /// `tag` is `TimeoutObject` for the global `setTimeout`/`setInterval`/
+    /// `Bun.sleep` (subject to `jest.useFakeTimers()`) or
+    /// `InternalTimeoutObject` for `internal/timers` (always real time); see
+    /// [`EventLoopTimerTag::allow_fake_timers`]. Anything else is a bug.
     pub(crate) fn init(
         global: &JSGlobalObject,
+        tag: EventLoopTimerTag,
         id: i32,
         kind: Kind,
         interval: u32,
         callback: JSValue,
         arguments: JSValue,
     ) -> JSValue {
-        Self::init_with(global, id, kind, interval, callback, arguments)
+        debug_assert!(matches!(
+            tag,
+            EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::InternalTimeoutObject
+        ));
+        debug_assert!(kind != Kind::SetImmediate);
+        Self::init_with(global, tag, id, kind, interval, callback, arguments)
     }
 
     #[bun_jsc::host_fn(method)]

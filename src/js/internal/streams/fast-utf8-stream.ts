@@ -8,6 +8,7 @@ const {
   validateString,
   validateUint32,
 } = require("internal/validators");
+const { setTimeout, setInterval, clearInterval } = require("internal/timers");
 
 const EventEmitter = require("node:events");
 const path = require("node:path");

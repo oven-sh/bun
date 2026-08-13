@@ -1,14 +1,14 @@
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue};
 
-use super::{Kind, TimerObjectInternals};
+use super::{EventLoopTimerTag, Kind, TimerObjectInternals};
 
 // `jsc.Codegen.JSImmediate` — the C++ JSCell wrapper stays generated; this
-// struct is the `m_ctx` payload. Struct + `RefCounted`/`Default` impls + the
+// struct is the `m_ctx` payload. Struct + `RefCounted` impl + the
 // forwarder host-fns (`to_primitive`/`do_ref`/`do_unref`/`has_ref`/
 // `get_destroyed`/`dispose`/`constructor`/`finalize`/`ref_`/`deref`/`deinit`/
 // `init_with`) — see `impl_timer_object!` in `super` (timer/mod.rs).
-super::impl_timer_object!(ImmediateObject, ImmediateObject, "Immediate");
+super::impl_timer_object!(ImmediateObject, "Immediate");
 
 impl ImmediateObject {
     pub(crate) fn init(
@@ -17,7 +17,15 @@ impl ImmediateObject {
         callback: JSValue,
         arguments: JSValue,
     ) -> JSValue {
-        Self::init_with(global, id, Kind::SetImmediate, 0, callback, arguments)
+        Self::init_with(
+            global,
+            EventLoopTimerTag::ImmediateObject,
+            id,
+            Kind::SetImmediate,
+            0,
+            callback,
+            arguments,
+        )
     }
 
     /// Thin forwarder to

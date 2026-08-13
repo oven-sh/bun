@@ -37,6 +37,7 @@ const {
   isKeyObject,
 } = require("node:util/types");
 const { SocketAddress, BlockList } = require("node:net");
+const { setTimeout, clearTimeout } = require("internal/timers");
 
 // The native binding hands certificates over as DER bytes; expose them as
 // X509Certificate objects like Node does.

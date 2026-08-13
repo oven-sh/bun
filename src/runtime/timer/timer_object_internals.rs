@@ -549,10 +549,7 @@ impl TimerObjectInternals {
         if kind != KindBig::SetInterval {
             s.this_value.with_mut(|r| r.downgrade());
         } else {
-            time_before_call = Timespec::ms_from_now(
-                TimespecMockMode::AllowMockedTime,
-                i64::from(s.interval.get()),
-            );
+            time_before_call = Timespec::ms_from_now(s.clock(), i64::from(s.interval.get()));
         }
         this_object.ensure_still_alive();
 
@@ -768,7 +765,7 @@ impl TimerObjectInternals {
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
 
-        let now = Timespec::now(TimespecMockMode::AllowMockedTime);
+        let now = Timespec::now(self.clock());
         let scheduled_time = now.add_ms(i64::from(self.interval.get()));
         let was_active = self.event_loop_timer_state() == EventLoopTimerState::ACTIVE;
         if was_active {
@@ -889,6 +886,14 @@ impl TimerObjectInternals {
     fn event_loop_timer_state(&self) -> EventLoopTimerState {
         // SAFETY: ptr into the live parent per `parent_ptr()`; read-only deref.
         unsafe { (*self.event_loop_timer()).state }
+    }
+
+    /// Clock the deadlines of this timer are computed from: the one driving
+    /// the heap its tag routes it to (`EventLoopTimerTag::clock`), so an
+    /// `internal/timers` timer stays on real time under `jest.useFakeTimers()`.
+    fn clock(&self) -> TimespecMockMode {
+        // SAFETY: ptr into the live parent per `parent_ptr()`; read-only deref.
+        unsafe { (*self.event_loop_timer()).tag }.clock()
     }
 
     /// Write the owning `EventLoopTimer.state`. Paired write-side accessor for

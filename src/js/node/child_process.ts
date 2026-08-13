@@ -11,6 +11,7 @@ const {
   validateObject,
   validateOneOf,
 } = require("internal/validators");
+const { setTimeout, clearTimeout } = require("internal/timers");
 
 var NetModule;
 

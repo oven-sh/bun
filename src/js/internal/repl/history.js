@@ -27,7 +27,7 @@ let debug = require("internal/repl/node-shims").debuglog("repl", fn => {
   debug = fn;
 });
 const permission = require("internal/repl/node-shims");
-const { clearTimeout, setTimeout } = require("node:timers");
+const { clearTimeout, setTimeout } = require("internal/timers");
 const { reverseString } = require("internal/readline/utils");
 
 // The debounce is to guard against code pasted into the REPL.

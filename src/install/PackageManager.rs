@@ -161,7 +161,10 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.
 
 use crate::lockfile_real::package as Package;
 use crate::package_manager_task as Task;
-use crate::resolvers::folder_resolver::{Entry as FolderResolutionEntry, FolderResolution};
+use crate::resolvers::folder_resolver::{
+    Entry as FolderResolutionEntry, FolderResolution, Key as FolderResolutionKey,
+    Kind as FolderResolutionKind,
+};
 use bun_install::lockfile::{self, Lockfile};
 use bun_install::{
     Dependency, DependencyID, NetworkTask, PackageID, PackageManifestMap,
@@ -252,8 +255,7 @@ type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>
 /// process.
 type AppendedTaskPackageMap =
     HashMap<Task::Id, PackageID /* , IdentityContext<Task::Id>, 80 */>;
-pub(crate) type FolderResolutionMap =
-    HashMap<u64, FolderResolutionEntry /* , IdentityContext<u64>, 80 */>;
+pub(crate) type FolderResolutionMap = HashMap<FolderResolutionKey, FolderResolutionEntry>;
 pub(crate) type NpmAliasMap =
     HashMap<PackageNameHash, crate::dependency::Version /* , IdentityContext<u64>, 80 */>;
 
@@ -2107,8 +2109,8 @@ pub fn init(
     {
         // make sure folder packages can find the root package without creating a new one
         // Posix-normalize the
-        // separators before hashing; `FolderResolution.hash` is always fed `/`-separated
-        // bytes by every resolver-side caller. On Windows `getFdPath` yields `\`, so
+        // separators before hashing; the folder resolver always builds its `Key` from
+        // `/`-separated bytes. On Windows `getFdPath` yields `\`, so
         // hashing the raw bytes would seed a key the resolver never looks up — copy into
         // a stack buffer and convert separators in place.
         // SAFETY: ROOT_PACKAGE_JSON_PATH set above on the main thread.
@@ -2119,7 +2121,7 @@ pub fn init(
         resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(normalized);
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         unsafe { &mut *manager_ptr }.folders.put(
-            crate::resolvers::folder_resolver::hash(normalized),
+            FolderResolutionKey::new(FolderResolutionKind::Folder, normalized),
             FolderResolutionEntry {
                 abs_path: Box::<[u8]>::from(&*normalized),
                 resolution: FolderResolution::PackageId(0),

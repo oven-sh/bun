@@ -9917,6 +9917,52 @@ it("fails when a transitive file: dependency's folder does not exist", async () 
   expect(exitCode).toBe(1);
 });
 
+// A `file:` dependency is a folder package whose dependencies get installed; a
+// `link:` dependency on the same directory is a bare symlink with none. The
+// folder resolver caches resolutions per directory, so whichever of the two
+// resolved first used to be handed out for the other one as well. Dependencies
+// resolve in alias order, so "a" is resolved before "z".
+for (const [first, second] of [
+  ["link", "file"],
+  ["file", "link"],
+] as const) {
+  it(`resolves file: and link: to the same directory as separate packages (${first}: resolves first)`, async () => {
+    using dir = tempDir("file-and-link-to-same-dir", {
+      "shared/package.json": JSON.stringify({
+        name: "shared",
+        version: "1.0.0",
+        dependencies: { extra: "file:../app/extra" },
+      }),
+      "app/extra/package.json": JSON.stringify({ name: "extra", version: "1.0.0" }),
+      "app/package.json": JSON.stringify({
+        name: "app",
+        dependencies: { a: `${first}:../shared`, z: `${second}:../shared` },
+      }),
+    });
+    const projectDir = join(String(dir), "app");
+    const fileAlias = first === "file" ? "a" : "z";
+    const linkAlias = first === "link" ? "a" : "z";
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      cwd: projectDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    const lockfile = Bun.JSONC.parse(await file(join(projectDir, "bun.lock")).text()) as any;
+    expect(lockfile.packages).toEqual({
+      [fileAlias]: ["shared@file:../shared", { dependencies: { extra: "file:../app/extra" } }],
+      [`${fileAlias}/extra`]: ["extra@file:extra", {}],
+      [linkAlias]: ["shared@link:../shared", {}],
+    });
+  });
+}
+
 it("does not extract a local file: tarball outside the temp dir for a dependency alias containing '..' path segments", async () => {
   // For `file:` tarball dependencies, the dependency alias (the key in
   // `dependencies`) is used to derive the temporary extraction folder name.

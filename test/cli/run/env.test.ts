@@ -777,13 +777,30 @@ describe.concurrent("--env-file", () => {
       });
     });
 
-    test("bun <file.sh>", async () => {
+    // `./` makes bun open the file directly and boot the shell runner; a bare
+    // name goes through the package.json script lookup instead (covered below).
+    test("bun ./file.sh", async () => {
       using shDir = tempDir("dotenv-missing-sh", { "script.sh": "echo ran\n" });
-      expect(await spawnEnvFile(["--env-file=.env.nonexisting", "script.sh"], String(shDir))).toEqual({
+      expect(await spawnEnvFile(["--env-file=.env.nonexisting", "./script.sh"], String(shDir))).toEqual({
         stdout: "",
         stderr: missing,
         exitCode: 1,
       });
+    });
+
+    test("node ./file.sh (argv0=node)", async () => {
+      using shDir = tempDir("dotenv-missing-sh-node", { "script.sh": "echo ran\n" });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--env-file=.env.nonexisting", "./script.sh"],
+        argv0: "node",
+        cwd: String(shDir),
+        env: { ...bunEnv, NODE_ENV: undefined },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: missing, exitCode: 1 });
     });
 
     test("bun test", async () => {
@@ -804,11 +821,13 @@ describe.concurrent("--env-file", () => {
     // point, and each has its own error sink that must not add a second line.
     test.each([
       ["bun run <script>", ["run", "go"]],
+      ["bun <file.sh> (bare name, resolved like a script)", ["script.sh"]],
       ["bun run --parallel <script>", ["run", "--parallel", "go"]],
       ["bun run --filter <script>", ["run", "--filter", "*", "go"]],
     ])("%s", async (_, args) => {
       using scriptDir = tempDir("dotenv-missing-script", {
         "package.json": JSON.stringify({ name: "pkg", scripts: { go: "echo ran" } }),
+        "script.sh": "echo ran\n",
       });
       expect(await spawnEnvFile(["--env-file=.env.nonexisting", ...args], String(scriptDir))).toEqual({
         stdout: "",

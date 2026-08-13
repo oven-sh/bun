@@ -12,18 +12,7 @@ use enum_map::Enum;
 /// - bun-native-bundler-plugin-api/bundler_plugin.h
 /// - src/jsc/bindings/headers-handwritten.h
 #[repr(u8)]
-#[derive(
-    Copy,
-    Clone,
-    Default,
-    Eq,
-    PartialEq,
-    Debug,
-    Hash,
-    Enum,
-    strum::IntoStaticStr,
-    strum::VariantNames,
-)]
+#[derive(Copy, Clone, Default, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr)]
 // The lower_snake names are exposed to JS (HTMLImportManifest
 // `"loader":`, BuildArtifact.loader) so the strum serialization must match exactly.
 #[strum(serialize_all = "snake_case")]

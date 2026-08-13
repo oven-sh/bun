@@ -239,9 +239,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) dirname_ref: Ref,
     pub(crate) import_meta_ref: Ref,
     pub(crate) hmr_api_ref: Ref,
-    /// Unbound `module` created by `value_for_import_meta_main` for iife output. It is
-    /// never printed; being unbound, it makes the renamer keep every bundled binding off
-    /// that name, so the `module` the lowering prints is the host's.
+    /// Unbound `module` declared by `value_for_import_meta_main`; reserves the
+    /// name so the iife lowering compares against the host's `module`.
     pub(crate) import_meta_main_host_module_ref: Ref,
 
     /// If bake is enabled and this is a server-side file, we want to use
@@ -5277,14 +5276,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The printer can handle this for us, but we need to reference
         // a handle to the `__require` function.
         //
-        // An iife is loaded as a CommonJS script instead, so there it becomes
-        //
-        //     var import_meta_main = __require.main == module;
-        //
-        // where `module` is the host's. cjs output reserves that name for every
-        // bundle (see `compute_initial_reserved_names`); for the iife an unbound
-        // `module` in this file's scope reserves it the same way, so a bundled
-        // binding of that name gets renamed instead of being compared against.
+        // An iife runs as CommonJS, so there it prints `__require.main == module`
+        // with the host's `module`; the unbound symbol reserves the name in the
+        // renamer (cjs does the same via `compute_initial_reserved_names`).
         if self.options.lower_import_meta_main {
             self.record_usage_of_runtime_require();
             if self.options.output_format == options::Format::Iife

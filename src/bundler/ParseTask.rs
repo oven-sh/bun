@@ -396,8 +396,7 @@ pub(crate) struct RuntimeSource {
 // code that called `fn.toString()` and parsed the code outside a module
 // context.
 //
-// This is also right for iife output: Bun loads the `// @bun` output as an ES
-// module, where `import.meta.require` is the only `require` there is.
+// iife output uses this too: Bun loads the `// @bun` iife as an ES module.
 const RUNTIME_REQUIRE_BUN: &str = "export var __require = import.meta.require;";
 
 const RUNTIME_REQUIRE_NODE: &str = "\
@@ -417,9 +416,7 @@ export var __require = /* @__PURE__ */ createRequire(import.meta.url);
 // When bundling to node, esbuild picks this code path as well, but `globalThis.require`
 // is not always defined there. The `createRequire` call approach is more reliable.
 //
-// iife output for node uses this too (like esbuild): a script can neither `import`
-// node:module nor read `import.meta.url`, and node loads the iife as CommonJS, where
-// `require` is in scope for this shim to forward to.
+// node iife output uses this too: a script has no `import` or `import.meta.url`.
 const RUNTIME_REQUIRE_OTHER: &str = "\
 export var __require = /* @__PURE__ */ (x =>
   typeof require !== 'undefined' ? require :
@@ -2511,9 +2508,8 @@ pub mod parse_worker {
         opts.features.lower_using = !target.is_bun();
         opts.features.hot_module_reloading =
             output_format == options::Format::InternalBakeDev && !task.source_index.is_runtime();
-        // The printer emits the runtime's `__require` for every output format except cjs
-        // (see `runtime_require_ref` in the linker); this is what makes a file that uses it
-        // import the part defining it.
+        // Must match `runtime_require_ref` in the linker: every format but cjs
+        // prints the runtime's `__require`.
         opts.features.auto_polyfill_require =
             matches!(output_format, options::Format::Esm | options::Format::Iife)
                 && !opts.features.hot_module_reloading;
@@ -2608,12 +2604,10 @@ pub mod parse_worker {
         if topts.inline_entrypoint_import_meta_main || !task.is_entry_point {
             opts.import_meta_main_value = Some(task.is_entry_point && !topts.has_dev_server());
         } else {
-            // Must agree with `EImportMetaMain` in the printer. cjs output lowers it too,
-            // but to the host's own `require`, which needs nothing from the parser.
+            // Must agree with `EImportMetaMain` in the printer.
             opts.lower_import_meta_main = match output_format {
                 options::Format::Esm => target == options::Target::Node,
-                // Bun loads its `// @bun` iife as an ES module (see post_process_js_chunk),
-                // so `import.meta.main` is kept as is there.
+                // Bun loads its `// @bun` iife as an ES module, so import.meta.main works there.
                 options::Format::Iife => !target.is_bun(),
                 options::Format::Cjs | options::Format::InternalBakeDev => false,
             };

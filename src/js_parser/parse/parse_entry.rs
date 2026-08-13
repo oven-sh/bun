@@ -92,9 +92,8 @@ pub struct Options<'a> {
 
     /// Used for inlining the state of import.meta.main during visiting
     pub import_meta_main_value: Option<bool>,
-    /// The printer is going to lower `import.meta.main` to a comparison built on the
-    /// runtime's `__require` (esm output for node, iife output unless targeting bun),
-    /// so the file has to import it. See `P::value_for_import_meta_main`.
+    /// The printer will lower `import.meta.main` via the runtime's `__require`;
+    /// see `P::value_for_import_meta_main`.
     pub lower_import_meta_main: bool,
 
     /// When using react fast refresh or server components, the framework is

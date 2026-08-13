@@ -2599,8 +2599,7 @@ pub mod bv2_impl {
             }
         }
 
-        /// `loader` is the graph's `File::rebundle_loader()` for the file, passed in
-        /// because the caller is inside the graph (see [`Self::entry_point_loader`]).
+        /// `loader`: the file's `File::rebundle_loader()`, passed in since the caller is inside the graph.
         pub fn enqueue_file_from_dev_server_incremental_graph_invalidation(
             &mut self,
             path_slice: &[u8],
@@ -2689,9 +2688,7 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        /// Loader for a file bundled from its path alone. The dev server rebundles
-        /// changed files this way, and their loader may have come from an importer's
-        /// `with { type }` rather than the extension, so its record wins when it has one.
+        /// Dev server rebundles reuse the file's recorded loader: an importer's `with { type }` may have chosen it.
         pub(crate) fn entry_point_loader(
             &self,
             path: &Fs::Path,

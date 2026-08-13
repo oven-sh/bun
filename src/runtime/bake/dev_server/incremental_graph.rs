@@ -109,8 +109,7 @@ pub struct File {
     pub(crate) kind: FileKind,
     /// If the file has an error, the failure can be looked up in `dev.bundling_failures`.
     pub(crate) failed: bool,
-    /// Loader of the last bundle attempt (`None` before the first). It may come from an
-    /// importer's `with { type }` rather than the extension, so rebundles read it back.
+    /// Loader of the last bundle attempt; rebundles reuse it since an importer's `with { type }` may have chosen it.
     pub(crate) loader: Option<Loader>,
     // ── server-side ────────────────────────────────────────────────────
     pub(crate) is_rsc: bool,
@@ -131,8 +130,7 @@ impl File {
         self.kind
     }
 
-    /// Loader to rebundle this file with. The graph has one entry per path, so a text
-    /// import of a route's HTML file may have recorded its loader first; the route wins.
+    /// A route's HTML file is always rebundled as the route, even if a text import of it recorded `loader` first.
     #[inline]
     pub(crate) fn rebundle_loader(&self) -> Option<Loader> {
         if self.html_route_bundle_index.is_some() {
@@ -1426,8 +1424,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(())
     }
 
-    /// `IncrementalGraph(side).insertFailure` (spec :1419). `loader` is the failed
-    /// attempt's loader when known; `None` keeps the file's existing record.
+    /// `IncrementalGraph(side).insertFailure` (spec :1419). `loader: None` keeps the file's existing record.
     pub(crate) fn insert_failure(
         &mut self,
         key: InsertFailureKey<'_>,

@@ -4093,8 +4093,7 @@ pub(super) fn finalize_bundle(
             .get(key)
             .and_then(|file| file.html_route_bundle_index)
         else {
-            // Not a route (an `onLoad` plugin returned `loader: "html"` for an import;
-            // imports that ask for html themselves are rejected while resolving).
+            // Not a route: an `onLoad` plugin returned `loader: "html"` for an import.
             let mut log = Log::init();
             log.add_error(
                 Some(source),

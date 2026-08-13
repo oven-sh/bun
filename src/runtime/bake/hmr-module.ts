@@ -694,8 +694,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       DEBUG.ASSERT(current);
       DEBUG.ASSERT(current.selfAccept === null);
       if (current.importers.size === 0) {
-        // A root .html module is the route's own file; the caller should have already
-        // reloaded for it. (An .html file imported as text has importers.)
+        // Only a route's own .html file is a root module, and the caller already reloads for those.
         DEBUG.ASSERT(!boundary.endsWith(".html"));
         message += `Module "${boundary}" is a root module that does not self-accept.\n`;
         continue;

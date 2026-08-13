@@ -60,8 +60,7 @@ pub struct NetworkTask {
     // `tarball.url` in the latter would be a self-reference
     // into `callback`; owning avoids that at the cost of one copy per tarball download.
     pub(crate) url_buf: Box<[u8]>,
-    /// Proxy href the request goes through (empty: direct); borrowed by the
-    /// `AsyncHTTP` like `url_buf`.
+    /// Proxy href for this request (empty: direct); owned like `url_buf`, `AsyncHTTP` borrows it.
     pub(crate) http_proxy_buf: Box<[u8]>,
     pub(crate) retried: u16,
     pub(crate) response_buffer: MutableString,

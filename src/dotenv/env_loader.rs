@@ -337,8 +337,7 @@ impl Loader {
     /// `hostname` is the host without port (e.g., "localhost")
     /// `host` is the host with port if present (e.g., "localhost:3000")
     ///
-    /// The value is WHATWG-normalized like `fetch()`'s `proxy` option (#16182);
-    /// one the WHATWG parser rejects (e.g. a scheme-less `host:port`) is used as written.
+    /// Normalized like `fetch()`'s `proxy` option (#16182); a value WTF::URL rejects is used as is.
     pub fn get_http_proxy(
         &self,
         is_http: bool,

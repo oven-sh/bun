@@ -2238,10 +2238,11 @@ mod tests {
         Some(String::from_utf16(resolved.as_slice()).unwrap())
     }
 
-    /// A drive-relative name on the cwd's drive resolves against the cwd;
-    /// the test binary's cwd is always drive-letter rooted.
+    /// The bare designator of the cwd's drive, in either case, stands for the
+    /// cwd itself; this is what `node:fs` resolves drive-relative paths with.
+    /// The test binary's cwd is always drive-letter rooted.
     #[test]
-    fn full_path_name_resolves_drive_relative_against_cwd() {
+    fn full_path_name_of_bare_drive_designator_is_the_cwd() {
         let cwd = std::env::current_dir()
             .unwrap()
             .to_str()
@@ -2249,20 +2250,15 @@ mod tests {
             .to_owned();
         let drive = &cwd[..2];
         assert_eq!(drive.as_bytes()[1], b':', "{cwd}");
-        let expected = format!("{}\\x", cwd.trim_end_matches('\\'));
-        assert_eq!(
-            full_path_name(&format!("{drive}x")).as_deref(),
-            Some(&*expected)
-        );
-        assert_eq!(
-            full_path_name(&format!("{}x", drive.to_ascii_lowercase())).as_deref(),
-            Some(&*expected)
-        );
-        assert_eq!(
-            full_path_name(&format!("{drive}a\\..\\x")).as_deref(),
-            Some(&*expected)
-        );
         assert_eq!(full_path_name(drive).as_deref(), Some(&*cwd));
+        assert_eq!(
+            full_path_name(&drive.to_ascii_lowercase()).as_deref(),
+            Some(&*cwd)
+        );
+        assert_eq!(
+            full_path_name(&drive.to_ascii_uppercase()).as_deref(),
+            Some(&*cwd)
+        );
     }
 
     #[test]

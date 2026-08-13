@@ -5351,8 +5351,8 @@ describe.if(isWindows)("windows path handling", () => {
 // operations that open through NT relative to the cwd handle (readdir,
 // recursive rm, writeFile, mkdir -p's existence probe) used to read it as a
 // stream named "dir" on a file named "C" instead. Every fixture below runs in a
-// child whose cwd is a fresh temp dir and spells its paths as that cwd's drive
-// followed directly by a name relative to the cwd.
+// child whose cwd is a fresh temp dir and spells its paths from that cwd: the
+// cwd's drive followed directly by a name relative to it.
 describe.if(isWindows)("windows drive-relative paths", () => {
   async function runFixture(cwd: string, body: string): Promise<unknown> {
     const source = `
@@ -5439,6 +5439,45 @@ describe.if(isWindows)("windows drive-relative paths", () => {
     });
   });
 
+  // The other spelling Win32 completes from the cwd: rooted but without a
+  // drive (`\dir`, the cwd's drive). The async recursive readdir used to be the
+  // one flavor that opened its root without going through the same path
+  // translation as the others.
+  it.concurrent("recursive readdir accepts a rooted path without a drive in every flavor", async () => {
+    using dir = tempDir("fs-drive-relative", {
+      "dir/inner.txt": "",
+      "dir/sub/deep.txt": "",
+    });
+    expect(
+      await runFixture(
+        String(dir),
+        `
+          const rooted = path.join(cwd.slice(2), "dir");
+          const callback = await new Promise((resolve, reject) =>
+            fs.readdir(rooted, { recursive: true }, (err, names) => (err ? reject(err) : resolve(names))),
+          );
+          Object.assign(out, {
+            rootedHasNoDrive: rooted.startsWith(path.sep),
+            sync: fs.readdirSync(rooted),
+            recursiveSync: fs.readdirSync(rooted, { recursive: true }).sort(),
+            recursiveCallback: callback.sort(),
+            recursivePromise: (await fs.promises.readdir(rooted, { recursive: true })).sort(),
+            recursivePromiseDirents: (await fs.promises.readdir(rooted, { recursive: true, withFileTypes: true }))
+              .map(dirent => dirent.name)
+              .sort(),
+          });
+        `,
+      ),
+    ).toEqual({
+      rootedHasNoDrive: true,
+      sync: ["inner.txt", "sub"],
+      recursiveSync: recursiveListing,
+      recursiveCallback: recursiveListing,
+      recursivePromise: recursiveListing,
+      recursivePromiseDirents: ["deep.txt", "inner.txt", "sub"],
+    });
+  });
+
   it.concurrent("writeFile writes the file the path names", async () => {
     using dir = tempDir("fs-drive-relative", {});
     expect(
@@ -5450,18 +5489,27 @@ describe.if(isWindows)("windows drive-relative paths", () => {
           fs.writeFileSync(drive[0], "unrelated");
           fs.writeFileSync(rel("sync"), "sync contents");
           await fs.promises.writeFile(rel("promise"), "promise contents");
+          // The name itself is taken literally, as it is for the absolute
+          // spelling: Win32's own rules would drop the trailing dot and send
+          // nul.txt to the NUL device.
+          fs.writeFileSync(rel("dot."), "dot contents");
+          fs.writeFileSync(rel("nul.txt"), "nul contents");
           Object.assign(out, {
             listing: fs.readdirSync(".").filter(name => name !== drive[0]).sort(),
             sync: fs.readFileSync("sync", "utf8"),
             promise: fs.readFileSync("promise", "utf8"),
+            dot: fs.readFileSync(rel("dot."), "utf8"),
+            nul: fs.readFileSync(rel("nul.txt"), "utf8"),
             letterFile: fs.readFileSync(drive[0], "utf8"),
           });
         `,
       ),
     ).toEqual({
-      listing: ["promise", "sync"],
+      listing: ["dot.", "nul.txt", "promise", "sync"],
       sync: "sync contents",
       promise: "promise contents",
+      dot: "dot contents",
+      nul: "nul contents",
       letterFile: "unrelated",
     });
   });

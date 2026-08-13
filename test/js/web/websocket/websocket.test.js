@@ -1149,3 +1149,24 @@ describe("WebSocket message handler re-entrancy during a multi-frame read", () =
     expect(close).toEqual({ code: 1006, wasClean: false });
   });
 });
+
+// https://github.com/oven-sh/bun/issues/38188
+it("terminate() on a wss:// socket whose peer never answers close_notify still fires close", async () => {
+  const worker = new Worker(join(import.meta.dir, "websocket-frozen-server-fixture.ts"));
+  try {
+    const port = await new Promise(resolve => (worker.onmessage = e => resolve(e.data)));
+    const frozen = new Promise(resolve => (worker.onmessage = e => resolve(e.data)));
+    const ws = new WebSocket(`wss://localhost:${port}`, { tls: { rejectUnauthorized: false } });
+    const closed = new Promise(resolve => (ws.onclose = e => resolve(e.code)));
+    await new Promise(resolve => (ws.onopen = resolve));
+    ws.send("freeze");
+    expect(await frozen).toBe("frozen");
+
+    ws.terminate();
+    expect(ws.readyState).toBe(WebSocket.CLOSING);
+    expect(await closed).toBe(1006);
+    expect(ws.readyState).toBe(WebSocket.CLOSED);
+  } finally {
+    worker.terminate();
+  }
+});

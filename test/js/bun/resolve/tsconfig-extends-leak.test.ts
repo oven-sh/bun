@@ -85,7 +85,7 @@ test.skipIf(!isDebug)("tsconfig 'extends' chain frees every intermediate TSConfi
 // Guards against accidentally freeing data the merged config still references
 // (the merged struct borrows string slices from the intermediates' source
 // buffers, which outlive the struct).
-test("tsconfig 'extends' merge still works after freeing intermediates", async () => {
+test.concurrent("tsconfig 'extends' merge still works after freeing intermediates", async () => {
   using dir = tempDir("tsconfig-extends-merge", {
     "tsconfig.base2.json": JSON.stringify({
       compilerOptions: {
@@ -129,7 +129,7 @@ test("tsconfig 'extends' merge still works after freeing intermediates", async (
 // itself extend another file. The chained compilerOptions must apply: here
 // experimentalDecorators (legacy decorator call signature) and
 // emitDecoratorMetadata (design:* metadata emission) live in the base config.
-test("tsconfig 'extends' resolves package specifiers from node_modules", async () => {
+test.concurrent("tsconfig 'extends' resolves package specifiers from node_modules", async () => {
   using dir = tempDir("tsconfig-extends-package", {
     "node_modules/fake-tsconfig/package.json": JSON.stringify({ name: "fake-tsconfig", version: "1.0.0" }),
     // Layered like @adonisjs/tsconfig: the entry config extends a sibling
@@ -173,7 +173,7 @@ test("tsconfig 'extends' resolves package specifiers from node_modules", async (
 // TypeScript 5 allows "extends" to be an array. Each entry is resolved like a
 // single-string extends (relative or package specifier), and later entries
 // override earlier ones. The leaf config overrides all of them.
-test("tsconfig 'extends' accepts an array of base configs", async () => {
+test.concurrent("tsconfig 'extends' accepts an array of base configs", async () => {
   using dir = tempDir("tsconfig-extends-array", {
     "lib/a/mod.ts": `export default "A";`,
     "lib/b/mod.ts": `export default "B";`,
@@ -197,7 +197,7 @@ test("tsconfig 'extends' accepts an array of base configs", async () => {
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "B\n", stderr: "", exitCode: 0 });
 });
 
-test("tsconfig 'extends' array entries may be package specifiers", async () => {
+test.concurrent("tsconfig 'extends' array entries may be package specifiers", async () => {
   using dir = tempDir("tsconfig-extends-array-pkg", {
     "lib/mod.ts": `export default "LIB";`,
     "node_modules/@tsc/base/package.json": JSON.stringify({ name: "@tsc/base", version: "1.0.0" }),
@@ -227,7 +227,7 @@ test("tsconfig 'extends' array entries may be package specifiers", async () => {
 // second entry is merged (not used as the starting config), so a flag set
 // only there exercises the merge path. No emitDecoratorMetadata here: that
 // flag alone already implies legacy semantics and would mask the bug.
-test("tsconfig 'extends' array merges experimentalDecorators from a non-first entry", async () => {
+test.concurrent("tsconfig 'extends' array merges experimentalDecorators from a non-first entry", async () => {
   using dir = tempDir("tsconfig-extends-array-decorators", {
     "paths.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./lib/*"] } } }),
     "decorators.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
@@ -261,7 +261,7 @@ test("tsconfig 'extends' array merges experimentalDecorators from a non-first en
 });
 
 // One unresolvable array entry must not drop the entries next to it.
-test("tsconfig 'extends' array keeps siblings when one entry is missing", async () => {
+test.concurrent("tsconfig 'extends' array keeps siblings when one entry is missing", async () => {
   using dir = tempDir("tsconfig-extends-array-missing", {
     "lib/mod.ts": `export default "OK";`,
     "real.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./lib/*"] } } }),
@@ -285,7 +285,7 @@ test("tsconfig 'extends' array keeps siblings when one entry is missing", async 
 // The common NestJS/TypeORM shape: the leaf sets experimentalDecorators and
 // extends a base. The merge starts from the base, so the leaf's flag must be
 // carried over by the merge loop, not just flags from the starting config.
-test("tsconfig 'extends' keeps experimentalDecorators set in the extending config", async () => {
+test.concurrent("tsconfig 'extends' keeps experimentalDecorators set in the extending config", async () => {
   using dir = tempDir("tsconfig-extends-leaf-decorators", {
     "base.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./lib/*"] } } }),
     "tsconfig.json": JSON.stringify({
@@ -322,7 +322,7 @@ test("tsconfig 'extends' keeps experimentalDecorators set in the extending confi
 
 // A relative extends that points into node_modules follows the target's own
 // extends chain, same as a package specifier would (tsc behavior).
-test("tsconfig 'extends' via relative path into node_modules follows the chain", async () => {
+test.concurrent("tsconfig 'extends' via relative path into node_modules follows the chain", async () => {
   using dir = tempDir("tsconfig-extends-relative-nm", {
     "node_modules/pkg/app.json": JSON.stringify({ extends: "./flags.json" }),
     "node_modules/pkg/flags.json": JSON.stringify({
@@ -359,7 +359,7 @@ test("tsconfig 'extends' via relative path into node_modules follows the chain",
 // "extends": "base.json" without "./" resolved relative to the tsconfig
 // before the node_modules walk existed; the walk misses and the relative
 // fallback must keep that shape working.
-test("tsconfig 'extends' bare sibling file name still resolves relative", async () => {
+test.concurrent("tsconfig 'extends' bare sibling file name still resolves relative", async () => {
   using dir = tempDir("tsconfig-extends-bare-relative", {
     "lib/mod.ts": `export default "BARE";`,
     "base.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./lib/*"] } } }),
@@ -381,7 +381,7 @@ test("tsconfig 'extends' bare sibling file name still resolves relative", async 
 });
 
 // tsc appends ".json" to extension-less extends targets.
-test("tsconfig 'extends' appends .json to an extension-less relative target", async () => {
+test.concurrent("tsconfig 'extends' appends .json to an extension-less relative target", async () => {
   using dir = tempDir("tsconfig-extends-json-retry", {
     "lib/mod.ts": `export default "RETRY";`,
     "tsconfig.base.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./lib/*"] } } }),
@@ -405,7 +405,7 @@ test("tsconfig 'extends' appends .json to an extension-less relative target", as
 // Workspace config packages are installed as symlinks. The resolved config
 // must be realpath'd so its relative paths entries are interpreted from the
 // package's real location, matching tsc and esbuild.
-test("tsconfig 'extends' package specifier resolves through a symlink", async () => {
+test.concurrent("tsconfig 'extends' package specifier resolves through a symlink", async () => {
   using dir = tempDir("tsconfig-extends-symlink", {
     "packages/cfg/tsconfig.json": JSON.stringify({
       compilerOptions: { paths: { "@shared/*": ["../shared/*"] } },

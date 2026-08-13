@@ -20,6 +20,7 @@ import { join } from "path";
 import { createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
+const isRoot = process.getuid?.() === 0;
 
 $.nothrow();
 
@@ -190,6 +191,30 @@ describe("mv", async () => {
         rmSync(dst, { recursive: true, force: true });
       }
     });
+
+    test.skipIf(skip || isRoot)(
+      "unreadable directory across devices fails without creating the destination",
+      async () => {
+        const [src, dst] = crossDevicePair("unreadable");
+        const srcDir = join(src, "tree");
+        try {
+          mkdirSync(srcDir);
+          writeFileSync(join(srcDir, "a.txt"), "A\n");
+          chmodSync(srcDir, 0o000);
+
+          const r = await $`mv ${srcDir} ${dst}`.quiet();
+          expect(r.stderr.toString()).toBe(`mv: ${join(dst, "tree")}: Permission denied\n`);
+          expect(lstatSync(join(dst, "tree"), { throwIfNoEntry: false })).toBeUndefined();
+          chmodSync(srcDir, 0o700);
+          expect(readFileSync(join(srcDir, "a.txt"), "utf8")).toBe("A\n");
+          expect(r.exitCode).toBe(13);
+        } finally {
+          if (existsSync(srcDir)) chmodSync(srcDir, 0o700);
+          rmSync(src, { recursive: true, force: true });
+          rmSync(dst, { recursive: true, force: true });
+        }
+      },
+    );
 
     test.skipIf(skip)("FIFO across devices fails fast", async () => {
       const [src, dst] = crossDevicePair("fifo");

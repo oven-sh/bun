@@ -863,6 +863,24 @@ impl Lockfile {
         self.packages.items_dependencies()[root_id as usize].contains(id)
     }
 
+    /// Is `id` a direct dependency of one of the `targets` workspaces?
+    pub fn is_dependency_of_workspace_in(
+        &self,
+        targets: &[crate::package_manager::UpdateTargetWorkspace],
+        id: DependencyID,
+    ) -> bool {
+        let pkg_id = self.get_workspace_pkg_if_workspace_dep(id);
+        if pkg_id == invalid_package_id {
+            return false;
+        }
+        let is_root =
+            self.packages.items_resolution()[pkg_id as usize].tag == crate::resolution::Tag::Root;
+        let hash = self.packages.items_name_hash()[pkg_id as usize];
+        let name =
+            self.packages.items_name()[pkg_id as usize].slice(self.buffers.string_bytes.as_slice());
+        targets.iter().any(|t| t.matches(is_root, hash, name))
+    }
+
     /// Is this a direct dependency of any workspace (including workspace root)?
     /// TODO make this faster by caching the workspace package ids
     pub(crate) fn is_workspace_dependency(&self, id: DependencyID) -> bool {
@@ -1020,6 +1038,7 @@ impl Lockfile {
             lockfile: &mut *new,
             mapping: &mut package_id_mapping,
             clone_queue: clone_queue_,
+            optional_peers: PendingResolutions::new(),
             log,
             old_preinstall_state,
             manager: &mut *manager,
@@ -1292,6 +1311,8 @@ impl Lockfile {
 
 pub struct Cloner<'a> {
     pub(crate) clone_queue: PendingResolutions,
+    /// Bound in `flush`, once `clone_queue` has decided which targets survive.
+    pub(crate) optional_peers: PendingResolutions,
     pub lockfile: &'a mut Lockfile,
     pub(crate) old: &'a mut Lockfile,
     pub(crate) mapping: &'a mut [PackageID],
@@ -1316,6 +1337,14 @@ impl<'a> Cloner<'a> {
             // `Package::clone` reads/writes through `cloner` exclusively.
             let new_id = old_package.clone(self)?;
             self.lockfile.buffers.resolutions[to_clone.resolve_id as usize] = new_id;
+        }
+
+        // bun.lock.rs binds these before hoisting; the hoist below has to see the same bindings.
+        for pending in self.optional_peers.drain(..) {
+            let mapping = self.mapping[pending.old_resolution as usize];
+            if (mapping as usize) < max_package_id {
+                self.lockfile.buffers.resolutions[pending.resolve_id as usize] = mapping;
+            }
         }
 
         // cloning finished, items in lockfile buffer might have a different order, meaning
@@ -1345,8 +1374,10 @@ impl<'a> Cloner<'a> {
 // ────────────────────────────────────────────────────────────────────────────
 
 impl Lockfile {
+    /// Re-hoists while a pass bound an optional peer late; a reload has that binding up front.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
-        self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)
+        while self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {}
+        Ok(())
     }
 
     pub(crate) fn filter(
@@ -1363,10 +1394,11 @@ impl Lockfile {
             install_root_dependencies,
             workspace_filters,
             packages_to_install,
-        )
+        )?;
+        Ok(())
     }
 
-    /// Sets `buffers.trees` and `buffers.hoisted_dependencies`
+    /// Sets `buffers.trees`/`hoisted_dependencies`; returns `Builder::late_bound_optional_peer`.
     pub(crate) fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
         log: &mut bun_ast::Log,
@@ -1376,7 +1408,7 @@ impl Lockfile {
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
-    ) -> Result<(), tree::SubtreeError> {
+    ) -> Result<bool, tree::SubtreeError> {
         let slice = self.packages.slice();
 
         // `tree::Builder` stores `lockfile: ParentRef<Lockfile>` so
@@ -1398,6 +1430,7 @@ impl Lockfile {
             workspace_filters,
             packages_to_install,
             pending_optional_peers: Default::default(),
+            late_bound_optional_peer: false,
             list: Default::default(),
             sort_buf: Default::default(),
         };
@@ -1416,9 +1449,10 @@ impl Lockfile {
         }
 
         let cleaned = builder.clean()?;
+        let late_bound_optional_peer = builder.late_bound_optional_peer;
         self.buffers.trees = cleaned.trees;
         self.buffers.hoisted_dependencies = cleaned.dep_ids;
-        Ok(())
+        Ok(late_bound_optional_peer)
     }
 }
 
@@ -1493,14 +1527,14 @@ impl Lockfile {
                     // above); `manifests` and `lockfile` are non-overlapping
                     // fields and nothing below resizes/relocates `manifests`
                     // while `manifest` is held.
-                    let scope = mgr_ref.options.scope_for_package_name(
-                        pkg_name.slice(self.buffers.string_bytes.as_slice()),
-                    );
+                    let pkg_name_str = pkg_name.slice(self.buffers.string_bytes.as_slice());
+                    let scope = mgr_ref.options.scope_for_package_name(pkg_name_str);
                     // SAFETY: `manifests` projected from `manager_ptr`; the
                     // call holds only that disjoint field.
                     let Some(manifest) = unsafe { &mut (*manager_ptr).manifests }.by_name_hash(
                         cache_ctx,
                         scope,
+                        pkg_name_str,
                         pkg_name_hash,
                         Install::ManifestLoad::LoadFromMemoryFallbackToDisk,
                         false,

@@ -517,6 +517,8 @@ bun_dispatch::link_interface! {
         fn on_reader_error(err: bun_sys::Error);
         fn loop_ptr() -> *mut Loop;
         fn event_loop() -> EventLoopCtx;
+        fn ref_();
+        fn deref();
     }
 }
 
@@ -579,6 +581,8 @@ macro_rules! __impl_buffered_reader_parent_body {
         on_reader_error = |$re_this:ident, $re_err:ident| $re:expr;
         loop_ = |$l_this:ident| $lp:expr;
         event_loop = |$e_this:ident| $ev:expr;
+        $( ref_ = |$rf_this:ident| $rf:expr; )?
+        $( deref = |$dr_this:ident| $dr:expr; )?
     ) => {
         // SAFETY (all generated methods): see `BufferedReaderParent` aliasing
         // contract — `this` is the `*mut Self` registered via `set_parent`; a
@@ -613,6 +617,18 @@ macro_rules! __impl_buffered_reader_parent_body {
             unsafe fn event_loop($e_this: *mut Self) -> $crate::EventLoopHandle {
                 unsafe { $ev }
             }
+            $(
+                #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
+                unsafe fn ref_($rf_this: *mut Self) {
+                    unsafe { $rf }
+                }
+            )?
+            $(
+                #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
+                unsafe fn deref($dr_this: *mut Self) {
+                    unsafe { $dr }
+                }
+            )?
         }
     };
 }
@@ -640,6 +656,10 @@ macro_rules! buffered_reader_parent_link {
                     <$T as $crate::pipe_reader::BufferedReaderParent>::loop_(this),
                 event_loop() =>
                     <$T as $crate::pipe_reader::BufferedReaderParent>::event_loop(this),
+                ref_() =>
+                    <$T as $crate::pipe_reader::BufferedReaderParent>::ref_(this),
+                deref() =>
+                    <$T as $crate::pipe_reader::BufferedReaderParent>::deref(this),
             }
         }
     };

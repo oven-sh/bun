@@ -1023,7 +1023,7 @@ impl WindowsNamedPipe {
         // reschedule the timer
         // `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
         // bridge from `bun_core::Timespec` until the lower tier switches.
-        let next = timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, ms as i64);
+        let next = timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, ms as i64);
         self.event_loop_timer.with_mut(|t| {
             t.next = ElTimespec {
                 sec: next.sec,

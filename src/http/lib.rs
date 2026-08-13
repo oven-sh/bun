@@ -840,7 +840,7 @@ pub struct HTTPClient<'a> {
     /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
     /// This is a workaround for that.
     pub if_modified_since: &'a [u8],
-    pub(crate) request_content_len_buf: [u8; b"-4294967295".len()],
+    pub(crate) request_content_len_buf: [u8; b"18446744073709551615".len()],
 
     pub(crate) http_proxy: Option<URL<'a>>,
     /// Captured proxy env (http_proxy / https_proxy / no_proxy) so redirects
@@ -1264,9 +1264,10 @@ fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'
 }
 
 // ── support types ───────────────────────────────────────────────────────
-enum PendingH2Resolution<'a> {
+#[derive(Clone, Copy)]
+enum PendingH2Resolution {
     /// ALPN selected h2; waiters attach onto this session.
-    H2(&'a mut h2::ClientSession),
+    H2(h2::SessionPtr),
     /// Handshake completed and ALPN selected http/1.1. Waiters can be pinned
     /// to h1 (and h2-pinned waiters failed) since the server has spoken.
     H1,
@@ -1435,9 +1436,27 @@ pub(crate) fn print_request(
         Protocol::Http2 => "HTTP/2",
         Protocol::Http3 => "HTTP/3",
     };
-    bun_core::pretty_errorln!("> {} {} {}", ver, BStr::new(request.method), BStr::new(url));
+    bun_core::pretty_errorln!(
+        "> {} {} {}",
+        ver,
+        BStr::new(request.method),
+        bun_core::fmt::redacted_npm_url(url),
+    );
     for header in request.headers {
-        bun_core::pretty_errorln!("> {}", header);
+        let name = header.name();
+        if strings::eql_case_insensitive_ascii(name, b"authorization", true)
+            || strings::eql_case_insensitive_ascii(name, b"proxy-authorization", true)
+        {
+            let value = header.value();
+            let scheme_len = strings::index_of_char_usize(value, b' ').map_or(0, |i| i + 1);
+            bun_core::pretty_errorln!(
+                "> <r><cyan>{}<r><d>: <r>{}<d>[redacted]<r>",
+                BStr::new(name),
+                BStr::new(&value[..scheme_len]),
+            );
+        } else {
+            bun_core::pretty_errorln!("> {}", header);
+        }
     }
     Output::flush();
 }
@@ -1600,28 +1619,21 @@ impl<'a> HTTPClient<'a> {
         // field of `self`); the RawSlice invariant centralises the unsafe.
         self.state.request_body.slice()
     }
+    /// The tunnel handle's pointer, for the entry points that may release the
+    /// handle while they run (`ProxyTunnel::on_writable` / `receive`).
     #[inline]
-    fn proxy_tunnel_mut(&mut self) -> Option<&mut ProxyTunnel> {
-        let raw = self.proxy_tunnel.as_ref().map(|p| p.as_ptr())?;
-        Some(proxy_tunnel::raw_as_mut(raw))
+    fn proxy_tunnel_ptr(&self) -> Option<NonNull<ProxyTunnel>> {
+        self.proxy_tunnel.as_ref().map(|p| p.data)
     }
-    /// Detach and release the proxy tunnel if one is attached. Replaces the
-    /// open-coded `take → as_mut → shutdown → detach_and_deref` sequence.
+    /// Detach the proxy tunnel, if one is attached, and release this client's
+    /// ref on it through the handle that holds it.
     #[inline]
     fn close_proxy_tunnel(&mut self, shutdown: bool) {
         if let Some(t) = self.proxy_tunnel.take() {
-            // `detach_socket` (formerly the first half of `detach_and_deref`)
-            // must run before the strong ref is released so a refcount>1
-            // tunnel keeps no dangling socket.
             if shutdown {
-                proxy_tunnel::ProxyTunnel::shutdown(
-                    core::ptr::NonNull::new(t.as_ptr()).expect("live strong ref is non-null"),
-                );
+                proxy_tunnel::ProxyTunnel::shutdown(t.data);
             }
-            let tunnel = proxy_tunnel::raw_as_mut(t.as_ptr());
-            tunnel.detach_socket();
-            // Release the strong ref this client held (formerly the `deref`
-            // half of `detach_and_deref`).
+            proxy_tunnel::raw_as_mut(t.as_ptr()).detach_socket();
             t.deref();
         }
     }
@@ -2013,13 +2025,13 @@ impl<'a> HTTPClient<'a> {
                 // unified here, so rebuild from the InternalSocket.
                 let tls_socket = uws::SocketTLS::from_any(socket.socket);
                 let ctx = self.get_ssl_ctx::<true>();
-                // SAFETY: `create` returns a freshly-boxed session with refcount 1,
-                // owned by the socket ext-data via `tag_as_h2`. The `&mut` is
-                // unique here — no other access until `attach` returns.
-                let session = unsafe { &mut *h2::ClientSession::create(ctx, tls_socket, self) };
-                GenHttpContext::<true>::tag_as_h2(tls_socket, session);
+                // `create` hands back the ref the socket ext owns from here on;
+                // `attach_leader` may release it (a failed first flush tears the
+                // session down), so `session` is not used after that call.
+                let session = h2::ClientSession::create(ctx, tls_socket, self);
+                GenHttpContext::<true>::tag_as_h2(tls_socket, session.as_ptr());
                 self.resolve_pending_h2(PendingH2Resolution::H2(session));
-                session.attach(self);
+                h2::ClientSession::attach_leader(session, self);
                 return;
             }
             self.flags.protocol = Protocol::Http1_1;
@@ -2527,16 +2539,10 @@ impl<'a> HTTPClient<'a> {
                     header_count += 1;
                 }
             } else {
-                // 11-byte buf vs 64-bit usize: must fall back to "0" on
-                // overflow, NOT panic.
-                let value: &[u8] = match bun_core::fmt::buf_print(
-                    &mut self.request_content_len_buf,
-                    format_args!("{body_len}"),
-                ) {
-                    // SAFETY: borrows `self.request_content_len_buf` which lives for `self`.
-                    Ok(s) => unsafe { bun_ptr::detach_lifetime(s) },
-                    Err(_) => b"0",
-                };
+                let value: &[u8] =
+                    bun_core::fmt::int_as_bytes(&mut self.request_content_len_buf, body_len);
+                // SAFETY: borrows `self.request_content_len_buf` which lives for `self`.
+                let value: &[u8] = unsafe { bun_ptr::detach_lifetime(value) };
                 request_headers_buf[header_count] =
                     picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, value);
                 header_count += 1;
@@ -3285,8 +3291,8 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
-        if let Some(proxy) = self.proxy_tunnel_mut() {
-            proxy.on_writable::<IS_SSL>(socket);
+        if let Some(proxy) = self.proxy_tunnel_ptr() {
+            ProxyTunnel::on_writable::<IS_SSL>(proxy, socket);
             // ProxyTunnel::on_writable → SSLWrapper::flush → handle_traffic
             // may process a TLS alert or close_notify that was buffered
             // alongside the handshake flight, firing on_close →
@@ -3774,6 +3780,9 @@ impl<'a> HTTPClient<'a> {
         }
 
         if should_continue == ShouldContinue::Finished {
+            if !to_read.is_empty() {
+                self.state.flags.allow_keepalive = false;
+            }
             if self.state.flags.is_redirect_pending {
                 self.do_redirect::<IS_SSL>(ctx, socket);
                 return;
@@ -3853,7 +3862,7 @@ impl<'a> HTTPClient<'a> {
             return;
         }
 
-        if self.proxy_tunnel.is_some() {
+        if let Some(proxy) = self.proxy_tunnel_ptr() {
             // Body phase only, mirroring the non-proxy dispatch below (header
             // phase is an absolute deadline; see [`IDLE_TIMEOUT_SECONDS`]).
             debug_assert!(!self.state.flags.receive_paused); // maybe_pause_receive bails on proxy_tunnel
@@ -3863,7 +3872,7 @@ impl<'a> HTTPClient<'a> {
             ) {
                 self.set_timeout(&socket);
             }
-            self.proxy_tunnel_mut().unwrap().receive(incoming_data);
+            ProxyTunnel::receive(proxy, incoming_data);
             return;
         }
 
@@ -3947,7 +3956,7 @@ impl<'a> HTTPClient<'a> {
 
     /// The leader of a coalesced cold connect has learned the ALPN outcome (or
     /// failed). Dispatch every waiter accordingly.
-    fn resolve_pending_h2(&mut self, mut resolution: PendingH2Resolution<'_>) {
+    fn resolve_pending_h2(&mut self, resolution: PendingH2Resolution) {
         let Some(pc_ptr) = self.pending_h2.take() else {
             return;
         };
@@ -3968,8 +3977,8 @@ impl<'a> HTTPClient<'a> {
                 waiter.fail(crate::Error::Aborted);
                 continue;
             }
-            match &mut resolution {
-                PendingH2Resolution::H2(s) => s.enqueue(waiter),
+            match resolution {
+                PendingH2Resolution::H2(session) => h2::ClientSession::enqueue(session, waiter),
                 PendingH2Resolution::H1 => {
                     // ALPN selected http/1.1 on the leader's handshake; an
                     // h2-pinned waiter would just open a fresh TLS connection

@@ -103,10 +103,7 @@ pub struct PackageInstaller<'a> {
     pub(crate) tree_ids_to_trees_the_id_depends_on: bun_collections::DynamicBitSetList,
     pub(crate) pending_lifecycle_scripts: Vec<PendingLifecycleScript>,
 
-    /// Value is the alias bytes the key hash was computed from; lookups must
-    /// compare it since truncated hashes can collide.
-    pub(crate) trusted_dependencies_from_update_requests:
-        ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>>,
+    pub(crate) trusted_dependencies_from_update_requests: ArrayHashMap<PackageID, ()>,
 
     /// uses same ids as lockfile.trees
     pub(crate) trees: Box<[TreeContext]>,
@@ -425,6 +422,22 @@ pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
     }
 
     component_count == 1 || (component_count == 2 && alias[0] == b'@')
+}
+
+/// Formats the version label `PackageInstall` verifies and hashes patches
+/// against. npm versions fit `buf`; tarball, folder and git resolutions (and
+/// prerelease tags) repeat a user-supplied path, URL or tag of unbounded
+/// length, so a label that does not fit is formatted into `spill` instead.
+fn print_package_version<'a>(
+    buf: &'a mut [u8],
+    spill: &'a mut Vec<u8>,
+    args: core::fmt::Arguments<'_>,
+) -> &'a [u8] {
+    if let Ok(label) = bun_core::fmt::buf_print(buf, args) {
+        return label;
+    }
+    std::io::Write::write_fmt(spill, args).expect("formatting into a Vec is infallible");
+    spill
 }
 
 impl<'a> PackageInstaller<'a> {
@@ -1314,6 +1327,7 @@ impl<'a> PackageInstaller<'a> {
         let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
 
         let mut resolution_buf = [0u8; 512];
+        let mut resolution_spill = Vec::new();
         let package_version: &[u8] = if resolution.tag == resolution::Tag::Workspace {
             'brk: {
                 if let Some(workspace_version) = self
@@ -1322,22 +1336,22 @@ impl<'a> PackageInstaller<'a> {
                     .workspace_versions
                     .get(&pkg_name_hash)
                 {
-                    break 'brk bun_core::fmt::buf_print(
+                    break 'brk print_package_version(
                         &mut resolution_buf,
+                        &mut resolution_spill,
                         format_args!("{}", workspace_version.fmt(string_buf!())),
-                    )
-                    .expect("unreachable");
+                    );
                 }
 
                 // no version
                 break 'brk b"";
             }
         } else {
-            bun_core::fmt::buf_print(
+            print_package_version(
                 &mut resolution_buf,
+                &mut resolution_spill,
                 format_args!("{}", resolution.fmt(string_buf!(), PathSep::Posix)),
             )
-            .expect("unreachable")
         };
 
         let (patch_patch, patch_contents_hash, patch_name_and_version_hash, remove_patch) = 'brk: {
@@ -1923,8 +1937,7 @@ impl<'a> PackageInstaller<'a> {
                     let (is_trusted, is_trusted_through_update_request) = 'brk: {
                         if self
                             .trusted_dependencies_from_update_requests
-                            .get(&truncated_dep_name_hash)
-                            .is_some_and(|n| **n == *alias.slice(string_buf!()))
+                            .contains(&package_id)
                         {
                             break 'brk (true, true);
                         }
@@ -1988,9 +2001,15 @@ impl<'a> PackageInstaller<'a> {
                                 resolution,
                             ) {
                                 if is_trusted_through_update_request {
+                                    let (trusted_name, trusted_name_hash) =
+                                        if resolution.tag == resolution::Tag::Npm {
+                                            (pkg_name, pkg_name_hash as TruncatedPackageNameHash)
+                                        } else {
+                                            (alias, truncated_dep_name_hash)
+                                        };
                                     self.manager_mut()
                                         .trusted_deps_to_add_to_package_json
-                                        .push(Box::<[u8]>::from(alias.slice(string_buf!())));
+                                        .push(Box::<[u8]>::from(trusted_name.slice(string_buf!())));
 
                                     if self.lockfile().trusted_dependencies.is_none() {
                                         self.lockfile_mut().trusted_dependencies =
@@ -2001,8 +2020,8 @@ impl<'a> PackageInstaller<'a> {
                                         .as_mut()
                                         .unwrap()
                                         .put(
-                                            truncated_dep_name_hash,
-                                            Box::<[u8]>::from(alias.slice(string_buf!())),
+                                            trusted_name_hash,
+                                            Box::<[u8]>::from(trusted_name.slice(string_buf!())),
                                         )
                                         .unwrap_or_oom();
                                 }
@@ -2229,8 +2248,7 @@ impl<'a> PackageInstaller<'a> {
                 // trusted through a --trust dependency. need to enqueue scripts, write to package.json, and add to lockfile
                 if self
                     .trusted_dependencies_from_update_requests
-                    .get(&truncated_dep_name_hash)
-                    .is_some_and(|n| **n == *alias.slice(string_buf!()))
+                    .contains(&package_id)
                 {
                     break 'brk (true, true, true);
                 }
@@ -2300,10 +2318,17 @@ impl<'a> PackageInstaller<'a> {
                         dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
                         resolution,
                     ) {
+                        let (trusted_name, trusted_name_hash) =
+                            if resolution.tag == resolution::Tag::Npm {
+                                (pkg_name, pkg_name_hash as TruncatedPackageNameHash)
+                            } else {
+                                (alias, truncated_dep_name_hash)
+                            };
+
                         if is_trusted_through_update_request {
                             self.manager_mut()
                                 .trusted_deps_to_add_to_package_json
-                                .push(Box::<[u8]>::from(alias.slice(string_buf!())));
+                                .push(Box::<[u8]>::from(trusted_name.slice(string_buf!())));
                         }
 
                         if add_to_lockfile {
@@ -2315,8 +2340,8 @@ impl<'a> PackageInstaller<'a> {
                                 .as_mut()
                                 .unwrap()
                                 .put(
-                                    truncated_dep_name_hash,
-                                    Box::<[u8]>::from(alias.slice(string_buf!())),
+                                    trusted_name_hash,
+                                    Box::<[u8]>::from(trusted_name.slice(string_buf!())),
                                 )
                                 .unwrap_or_oom();
                         }

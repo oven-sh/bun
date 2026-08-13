@@ -274,58 +274,60 @@ describe("bundler", () => {
   // with the runtime's `__export` helper, into each chunk that imports it. The
   // runtime is used by nothing else here, so the CSS file alone decides where
   // the helper ends up: in the entry's own chunk with one entry point...
-  itBundled("splitting/NamespaceImportOfCSS", {
-    files: {
-      "/entry.js": `
-        import * as ns from './styles.css'
-        console.log(JSON.stringify(Object.keys(ns)), JSON.stringify(ns.default))
-      `,
-      "/styles.css": `.styles { color: blue; }`,
-    },
-    entryPoints: ["/entry.js"],
-    splitting: true,
-    outdir: "/out",
-    target: "browser",
-    format: "esm",
-    onAfterBundle(api) {
-      expect(readdirSync(api.outdir).sort()).toEqual(["entry.css", "entry.js"]);
-    },
-    run: {
-      file: "/out/entry.js",
-      stdout: '["default"] {}',
-    },
-  });
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`splitting/NamespaceImportOfCSS-${target}`, {
+      files: {
+        "/entry.js": `
+          import * as ns from './styles.css'
+          console.log(JSON.stringify(Object.keys(ns)), JSON.stringify(ns.default))
+        `,
+        "/styles.css": `.styles { color: blue; }`,
+      },
+      entryPoints: ["/entry.js"],
+      splitting: true,
+      outdir: "/out",
+      target,
+      format: "esm",
+      onAfterBundle(api) {
+        expect(readdirSync(api.outdir).sort()).toEqual(["entry.css", "entry.js"]);
+      },
+      run: {
+        file: "/out/entry.js",
+        stdout: '["default"] {}',
+      },
+    });
 
-  // ...and in a chunk shared by both entry points when two of them import the
-  // stylesheet, which each entry chunk then has to import the helper from.
-  itBundled("splitting/MultipleEntryPointsWithNamespaceImportOfSharedCSS", {
-    files: {
-      "/entry1.js": `
-        import * as ns from './shared.module.css'
-        console.log('entry1', JSON.stringify(Object.keys(ns).sort()), ns.shared === ns.default.shared)
-      `,
-      "/entry2.js": `
-        import * as ns from './shared.module.css'
-        console.log('entry2', JSON.stringify(Object.keys(ns).sort()), ns.shared === ns.default.shared)
-      `,
-      "/shared.module.css": `.shared { font-size: 16px; }`,
-    },
-    entryPoints: ["/entry1.js", "/entry2.js"],
-    splitting: true,
-    outdir: "/out",
-    target: "browser",
-    format: "esm",
-    run: [
-      {
-        file: "/out/entry1.js",
-        stdout: 'entry1 ["default","shared"] true',
+    // ...and in a chunk shared by both entry points when two of them import the
+    // stylesheet, which each entry chunk then has to import the helper from.
+    itBundled(`splitting/MultipleEntryPointsWithNamespaceImportOfSharedCSS-${target}`, {
+      files: {
+        "/entry1.js": `
+          import * as ns from './shared.module.css'
+          console.log('entry1', JSON.stringify(Object.keys(ns).sort()), ns.shared === ns.default.shared)
+        `,
+        "/entry2.js": `
+          import * as ns from './shared.module.css'
+          console.log('entry2', JSON.stringify(Object.keys(ns).sort()), ns.shared === ns.default.shared)
+        `,
+        "/shared.module.css": `.shared { font-size: 16px; }`,
       },
-      {
-        file: "/out/entry2.js",
-        stdout: 'entry2 ["default","shared"] true',
-      },
-    ],
-  });
+      entryPoints: ["/entry1.js", "/entry2.js"],
+      splitting: true,
+      outdir: "/out",
+      target,
+      format: "esm",
+      run: [
+        {
+          file: "/out/entry1.js",
+          stdout: 'entry1 ["default","shared"] true',
+        },
+        {
+          file: "/out/entry2.js",
+          stdout: 'entry2 ["default","shared"] true',
+        },
+      ],
+    });
+  }
 
   itBundled("splitting/DynamicImportWithOnlyCSSNoJS", {
     files: {

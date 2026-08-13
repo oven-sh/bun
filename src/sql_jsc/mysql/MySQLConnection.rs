@@ -90,6 +90,7 @@ pub struct MySQLConnection {
     tls_status: TLSStatus,
     ssl_mode: SSLMode,
     allow_public_key_retrieval: bool,
+    unix_socket: bool,
     flags: ConnectionFlags,
 }
 
@@ -124,6 +125,7 @@ impl Default for MySQLConnection {
             tls_status: TLSStatus::None,
             ssl_mode: SSLMode::Disable,
             allow_public_key_retrieval: false,
+            unix_socket: false,
             flags: ConnectionFlags::default(),
         }
     }
@@ -144,6 +146,7 @@ impl MySQLConnection {
         secure: Option<*mut SslCtx>,
         ssl_mode: SSLMode,
         allow_public_key_retrieval: bool,
+        unix_socket: bool,
     ) -> Self {
         Self {
             database,
@@ -158,6 +161,7 @@ impl MySQLConnection {
             secure,
             ssl_mode,
             allow_public_key_retrieval,
+            unix_socket,
             tls_status: if ssl_mode != SSLMode::Disable {
                 TLSStatus::Pending
             } else {
@@ -773,6 +777,15 @@ impl MySQLConnection {
         }
     }
 
+    /// Transports over which caching_sha2_password full authentication sends the
+    /// password itself rather than going through the RSA public-key exchange. The
+    /// public-key gate defends against an on-path attacker, who does not exist on a
+    /// unix socket; libmysqlclient, mysql2 (`ssl || socketPath`) and go-sql-driver
+    /// (`Net == "unix"`) draw the same line.
+    fn is_secure_transport(&self) -> bool {
+        self.tls_status == TLSStatus::SslOk || self.unix_socket
+    }
+
     pub(crate) fn handle_auth<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
@@ -839,7 +852,7 @@ impl MySQLConnection {
                                     }
                                     self.full_auth_requested = true;
 
-                                    if self.tls_status != TLSStatus::SslOk {
+                                    if !self.is_secure_transport() {
                                         // Over plain TCP, an on-path attacker can answer the
                                         // public-key request with their own key and recover the
                                         // password. Match mysql2 / Connector/J: refuse unless the
@@ -864,9 +877,8 @@ impl MySQLConnection {
                                     } else {
                                         bun_core::scoped_log!(
                                             MySQLConnection,
-                                            "sending password TLS enabled"
+                                            "secure transport, sending password as is"
                                         );
-                                        // SSL mode is enabled, send password as is
                                         let mut packet = self.writer().start(self.sequence_id)?;
                                         self.writer().write_z(&self.password)?;
                                         packet.end()?;

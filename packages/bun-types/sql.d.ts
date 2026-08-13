@@ -406,7 +406,9 @@ declare module "bun" {
        * the connection is not protected by TLS. Disabled by default because a
        * network attacker can substitute their own key and recover the
        * plaintext password. Enable only for trusted local connections, or use
-       * TLS instead.
+       * TLS instead. Not needed over TLS or a Unix socket (`path`): like other
+       * MySQL clients, Bun treats those as secure and sends the password
+       * directly instead of requesting the key.
        * @default false
        */
       allowPublicKeyRetrieval?: boolean | undefined;

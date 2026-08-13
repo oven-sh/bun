@@ -500,6 +500,7 @@ impl JSMySQLConnection {
         // MySQL doesn't support unnamed prepared statements
         let _ = use_unnamed_prepared_statements;
         let allow_public_key_retrieval = callframe.argument(15).to_boolean();
+        let unix_socket = !path.is_empty();
 
         // Ownership transferred into `ptr.connection`; disarm the errdefer so the
         // connect-fail `ptr.deref()` is the sole cleanup path from here on.
@@ -523,6 +524,7 @@ impl JSMySQLConnection {
                 secure,
                 args.ssl_mode,
                 allow_public_key_retrieval,
+                unix_socket,
             )),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),
@@ -547,7 +549,7 @@ impl JSMySQLConnection {
             // MySQL always opens plain TCP first; STARTTLS adopts into the TLS
             // group after the SSLRequest exchange.
             let group = vm.mysql_socket_group::<false>();
-            let result = if !path.is_empty() {
+            let result = if unix_socket {
                 SocketTCP::connect_unix_group(
                     group,
                     uws::DispatchKind::Mysql,

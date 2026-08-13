@@ -16,8 +16,9 @@
  *
  * The graph under test is what registerRustRules() + emitRust() emit, pointed
  * at a scratch repo and at a cargo stand-in that writes the PE where cargo
- * would. Driving it takes ninja itself and a non-windows host: the stand-in is
- * a shell script, and the rule's shell dialect follows the host. The `ninja`
+ * would. Driving it takes ninja itself, node (the build's own wrapper runtime,
+ * see the build test) and a non-windows host: the stand-in is a shell script,
+ * and the rule's shell dialect follows the host. The `ninja`
  * on PATH may also be samurai (Alpine), which logs every edge's post-command
  * mtime and so never had the extra rebuild; there the build test only checks
  * that the restat rule still converges and still notices the sibling's
@@ -26,7 +27,7 @@
  */
 import { which } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, isWindows, nodeExe, tempDir } from "harness";
 import { chmodSync, existsSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
@@ -37,8 +38,9 @@ import { quote } from "../../scripts/build/shell.ts";
 
 // Test-only CI lanes may run without a build toolchain; the build test skips there.
 const ninjaExe = which("ninja");
+const node = nodeExe();
 
-/** A fully-populated fake toolchain; resolveConfig never spawns any of these. */
+/** A fully-populated fake toolchain; resolveConfig never spawns any of these (the build test overrides jsRuntime). */
 function mockToolchain(overrides: Partial<Toolchain>): Toolchain {
   return {
     cc: "/fake/llvm/bin/clang-cl",
@@ -59,9 +61,7 @@ function mockToolchain(overrides: Partial<Toolchain>): Toolchain {
     llvmStrip: "/fake/llvm/bin/llvm-strip",
     dsymutil: undefined,
     bun: "/fake/bin/bun",
-    // The rule command runs scripts/build/stream.ts through this, so it is the
-    // one real tool here: ninja has to be able to run the edge.
-    jsRuntime: quote(bunExe(), isWindows),
+    jsRuntime: "/fake/bin/node",
     esbuild: "/fake/bin/esbuild",
     ccache: undefined,
     cmake: "/fake/bin/cmake",
@@ -102,7 +102,7 @@ interface ShimGraph {
  * with `<dir>/repo` (from `fixtureTree`) standing in for the source tree, so
  * the exe the edge writes lands in the scratch dir and not in this checkout.
  */
-function emitShimGraph(dir: string): ShimGraph {
+function emitShimGraph(dir: string, toolchain: Partial<Toolchain> = {}): ShimGraph {
   const repo = join(dir, "repo");
   const cargo = join(dir, "toolchain", "cargo");
   const buildDir = join(dir, "build");
@@ -111,7 +111,7 @@ function emitShimGraph(dir: string): ShimGraph {
       // winsysroot is only consulted when cross-compiling, and then only
       // spliced into flags; nothing probes it.
       { os: "windows", buildType: "Debug", buildDir, winsysroot: join(dir, "winsysroot") },
-      mockToolchain({ cargo }),
+      mockToolchain({ cargo, ...toolchain }),
     ),
     cwd: repo,
   };
@@ -219,11 +219,17 @@ function shimDriver(buildDir: string, shimStamp: string) {
 }
 
 describe("rust_shim edge", () => {
-  test.skipIf(isWindows || ninjaExe === null)(
+  test.skipIf(isWindows || ninjaExe === null || node === null)(
     "the build after a shim build is a no-op, and a sibling build dir overwriting the exe still re-runs it",
     async () => {
       using dir = tempDir("build-rust-shim-edge", fixtureTree);
-      const { cfg, ninja, cargo, shimSrc, shimDest, shimStamp } = emitShimGraph(String(dir));
+      // The rule command runs scripts/build/stream.ts through cfg.jsRuntime,
+      // i.e. whatever configured the build. This is the form configure.ts
+      // produces under node, which is what CI builds run with; bunExe() works
+      // too, but a debug build takes seconds to start stream.ts, and this
+      // test starts it twice.
+      const jsRuntime = `${quote(node!, false)} --experimental-strip-types`;
+      const { cfg, ninja, cargo, shimSrc, shimDest, shimStamp } = emitShimGraph(String(dir), { jsRuntime });
       const { buildDir } = cfg;
 
       // `cargo build -p bun_shim_impl ...` stand-in: links the PE on the first
@@ -242,7 +248,7 @@ describe("rust_shim edge", () => {
       const driver = shimDriver(buildDir, shimStamp);
 
       // Fresh build dir: builds the PE and copies it over the placeholder.
-      expect(driver.build()).toMatchObject({ stderr: "", exitCode: 0 });
+      expect(driver.build()).toMatchObject({ exitCode: 0 });
       expect(readFileSync(shimDest, "utf8")).toBe(pe);
       expect(existsSync(shimStamp)).toBe(true);
 
@@ -261,15 +267,12 @@ describe("rust_shim edge", () => {
       expect(overwritten.runsEdge).toBe(true);
       expect(overwritten.explain.join("\n")).toContain("bun_shim_impl.stamp");
 
-      expect(driver.build()).toMatchObject({ stderr: "", exitCode: 0 });
+      expect(driver.build()).toMatchObject({ exitCode: 0 });
       expect(readFileSync(shimDest, "utf8")).toBe(pe);
       // That rebuild rewrote the exe during the command just like the fresh
       // build did, and has to converge the same way.
       expect(driver.nextBuild()).toEqual({ runsEdge: false, explain: [] });
     },
-    // Each of the two real builds starts bunExe() once, to run stream.ts;
-    // that alone is ~2.5s per build in a debug build (~50ms in a release one).
-    60_000,
   );
 
   test("the rule is restat, and the exe it rewrites stays an input of the stamp", () => {

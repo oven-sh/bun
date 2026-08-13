@@ -596,11 +596,13 @@ impl NameLookup {
         match &*request {
             NameRequest::Reverse(req) => {
                 let mut no_addrs: [*mut c_char; 1] = [ptr::null_mut()];
+                // As `ares_parse_ptr_reply` shapes it: every PTR name in `h_aliases`
+                // (that is the list `reverse()` reports), the first also as `h_name`.
                 let mut hostent = (!name_ptrs.is_empty()).then(|| {
                     name_ptrs.push(ptr::null_mut());
                     c_ares::struct_hostent {
                         h_name: name_ptrs[0],
-                        h_aliases: name_ptrs[1..].as_mut_ptr(),
+                        h_aliases: name_ptrs.as_mut_ptr(),
                         h_addrtype: c_int::from(self.sa.ss_family),
                         h_length: 0,
                         h_addr_list: no_addrs.as_mut_ptr(),

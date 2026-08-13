@@ -578,7 +578,20 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
   o.cppHeaders.push(...cppOutputs);
 }
 
-function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
+/**
+ * The `$inherits<Class>()` table. Its indices are baked into two outputs of two
+ * different steps: replacements.ts rewrites `$inheritsBlob(x)` in every bundled
+ * module to `$inherits(<index>, x)` (emitJsModules), and generate-classes.ts
+ * emits the matching `switch (id)` into ZigGeneratedClasses.cpp
+ * (emitGeneratedClasses). It matches neither step's source glob, so both edges
+ * list it explicitly; an edit to it has to regenerate both sides together.
+ */
+function jsClassesTable(cfg: Config): string {
+  return resolve(cfg.cwd, "src", "jsc", "bindings", "js_classes.ts");
+}
+
+/** Exported (with emitJsModules) for test/internal/build-codegen-extra-inputs.test.ts. */
+export function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "generate-classes.ts");
 
   const outputs = [
@@ -598,7 +611,7 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
   n.build({
     outputs,
     rule: "codegen",
-    inputs: [script, ...sources.zigGeneratedClasses],
+    inputs: [script, ...sources.zigGeneratedClasses, jsClassesTable(cfg)],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -701,15 +714,32 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.rustInputs.push(outputRs);
 }
 
-function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
+export function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bundle-modules.ts");
 
-  // InternalModuleRegistry.cpp is read by the script (for a sanity check).
-  const extraInput = resolve(cfg.cwd, "src", "jsc", "bindings", "InternalModuleRegistry.cpp");
-  // replacements.ts bakes ErrorCode.ts indices into every bundled module
-  // ($makeErrorWithCode(N, ...)); without this dep an ErrorCode.ts edit leaves
-  // stale error numbers in the JS bundles while the C++ enum regenerates.
-  const errorCodeInput = resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.ts");
+  // Inputs from outside sources.js (src/js/**/*.{js,ts}) and sources.jsCodegen
+  // (src/codegen/*.ts). The script bakes each file it reads from elsewhere into
+  // its outputs, so an edit to one of them alone has to re-run the step, and
+  // ninja only does that for files listed here.
+  const extraInputs = [
+    // internal-module-registry-scanner.ts numbers the native modules from this
+    // list. The numbers end up in InternalModuleRegistry+*.h,
+    // SyntheticModuleType.h, NativeModuleImpl.h, generated_resolved_source_tag.rs
+    // and in the require() rewrites inside the bundled modules.
+    resolve(cfg.cwd, "src", "jsc", "modules", "NativeModuleList.h"),
+    // bundle-functions.ts writes BunBuiltinNames+extras.h: the private names
+    // the builtins use minus the ones this header already declares.
+    resolve(cfg.cwd, "src", "js", "builtins", "BunBuiltinNames.h"),
+    // replacements.ts bakes each class's index into $inherits(N, ...).
+    jsClassesTable(cfg),
+    // replacements.ts bakes ErrorCode.ts indices into every bundled module
+    // ($makeErrorWithCode(N, ...)); without this dep an ErrorCode.ts edit leaves
+    // stale error numbers in the JS bundles while the C++ enum regenerates.
+    resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.ts"),
+    // Not read by the script; inherited from the CMake build's input list for
+    // this step.
+    resolve(cfg.cwd, "src", "jsc", "bindings", "InternalModuleRegistry.cpp"),
+  ];
 
   const outputs = [
     resolve(cfg.codegenDir, "WebCoreJSBuiltins.cpp"),
@@ -736,7 +766,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   n.build({
     outputs,
     rule: "codegen",
-    inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput],
+    inputs: [script, ...sources.js, ...sources.jsCodegen, ...extraInputs],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,

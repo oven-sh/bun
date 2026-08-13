@@ -1,12 +1,12 @@
 // server.closeIdleConnections() / server.closeAllConnections() must keep
 // working after server.close() has run: that is the canonical graceful-drain
 // pattern (close(); wait; closeIdleConnections()) and the force path used by
-// http-terminator. Apart from the subprocess test at the end, these tests also
-// pass on Node.js.
+// http-terminator. These tests also pass on Node.js v26, except the subprocess
+// test at the end and the one pipelining test that says otherwise.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { once } from "node:events";
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import { connect, type AddressInfo, type Socket } from "node:net";
 
 async function listen(server: Server) {
@@ -45,12 +45,40 @@ describe.each(["closeIdleConnections", "closeAllConnections"] as const)("%s", me
       client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n");
       await gotResponse;
 
-      // Node.js's ConnectionsList is parser-keyed; freeParser() removes the
-      // entry before emitting 'upgrade', so neither call reaches this socket.
+      // Node.js's ConnectionsList is parser-keyed; a body-less upgrade request
+      // is complete when it is handed off, so freeParser() has removed the
+      // entry by the time 'upgrade' is emitted and neither call reaches it.
       server[method]();
       expect(upgraded.destroyed).toBe(false);
 
       upgraded.destroy();
+      client.destroy();
+      await new Promise<void>(r => server.close(() => r()));
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
+  test("treats an upgrade request whose body is still arriving like Node.js", async () => {
+    const server = createServer();
+    const { promise: upgradeEmitted, resolve: onUpgrade } = Promise.withResolvers<void>();
+    server.on("upgrade", () => onUpgrade());
+    try {
+      const port = await listen(server);
+      const { client, gotConnection } = await openConnection(server, port);
+      // 3 of the 10 body bytes: Node.js (v26, which delivers upgrade bodies)
+      // only frees the parser once the request is complete, so until then the
+      // connection is still listed. closeAllConnections() destroys it;
+      // closeIdleConnections() skips it because a message is being received.
+      client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nContent-Length: 10\r\n\r\nabc");
+      const [serverSocket] = await gotConnection;
+      await upgradeEmitted;
+
+      server[method]();
+      expect(serverSocket.destroyed).toBe(method === "closeAllConnections");
+
+      serverSocket.destroy();
       client.destroy();
       await new Promise<void>(r => server.close(() => r()));
     } finally {
@@ -146,8 +174,81 @@ describe("closeIdleConnections", () => {
     }
   });
 
+  test("skips a connection whose request body is still arriving, reaps it once received", async () => {
+    // Responds before the body has arrived; the connection stays keep-alive and
+    // the rest of the body is read and discarded.
+    const server = createServer((req, res) => res.end("ok"));
+    server.keepAliveTimeout = 60_000;
+    try {
+      const port = await listen(server);
+      const { client, gotConnection } = await openConnection(server, port);
+      const response = once(client, "data");
+      client.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 6\r\n\r\nabc");
+      const [serverSocket] = await gotConnection;
+      await response;
+
+      // The response is finished, but the request message is not: still busy.
+      server.closeIdleConnections();
+      expect(serverSocket.destroyed).toBe(false);
+
+      // Nothing in JS observes the discarded bytes arriving, so the sweep itself
+      // is the observable: it keeps skipping the connection until they have.
+      client.write("def");
+      while (!serverSocket.destroyed) {
+        await new Promise(r => setImmediate(r));
+        server.closeIdleConnections();
+      }
+      await waitClose(client);
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
+  test("keeps a connection with pipelined responses still queued (unlike Node.js)", async () => {
+    const responses: ServerResponse[] = [];
+    const { promise: bothDispatched, resolve: onBothDispatched } = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      responses.push(res);
+      if (responses.length === 2) onBothDispatched();
+    });
+    server.keepAliveTimeout = 60_000;
+    try {
+      const port = await listen(server);
+      const { client, gotConnection } = await openConnection(server, port);
+      let received = "";
+      const { promise: gotBothBodies, resolve: onBothBodies } = Promise.withResolvers<void>();
+      client.on("data", chunk => {
+        received += chunk;
+        if (received.includes("body-a") && received.includes("body-b")) onBothBodies();
+      });
+      client.write("GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n");
+      const [serverSocket] = await gotConnection;
+      await bothDispatched;
+      const [resA, resB] = responses;
+
+      // Synchronously after the first response finishes, the second one is
+      // still queued behind it. Node.js v26 destroys the connection at this
+      // point and never delivers the second response; Bun treats the queue as
+      // in flight, like its native idle sweep does.
+      resA.end("body-a");
+      server.closeIdleConnections();
+      expect(serverSocket.destroyed).toBe(false);
+
+      resB.end("body-b");
+      await gotBothBodies;
+
+      server.closeIdleConnections();
+      expect(serverSocket.destroyed).toBe(true);
+      await waitClose(client);
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
   test("skips in-flight connections and reaps idle ones", async () => {
-    const inflightResponses: import("node:http").ServerResponse[] = [];
+    const inflightResponses: ServerResponse[] = [];
     const server = createServer((req, res) => {
       if (req.url === "/inflight") {
         inflightResponses.push(res);

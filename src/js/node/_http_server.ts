@@ -494,9 +494,17 @@ Server.prototype.unref = function () {
   return this;
 };
 
-// Node.js's ConnectionsList is parser-keyed: freeParser() drops the entry on
-// 'upgrade'/'connect' handoff (releaseServerParserShim nulls socket.parser on
-// that same handoff), so upgraded sockets are outside both drain methods.
+// Node.js's ConnectionsList (what closeAllConnections/closeIdleConnections walk)
+// is parser-keyed, and freeParser() removes a connection once its 'connect' or
+// 'upgrade' request has been received in full: at the handoff for CONNECT and
+// body-less upgrades, after the body for an upgrade that carries one.
+// releaseServerParserShim() nulls socket.parser at the handoff in every case,
+// so a handed-off socket still counts as listed while that body is arriving
+// (hasIncompleteRequest stays set until the message completes).
+function isOutsideConnectionsList(socket) {
+  return socket.parser == null && !socket[kHandle]?.hasIncompleteRequest;
+}
+
 Server.prototype.closeAllConnections = function () {
   closeAllHttp1Connections(this);
   const connections = this[kTrackedConnections];
@@ -504,7 +512,7 @@ Server.prototype.closeAllConnections = function () {
     return;
   }
   for (const socket of connections) {
-    if (socket.parser == null) {
+    if (isOutsideConnectionsList(socket)) {
       continue;
     }
     socket.destroy();
@@ -528,13 +536,23 @@ Server.prototype.closeIdleConnections = function () {
     return;
   }
   for (const socket of connections) {
-    const message = socket._httpMessage;
-    if (socket.parser == null || (message && !message.finished) || socket[kPipelinedResponses]?.length) {
+    if (isOutsideConnectionsList(socket)) {
       continue;
     }
-    // Node.js's ConnectionsList.idle() additionally skips parsers whose
-    // last_message_start_ is non-zero (set on accept and on each message
-    // begin); the native handle exposes the same lastMessageStartMs.
+    const message = socket._httpMessage;
+    if (message && !message.finished) {
+      continue;
+    }
+    // Deliberately unlike Node.js, which destroys the connection here and
+    // drops the queued responses: a pipelined queue counts as in flight, as it
+    // does for the native idle sweep that close() runs.
+    if (socket[kPipelinedResponses]?.length) {
+      continue;
+    }
+    // Node.js's ConnectionsList.idle() also skips parsers whose
+    // last_message_start_ is set, i.e. a request head or body is still being
+    // received (a connection that has not sent its first request yet counts
+    // too); hasIncompleteRequest is the native handle's view of the same state.
     if (socket[kHandle]?.hasIncompleteRequest) {
       continue;
     }

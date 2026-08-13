@@ -4702,18 +4702,21 @@ impl VirtualMachine {
             // reason a resolution failed (a `GET <tarball url> - 404`, an
             // unreadable directory, ...) as ordinary errors/warnings in the
             // scoped `log`, which dies with this frame. Carry them on the
-            // `ResolveMessage` as notes so they are printed with it.
+            // `ResolveMessage` as notes so they are printed with it. `_resolve`
+            // retries once after busting the directory cache, and a failure the
+            // package manager derives from a manifest it already has (no such
+            // version or tag) is logged again by the retry, so keep one copy of
+            // each line.
             let mut notes = core::mem::take(&mut msg.notes).into_vec();
-            notes.extend(
-                log.msgs
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, m)| {
-                        Some(*i) != resolve_msg_index
-                            && matches!(m.kind, bun_ast::Kind::Err | bun_ast::Kind::Warn)
-                    })
-                    .map(|(_, m)| m.data.clone()),
-            );
+            for (i, logged) in log.msgs.iter().enumerate() {
+                if Some(i) == resolve_msg_index
+                    || !matches!(logged.kind, bun_ast::Kind::Err | bun_ast::Kind::Warn)
+                    || notes.iter().any(|note| note.text == logged.data.text)
+                {
+                    continue;
+                }
+                notes.push(logged.data.clone());
+            }
             msg.notes = notes.into_boxed_slice();
             *res = ErrorableString::err(
                 ErrorCode(ErrorCode::JS_ERROR_OBJECT),

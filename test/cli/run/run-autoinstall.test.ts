@@ -115,10 +115,10 @@ function registryWithMissingTarball(name: string) {
   };
 }
 
-async function runWithRegistry(registryOrigin: string, entry: string, source: string) {
+async function runWithRegistry(registryOrigin: string, entry: string, source: string, installOptions = "") {
   using dir = tempDir("autoinstall-error-report", {
     [entry]: source,
-    "bunfig.toml": `[install]\nregistry = "${registryOrigin}/"\n`,
+    "bunfig.toml": `[install]\nregistry = "${registryOrigin}/"\n${installOptions}`,
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), entry],
@@ -181,6 +181,107 @@ describe.concurrent("auto-install reports why a package could not be installed",
     expect(r.requests).toEqual([`/${name}`]);
     expect(stderr).toContain(`error: Cannot find package '${name}'`);
     expect(stderr).toContain(`note: GET ${r.origin}/${name} - 404`);
+    expect(exitCode).toBe(1);
+  });
+});
+
+// A registry whose every package has exactly one version, 1.0.0, published now.
+function registryWithOneFreshVersion() {
+  const registry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const name = decodeURIComponent(new URL(req.url).pathname.slice(1));
+      return Response.json({
+        name,
+        "dist-tags": { latest: "1.0.0" },
+        versions: { "1.0.0": { name, version: "1.0.0", dist: { tarball: `http://127.0.0.1:1/${name}-1.0.0.tgz` } } },
+        time: { "1.0.0": new Date().toISOString() },
+      });
+    },
+  });
+  return {
+    origin: `http://127.0.0.1:${registry.port}`,
+    [Symbol.dispose]() {
+      registry.stop(true);
+    },
+  };
+}
+
+function noteLines(stderr: string) {
+  return stderr.split("\n").filter(line => line.startsWith("note: "));
+}
+
+// The manifest exists but nothing in it satisfies the request. These failures
+// belong to the dependency auto-install enqueues on the root, whose errors used
+// to go to a callback that never reported them, so they printed a bare
+// "Cannot find package". Each one now prints the same line `bun install` does,
+// exactly once: the runtime retries a failed resolve after busting its
+// directory cache, and the retry reports the same failure again.
+describe.concurrent("auto-install reports why a package could not be resolved", () => {
+  test("version the registry does not have", async () => {
+    using r = registryWithOneFreshVersion();
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.js", `import "pkg-without-v2@2.0.0";\n`);
+
+    expect(stderr).toContain("error: Cannot find package 'pkg-without-v2@2.0.0'");
+    expect(noteLines(stderr)).toEqual([
+      'note: No version matching "2.0.0" found for specifier "pkg-without-v2" (but package exists)',
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("version the registry does not have, require()", async () => {
+    using r = registryWithOneFreshVersion();
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.cjs", `require("pkg-without-v2@2.0.0");\n`);
+
+    expect(stderr).toContain("error: Cannot find package 'pkg-without-v2@2.0.0'");
+    expect(noteLines(stderr)).toEqual([
+      'note: No version matching "2.0.0" found for specifier "pkg-without-v2" (but package exists)',
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("dist-tag the registry does not have", async () => {
+    using r = registryWithOneFreshVersion();
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.js", `import "pkg-without-canary@canary";\n`);
+
+    expect(stderr).toContain("error: Cannot find package 'pkg-without-canary@canary'");
+    expect(noteLines(stderr)).toEqual([
+      'note: Package "pkg-without-canary" with tag "canary" not found, but package exists',
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("version blocked by minimumReleaseAge", async () => {
+    using r = registryWithOneFreshVersion();
+    const { stderr, exitCode } = await runWithRegistry(
+      r.origin,
+      "index.js",
+      `import "pkg-published-today@1.0.0";\n`,
+      "minimumReleaseAge = 86400\n",
+    );
+
+    expect(stderr).toContain("error: Cannot find package 'pkg-published-today@1.0.0'");
+    expect(noteLines(stderr)).toEqual([
+      expect.stringMatching(
+        /^note: No version matching "[^"]+" found for specifier "[^"]+" \(blocked by minimum-release-age: 86400 seconds\)$/,
+      ),
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("dist-tag whose versions are all blocked by minimumReleaseAge", async () => {
+    using r = registryWithOneFreshVersion();
+    const { stderr, exitCode } = await runWithRegistry(
+      r.origin,
+      "index.js",
+      `import "pkg-published-today";\n`,
+      "minimumReleaseAge = 86400\n",
+    );
+
+    expect(stderr).toContain("error: Cannot find package 'pkg-published-today'");
+    expect(noteLines(stderr)).toEqual([
+      'note: Package "pkg-published-today" with tag "latest" not found (all versions blocked by minimum-release-age: 86400 seconds)',
+    ]);
     expect(exitCode).toBe(1);
   });
 });

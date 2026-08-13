@@ -168,8 +168,7 @@ JSC::EncodedJSValue INVALID_FILE_URL_PATH(JSC::ThrowScope& throwScope, JSC::JSGl
 
 }
 
-/// Throws INVALID_FILE_URL_HOST and returns true when a file:// URL's host is neither
-/// empty nor "localhost". Posix only: on Windows a file:// host is a UNC server name.
+/// Posix only: on Windows a file:// host is a UNC server name. Returns true if it threw.
 bool throwIfInvalidFileURLHost(JSC::ThrowScope&, JSC::JSGlobalObject*, const WTF::URL&);
 
 void throwBoringSSLError(JSGlobalObject* globalObject, JSC::ThrowScope& scope, int errorCode);

@@ -21,6 +21,9 @@
 // bug. With the delay, a build with the bug always exits before "second query
 // done" is printed, leaving the exit code at 1.
 //
+// Queries use the text protocol (`unsafe` without parameters) so that the mock
+// server in the test only has to answer COM_QUERY.
+//
 // This runs as its own process because `bun test` keeps the event loop alive
 // by itself. The work is wrapped in main() on purpose: while an entry module's
 // top-level await is pending the runtime keeps polling regardless of what is
@@ -45,17 +48,17 @@ async function main() {
 
       if (scenario === "begin") {
         await sql.begin(async tx => {
-          await tx`select 1`;
+          await tx.unsafe("select 1 as x");
         });
       } else {
         const reserved = await sql.reserve();
-        await reserved`select 1`;
+        await reserved.unsafe("select 1 as x");
         await reserved.release();
       }
       break;
     }
     case "turn":
-      await sql`select 1`;
+      await sql.unsafe("select 1 as x");
       await new Promise(resolve => setImmediate(resolve));
       break;
     default:

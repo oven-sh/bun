@@ -227,8 +227,7 @@ impl IOReader {
         }
         #[cfg(windows)]
         {
-            let s = self.state();
-            if s.is_reading {
+            if self.state().is_reading {
                 return Yield::suspended();
             }
             // Already at EOF (the source is gone): just notify whoever registered late.
@@ -236,7 +235,7 @@ impl IOReader {
                 self.drain_readers();
                 return Yield::suspended();
             }
-            s.is_reading = true;
+            self.state().is_reading = true;
             if let Err(e) = self.reader().start_with_current_pipe() {
                 self.on_reader_error(&e);
                 return Yield::failed();
@@ -314,8 +313,7 @@ impl IOReader {
         // alive across the loop.
         let _keepalive = self.keepalive();
         self.set_reading(false);
-        let s = self.state();
-        s.raw_err = Some(err.clone());
+        self.state().raw_err = Some(err.clone());
         self.drain_readers();
     }
 

@@ -4182,13 +4182,23 @@ impl<'a> Resolver<'a> {
                     &[dir, node_modules, &specifier_json],
                 ];
                 for parts in candidates {
-                    let abs_path = ResolvePath::join_abs_string_buf(
-                        dir,
-                        bufs!(tsconfig_path_abs),
-                        parts,
-                        bun_paths::Platform::AUTO,
-                    );
-                    match self.parse_tsconfig(abs_path, FD::INVALID, true) {
+                    // NUL-terminated join so a hit can be realpath'd in place.
+                    let abs_path = ::bun_paths::resolve_path::join_abs_string_buf_z::<
+                        ::bun_paths::resolve_path::platform::Auto,
+                    >(dir, bufs!(tsconfig_path_abs), parts);
+                    // Workspace config packages are installed as symlinks;
+                    // resolve them so the base config's relative baseUrl/paths
+                    // are interpreted from the real location (tsc, esbuild).
+                    let parse_result = if self.opts.preserve_symlinks {
+                        self.parse_tsconfig(abs_path.as_bytes(), FD::INVALID, true)
+                    } else {
+                        let mut real_buf = bun_paths::path_buffer_pool::get();
+                        match bun_sys::realpath(abs_path, &mut real_buf) {
+                            Ok(real) => self.parse_tsconfig(real, FD::INVALID, true),
+                            Err(err) => Err(err.into()),
+                        }
+                    };
+                    match parse_result {
                         // Candidate is missing or not a regular file: keep looking.
                         Err(crate::Error::Sys(
                             bun_errno::SystemErrno::ENOENT
@@ -4204,6 +4214,41 @@ impl<'a> Resolver<'a> {
                 return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
             }
             dir = parent;
+        }
+    }
+
+    /// Resolve a relative or absolute tsconfig `extends` value against the
+    /// tsconfig's directory, retrying with ".json" appended like tsc does for
+    /// extension-less targets.
+    fn parse_tsconfig_extends_relative(
+        &mut self,
+        ts_dir_name: &[u8],
+        entry: &[u8],
+    ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
+        let abs_path = ResolvePath::join_abs_string_buf(
+            ts_dir_name,
+            bufs!(tsconfig_path_abs),
+            &[ts_dir_name, entry],
+            bun_paths::Platform::AUTO,
+        );
+        match self.parse_tsconfig(abs_path, FD::INVALID, true) {
+            Err(crate::Error::Sys(
+                bun_errno::SystemErrno::ENOENT
+                | bun_errno::SystemErrno::ENOTDIR
+                | bun_errno::SystemErrno::EISDIR,
+            )) if !entry.ends_with(b".json") => {
+                let mut entry_json = Vec::with_capacity(entry.len() + b".json".len());
+                entry_json.extend_from_slice(entry);
+                entry_json.extend_from_slice(b".json");
+                let abs_path = ResolvePath::join_abs_string_buf(
+                    ts_dir_name,
+                    bufs!(tsconfig_path_abs),
+                    &[ts_dir_name, &entry_json],
+                    bun_paths::Platform::AUTO,
+                );
+                self.parse_tsconfig(abs_path, FD::INVALID, true)
+            }
+            result => result,
         }
     }
 
@@ -6662,15 +6707,19 @@ impl<'a> Resolver<'a> {
                             // tsc resolves non-relative `extends` specifiers
                             // (e.g. "@tsconfig/node20") against node_modules.
                             let parse_result = if is_package_path(entry) {
-                                self.parse_tsconfig_extends_package(ts_dir_name, entry)
+                                match self.parse_tsconfig_extends_package(ts_dir_name, entry) {
+                                    // Bun historically resolved bare values like
+                                    // "base.json" relative to the tsconfig, so fall
+                                    // back when the node_modules walk misses.
+                                    Err(crate::Error::Sys(
+                                        bun_errno::SystemErrno::ENOENT
+                                        | bun_errno::SystemErrno::ENOTDIR
+                                        | bun_errno::SystemErrno::EISDIR,
+                                    )) => self.parse_tsconfig_extends_relative(ts_dir_name, entry),
+                                    result => result,
+                                }
                             } else {
-                                let abs_path = ResolvePath::join_abs_string_buf(
-                                    ts_dir_name,
-                                    bufs!(tsconfig_path_abs),
-                                    &[ts_dir_name, entry],
-                                    bun_paths::Platform::AUTO,
-                                );
-                                self.parse_tsconfig(abs_path, FD::INVALID, true)
+                                self.parse_tsconfig_extends_relative(ts_dir_name, entry)
                             };
                             match parse_result {
                                 Ok(Some(parent)) => {

@@ -14,6 +14,7 @@
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import fs from "node:fs";
 import path from "path";
 
 // The allocation log is only emitted in builds with Environment.allow_assert
@@ -279,4 +280,156 @@ test("tsconfig 'extends' array keeps siblings when one entry is missing", async 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OK\n", stderr: "", exitCode: 0 });
+});
+
+// The common NestJS/TypeORM shape: the leaf sets experimentalDecorators and
+// extends a base. The merge starts from the base, so the leaf's flag must be
+// carried over by the merge loop, not just flags from the starting config.
+test("tsconfig 'extends' keeps experimentalDecorators set in the extending config", async () => {
+  using dir = tempDir("tsconfig-extends-leaf-decorators", {
+    "base.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./lib/*"] } } }),
+    "tsconfig.json": JSON.stringify({
+      extends: "./base.json",
+      compilerOptions: { experimentalDecorators: true },
+    }),
+    "index.ts": `
+      function dec(target: unknown, key?: unknown) {
+        console.log("decorator args:", typeof target, typeof key);
+      }
+      class Foo {
+        @dec name!: string;
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Legacy decorators receive (prototype, key); TC39 would be (undefined, context).
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "decorator args: object string\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// A relative extends that points into node_modules follows the target's own
+// extends chain, same as a package specifier would (tsc behavior).
+test("tsconfig 'extends' via relative path into node_modules follows the chain", async () => {
+  using dir = tempDir("tsconfig-extends-relative-nm", {
+    "node_modules/pkg/app.json": JSON.stringify({ extends: "./flags.json" }),
+    "node_modules/pkg/flags.json": JSON.stringify({
+      compilerOptions: { experimentalDecorators: true },
+    }),
+    "tsconfig.json": JSON.stringify({ extends: "./node_modules/pkg/app.json" }),
+    "index.ts": `
+      function dec(target: unknown, key?: unknown) {
+        console.log("decorator args:", typeof target, typeof key);
+      }
+      class Foo {
+        @dec name!: string;
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "decorator args: object string\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// "extends": "base.json" without "./" resolved relative to the tsconfig
+// before the node_modules walk existed; the walk misses and the relative
+// fallback must keep that shape working.
+test("tsconfig 'extends' bare sibling file name still resolves relative", async () => {
+  using dir = tempDir("tsconfig-extends-bare-relative", {
+    "lib/mod.ts": `export default "BARE";`,
+    "base.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./lib/*"] } } }),
+    "tsconfig.json": JSON.stringify({ extends: "base.json" }),
+    "index.ts": `import x from "@lib/mod"; console.log(x);`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "BARE\n", stderr: "", exitCode: 0 });
+});
+
+// tsc appends ".json" to extension-less extends targets.
+test("tsconfig 'extends' appends .json to an extension-less relative target", async () => {
+  using dir = tempDir("tsconfig-extends-json-retry", {
+    "lib/mod.ts": `export default "RETRY";`,
+    "tsconfig.base.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./lib/*"] } } }),
+    "tsconfig.json": JSON.stringify({ extends: "./tsconfig.base" }),
+    "index.ts": `import x from "@lib/mod"; console.log(x);`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "RETRY\n", stderr: "", exitCode: 0 });
+});
+
+// Workspace config packages are installed as symlinks. The resolved config
+// must be realpath'd so its relative paths entries are interpreted from the
+// package's real location, matching tsc and esbuild.
+test("tsconfig 'extends' package specifier resolves through a symlink", async () => {
+  using dir = tempDir("tsconfig-extends-symlink", {
+    "packages/cfg/tsconfig.json": JSON.stringify({
+      compilerOptions: { paths: { "@shared/*": ["../shared/*"] } },
+    }),
+    "packages/shared/mod.ts": `export default "SHARED";`,
+    "app/tsconfig.json": JSON.stringify({ extends: "@repo/cfg/tsconfig.json" }),
+    "app/index.ts": `import x from "@shared/mod"; console.log(x);`,
+  });
+  fs.mkdirSync(path.join(String(dir), "app/node_modules/@repo"), { recursive: true });
+  fs.symlinkSync(
+    path.join(String(dir), "packages/cfg"),
+    path.join(String(dir), "app/node_modules/@repo/cfg"),
+    "junction",
+  );
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: path.join(String(dir), "app"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "SHARED\n", stderr: "", exitCode: 0 });
 });

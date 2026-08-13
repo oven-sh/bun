@@ -85,10 +85,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Declares the identifiers bound by these `var` decls at the top level of
-    /// the current part instead (`append_part` emits the declarations) and
-    /// returns what replaces the original declaration: the initializers turned
-    /// into assignments, or `None` if there is nothing left to evaluate.
+    /// Re-declares these `var`s at the top level of the part (`append_part` emits
+    /// them) and returns the assignments that replace the declaration, if any.
     pub(crate) fn relocate_vars_to_top_level(
         &mut self,
         decls: &[G::Decl],

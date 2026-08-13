@@ -202,10 +202,6 @@ declare module "bun:test" {
      */
     mock: typeof mock.module;
     /**
-     * Return the mocked exports of a module.
-     */
-    requireMock: typeof jest.requireMock;
-    /**
      * Restore all mocks to their original implementation
      */
     restoreAllMocks: typeof jest.restoreAllMocks;

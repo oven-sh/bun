@@ -217,8 +217,8 @@ test("onResolve plugin errors surface from mock.module; an unresolvable specifie
 
 // =============================================================================
 // Auto-mock: `mock.module(specifier)` / `jest.mock(specifier)` /
-// `vi.mock(specifier)` with no factory, plus `jest.requireMock(specifier)` /
-// `vi.requireMock(specifier)`. Issue: https://github.com/oven-sh/bun/issues/29834
+// `vi.mock(specifier)` with no factory, plus `jest.requireMock(specifier)`.
+// Issue: https://github.com/oven-sh/bun/issues/29834
 //
 // NOTE: `mock.module(...)` in Bun is not hoisted (unlike Jest's Babel plugin),
 // so when it runs the ESM namespace bindings resolve first. Our implementation
@@ -239,19 +239,21 @@ test("mock.module without a factory auto-mocks exported functions", () => {
   expect(mocked.plainFunction(1, 2, 3)).toBeUndefined();
   expect(mocked.plainFunction).toHaveBeenCalledWith(1, 2, 3);
 
-  // Top-level class is replaced with a mock constructor that records calls.
+  // Top-level class is replaced with a mock constructor that records calls
+  // and produces instances inheriting the mocked prototype.
   expect(typeof mocked.MyClass).toBe("function");
   expect(mocked.MyClass.mock).toBeDefined();
-  new mocked.MyClass("arg");
+  const instance = new mocked.MyClass("arg");
   expect(mocked.MyClass).toHaveBeenCalledTimes(1);
   expect(mocked.MyClass).toHaveBeenCalledWith("arg");
+  expect(instance).toBeInstanceOf(mocked.MyClass);
+  expect(mocked.MyClass.mock.instances[0]).toBe(instance);
 
-  // Instance methods on the class's prototype are mocked too (via the
-  // prototype itself — Bun's JSMockFunction doesn't currently install the
-  // prototype on `new` instances, but MyClass.prototype.method is a mock).
-  expect(typeof mocked.MyClass.prototype.greet).toBe("function");
-  expect(mocked.MyClass.prototype.greet.mock).toBeDefined();
-  expect(mocked.MyClass.prototype.greet()).toBeUndefined();
+  // Instance methods resolve through the mocked prototype.
+  expect(typeof instance.greet).toBe("function");
+  expect(instance.greet.mock).toBeDefined();
+  expect(instance.greet()).toBeUndefined();
+  expect(instance.greet).toBe(mocked.MyClass.prototype.greet);
 
   // `Class.prototype.constructor === Class` — Jest preserves this invariant on
   // auto-mocks so `instance.constructor === MockedClass` holds in consumer code.
@@ -297,18 +299,6 @@ test("jest.requireMock returns the auto-mocked version of a module", () => {
   expect(mocked.plainFunction("x")).toBe(7);
 });
 
-test("vi.requireMock mirrors jest.requireMock", () => {
-  jest.mock("./auto-mock-fixture-virequiremock");
-
-  const viMocked = vi.requireMock("./auto-mock-fixture-virequiremock") as any;
-  const jestMocked = jest.requireMock("./auto-mock-fixture-virequiremock") as any;
-
-  // Both call into the same cached JSModuleMock, so the handles are identical.
-  expect(viMocked).toBe(jestMocked);
-  expect(viMocked.plainFunction.mock).toBeDefined();
-  expect(viMocked.MyClass.mock).toBeDefined();
-});
-
 test("jest.requireMock generates an auto-mock for a module that was never jest.mock()-ed", () => {
   // A distinct fixture so this specifier hasn't been touched by the other
   // tests — we exercise the synthesise-on-demand branch of requireMock.
@@ -347,8 +337,9 @@ test("auto-mock preserves arrays and mocks static methods on classes", () => {
 test("auto-mock does not invoke getters on the real module", () => {
   // If the walker read an accessor property via `object.get(...)` it would
   // trigger the getter, which can have side effects. The walker skips
-  // accessors instead. We load the real module first so we can observe its
-  // real counter.
+  // accessors unless the owning object is an `__esModule` interop object
+  // (see the esbuild-shaped test below). We load the real module first so we
+  // can observe its real counter.
   const real = require("./auto-mock-fixture-accessor");
   const hitsBefore = real.getterHits();
 
@@ -394,6 +385,153 @@ test("auto-mock handles plain objects with integer-indexed own keys", () => {
   expect(mocked.handlers.name).toBe("handlers");
 });
 
+test("auto-mock walks the prototype chain: subclass statics, inherited methods, exported instances", () => {
+  jest.mock("./auto-mock-fixture-subclass");
+  const mocked = require("./auto-mock-fixture-subclass");
+
+  // The subclass keeps the parent's statics and prototype methods (jest-mock
+  // collects slots up the prototype chain, not just own properties).
+  expect(mocked.Child.childStatic.mock).toBeDefined();
+  expect(mocked.Child.baseStatic.mock).toBeDefined();
+  expect(mocked.Child.prototype.childMethod.mock).toBeDefined();
+  expect(mocked.Child.prototype.baseMethod.mock).toBeDefined();
+
+  // `new` returns an instance that inherits the mocked prototype.
+  const instance = new mocked.Child();
+  expect(instance).toBeInstanceOf(mocked.Child);
+  expect(instance.constructor).toBe(mocked.Child);
+  expect(instance.childMethod()).toBeUndefined();
+  expect(instance.baseMethod()).toBeUndefined();
+  expect(mocked.Child.mock.instances[0]).toBe(instance);
+
+  // An exported instance keeps its API — the methods live on the class
+  // prototype, which only a chain walk can see.
+  expect(typeof mocked.client.connect).toBe("function");
+  expect(mocked.client.connect.mock).toBeDefined();
+  expect(mocked.client.connect()).toBeUndefined();
+  mocked.client.connect.mockReturnValue("ok");
+  expect(mocked.client.connect()).toBe("ok");
+  expect(mocked.client.disconnect.mock).toBeDefined();
+});
+
+test("auto-mock reads getters on __esModule interop objects (esbuild/tsc-built CJS)", () => {
+  // esbuild and tsc emit CJS exports as getters next to an `__esModule` data
+  // property; jest-mock reads accessors when the owner has `__esModule`, so
+  // the mock keeps the exports instead of collapsing to `{ __esModule: true }`.
+  const mocked = jest.requireMock("./auto-mock-fixture-esbuild.cjs") as any;
+
+  expect(mocked.__esModule).toBe(true);
+  expect(typeof mocked.helper).toBe("function");
+  expect(mocked.helper.mock).toBeDefined();
+  expect(mocked.helper()).toBeUndefined();
+  expect(mocked.VERSION).toBe("1.2.3");
+  // The `default` getter returns the same function as `helper`, so the mock
+  // preserves the aliasing.
+  expect(mocked.default).toBe(mocked.helper);
+});
+
+test("auto-mock of a CJS module synthesizes a default export for import consumers", async () => {
+  jest.mock("./auto-mock-fixture-cjs.cjs");
+
+  // require() sees the mocked exports object.
+  const mocked = require("./auto-mock-fixture-cjs.cjs");
+  expect(mocked.doWork.mock).toBeDefined();
+  expect(mocked.doWork()).toBeUndefined();
+  expect(mocked.Engine.mock).toBeDefined();
+  expect(mocked.LIMIT).toBe(99);
+
+  // `import pkg from` links: `default` mirrors require-to-import interop
+  // (the whole exports object). Without the synthesized `default`, this
+  // import fails to link with "Missing 'default' export".
+  const ns = await import("./auto-mock-fixture-cjs.cjs");
+  expect(ns.doWork).toBe(mocked.doWork);
+  expect(ns.default.doWork).toBe(mocked.doWork);
+});
+
+test("auto-mock of a primitive CJS module keeps the raw value", async () => {
+  jest.mock("./auto-mock-fixture-primitive.cjs");
+
+  // require() returns the primitive itself, not a `{ default: 42 }` carrier.
+  expect(require("./auto-mock-fixture-primitive.cjs")).toBe(42);
+  // jest.requireMock matches.
+  expect(jest.requireMock("./auto-mock-fixture-primitive.cjs")).toBe(42);
+  // And the default import sees the value.
+  const ns = await import("./auto-mock-fixture-primitive.cjs");
+  expect(ns.default).toBe(42);
+});
+
+test("jest.mock auto-mocks a plugin-provided module", () => {
+  Bun.plugin({
+    name: "auto-mock-plugin-test",
+    setup(build) {
+      build.module("auto-mock-plugin-pkg", () => ({
+        exports: {
+          greet() {
+            return "real-greet";
+          },
+        },
+        loader: "object",
+      }));
+    },
+  });
+
+  expect(require("auto-mock-plugin-pkg").greet()).toBe("real-greet");
+
+  // jest.mock must be able to load the plugin-provided module to build the
+  // auto-mock (the plugin's entry lives only in the virtual module map, so
+  // removing it during the internal require() would break resolution).
+  jest.mock("auto-mock-plugin-pkg");
+
+  const mocked = require("auto-mock-plugin-pkg");
+  expect(mocked.greet.mock).toBeDefined();
+  expect(mocked.greet()).toBeUndefined();
+});
+
+test("auto-mock of the fs builtin: import and requireMock see the mock, require sees the real module", async () => {
+  // Fresh process so mocking a builtin can't leak into other test files.
+  using dir = tempDir("automock-builtin", {
+    "fixture.test.ts": `
+      import { test, expect, jest } from "bun:test";
+
+      test("jest.mock('fs') consumers", async () => {
+        jest.mock("fs");
+
+        // Both import specifiers see the mock, including the default export.
+        const ns: any = await import("fs");
+        expect(ns.readFileSync.mock).toBeDefined();
+        expect(ns.readFileSync("/nonexistent")).toBeUndefined();
+        expect(ns.default.readFileSync).toBe(ns.readFileSync);
+        const nodeNs: any = await import("node:fs");
+        expect(nodeNs.readFileSync.mock).toBeDefined();
+
+        // jest.requireMock returns the registered mock.
+        const mocked: any = jest.requireMock("fs");
+        expect(mocked.readFileSync.mock).toBeDefined();
+
+        // Known limitation: require() of a builtin bypasses the mock
+        // registry and keeps returning the real module.
+        const real: any = require("fs");
+        expect(real.readFileSync.mock).toBeUndefined();
+        expect(typeof real.readFileSync).toBe("function");
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "fixture.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("1 pass");
+  expect(stderr).not.toContain("0 pass");
+  expect(exitCode).toBe(0);
+});
+
 test("auto-mock restores the prior factory mock when the require() throws", () => {
   // Install a factory mock for a virtual specifier that has no real module
   // on disk. A subsequent `jest.mock(specifier)` (no factory → auto-mock)
@@ -414,22 +552,16 @@ test("auto-mock restores the prior factory mock when the require() throws", () =
   expect(require("auto-mock-virtual-no-disk").greet()).toBe("hi");
 });
 
-test("jest.restoreAllMocks clears the on-demand requireMock cache", () => {
-  // A subsequent jest.requireMock() for the same specifier, with no
-  // intervening jest.mock(), must not return the previously configured
-  // mock — bun test runs all files in one process, and the cache must
-  // scope per `mock.restore()` boundary the same way `activeSpies` does.
+test("jest.requireMock handles survive jest.restoreAllMocks", () => {
+  // Jest's restoreAllMocks doesn't touch the module registry (jest-runtime
+  // clears _mockRegistry only in resetModules/teardown), so a requireMock
+  // handle taken earlier must still be the one returned afterwards.
   const first = jest.requireMock("./auto-mock-fixture-ondemand") as any;
-  first.plainFunction.mockReturnValue("from-before-restore");
-  expect(first.plainFunction()).toBe("from-before-restore");
 
   jest.restoreAllMocks();
 
   const second = jest.requireMock("./auto-mock-fixture-ondemand") as any;
-  // Fresh mock — configured return value is gone.
-  expect(second.plainFunction()).toBeUndefined();
-  // And the handles are distinct — cache was cleared, not replaced in place.
-  expect(second).not.toBe(first);
+  expect(second).toBe(first);
 });
 
 test("jest.requireMock with a relative specifier doesn't break later ESM imports", async () => {

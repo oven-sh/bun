@@ -1080,7 +1080,7 @@ interface SharedArrayBuffer {
   /**
    * Grow the SharedArrayBuffer in-place.
    */
-  grow(size: number): SharedArrayBuffer;
+  grow(size: number): void;
 }
 
 interface ArrayConstructor {

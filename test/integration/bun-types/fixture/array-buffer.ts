@@ -11,5 +11,6 @@ TextDecoder;
 
 const buf = new SharedArrayBuffer(1024);
 buf.grow(2048);
+expectType(buf.grow(1024)).is<void>();
 
 expectType(buffer[Symbol.toStringTag]).extends<string>();

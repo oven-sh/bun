@@ -2043,9 +2043,9 @@ template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JS
  *
  * @tparam enableAsymmetricMatchers
  * @param objValue
- * @param seenObjProperties already visited properties of `objValue`.
+ * @param seenObjProperties objects of `objValue` on the current recursion path (cycle guard).
  * @param subsetValue
- * @param seenSubsetProperties already visited properties of `subsetValue`.
+ * @param seenSubsetProperties objects of `subsetValue` on the current recursion path (cycle guard).
  * @param globalObject
  * @param throwScope
  * @param gcBuffer
@@ -2152,15 +2152,24 @@ bool Bun__deepMatch(
                 ASSERT(seenObjProperties != nullptr);
                 ASSERT(seenSubsetProperties != nullptr);
                 ASSERT(gcBuffer != nullptr);
-                auto didInsertProp = seenObjProperties->insert(JSC::JSValue::encode(prop));
-                auto didInsertSubset = seenSubsetProperties->insert(JSC::JSValue::encode(subsetProp));
                 gcBuffer->append(prop);
                 gcBuffer->append(subsetProp);
-                // property cycle detected
-                if (!didInsertProp.second || !didInsertSubset.second) continue;
-                if (!Bun__deepMatch<enableAsymmetricMatchers>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, isMatchingObjectContaining)) {
-                    return false;
+                // The seen sets hold the objects on the current recursion path
+                // (like Jest's subsetEquality), so a shared sub-object reached
+                // from two different properties is checked at both and only a
+                // genuine cycle is skipped.
+                auto didInsertProp = seenObjProperties->insert(JSC::JSValue::encode(prop));
+                auto didInsertSubset = seenSubsetProperties->insert(JSC::JSValue::encode(subsetProp));
+                if (!didInsertProp.second || !didInsertSubset.second) {
+                    if (didInsertProp.second) seenObjProperties->erase(didInsertProp.first);
+                    if (didInsertSubset.second) seenSubsetProperties->erase(didInsertSubset.first);
+                    continue;
                 }
+                bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, isMatchingObjectContaining);
+                seenObjProperties->erase(JSC::JSValue::encode(prop));
+                seenSubsetProperties->erase(JSC::JSValue::encode(subsetProp));
+                RETURN_IF_EXCEPTION(throwScope, false);
+                if (!matched) return false;
             }
         } else {
             auto same = JSC::sameValue(globalObject, prop, subsetProp);
@@ -2203,134 +2212,152 @@ bool isAsymmetricMatcher(JSValue v)
         || dynamicDowncast<JSExpectCustomAsymmetricMatcher>(cell);
 }
 
-// Walks `value` and `matchers` in parallel and returns a clone of `value` with
-// any asymmetric matchers from `matchers` substituted in place of the matching
-// `value` properties. A clone is produced for every plain-object/array node on
-// the matcher path; other values (primitives, Error/Date/Map/Set/etc.) are
-// returned unchanged. Cycles in `value` resolve to the ancestor's clone.
-//
-// Used by snapshot serialization so property matchers like `expect.any(Date)`
-// show up as `Any<Date>` in the saved snapshot without mutating the user's
-// object. Replaces the old `replacePropsWithAsymmetricMatchers` side effect of
-// `Bun__deepMatch` (issue #3521).
-JSValue substituteAsymmetricMatchersImpl(
-    JSGlobalObject* globalObject,
-    ThrowScope& throwScope,
-    JSValue value,
-    JSValue matchers,
-    std::unordered_map<EncodedJSValue, JSObject*>& ancestors,
-    MarkedArgumentBuffer& gcBuffer)
-{
-    if (isAsymmetricMatcher(matchers)) {
-        return matchers;
-    }
-    if (!value.isObject() || !matchers.isObject()) {
-        return value;
-    }
+// State for `substituteAsymmetricMatchers`: produces the value that
+// `toMatchSnapshot(propertyMatchers)` serializes. It re-walks `received` and
+// `propertyMatchers` exactly the way `Bun__deepMatch<true>` just did (same
+// property enumeration, same recursion and cycle rules) and records every
+// matcher that walk checked on a clone of the received object at that
+// position, so the received object itself is never written to.
+struct AsymmetricMatcherSubstitution {
+    JSGlobalObject* globalObject;
+    ThrowScope& throwScope;
+    MarkedArgumentBuffer& gcBuffer;
+    // One clone per received object for the whole walk, so an object reached
+    // through several properties renders the same everywhere and a reference
+    // back to it renders as [Circular] exactly where the original did.
+    std::unordered_map<EncodedJSValue, JSObject*> clones;
+    // The two recursion paths, mirroring deepMatch's seen sets.
+    std::set<EncodedJSValue> receivedPath;
+    std::set<EncodedJSValue> matcherPath;
 
-    auto [entry, inserted] = ancestors.emplace(JSValue::encode(value), nullptr);
-    if (!inserted) {
-        JSObject* ancestorClone = entry->second;
-        return ancestorClone ? JSValue(ancestorClone) : value;
-    }
+    // Returns the clone standing in for `received`, or nullptr when the
+    // snapshot formatter does not render this kind of object from the
+    // properties a matcher can land on (Date, RegExp, Map, Set, boxed
+    // primitives, ...). For those the original renders the same as the
+    // mutated object used to, so it is serialized as-is.
+    JSObject* cloneFor(JSObject* received)
+    {
+        auto& vm = globalObject->vm();
+        auto existing = clones.find(JSValue::encode(received));
+        if (existing != clones.end()) return existing->second;
 
-    auto& vm = globalObject->vm();
-    JSObject* valueObj = value.getObject();
-    JSObject* matchersObj = matchers.getObject();
+        bool receivedIsArray = isArray(globalObject, received);
+        RETURN_IF_EXCEPTION(throwScope, nullptr);
 
-    bool valueIsArray = isArray(globalObject, value);
-    RETURN_IF_EXCEPTION(throwScope, value);
-    // The snapshot formatter dispatches on the cell's JSType. A JSFinalObject
-    // clone cannot stand in for ErrorInstance/JSDate/RegExpObject/JSMap/etc.,
-    // whose snapshot rendering does not enumerate own properties anyway, so
-    // the substituted matcher was never visible in the snapshot for those
-    // types under the old in-place mutation either.
-    if (!valueIsArray && valueObj->type() != JSC::FinalObjectType && valueObj->type() != JSC::ObjectType) {
-        ancestors.erase(JSValue::encode(value));
-        return value;
-    }
+        JSObject* clone = nullptr;
+        if (receivedIsArray) {
+            // The formatter renders arrays from their indices only.
+            clone = JSC::constructEmptyArray(globalObject, nullptr, received->getArrayLength());
+        } else {
+            JSC::JSType type = received->type();
+            bool rendersOwnProperties = type == JSC::FinalObjectType || type == JSC::ObjectType || type == JSC::JSType(JSDOMWrapperType);
+            if (!rendersOwnProperties && type != JSC::ErrorInstanceType) return nullptr;
 
-    // Allocate the clone up front and record it in `ancestors` before
-    // recursing, so a back-reference at any depth resolves to the clone and
-    // the formatter's identity-based [Circular] check fires at the same level
-    // it would on the original.
-    JSObject* cloned;
-    if (valueIsArray) {
-        unsigned len = valueObj->getArrayLength();
-        cloned = JSC::constructEmptyArray(globalObject, nullptr, len);
-    } else {
-        // Preserve the original's prototype so the snapshot formatter keeps
-        // the class-name prefix (e.g. `User { ... }`).
-        JSValue proto = valueObj->getPrototype(globalObject);
-        RETURN_IF_EXCEPTION(throwScope, value);
-        JSObject* protoObj = proto.isObject() ? proto.getObject() : globalObject->objectPrototype();
-        cloned = JSC::constructEmptyObject(globalObject, protoObj);
-    }
-    RETURN_IF_EXCEPTION(throwScope, value);
-    gcBuffer.append(cloned);
-    ancestors[JSValue::encode(value)] = cloned;
-
-    // Shallow-copy own properties using the same slot discipline as
-    // `JSC__JSValue__forEachPropertyOrdered` (which the snapshot formatter
-    // drives): accessor slots are taken via `getPureResult()` so user getters
-    // are not invoked and render as the GetterSetter cell, matching the
-    // pre-substitution output. Back-references are rewritten via `ancestors`.
-    PropertyNameArrayBuilder valueProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
-    valueObj->methodTable()->getOwnPropertyNames(valueObj, globalObject, valueProps, DontEnumPropertiesMode::Include);
-    RETURN_IF_EXCEPTION(throwScope, value);
-    for (const auto& p : valueProps) {
-        JSC::PropertySlot slot(valueObj, PropertySlot::InternalMethodType::Get);
-        bool hasProperty = valueObj->methodTable()->getOwnPropertySlot(valueObj, globalObject, p, slot);
-        RETURN_IF_EXCEPTION(throwScope, value);
-        if (!hasProperty) continue;
-        if (slot.isAccessor()) {
-            cloned->putDirectAccessor(globalObject, p, slot.getterSetter(), slot.attributes());
-            RETURN_IF_EXCEPTION(throwScope, value);
-            continue;
+            // Same prototype as the original: the formatter derives the
+            // `ClassName {` prefix (and an Error's name) from the prototype
+            // chain, not from the cell type.
+            JSValue proto = received->getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, nullptr);
+            if (type == JSC::ErrorInstanceType) {
+                // Errors render as `[Name: message]`, so the clone has to stay
+                // an ErrorInstance for a matcher on `message` to show up.
+                clone = JSC::ErrorInstance::create(vm, JSC::ErrorInstance::createStructure(vm, globalObject, proto), String(), JSValue(), nullptr, JSC::TypeNothing, JSC::ErrorType::Error, false);
+            } else if (proto.isObject()) {
+                clone = JSC::constructEmptyObject(globalObject, proto.getObject());
+            } else {
+                clone = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+            }
         }
-        JSValue v = slot.getValue(globalObject, p);
-        RETURN_IF_EXCEPTION(throwScope, value);
-        if (v.isEmpty()) continue;
-        if (v.isCell()) {
-            auto found = ancestors.find(JSValue::encode(v));
-            if (found != ancestors.end() && found->second) v = JSValue(found->second);
+        RETURN_IF_EXCEPTION(throwScope, nullptr);
+        gcBuffer.append(clone);
+        clones.emplace(JSValue::encode(received), clone);
+
+        PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+        received->methodTable()->getOwnPropertyNames(received, globalObject, names, DontEnumPropertiesMode::Include);
+        RETURN_IF_EXCEPTION(throwScope, nullptr);
+        for (const auto& name : names) {
+            if (receivedIsArray && name == vm.propertyNames->length) continue;
+            JSC::PropertySlot slot(received, PropertySlot::InternalMethodType::Get);
+            bool hasProperty = received->methodTable()->getOwnPropertySlot(received, globalObject, name, slot);
+            RETURN_IF_EXCEPTION(throwScope, nullptr);
+            if (!hasProperty) continue;
+            // Accessors are copied as accessors so user getters do not run.
+            if (slot.isAccessor()) {
+                clone->putDirectAccessor(globalObject, name, slot.getterSetter(), slot.attributes());
+                RETURN_IF_EXCEPTION(throwScope, nullptr);
+                continue;
+            }
+            JSValue v = slot.getValue(globalObject, name);
+            RETURN_IF_EXCEPTION(throwScope, nullptr);
+            if (v.isEmpty()) continue;
+            if (v.isCell()) {
+                auto cloned = clones.find(JSValue::encode(v));
+                if (cloned != clones.end()) v = cloned->second;
+            }
+            unsigned attributes = slot.attributes() & PropertyAttribute::DontEnum;
+            if (std::optional<uint32_t> index = parseIndex(name))
+                clone->putDirectIndex(globalObject, index.value(), v, attributes, PutDirectIndexLikePutDirect);
+            else
+                clone->putDirect(vm, name, v, attributes);
+            RETURN_IF_EXCEPTION(throwScope, nullptr);
         }
-        unsigned attrs = slot.attributes() & PropertyAttribute::DontEnum;
-        if (std::optional<uint32_t> index = parseIndex(p))
-            cloned->putDirectIndex(globalObject, index.value(), v, attrs, PutDirectIndexLikePutDirect);
-        else
-            cloned->putDirect(vm, p, v, attrs);
-        RETURN_IF_EXCEPTION(throwScope, value);
+        return clone;
     }
 
-    PropertyNameArrayBuilder matcherProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
-    matchersObj->getPropertyNames(globalObject, matcherProps, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(throwScope, value);
+    // `received` and `matchers` are objects that deepMatch compared against
+    // each other. Returns what should be serialized in place of `received`.
+    JSValue substitute(JSObject* received, JSObject* matchers)
+    {
+        if (received == matchers) return received;
 
-    for (const auto& property : matcherProps) {
-        JSValue valueProp = valueObj->getIfPropertyExists(globalObject, property);
-        RETURN_IF_EXCEPTION(throwScope, value);
-        if (valueProp.isEmpty()) continue;
+        JSObject* clone = cloneFor(received);
+        RETURN_IF_EXCEPTION(throwScope, received);
+        if (!clone) return received;
 
-        JSValue matcherProp = matchersObj->get(globalObject, property);
-        RETURN_IF_EXCEPTION(throwScope, value);
+        PropertyNameArrayBuilder names(globalObject->vm(), PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+        matchers->getPropertyNames(globalObject, names, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(throwScope, received);
 
-        gcBuffer.append(valueProp);
-        gcBuffer.append(matcherProp);
+        for (const auto& name : names) {
+            JSValue receivedProp = received->getIfPropertyExists(globalObject, name);
+            RETURN_IF_EXCEPTION(throwScope, received);
+            if (receivedProp.isEmpty()) continue;
+            JSValue matcherProp = matchers->get(globalObject, name);
+            RETURN_IF_EXCEPTION(throwScope, received);
+            gcBuffer.append(receivedProp);
+            gcBuffer.append(matcherProp);
 
-        JSValue substituted = substituteAsymmetricMatchersImpl(globalObject, throwScope, valueProp, matcherProp, ancestors, gcBuffer);
-        RETURN_IF_EXCEPTION(throwScope, value);
+            JSValue replacement;
+            if (isAsymmetricMatcher(matcherProp)) {
+                replacement = matcherProp;
+            } else if (isAsymmetricMatcher(receivedProp) || !receivedProp.isObject() || !matcherProp.isObject()) {
+                // Compared as a whole by deepMatch, and a matcher on the
+                // received side already prints as a matcher: nothing to
+                // substitute.
+                continue;
+            } else {
+                auto onReceivedPath = receivedPath.insert(JSValue::encode(receivedProp));
+                auto onMatcherPath = matcherPath.insert(JSValue::encode(matcherProp));
+                if (!onReceivedPath.second || !onMatcherPath.second) {
+                    // deepMatch stopped at this cycle without checking below it.
+                    if (onReceivedPath.second) receivedPath.erase(onReceivedPath.first);
+                    if (onMatcherPath.second) matcherPath.erase(onMatcherPath.first);
+                    continue;
+                }
+                replacement = substitute(receivedProp.getObject(), matcherProp.getObject());
+                receivedPath.erase(JSValue::encode(receivedProp));
+                matcherPath.erase(JSValue::encode(matcherProp));
+                RETURN_IF_EXCEPTION(throwScope, received);
+                if (replacement == receivedProp) continue;
+            }
 
-        if (substituted == valueProp) continue;
+            clone->putDirectMayBeIndex(globalObject, name, replacement);
+            RETURN_IF_EXCEPTION(throwScope, received);
+        }
 
-        gcBuffer.append(substituted);
-        cloned->putDirectMayBeIndex(globalObject, property, substituted);
-        RETURN_IF_EXCEPTION(throwScope, value);
+        return clone;
     }
-
-    ancestors.erase(JSValue::encode(value));
-    return JSValue(cloned);
-}
+};
 }
 
 extern "C" {
@@ -3354,15 +3381,18 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
     RELEASE_AND_RETURN(scope, Bun__deepMatch<true>(obj, &objVisited, subset, &subsetVisited, globalObject, scope, &gcBuffer, false));
 }
 
-extern "C" JSC::EncodedJSValue Bun__JSValue__substituteAsymmetricMatchers(JSC::EncodedJSValue valueEncoded, JSC::EncodedJSValue matchersEncoded, JSC::JSGlobalObject* globalObject)
+// Only valid after `JSC__JSValue__jestDeepMatch(received, matchers)` returned
+// true; both arguments must be objects.
+extern "C" JSC::EncodedJSValue Bun__JSValue__substituteAsymmetricMatchers(JSC::EncodedJSValue receivedEncoded, JSC::EncodedJSValue matchersEncoded, JSC::JSGlobalObject* globalObject)
 {
-    JSValue value = JSValue::decode(valueEncoded);
-    JSValue matchers = JSValue::decode(matchersEncoded);
+    JSObject* received = JSValue::decode(receivedEncoded).getObject();
+    JSObject* matchers = JSValue::decode(matchersEncoded).getObject();
+    ASSERT(received && matchers);
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    std::unordered_map<EncodedJSValue, JSObject*> ancestors;
     MarkedArgumentBuffer gcBuffer;
-    JSValue result = substituteAsymmetricMatchersImpl(globalObject, scope, value, matchers, ancestors, gcBuffer);
+    AsymmetricMatcherSubstitution substitution { globalObject, scope, gcBuffer };
+    JSValue result = substitution.substitute(received, matchers);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(result);
 }

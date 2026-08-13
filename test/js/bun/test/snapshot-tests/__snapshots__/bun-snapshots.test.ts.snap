@@ -133,3 +133,42 @@ exports[`property matchers preserve class name and handle shared references 6`] 
   },
 }
 `;
+
+exports[`snapshot records the matchers that were checked 1`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`snapshot records the matchers that were checked 2`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`snapshot records the matchers that were checked 3`] = `
+{
+  "a": {
+    "x": Any<Number>,
+    "y": Any<String>,
+  },
+  "b": {
+    "x": Any<Number>,
+    "y": Any<String>,
+  },
+}
+`;
+
+exports[`snapshot records the matchers that were checked 4`] = `
+{
+  "id": Any<Number>,
+}
+`;
+
+exports[`snapshot records the matchers that were checked 5`] = `[TypeError: [object ExpectAny]]`;
+
+exports[`snapshot records the matchers that were checked 6`] = `Headers 
+Headers {
+  "append": Any<Function>,
+}
+`;

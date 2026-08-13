@@ -4011,10 +4011,14 @@ CREATE TABLE ${table_name} (
       const third = track(reserved`select 3 as x`);
 
       await Promise.all([first, third]);
-      expect(resolved).toEqual([1, 3]);
+      const beforeRelease = [...resolved];
 
+      // release before asserting: closing the pool waits for the reservation, so a failed
+      // expect here would otherwise hang the `await using` disposal until the test times out
       await reserved.release();
       await pooled;
+
+      expect(beforeRelease).toEqual([1, 3]);
       expect(resolved).toEqual([1, 3, 2]);
     });
 

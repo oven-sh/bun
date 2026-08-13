@@ -11,9 +11,8 @@ use core::fmt;
 use core::time::Duration;
 use std::time::Instant;
 
+use bun_core::env_var::BUN_INSTALL_WINDOWS_RENAME_RETRY_MS;
 use bun_sys as sys;
-
-pub(crate) const ENV_VAR_NAME: &str = "BUN_INSTALL_WINDOWS_RENAME_RETRY_MS";
 
 pub(crate) struct RenameRetry {
     started: Instant,
@@ -27,11 +26,7 @@ impl RenameRetry {
     pub(crate) fn start() -> Self {
         Self {
             started: Instant::now(),
-            budget: Duration::from_millis(
-                bun_core::env_var::BUN_INSTALL_WINDOWS_RENAME_RETRY_MS
-                    .get()
-                    .unwrap_or(5_000),
-            ),
+            budget: Duration::from_millis(BUN_INSTALL_WINDOWS_RENAME_RETRY_MS.get().unwrap()),
             next_backoff: Duration::ZERO,
             exhausted: false,
         }
@@ -80,7 +75,7 @@ impl fmt::Display for ExhaustedHint {
                 f,
                 " (gave up after retrying for {}ms; usually another process such as antivirus has a file in the directory open. Set {} to wait longer)",
                 waited.as_millis(),
-                ENV_VAR_NAME,
+                bstr::BStr::new(BUN_INSTALL_WINDOWS_RENAME_RETRY_MS.key().as_bytes()),
             ),
             None => Ok(()),
         }

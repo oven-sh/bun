@@ -2481,10 +2481,14 @@ impl<'a> Installer<'a> {
                 store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile()),
                 bun_core::fast_random(),
             ));
-            if let Some(swap_err) =
+            while let Some(swap_err) =
                 sys::renameat(Fd::cwd(), final_.slice_z(), Fd::cwd(), old.slice_z()).err()
             {
+                if RenameRetry::is_transient(&swap_err) && retry.wait() {
+                    continue;
+                }
                 let _ = Fd::cwd().delete_tree(staging.slice());
+                report_exhausted_publish(&retry, &final_);
                 return sys::Result::Err(swap_err);
             }
             loop {

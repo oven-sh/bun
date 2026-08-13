@@ -16,7 +16,7 @@ import { isLinux } from "harness";
 // ICU they were generated against (Linux); macOS uses Apple's libicucore and
 // Windows is on a different ICU build, so snapshot diffs there are expected
 // and not a regression. The structural sweep below runs everywhere.
-const SNAPSHOT_ICU_VERSION = "75.1";
+const SNAPSHOT_ICU_VERSION = "78.3";
 const snapshotIf = isLinux && process.versions.icu === SNAPSHOT_ICU_VERSION ? test : test.skip;
 
 const LOCALES = ["en", "de", "fr", "ja", "ko", "ru", "zh", "zh-Hant", "ar", "th", "es-419", "pt-PT"] as const;

@@ -547,8 +547,6 @@ JSC_DEFINE_HOST_FUNCTION(functionCallerSourceOrigin,
     return JSValue::encode(jsString(vm, sourceOrigin.string()));
 }
 
-// Same as the jsc shell's noDFG: the function never enters an optimizing tier
-// (DFG or FTL), unlike noFTL below, which only keeps it out of the FTL.
 JSC_DECLARE_HOST_FUNCTION(functionNoDFG);
 JSC_DEFINE_HOST_FUNCTION(functionNoDFG,
     (JSGlobalObject * globalObject,

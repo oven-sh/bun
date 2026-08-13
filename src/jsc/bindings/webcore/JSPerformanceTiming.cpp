@@ -591,38 +591,8 @@ void JSPerformanceTimingOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* 
     uncacheWrapper(world, &jsPerformanceTiming->wrapped(), jsPerformanceTiming);
 }
 
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7PerformanceTiming@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore17PerformanceTimingE[];
-}
-#endif
-#endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<PerformanceTiming>&& impl)
 {
-
-    if constexpr (std::is_polymorphic_v<PerformanceTiming>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7PerformanceTiming@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore17PerformanceTimingE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // PerformanceTiming has subclasses. If PerformanceTiming has subclasses that get passed
-        // to toJS() we currently require PerformanceTiming you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
     return createWrapper<PerformanceTiming>(globalObject, WTF::move(impl));
 }
 

@@ -33,27 +33,10 @@ namespace WebCore {
 
 class DOMPromise : public DOMGuarded<JSC::JSPromise> {
 public:
-    static Ref<DOMPromise> create(JSDOMGlobalObject& globalObject, JSC::JSPromise& promise)
-    {
-        return adoptRef(*new DOMPromise(globalObject, promise));
-    }
-
-    JSC::JSPromise* promise() const
-    {
-        ASSERT(!isSuspended());
-        return guarded();
-    }
-
     enum class IsCallbackRegistered { No,
         Yes };
 
     static IsCallbackRegistered whenPromiseIsSettled(JSDOMGlobalObject*, JSC::JSObject* promise, Function<void()>&&);
-
-private:
-    DOMPromise(JSDOMGlobalObject& globalObject, JSC::JSPromise& promise)
-        : DOMGuarded<JSC::JSPromise>(globalObject, promise)
-    {
-    }
 };
 
 } // namespace WebCore

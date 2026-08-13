@@ -268,38 +268,8 @@ void JSMessageChannelOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* con
     uncacheWrapper(world, &jsMessageChannel->wrapped(), jsMessageChannel);
 }
 
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7MessageChannel@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore14MessageChannelE[];
-}
-#endif
-#endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<MessageChannel>&& impl)
 {
-
-    if constexpr (std::is_polymorphic_v<MessageChannel>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7MessageChannel@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore14MessageChannelE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // MessageChannel has subclasses. If MessageChannel has subclasses that get passed
-        // to toJS() we currently require MessageChannel you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
     return createWrapper<MessageChannel>(globalObject, WTF::move(impl));
 }
 

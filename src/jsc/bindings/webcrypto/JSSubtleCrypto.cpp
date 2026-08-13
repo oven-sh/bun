@@ -41,7 +41,6 @@
 #include "JSDOMConvertNullable.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSDOMConvertObject.h"
-#include "JSDOMConvertPromise.h"
 #include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMConvertUnion.h"
@@ -54,7 +53,6 @@
 #include "JSJsonWebKey.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
-#include "WebCoreOpaqueRoot.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSArray.h>
@@ -837,38 +835,8 @@ void JSSubtleCryptoOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* conte
     uncacheWrapper(world, &jsSubtleCrypto->wrapped(), jsSubtleCrypto);
 }
 
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7SubtleCrypto@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore12SubtleCryptoE[];
-}
-#endif
-#endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<SubtleCrypto>&& impl)
 {
-
-    if constexpr (std::is_polymorphic_v<SubtleCrypto>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7SubtleCrypto@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore12SubtleCryptoE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // SubtleCrypto has subclasses. If SubtleCrypto has subclasses that get passed
-        // to toJS() we currently require SubtleCrypto you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
     return createWrapper<SubtleCrypto>(globalObject, WTF::move(impl));
 }
 

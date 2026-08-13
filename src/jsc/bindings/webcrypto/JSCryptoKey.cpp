@@ -47,7 +47,6 @@
 #include "ScriptExecutionContext.h"
 #include "streams/WebStreamsInspectCustom.h"
 #include "WebCoreJSClientData.h"
-#include "WebCoreOpaqueRoot.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSArray.h>

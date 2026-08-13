@@ -29,7 +29,6 @@
 #if ENABLE(WEB_CRYPTO)
 
 #include "CryptoAlgorithmRegistry.h"
-#include "WebCoreOpaqueRoot.h"
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <openssl/rand.h>
 #include <openssl/evp.h>
@@ -77,11 +76,6 @@ auto CryptoKey::usages() const -> Vector<CryptoKeyUsage>
     if (m_usages & CryptoKeyUsageDecapsulateBits)
         result.append(CryptoKeyUsage::DecapsulateBits);
     return result;
-}
-
-WebCoreOpaqueRoot root(CryptoKey* key)
-{
-    return WebCoreOpaqueRoot { key };
 }
 
 Vector<uint8_t> CryptoKey::randomData(size_t size)

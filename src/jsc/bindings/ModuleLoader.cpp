@@ -340,7 +340,6 @@ static OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSV
         OnLoadResult result = {};
         result.type = OnLoadResultTypePromise;
         result.value.promise = objectValue;
-        result.wasMock = wasModuleMock;
         return result;
     }
 

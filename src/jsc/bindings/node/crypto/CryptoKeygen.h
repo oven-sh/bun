@@ -16,7 +16,6 @@ struct SecretKeyJobCtx {
     void deinit();
 
     static std::optional<SecretKeyJobCtx> fromJS(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue typeValue, JSC::JSValue optionsValue);
-    JSC::JSValue result() const;
 
     size_t m_length;
 

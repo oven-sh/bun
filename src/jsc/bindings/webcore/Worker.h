@@ -62,7 +62,6 @@ public:
     bool wasTerminated() const { return m_wasTerminated || m_contextProxy->isClosingOrClosed(); }
     // The thread has exited (or never started). threadId reads -1 from here on, as in Node.
     bool hasExited() const { return m_contextProxy->isClosingOrClosed(); }
-    bool isOnline() const { return m_contextProxy->isOnline(); }
     void setKeepAlive(bool);
 
     // Node worker_threads: 'message'/'error'/'messageerror' are not delivered once terminate() was

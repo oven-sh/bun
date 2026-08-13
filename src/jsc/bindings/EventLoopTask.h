@@ -13,11 +13,6 @@ public:
     {
     }
 
-    EventLoopTask(Function<void()>&& task)
-        : m_task([task = WTF::move(task)](ScriptExecutionContext&) { task(); })
-    {
-    }
-
     void performTask(ScriptExecutionContext& context)
     {
         m_task(context);

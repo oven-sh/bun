@@ -53,8 +53,6 @@ class JSValue;
 
 namespace WebCore {
 
-class WebCoreOpaqueRoot;
-
 struct StructuredSerializeOptions;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MessagePort);
@@ -173,7 +171,5 @@ private:
     // Reconciles the listener event-loop ref with (m_isRefd && m_messageEventCount > 0).
     void updateListenerEventLoopRef();
 };
-
-WebCoreOpaqueRoot root(MessagePort*);
 
 } // namespace WebCore

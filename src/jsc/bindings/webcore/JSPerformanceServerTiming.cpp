@@ -263,19 +263,6 @@ void JSPerformanceServerTimingOwner::finalize(JSC::Handle<JSC::Unknown> handle, 
     uncacheWrapper(world, jsPerformanceServerTiming->protectedWrapped().ptr(), jsPerformanceServerTiming);
 }
 
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7PerformanceServerTiming@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore23PerformanceServerTimingE[];
-}
-#endif
-#endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<PerformanceServerTiming>&& impl)
 {
     return createWrapper<PerformanceServerTiming>(globalObject, WTF::move(impl));

@@ -5,11 +5,6 @@ use super::color::{
     XYZd65,
 };
 
-/// Marker module so `use super::color_generated::generated_color_conversions;`
-/// in `color.rs` resolves. The actual `impl From<_> for _` blocks live at the
-/// parent scope (they apply crate-wide regardless of the module they sit in).
-pub mod generated_color_conversions {}
-
 // Helper: every generated conversion routes through exactly one intermediate
 // colorspace (`const xyz: Via = this.into(.Via); return xyz.into(.Dst);`).
 macro_rules! convert_via {

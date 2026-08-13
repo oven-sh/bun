@@ -122,9 +122,6 @@ public:
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
-    template<typename Visitor>
-    static void visitChildren(JSCell*, Visitor&);
-
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
@@ -149,8 +146,6 @@ public:
 
     ~JSNodePerformanceHooksHistogram();
 
-    hdr_histogram& histogram() { return *m_histogramData.histogram; }
-
     bool record(int64_t value);
     uint64_t recordDelta(JSGlobalObject* globalObject);
     void reset();
@@ -164,8 +159,6 @@ public:
     size_t getExceeds() const;
     uint64_t getCount() const;
     double add(JSNodePerformanceHooksHistogram* other);
-
-    // std::shared_ptr<HistogramData> getHistogramDataForCloning() const;
 
 private:
     uint16_t m_extraMemorySizeForGC = 0;

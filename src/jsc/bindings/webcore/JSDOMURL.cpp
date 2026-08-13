@@ -56,11 +56,6 @@
 #include <wtf/URL.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
-#if ENABLE(MEDIA_SOURCE)
-#include "DOMURLMediaSource.h"
-#include "JSMediaSource.h"
-#endif
-
 namespace WebCore {
 using namespace JSC;
 
@@ -913,38 +908,8 @@ void JSDOMURLOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
     uncacheWrapper(world, &jsDOMURL->wrapped(), jsDOMURL);
 }
 
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7DOMURL@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore6DOMURLE[];
-}
-#endif
-#endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<DOMURL>&& impl)
 {
-
-    if constexpr (std::is_polymorphic_v<DOMURL>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7DOMURL@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore6DOMURLE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // DOMURL has subclasses. If DOMURL has subclasses that get passed
-        // to toJS() we currently require DOMURL you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
     return createWrapper<DOMURL>(globalObject, WTF::move(impl));
 }
 

@@ -316,10 +316,10 @@ it("jsx with fragment", () => {
   expect(input).toBe(output);
 });
 
-it("jsx with circular references does not crash", () => {
+it.concurrent("jsx with circular references does not crash", async () => {
   // Run in a subprocess: without the fix this overflows the native stack and segfaults,
   // which would otherwise kill the test runner before it can record a failure.
-  const { exitCode, stdout } = Bun.spawnSync({
+  await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
@@ -345,16 +345,16 @@ it("jsx with circular references does not crash", () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const out = stdout.toString();
-  expect(out).toContain("[Circular]");
-  expect(out).toContain("<div>\n  [Circular]\n</div>");
-  expect(out).toContain("<span>\n  [Circular]\n  [Circular]\n</span>");
-  expect(out).toContain("<div key=[Circular] />");
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toContain("[Circular]");
+  expect(stdout).toContain("<div>\n  [Circular]\n</div>");
+  expect(stdout).toContain("<span>\n  [Circular]\n  [Circular]\n</span>");
+  expect(stdout).toContain("<div key=[Circular] />");
   expect(exitCode).toBe(0);
 });
 
-it("jsx with non-object props does not crash", () => {
-  const { exitCode, stdout } = Bun.spawnSync({
+it.concurrent("jsx with non-object props does not crash", async () => {
+  await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
@@ -367,11 +367,12 @@ it("jsx with non-object props does not crash", () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(stdout.toString().trim()).toBe("<div />");
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe("<div />");
   expect(exitCode).toBe(0);
 });
 
-it("jsx with circular props in test diff formatter", () => {
+it.concurrent("jsx with circular props in test diff formatter", async () => {
   using dir = tempDir("jsx-circular-diff", {
     "diff.test.js": `
       import { test, expect } from "bun:test";
@@ -386,18 +387,19 @@ it("jsx with circular props in test diff formatter", () => {
       });
     `,
   });
-  const { exitCode, stderr } = Bun.spawnSync({
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "diff.test.js"],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(stderr.toString()).toContain("2 pass");
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("2 pass");
   expect(exitCode).toBe(0);
 });
 
-it("Event in test diff formatter is not spuriously [Circular]", () => {
+it.concurrent("Event in test diff formatter is not spuriously [Circular]", async () => {
   using dir = tempDir("event-diff", {
     "diff.test.js": `
       import { test, expect } from "bun:test";
@@ -414,22 +416,23 @@ it("Event in test diff formatter is not spuriously [Circular]", () => {
       });
     `,
   });
-  const { exitCode, stderr } = Bun.spawnSync({
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "diff.test.js"],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(stderr.toString()).toContain("3 pass");
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("3 pass");
   expect(exitCode).toBe(0);
 });
 
-it("deeply nested Proxy chain does not crash", () => {
+it.concurrent("deeply nested Proxy chain does not crash", async () => {
   // Without the fix, print_proxy recurses on the target without a stack-safety
   // check and segfaults; run in a subprocess so a regression fails the suite
   // instead of killing the runner.
-  const { exitCode, stdout, signalCode } = Bun.spawnSync({
+  await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
@@ -444,7 +447,8 @@ it("deeply nested Proxy chain does not crash", () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(normalizeBunSnapshot(stdout.toString())).toMatchInlineSnapshot(`
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
     "{
       ok: 1,
     }
@@ -452,15 +456,15 @@ it("deeply nested Proxy chain does not crash", () => {
       ok: 1,
     }"
   `);
-  expect(signalCode).toBeFalsy();
+  expect(proc.signalCode).toBeFalsy();
   expect(exitCode).toBe(0);
 });
 
-it("deeply nested non-cyclic jsx does not segfault", () => {
+it.concurrent("deeply nested non-cyclic jsx does not segfault", async () => {
   // Stack size and release-build frame size vary by platform, so a fixed depth
   // may or may not overflow: accept either a clean RangeError or successful
   // completion. The regression was SIGSEGV.
-  const { exitCode, stdout, signalCode } = Bun.spawnSync({
+  await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
@@ -476,8 +480,9 @@ it("deeply nested non-cyclic jsx does not segfault", () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(["RangeError", "ok"]).toContain(stdout.toString().trim());
-  expect(signalCode).toBeFalsy();
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(["RangeError", "ok"]).toContain(stdout.trim());
+  expect(proc.signalCode).toBeFalsy();
   expect(exitCode).toBe(0);
 });
 

@@ -181,31 +181,27 @@ describe("Bun.build", () => {
       expect(build.outputs.map(output => output.kind)).toEqual(["entry-point", "bytecode"]);
       sidecarMB = build.outputs[1].size / 1024 / 1024;
       expect(sidecarMB).toBeGreaterThan(0.5);
-    }, 30000); // generating the bytecode takes ~1.5s in a debug build
+    });
 
     variants.forEach(({ name }, i) => {
-      test(
-        name,
-        async () => {
-          const result = await bunRun(["--smol", "run", join(dir, `fixture-${i}.js`)], {
-            // Under ASAN, freed allocations sit in the quarantine (256 MB by default) and still
-            // count towards RSS, which would hide the difference between freeing the sidecars and
-            // leaking them. Ignored by non-ASAN builds.
-            ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
-          });
-          expect(result).toSpawn();
+      test.concurrent(name, async () => {
+        const result = await bunRun(["--smol", "run", join(dir, `fixture-${i}.js`)], {
+          // Under ASAN, freed allocations sit in the quarantine (256 MB by default) and still
+          // count towards RSS, which would hide the difference between freeing the sidecars and
+          // leaking them. Ignored by non-ASAN builds.
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+        });
+        expect(result).toSpawn();
 
-          const growthMB = Number(result.stdout);
-          // A leak on any of the paths a variant goes through keeps at least one sidecar per load
-          // resident, so it adds at least leakMB (~37 MB). With the sidecars freed, what is left is
-          // allocator noise plus whatever the last load still holds: 1 to 12 MB across these
-          // variants in a debug build.
-          const leakMB = LOADS * sidecarMB;
-          console.log(`${name}: RSS grew ${growthMB} MB, a leak would add at least ${leakMB.toFixed(1)} MB`);
-          expect(growthMB).toBeLessThan((leakMB * 2) / 3);
-        },
-        30000, // ~2s each in a debug build
-      );
+        const growthMB = Number(result.stdout);
+        // A leak on any of the paths a variant goes through keeps at least one sidecar per load
+        // resident, so it adds at least leakMB (~37 MB). With the sidecars freed, what is left is
+        // allocator noise plus whatever the last load still holds: 1 to 12 MB across these
+        // variants in a debug build.
+        const leakMB = LOADS * sidecarMB;
+        console.log(`${name}: RSS grew ${growthMB} MB, a leak would add at least ${leakMB.toFixed(1)} MB`);
+        expect(growthMB).toBeLessThan((leakMB * 2) / 3);
+      });
     });
   });
 

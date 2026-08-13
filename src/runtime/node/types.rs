@@ -862,8 +862,7 @@ pub trait PathLikeExt {
     fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
     where
         Self: Sized;
-    /// Always writes the path (NUL included) into `buf`, unlike [`slice_z`](Self::slice_z):
-    /// the `cp` tree walks keep only the length and append entry names to `buf`.
+    /// Always materialized in `buf` (the `cp` walks append entry names to it), unlike `slice_z`.
     fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
         Self: Sized;
@@ -1040,8 +1039,7 @@ impl PathLikeExt for PathLike {
         }
         #[cfg(not(windows))]
         {
-            // Non-forced, an empty operand (`fs.cp(dir, "")`) returns `ZStr::EMPTY` and leaves
-            // `buf` unwritten.
+            // Unforced, an empty operand (`fs.cp(dir, "")`) yields `ZStr::EMPTY` and skips `buf`.
             Ok(self.slice_z_with_force_copy::<true>(buf))
         }
     }

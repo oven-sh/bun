@@ -270,7 +270,7 @@ describe.skipIf(!isPosix)("parallel hoisted install: lifecycle scripts wait for 
     }
 
     let holdLib: Promise<void> | null = null;
-    let libRequested = Promise.withResolvers<void>();
+    let libRequested = Promise.withResolvers<"requested" | "exited">();
     using server = serve({
       port: 0,
       async fetch(req) {
@@ -278,7 +278,7 @@ describe.skipIf(!isPosix)("parallel hoisted install: lifecycle scripts wait for 
         const tgz = path.match(/^\/tarballs\/(.+)\.tgz$/);
         if (tgz) {
           if (tgz[1] === "lib-1.0.0") {
-            libRequested.resolve();
+            libRequested.resolve("requested");
             if (holdLib) await holdLib;
           }
           return new Response(file(join(tarballs, `${tgz[1]}.tgz`)));
@@ -332,23 +332,30 @@ describe.skipIf(!isPosix)("parallel hoisted install: lifecycle scripts wait for 
     // Fresh install with lib missing from the cache: lib's worker reroutes to a download, which we hold.
     const release = Promise.withResolvers<void>();
     holdLib = release.promise;
-    libRequested = Promise.withResolvers<void>();
+    libRequested = Promise.withResolvers<"requested" | "exited">();
     await using proc = spawnInstall(dir, env, ["--frozen-lockfile"]);
-    await libRequested.promise;
-
-    // bun is now blocked on lib. Result replay (where a buggy build spawns the nested postinstall)
-    // finished before it sent this request, so give any such child a scale-aware chance to run:
-    // two sequential bun startups take at least as long as one postinstall that started earlier.
-    for (let i = 0; i < 2; i++) {
-      await using ref = spawn({ cmd: [bunExe(), "-e", "0"], env: bunEnv, stdout: "ignore", stderr: "ignore" });
-      await ref.exited;
+    // Settle-once: if bun dies before asking for lib, fail now with its output instead of hanging.
+    proc.exited.then(() => libRequested.resolve("exited"));
+    if ((await libRequested.promise) === "exited") {
+      const { exitCode, stderr } = await finish(proc);
+      throw new Error(`bun install exited (${exitCode}) before requesting lib:\n${stderr}`);
     }
-    expect(
-      await file(marker).exists(),
-      "scripted@1's postinstall ran while its ancestor tree (root) was still waiting on lib",
-    ).toBe(false);
 
-    release.resolve();
+    try {
+      // bun is now blocked on lib. Result replay (where a buggy build spawns the nested postinstall)
+      // finished before it sent this request, so give any such child a scale-aware chance to run:
+      // two sequential bun startups take at least as long as one postinstall that started earlier.
+      for (let i = 0; i < 2; i++) {
+        await using ref = spawn({ cmd: [bunExe(), "-e", "0"], env: bunEnv, stdout: "ignore", stderr: "ignore" });
+        await ref.exited;
+      }
+      expect(
+        await file(marker).exists(),
+        "scripted@1's postinstall ran while its ancestor tree (root) was still waiting on lib",
+      ).toBe(false);
+    } finally {
+      release.resolve();
+    }
     const out = await finish(proc);
     expect(out.stderr).not.toContain("error:");
     expect(out.exitCode).toBe(0);

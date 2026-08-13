@@ -247,6 +247,53 @@ pub fn replace_package_manager_run(
     Ok(())
 }
 
+/// argv for spawning a package.json script: `<shell> -c <script>` with the
+/// POSIX shell the caller found, otherwise (always on Windows)
+/// `bun exec --no-env-file <script>`.
+///
+/// The envp the caller spawns with is the script's entire environment either
+/// way: `sh` adds nothing to it, and `--no-env-file` keeps `bun exec` from
+/// loading the `.env*` files in the script's cwd on top of it.
+pub struct ScriptArgv<'a> {
+    /// Elements are bare nullable pointers (an `Option<*const c_char>` would
+    /// not be one word each); terminated by a null after the last argument,
+    /// which for the shell form is one slot early.
+    argv: [*const c_char; 5],
+    _borrowed: core::marker::PhantomData<&'a ZStr>,
+}
+
+impl<'a> ScriptArgv<'a> {
+    pub fn new(shell: Option<&'a ZStr>, script: &'a ZStr) -> Result<Self, crate::Error> {
+        // `find_shell` yields cmd.exe on Windows, which does not take `-c`.
+        let argv = match shell {
+            Some(shell) if cfg!(unix) => [
+                shell.as_ptr(),
+                c"-c".as_ptr(),
+                script.as_ptr(),
+                core::ptr::null(),
+                core::ptr::null(),
+            ],
+            _ => [
+                bun_core::self_exe_path()?.as_ptr(),
+                c"exec".as_ptr(),
+                c"--no-env-file".as_ptr(),
+                script.as_ptr(),
+                core::ptr::null(),
+            ],
+        };
+        Ok(Self {
+            argv,
+            _borrowed: core::marker::PhantomData,
+        })
+    }
+
+    /// The null-terminated array `spawn_process` takes; valid while `self`
+    /// (and the strings it borrows) is.
+    pub fn as_ptr(&self) -> *const *const c_char {
+        self.argv.as_ptr()
+    }
+}
+
 pub struct LifecycleScriptSubprocess<'a> {
     pub(crate) package_name: Box<[u8]>,
 
@@ -536,9 +583,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             replace_package_manager_run(&mut copy_script, original_script)?;
             copy_script.push(0);
 
-            // SAFETY: we just pushed a NUL byte at copy_script[len-1]; slice [..len-1] is the body.
-            let combined_script: &mut ZStr =
-                ZStr::from_raw_mut(copy_script.as_mut_ptr(), copy_script.len() - 1);
+            let combined_script: &ZStr = ZStr::from_slice_with_nul(&copy_script);
 
             if (*this).foreground && (*manager).options.log_level != crate::LogLevel::Silent {
                 Output::command(Output::CommandArgv::Single(combined_script.as_bytes()));
@@ -564,29 +609,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 bstr::BStr::new(combined_script.as_bytes())
             );
 
-            // `[_]?[*:0]const u8` argv array with trailing null. Element type MUST be
-            // bare `*const c_char` (null sentinel), never `Option<*const c_char>` —
-            // raw pointers are already nullable, and `Option<*const T>` is a 2-word
-            // (tag, ptr) pair, not niche-optimized. Casting a `[Option<*const c_char>; N]`
-            // to `Argv` would interleave discriminant words and EFAULT in the kernel.
-            let mut argv: [*const c_char; 4] = if (*this).shell_bin.is_some() && !cfg!(windows) {
-                [
-                    (*this).shell_bin.unwrap().as_ptr().cast::<c_char>(),
-                    c"-c".as_ptr(),
-                    combined_script.as_ptr().cast::<c_char>(),
-                    core::ptr::null(),
-                ]
-            } else {
-                [
-                    bun_core::self_exe_path()?.as_ptr().cast::<c_char>(),
-                    c"exec".as_ptr(),
-                    combined_script.as_ptr().cast::<c_char>(),
-                    core::ptr::null(),
-                ]
-            };
-            const _: () = assert!(
-                core::mem::size_of::<[*const c_char; 4]>() == 4 * core::mem::size_of::<usize>()
-            );
+            let argv = ScriptArgv::new((*this).shell_bin, combined_script)?;
 
             // OWNERSHIP:
             // `bun_io::Source::Pipe` owns a `Box<uv::Pipe>` AND
@@ -666,9 +689,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 .insert(this.cast::<LifecycleScriptSubprocess<'static>>());
             let spawned = match bun_spawn::spawn_process(
                 &spawn_options,
-                // argv is `[*const c_char; 4]` with trailing null — exactly the
-                // `[*:null]?[*:0]const u8` layout `spawn_process` expects (1 word/elt).
-                argv.as_mut_ptr().cast(),
+                argv.as_ptr(),
                 (*this).envp.as_ptr().cast::<*const c_char>(),
             ) {
                 Ok(Ok(s)) => s,

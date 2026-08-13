@@ -290,3 +290,13 @@ const nonEnumerableWithGetter = {
 };
 Object.defineProperty(nonEnumerableWithGetter, "b", { value: 2, enumerable: false });
 console.log(nonEnumerableWithGetter);
+
+// an own non-enumerable property shadowing a same-named enumerable
+// prototype property must hide the name entirely, not leak the
+// prototype's value through the fast path's prototype recursion
+function ShadowBase() {}
+ShadowBase.prototype.x = "from prototype";
+const shadowed = new ShadowBase();
+shadowed.y = 1;
+Object.defineProperty(shadowed, "x", { value: "own hidden", enumerable: false });
+console.log(shadowed);

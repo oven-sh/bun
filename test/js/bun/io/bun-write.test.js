@@ -216,6 +216,35 @@ const IS_UV_FS_COPYFILE_DISABLED =
     expect(exitCode).toBe(0);
   });
 
+  it("Bun.write(dest, Bun.file(src), { mode }) applies the mode once the copy is done", async () => {
+    using dir = tempDir("bun-write-copy-mode", {
+      "src.txt": "copy me",
+    });
+    // 0o444 is the one mode every platform can represent (the read-only
+    // attribute on Windows). The second copy also goes through the
+    // create-missing-directory retry before the chmod.
+    const fixture = `
+      const { join } = require("path");
+      const { statSync, chmodSync } = require("fs");
+      const dir = ${JSON.stringify(String(dir))};
+      for (const dest of [join(dir, "dest.txt"), join(dir, "a", "b", "dest.txt")]) {
+        await Bun.write(dest, Bun.file(join(dir, "src.txt")), { mode: 0o444 });
+        const mode = statSync(dest).mode & 0o777;
+        chmodSync(dest, 0o644);
+        console.log(mode.toString(8) + " " + (await Bun.file(dest).text()));
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("444 copy me\n444 copy me\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   it("Bun.write('out.txt', 'string')", async () => {
     using tmpbase = tempDir("bun-write-string", {});
     const outpath = path.join(tmpbase, "out." + ((Math.random() * 102400) | 0).toString(32) + "txt");

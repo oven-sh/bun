@@ -7,6 +7,8 @@ use core::sync::atomic::AtomicU8;
 use core::sync::atomic::Ordering;
 
 use crate::Error;
+#[cfg(windows)]
+use crate::node::types::PathLikeExt as _;
 use crate::webcore::Lifetime;
 #[cfg(not(windows))]
 use crate::webcore::blob::ClosingState;
@@ -309,22 +311,6 @@ impl FileOpener for ReadFile {
     }
     fn pathlike(&self) -> &PathOrFileDescriptor {
         &self.file_store.pathlike
-    }
-    #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
-        unreachable!("ReadFile is POSIX-only; see ReadFileUV")
-    }
-    #[cfg(windows)]
-    fn req(&mut self) -> &mut bun_libuv_sys::uv_fs_t {
-        unreachable!("ReadFile is POSIX-only; see ReadFileUV")
-    }
-    #[cfg(windows)]
-    fn set_open_callback(&mut self, _cb: fn(&mut Self, Fd)) {
-        unreachable!()
-    }
-    #[cfg(windows)]
-    fn open_callback(&self) -> fn(&mut Self, Fd) {
-        unreachable!()
     }
 }
 
@@ -924,38 +910,28 @@ pub struct ReadFileUV<'a> {
     pub(crate) is_regular_file: bool,
 
     pub(crate) req: libuv::fs_t,
-    /// Stash for the open completion callback across the libuv async hop.
-    open_callback: fn(&mut Self, Fd),
 }
 
+/// What a step of the read asks [`ReadFileUV::finish`] to do with the task. The steps take
+/// `&mut self`, which has to stay valid until they return, so none of them frees the task; the
+/// entry points hold the heap pointer and hand the step to `finish`, which does.
 #[cfg(windows)]
-impl<'a> FileOpener for ReadFileUV<'a> {
-    fn opened_fd(&self) -> Fd {
-        self.opened_fd
-    }
-    fn set_opened_fd(&mut self, fd: Fd) {
-        self.opened_fd = fd;
-    }
-    fn set_errno(&mut self, e: crate::Error) {
-        self.errno = Some(e);
-    }
-    fn set_system_error(&mut self, e: jsc::SystemError) {
-        self.system_error = Some(e);
-    }
-    fn pathlike(&self) -> &PathOrFileDescriptor {
-        &self.file_store.pathlike
-    }
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
-        self.loop_
-    }
-    fn req(&mut self) -> &mut bun_libuv_sys::uv_fs_t {
-        &mut self.req
-    }
-    fn set_open_callback(&mut self, cb: fn(&mut Self, Fd)) {
-        self.open_callback = cb;
-    }
-    fn open_callback(&self) -> fn(&mut Self, Fd) {
-        self.open_callback
+#[derive(Clone, Copy)]
+#[must_use]
+enum Step {
+    /// A libuv request is in flight; its completion runs the next step.
+    Pending,
+    /// The read is over; `system_error` / `byte_store` hold the outcome to deliver.
+    Done,
+}
+
+/// Releases the loop reference `start_with_ctx` took; the store reference (and the completion,
+/// which cancels itself if the read never finished) go with the fields.
+#[cfg(windows)]
+impl Drop for ReadFileUV<'_> {
+    fn drop(&mut self) {
+        self.req.deinit();
+        self.event_loop.unref_keep_alive();
     }
 }
 
@@ -1033,9 +1009,11 @@ impl<'a> ReadFileUV<'a> {
         log!("ReadFileUV.start");
         // SAFETY: `event_loop` is the per-thread `EventLoop` singleton owned by
         // the VM (`global.bun_vm().event_loop()`); it strictly outlives this
-        // async op, which additionally holds a keep-alive on it below.
+        // async op, which additionally holds a keep-alive on it.
         let event_loop: &'a EventLoop = unsafe { &*event_loop };
         let file_store = store.data.as_file().clone();
+        // Balanced by `Drop`.
+        event_loop.ref_keep_alive();
         let this = Box::new(ReadFileUV {
             // Projected through the helper to avoid materializing a
             // `&VirtualMachine`.
@@ -1058,51 +1036,99 @@ impl<'a> ReadFileUV<'a> {
             completion: Some(completion),
             is_regular_file: false,
             req: bun_core::ffi::zeroed(),
-            open_callback: Self::on_file_open,
         });
-        // Keep the event loop alive while the async operation is pending
-        event_loop.ref_keep_alive();
-        let this_ptr: *mut ReadFileUV = bun_core::heap::into_raw(this);
-        // SAFETY: this_ptr is freshly boxed and uniquely owned by the async op.
-        unsafe { (*this_ptr).get_fd(Self::on_file_open) };
-        // ownership now lives with the libuv request chain until finalize().
-        let _ = this_ptr;
+        let this: *mut ReadFileUV = bun_core::heap::into_raw(this);
+        // SAFETY: just allocated, nothing else holds it; `get_fd` does not free it.
+        let step = unsafe { (*this).get_fd() };
+        // SAFETY: as above; afterwards the task belongs to its libuv requests, or is gone.
+        unsafe { Self::finish(this, step) };
     }
 
-    pub fn finalize(this: *mut Self) {
+    /// Uses a `Bun.file(fd)` store's descriptor as is; opens a path through libuv (`on_open`).
+    fn get_fd(&mut self) -> Step {
+        if let PathOrFileDescriptor::Fd(fd) = &self.file_store.pathlike {
+            self.opened_fd = *fd;
+            return self.on_file_open();
+        }
+
+        self.req.data = core::ptr::from_mut(self).cast::<c_void>();
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let path = self.file_store.pathlike.path().slice_z(&mut buf);
+        // SAFETY: FFI — `loop_` is the live VM uv loop, `self.req` is the zeroed `fs_t` owned
+        // by `self`, `path` is NUL-terminated (libuv copies it before returning), and `on_open`
+        // is a valid `uv_fs_cb` that recovers `self` from `req.data` (set above).
+        let rc = unsafe {
+            libuv::uv_fs_open(
+                self.loop_,
+                &mut self.req,
+                path.as_ptr(),
+                libuv::O::RDONLY,
+                crate::node::fs::DEFAULT_PERMISSION as i32,
+                Some(Self::on_open),
+            )
+        };
+        if let Some(errno) = rc.err_enum_e() {
+            self.set_open_error(errno);
+            return self.on_file_open();
+        }
+
+        Step::Pending
+    }
+
+    fn set_open_error(&mut self, errno: bun_sys::E) {
+        self.errno = Some(bun_errno::from_errno(errno as i32).into());
+        self.system_error = Some(
+            bun_sys::Error::from_code(errno, bun_sys::Tag::open)
+                .with_path(self.file_store.pathlike.path().slice())
+                .to_system_error()
+                .into(),
+        );
+    }
+
+    /// Body of the libuv completions below: run `step` on the task that owns `req`, then `finish`.
+    fn on_uv_complete(req: *mut libuv::fs_t, step: fn(&mut Self) -> Step) {
+        // SAFETY: `data` was set to the task pointer before the request was queued; the
+        // request is accessed through the task from here on.
+        let this: *mut Self = unsafe { (*req).data.cast::<Self>() };
+        // SAFETY: `this` is live; only a field address is taken.
+        debug_assert!(unsafe { core::ptr::addr_of_mut!((*this).req) } == req);
+        // SAFETY: `this` is live and nothing else borrows it; no step frees it.
+        let step = unsafe { step(&mut *this) };
+        // SAFETY: `this` is still live; only `finish` frees it.
+        unsafe { Self::finish(this, step) };
+    }
+
+    /// Takes `*mut Self`, not `&mut self`: on [`Step::Done`] this reclaims the `Box`
+    /// `start_with_ctx` leaked and drops it, which a `&mut self` argument would have to outlive.
+    ///
+    /// # Safety
+    /// `this` is the live task from `start_with_ctx` and nothing borrows it; on `Done` it is
+    /// freed here.
+    unsafe fn finish(this: *mut Self, step: Step) {
+        let Step::Done = step else { return };
         log!("ReadFileUV.finalize");
-        // SAFETY: `this` was heap-allocated in start(); we reclaim ownership here.
-        let mut this_box = unsafe { bun_core::heap::take(this) };
-        let event_loop = this_box.event_loop;
+        // SAFETY: caller contract.
+        let mut task = unsafe { bun_core::heap::take(this) };
 
-        let completion = this_box
-            .completion
-            .take()
-            .expect("a ReadFileUV completes once");
+        let completion = task.completion.take().expect("a ReadFileUV completes once");
 
-        let result = if let Some(err) = this_box.system_error.take() {
+        let result = if let Some(err) = task.system_error.take() {
             ReadFileResultType::Err(err)
         } else {
-            // Move byte_store out so dropping `this_box` below does not free the
+            // Move byte_store out so dropping `task` below does not free the
             // buffer we hand to the callback. Normalize to `Box<[u8]>` so the
             // `is_temporary` consumer (Body.rs / Blob.rs) can soundly reclaim
             // via `heap::take` — handing out `(ptr, len)` from a ByteStore
             // whose `cap > len` would be a layout-mismatched dealloc.
-            let boxed = core::mem::take(&mut this_box.byte_store).into_boxed_slice();
+            let boxed = core::mem::take(&mut task.byte_store).into_boxed_slice();
             ReadFileResultType::Result(ReadFileRead {
                 buf: bun_core::heap::into_raw(boxed),
             })
         };
 
-        // The completion must run BEFORE the cleanup below (store deref / req.deinit /
-        // box drop / event_loop.unref) — it may inspect store.
+        // The completion may inspect the store, which `task` holds a reference to.
         completion.complete(result);
-
-        // store.deref runs via StoreRef's Drop when the Box drops.
-        this_box.req.deinit();
-        drop(this_box);
-        // Release the event loop reference now that we're done
-        event_loop.unref_keep_alive();
+        drop(task);
         log!("ReadFileUV.finalize destroy");
     }
 
@@ -1110,7 +1136,7 @@ impl<'a> ReadFileUV<'a> {
         self.file_store.pathlike.is_path()
     }
 
-    fn on_finish(&mut self) {
+    fn on_finish(&mut self) -> Step {
         log!("ReadFileUV.onFinish");
         let fd = self.opened_fd;
         let needs_close = fd != Fd::INVALID;
@@ -1118,21 +1144,31 @@ impl<'a> ReadFileUV<'a> {
         self.size = self.read_len.max(self.size);
         self.total_size = self.total_size.max(self.size);
 
-        if needs_close {
-            if self.do_close(self.is_allowed_to_close()) {
-                // we have to wait for the close to finish
-                return;
-            }
+        if needs_close && self.do_close(self.is_allowed_to_close()) {
+            // we have to wait for the close to finish
+            return Step::Pending;
         }
 
-        Self::finalize(core::ptr::from_mut(self));
+        Step::Done
     }
 
-    pub(crate) fn on_file_open(&mut self, opened_fd: Fd) {
+    extern "C" fn on_open(req: *mut libuv::fs_t) {
+        Self::on_uv_complete(req, Self::on_open_complete);
+    }
+
+    fn on_open_complete(&mut self) -> Step {
+        let result = self.req.result;
+        match result.err_enum_e() {
+            Some(errno) => self.set_open_error(errno),
+            None => self.opened_fd = Fd::from_uv(result.to_fd()),
+        }
+        self.on_file_open()
+    }
+
+    fn on_file_open(&mut self) -> Step {
         log!("ReadFileUV.onFileOpen");
         if self.errno.is_some() {
-            self.on_finish();
-            return;
+            return self.on_finish();
         }
 
         self.req.deinit();
@@ -1146,7 +1182,7 @@ impl<'a> ReadFileUV<'a> {
             libuv::uv_fs_fstat(
                 self.loop_,
                 &mut self.req,
-                opened_fd.uv(),
+                self.opened_fd.uv(),
                 Some(Self::on_file_initial_stat),
             )
         };
@@ -1157,35 +1193,33 @@ impl<'a> ReadFileUV<'a> {
                     .to_system_error()
                     .into(),
             );
-            self.on_finish();
-            return;
+            return self.on_finish();
         }
 
         self.req.data = core::ptr::from_mut(self).cast::<c_void>();
+        Step::Pending
     }
 
     extern "C" fn on_file_initial_stat(req: *mut libuv::fs_t) {
-        log!("ReadFileUV.onFileInitialStat");
-        // SAFETY: req.data was set to *mut Self in on_file_open().
-        let this: &mut ReadFileUV = unsafe { bun_ptr::callback_ctx::<ReadFileUV>((*req).data) };
+        Self::on_uv_complete(req, Self::on_initial_stat_complete);
+    }
 
-        // `req` aliases `this.req`; once `&mut ReadFileUV` exists, going through the
-        // raw `req` pointer would violate Stacked Borrows. Read via `this.req` instead.
-        if let Some(errno) = this.req.result.err_enum_e() {
-            this.errno = Some(bun_errno::from_errno(errno as i32).into());
-            this.system_error = Some(
+    fn on_initial_stat_complete(&mut self) -> Step {
+        log!("ReadFileUV.onFileInitialStat");
+        if let Some(errno) = self.req.result.err_enum_e() {
+            self.errno = Some(bun_errno::from_errno(errno as i32).into());
+            self.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::fstat)
                     .to_system_error()
                     .into(),
             );
-            this.on_finish();
-            return;
+            return self.on_finish();
         }
 
-        let stat = this.req.statbuf;
+        let stat = self.req.statbuf;
 
         // keep in sync with resolveSizeAndLastModified
-        if let Data::File(file) = this.store.data_mut() {
+        if let Data::File(file) = self.store.data_mut() {
             // `uv_timespec_t` fields are `c_long` (i32 on Windows); widen to the
             // platform-width `isize` `to_js_time` expects.
             file.last_modified =
@@ -1193,11 +1227,11 @@ impl<'a> ReadFileUV<'a> {
         }
 
         if bun_sys::S::ISDIR(u32::try_from(stat.mode()).expect("int cast")) {
-            this.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
-            this.system_error = Some(SystemError {
+            self.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
+            self.system_error = Some(SystemError {
                 code: BunString::static_("EISDIR").into(),
-                path: if this.file_store.pathlike.is_path() {
-                    BunString::clone_utf8(this.file_store.pathlike.path().slice())
+                path: if self.file_store.pathlike.is_path() {
+                    BunString::clone_utf8(self.file_store.pathlike.path().slice())
                 } else {
                     BunString::EMPTY
                 }
@@ -1206,28 +1240,27 @@ impl<'a> ReadFileUV<'a> {
                 syscall: BunString::static_("read").into(),
                 ..Default::default()
             });
-            this.on_finish();
-            return;
+            return self.on_finish();
         }
         // `uv_stat_t::st_size` is `u64` (never negative); clamp to MAX_SIZE
         // without a signed detour so a hypothetical >i64::MAX value isn't
         // wrapped to negative and then floored to 0.
-        this.total_size = stat.size().min(MAX_SIZE as u64) as SizeType;
-        this.is_regular_file = bun_sys::is_regular_file(stat.mode() as bun_sys::Mode);
+        self.total_size = stat.size().min(MAX_SIZE as u64) as SizeType;
+        self.is_regular_file = bun_sys::is_regular_file(stat.mode() as bun_sys::Mode);
 
-        log!("is_regular_file: {}", this.is_regular_file);
+        log!("is_regular_file: {}", self.is_regular_file);
 
-        if stat.size() > 0 && this.is_regular_file {
-            this.size = this.total_size.min(this.max_length);
-        } else if stat.size() == 0 && !this.is_regular_file {
+        if stat.size() > 0 && self.is_regular_file {
+            self.size = self.total_size.min(self.max_length);
+        } else if stat.size() == 0 && !self.is_regular_file {
             // read up to 4k at a time if they didn't explicitly set a size and
             // we're reading from something that's not a regular file.
-            this.size = this.max_length.min(4096);
+            self.size = self.max_length.min(4096);
         }
 
-        if this.offset > 0 {
+        if self.offset > 0 {
             // We DO support offset in Bun.file()
-            match bun_sys::set_file_offset(this.opened_fd, this.offset) {
+            match bun_sys::set_file_offset(self.opened_fd, self.offset) {
                 // we ignore errors because it should continue to work even if its a pipe
                 Err(_) | Ok(_) => {}
             }
@@ -1235,43 +1268,40 @@ impl<'a> ReadFileUV<'a> {
 
         // Special files might report a size of > 0, and be wrong.
         // so we should check specifically that its a regular file before trusting the size.
-        if this.size == 0 && this.is_regular_file {
+        if self.size == 0 && self.is_regular_file {
             // buffer is empty here,
             // so move it (Vec<u8>) into the owning ByteStore rather than borrow.
-            this.byte_store = ByteStore::init(core::mem::take(&mut this.buffer));
-            this.on_finish();
-            return;
+            self.byte_store = ByteStore::init(core::mem::take(&mut self.buffer));
+            return self.on_finish();
         }
         // Out of memory we can't read more than 4GB at a time (ULONG) on Windows
-        if this.size as usize > bun_sys::windows::ULONG::MAX as usize {
-            this.errno = Some(bun_errno::from_errno(bun_sys::E::NOMEM as i32).into());
-            this.system_error = Some(
+        if self.size as usize > bun_sys::windows::ULONG::MAX as usize {
+            self.errno = Some(bun_errno::from_errno(bun_sys::E::NOMEM as i32).into());
+            self.system_error = Some(
                 bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::read)
                     .to_system_error()
                     .into(),
             );
-            this.on_finish();
-            return;
+            return self.on_finish();
         }
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
         let want =
-            ((this.size as usize).saturating_add(16)).min(bun_sys::windows::ULONG::MAX as usize);
-        if this.buffer.try_reserve_exact(want).is_err() {
-            this.errno = Some(crate::Error::Alloc(bun_alloc::AllocError));
-            this.system_error = Some(
+            ((self.size as usize).saturating_add(16)).min(bun_sys::windows::ULONG::MAX as usize);
+        if self.buffer.try_reserve_exact(want).is_err() {
+            self.errno = Some(crate::Error::Alloc(bun_alloc::AllocError));
+            self.system_error = Some(
                 bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::read)
                     .to_system_error()
                     .into(),
             );
-            this.on_finish();
-            return;
+            return self.on_finish();
         }
-        this.read_len = 0;
-        this.read_off = 0;
+        self.read_len = 0;
+        self.read_off = 0;
 
-        this.req.deinit();
+        self.req.deinit();
 
-        this.queue_read();
+        self.queue_read()
     }
 
     fn remaining_buffer(&mut self) -> &mut [MaybeUninit<u8>] {
@@ -1284,7 +1314,7 @@ impl<'a> ReadFileUV<'a> {
         &mut spare[..take]
     }
 
-    pub(crate) fn queue_read(&mut self) {
+    fn queue_read(&mut self) -> Step {
         // if not a regular file, buffer capacity is arbitrary, and running out doesn't mean we're
         // at the end of the file
         if (!self.remaining_buffer().is_empty() || !self.is_regular_file)
@@ -1307,8 +1337,7 @@ impl<'a> ReadFileUV<'a> {
                             .to_system_error()
                             .into(),
                     );
-                    self.on_finish();
-                    return;
+                    return self.on_finish();
                 }
             }
 
@@ -1347,53 +1376,52 @@ impl<'a> ReadFileUV<'a> {
                         .to_system_error()
                         .into(),
                 );
-                self.on_finish();
+                return self.on_finish();
             }
+
+            Step::Pending
         } else {
             log!("ReadFileUV.queueRead done");
 
             // We are done reading.
             let owned = core::mem::take(&mut self.buffer).into_boxed_slice();
             self.byte_store = ByteStore::init_owned(owned);
-            self.on_finish();
+            self.on_finish()
         }
     }
 
-    pub(crate) extern "C" fn on_read(req: *mut libuv::fs_t) {
-        // SAFETY: req.data was set to *mut Self in queue_read().
-        let this: &mut ReadFileUV = unsafe { bun_ptr::callback_ctx::<ReadFileUV>((*req).data) };
+    extern "C" fn on_read(req: *mut libuv::fs_t) {
+        Self::on_uv_complete(req, Self::on_read_complete);
+    }
 
-        // `req` aliases `this.req`; once `&mut ReadFileUV` exists, going through the
-        // raw `req` pointer would violate Stacked Borrows. Read via `this.req` instead.
-        let result = this.req.result;
+    fn on_read_complete(&mut self) -> Step {
+        let result = self.req.result;
 
         if let Some(errno) = result.err_enum_e() {
-            this.errno = Some(bun_errno::from_errno(errno as i32).into());
-            this.system_error = Some(
+            self.errno = Some(bun_errno::from_errno(errno as i32).into());
+            self.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::read)
                     .to_system_error()
                     .into(),
             );
-            this.on_finish();
-            return;
+            return self.on_finish();
         }
 
         if result.int() == 0 {
             // We are done reading.
-            let owned = core::mem::take(&mut this.buffer).into_boxed_slice();
-            this.byte_store = ByteStore::init_owned(owned);
-            this.on_finish();
-            return;
+            let owned = core::mem::take(&mut self.buffer).into_boxed_slice();
+            self.byte_store = ByteStore::init_owned(owned);
+            return self.on_finish();
         }
 
-        this.read_off += SizeType::try_from(result.int()).expect("int cast");
+        self.read_off += SizeType::try_from(result.int()).expect("int cast");
         // SAFETY: libuv wrote result.int() bytes into remaining_buffer()'s spare slice.
         unsafe {
-            this.buffer
+            self.buffer
                 .uv_commit(usize::try_from(result.int()).expect("int cast"))
         };
 
-        this.req.deinit();
-        this.queue_read();
+        self.req.deinit();
+        self.queue_read()
     }
 }

@@ -2287,6 +2287,16 @@ describe("bundler", () => {
     capture: importMetaMainInvertedMemberCapture,
     run: { stdout: "5 0" },
   });
+  // The lowered form prints as `==` / `!=` and needs the same parentheses.
+  itBundled("edgecase/ImportMetaMainInvertedMemberTargetNode", {
+    files: importMetaMainInvertedMemberFiles,
+    target: "node",
+    capture: [
+      "(__require.main != __require.module).toString().length",
+      "(__require.main != __require.module) ** 2",
+    ],
+    run: { runtime: "node", stdout: "5 0" },
+  });
   itBundled("edgecase/IdentifierInEnum#13081", {
     files: {
       "/entry.ts": `

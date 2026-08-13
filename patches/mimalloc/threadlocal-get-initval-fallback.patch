@@ -1,0 +1,41 @@
+Backport of microsoft/mimalloc 6def7be9 ("fix thread_locals_get", on dev3
+after the pinned oven-sh/mimalloc commit). Drop this patch once the pin moves
+to a revision that includes it.
+
+mimalloc keeps the per-thread theaps of every non-main heap (mi_heap_new,
+mi_heap_new_in_arena) in one per-thread slot array reached through the
+mi_thread_locals thread local. The variable starts out pointing at
+mi_thread_locals_empty, but _mi_thread_locals_thread_done (run from
+_mi_thread_done, i.e. mimalloc's pthread key destructor at thread exit) frees
+the array and stores NULL.
+
+The pthread-keys flavour of mi_define_thread_local (macOS, Android) already
+maps that NULL back to the initial value in name##_get(). The direct
+thread-local flavour, which is what Bun's glibc, musl and Windows builds
+compile, returned the raw NULL, so everything that reads the array on a thread
+after its teardown dereferenced it: mi_thread_local_get_regular (threadlocal.c
+tls->count), mi_thread_local_set_regular, and mi_thread_locals_expand.
+That happens for any non-main-heap access made on a thread after its
+_mi_thread_done: a later TLS destructor freeing a block of such a heap
+(mi_free -> mi_free_try_collect_mt -> _mi_page_associated_theap_peek), or,
+in MI_DEBUG builds, _mi_thread_done itself (mi_thread_theaps_done ->
+mi_theap_is_valid -> _mi_heap_theap_peek) when the exiting thread still has a
+theap of a non-main heap that is not the cached one, which aborts with
+  mimalloc: assertion failed: at "src/threadlocal.c":184, "tls!=NULL"
+
+With the fallback, reads after teardown see the empty array (count 0) and
+return NULL, exactly like a thread that never used a non-main heap; a write
+after teardown allocates a fresh array, which the re-registered thread-done
+frees again.
+
+--- a/src/threadlocal.c
++++ b/src/threadlocal.c
+@@ -54,7 +54,7 @@
+ #define mi_define_thread_local(tp,name,initval) \
+   static mi_decl_thread tp __##name = initval; \
+   static inline tp   name##_peek(void)    { return __##name; } \
+-  static inline tp   name##_get(void)     { return __##name; } \
++  static inline tp   name##_get(void)     { tp result = __##name; return (result!=NULL ? result : initval); } \
+   static inline bool name##_set(tp val)   { __##name = val; return true; } \
+   static inline void name##_delete(void)  {  }
+ #endif

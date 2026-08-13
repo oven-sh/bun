@@ -24,6 +24,12 @@ export const mimalloc: Dependency = {
     commit: MIMALLOC_COMMIT,
   }),
 
+  // Backport of microsoft/mimalloc 6def7be9 (in the dev3 sync after this pin):
+  // the thread-locals array read after a thread's teardown. The matching entry
+  // in workarounds.ts fails configure once MIMALLOC_COMMIT moves, so the patch
+  // gets dropped with the bump instead of breaking the fetch (#34335).
+  patches: ["patches/mimalloc/threadlocal-get-initval-fallback.patch"],
+
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───
     //   ASAN:    OFF — ASAN interceptors must see the real malloc.

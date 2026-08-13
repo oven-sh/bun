@@ -32,6 +32,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import { mimalloc } from "./deps/mimalloc.ts";
 import { BuildError } from "./error.ts";
 import { satisfiesRange } from "./tools.ts";
 
@@ -225,6 +226,30 @@ export const workarounds: Workaround[] = [
       `In src/spawn_sys/posix_spawn.rs (Attr::set) and src/spawn_sys/spawn_process.rs ` +
       `(options.detached block), replace the local 0x80 with libc::POSIX_SPAWN_SETSID, ` +
       `drop the explanatory comments, and delete this entry.`,
+  },
+  {
+    id: "mimalloc-threadlocal-get-initval-fallback",
+    issue: "https://github.com/microsoft/mimalloc/commit/6def7be9458fb8a97b8323af3fb0b0ae04387065",
+    description:
+      "mimalloc's thread teardown NULLs the per-thread array holding the theaps of non-main heaps, " +
+      "and the direct-thread-local build (glibc, musl, Windows) then dereferenced that NULL on any " +
+      "later non-main-heap access from the exiting thread (MI_DEBUG builds abort in _mi_thread_done " +
+      "itself). patches/mimalloc/threadlocal-get-initval-fallback.patch backports the upstream fix.",
+    // The patch is applied to the fetched source on every target, so a pin
+    // that already contains the fix breaks the fetch everywhere (#34335).
+    applies: () => true,
+    expectedToBeFixed: cfg => {
+      // Written against this pin. Any newer oven-sh/mimalloc pin synced with
+      // upstream dev3 after 2026-08-09 (e.g. the one in #37367) carries the
+      // commit itself; a bump that somehow doesn't can re-pin this constant.
+      const PATCHED_PIN = "1803341d6241d8fa4b3f65fa68cb13a32ad92f04";
+      const source = mimalloc.source(cfg);
+      return source.kind === "github-archive" && source.commit !== PATCHED_PIN;
+    },
+    cleanup:
+      `Check that src/threadlocal.c in the new pin returns initval from the direct-thread-local ` +
+      `name##_get(), then delete patches/mimalloc/threadlocal-get-initval-fallback.patch, its ` +
+      `entry in scripts/build/deps/mimalloc.ts, and this entry.`,
   },
 ];
 

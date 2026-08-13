@@ -1,4 +1,4 @@
-import { $, Glob, spawn, write } from "bun";
+import { $, Glob, file, serve, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { lstat, mkdir, readlink, rm } from "fs/promises";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
@@ -78,16 +78,35 @@ async function fingerprintNodeModules(dir: string): Promise<string[]> {
   return entries;
 }
 
-async function install(dir: string, env: NodeJS.Dict<string>, extraArgs: string[] = []) {
-  await using proc = spawn({
-    cmd: [bunExe(), "install", "--ignore-scripts", ...extraArgs],
+function spawnInstall(dir: string, env: NodeJS.Dict<string>, args: string[]) {
+  return spawn({
+    cmd: [bunExe(), "install", ...args],
     cwd: dir,
     env,
     stdout: "pipe",
     stderr: "pipe",
   });
+}
+
+async function finish(proc: ReturnType<typeof spawnInstall>) {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
+}
+
+async function install(dir: string, env: NodeJS.Dict<string>, extraArgs: string[] = []) {
+  await using proc = spawnInstall(dir, env, ["--ignore-scripts", ...extraArgs]);
+  return await finish(proc);
+}
+
+/**
+ * Parse the test-only "[ParallelHoistedInstall] N tasks" marker that
+ * complete_parallel_installs() emits under
+ * BUN_INTERNAL_PARALLEL_HOISTED_MARKER. Returns 0 if the marker is
+ * absent (i.e. the parallel path was not taken, or doesn't exist).
+ */
+function parallelTaskCount(stderr: string): number {
+  const m = stderr.match(/\[ParallelHoistedInstall\]\s+(\d+)\s+tasks/);
+  return m ? Number(m[1]) : 0;
 }
 
 describe.skipIf(!isPosix)("parallel hoisted install", () => {
@@ -119,17 +138,6 @@ describe.skipIf(!isPosix)("parallel hoisted install", () => {
   afterAll(async () => {
     if (fixture) await rm(fixture.dir, { recursive: true, force: true });
   });
-
-  /**
-   * Parse the test-only "[ParallelHoistedInstall] N tasks" marker that
-   * completeParallelInstalls() emits under
-   * BUN_INTERNAL_PARALLEL_HOISTED_MARKER. Returns 0 if the marker is
-   * absent (i.e. the parallel path was not taken, or doesn't exist).
-   */
-  function parallelTaskCount(stderr: string): number {
-    const m = stderr.match(/\[ParallelHoistedInstall\]\s+(\d+)\s+tasks/);
-    return m ? Number(m[1]) : 0;
-  }
 
   test("produces identical node_modules to the serial installer", async () => {
     // Warm the cache + generate the lockfile.
@@ -212,5 +220,142 @@ describe.skipIf(!isPosix)("parallel hoisted install", () => {
       expect(paths.has(join("node_modules", name, "lib", "nested", "a.js"))).toBe(true);
     }
     expect(layout.filter(p => p.startsWith("node_modules/.bin/")).length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * A package's lifecycle scripts may only run once every ancestor tree is
+ * installed, because its dependencies can be hoisted into any ancestor.
+ * The serial linker gets this for free from can_install_package_for_tree();
+ * the parallel linker bypasses that gate, so when a root-tree package is
+ * rerouted to a download, a nested tree must not fire its scripts during
+ * result replay while the root package is still in flight.
+ *
+ * Fixture (served from an in-test registry):
+ *   root: lib, app, scripted@2            -> tree 0
+ *   app -> scripted@1 (conflicts with @2) -> nested under app (tree 1)
+ * scripted@1 is trusted and its postinstall touches a marker. `lib` is
+ * evicted from the cache and its tarball response is held, so the marker
+ * can only legitimately appear after the test releases `lib`.
+ */
+describe.skipIf(!isPosix)("parallel hoisted install: lifecycle scripts wait for ancestor trees", () => {
+  test("nested tree's postinstall is deferred until a rerouted root package is installed", async () => {
+    using root = tempDir("parallel-hoisted-scripts", {});
+    const dir = String(root);
+    const cacheDir = join(dir, ".bun-cache");
+    const marker = join(dir, "scripted-postinstall-ran");
+    const tarballs = join(dir, "tarballs");
+    await mkdir(tarballs, { recursive: true });
+
+    type Version = { dependencies?: Record<string, string>; scripts?: Record<string, string> };
+    const registry: Record<string, Record<string, Version>> = {
+      lib: { "1.0.0": {} },
+      app: { "1.0.0": { dependencies: { scripted: "1.0.0" } } },
+      scripted: {
+        "1.0.0": { scripts: { postinstall: `echo ran > ${JSON.stringify(marker)}` } },
+        "2.0.0": {},
+      },
+    };
+    for (const [name, versions] of Object.entries(registry)) {
+      for (const [version, extra] of Object.entries(versions)) {
+        const pkgRoot = join(dir, "src", `${name}-${version}`);
+        await mkdir(join(pkgRoot, "package"), { recursive: true });
+        await write(join(pkgRoot, "package", "package.json"), JSON.stringify({ name, version, ...extra }));
+        await write(
+          join(pkgRoot, "package", "index.js"),
+          `module.exports = ${JSON.stringify(`${name}@${version}`)};\n`,
+        );
+        await $`tar -czf ${join(tarballs, `${name}-${version}.tgz`)} -C ${pkgRoot} package`.quiet();
+      }
+    }
+
+    let holdLib: Promise<void> | null = null;
+    let libRequested = Promise.withResolvers<void>();
+    using server = serve({
+      port: 0,
+      async fetch(req) {
+        const path = new URL(req.url).pathname;
+        const tgz = path.match(/^\/tarballs\/(.+)\.tgz$/);
+        if (tgz) {
+          if (tgz[1] === "lib-1.0.0") {
+            libRequested.resolve();
+            if (holdLib) await holdLib;
+          }
+          return new Response(file(join(tarballs, `${tgz[1]}.tgz`)));
+        }
+        const name = path.slice(1);
+        const versions = registry[name];
+        if (!versions) return new Response("not found", { status: 404 });
+        const body = Object.fromEntries(
+          Object.entries(versions).map(([version, extra]) => [
+            version,
+            { name, version, ...extra, dist: { tarball: `${server.url}tarballs/${name}-${version}.tgz` } },
+          ]),
+        );
+        return Response.json({ name, versions: body, "dist-tags": { latest: Object.keys(versions).at(-1) } });
+      },
+    });
+
+    await write(
+      join(dir, "package.json"),
+      JSON.stringify({
+        name: "scripts-wait-for-ancestors",
+        version: "1.0.0",
+        dependencies: { lib: "1.0.0", app: "1.0.0", scripted: "2.0.0" },
+        trustedDependencies: ["scripted"],
+      }),
+    );
+    await write(join(dir, "bunfig.toml"), `[install]\ncache = "${cacheDir}"\nregistry = "${server.url}"\n`);
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir, BUN_INTERNAL_PARALLEL_HOISTED_MARKER: "1" };
+
+    // Warm install: proves the fixture nests scripted@1 under app and that its postinstall runs at all.
+    {
+      await using proc = spawnInstall(dir, env, []);
+      const warm = await finish(proc);
+      expect(warm.stderr).not.toContain("error:");
+      expect(warm.exitCode).toBe(0);
+    }
+    expect(await file(join(dir, "node_modules", "app", "node_modules", "scripted", "package.json")).exists()).toBe(
+      true,
+    );
+    expect(await file(marker).exists()).toBe(true);
+
+    await rm(marker);
+    await rm(join(dir, "node_modules"), { recursive: true, force: true });
+    const evicted: string[] = [];
+    for await (const entry of new Glob("lib@*").scan({ cwd: cacheDir, onlyFiles: false })) {
+      evicted.push(entry);
+      await rm(join(cacheDir, entry), { recursive: true, force: true });
+    }
+    expect(evicted.length).toBeGreaterThan(0);
+
+    // Fresh install with lib missing from the cache: lib's worker reroutes to a download, which we hold.
+    const release = Promise.withResolvers<void>();
+    holdLib = release.promise;
+    libRequested = Promise.withResolvers<void>();
+    await using proc = spawnInstall(dir, env, ["--frozen-lockfile"]);
+    await libRequested.promise;
+
+    // bun is now blocked on lib. Result replay (where a buggy build spawns the nested postinstall)
+    // finished before it sent this request, so give any such child a scale-aware chance to run:
+    // two sequential bun startups take at least as long as one postinstall that started earlier.
+    for (let i = 0; i < 2; i++) {
+      await using ref = spawn({ cmd: [bunExe(), "-e", "0"], env: bunEnv, stdout: "ignore", stderr: "ignore" });
+      await ref.exited;
+    }
+    expect(
+      await file(marker).exists(),
+      "scripted@1's postinstall ran while its ancestor tree (root) was still waiting on lib",
+    ).toBe(false);
+
+    release.resolve();
+    const out = await finish(proc);
+    expect(out.stderr).not.toContain("error:");
+    expect(out.exitCode).toBe(0);
+    // All four packages went through the parallel path; lib's task was the one rerouted.
+    expect(parallelTaskCount(out.stderr)).toBe(4);
+    expect(await file(join(dir, "node_modules", "lib", "package.json")).exists()).toBe(true);
+    // The postinstall still ran, just after lib landed.
+    expect(await file(marker).exists()).toBe(true);
   });
 });

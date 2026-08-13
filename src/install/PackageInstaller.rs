@@ -422,17 +422,12 @@ impl ParallelHoistedTask {
     fn run(&mut self) -> package_install::InstallResult {
         // SAFETY: BACKREF. The main thread holds `&mut PackageInstaller` while workers run
         // (`run_tasks(this, &mut installer, ..)`, the next tree's `install_package`), so a worker
-        // must never form `&PackageInstaller`; it projects individual fields with `addr_of!`.
-        // Workers touch exactly three fields: these two, which are not mutated during the install
-        // pass (`root_node_modules_folder` is an open fd, `lockfile` a stable pointer), and the
-        // atomic `parallel_wait_group` in `run_from_thread_pool`. Everything else (column slices,
-        // `trees`, `summary`, `node_modules`, `parallel_tasks`) is main-thread only.
-        let (root_node_modules_folder, lockfile): (&Dir, &Lockfile) = unsafe {
-            (
-                &*core::ptr::addr_of!((*self.installer).root_node_modules_folder),
-                &*core::ptr::addr_of!((*self.installer).lockfile).read(),
-            )
-        };
+        // must never form `&PackageInstaller`; it projects the one field it reads with `addr_of!`.
+        // Workers touch exactly two fields: `root_node_modules_folder`, an open fd that is not
+        // mutated during the install pass, and the atomic `parallel_wait_group` in
+        // `run_from_thread_pool`. Everything else, the lockfile included, is main-thread only.
+        let root_node_modules_folder: &Dir =
+            unsafe { &*core::ptr::addr_of!((*self.installer).root_node_modules_folder) };
 
         // Root tree reuses the open fd; nested trees open (creating if needed) their own.
         let owned_dir: Option<Dir> = if self.tree_id == 0 {
@@ -488,7 +483,7 @@ impl ParallelHoistedTask {
             package_version: b"",
             patch: None,
             node_modules: &local_node_modules,
-            lockfile,
+            lockfile: None,
         };
 
         let result = pi.install(
@@ -1242,6 +1237,12 @@ impl<'a> PackageInstaller<'a> {
         // .monotonic is okay because this value isn't modified from any other thread.
         (deps.subset_of(&self.completed_trees.unmanaged)
             || deps.eql(&self.completed_trees.unmanaged))
+            // Deps may live in any ancestor tree; the parallel linker doesn't install ancestors first.
+            && Self::can_install_package_for_tree(
+                &self.completed_trees,
+                self.lockfile().buffers.trees.as_slice(),
+                scripts_tree_id,
+            )
             && LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
                 < self.manager().options.max_concurrent_lifecycle_scripts
     }
@@ -1953,7 +1954,7 @@ impl<'a> PackageInstaller<'a> {
             // BACKREF accessor — `self.lockfile` is `*mut Lockfile` (never null,
             // outlives `'a`); `lockfile()` centralises the raw deref so this
             // site stays safe.
-            lockfile: self.lockfile(),
+            lockfile: Some(self.lockfile()),
             cache_dir_subpath: ZStr::EMPTY,
         };
         bun_output::scoped_log!(

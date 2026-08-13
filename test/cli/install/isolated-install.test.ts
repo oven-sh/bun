@@ -425,7 +425,9 @@ describe("link: dependencies", () => {
 
     // Both reinstalling over the existing node_modules and installing into a
     // fresh one (a clone with the lockfile checked in) must report the missing
-    // package instead of leaving a dangling symlink behind.
+    // package and exit 1 instead of silently succeeding. As with every other
+    // failed entry, node_modules/<name> still points at the registration and
+    // resolves again once the package is re-linked.
     result = await runBun(["install"], appDir, env);
     expect(result.stderr).toContain("ENOENT");
     expect(result.stderr).toContain(`failed to link package: ${name}@link:`);

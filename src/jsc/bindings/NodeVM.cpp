@@ -380,6 +380,23 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
     RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(globalObject, thenResult));
 }
 
+struct EmbeddedFunctionBody {
+    ASCIILiteral prefix;
+    StringView rest;
+};
+
+// A hashbang comment is only valid at offset 0 of a source text, but the body
+// lands after the "(function (...) {\n" prefix. V8's CompileFunction accepts it
+// (Node's CommonJS loader relies on that), and it ends where a "//" comment
+// would, so embed it as one. Swapping those two characters in place keeps every
+// offset into the body unchanged. The view borrows from `body`.
+static EmbeddedFunctionBody embedFunctionBody(const String& body)
+{
+    if (body.startsWith("#!"_s))
+        return { "//"_s, StringView(body).substring(2) };
+    return { ""_s, body };
+}
+
 // Helper function to create an anonymous function expression with parameters
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset)
 {
@@ -393,7 +410,8 @@ String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& a
         auto body = args.at(0).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        program = tryMakeString("(function () {\n"_s, body, "\n})"_s);
+        auto [bodyPrefix, bodyRest] = embedFunctionBody(body);
+        program = tryMakeString("(function () {\n"_s, bodyPrefix, bodyRest, "\n})"_s);
         *outOffset = "(function () {\n"_s.length();
 
         if (!program) [[unlikely]] {
@@ -419,7 +437,8 @@ String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& a
         auto body = args.at(parameterCount).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        program = tryMakeString("(function ("_s, paramString.toString(), ") {\n"_s, body, "\n})"_s);
+        auto [bodyPrefix, bodyRest] = embedFunctionBody(body);
+        program = tryMakeString("(function ("_s, paramString.toString(), ") {\n"_s, bodyPrefix, bodyRest, "\n})"_s);
         *outOffset = "(function ("_s.length() + paramString.length() + ") {\n"_s.length();
 
         if (!program) [[unlikely]] {

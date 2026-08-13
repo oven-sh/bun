@@ -269,6 +269,106 @@ describe("vm", () => {
         expect(e).toBeTruthy();
       }
     });
+
+    // Node (V8's CompileFunction) treats the body like a script source, so a
+    // hashbang line at the very start of it is a comment. Node's own CommonJS
+    // loader compiles "#!" files this way.
+    describe("body starting with a hashbang", () => {
+      test("compiles with and without params", () => {
+        expect(compileFunction("#!/usr/bin/env node\nreturn 1", [])()).toBe(1);
+        expect(compileFunction("#!/usr/bin/env node\nreturn 2")()).toBe(2);
+        expect(compileFunction("#!/usr/bin/env node\nreturn a + b", ["a", "b"])(1, 2)).toBe(3);
+        expect(compileFunction("#!/usr/bin/env node", [])()).toBeUndefined();
+        expect(compileFunction("#!", [])()).toBeUndefined();
+      });
+
+      test("CommonJS loader style", () => {
+        const mod = { exports: {} as any };
+        compileFunction("#!/usr/bin/env node\nmodule.exports = { answer: 42, filename: __filename };", [
+          "exports",
+          "require",
+          "module",
+          "__filename",
+          "__dirname",
+        ])(mod.exports, () => {}, mod, "/app/cli.js", "/app");
+        expect(mod.exports).toEqual({ answer: 42, filename: "/app/cli.js" });
+      });
+
+      test("the hashbang ends at any line terminator", () => {
+        const results = ["\n", "\r\n", "\r", "\u2028", "\u2029"].map(terminator =>
+          compileFunction(`#!/usr/bin/env node${terminator}return "ok"`, [])(),
+        );
+        expect(results).toEqual(["ok", "ok", "ok", "ok", "ok"]);
+      });
+
+      test("a 'use strict' directive on the next line still applies", () => {
+        expect(compileFunction("#!/usr/bin/env node\n'use strict';\nreturn this", [])()).toBeUndefined();
+        expect(typeof compileFunction("#!/usr/bin/env node\nreturn this", [])()).toBe("object");
+      });
+
+      test("parsingContext and contextExtensions", () => {
+        const parsingContext = createContext({ fromContext: "context" });
+        expect(compileFunction("#!/usr/bin/env node\nreturn fromContext", [], { parsingContext })()).toBe("context");
+        expect(
+          compileFunction("#!/usr/bin/env node\nreturn fromExtension", [], {
+            contextExtensions: [{ fromExtension: "extension" }],
+          })(),
+        ).toBe("extension");
+      });
+
+      test("the hashbang line still counts as a line of the body", () => {
+        // The two bodies differ only in how line 1 is commented out; node
+        // reports frame.js:13 for both.
+        const frame = (firstLine: string) =>
+          compileFunction(`${firstLine}\n\nreturn new Error("x")`, [], {
+            filename: "frame.js",
+            lineOffset: 10,
+          })().stack.split("\n")[1];
+        const hashbangFrame = frame("#!/usr/bin/env node");
+        expect(hashbangFrame).toContain("frame.js:13:");
+        expect(hashbangFrame).toBe(frame("// /usr/bin/env node"));
+
+        let err: any;
+        try {
+          compileFunction("#!/usr/bin/env node\nvar a = 1;\nvar = ;", [], { filename: "bad.js", lineOffset: 10 });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(SyntaxError);
+        expect(err.stack.split("\n").slice(0, 4)).toEqual(["bad.js:13", "var = ;", "    ^", ""]);
+      });
+
+      test("Function.prototype.toString keeps the line", () => {
+        // JSC only lexes "#!" at offset 0 of a source, so inside the function
+        // the line is stored as a "//" comment; node returns it as "#!...".
+        expect(compileFunction("#!/usr/bin/env node\nreturn a + b", ["a", "b"]).toString()).toBe(
+          "function (a, b) {\n///usr/bin/env node\nreturn a + b\n}",
+        );
+      });
+
+      test("cachedData round-trips", () => {
+        const body = "#!/usr/bin/env node\nreturn 7";
+        const producer = compileFunction(body, [], { produceCachedData: true }) as any;
+        const consumer = compileFunction(body, [], { cachedData: producer.cachedData }) as any;
+        const otherBody = compileFunction("return 7", [], { cachedData: producer.cachedData }) as any;
+        expect({
+          produced: producer.cachedDataProduced,
+          rejected: consumer.cachedDataRejected,
+          result: consumer(),
+          rejectedForOtherBody: otherBody.cachedDataRejected,
+        }).toEqual({ produced: true, rejected: false, result: 7, rejectedForOtherBody: true });
+      });
+
+      test("only a hashbang at offset 0 of the body is a comment", () => {
+        // Same inputs node rejects: V8 does not strip a BOM or whitespace here
+        // either (node's CommonJS loader strips the BOM before compiling).
+        expect(() => compileFunction(" #!/usr/bin/env node\nreturn 1")).toThrow(SyntaxError);
+        expect(() => compileFunction("\n#!/usr/bin/env node\nreturn 1")).toThrow(SyntaxError);
+        expect(() => compileFunction("\uFEFF#!/usr/bin/env node\nreturn 1")).toThrow(SyntaxError);
+        expect(() => compileFunction("#\nreturn 1")).toThrow(SyntaxError);
+        expect(() => compileFunction("return 1", ["#!p"])).toThrow();
+      });
+    });
   });
 });
 

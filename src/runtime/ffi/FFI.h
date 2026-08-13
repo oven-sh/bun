@@ -128,15 +128,12 @@ EncodedJSValue ValueTrue = { TagValueTrue };
 
 typedef void* JSContext;
 
-// callFrame is the JSC::CallFrame (an array of 8-byte slots); the two slot indices
-// are defined from JSC::CallFrameSlot by src/jsc/bindings/ffi.cpp.
+// The Bun_FFI_PointerOffsetTo* slot indices into the JSC::CallFrame are defined from JSC::CallFrameSlot by src/jsc/bindings/ffi.cpp.
 #define LOAD_ARGUMENTS_FROM_CALL_FRAME \
   int64_t *argsPtr = (int64_t*)((size_t*)callFrame + Bun_FFI_PointerOffsetToArgumentsList); \
   int32_t argsCount = ((EncodedJSValue*)((size_t*)callFrame + Bun_FFI_PointerOffsetToArgumentCountIncludingThis))->asBits.payload - 1
 
-// Bits of JSC::CallFrame::argument(i): a slot past argsCount is stale stack, so an
-// argument that was not passed reads as undefined. int64_t rather than a union copy:
-// TinyCC emits a memmove call for those on non-x86_64 and this file is built -nostdlib.
+// JSC::CallFrame::argument(i) as encoded bits: an argument the caller did not pass reads as undefined, not as the stale slot.
 #define ARGUMENT(i) ((i) < argsCount ? argsPtr[i] : TagValueUndefined)
 
 

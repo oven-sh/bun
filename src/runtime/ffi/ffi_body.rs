@@ -2159,6 +2159,7 @@ impl Function {
             writer.write_all(b"  LOAD_ARGUMENTS_FROM_CALL_FRAME;\n")?;
             for (i, arg) in self.arg_types.iter().enumerate() {
                 if *arg != ABIType::NapiEnv {
+                    // Initialized from the bits, never copied as a union: TinyCC lowers union copies to memmove on non-x86_64 and the wrapper is -nostdlib.
                     writeln!(
                         writer,
                         "  EncodedJSValue arg{i} = {{ .asInt64 = ARGUMENT({i}) }};"

@@ -5,9 +5,7 @@ use crate::shell::interpreter::{Interpreter, NodeId, OutputNeedsIOSafeGuard};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
-/// The sequence is rendered and written one chunk at a time, cut at the first
-/// value boundary at or past this size, so a long sequence streams to its
-/// consumer and the builtin never holds more than about one chunk of it.
+/// Chunks are cut at the first value boundary at or past this size; about one is held at a time.
 const CHUNK_SIZE: usize = 64 * 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -180,9 +178,8 @@ impl Seq {
         loop {
             let (mut stdout, me) = Self::split_stdout_no_io(interp, cmd);
             let last = me.render_chunk();
+            // Err: the `> ${buffer}` is full, so no later chunk would fit either.
             let written = stdout.write(&me.buf);
-            // A chunk that did not fit (a full `> ${buffer}`) means the rest
-            // of the sequence will not fit either.
             if last || written.is_err() {
                 break;
             }
@@ -191,8 +188,7 @@ impl Seq {
         Builtin::done(interp, cmd, 0)
     }
 
-    /// Renders the next chunk and queues it on stdout; `on_io_writer_chunk`
-    /// continues with the following one once it has been written.
+    /// Queues the next chunk; `on_io_writer_chunk` queues the one after it.
     fn enqueue_chunk(
         interp: &Interpreter,
         cmd: NodeId,
@@ -216,9 +212,7 @@ impl Seq {
         }
     }
 
-    /// Replaces `buf` with the next run of values, stopping once it holds
-    /// `CHUNK_SIZE` bytes. Returns true when the sequence ended inside this
-    /// chunk, in which case the terminator has been appended too.
+    /// Refills `buf`; true once the sequence (and terminator) has been rendered into it.
     fn render_chunk(&mut self) -> bool {
         self.buf.clear();
         while self.has_next() {
@@ -255,8 +249,6 @@ impl Seq {
         }
         match Self::state_mut(interp, cmd).state {
             State::Writing => {
-                // Chunks are only ever queued on an fd stdout, so the callback
-                // implies `needs_io()`.
                 debug_assert!(Builtin::of(interp, cmd).stdout.needs_io().is_some());
                 Self::enqueue_chunk(interp, cmd, OutputNeedsIOSafeGuard::OutputNeedsIo)
             }

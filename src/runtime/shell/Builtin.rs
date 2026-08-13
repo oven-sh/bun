@@ -64,18 +64,14 @@ pub(crate) trait BuiltinState: Sized {
         Self::extract(&mut Builtin::of_mut(interp, cmd).impl_)
     }
 
-    /// The builtin's stdout and its state borrowed side by side (disjoint
-    /// fields of `Builtin`), so bytes kept on the state can be handed to
-    /// `stdout.enqueue` without copying them out first.
+    /// stdout and the state borrowed together: bytes kept on the state are enqueued uncopied.
     #[inline]
     #[track_caller]
     fn split_stdout(bltn: &mut Builtin) -> (&mut BuiltinIO, &mut Self) {
         (&mut bltn.stdout, Self::extract(&mut bltn.impl_))
     }
 
-    /// [`split_stdout`](Self::split_stdout) for a stdout that does not
-    /// `needs_io()`: the same contract as [`Builtin::write_no_io`], writing
-    /// bytes kept on the state without copying them out first.
+    /// `split_stdout` under `Builtin::write_no_io`'s contract: stdout must not `needs_io()`.
     #[track_caller]
     fn split_stdout_no_io(interp: &Interpreter, cmd: NodeId) -> (NoIoOutput<'_>, &mut Self) {
         let (shell, bltn) = Builtin::of_mut_with_shell(interp, cmd);
@@ -447,22 +443,17 @@ impl BuiltinIO {
     }
 }
 
-/// A builtin output stream written synchronously (see [`Builtin::write_no_io`])
-/// together with the shell env a captured stream appends to. Only this module
-/// constructs one, from a Cmd's own stream and env, which is what makes
-/// [`write`](Self::write) safe to call.
+/// A non-fd stream and the env of its own Cmd; built only in this module, so `write` can be safe.
 pub(crate) struct NoIoOutput<'a> {
     io: &'a mut BuiltinIO,
-    /// Env of the Cmd `io` is borrowed from. The env outlives the Cmd and the
-    /// Cmd stays borrowed through `io`, so it is live for `'a`.
     shell: *mut crate::shell::interpreter::ShellExecEnv,
 }
 
 impl NoIoOutput<'_> {
     /// Returns `Err(ENOSPC)` when an ArrayBuffer target is already full.
     pub(crate) fn write(&mut self, buf: &[u8]) -> bun_sys::Result<usize> {
-        // SAFETY: `shell` is the live env of the Cmd owning `io` (see the
-        // field doc); both were taken from the same Cmd by this module.
+        // SAFETY: `shell` is the env of the Cmd `io` is borrowed from; the env
+        // outlives the Cmd, which stays borrowed through `io`.
         unsafe { self.io.write_no_io_to(self.shell, buf) }
     }
 }
@@ -919,8 +910,7 @@ impl Builtin {
         Self::of_mut_with_shell(interp, cmd).1
     }
 
-    /// [`of_mut`](Self::of_mut) plus the owning Cmd's shell env, the pair a
-    /// [`NoIoOutput`] is made of. The env outlives the Cmd.
+    /// [`of_mut`](Self::of_mut) plus the Cmd's shell env, the pair a [`NoIoOutput`] needs.
     #[inline]
     #[track_caller]
     fn of_mut_with_shell<'a>(

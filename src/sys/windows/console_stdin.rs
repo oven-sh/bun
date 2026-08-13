@@ -87,8 +87,9 @@ impl State {
     /// `Ok(false)` is end of input; `Ok(true)` can leave `bytes` empty (lone high surrogate).
     fn refill(&mut self, fd: Fd, line_input: bool) -> Maybe<bool> {
         let has_lead = self.pending_lead != 0;
-        self.units[0] = core::mem::take(&mut self.pending_lead);
+        self.units[0] = self.pending_lead;
         let n = read_units(fd, &mut self.units[1..])?;
+        self.pending_lead = 0;
         let continues_line = self.mid_line;
         self.mid_line = line_input && n > 0 && self.units[n] != LF;
         let first = if has_lead { 0 } else { 1 };

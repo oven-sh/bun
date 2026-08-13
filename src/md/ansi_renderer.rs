@@ -10,6 +10,7 @@ use bun_core::output::ansi_b;
 use bun_core::strings;
 
 use crate::helpers;
+use crate::output::{OutputBuffer, try_extend, try_push};
 use crate::root;
 use crate::types::{
     self, Align, BlockType, JsResult, Renderer, RendererImpl, SpanDetail, SpanType, TextType,
@@ -109,8 +110,8 @@ impl RendererImpl for ImageUrlCollector {
 
 // Drop is automatic for `Vec<Box<[u8]>>`.
 
-pub struct AnsiRenderer<'a> {
-    pub out: OutputBuffer,
+struct AnsiRenderer<'a> {
+    pub(crate) out: OutputBuffer,
     src_text: &'a [u8],
     theme: Theme<'a>,
     /// Stack of active block contexts (li/quote) for indentation.
@@ -259,30 +260,8 @@ impl InlineStyle {
     }
 }
 
-pub struct OutputBuffer {
-    pub list: Vec<u8>,
-    pub oom: bool,
-}
-
-impl OutputBuffer {
-    fn write(&mut self, data: &[u8]) {
-        if self.oom {
-            return;
-        }
-        // Vec::extend aborts on OOM under the global mimalloc allocator.
-        self.list.extend_from_slice(data);
-    }
-
-    fn write_byte(&mut self, b: u8) {
-        if self.oom {
-            return;
-        }
-        self.list.push(b);
-    }
-}
-
 impl<'a> AnsiRenderer<'a> {
-    pub fn init(src_text: &'a [u8], theme: Theme<'a>) -> AnsiRenderer<'a> {
+    pub(crate) fn init(src_text: &'a [u8], theme: Theme<'a>) -> AnsiRenderer<'a> {
         let mut r = AnsiRenderer {
             out: OutputBuffer {
                 list: Vec::new(),
@@ -316,18 +295,14 @@ impl<'a> AnsiRenderer<'a> {
             last_was_newline: true,
             blank_emitted: false,
         };
-        r.out.list.reserve(src_text.len() + src_text.len() / 2);
+        // The output is usually ~1.5x the input; this is only a throughput
+        // hint, so on failure fall back to the incremental `try_reserve`s in
+        // `write` instead of aborting.
+        let _ = r.out.list.try_reserve(src_text.len() + src_text.len() / 2);
         r
     }
 
-    pub fn to_owned_slice(&mut self) -> Result<Box<[u8]>, bun_alloc::AllocError> {
-        if self.out.oom {
-            return Err(bun_alloc::AllocError);
-        }
-        Ok(core::mem::take(&mut self.out.list).into_boxed_slice())
-    }
-
-    pub fn renderer(&mut self) -> Renderer<'_> {
+    pub(crate) fn renderer(&mut self) -> Renderer<'_> {
         Renderer { ptr: self }
     }
 
@@ -335,7 +310,7 @@ impl<'a> AnsiRenderer<'a> {
     // Block rendering
     // ========================================
 
-    pub fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) {
+    pub(crate) fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) {
         match block_type {
             BlockType::Doc => {}
             BlockType::Quote => {
@@ -512,7 +487,7 @@ impl<'a> AnsiRenderer<'a> {
         }
     }
 
-    pub fn leave_block(&mut self, block_type: BlockType, _data: u32) {
+    pub(crate) fn leave_block(&mut self, block_type: BlockType, _data: u32) {
         match block_type {
             BlockType::Doc => {}
             BlockType::Quote | BlockType::Ul | BlockType::Ol | BlockType::Li => {
@@ -547,19 +522,27 @@ impl<'a> AnsiRenderer<'a> {
                 // normalized once the table finishes.
                 let cells: Box<[TableCell]> =
                     core::mem::take(&mut self.table_cells).into_boxed_slice();
-                self.table_rows.push(TableRow {
-                    cells,
-                    is_header: self.in_thead,
-                });
+                try_push(
+                    &mut self.out.oom,
+                    &mut self.table_rows,
+                    TableRow {
+                        cells,
+                        is_header: self.in_thead,
+                    },
+                );
                 self.table_cells.clear();
             }
             BlockType::Th | BlockType::Td => {
                 self.in_cell = false;
                 let owned = Box::<[u8]>::from(self.table_cell_buf.as_slice());
-                self.table_cells.push(TableCell {
-                    content: owned,
-                    alignment: self.cell_align,
-                });
+                try_push(
+                    &mut self.out.oom,
+                    &mut self.table_cells,
+                    TableCell {
+                        content: owned,
+                        alignment: self.cell_align,
+                    },
+                );
             }
         }
     }
@@ -568,7 +551,7 @@ impl<'a> AnsiRenderer<'a> {
     // Span rendering
     // ========================================
 
-    pub fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail) {
+    pub(crate) fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail) {
         match span_type {
             SpanType::Em | SpanType::Strong | SpanType::U | SpanType::Del => {
                 let s = InlineStyle::of(span_type).unwrap();
@@ -583,10 +566,8 @@ impl<'a> AnsiRenderer<'a> {
             SpanType::A => {
                 self.link_depth += 1;
                 if self.link_depth == 1 {
-                    // Resolve final href (prefixes for autolinks). On OOM
-                    // we leave link_href null so leaveSpan doesn't try to
-                    // free a literal.
-                    self.link_href = resolve_href(&detail).ok();
+                    // Resolve final href (prefixes for autolinks).
+                    self.link_href = Some(resolve_href(&detail));
                     if self.theme.colors && self.theme.hyperlinks {
                         if let Some(href) = &self.link_href {
                             // OSC 8 hyperlink start
@@ -626,7 +607,7 @@ impl<'a> AnsiRenderer<'a> {
         }
     }
 
-    pub fn leave_span(&mut self, span_type: SpanType) {
+    pub(crate) fn leave_span(&mut self, span_type: SpanType) {
         match span_type {
             SpanType::Em | SpanType::Strong | SpanType::U | SpanType::Del => {
                 let s = InlineStyle::of(span_type).unwrap();
@@ -705,7 +686,7 @@ impl<'a> AnsiRenderer<'a> {
     // Text rendering
     // ========================================
 
-    pub fn text(&mut self, text_type: TextType, content: &[u8]) {
+    pub(crate) fn text(&mut self, text_type: TextType, content: &[u8]) {
         let mut sanitized: Vec<u8> = Vec::new();
         let content = sanitize_source_text(content, &mut sanitized);
         match text_type {
@@ -748,19 +729,19 @@ impl<'a> AnsiRenderer<'a> {
     /// heading buffer, table cell, image alt, or directly to output).
     fn write_content(&mut self, data: &[u8]) {
         if self.image_depth > 0 {
-            self.image_alt.extend_from_slice(data);
+            try_extend(&mut self.out.oom, &mut self.image_alt, data);
             return;
         }
         if self.in_code_block {
-            self.code_buf.extend_from_slice(data);
+            try_extend(&mut self.out.oom, &mut self.code_buf, data);
             return;
         }
         if self.heading_level > 0 {
-            self.heading_buf.extend_from_slice(data);
+            try_extend(&mut self.out.oom, &mut self.heading_buf, data);
             return;
         }
         if self.in_cell {
-            self.table_cell_buf.extend_from_slice(data);
+            try_extend(&mut self.out.oom, &mut self.table_cell_buf, data);
             return;
         }
         // Normal paragraph flow: respect wrapping + indent.
@@ -942,16 +923,16 @@ impl<'a> AnsiRenderer<'a> {
                 while i < bytes.len() && bytes[i] != 0x1b {
                     i += 1;
                 }
-                self.image_alt.extend_from_slice(&bytes[start..i]);
+                try_extend(&mut self.out.oom, &mut self.image_alt, &bytes[start..i]);
             }
             return;
         }
         if self.in_cell {
-            self.table_cell_buf.extend_from_slice(bytes);
+            try_extend(&mut self.out.oom, &mut self.table_cell_buf, bytes);
             return;
         }
         if self.heading_level > 0 {
-            self.heading_buf.extend_from_slice(bytes);
+            try_extend(&mut self.out.oom, &mut self.heading_buf, bytes);
             return;
         }
         self.out.write(bytes);
@@ -1116,11 +1097,11 @@ impl<'a> AnsiRenderer<'a> {
             return;
         }
         if self.in_cell {
-            self.table_cell_buf.extend_from_slice(data);
+            try_extend(&mut self.out.oom, &mut self.table_cell_buf, data);
             return;
         }
         if self.heading_level > 0 {
-            self.heading_buf.extend_from_slice(data);
+            try_extend(&mut self.out.oom, &mut self.heading_buf, data);
             return;
         }
         self.out.write(data);
@@ -2189,7 +2170,7 @@ impl<'s> CellAnsiState<'s> {
         // Stateful parse: 38/48 consume 2 extra params for `5;N` or
         // 4 extra for `2;R;G;B`. Snapshot the whole seq for fg/bg
         // since we don't need to recompute it — just replay it.
-        let mut iter = params.split(|b| *b == b';');
+        let mut iter = strings::split(params, b";");
         while let Some(p) = iter.next() {
             let n = match bun_core::fmt::parse_int::<u32>(p, 10).ok() {
                 Some(n) => n,
@@ -2438,7 +2419,7 @@ fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
 
 /// Build the final href string with autolink prefixes (mailto:, http://).
 /// Caller owns the returned memory.
-fn resolve_href(detail: &SpanDetail) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+fn resolve_href(detail: &SpanDetail) -> Box<[u8]> {
     let mut buf: Vec<u8> = Vec::new();
     if detail.autolink_email {
         buf.extend_from_slice(b"mailto:");
@@ -2448,7 +2429,7 @@ fn resolve_href(detail: &SpanDetail) -> Result<Box<[u8]>, bun_alloc::AllocError>
     }
     let mut scratch: Vec<u8> = Vec::new();
     buf.extend_from_slice(sanitize_source_text(detail.href, &mut scratch));
-    Ok(buf.into_boxed_slice())
+    buf.into_boxed_slice()
 }
 
 // ========================================
@@ -2464,7 +2445,7 @@ pub fn detect_light_background() -> bool {
         // (bright white) are light terminal backgrounds. Bright colors
         // 9-14 are high-intensity foreground codes, not light backgrounds.
         let mut last: &[u8] = b"";
-        for part in value.split(|b| *b == b';') {
+        for part in strings::split(value, b";") {
             last = part;
         }
         if !last.is_empty() {
@@ -2553,10 +2534,19 @@ fn probe_kitty_graphics() -> bool {
             Ok(t) => t,
             Err(_) => return false,
         };
-        let _ = bun_core::tty::set_mode(0, bun_core::tty::Mode::Raw);
-        let _restore = scopeguard::guard(saved_termios, |saved| {
+        let mut tty_state = bun_core::tty::State::new();
+        let _ = tty_state.set_mode(
+            0,
+            bun_core::tty::Mode::Raw,
+            bun_core::tty::SetAttrWhen::Drain,
+        );
+        let _restore = scopeguard::guard((saved_termios, tty_state), |(saved, mut state)| {
             if bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Now, &saved).is_err() {
-                let _ = bun_core::tty::set_mode(0, bun_core::tty::Mode::Normal);
+                let _ = state.set_mode(
+                    0,
+                    bun_core::tty::Mode::Normal,
+                    bun_core::tty::SetAttrWhen::Drain,
+                );
             }
         });
 

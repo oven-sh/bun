@@ -2,7 +2,6 @@
 //! But this incurred a fixed 350ms overhead on every build, which is unacceptable
 //! so we give up on codesigning support on macOS for now until we can find a better solution
 
-use bun_collections::VecExt;
 use core::mem::size_of;
 use core::ptr::NonNull;
 use std::io::Write as _;
@@ -11,7 +10,7 @@ use std::sync::Arc;
 use bun_ast::Loader;
 use bun_bundler::options::{self, OutputFile};
 use bun_collections::StringArrayHashMap;
-use bun_core::{Environment, Error as BunError, Output, err};
+use bun_core::{Environment, Output};
 use bun_core::{String as BunString, StringPointer, ZStr};
 use bun_exe_format::{elf as bun_elf, macho as bun_macho, pe as bun_pe};
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
@@ -23,6 +22,8 @@ use bun_paths::{self as path, PathBuffer, strings};
 use bun_paths::{OSPathBuffer, WPathBuffer};
 use bun_sourcemap as SourceMap;
 use bun_sys::{self as Syscall, Fd, FdExt as _, Stat};
+
+bun_core::declare_scope!(StandaloneModuleGraph, hidden);
 
 // `bun_webcore::Blob` lives in a higher tier and `cached_blob` is only ever
 // set from `bun_runtime`, so it is modeled as an opaque erased pointer here.
@@ -39,6 +40,8 @@ pub struct StandaloneModuleGraph {
     /// them under Stacked/Tree Borrows and make the later foreign write UB.
     pub bytes: *const [u8],
     pub files: StringArrayHashMap<File>,
+    /// Directory prefixes derived from `files` keys (no trailing `/`, always posix-separated).
+    pub dirs: StringArrayHashMap<()>,
     pub entry_point_id: u32,
     pub compile_exec_argv: &'static [u8],
     pub flags: Flags,
@@ -94,6 +97,12 @@ impl StandaloneModuleGraph {
         // result concurrently, and overlapping `&mut` is UB regardless of
         // whether either side writes.
         INSTANCE.get().map(|cell| cell.0.get())
+    }
+
+    /// Read-only lookups. Use `get()` when mutating per-`File` lazy caches.
+    pub fn get_ref() -> Option<&'static StandaloneModuleGraph> {
+        // SAFETY: `Instance` is `Sync`; the `&self` methods touch only the immutable tables.
+        INSTANCE.get().map(|cell| unsafe { &*cell.0.get() })
     }
 
     pub fn set(instance: StandaloneModuleGraph) -> *mut StandaloneModuleGraph {
@@ -157,25 +166,118 @@ impl StandaloneModuleGraph {
         self.find_assume_standalone_path(name)
     }
 
-    pub fn stat(&mut self, name: &[u8]) -> Option<Stat> {
-        let file = self.find(name)?;
-        Some(file.stat())
+    fn lookup_file(&self, name: &[u8]) -> Option<&File> {
+        #[cfg(windows)]
+        {
+            let mut buf = PathBuffer::uninit();
+            return self.files.get(normalize_file_key(name, &mut buf));
+        }
+        #[cfg(not(windows))]
+        self.files.get(name)
+    }
+
+    pub fn find_ref(&self, name: &[u8]) -> Option<&File> {
+        if !is_bun_standalone_file_path(name) {
+            return None;
+        }
+        self.lookup_file(name)
+    }
+
+    pub fn contains_file(&self, name: &[u8]) -> bool {
+        self.find_ref(name).is_some()
+    }
+
+    pub fn stat(&self, name: &[u8]) -> Option<Stat> {
+        if !is_bun_standalone_file_path(name) {
+            return None;
+        }
+        if let Some(file) = self.lookup_file(name) {
+            return Some(file.stat());
+        }
+        if self.find_dir(name) {
+            return Some(dir_stat());
+        }
+        None
+    }
+
+    fn normalize_dir_path<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
+        #[cfg(windows)]
+        let name = normalize_file_key(name, buf);
+        #[cfg(not(windows))]
+        let _ = buf;
+        let mut name = name;
+        while name.last() == Some(&b'/') {
+            name = &name[..name.len() - 1];
+        }
+        name
+    }
+
+    pub fn find_dir(&self, name: &[u8]) -> bool {
+        if !is_bun_standalone_file_path(name) {
+            return false;
+        }
+        let mut buf = PathBuffer::uninit();
+        let name = Self::normalize_dir_path(name, &mut buf);
+        self.dirs.contains_key(name)
+    }
+
+    /// `(entry, is_dir)`; `entry` is the basename, or the `name`-relative path when `recursive`.
+    pub fn readdir(&self, name: &[u8], recursive: bool) -> Option<Vec<(Box<[u8]>, bool)>> {
+        if !is_bun_standalone_file_path(name) {
+            return None;
+        }
+        let mut buf = PathBuffer::uninit();
+        let name = Self::normalize_dir_path(name, &mut buf);
+        if !self.dirs.contains_key(name) {
+            return None;
+        }
+        let mut prefix: Vec<u8> = Vec::with_capacity(name.len() + 1);
+        prefix.extend_from_slice(name);
+        prefix.push(b'/');
+
+        let mut seen: StringArrayHashMap<bool> = StringArrayHashMap::new();
+        let mut push = |key: &[u8], is_dir: bool| {
+            if key.len() <= prefix.len() || !key.starts_with(&prefix) {
+                return;
+            }
+            let rel = &key[prefix.len()..];
+            if recursive {
+                let _ = seen.put(rel, is_dir);
+            } else if let Some(sep) = strings::index_of_char(rel, b'/') {
+                let _ = seen.put(&rel[..sep as usize], true);
+            } else {
+                let _ = seen.put(rel, is_dir);
+            }
+        };
+        for key in self.files.keys() {
+            push(key, false);
+        }
+        for key in self.dirs.keys() {
+            push(key, true);
+        }
+
+        let mut out: Vec<(Box<[u8]>, bool)> = Vec::with_capacity(seen.count());
+        for (k, v) in seen.iter() {
+            out.push((Box::<[u8]>::from(&k[..]), *v));
+        }
+        Some(out)
     }
 
     pub fn find_assume_standalone_path(&mut self, name: &[u8]) -> Option<&mut File> {
         #[cfg(windows)]
         {
-            let mut normalized_buf = PathBuffer::uninit();
-            let input = strings::paths::without_nt_prefix::<u8>(name);
-            let normalized =
-                path::resolve_path::platform_to_posix_buf::<u8>(input, &mut normalized_buf);
-            return self.files.get_mut(normalized);
+            let mut buf = PathBuffer::uninit();
+            return self.files.get_mut(normalize_file_key(name, &mut buf));
         }
         #[cfg(not(windows))]
-        {
-            self.files.get_mut(name)
-        }
+        self.files.get_mut(name)
     }
+}
+
+#[cfg(windows)]
+fn normalize_file_key<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
+    let input = strings::paths::without_nt_prefix::<u8>(name);
+    path::resolve_path::platform_to_posix_buf::<u8>(input, buf)
 }
 
 // SAFETY: the graph is the process-global INSTANCE singleton (set once at
@@ -200,24 +302,11 @@ unsafe impl Sync for StandaloneModuleGraph {}
 /// blob/sourcemap caching path.
 impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&[u8]> {
-        #[cfg(windows)]
-        let file = {
-            let mut normalized_buf = PathBuffer::uninit();
-            let input = strings::paths::without_nt_prefix::<u8>(name);
-            let normalized =
-                path::resolve_path::platform_to_posix_buf::<u8>(input, &mut normalized_buf);
-            self.files.get(normalized)
-        };
-        #[cfg(not(windows))]
-        let file = self.files.get(name);
-        file.map(|f| f.name)
+        self.lookup_file(name).map(|f| f.name)
     }
 
     fn find(&self, name: &[u8]) -> Option<&[u8]> {
-        if !is_bun_standalone_file_path(name) {
-            return None;
-        }
-        <Self as bun_resolver::StandaloneModuleGraph>::find_assume_standalone_path(self, name)
+        self.find_ref(name).map(|f| f.name)
     }
 
     fn base_public_path_with_default_suffix(&self) -> &'static [u8] {
@@ -394,8 +483,7 @@ impl File {
     }
 
     pub fn stat(&self) -> Stat {
-        // SAFETY: all-zero is a valid `libc::stat` (POD `#[repr(C)]`).
-        let mut result: Stat = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut result: Stat = bun_core::ffi::zeroed();
         result.st_size = self.contents.len() as _;
         // `Stat` is `libc::stat` (POSIX) / `uv_stat_t` (Windows, `st_mode: u64`).
         result.st_mode = (libc::S_IFREG | 0o644) as _;
@@ -423,6 +511,12 @@ impl File {
         // We don't want this to free.
         self.wtf_string.dupe_ref()
     }
+}
+
+fn dir_stat() -> Stat {
+    let mut result: Stat = bun_core::ffi::zeroed();
+    result.st_mode = (libc::S_IFDIR | 0o755) as _;
+    result
 }
 
 pub enum LazySourceMap {
@@ -463,8 +557,10 @@ impl LazySourceMap {
                 // copy the section bytes. Could switch
                 // the field to `Vec<&'static [u8]>` for the standalone path.
                 let mut file_names: Vec<Box<[u8]>> = Vec::with_capacity(source_files_count);
-                let decompressed_contents_slice: Vec<Option<Vec<u8>>> =
-                    vec![None; source_files_count];
+                let decompressed_contents_slice: Vec<std::sync::OnceLock<Vec<u8>>> =
+                    std::iter::repeat_with(std::sync::OnceLock::new)
+                        .take(source_files_count)
+                        .collect();
                 for i in 0..source_files_count {
                     // SAFETY: `serialized.bytes` is a 'static read-only sourcemap subrange
                     // (disjoint from bytecode); StringPointer offsets were serialized by
@@ -533,11 +629,12 @@ impl StandaloneModuleGraph {
         raw_ptr: *mut u8,
         raw_len: usize,
         offsets: Offsets,
-    ) -> Result<StandaloneModuleGraph, BunError> {
+    ) -> crate::Result<StandaloneModuleGraph> {
         if raw_len == 0 {
             return Ok(StandaloneModuleGraph {
                 bytes: core::ptr::slice_from_raw_parts(NonNull::<u8>::dangling().as_ptr(), 0),
                 files: StringArrayHashMap::new(),
+                dirs: StringArrayHashMap::new(),
                 entry_point_id: 0,
                 compile_exec_argv: b"",
                 flags: Flags::default(),
@@ -565,9 +662,7 @@ impl StandaloneModuleGraph {
         let modules_list_base = modules_list_bytes.as_ptr();
 
         if offsets.entry_point_id as usize > modules_list_count {
-            return Err(err!(
-                "Corrupted module graph: entry point ID is greater than module list count"
-            ));
+            return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
         }
 
         let mut modules = StringArrayHashMap::<File>::new();
@@ -640,11 +735,26 @@ impl StandaloneModuleGraph {
 
         modules.lock_pointers(); // make the pointers stable forever
 
+        // Keys are posix-separated already (see `to_bytes`), so byte-scan for `/`.
+        let mut dirs = StringArrayHashMap::<()>::new();
+        for key in modules.keys() {
+            let mut rest: &[u8] = key;
+            while let Some(sep) = strings::last_index_of_char(rest, b'/') {
+                rest = &rest[..sep as usize];
+                if rest.len() < BASE_PUBLIC_PATH.len() || dirs.contains_key(rest) {
+                    break;
+                }
+                let _ = dirs.put(rest, ());
+            }
+        }
+        dirs.lock_pointers();
+
         Ok(StandaloneModuleGraph {
             // Stored as a raw fat pointer — `byte_count` covers the writable
             // bytecode/module_info regions, so a `&'static [u8]` here would alias them.
             bytes: core::ptr::slice_from_raw_parts(raw_const, offsets.byte_count),
             files: modules,
+            dirs,
             entry_point_id: offsets.entry_point_id,
             // SAFETY: read-only argv string subrange, disjoint from writable regions.
             compile_exec_argv: unsafe {
@@ -710,7 +820,7 @@ pub(crate) fn to_bytes(
     output_format: Format,
     compile_exec_argv: &[u8],
     flags: Flags,
-) -> Result<Vec<u8>, BunError> {
+) -> crate::Result<Vec<u8>> {
     // RAII trace handle ends on drop.
     let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraphSerialize);
 
@@ -720,7 +830,7 @@ pub(crate) fn to_bytes(
     for output_file in output_files {
         string_builder.count_z(&output_file.dest_path);
         string_builder.count_z(prefix);
-        if let options::OutputValue::Buffer { bytes } = &output_file.value {
+        if let options::OutputFileValue::Buffer { bytes } = &output_file.value {
             if output_file.output_kind == options::OutputKind::Sourcemap {
                 // This is an over-estimation to ensure that we allocate
                 // enough memory for the source-map contents. Calculating
@@ -770,7 +880,7 @@ pub(crate) fn to_bytes(
             continue;
         }
 
-        let options::OutputValue::Buffer { bytes: buf_bytes } = &output_file.value else {
+        let options::OutputFileValue::Buffer { bytes: buf_bytes } = &output_file.value else {
             continue;
         };
 
@@ -863,11 +973,17 @@ pub(crate) fn to_bytes(
 
         if Environment::IS_CANARY || Environment::IS_DEBUG {
             if let Some(dump_code_dir) = bun_core::env_var::BUN_FEATURE_FLAG_DUMP_CODE.get() {
+                // `dest_path` keeps `..` for the embedded bunfs key below; neutralize
+                // every `..` segment here so the on-disk dump can't escape
+                // `dump_code_dir` (the join would otherwise normalize `..` above it).
+                let mut dump_rel: Vec<u8> = Vec::new();
+                options::write_sanitized_parent_dirs(&mut dump_rel, dest_path)
+                    .expect("write to Vec<u8>");
                 let mut path_buf = bun_paths::path_buffer_pool::get();
                 let dest_z = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
                     dump_code_dir,
                     &mut path_buf[..],
-                    &[dest_path],
+                    &[&dump_rel],
                 );
 
                 // Scoped block to handle dump failures without skipping module emission
@@ -997,6 +1113,7 @@ pub(crate) fn to_bytes(
         )?;
         debug_assert_eq!(graph.files.count(), modules.len());
         graph.files.unlock_pointers();
+        graph.dirs.unlock_pointers();
     }
 
     // StringBuilder owns the buffer; hand it back without copying. `cap` may
@@ -1063,7 +1180,6 @@ pub(crate) fn inject(
     inject_options: &InjectOptions,
     target: &CompileTarget,
 ) -> Fd {
-    let _ = inject_options;
     let mut buf = PathBuffer::uninit();
     // Note: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
     // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
@@ -1072,8 +1188,12 @@ pub(crate) fn inject(
     let mut zname: &ZStr = match bun_fs::FileSystem::tmpname(
         b"bun-build",
         &mut buf[..],
-        // i64 → u64 bitcast.
-        bun_core::time::milli_timestamp() as u64,
+        // tmpname OR's this seed with nano_timestamp(). milli_timestamp() is a
+        // bit-subset of nanos and so adds zero entropy; fast_random() is seeded
+        // from the OS CSPRNG per process, which keeps concurrent
+        // `bun build --compile` invocations from colliding on the same temp
+        // name in a shared cwd (the per-process counter is always 0 here).
+        bun_core::fast_random(),
     ) {
         Ok(n) => n,
         Err(e) => {
@@ -1341,8 +1461,15 @@ pub(crate) fn inject(
                     return Fd::INVALID;
                 }
             };
+            if inject_options.hide_console {
+                if let Err(e) = pe_file.set_subsystem(bun_pe::IMAGE_SUBSYSTEM_WINDOWS_GUI) {
+                    bun_core::pretty_errorln!("Error setting PE subsystem: {}", e);
+                    cleanup(zname, cloned_executable_fd);
+                    return Fd::INVALID;
+                }
+            }
             // Always strip authenticode when adding .bun section for --compile
-            if let Err(e) = pe_file.add_bun_section(bytes, bun_pe::StripMode::StripAlways) {
+            if let Err(e) = pe_file.add_bun_section(bytes) {
                 bun_core::pretty_errorln!("Error adding Bun section to PE file: {}", e);
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
@@ -1358,6 +1485,15 @@ pub(crate) fn inject(
             let mut writer = bun_sys::FileWriter(cloned_executable_fd);
             if let Err(e) = pe_file.write(&mut writer) {
                 bun_core::pretty_errorln!("Error writing PE file: {}", bstr::BStr::new(e.name()));
+                cleanup(zname, cloned_executable_fd);
+                return Fd::INVALID;
+            }
+            // Truncate to the in-memory PE size; Authenticode strip can make it shorter than the base.
+            if let Err(err) = Syscall::ftruncate(
+                cloned_executable_fd,
+                i64::try_from(pe_file.len()).expect("int cast"),
+            ) {
+                bun_core::pretty_errorln!("Error truncating PE file: {}", err);
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }
@@ -1411,10 +1547,14 @@ pub(crate) fn inject(
                 return Fd::INVALID;
             }
             // Truncate the file to the exact size of the modified ELF
-            let _ = Syscall::ftruncate(
+            if let Err(err) = Syscall::ftruncate(
                 cloned_executable_fd,
                 i64::try_from(elf_file.data.len()).expect("int cast"),
-            );
+            ) {
+                bun_core::pretty_errorln!("Error truncating ELF file: {}", err);
+                cleanup(zname, cloned_executable_fd);
+                return Fd::INVALID;
+            }
 
             #[cfg(not(windows))]
             {
@@ -1514,9 +1654,9 @@ pub use bun_options_types::compile_target::CompileTarget;
 /// two `download*` fns below in this crate.
 pub(crate) fn download_to_path(
     target: &CompileTarget,
-    env: &mut bun_dotenv::Loader<'_>,
+    env: &mut bun_dotenv::Loader,
     dest_z: &ZStr,
-) -> Result<(), BunError> {
+) -> crate::Result<()> {
     bun_http::http_thread::init(&Default::default());
     let mut refresher = bun_core::Progress::Progress::default();
 
@@ -1531,7 +1671,7 @@ pub(crate) fn download_to_path(
             Ok(s) => s,
             Err(err) => {
                 // Return error without printing - let caller decide how to handle
-                return Err(err);
+                return Err(err.into());
             }
         };
         let url_str_copy: Box<[u8]> = Box::from(url_str);
@@ -1552,7 +1692,6 @@ pub(crate) fn download_to_path(
                 url,
                 Default::default(),
                 b"",
-                &raw mut *compressed_archive_bytes,
                 b"",
                 http_proxy,
                 None,
@@ -1561,22 +1700,22 @@ pub(crate) fn download_to_path(
             async_http.client.progress_node =
                 core::ptr::NonNull::new(core::ptr::from_mut(progress));
             async_http.client.flags.reject_unauthorized = reject_unauthorized;
-            let send_result = async_http.send_sync();
+            let send_result = async_http.send_sync(&mut compressed_archive_bytes);
 
             progress.end();
-            let status_code = send_result?.status_code as u16;
+            let status_code = send_result?.status_code() as u16;
 
             match status_code {
                 404 => {
                     // Return error without printing - let caller handle the messaging
-                    return Err(err!("TargetNotFound"));
+                    return Err(crate::Error::TargetNotFound);
                 }
                 403 | 429 | 499..=599 => {
                     // Return error without printing - let caller handle the messaging
-                    return Err(err!("NetworkError"));
+                    return Err(crate::Error::NetworkError);
                 }
                 200 => {}
-                _ => return Err(err!("NetworkError")),
+                _ => return Err(crate::Error::NetworkError),
             }
         }
 
@@ -1587,20 +1726,22 @@ pub(crate) fn download_to_path(
 
             if compressed_archive_bytes.list.is_empty() {
                 // Return error without printing - let caller handle the messaging
-                return Err(err!("InvalidResponse"));
+                return Err(crate::Error::InvalidResponse);
             }
 
             {
                 // Note: reshaped for borrowck — `refresher.start` borrows
                 // `refresher` mutably; do gunzip work first, drive progress around it.
                 refresher.start(b"Decompressing", 0);
-                let gunzip_result = (|| -> Result<(), BunError> {
+                let gunzip_result = (|| -> crate::Result<()> {
                     let mut gunzip = bun_zlib::ZlibReaderArrayList::init(
                         compressed_archive_bytes.list.as_slice(),
                         &mut tarball_bytes,
                     )
-                    .map_err(|_| err!("InvalidResponse"))?;
-                    gunzip.read_all(true).map_err(|_| err!("InvalidResponse"))?;
+                    .map_err(|_| crate::Error::InvalidResponse)?;
+                    gunzip
+                        .read_all(true)
+                        .map_err(|_| crate::Error::InvalidResponse)?;
                     Ok(())
                 })();
                 refresher.root.end();
@@ -1634,7 +1775,7 @@ pub(crate) fn download_to_path(
                 if extract_res.is_err() {
                     refresher.root.end();
                     // Return error without printing - let caller handle the messaging
-                    return Err(err!("ExtractionFailed"));
+                    return Err(crate::Error::ExtractionFailed);
                 }
 
                 let mut did_retry = false;
@@ -1658,7 +1799,7 @@ pub(crate) fn download_to_path(
                         }
                         refresher.root.end();
                         // Return error without printing - let caller handle the messaging
-                        return Err(err!("ExtractionFailed"));
+                        return Err(crate::Error::ExtractionFailed);
                     }
                     break;
                 }
@@ -1683,7 +1824,7 @@ pub fn to_executable(
     compile_exec_argv: &[u8],
     self_exe_path: Option<&[u8]>,
     flags: Flags,
-) -> Result<CompileResult, BunError> {
+) -> crate::Result<CompileResult> {
     #[cfg(windows)]
     let _ = root_dir;
     let bytes = match to_bytes(
@@ -1733,34 +1874,28 @@ pub fn to_executable(
 
         if needs_download {
             if let Err(e) = download_to_path(target, env, dest_z) {
-                return Ok(if e == err!("TargetNotFound") {
-                    CompileResult::fail_fmt(format_args!(
+                return Ok(match e {
+                    crate::Error::TargetNotFound => CompileResult::fail_fmt(format_args!(
                         "Target platform '{}' is not available for download. Check if this version of Bun supports this target.",
                         target
-                    ))
-                } else if e == err!("NetworkError") {
-                    CompileResult::fail_fmt(format_args!(
+                    )),
+                    crate::Error::NetworkError => CompileResult::fail_fmt(format_args!(
                         "Network error downloading executable for '{}'. Check your internet connection and proxy settings.",
                         target
-                    ))
-                } else if e == err!("InvalidResponse") {
-                    CompileResult::fail_fmt(format_args!(
+                    )),
+                    crate::Error::InvalidResponse => CompileResult::fail_fmt(format_args!(
                         "Downloaded file for '{}' appears to be corrupted. Please try again.",
                         target
-                    ))
-                } else if e == err!("ExtractionFailed") {
-                    CompileResult::fail_fmt(format_args!(
+                    )),
+                    crate::Error::ExtractionFailed => CompileResult::fail_fmt(format_args!(
                         "Failed to extract executable for '{}'. The download may be incomplete.",
                         target
-                    ))
-                } else if e == err!("UnsupportedTarget") {
-                    CompileResult::fail_fmt(format_args!("Target '{}' is not supported", target))
-                } else {
-                    CompileResult::fail_fmt(format_args!(
+                    )),
+                    _ => CompileResult::fail_fmt(format_args!(
                         "Failed to download '{}': {}",
                         target,
                         bstr::BStr::new(e.name())
-                    ))
+                    )),
                 });
             }
         }
@@ -1896,7 +2031,7 @@ pub fn to_executable(
             ) {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "Failed to set Windows metadata: {}",
-                    e.name()
+                    e
                 )));
             }
         }
@@ -1934,7 +2069,7 @@ pub fn to_executable(
 
             let _ = Syscall::unlink(temp_posix);
 
-            if e == err!("IsDir") || e == err!("EISDIR") {
+            if e.get_errno() == bun_errno::SystemErrno::EISDIR {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "{} is a directory. Please choose a different --outfile or delete the directory",
                     bstr::BStr::new(outfile)
@@ -1959,7 +2094,7 @@ pub fn to_executable(
 impl StandaloneModuleGraph {
     /// Loads the standalone module graph from the executable, allocates it on the heap,
     /// sets it globally, and returns the pointer.
-    pub fn from_executable() -> Result<Option<*mut StandaloneModuleGraph>, BunError> {
+    pub fn from_executable() -> crate::Result<Option<*mut StandaloneModuleGraph>> {
         #[cfg(target_os = "macos")]
         {
             let Some((base, len)) = macho::get_data() else {
@@ -2058,7 +2193,8 @@ impl StandaloneModuleGraph {
     /// The pages are clean file-backed COW, so any later read (lazy require,
     /// stack-trace source lookup) faults back in transparently from the
     /// executable on disk. Only applies when running as a compiled
-    /// standalone binary.
+    /// standalone binary; `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1`
+    /// skips the hint.
     pub fn hint_source_pages_dont_need() {
         #[cfg(windows)]
         {
@@ -2090,7 +2226,11 @@ impl StandaloneModuleGraph {
 
             #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
             {
-                if len == 0 {
+                if len == 0
+                    || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE
+                        .get()
+                        .unwrap_or(false)
+                {
                     return;
                 }
 
@@ -2110,13 +2250,15 @@ impl StandaloneModuleGraph {
                     )
                 };
                 if rc != 0 {
-                    bun_core::debug_warn!(
+                    bun_core::scoped_log!(
+                        StandaloneModuleGraph,
                         "hintSourcePagesDontNeed: madvise failed errno={}",
                         bun_sys::last_errno()
                     );
                     return;
                 }
-                bun_core::debug_warn!(
+                bun_core::scoped_log!(
+                    StandaloneModuleGraph,
                     "hintSourcePagesDontNeed: MADV_DONTNEED {} bytes",
                     end - start
                 );
@@ -2131,7 +2273,7 @@ fn from_bytes_alloc(
     raw_ptr: *mut u8,
     raw_len: usize,
     offsets: Offsets,
-) -> Result<*mut StandaloneModuleGraph, BunError> {
+) -> crate::Result<*mut StandaloneModuleGraph> {
     let graph = StandaloneModuleGraph::from_bytes(raw_ptr, raw_len, offsets)?;
     Ok(StandaloneModuleGraph::set(graph))
 }
@@ -2206,18 +2348,15 @@ pub struct SerializedSourceMapLoaded {
     /// Only decompress source code once! Once a file is decompressed,
     /// it is stored here. Decompression failures are stored as an empty
     /// string, which will be treated as "no contents".
-    pub decompressed_files: Box<[Option<Vec<u8>>]>,
+    pub decompressed_files: Box<[std::sync::OnceLock<Vec<u8>>]>,
 }
 
 pub(crate) fn serialize_json_source_map_for_standalone(
     header_list: &mut Vec<u8>,
     string_payload: &mut Vec<u8>,
     json_source: &[u8],
-) -> Result<(), BunError> {
+) -> crate::Result<()> {
     use bun_ast::ExprData as AstData;
-
-    // We own a local bump arena and drop it on return.
-    let arena = bun_alloc::Arena::new();
 
     let json_src = bun_ast::Source::init_path_string("sourcemap.json", json_source);
     let mut log = bun_ast::Log::init();
@@ -2226,81 +2365,73 @@ pub(crate) fn serialize_json_source_map_for_standalone(
     // of the parse, so we need to remember to reset the ast store
     let _reset_guard = bun_ast::StoreResetGuard::new();
 
-    let json = bun_parsers::json::parse::<false>(&json_src, &mut log, &arena)
-        .map_err(|_| err!("InvalidSourceMap"))?;
+    let parsed = bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log)
+        .map_err(|_| crate::Error::InvalidSourceMap)?;
+    let json = parsed.root;
 
     let mappings_str = json
         .get(b"mappings")
-        .ok_or_else(|| err!("InvalidSourceMap"))?;
-    if !matches!(mappings_str.data, AstData::EString(_)) {
-        return Err(err!("InvalidSourceMap"));
-    }
+        .ok_or(crate::Error::InvalidSourceMap)?;
+    let map_vlq: &[u8] = mappings_str
+        .as_utf8_string_literal()
+        .ok_or(crate::Error::InvalidSourceMap)?;
     let sources_content = match json
         .get(b"sourcesContent")
-        .ok_or_else(|| err!("InvalidSourceMap"))?
+        .ok_or(crate::Error::InvalidSourceMap)?
         .data
     {
-        AstData::EArray(arr) => arr,
-        _ => return Err(err!("InvalidSourceMap")),
+        AstData::EArrayJSON(arr) => arr,
+        _ => return Err(crate::Error::InvalidSourceMap),
     };
+    let sources_content = sources_content.get();
     let sources_paths = match json
         .get(b"sources")
-        .ok_or_else(|| err!("InvalidSourceMap"))?
+        .ok_or(crate::Error::InvalidSourceMap)?
         .data
     {
-        AstData::EArray(arr) => arr,
-        _ => return Err(err!("InvalidSourceMap")),
+        AstData::EArrayJSON(arr) => arr,
+        _ => return Err(crate::Error::InvalidSourceMap),
     };
-    if sources_content.items.len_u32() != sources_paths.items.len_u32() {
-        return Err(err!("InvalidSourceMap"));
+    let sources_paths = sources_paths.get();
+    if sources_content.items().len() != sources_paths.items().len() {
+        return Err(crate::Error::InvalidSourceMap);
     }
 
-    // SAFETY: matched `EString` above; `StoreRef` derefs `&mut` into the arena node.
-    let mut mappings_e_string = mappings_str
-        .data
-        .e_string()
-        .expect("infallible: variant checked");
-    let map_vlq: &[u8] = mappings_e_string.slice(&arena);
-    let map_blob =
-        SourceMap::InternalSourceMap::from_vlq(map_vlq, 0).map_err(|_| err!("InvalidSourceMap"))?;
+    let map_blob = SourceMap::InternalSourceMap::from_vlq(map_vlq, 0)
+        .map_err(|_| crate::Error::InvalidSourceMap)?;
 
     // Every offset/length in the serialized map is a u32 `StringPointer`;
     // anything that cannot be represented is a build error, not a crash.
-    let map_blob_len_u32 = u32::try_from(map_blob.len()).map_err(|_| err!("SourceMapTooLarge"))?;
-    header_list.extend_from_slice(&u32::to_le_bytes(sources_paths.items.len_u32()));
+    let map_blob_len_u32 =
+        u32::try_from(map_blob.len()).map_err(|_| crate::Error::SourceMapTooLarge)?;
+    let sources_len_u32 =
+        u32::try_from(sources_paths.items().len()).map_err(|_| crate::Error::SourceMapTooLarge)?;
+    header_list.extend_from_slice(&sources_len_u32.to_le_bytes());
     header_list.extend_from_slice(&map_blob_len_u32.to_le_bytes());
 
     let string_payload_start_location = size_of::<u32>()
         + size_of::<u32>()
-        + size_of::<StringPointer>() * (sources_content.items.len_u32() as usize) * 2 // path + source
+        + size_of::<StringPointer>() * sources_content.items().len() * 2 // path + source
         + map_blob.len();
 
-    for item in sources_paths.items.slice() {
-        let AstData::EString(s) = item.data else {
-            return Err(err!("InvalidSourceMap"));
-        };
-
-        let decoded = s.string_cloned(&arena).map_err(|_| err!("OutOfMemory"))?;
+    for item in sources_paths.items() {
+        let decoded = item.as_str().ok_or(crate::Error::InvalidSourceMap)?;
 
         let offset = string_payload.len();
         string_payload.extend_from_slice(decoded);
 
         let slice = StringPointer {
             offset: u32::try_from(offset + string_payload_start_location)
-                .map_err(|_| err!("SourceMapTooLarge"))?,
+                .map_err(|_| crate::Error::SourceMapTooLarge)?,
             length: u32::try_from(string_payload.len() - offset)
-                .map_err(|_| err!("SourceMapTooLarge"))?,
+                .map_err(|_| crate::Error::SourceMapTooLarge)?,
         };
         header_list.extend_from_slice(&slice.offset.to_le_bytes());
         header_list.extend_from_slice(&slice.length.to_le_bytes());
     }
 
-    for item in sources_content.items.slice() {
-        let AstData::EString(s) = item.data else {
-            return Err(err!("InvalidSourceMap"));
-        };
-
-        let utf8 = s.string_cloned(&arena).map_err(|_| err!("OutOfMemory"))?;
+    for item in sources_content.items() {
+        let utf8 = item.as_str().ok_or(crate::Error::InvalidSourceMap)?;
 
         let offset = string_payload.len();
 
@@ -2310,7 +2441,7 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         // feeding that to `Vec::reserve` below would abort with a capacity
         // overflow instead of failing the build.
         if bun_zstd::is_error(bound) {
-            return Err(err!("SourceMapTooLarge"));
+            return Err(crate::Error::SourceMapTooLarge);
         }
         string_payload.reserve(bound);
         if let bun_zstd::Result::Err(err_msg) =
@@ -2324,9 +2455,9 @@ pub(crate) fn serialize_json_source_map_for_standalone(
 
         let slice = StringPointer {
             offset: u32::try_from(offset + string_payload_start_location)
-                .map_err(|_| err!("SourceMapTooLarge"))?,
+                .map_err(|_| crate::Error::SourceMapTooLarge)?,
             length: u32::try_from(string_payload.len() - offset)
-                .map_err(|_| err!("SourceMapTooLarge"))?,
+                .map_err(|_| crate::Error::SourceMapTooLarge)?,
         };
         header_list.extend_from_slice(&slice.offset.to_le_bytes());
         header_list.extend_from_slice(&slice.length.to_le_bytes());

@@ -1,5 +1,7 @@
 import type { BunRequest, ServeOptions, Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import net from "node:net";
 
 describe("path parameters", () => {
   let server: Server;
@@ -68,6 +70,27 @@ describe("path parameters", () => {
       id: "🦊",
       method: "GET",
     });
+  });
+
+  it.each([
+    ["valid UTF-8 bytes", [0xc3, 0xa9], "é"],
+    ["an invalid UTF-8 byte", [0xe9], "�"],
+  ])("decodes raw %s in a parameter segment", async (_label, bytes, expected) => {
+    const request = Buffer.concat([
+      Buffer.from("GET /users/"),
+      Buffer.from(bytes),
+      Buffer.from(" HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+    ]);
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const socket = net.connect(server.port, "127.0.0.1");
+    const chunks: Buffer[] = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    socket.on("connect", () => socket.write(request));
+    const response = await promise;
+    expect(response).toContain("HTTP/1.1 200");
+    expect(JSON.parse(response.slice(response.indexOf("\r\n\r\n") + 4))).toEqual({ id: expected, method: "GET" });
   });
 });
 
@@ -969,4 +992,55 @@ it("routes absolute-form request targets by path and derives request.url from th
     expect(rawUrl.pathname).toBe("/");
     expect(rawUrl.search).toBe(new URL(target).search);
   }
+});
+
+describe.concurrent("false route with no fetch handler", () => {
+  // A route value of `false` must fall through to the default handler. With no
+  // `fetch` configured that default is the built-in 404, not a call through an
+  // empty handler slot (which crashed the server process).
+  const serverSrc = /* ts */ `
+    const srv = Bun.serve({
+      port: 0,
+      development: false,
+      routes: {
+        "/x": new Response("x"),
+        "/off": false,
+        "/off/:id": false,
+        "/wild/*": false,
+      },
+    });
+    process.send!({ port: srv.port });
+  `;
+
+  test.each([
+    ["exact", "/off"],
+    ["param", "/off/7"],
+    ["wildcard", "/wild/z"],
+  ])("%s route 404s and the server survives", async (_label, path) => {
+    const { promise: portPromise, resolve: gotPort } = Promise.withResolvers<number>();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", serverSrc],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      ipc(message: { port: number }) {
+        gotPort(message.port);
+      },
+    });
+    const port = await Promise.race([
+      portPromise,
+      proc.exited.then(code => Promise.reject(new Error(`server exited (${code}) before listening`))),
+    ]);
+
+    const res = await fetch(`http://127.0.0.1:${port}${path}`);
+    expect(res.status).toBe(404);
+
+    // The server must still be serving after the request above.
+    const ok = await fetch(`http://127.0.0.1:${port}/x`);
+    expect(await ok.text()).toBe("x");
+    expect(ok.status).toBe(200);
+
+    proc.kill();
+    await proc.exited;
+  });
 });

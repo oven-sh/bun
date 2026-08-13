@@ -340,6 +340,36 @@ it("unsafe github .bun-tag is rejected at every version", async () => {
   }
 });
 
+it("a github resolution whose committish contains a slash reads back with owner, repo and tag intact", async () => {
+  const ghUrl = "github:example/repo#feature/branch";
+  const lockfile = JSON.stringify({
+    lockfileVersion: 1,
+    configVersion: 1,
+    workspaces: {
+      "": { name: "root", dependencies: { dep: ghUrl } },
+    },
+    packages: {
+      dep: [`dep@${ghUrl}`, {}, "example-repo-abc1234"],
+    },
+  });
+
+  using dir = tempDir("lockfile-github-committish-slash", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { dep: ghUrl } }),
+    "bun.lock": lockfile,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "pm", "hash-string"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(out).toContain("dep@github:example/repo#abc1234\n");
+  expect(exitCode).toBe(0);
+});
+
 // The writer must not silently upgrade a lockfile to v2 if doing so would make
 // it fail the v2 parse checks on the next install. A v1 lockfile with an
 // off-registry tarball and no integrity hash must round-trip as v1.
@@ -422,7 +452,7 @@ it("re-saving keeps v1 for a tarball under a writer-only scoped registry", async
   // make the writer consider the entry "v2-clean" and stamp v2.
   using writerDir = tempDir("lockfile-scoped-writer", {
     "package.json": JSON.stringify({ name: "root", dependencies: { "@myorg/foo": "1.0.0" } }),
-    "bunfig.toml": `[install.scopes]\nmyorg = { url = "${scopedRegistryUrl}" }\n`,
+    "bunfig.toml": Bun.TOML.stringify({ install: { scopes: { myorg: { url: scopedRegistryUrl } } } }),
     "bun.lock": v1Lockfile,
   });
 

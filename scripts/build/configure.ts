@@ -6,7 +6,7 @@
  * can configure once then run specific targets.
  */
 
-import { globSync, mkdirSync } from "node:fs";
+import { existsSync, globSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
@@ -21,6 +21,7 @@ import {
   resolveConfig,
 } from "./config.ts";
 import { BuildError } from "./error.ts";
+import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
 import { Ninja } from "./ninja.ts";
@@ -298,7 +299,7 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   // Check here so the error is at configure time with a clear hint.
   // rust-only/link-only don't run LUT codegen — skip the check so split-CI
   // steps don't require perl on the rust cross-compile box.
-  if (cfg.mode === "full" || cfg.mode === "cpp-only") {
+  if (cfg.mode === "full" || cfg.mode === "cpp-only" || cfg.mode === "archive-link") {
     if (findSystemTool("perl") === undefined) {
       throw new BuildError("perl not found in PATH", {
         hint: "LUT codegen (create-hash-table.ts) needs perl. Install it: apt install perl / brew install perl",
@@ -329,6 +330,7 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
     const defaultTarget = output.strippedExe !== undefined ? n.rel(output.strippedExe) : "bun";
     const targets = [defaultTarget, "check"];
     if (output.dsym !== undefined) targets.push(n.rel(output.dsym));
+    for (const stamp of output.uploadStamps ?? []) targets.push(n.rel(stamp));
     n.default(targets);
   }
 
@@ -342,6 +344,18 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   // the orchestrator already knows every .o path.
   mkdirAll(output.objects.map(dirname));
   mark("mkdirAll");
+
+  // Seed an empty symbol ordering file so the link flag always points at
+  // something. lld and Apple ld both treat an empty file as a no-op, which is
+  // exactly the unordered pass-1 link; a later `generateOrderFile()` overwrites
+  // it and ninja relinks (linkDepends lists it). Never clobber an existing one
+  // — that would throw away the file a release relink or a canary download
+  // just put there.
+  if (usesOrderFile(cfg) && !existsSync(orderFilePath(cfg))) {
+    writeIfChanged(orderFilePath(cfg), "# no order file yet — an empty file is a no-op for the linker\n");
+  }
+  mark("orderFile");
+
   const ninjaFile = resolve(cfg.buildDir, "build.ninja");
 
   const elapsed = Math.round(performance.now() - start);

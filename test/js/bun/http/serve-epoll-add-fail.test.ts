@@ -182,21 +182,24 @@ async function runWithShim(script: string, mode: "listener" | "accepted" | "udp"
   return { stdout, stderr, exitCode };
 }
 
-test.skipIf(!isLinux || !cc)("Bun.serve throws when epoll_ctl(EPOLL_CTL_ADD) for the listen socket fails", async () => {
-  const { stdout, stderr, exitCode } = await runWithShim("serve.js");
-  const line = stdout.trim().split("\n").pop() ?? "";
-  expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
-  const result = JSON.parse(line);
-  expect(result).toEqual({
-    ok: false,
-    code: "ENOSPC",
-    syscall: "listen",
-    message: expect.stringContaining("ENOSPC"),
-  });
-  expect(exitCode).toBe(0);
-});
+test.concurrent.skipIf(!isLinux || !cc)(
+  "Bun.serve throws when epoll_ctl(EPOLL_CTL_ADD) for the listen socket fails",
+  async () => {
+    const { stdout, stderr, exitCode } = await runWithShim("serve.js");
+    const line = stdout.trim().split("\n").pop() ?? "";
+    expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
+    const result = JSON.parse(line);
+    expect(result).toEqual({
+      ok: false,
+      code: "ENOSPC",
+      syscall: "listen",
+      message: expect.stringContaining("ENOSPC"),
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
-test.skipIf(!isLinux || !cc)(
+test.concurrent.skipIf(!isLinux || !cc)(
   "Bun.listen throws when epoll_ctl(EPOLL_CTL_ADD) for the listen socket fails",
   async () => {
     const { stdout, stderr, exitCode } = await runWithShim("listen.js");
@@ -214,80 +217,86 @@ test.skipIf(!isLinux || !cc)(
   },
 );
 
-test.skipIf(!isLinux || !cc)("accepted connection is closed when epoll_ctl(EPOLL_CTL_ADD) fails for it", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "accept.js"],
-    cwd: String(dir),
-    env: shimEnv("accepted"),
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "pipe",
-  });
-
-  const stderrPromise = proc.stderr.text();
-  const reader = proc.stdout.getReader();
-  const decoder = new TextDecoder();
-  let buffered = "";
-  async function readLine(): Promise<string | null> {
-    for (;;) {
-      const i = buffered.indexOf("\n");
-      if (i >= 0) {
-        const line = buffered.slice(0, i);
-        buffered = buffered.slice(i + 1);
-        return line;
-      }
-      const { value, done } = await reader.read();
-      if (done) {
-        const tail = buffered;
-        buffered = "";
-        return tail.length ? tail : null;
-      }
-      buffered += decoder.decode(value, { stream: true });
-    }
-  }
-
-  const portLine = await readLine();
-  expect(portLine).toMatch(/^PORT \d+$/);
-  const port = Number(portLine!.slice("PORT ".length));
-
-  // The shim is only in the child; this client must see the server close
-  // the accepted fd (epoll_ctl failed) instead of leaving it parked.
-  const closed = await new Promise<string>(resolve => {
-    const sock = net.connect({ host: "127.0.0.1", port }, () => {
-      sock.write("ping");
+test.concurrent.skipIf(!isLinux || !cc)(
+  "accepted connection is closed when epoll_ctl(EPOLL_CTL_ADD) fails for it",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "accept.js"],
+      cwd: String(dir),
+      env: shimEnv("accepted"),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "pipe",
     });
-    sock.on("error", err => resolve("error:" + (err as NodeJS.ErrnoException).code));
-    sock.on("close", () => resolve("close"));
-  });
-  expect(["close", "error:ECONNRESET"]).toContain(closed);
 
-  proc.stdin.write("done\n");
-  proc.stdin.end();
-  const [stderr, rest, exitCode] = await Promise.all([
-    stderrPromise,
-    (async () => {
-      let out = "";
-      for (let line; (line = await readLine()) !== null; ) out += line + "\n";
-      return out;
-    })(),
-    proc.exited,
-  ]);
-  // open() must not have fired (no "OPEN" line after PORT).
-  expect({ stderr, rest }).toEqual({ stderr: expect.any(String), rest: "" });
-  expect(exitCode).toBe(0);
-});
+    const stderrPromise = proc.stderr.text();
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let buffered = "";
+    async function readLine(): Promise<string | null> {
+      for (;;) {
+        const i = buffered.indexOf("\n");
+        if (i >= 0) {
+          const line = buffered.slice(0, i);
+          buffered = buffered.slice(i + 1);
+          return line;
+        }
+        const { value, done } = await reader.read();
+        if (done) {
+          const tail = buffered;
+          buffered = "";
+          return tail.length ? tail : null;
+        }
+        buffered += decoder.decode(value, { stream: true });
+      }
+    }
 
-test.skipIf(!isLinux || !cc)("fetch() rejects when epoll_ctl(EPOLL_CTL_ADD) for the connect socket fails", async () => {
-  const { stdout, stderr, exitCode } = await runWithShim("fetch.js", "accepted");
-  const line = stdout.trim().split("\n").pop() ?? "";
-  expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
-  const result = JSON.parse(line);
-  expect(result.settled).toBe("rejected");
-  expect(result.code).toBe("FailedToOpenSocket");
-  expect(exitCode).toBe(0);
-});
+    const portLine = await readLine();
+    expect(portLine).toMatch(/^PORT \d+$/);
+    const port = Number(portLine!.slice("PORT ".length));
 
-test.skipIf(!isLinux || !cc)(
+    // The shim is only in the child; this client must see the server close
+    // the accepted fd (epoll_ctl failed) instead of leaving it parked.
+    const closed = await new Promise<string>(resolve => {
+      const sock = net.connect({ host: "127.0.0.1", port }, () => {
+        sock.write("ping");
+      });
+      sock.on("error", err => resolve("error:" + (err as NodeJS.ErrnoException).code));
+      sock.on("close", () => resolve("close"));
+    });
+    expect(["close", "error:ECONNRESET"]).toContain(closed);
+
+    proc.stdin.write("done\n");
+    proc.stdin.end();
+    const [stderr, rest, exitCode] = await Promise.all([
+      stderrPromise,
+      (async () => {
+        let out = "";
+        for (let line; (line = await readLine()) !== null; ) out += line + "\n";
+        return out;
+      })(),
+      proc.exited,
+    ]);
+    // open() must not have fired (no "OPEN" line after PORT).
+    expect({ stderr, rest }).toEqual({ stderr: expect.any(String), rest: "" });
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent.skipIf(!isLinux || !cc)(
+  "fetch() rejects when epoll_ctl(EPOLL_CTL_ADD) for the connect socket fails",
+  async () => {
+    const { stdout, stderr, exitCode } = await runWithShim("fetch.js", "accepted");
+    const line = stdout.trim().split("\n").pop() ?? "";
+    expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
+    const result = JSON.parse(line);
+    expect(result.settled).toBe("rejected");
+    expect(result.code).toBe("FailedToOpenSocket");
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent.skipIf(!isLinux || !cc)(
   "Bun.connect rejects when epoll_ctl(EPOLL_CTL_ADD) for the connect socket fails",
   async () => {
     const { stdout, stderr, exitCode } = await runWithShim("connect.js", "accepted");
@@ -307,7 +316,7 @@ test.skipIf(!isLinux || !cc)(
   },
 );
 
-test.skipIf(!isLinux || !cc)(
+test.concurrent.skipIf(!isLinux || !cc)(
   "Bun.udpSocket throws when epoll_ctl(EPOLL_CTL_ADD) for the UDP socket fails",
   async () => {
     const { stdout, stderr, exitCode } = await runWithShim("udp.js", "udp");

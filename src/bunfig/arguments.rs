@@ -40,7 +40,7 @@ fn load_bunfig(
     auto_loaded: bool,
     config_path: &ZStr,
     ctx: Context<'_>,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let source =
         match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
             Ok(s) => s,
@@ -80,7 +80,7 @@ fn load_bunfig(
     Bunfig::parse(cmd, &source, ctx)
 }
 
-fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), bun_core::Error> {
+fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Error> {
     if ctx.has_loaded_global_config {
         return Ok(());
     }
@@ -98,7 +98,7 @@ pub fn load_config_path(
     auto_loaded: bool,
     config_path: &ZStr,
     ctx: Context<'_>,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     // `cmd.read_global_config()` is evaluated at runtime (see
     // the note on `Parser::parse` in src/bunfig/bunfig.rs);
     // `Tag::read_global_config` is a const-ish
@@ -122,7 +122,7 @@ pub fn load_config_path(
 }
 
 #[cold]
-fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: bun_core::Error) -> ! {
+fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: crate::Error) -> ! {
     // SAFETY: process-global Log; see `load_bunfig` note.
     let log = unsafe { &mut *log };
     if log.has_any() {
@@ -137,7 +137,7 @@ pub fn load_config(
     cmd: CommandTag,
     user_config_path_: Option<&[u8]>,
     ctx: Context<'_>,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     // If running as a standalone executable with autoloadBunfig disabled, skip config loading
     // unless an explicit config path was provided via --config
     if user_config_path_.is_none() {
@@ -230,6 +230,6 @@ pub fn load_config_with_cmd_args(
     cmd: CommandTag,
     args: &bun_clap::Args<bun_clap::Help>,
     ctx: Context<'_>,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     load_config(cmd, args.option(b"--config"), ctx)
 }

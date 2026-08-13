@@ -1,9 +1,9 @@
 use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use crate::Error;
 use bun_alloc::AllocError;
 use bun_collections::{StringHashMap, VecExt};
-use bun_core::Error;
 use bun_core::ZStr;
 #[cfg(windows)]
 use bun_core::w;
@@ -39,10 +39,10 @@ bun_output::declare_scope!(BinLinker, hidden);
 #[derive(Clone, Copy)]
 pub struct Bin {
     pub tag: Tag,
-    pub _padding_tag: [u8; 3],
+    pub(crate) _padding_tag: [u8; 3],
 
     // Largest member must be zero initialized
-    pub value: Value,
+    pub(crate) value: Value,
 }
 
 impl Default for Bin {
@@ -58,7 +58,7 @@ impl Default for Bin {
 }
 
 impl Bin {
-    pub fn count<B: StringBuilder>(
+    pub(crate) fn count<B: StringBuilder>(
         &self,
         buf: &[u8],
         extern_strings: &[ExternalString],
@@ -87,7 +87,7 @@ impl Bin {
         0
     }
 
-    pub fn eql(
+    pub(crate) fn eql(
         l: &Bin,
         r: &Bin,
         l_buf: &[u8],
@@ -147,7 +147,7 @@ impl Bin {
     /// tail, which is UB under Stacked Borrows) and we build the
     /// `ExternalStringList` directly. Named `clone_with_buffers` to avoid
     /// shadowing `Clone::clone`.
-    pub fn clone_with_buffers<B: StringBuilder>(
+    pub(crate) fn clone_with_buffers<B: StringBuilder>(
         &self,
         buf: &[u8],
         prev_external_strings: &[ExternalString],
@@ -203,79 +203,39 @@ impl Bin {
     }
 
     /// Used for packages read from text lockfile / pnpm migration.
-    pub fn parse_append(
+    pub(crate) fn parse_append(
         bin_expr: &Expr,
         buf: &mut bun_semver::string::Buf,
         extern_strings: &mut Vec<ExternalString>,
     ) -> Result<Bin, AllocError> {
-        if let ExprData::EObject(o) = &bin_expr.data {
-            let props = o.properties.slice();
-            match props.len() {
-                0 => {}
-                1 => {
-                    let Some(bin_name) =
-                        props[0].key.as_ref().and_then(Expr::as_utf8_string_literal)
-                    else {
-                        return Ok(Bin::default());
-                    };
-                    let Some(value) = props[0]
-                        .value
-                        .as_ref()
-                        .and_then(Expr::as_utf8_string_literal)
-                    else {
-                        return Ok(Bin::default());
-                    };
-
-                    return Ok(Bin {
-                        tag: Tag::NamedFile,
-                        _padding_tag: [0; 3],
-                        value: Value {
-                            named_file: [buf.append(bin_name)?, buf.append(value)?],
-                        },
-                    });
-                }
-                _ => {
-                    let current_len = extern_strings.len();
-                    let num_props: usize = props.len() * 2;
-                    extern_strings
-                        .try_reserve_exact(
-                            (current_len + num_props).saturating_sub(extern_strings.len()),
+        match &bin_expr.data {
+            ExprData::EObject(o) => {
+                let props = o.properties.slice();
+                return Self::parse_append_object(
+                    props.len(),
+                    props.iter().map(|prop| {
+                        (
+                            prop.key.as_ref().and_then(Expr::as_utf8_string_literal),
+                            prop.value.as_ref().and_then(Expr::as_utf8_string_literal),
                         )
-                        .map_err(|_| AllocError)?;
-                    // Push incrementally so a bailout leaves only the slots
-                    // actually written. The returned `Bin` is `Tag::None` on
-                    // bailout so the slots are never indexed either way.
-                    let mut i: usize = 0;
-                    for bin_prop in props {
-                        let Some(key_str) =
-                            bin_prop.key.as_ref().and_then(Expr::as_utf8_string_literal)
-                        else {
-                            return Ok(Bin::default());
-                        };
-                        let Some(value_str) = bin_prop
-                            .value
-                            .as_ref()
-                            .and_then(Expr::as_utf8_string_literal)
-                        else {
-                            return Ok(Bin::default());
-                        };
-                        extern_strings.push(buf.append_external(key_str)?);
-                        i += 1;
-                        extern_strings.push(buf.append_external(value_str)?);
-                        i += 1;
-                    }
-                    debug_assert!(i == num_props);
-                    let new = &extern_strings[current_len..current_len + num_props];
-                    return Ok(Bin {
-                        tag: Tag::Map,
-                        _padding_tag: [0; 3],
-                        value: Value {
-                            map: ExternalStringList::init(extern_strings.as_slice(), new),
-                        },
-                    });
-                }
+                    }),
+                    buf,
+                    extern_strings,
+                );
             }
-        } else if let Some(str_) = bin_expr.as_utf8_string_literal() {
+            ExprData::EObjectJSON(o) => {
+                let rows = o.get().properties();
+                return Self::parse_append_object(
+                    rows.len(),
+                    rows.iter()
+                        .map(|row| (Some(row.key.slice()), row.value.as_str())),
+                    buf,
+                    extern_strings,
+                );
+            }
+            _ => {}
+        }
+        if let Some(str_) = bin_expr.as_utf8_string_literal() {
             if !str_.is_empty() {
                 return Ok(Bin {
                     tag: Tag::File,
@@ -289,7 +249,59 @@ impl Bin {
         Ok(Bin::default())
     }
 
-    pub fn parse_append_from_directories(
+    fn parse_append_object<'a>(
+        len: usize,
+        mut pairs: impl Iterator<Item = (Option<&'a [u8]>, Option<&'a [u8]>)>,
+        buf: &mut bun_semver::string::Buf,
+        extern_strings: &mut Vec<ExternalString>,
+    ) -> Result<Bin, AllocError> {
+        match len {
+            0 => {}
+            1 => {
+                let Some((Some(bin_name), Some(value))) = pairs.next() else {
+                    return Ok(Bin::default());
+                };
+                return Ok(Bin {
+                    tag: Tag::NamedFile,
+                    _padding_tag: [0; 3],
+                    value: Value {
+                        named_file: [buf.append(bin_name)?, buf.append(value)?],
+                    },
+                });
+            }
+            _ => {
+                let current_len = extern_strings.len();
+                let num_props: usize = len * 2;
+                extern_strings
+                    .try_reserve_exact(
+                        (current_len + num_props).saturating_sub(extern_strings.len()),
+                    )
+                    .map_err(|_| AllocError)?;
+                let mut i: usize = 0;
+                for (key_str, value_str) in pairs {
+                    let (Some(key_str), Some(value_str)) = (key_str, value_str) else {
+                        return Ok(Bin::default());
+                    };
+                    extern_strings.push(buf.append_external(key_str)?);
+                    i += 1;
+                    extern_strings.push(buf.append_external(value_str)?);
+                    i += 1;
+                }
+                debug_assert!(i == num_props);
+                let new = &extern_strings[current_len..current_len + num_props];
+                return Ok(Bin {
+                    tag: Tag::Map,
+                    _padding_tag: [0; 3],
+                    value: Value {
+                        map: ExternalStringList::init(extern_strings.as_slice(), new),
+                    },
+                });
+            }
+        }
+        Ok(Bin::default())
+    }
+
+    pub(crate) fn parse_append_from_directories(
         bin_expr: &Expr,
         buf: &mut bun_semver::string::Buf,
     ) -> Result<Bin, AllocError> {
@@ -305,7 +317,7 @@ impl Bin {
         Ok(Bin::default())
     }
 
-    pub fn to_json<W: fmt::Write, const STYLE: ToJsonStyle>(
+    pub(crate) fn to_json<W: fmt::Write, const STYLE: ToJsonStyle>(
         &self,
         indent: Option<&mut u32>,
         buf: &[u8],
@@ -436,7 +448,7 @@ impl Bin {
         Ok(())
     }
 
-    pub fn init() -> Bin {
+    pub(crate) fn init() -> Bin {
         Bin {
             tag: Tag::None,
             _padding_tag: [0; 3],
@@ -475,63 +487,63 @@ pub union Value {
     pub none: (),
 
     /// "bin" is a string
-    /// ```
+    /// ```json
     /// "bin": "./bin/foo",
     /// ```
-    pub file: String,
+    pub(crate) file: String,
 
     // Single-entry map
-    ///```
+    ///```json
     /// "bin": {
     ///     "babel": "./cli.js",
     /// }
     ///```
-    pub named_file: [String; 2],
+    pub(crate) named_file: [String; 2],
 
     /// "bin" is a directory
-    ///```
+    ///```json
     /// "dirs": {
     ///     "bin": "./bin",
     /// }
     ///```
-    pub dir: String,
+    pub(crate) dir: String,
     // "bin" is a map
-    ///```
+    ///```json
     /// "bin": {
     ///     "babel": "./cli.js",
     ///     "babel-cli": "./cli.js",
     /// }
     ///```
-    pub map: ExternalStringList,
+    pub(crate) map: ExternalStringList,
 }
 
 impl Value {
     /// To avoid undefined memory between union values, we must zero initialize the union first.
     #[inline]
-    pub fn init_none() -> Value {
+    pub(crate) fn init_none() -> Value {
         // SAFETY: all-zero is a valid Value (largest member ExternalStringList is POD)
         unsafe { bun_core::ffi::zeroed_unchecked() }
     }
     #[inline]
-    pub fn init_file(file: String) -> Value {
+    pub(crate) fn init_file(file: String) -> Value {
         let mut v = Self::init_none();
         v.file = file;
         v
     }
     #[inline]
-    pub fn init_named_file(named_file: [String; 2]) -> Value {
+    pub(crate) fn init_named_file(named_file: [String; 2]) -> Value {
         let mut v = Self::init_none();
         v.named_file = named_file;
         v
     }
     #[inline]
-    pub fn init_dir(dir: String) -> Value {
+    pub(crate) fn init_dir(dir: String) -> Value {
         let mut v = Self::init_none();
         v.dir = dir;
         v
     }
     #[inline]
-    pub fn init_map(map: ExternalStringList) -> Value {
+    pub(crate) fn init_map(map: ExternalStringList) -> Value {
         let mut v = Self::init_none();
         v.map = map;
         v
@@ -545,13 +557,13 @@ pub enum Tag {
     None = 0,
 
     /// "bin" is a string
-    /// ```
+    /// ```json
     /// "bin": "./bin/foo",
     /// ```
     File = 1,
 
     // Single-entry map
-    ///```
+    ///```json
     /// "bin": {
     ///     "babel": "./cli.js",
     /// }
@@ -559,7 +571,7 @@ pub enum Tag {
     NamedFile = 2,
 
     /// "bin" is a directory
-    ///```
+    ///```json
     /// "dirs": {
     ///     "bin": "./bin",
     /// }
@@ -567,7 +579,7 @@ pub enum Tag {
     Dir = 3,
 
     // "bin" is a map of more than one
-    ///```
+    ///```json
     /// "bin": {
     ///     "babel": "./cli.js",
     ///     "babel-cli": "./cli.js",
@@ -577,19 +589,19 @@ pub enum Tag {
     Map = 4,
 }
 
-pub struct NamesIterator<'a> {
-    pub bin: Bin,
-    pub i: usize,
-    pub done: bool,
-    pub dir_iterator: Option<sys::dir_iterator::WrappedIterator>,
-    pub package_name: String,
+pub(crate) struct NamesIterator<'a> {
+    pub(crate) bin: Bin,
+    pub(crate) i: usize,
+    pub(crate) done: bool,
+    pub(crate) dir_iterator: Option<sys::dir_iterator::WrappedIterator>,
+    pub(crate) package_name: String,
     /// Borrowed view of the destination `node_modules` directory fd; the
     /// caller owns the underlying `Dir`. Default is `Fd::INVALID`, which
     /// `next_in_dir()` never reaches.
-    pub destination_node_modules: Fd,
-    pub buf: PathBuffer,
-    pub string_buffer: &'a [u8],
-    pub extern_string_buf: &'a [ExternalString],
+    pub(crate) destination_node_modules: Fd,
+    pub(crate) buf: PathBuffer,
+    pub(crate) string_buffer: &'a [u8],
+    pub(crate) extern_string_buf: &'a [ExternalString],
 }
 
 impl<'a> NamesIterator<'a> {
@@ -632,7 +644,7 @@ impl<'a> NamesIterator<'a> {
     }
 
     /// next filename, e.g. "babel" instead of "cli.js"
-    pub fn next(&mut self) -> Result<Option<&[u8]>, Error> {
+    pub(crate) fn next(&mut self) -> Result<Option<&[u8]>, Error> {
         match self.bin.tag {
             Tag::File => {
                 if self.i > 0 {
@@ -689,12 +701,12 @@ impl<'a> NamesIterator<'a> {
 // `TreeContext.binaries` field to carry an unsatisfiable `'static` (the
 // installer outlives no concrete lifetime for its own self-borrowed buffers).
 pub struct PriorityQueueContext {
-    pub dependencies: bun_ptr::BackRef<Vec<Dependency>>,
-    pub string_buf: bun_ptr::BackRef<Vec<u8>>,
+    pub(crate) dependencies: bun_ptr::BackRef<Vec<Dependency>>,
+    pub(crate) string_buf: bun_ptr::BackRef<Vec<u8>>,
 }
 
 impl PriorityQueueContext {
-    pub(crate) fn less_than(&self, a: DependencyID, b: DependencyID) -> core::cmp::Ordering {
+    fn less_than(&self, a: DependencyID, b: DependencyID) -> core::cmp::Ordering {
         // `dependencies` / `string_buf` point at
         // `lockfile.buffers.{dependencies,string_bytes}`, which are kept alive
         // for the entire install (the `PackageInstaller` that owns this queue
@@ -721,21 +733,17 @@ impl bun_collections::PriorityCompare<DependencyID> for PriorityQueueContext {
 pub(crate) type PriorityQueue = bun_collections::PriorityQueue<DependencyID, PriorityQueueContext>;
 
 // `inherent_associated_types` is unstable, so callers use `Bin::PriorityQueueContext`.
-pub type Context = PriorityQueueContext;
 
 // https://github.com/npm/npm-normalize-package-bin/blob/574e6d7cd21b2f3dee28a216ec2053c2551f7af9/lib/index.js#L38
-pub(crate) fn normalized_bin_name(name: &[u8]) -> &[u8] {
-    let name = match name
-        .iter()
-        .rposition(|&b| b == b'/' || b == b'\\' || b == b':')
-    {
+fn normalized_bin_name(name: &[u8]) -> &[u8] {
+    let name = match strings::last_index_of_any(name, b"/\\:") {
         Some(i) => &name[i + 1..],
         None => name,
     };
 
     // npm's `join('/', key).slice(1)` collapses `.`/`..` to empty; do the same
     // so the `.bin/<name>` destination cannot resolve outside `.bin/`.
-    if name == b"." || name == b".." {
+    if !crate::dependency::is_safe_install_folder_name(name) {
         return b"";
     }
 
@@ -758,15 +766,14 @@ pub(crate) fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
     // be a drive prefix (or an NTFS alternate-data-stream on the leading
     // segment) — reject it. Colons in later components are left alone so Unix
     // filenames containing `:` keep working.
-    if target
-        .split(|&b| b == b'/' || b == b'\\')
+    if strings::split_any(target, b"/\\")
         .next()
-        .is_some_and(|first| first.contains(&b':'))
+        .is_some_and(|first| strings::contains_char(first, b':'))
     {
         return true;
     }
     let mut depth: isize = 0;
-    for component in target.split(|&b| b == b'/' || b == b'\\') {
+    for component in strings::split_any(target, b"/\\") {
         match component {
             b"" | b"." => {}
             b".." => {
@@ -781,10 +788,12 @@ pub(crate) fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
     false
 }
 
-fn bin_target_has_dot_components(target: &[u8]) -> bool {
-    target
-        .split(|&b| b == b'/' || b == b'\\')
-        .any(|component| component == b"." || component == b"..")
+fn bin_target_needs_resolved_containment_check(target: &[u8]) -> bool {
+    let mut components = strings::tokenize_any(target, b"/\\");
+    let Some(first) = components.next() else {
+        return false;
+    };
+    first == b"." || first == b".." || components.next().is_some()
 }
 
 pub struct Linker<'a> {
@@ -826,7 +835,7 @@ pub struct Linker<'a> {
     pub skipped_due_to_missing_bin: bool,
 }
 
-pub(crate) static UMASK: AtomicU32 = AtomicU32::new(0);
+static UMASK: AtomicU32 = AtomicU32::new(0);
 static HAS_SET_UMASK: AtomicBool = AtomicBool::new(false);
 
 impl<'a> Linker<'a> {
@@ -880,7 +889,7 @@ impl<'a> Linker<'a> {
         abs_target: &ZStr,
         abs_dest: &ZStr,
         global: bool,
-        target_has_dot_components: bool,
+        target_needs_resolved_containment_check: bool,
     ) {
         debug_assert!(path::is_absolute(abs_target.as_bytes()));
         debug_assert!(path::is_absolute(abs_dest.as_bytes()));
@@ -902,7 +911,7 @@ impl<'a> Linker<'a> {
             return;
         }
 
-        if target_has_dot_components {
+        if target_needs_resolved_containment_check {
             #[cfg(not(windows))]
             if self.resolved_target_parent_escapes_package_dir(abs_target) {
                 return;
@@ -925,8 +934,8 @@ impl<'a> Linker<'a> {
             let target = match sys::File::openat(Fd::cwd(), abs_target, sys::O::RDONLY, 0) {
                 Ok(f) => f,
                 Err(err) => {
-                    let err: bun_core::Error = err.into();
-                    if err != bun_core::err!("EISDIR") {
+                    let err: crate::Error = err.into();
+                    if err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR) {
                         // ignore directories, creating a shim for one won't do anything
                         self.err = Some(err);
                     }
@@ -1137,8 +1146,8 @@ impl<'a> Linker<'a> {
             ) {
                 Ok(f) => break 'bunx_file f,
                 Err(err) => {
-                    let err: bun_core::Error = err.into();
-                    if err != bun_core::err!("ENOENT") || global {
+                    let err: crate::Error = err.into();
+                    if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) || global {
                         self.err = Some(err);
                         return;
                     }
@@ -1195,7 +1204,7 @@ impl<'a> Linker<'a> {
                 match WinShimShebang::parse(chunk, rel_target_w) {
                     Ok(s) => break 'shebang s,
                     Err(_) => {
-                        self.err = Some(bun_core::err!("InvalidBinCount"));
+                        self.err = Some(crate::Error::InvalidBinCount);
                         return;
                     }
                 }
@@ -1211,13 +1220,13 @@ impl<'a> Linker<'a> {
 
         let len = shim.encoded_length();
         if len > shim_buf.len() {
-            self.err = Some(bun_core::err!("InvalidBinContent"));
+            self.err = Some(crate::Error::InvalidBinContent);
             return;
         }
 
         let metadata = &mut shim_buf[0..len];
         if shim.encode_into(metadata).is_err() {
-            self.err = Some(bun_core::err!("InvalidBinContent"));
+            self.err = Some(crate::Error::InvalidBinContent);
             return;
         }
 
@@ -1236,8 +1245,8 @@ impl<'a> Linker<'a> {
             abs_exe_file,
             crate::windows_shim::embedded_executable_data(),
         ) {
-            let err: bun_core::Error = err.into();
-            if err == bun_core::err!("EBUSY") {
+            let err: crate::Error = err.into();
+            if err == crate::Error::Sys(bun_errno::SystemErrno::EBUSY) {
                 // exe is most likely running. bunx file has already been updated, ignore error
                 return;
             }
@@ -1262,7 +1271,7 @@ impl<'a> Linker<'a> {
         match sys::symlink_running_executable(rel_target, abs_dest) {
             sys::Result::Err(err) => {
                 if err.get_errno() != sys::Errno::EEXIST && err.get_errno() != sys::Errno::ENOENT {
-                    self.err = Some(err.to_zig_err());
+                    self.err = Some(err.into());
                     Self::chmod_on_ok(self.err, abs_target);
                     return;
                 }
@@ -1270,7 +1279,7 @@ impl<'a> Linker<'a> {
                 // ENOENT means `.bin` hasn't been created yet. Should only happen if this isn't global
                 if err.get_errno() == sys::Errno::ENOENT {
                     if global {
-                        self.err = Some(err.to_zig_err());
+                        self.err = Some(err.into());
                         Self::chmod_on_ok(self.err, abs_target);
                         return;
                     }
@@ -1285,7 +1294,7 @@ impl<'a> Linker<'a> {
                     match sys::symlink_running_executable(rel_target, abs_dest) {
                         sys::Result::Err(real_error) => {
                             // It was just created, no need to delete destination and symlink again
-                            self.err = Some(real_error.to_zig_err());
+                            self.err = Some(real_error.into());
                             Self::chmod_on_ok(self.err, abs_target);
                             return;
                         }
@@ -1308,7 +1317,7 @@ impl<'a> Linker<'a> {
         // delete and try again
         let _ = sys::delete_tree_absolute(abs_dest.as_bytes());
         if let Err(err) = sys::symlink_running_executable(rel_target, abs_dest) {
-            self.err = Some(err.to_zig_err());
+            self.err = Some(err.into());
         }
         Self::chmod_on_ok(self.err, abs_target);
     }
@@ -1439,10 +1448,19 @@ impl<'a> Linker<'a> {
     /// but `claude` at the root of `@anthropic-ai/claude-code-linux-x64`,
     /// which has no `bin` field of its own).
     ///
-    /// Both candidates come from the root package's `bin` entry - its
+    /// All candidates come from the root package's `bin` entry - its
     /// value (`target`) and its key (`bin_name`):
     ///   1. `<package_dir>/<target>` - the path from the root `bin` field
     ///   2. `<package_dir>/<bin_name>` - the bin name at package root
+    ///   3. `<package_dir>/<basename(target)>` - the target's filename at
+    ///      package root (`@anthropic-ai/claude-code-win32-x64` ships
+    ///      `claude.exe` at root while the root package's `bin` is
+    ///      `bin/claude.exe`)
+    ///   4. `<package_dir>/<bin_name>.exe` - esbuild ships `esbuild.exe` at
+    ///      the root of `@esbuild/win32-x64` while the root package's `bin`
+    ///      is the extensionless `bin/esbuild`. Not `#[cfg(windows)]`-gated
+    ///      so the redirect still resolves when cross-installing with
+    ///      `--os win32`.
     ///
     /// Falls through to (1) when nothing exists so the existing
     /// `skipped_due_to_missing_bin` retry-without-redirect path still fires.
@@ -1473,6 +1491,26 @@ impl<'a> Linker<'a> {
             }
         }
 
+        let target_basename = path::basename(target);
+        if !target_basename.is_empty() && target_basename.len() != target.len() {
+            let at_root =
+                resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target_basename]);
+            if sys::exists(at_root.as_bytes()) {
+                return at_root;
+            }
+        }
+
+        if !bin_name.is_empty() && !strings::has_suffix_comptime(bin_name, b".exe") {
+            let mut exe_name = Vec::with_capacity(bin_name.len() + b".exe".len());
+            exe_name.extend_from_slice(bin_name);
+            exe_name.extend_from_slice(b".exe");
+            let at_root =
+                resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[&exe_name]);
+            if sys::exists(at_root.as_bytes()) {
+                return at_root;
+            }
+        }
+
         // Nothing found; return the primary so `linkBinOrCreateShim` sets
         // `skipped_due_to_missing_bin` and the caller retries without the
         // redirect.
@@ -1480,7 +1518,7 @@ impl<'a> Linker<'a> {
     }
 
     /// uses `self.abs_target_buf`
-    pub fn build_target_package_dir(&mut self) -> &[u8] {
+    pub(crate) fn build_target_package_dir(&mut self) -> &[u8] {
         // SAFETY: `target_node_modules_path` is set at construction to either
         // a caller-owned `AbsPath` or the same buffer as `node_modules_path`;
         // both outlive `self` and are not mutated for the duration of this
@@ -1511,7 +1549,7 @@ impl<'a> Linker<'a> {
     /// (i.e. where the bin name should be written).
     // Returning an offset (rather than a slice into abs_dest_buf) avoids
     // overlapping &mut borrows of self.
-    pub fn build_destination_dir(&mut self, global: bool) -> usize {
+    pub(crate) fn build_destination_dir(&mut self, global: bool) -> usize {
         let dest_dir_without_trailing_slash =
             strings::without_trailing_slash(self.node_modules_path.slice());
 
@@ -1569,7 +1607,8 @@ impl<'a> Linker<'a> {
                     if target.is_empty() || bin_target_escapes_package_dir(target) {
                         return;
                     }
-                    let target_has_dot_components = bin_target_has_dot_components(target);
+                    let target_needs_resolved_containment_check =
+                        bin_target_needs_resolved_containment_check(target);
 
                     let unscoped_package_name =
                         Dependency::unscoped_package_name(self.package_name.slice());
@@ -1594,7 +1633,7 @@ impl<'a> Linker<'a> {
                     if unscoped_package_name.len()
                         >= self.abs_dest_buf.len().saturating_sub(dest_off)
                     {
-                        self.err = Some(bun_core::err!("NameTooLong"));
+                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         return;
                     }
                     self.abs_dest_buf[dest_off..dest_off + unscoped_package_name.len()]
@@ -1609,7 +1648,7 @@ impl<'a> Linker<'a> {
                         abs_target,
                         abs_dest,
                         global,
-                        target_has_dot_components,
+                        target_needs_resolved_containment_check,
                     );
                 }
                 Tag::NamedFile => {
@@ -1623,9 +1662,10 @@ impl<'a> Linker<'a> {
                     {
                         return;
                     }
-                    let target_has_dot_components = bin_target_has_dot_components(target);
+                    let target_needs_resolved_containment_check =
+                        bin_target_needs_resolved_containment_check(target);
                     if normalized_name.len() >= self.abs_dest_buf.len().saturating_sub(dest_off) {
-                        self.err = Some(bun_core::err!("NameTooLong"));
+                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         return;
                     }
 
@@ -1654,7 +1694,7 @@ impl<'a> Linker<'a> {
                         abs_target,
                         abs_dest,
                         global,
-                        target_has_dot_components,
+                        target_needs_resolved_containment_check,
                     );
                 }
                 Tag::Map => {
@@ -1676,11 +1716,13 @@ impl<'a> Linker<'a> {
                             i += 2;
                             continue;
                         }
-                        let target_has_dot_components = bin_target_has_dot_components(bin_target);
+                        let target_needs_resolved_containment_check =
+                            bin_target_needs_resolved_containment_check(bin_target);
                         if normalized_bin_dest.len()
                             >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
                         {
-                            self.err = Some(bun_core::err!("NameTooLong"));
+                            self.err =
+                                Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                             return;
                         }
 
@@ -1709,7 +1751,7 @@ impl<'a> Linker<'a> {
                             abs_target,
                             abs_dest,
                             global,
-                            target_has_dot_components,
+                            target_needs_resolved_containment_check,
                         );
 
                         i += 2;
@@ -1721,8 +1763,6 @@ impl<'a> Linker<'a> {
                     if target.is_empty() || bin_target_escapes_package_dir(target) {
                         return;
                     }
-                    let target_has_dot_components = bin_target_has_dot_components(target);
-
                     // for normalizing `target`
                     let abs_target_dir: &ZStr = {
                         let package_dir = &self.abs_target_buf[0..package_dir_len];
@@ -1743,7 +1783,7 @@ impl<'a> Linker<'a> {
                                 // avoid erroring when the directory does not exist
                                 return;
                             }
-                            self.err = Some(err.to_zig_err());
+                            self.err = Some(err.into());
                             return;
                         }
                     };
@@ -1775,7 +1815,9 @@ impl<'a> Linker<'a> {
                                 if entry_name.len()
                                     >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
                                 {
-                                    self.err = Some(bun_core::err!("NameTooLong"));
+                                    self.err = Some(crate::Error::Sys(
+                                        bun_errno::SystemErrno::ENAMETOOLONG,
+                                    ));
                                     return;
                                 }
                                 dest_off = abs_dest_dir_end;
@@ -1787,12 +1829,7 @@ impl<'a> Linker<'a> {
                                 // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see note above.
                                 let abs_dest = ZStr::from_raw(abs_dest_buf_ptr, abs_dest_len);
 
-                                self.link_bin_or_create_shim(
-                                    abs_target,
-                                    abs_dest,
-                                    global,
-                                    target_has_dot_components,
-                                );
+                                self.link_bin_or_create_shim(abs_target, abs_dest, global, true);
                             }
                             _ => {}
                         }
@@ -1823,7 +1860,7 @@ impl<'a> Linker<'a> {
                     if unscoped_package_name.len()
                         >= self.abs_dest_buf.len().saturating_sub(dest_off)
                     {
-                        self.err = Some(bun_core::err!("NameTooLong"));
+                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         return;
                     }
                     self.abs_dest_buf[dest_off..dest_off + unscoped_package_name.len()]
@@ -1843,7 +1880,7 @@ impl<'a> Linker<'a> {
                         return;
                     }
                     if normalized_name.len() >= self.abs_dest_buf.len().saturating_sub(dest_off) {
-                        self.err = Some(bun_core::err!("NameTooLong"));
+                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         return;
                     }
 
@@ -1872,7 +1909,8 @@ impl<'a> Linker<'a> {
                         if normalized_bin_dest.len()
                             >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
                         {
-                            self.err = Some(bun_core::err!("NameTooLong"));
+                            self.err =
+                                Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                             return;
                         }
 
@@ -1902,7 +1940,7 @@ impl<'a> Linker<'a> {
                     let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
                         Ok(d) => d,
                         Err(err) => {
-                            self.err = Some(err.to_zig_err());
+                            self.err = Some(err.into());
                             return;
                         }
                     };
@@ -1920,7 +1958,9 @@ impl<'a> Linker<'a> {
                                 if entry_name.len()
                                     >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
                                 {
-                                    self.err = Some(bun_core::err!("NameTooLong"));
+                                    self.err = Some(crate::Error::Sys(
+                                        bun_errno::SystemErrno::ENAMETOOLONG,
+                                    ));
                                     return;
                                 }
                                 dest_off = abs_dest_dir_end;

@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { copyFile, exists, open, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, runBunInstall, stderrForInstall, VerdaccioRegistry } from "harness";
+import { bunExe, bunEnv as env, isWindows, runBunInstall, VerdaccioRegistry } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -44,7 +44,7 @@ it("should not print anything to stderr when running bun.lockb", async () => {
   expect(await exists(join(packageDir, "bun.lockb"))).toBe(true);
 
   // Assert that the lockfile has the correct permissions
-  const file = await open(join(packageDir, "bun.lockb"), "r");
+  await using file = await open(join(packageDir, "bun.lockb"), "r");
   const stat = await file.stat();
 
   // in unix, 0o755 == 33261
@@ -161,8 +161,7 @@ it("recovers from a corrupted binary lockfile instead of panicking", async () =>
     stderr: "pipe",
     env,
   });
-  const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-  const err = stderrForInstall(rawErr);
+  const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
 
   // The garbage `meta.id` deserialized from the corrupt lockfile used to
   // panic_bounds_check in Package::clone. Released Bun tolerates it: it
@@ -247,8 +246,7 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
     stderr: "pipe",
     env,
   });
-  const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-  const err = stderrForInstall(rawErr);
+  const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
 
   // The out-of-range flag byte must fail lockfile parsing so the install
   // falls back to a fresh resolve instead of consuming the bad byte.
@@ -258,6 +256,62 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
   expect(await exists(join(packageDir, "node_modules", "optional-peer-deps"))).toBe(true);
 });
 
+function packageScriptsFilledOffsets(lockb: Buffer): number[] {
+  const fmt = lockb.readUInt32LE(42);
+  const N = Number(lockb.readBigUInt64LE(86));
+  const begin = Number(lockb.readBigUInt64LE(110));
+  const resolutionSize = fmt === 2 ? 64 : 72;
+  const scriptsStart = begin + N * (8 + 8 + resolutionSize + 8 + 8 + 88 + 20);
+  const offsets: number[] = [];
+  for (let i = 0; i < N; i++) {
+    offsets.push(scriptsStart + i * 49 + 48);
+  }
+  return offsets;
+}
+
+it("rejects a binary lockfile whose package scripts flag byte is out of range", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "lockb-scripts-flag",
+      version: "1.0.0",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+  const lockbPath = join(packageDir, "bun.lockb");
+  expect(await exists(lockbPath)).toBe(true);
+
+  const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+  const offsets = packageScriptsFilledOffsets(lockb);
+  expect(offsets.length).toBe(2);
+  expect(lockb[offsets[0]]).toBe(1);
+  expect(lockb[offsets[1]]).toBe(0);
+  lockb[offsets[1]] = 0x42;
+  await write(lockbPath, lockb);
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--no-progress"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+  expect(err).toContain("invalid package scripts");
+  expect(err).toContain("Ignoring lockfile");
+  expect(out).toContain("no-deps@1.0.0");
+  expect(code).toBe(0);
+  expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(true);
+});
 it("rejects a binary lockfile whose git resolved tag contains path separators", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
 
@@ -305,8 +359,7 @@ it("rejects a binary lockfile whose git resolved tag contains path separators", 
       stderr: "pipe",
       env: installEnv,
     });
-    const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-    const err = stderrForInstall(rawErr);
+    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(out).toBeDefined();
@@ -327,8 +380,7 @@ it("rejects a binary lockfile whose git resolved tag contains path separators", 
       stderr: "pipe",
       env: installEnv,
     });
-    const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-    const err = stderrForInstall(rawErr);
+    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
     expect(err).not.toContain("Invalid git dependency tag");
     expect(err).not.toContain("error:");
     expect(out).toBeDefined();
@@ -355,8 +407,7 @@ it("rejects a binary lockfile whose git resolved tag contains path separators", 
     stderr: "pipe",
     env: installEnv,
   });
-  const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-  const err = stderrForInstall(rawErr);
+  const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
 
   // The tampered resolved value must fail binary lockfile loading (the same
   // fail-closed rule the text lockfile parser applies) instead of flowing into

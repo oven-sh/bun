@@ -25,6 +25,7 @@
 #include <JavaScriptCore/JSObjectInlines.h>
 #include "headers.h"
 #include "BunObject.h"
+#include "webcore/streams/BunStreamConsumers.h"
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/JSObject.h>
 #include "DOMJITIDLConvert.h"
@@ -41,6 +42,7 @@
 #include "GeneratedBunObject.h"
 #include "JavaScriptCore/BunV8HeapSnapshotBuilder.h"
 #include "BunObjectModule.h"
+#include "_NativeModule.h"
 #include "JSCookie.h"
 #include "JSCookieMap.h"
 #include "Secrets.h"
@@ -109,7 +111,7 @@ static JSValue constructEnvObject(VM& vm, JSObject* object)
     return uncheckedDowncast<Zig::GlobalObject>(object->globalObject())->processEnvObject();
 }
 
-static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue, size_t maxLength, bool asUint8Array)
+JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue, size_t maxLength, bool asUint8Array)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
 
@@ -697,17 +699,23 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
     JSC::JSValue arg1 = callFrame->uncheckedArgument(0);
     JSC::JSValue arg2 = callFrame->uncheckedArgument(1);
     JSC::JSValue strict = callFrame->argument(2);
+    JSC::JSValue skipPrototype = callFrame->argument(3);
 
     Vector<std::pair<JSValue, JSValue>, 16> stack;
     MarkedArgumentBuffer gcBuffer;
 
     if (strict.isBoolean() && strict.asBoolean()) {
+        if (skipPrototype.isBoolean() && skipPrototype.asBoolean()) {
+            bool isEqual = Bun__deepEquals<true, false, false, true>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSValue::encode(jsBoolean(isEqual));
+        }
 
-        bool isEqual = Bun__deepEquals<true, false>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
+        bool isEqual = Bun__deepEquals<true, false, false>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsBoolean(isEqual));
     } else {
-        bool isEqual = Bun__deepEquals<false, false>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
+        bool isEqual = Bun__deepEquals<false, false, false>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsBoolean(isEqual));
     }
@@ -937,6 +945,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     JSONL                                          constructJSONLObject                                                ReadOnly|DontDelete|PropertyCallback
     markdown                                         BunObject_lazyPropCb_wrap_markdown                                  DontDelete|PropertyCallback
     TOML                                           BunObject_lazyPropCb_wrap_TOML                                      DontDelete|PropertyCallback
+    XML                                            BunObject_lazyPropCb_wrap_XML                                       DontDelete|PropertyCallback
     YAML                                           BunObject_lazyPropCb_wrap_YAML                                      DontDelete|PropertyCallback
     Transpiler                                     BunObject_lazyPropCb_wrap_Transpiler                                DontDelete|PropertyCallback
     embeddedFiles                                  BunObject_lazyPropCb_wrap_embeddedFiles                             DontDelete|PropertyCallback
@@ -986,13 +995,13 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
     randomUUIDv7                                   Bun__randomUUIDv7                                                   DontDelete|Function 2
     randomUUIDv5                                   Bun__randomUUIDv5                                                   DontDelete|Function 3
-    readableStreamToArray                          JSBuiltin                                                           Builtin|Function 1
-    readableStreamToArrayBuffer                    JSBuiltin                                                           Builtin|Function 1
-    readableStreamToBytes                          JSBuiltin                                                           Builtin|Function 1
-    readableStreamToBlob                           JSBuiltin                                                           Builtin|Function 1
-    readableStreamToFormData                       JSBuiltin                                                           Builtin|Function 1
-    readableStreamToJSON                           JSBuiltin                                                           Builtin|Function 1
-    readableStreamToText                           JSBuiltin                                                           Builtin|Function 1
+    readableStreamToArray                          WebCore::jsFunctionReadableStreamToArray           DontDelete|Function 1
+    readableStreamToArrayBuffer                    WebCore::jsFunctionReadableStreamToArrayBuffer     DontDelete|Function 1
+    readableStreamToBytes                          WebCore::jsFunctionReadableStreamToBytes           DontDelete|Function 1
+    readableStreamToBlob                           WebCore::jsFunctionReadableStreamToBlob            DontDelete|Function 1
+    readableStreamToFormData                       WebCore::jsFunctionReadableStreamToFormData        DontDelete|Function 1
+    readableStreamToJSON                           WebCore::jsFunctionReadableStreamToJSON            DontDelete|Function 1
+    readableStreamToText                           WebCore::jsFunctionReadableStreamToText            DontDelete|Function 1
     registerMacro                                  BunObject_callback_registerMacro                                    DontEnum|DontDelete|Function 1
     resolve                                        BunObject_callback_resolve                                          DontDelete|Function 1
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
@@ -1088,14 +1097,6 @@ static JSC_DEFINE_CUSTOM_SETTER(setBunObjectMain, (JSC::JSGlobalObject * globalO
     return BunObject_setter_main(globalObject, encodedValue);
 }
 
-#define bunObjectReadableStreamToArrayCodeGenerator WebCore::readableStreamReadableStreamToArrayCodeGenerator
-#define bunObjectReadableStreamToArrayBufferCodeGenerator WebCore::readableStreamReadableStreamToArrayBufferCodeGenerator
-#define bunObjectReadableStreamToBytesCodeGenerator WebCore::readableStreamReadableStreamToBytesCodeGenerator
-#define bunObjectReadableStreamToBlobCodeGenerator WebCore::readableStreamReadableStreamToBlobCodeGenerator
-#define bunObjectReadableStreamToFormDataCodeGenerator WebCore::readableStreamReadableStreamToFormDataCodeGenerator
-#define bunObjectReadableStreamToJSONCodeGenerator WebCore::readableStreamReadableStreamToJSONCodeGenerator
-#define bunObjectReadableStreamToTextCodeGenerator WebCore::readableStreamReadableStreamToTextCodeGenerator
-
 // LazyProperty wrappers for stdin/stderr/stdout
 static JSValue BunObject_lazyPropCb_wrap_stdin(VM& vm, JSObject* bunObject)
 {
@@ -1116,14 +1117,6 @@ static JSValue BunObject_lazyPropCb_wrap_stdout(VM& vm, JSObject* bunObject)
 }
 
 #include "BunObject.lut.h"
-
-#undef bunObjectReadableStreamToArrayCodeGenerator
-#undef bunObjectReadableStreamToArrayBufferCodeGenerator
-#undef bunObjectReadableStreamToBytesCodeGenerator
-#undef bunObjectReadableStreamToBlobCodeGenerator
-#undef bunObjectReadableStreamToFormDataCodeGenerator
-#undef bunObjectReadableStreamToJSONCodeGenerator
-#undef bunObjectReadableStreamToTextCodeGenerator
 
 const JSC::ClassInfo JSBunObject::s_info = { "Bun"_s, &Base::s_info, &bunObjectTable, nullptr, CREATE_METHOD_TABLE(JSBunObject) };
 
@@ -1156,56 +1149,26 @@ JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)
     return JSBunObject::create(vm, uncheckedDowncast<Zig::GlobalObject>(globalObject));
 }
 
-static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues)
-{
-    exportNames.reserveCapacity(std::size(bunObjectTableValues) + 1);
-    exportValues.ensureCapacity(std::size(bunObjectTableValues) + 1);
-
-    PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    object->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(scope, void());
-
-    exportNames.append(vm.propertyNames->defaultKeyword);
-    exportValues.append(object);
-
-    for (const auto& propertyName : propertyNames) {
-        exportNames.append(propertyName);
-        auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
-        // Yes, we have to call getters :(
-        JSValue value = object->get(globalObject, propertyName);
-
-        if (topExceptionScope.exception()) {
-            (void)topExceptionScope.tryClearException();
-            value = jsUndefined();
-        }
-        exportValues.append(value);
-    }
-}
-
 } // namespace Bun
 
 namespace Zig {
-void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
+JSC::JSObject* generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
     JSC::Identifier moduleKey,
     Vector<JSC::Identifier, 4>& exportNames,
     JSC::MarkedArgumentBuffer& exportValues)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* object = globalObject->bunObject();
 
-    // :'(
-    if (object->hasNonReifiedStaticProperties()) [[likely]] {
-        object->reifyAllStaticProperties(lexicalGlobalObject);
-    }
+    // Static table entries are listed whether or not they have been reified, so this is the same export
+    // list that reifying them all used to produce, minus the cost of constructing every one of them.
+    PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    object->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
-    RETURN_IF_EXCEPTION(scope, void());
-
-    Bun::exportBunObject(vm, globalObject, object, exportNames, exportValues);
+    return exportObjectProperties(vm, object, propertyNames, exportNames, exportValues);
 }
 
 } // namespace Zig

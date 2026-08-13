@@ -71,16 +71,17 @@ public:
     }
 
 private:
-    /* If we have negotiated compression, set this frame compressed */
+    /* If we have negotiated compression, mark the message as compressed. Idempotent:
+     * consume() re-validates the same header when an extended-length header straddles
+     * a read boundary and is spilled, so this must keep returning true for it. */
     static bool setCompressed(WebSocketState<isServer> */*wState*/, void *s) {
         WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) s);
 
-        if (webSocketData->compressionStatus == WebSocketData::CompressionStatus::ENABLED) {
-            webSocketData->compressionStatus = WebSocketData::CompressionStatus::COMPRESSED_FRAME;
-            return true;
-        } else {
+        if (webSocketData->compressionStatus == WebSocketData::CompressionStatus::DISABLED) {
             return false;
         }
+        webSocketData->compressionStatus = WebSocketData::CompressionStatus::COMPRESSED_FRAME;
+        return true;
     }
 
     static void forceClose(WebSocketState<isServer> */*wState*/, void *s, std::string_view reason = {}) {

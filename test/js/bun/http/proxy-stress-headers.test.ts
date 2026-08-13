@@ -5,6 +5,10 @@
  *
  * Also: Content-Range (206), long URLs, and the decompress:false path
  * that surfaces the raw encoded body.
+ *
+ * Concurrency note: 76 tests share one {http, https} proxy pair from beforeAll
+ * to avoid ephemeral-port reuse under test.concurrent's rolling listen(0)
+ * churn. Tests that inspect proxy.connections create a dedicated proxy.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -13,6 +17,7 @@ import net from "node:net";
 import tls from "node:tls";
 import zlib from "node:zlib";
 import {
+  AdversarialProxy,
   cartesian,
   clearProxyEnv,
   createAdversarialOrigin,
@@ -23,10 +28,18 @@ import {
 } from "./proxy-stress-helpers";
 
 let savedEnv: Record<string, string | undefined>;
-beforeAll(() => {
+let sharedHttpProxy: AdversarialProxy;
+let sharedHttpsProxy: AdversarialProxy;
+const sharedProxy = (tls: boolean) => (tls ? sharedHttpsProxy : sharedHttpProxy);
+
+beforeAll(async () => {
   savedEnv = clearProxyEnv();
+  sharedHttpProxy = await createAdversarialProxy({ tls: false });
+  sharedHttpsProxy = await createAdversarialProxy({ tls: true });
 });
-afterAll(() => {
+afterAll(async () => {
+  await sharedHttpProxy?.close();
+  await sharedHttpsProxy?.close();
   restoreProxyEnv(savedEnv);
 });
 
@@ -46,7 +59,7 @@ describe("many response headers", () => {
         const headers: Record<string, string> = {};
         for (let i = 0; i < count; i++) headers[`X-Resp-${i}`] = `val-${i}`;
         await using origin = await createAdversarialOrigin({ tls: originTls, body: "ok", headers });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        const proxy = sharedProxy(proxyTls);
         const res = await fetch(origin.url, { proxy: proxy.url, keepalive: false, tls: laxTls });
         expect(res.status).toBe(200);
         expect(await res.text()).toBe("ok");
@@ -92,7 +105,7 @@ describe("duplicate Set-Cookie through tunnel", () => {
         server.listen(0, "127.0.0.1");
         await once(server, "listening");
         const originUrl = `${originTls ? "https" : "http"}://localhost:${(server.address() as net.AddressInfo).port}`;
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        const proxy = sharedProxy(proxyTls);
         try {
           const res = await fetch(originUrl, { proxy: proxy.url, keepalive: false, tls: laxTls });
           expect(res.status).toBe(200);
@@ -132,7 +145,7 @@ describe("Content-Type through tunnel", () => {
           body: "ct",
           headers: { "Content-Type": ct },
         });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        const proxy = sharedProxy(proxyTls);
         const res = await fetch(origin.url, { proxy: proxy.url, keepalive: false, tls: laxTls });
         expect(res.status).toBe(200);
         expect(res.headers.get("content-type")).toBe(ct);
@@ -159,7 +172,7 @@ describe("206 Content-Range through tunnel", () => {
           body: "partial",
           headers: { "Content-Range": "bytes 0-6/100", "Accept-Ranges": "bytes" },
         });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        const proxy = sharedProxy(proxyTls);
         const res = await fetch(origin.url, {
           proxy: proxy.url,
           keepalive: false,
@@ -195,7 +208,7 @@ describe("decompress:false through tunnel", () => {
           body: payload,
           encoding,
         });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        const proxy = sharedProxy(proxyTls);
         const res = await fetch(origin.url, {
           proxy: proxy.url,
           keepalive: false,
@@ -223,6 +236,7 @@ describe("CONNECT envelope shape", () => {
   for (const proxyTls of [false, true] as const) {
     test.concurrent(`${proxyTls ? "https" : "http"}-proxy CONNECT carries Host and Proxy-Connection`, async () => {
       await using origin = await createAdversarialOrigin({ tls: true, body: "ok" });
+      // This test inspects proxy.connections, so it needs a dedicated proxy.
       await using proxy = await createAdversarialProxy({ tls: proxyTls });
       const res = await fetch(origin.url, { proxy: proxy.url, keepalive: false, tls: laxTls });
       expect(res.status).toBe(200);
@@ -248,7 +262,7 @@ describe("long URL through proxy", () => {
       async () => {
         const path = "/" + Buffer.alloc(len - 1, "p").toString("latin1");
         await using origin = await createAdversarialOrigin({ tls: originTls, body: "ok" });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        const proxy = sharedProxy(proxyTls);
         const res = await fetch(origin.url + path, { proxy: proxy.url, keepalive: false, tls: laxTls });
         expect(res.status).toBe(200);
         expect(origin.requests[0].path).toBe(path);
@@ -266,6 +280,7 @@ describe("switching proxy", () => {
   for (const originTls of [false, true] as const) {
     test.concurrent(`two different proxies, same ${originTls ? "https" : "http"}-origin`, async () => {
       await using origin = await createAdversarialOrigin({ tls: originTls, body: "ok" });
+      // This test counts connections per proxy, so each needs its own.
       await using proxyA = await createAdversarialProxy({});
       await using proxyB = await createAdversarialProxy({});
       let res = await fetch(origin.url, { proxy: proxyA.url, keepalive: true, tls: laxTls });
@@ -295,7 +310,7 @@ describe("Content-Encoding header after decompress", () => {
       async () => {
         const payload = Buffer.alloc(2048, "D").toString("latin1");
         await using origin = await createAdversarialOrigin({ tls: originTls, body: payload, encoding: "gzip" });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        const proxy = sharedProxy(proxyTls);
         const res = await fetch(origin.url, { proxy: proxy.url, keepalive: false, tls: laxTls });
         expect(res.status).toBe(200);
         // Bun keeps Content-Encoding after transparent decompression

@@ -1790,9 +1790,8 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     /// then insert the same key) can hash once and feed the result to
     /// [`get_hashed`] / [`get_mut_hashed`] / [`get_or_put_static_key_hashed`]
     /// instead of re-deriving it on each call. The resolver's
-    /// `DirEntry::add_entry` does precisely this: one probe against the
-    /// previous-generation directory map, one insert into the new one, same
-    /// (lowercased) basename bytes.
+    /// `DirEntry::add_entry` does precisely this: one probe against the previous
+    /// listing, one insert into the new one, same lowercased basename bytes.
     #[inline]
     pub fn hash_key(&self, key: &[u8]) -> u64 {
         use core::hash::BuildHasher;
@@ -1823,12 +1822,9 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         }
     }
 
-    /// [`put_static_key`] with a caller-supplied hash, except that an existing
-    /// value is kept rather than overwritten: `value` is inserted only when
-    /// `key` is absent, and the result says which value is now stored. `hash`
-    /// MUST equal `self.hash_key(key)` (see [`hash_key`]); the single probe
-    /// trusts it without recomputing. Same zero-copy / `'static`-key contract
-    /// as [`put_static_key`].
+    /// Single-probe get-or-insert with the zero-copy key contract of
+    /// [`put_static_key`]: an existing value is kept and returned, otherwise
+    /// `value` is inserted. `hash` MUST equal `self.hash_key(key)`.
     #[inline]
     pub fn get_or_put_static_key_hashed(
         &mut self,

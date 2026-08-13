@@ -156,25 +156,21 @@ pub struct Entry {
 
     pub abs_path: Interned,
 
-    /// Next sibling whose basename ASCII-lowercases to the same `DirEntry::data`
-    /// key (`mod.js` and `Mod.js` in one directory, which only a case-sensitive
-    /// filesystem allows). The map holds the sibling listed first; the others
-    /// hang off it in listing order. Null for nearly every entry. Read and
-    /// written only under `entries_mutex`, like the map itself; the atomic
-    /// exists so the link can be rewritten through a shared reference.
+    /// Next sibling whose name differs from this one only in case (`mod.js`
+    /// and `Mod.js`, which only a case-sensitive filesystem can both hold).
+    /// `DirEntry::data` holds the first one listed; the rest chain behind it.
+    /// Accessed only under `entries_mutex`, like the map; atomic so it can be
+    /// set through a shared reference.
     next_case_variant: AtomicPtr<Entry>,
 }
 
 impl Entry {
-    /// Picks the entry a lookup for `name` returns out of the chain rooted at
-    /// `head_ptr`, the entry stored under `name`'s lowercased key.
-    ///
-    /// A lone entry satisfies any spelling of `name`: that is what the resolver
-    /// has always done, and what a case-insensitive filesystem does itself. Once
-    /// two siblings share the key the filesystem is known to be case-sensitive,
-    /// so only the sibling spelled byte-for-byte like `name` exists on disk.
-    /// Only the current listing counts: once a re-read finds the other
-    /// sibling gone, the survivor is a lone entry again.
+    /// Resolves a lookup for `name` against the chain rooted at `head_ptr`, the
+    /// entry stored under `name`'s lowercased key. A lone entry matches any
+    /// spelling of `name`, as it always has (and as a case-insensitive
+    /// filesystem itself would). Two or more entries prove the filesystem is
+    /// case-sensitive, so only the one spelled exactly like `name` exists.
+    /// This is decided per listing: the survivor of a re-read is lone again.
     fn select_case_variant(head_ptr: *mut Entry, name: &[u8]) -> Option<*mut Entry> {
         // SAFETY: EntryStore slots are never freed (see `dir_entry::EntryStore`).
         let head = unsafe { &*head_ptr };
@@ -193,12 +189,10 @@ impl Entry {
         None
     }
 
-    /// Detaches the entry spelled exactly `name` from the chain rooted in
-    /// `slot` (a value slot of the listing being replaced) and returns it, so
-    /// that a directory re-read reuses the entry for the same file instead of
-    /// one for a sibling that merely lowercases alike. Detaching keeps the
-    /// remaining variants findable by the re-read's later iterations; a head
-    /// without successors is left in place, as no other name can match it.
+    /// Unlinks and returns the entry spelled exactly `name` from the chain in
+    /// `slot`, a value slot of the listing being re-read, so the new listing
+    /// reuses it; the rest of the chain stays reachable for the names still to
+    /// come. A lone head is left in the slot: no other name can match it.
     fn take_case_variant(slot: &mut *mut Entry, name: &[u8]) -> Option<*mut Entry> {
         let head_ptr = *slot;
         // SAFETY: EntryStore slots are never freed.
@@ -229,10 +223,9 @@ impl Entry {
         None
     }
 
-    /// Appends `new_ptr` (whose own link must be null) to the chain rooted at
-    /// `head_ptr`. A no-op when it is already chained, which happens if the
-    /// listing reports the same name twice; appending it again would close a
-    /// cycle.
+    /// Appends unlinked `new_ptr` to the chain at `head_ptr`. No-op if it is
+    /// already in the chain (a listing that repeats a name), which would
+    /// otherwise close a cycle.
     fn push_case_variant(head_ptr: *mut Entry, new_ptr: *mut Entry) {
         let mut cur_ptr = head_ptr;
         while cur_ptr != new_ptr {
@@ -425,9 +418,7 @@ pub mod dir_entry {
     use super::{Entry, EntryStoreBacking};
 
     /// Lowercased-basename → entry-pointer map backing `DirEntry::data`.
-    /// Siblings whose names differ only in case share one key; the value is
-    /// the one listed first and the rest are chained through
-    /// `Entry::next_case_variant`.
+    /// Names differing only in case share a key; see `Entry::next_case_variant`.
     pub(crate) type EntryMap = bun_collections::StringHashMap<*mut Entry>;
 
     /// Process-wide append-only store that owns all `Entry` allocations.
@@ -575,10 +566,8 @@ impl DirEntry {
 
         let stored: *mut Entry = 'brk: {
             if let Some(map) = prev_map {
-                // `data` keys are the lowercased basenames (probed with
-                // `name_hash` instead of re-hashing); within the key's chain only
-                // the entry spelled exactly like this one may be reused, since a
-                // differently-cased sibling is a different file.
+                // Probe by the lowercased key (reusing `name_hash`), but only
+                // the entry spelled exactly like this one is the same file.
                 if let Some(existing_ptr) = map
                     .get_mut_hashed(name_hash, name_lc)
                     .and_then(|slot| Entry::take_case_variant(slot, name_slice))
@@ -690,8 +679,6 @@ impl DirEntry {
             .data
             .get_or_put_static_key_hashed(name_hash, key, stored)?;
         if slot.found_existing {
-            // A sibling differing only in case was listed first and owns the
-            // key; keep this one reachable behind it instead of dropping it.
             Entry::push_case_variant(*slot.value_ptr, stored);
         }
 
@@ -739,11 +726,8 @@ impl DirEntry {
     }
 
     // `query_` borrow is detached from the returned `Entry` lifetime so callers
-    // can pass a slice into the same threadlocal buffer they then mutate. The
-    // lookup key is the lowercased basename: a case-mismatched query still
-    // returns the directory's only entry with that key, but once siblings
-    // differing only in case coexist, only the exactly-spelled one is returned
-    // (see `Entry::select_case_variant`).
+    // can pass a slice into the same threadlocal buffer they then mutate.
+    // Case handling is `Entry::select_case_variant`'s.
     pub fn get<'a>(&'a self, query_: &[u8]) -> Option<EntryLookup<'a>> {
         Self::debug_assert_entries_mutex_held();
         if query_.is_empty() || query_.len() > MAX_PATH_BYTES {
@@ -755,8 +739,7 @@ impl DirEntry {
         self.lookup(query, query_)
     }
 
-    /// [`get`](Self::get) for a `&'static [u8]` that is already lowercase, so
-    /// no per-call lowercasing buffer is needed.
+    /// [`get`](Self::get) for a name that is already lowercase.
     pub(crate) fn get_comptime_query<'a>(
         &'a self,
         query_lower: &'static [u8],
@@ -765,14 +748,12 @@ impl DirEntry {
         self.lookup(query_lower, query_lower)
     }
 
-    /// True if [`get_comptime_query`](Self::get_comptime_query) would find an
-    /// entry for the given already-lowercase name.
+    /// True if a cached entry exists for the given already-lowercase name.
     pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
         self.get_comptime_query(query_lower).is_some()
     }
 
-    /// Every entry in the listing, including the case variants chained behind
-    /// a shared key, which `data.values()` alone does not reach.
+    /// Every entry, including the case variants `data.values()` does not reach.
     pub fn iter_entries(&self) -> impl Iterator<Item = *mut Entry> + '_ {
         Self::debug_assert_entries_mutex_held();
         self.data

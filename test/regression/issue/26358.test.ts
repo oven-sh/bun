@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { EventEmitter, once } from "node:events";
 import { WebSocket } from "ws";
 
 describe("ws.once() multiple calls", () => {
@@ -161,6 +162,35 @@ describe("ws.once() multiple calls", () => {
     expect(messages).toContain("listener2:test2");
 
     ws.close();
+  });
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/events.js#L649-L654
+  test("once() registered before on() does not duplicate events", async () => {
+    const ws = new WebSocket(`ws://localhost:${port}`);
+    await once(ws, "open");
+
+    const seenByOnce: string[] = [];
+    const seenByOn: string[] = [];
+    ws.once("message", data => seenByOnce.push(data.toString()));
+    ws.on("message", data => {
+      seenByOn.push(data.toString());
+      if (seenByOn.length === 2) ws.close();
+    });
+    ws.send("first");
+    ws.send("second");
+    await once(ws, "close");
+
+    expect({ seenByOnce, seenByOn }).toEqual({ seenByOnce: ["first"], seenByOn: ["first", "second"] });
+  });
+
+  test("once('error') consumes a native error without re-emitting it unhandled", async () => {
+    const ws = new WebSocket(`ws://localhost:${port}`);
+    let emits = 0;
+    EventEmitter.prototype.on.call(ws, "error", () => emits++);
+    const errored = once(ws, "error");
+    ws.terminate();
+    await errored;
+    expect(emits).toBe(1);
   });
 
   test("mixing on() and once() works correctly", async () => {

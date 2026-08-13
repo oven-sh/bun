@@ -1774,8 +1774,6 @@ it.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple 
 });
 
 // Node reports every readdir failure, recursive or not, as syscall "scandir".
-// The async recursive walk used to hand out the raw openat() error, so the
-// callback and promises forms said "open" where readdirSync said "scandir".
 describe("readdir({recursive: true}) reports failures as scandir", () => {
   const resultKinds = {
     paths: {},

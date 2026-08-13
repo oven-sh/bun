@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { isLinux, isWindows, tmpdirSync } from "harness";
+import { isLinux, isPosix, isWindows, tmpdirSync } from "harness";
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+
+const isRoot = process.getuid?.() === 0;
 
 let dirc = 0;
 function nextdir() {
@@ -397,5 +399,120 @@ describe("fs.promises.mkdir", () => {
     expect(fs.existsSync(pathname)).toBe(true);
     expect(fs.statSync(pathname).isDirectory()).toBe(true);
     expect(result).toBeUndefined();
+  });
+});
+
+// Each target below is `<refusing dir>/missing/b`: mkdir of the target itself fails with
+// ENOENT, so the recursive walk moves up to `missing`, and that is the mkdir the refusing
+// directory rejects. The error must still name the requested target, as node's mkdirSync and
+// every other failure of the walk do; it used to name `<refusing dir>/missing`.
+describe("fs.mkdir - recursive error names the requested path", () => {
+  let tmpdir: string;
+
+  beforeEach(() => {
+    tmpdir = getTmpDir();
+  });
+
+  afterEach(() => {
+    try {
+      fs.rmSync(tmpdir, { recursive: true, force: true });
+    } catch (err) {
+      // Ignore cleanup errors
+    }
+  });
+
+  function describeError(err: any) {
+    return err === undefined
+      ? undefined
+      : { code: err.code, syscall: err.syscall, path: err.path, message: err.message };
+  }
+
+  async function recursiveMkdirErrors(target: string) {
+    let sync: unknown;
+    try {
+      fs.mkdirSync(target, { recursive: true });
+    } catch (err) {
+      sync = err;
+    }
+
+    const { promise: callbackDone, resolve } = Promise.withResolvers<unknown>();
+    fs.mkdir(target, { recursive: true }, err => resolve(err ?? undefined));
+    const callback = await callbackDone;
+
+    const promises = await fs.promises.mkdir(target, { recursive: true }).then(
+      () => undefined,
+      err => err,
+    );
+
+    return { sync: describeError(sync), callback: describeError(callback), promises: describeError(promises) };
+  }
+
+  it.skipIf(!isPosix || isRoot)("when a parent cannot be created in an unwritable directory", async () => {
+    const unwritable = path.join(tmpdir, nextdir());
+    fs.mkdirSync(unwritable);
+    fs.chmodSync(unwritable, 0o555);
+    try {
+      const target = path.join(unwritable, "missing", "b");
+      const expected = {
+        code: "EACCES",
+        syscall: "mkdir",
+        path: target,
+        message: `EACCES: permission denied, mkdir '${target}'`,
+      };
+
+      expect(await recursiveMkdirErrors(target)).toEqual({ sync: expected, callback: expected, promises: expected });
+    } finally {
+      fs.chmodSync(unwritable, 0o755);
+    }
+  });
+
+  // sysfs refuses every mkdir, root's included (EROFS when it is mounted read-only, as in
+  // containers; otherwise EPERM for root and EACCES for anyone else), so unlike the chmod
+  // fixture above this one also exercises the walk when the tests run as root.
+  function sysMountIsSysfs() {
+    const SYSFS_MAGIC = 0x62656572;
+    try {
+      return isLinux && fs.statfsSync("/sys").type === SYSFS_MAGIC;
+    } catch {
+      return false;
+    }
+  }
+  it.skipIf(!sysMountIsSysfs())("when a parent cannot be created on sysfs", async () => {
+    const target = "/sys/bun-fs-mkdir-test-missing/b";
+
+    const errors = await recursiveMkdirErrors(target);
+    const code = errors.sync?.code;
+    expect(["EROFS", "EPERM", "EACCES"]).toContain(code);
+    const expected = {
+      code,
+      syscall: "mkdir",
+      path: target,
+      message: expect.stringContaining(`, mkdir '${target}'`),
+    };
+    expect(errors).toEqual({ sync: expected, callback: expected, promises: expected });
+  });
+
+  // Deny "add subdirectory" / "add file" to Everyone (S-1-1-0); deny entries also bind
+  // administrators, and the entry is removed again before the directory is deleted.
+  it.skipIf(!isWindows)("when a parent cannot be created in a directory whose ACL denies it", async () => {
+    const denied = path.join(tmpdir, nextdir());
+    fs.mkdirSync(denied);
+    execSync(`icacls "${denied}" /deny "*S-1-1-0:(AD,WD)"`);
+    try {
+      const target = path.join(denied, "missing", "b");
+
+      const errors = await recursiveMkdirErrors(target);
+      const code = errors.sync?.code;
+      expect(["EPERM", "EACCES"]).toContain(code);
+      const expected = {
+        code,
+        syscall: "mkdir",
+        path: target,
+        message: expect.stringContaining(`, mkdir '${target}'`),
+      };
+      expect(errors).toEqual({ sync: expected, callback: expected, promises: expected });
+    } finally {
+      execSync(`icacls "${denied}" /remove:d "*S-1-1-0"`);
+    }
   });
 });

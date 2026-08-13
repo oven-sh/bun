@@ -563,7 +563,7 @@ impl ShellCpTask {
             .is_some_and(|&c| resolve_path::Platform::AUTO.is_separator(c))
     }
 
-    /// Classifies a path without following a symlink.
+    /// Classifies the target operand without following a symlink.
     fn is_dir(path: &bun_core::ZStr) -> bun_sys::Maybe<bool> {
         #[cfg(windows)]
         {
@@ -582,10 +582,16 @@ impl ShellCpTask {
         }
     }
 
-    /// Is `tgt` (following symlinks, like the copy will) the file `src_stat`
-    /// describes? An inode number of 0 means the filesystem reports no identity.
-    fn is_same_file(src_stat: &bun_sys::Stat, tgt: &bun_core::ZStr) -> bool {
-        bun_sys::stat(tgt).is_ok_and(|tgt_stat| {
+    /// Is `tgt` the file `src_stat` describes? `follow` says whether a symlink
+    /// at `tgt` is looked through, and must match how `src_stat` was taken.
+    /// An inode number of 0 means the filesystem reports no identity.
+    fn is_same_file(src_stat: &bun_sys::Stat, tgt: &bun_core::ZStr, follow: bool) -> bool {
+        let tgt_stat = if follow {
+            bun_sys::stat(tgt)
+        } else {
+            bun_sys::lstat(tgt)
+        };
+        tgt_stat.is_ok_and(|tgt_stat| {
             src_stat.st_ino != 0
                 && src_stat.st_ino == tgt_stat.st_ino
                 && src_stat.st_dev == tgt_stat.st_dev
@@ -630,21 +636,17 @@ impl ShellCpTask {
 
         // cp(1) copies the file a symlink operand points at; only `-R` copies
         // the link itself.
-        let src_stat = if self.opts.recursive {
-            None
+        let follow_src = !self.opts.recursive;
+        let src_stat = if follow_src {
+            bun_sys::stat(src)
         } else {
-            match bun_sys::stat(src) {
-                Ok(st) => Some(st),
-                Err(e) => return Some(ShellErr::new_sys(&e)),
-            }
+            bun_sys::lstat(src)
         };
-        let src_is_dir = match &src_stat {
-            Some(st) => bun_sys::S::ISDIR(st.st_mode as _),
-            None => match Self::is_dir(src) {
-                Ok(x) => x,
-                Err(e) => return Some(ShellErr::new_sys(&e)),
-            },
+        let src_stat = match src_stat {
+            Ok(st) => st,
+            Err(e) => return Some(ShellErr::new_sys(&e)),
         };
+        let src_is_dir = bun_sys::S::ISDIR(src_stat.st_mode as _);
 
         // Any source directory without -R is an error.
         if src_is_dir && !self.opts.recursive {
@@ -690,6 +692,7 @@ impl ShellCpTask {
                     buf3.as_mut_slice(),
                     &[tgt.as_bytes(), basename],
                 );
+                dest_basename = Some(basename);
             } else if self.operands == 2 {
                 // source_dir -> new_target_dir.
             } else {
@@ -725,28 +728,24 @@ impl ShellCpTask {
             _copying_many = true;
         }
 
-        // With the operand dereferenced, `cp link target-of-link` would read
-        // and write one file; cp(1) refuses that as the same file.
-        if let Some(src_stat) = &src_stat {
-            if Self::is_same_file(src_stat, tgt) {
-                let mut shown_buf = bun_paths::path_buffer_pool::get();
-                let shown_tgt: &[u8] = match dest_basename {
-                    Some(basename) => resolve_path::join_string_buf::<platform::Auto>(
-                        &mut shown_buf[..],
-                        &[&self.tgt, basename],
-                    ),
-                    None => &self.tgt,
-                };
-                return Some(ShellErr::Custom(
-                    format!(
-                        "{} and {} are identical (not copied)",
-                        bstr::BStr::new(&self.src),
-                        bstr::BStr::new(shown_tgt)
-                    )
-                    .into_bytes()
-                    .into_boxed_slice(),
-                ));
-            }
+        // Copying a file onto itself (through a link, a hard link or a path
+        // going through a directory symlink, which the path comparison above
+        // misses) is refused, as cp(1) does. Reading and writing one file would
+        // otherwise go ahead, and the macOS copy unlinks the destination first.
+        if !src_is_dir && Self::is_same_file(&src_stat, tgt, follow_src) {
+            let shown_tgt = match dest_basename {
+                Some(basename) => bun_paths::join_sep_maybe_z::<false>(&[&self.tgt, basename]),
+                None => self.tgt.as_slice().into(),
+            };
+            return Some(ShellErr::Custom(
+                format!(
+                    "{} and {} are identical (not copied)",
+                    bstr::BStr::new(&self.src),
+                    bstr::BStr::new(&shown_tgt)
+                )
+                .into_bytes()
+                .into_boxed_slice(),
+            ));
         }
 
         self.src_absolute = Some(src.as_bytes().to_vec());
@@ -765,7 +764,7 @@ impl ShellCpTask {
                 recursive: self.opts.recursive,
                 force: true,
                 error_on_exist: false,
-                dereference: !self.opts.recursive,
+                dereference: follow_src,
             },
         };
 

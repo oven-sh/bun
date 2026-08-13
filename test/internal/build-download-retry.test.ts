@@ -16,21 +16,44 @@
  * which is exactly what distinguishes "retried on a new connection" from
  * "retried on the same one".
  *
+ * The same server doubles as an HTTP proxy for the proxy tests: builds behind
+ * a proxy only ever worked because the downloader honored HTTP(S)_PROXY, and
+ * the downloader now has to do that itself.
+ *
  * The production schedule is driven with its backoff zeroed, so the full
  * attempt count runs in milliseconds; the schedule's real timing is asserted
  * separately.
  */
-import { expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { join } from "node:path";
 
-import { downloadRetry, downloadWithRetry, type RetryPolicy } from "../../scripts/build/download.ts";
+import { downloadRetry, downloadWithRetry, proxyEnvironment, type RetryPolicy } from "../../scripts/build/download.ts";
 import { BuildError, describeError } from "../../scripts/build/error.ts";
 
 const BODY = "tarball bytes";
+
+/**
+ * downloadWithRetry reads the proxy variables from process.env. Each test
+ * starts with none of them set (whatever the machine running the tests has),
+ * and the proxy tests set exactly the ones they are about.
+ */
+const proxyVariables = ["http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "no_proxy", "NO_PROXY"] as const;
+let ambientProxyEnv: Partial<Record<(typeof proxyVariables)[number], string>>;
+beforeEach(() => {
+  ambientProxyEnv = {};
+  for (const name of proxyVariables) {
+    if (process.env[name] !== undefined) ambientProxyEnv[name] = process.env[name];
+    delete process.env[name];
+  }
+});
+afterEach(() => {
+  for (const name of proxyVariables) delete process.env[name];
+  Object.assign(process.env, ambientProxyEnv);
+});
 
 /** The production attempt count with no waiting between attempts. */
 const noBackoff: RetryPolicy = { ...downloadRetry, backoffMs: () => 0 };
@@ -276,6 +299,62 @@ test("a body that stops arriving is given up on and retried, leaving no partial 
   expect(lines).toEqual([`retry 2/${downloadRetry.attempts} in 0ms (no data from ${server.url} for ${stallMs}ms)`]);
   expect(server.traffic).toEqual({ connections: 2, requests: 2 });
   expect(readdirSync(String(dir))).toEqual(["dep.tar.gz"]);
+});
+
+test("http_proxy is honored, including the scheme-less form curl and bun's fetch() accept", async () => {
+  using dir = tempDir("build-download-retry", {});
+  // The fake server plays the proxy: a proxied request reaches it carrying
+  // the full URL as its request target. dep.invalid itself resolves nowhere,
+  // so a download that ignored the proxy could only fail.
+  await using proxy = await fakeServer([]);
+  process.env.http_proxy = proxy.origin.slice("http://".length);
+  const dest = join(String(dir), "dep.tar.gz");
+
+  const { lines } = await withLogCaptured(() =>
+    downloadWithRetry("http://dep.invalid/dep.tar.gz", dest, "dep", noBackoff),
+  );
+
+  expect(readFileSync(dest, "utf8")).toBe(BODY);
+  expect(lines).toEqual([]);
+  expect(proxy.paths).toEqual(["http://dep.invalid/dep.tar.gz"]);
+  expect(proxy.traffic).toEqual({ connections: 1, requests: 1 });
+});
+
+test("NO_PROXY sends a download past the proxy", async () => {
+  using dir = tempDir("build-download-retry", {});
+  await using proxy = await fakeServer([]);
+  await using server = await fakeServer([]);
+  process.env.HTTP_PROXY = proxy.origin;
+  process.env.NO_PROXY = "127.0.0.1";
+  const dest = join(String(dir), "dep.tar.gz");
+
+  const { lines } = await withLogCaptured(() => downloadWithRetry(server.url, dest, "dep", noBackoff));
+
+  expect(readFileSync(dest, "utf8")).toBe(BODY);
+  expect(lines).toEqual([]);
+  expect(server.paths).toEqual(["/dep.tar.gz"]);
+  expect(proxy.traffic).toEqual({ connections: 0, requests: 0 });
+});
+
+test("proxyEnvironment() rewrites the settings into the form the Agent's parser accepts", () => {
+  expect(
+    proxyEnvironment({
+      HTTPS_PROXY: "proxy.corp:3128",
+      https_proxy: " http://proxy.corp:3128/ ",
+      http_proxy: "socks5://proxy.corp:1080",
+      HTTP_PROXY: "",
+      NO_PROXY:
+        "github.com, build-cache.corp ,.example.org,*.example.net,registry.corp:5000,127.0.0.1,10.0.0.1-10.0.0.9,*",
+    }),
+  ).toEqual({
+    HTTPS_PROXY: "http://proxy.corp:3128",
+    https_proxy: "http://proxy.corp:3128/",
+    http_proxy: "socks5://proxy.corp:1080",
+    NO_PROXY:
+      "github.com,.github.com,build-cache.corp,.build-cache.corp,.example.org,*.example.net,registry.corp:5000,127.0.0.1,10.0.0.1-10.0.0.9,*",
+  });
+  expect(proxyEnvironment({ no_proxy: " , " })).toEqual({});
+  expect(proxyEnvironment({})).toEqual({});
 });
 
 test("giving up reports the attempt count and the failure that ended it", async () => {

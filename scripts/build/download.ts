@@ -22,10 +22,10 @@
  * 5 attempts / ~30s gave up inside them and took a random build lane along.
  *
  * Every attempt, and every redirect hop within one, goes out on a connection
- * of its own (`get` below). When this went through fetch(), its pool handed
- * each retry the very connection the previous attempt had failed on, and
- * github.com keeps a connection open while answering 503 or refusing the
- * stream on it (node's fetch speaks HTTP/2 to it), so a fetch-cli process
+ * of its own (`throwawayAgents` below). When this went through fetch(), its
+ * pool handed each retry the very connection the previous attempt had failed
+ * on, and github.com keeps a connection open while answering 503 or refusing
+ * the stream on it (node's fetch speaks HTTP/2 to it), so a fetch-cli process
  * that had landed on a bad front-end failed every one of its attempts in a
  * row while the dep fetches next to it, on connections of their own, went
  * through in the same second. A retry is only worth anything if it can land
@@ -160,9 +160,9 @@ export interface RetryPolicy {
   /** Delay before try number `attempt` (2..attempts). */
   backoffMs(attempt: number): number;
   /**
-   * An attempt whose connection has carried nothing for this long (while
-   * connecting, waiting for headers, or mid-body) is failed and retried.
-   * Bounds each attempt; a healthy transfer of any size never goes idle.
+   * An attempt that has gone this long without the response headers, or
+   * without a further chunk of body, is failed and retried. Bounds each
+   * attempt; a healthy transfer of any size never goes idle.
    */
   idleTimeoutMs: number;
 }
@@ -177,40 +177,116 @@ export const downloadRetry: RetryPolicy = {
 const maxRedirects = 20;
 
 /**
- * One GET for `hop` on a connection of its own. The request gets a fresh
- * non-keep-alive Agent, so it cannot inherit the connection an earlier
- * attempt failed on ("Retry behavior" above), and the connection is closed
- * behind the response. Resolves with the response headers in; the body is
- * still to be read.
+ * The proxy settings handed to the Agents, in the spelling their `proxyEnv`
+ * parser accepts. Builds behind a proxy used to be served by bun's fetch()
+ * honoring these variables itself (node's fetch never did), with curl's
+ * reading of them; the Agent's reading is stricter in two places that would
+ * otherwise silently change where a `bun bd` connects:
  *
- * `proxyEnv` keeps HTTPS_PROXY / NO_PROXY honored the way bun's fetch() did
- * when this went through it (node's fetch never did); builds in proxied
- * environments depend on that for every dep that misses the prefetch cache.
+ * - a proxy given without a scheme (`HTTPS_PROXY=proxy:3128`) is ignored by
+ *   the Agent, where curl and bun's fetch() take it as an http proxy;
+ * - a bare NO_PROXY host (`github.com`) only matches itself, where curl and
+ *   bun's fetch() also match its subdomains. Every download here is
+ *   redirected from github.com to a subdomain of github.com or
+ *   githubusercontent.com, so without the `.github.com` form the second hop
+ *   would take the other route from the first.
+ *
+ * Schemes the Agent does not support (socks5://) are left alone and the
+ * download goes direct, which is what node's fetch() did with any proxy.
  */
-function get(hop: string, idleTimeoutMs: number): Promise<http.IncomingMessage> {
+export function proxyEnvironment(env: NodeJS.ProcessEnv = process.env): http.ProxyEnv {
+  const out: http.ProxyEnv = {};
+  for (const name of ["http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY"] as const) {
+    const proxy = env[name]?.trim();
+    if (proxy) out[name] = /^[a-z][a-z0-9+.-]*:\/\//i.test(proxy) ? proxy : `http://${proxy}`;
+  }
+  for (const name of ["no_proxy", "NO_PROXY"] as const) {
+    const entries =
+      env[name]
+        ?.split(",")
+        .map(entry => entry.trim())
+        .filter(Boolean) ?? [];
+    if (entries.length === 0) continue;
+    // Only host names are widened: `*`, `.suffix`, `*.suffix`, `host:port`,
+    // addresses and address ranges already mean what they meant.
+    const isHostName = (entry: string) => /^[a-z0-9][a-z0-9.-]*$/i.test(entry) && /[a-z]/i.test(entry);
+    out[name] = entries.flatMap(entry => (isHostName(entry) ? [entry, `.${entry}`] : [entry])).join(",");
+  }
+  return out;
+}
+
+/**
+ * One Agent per scheme for the duration of a download. Neither keeps
+ * sockets alive, so every request made through them gets a connection of
+ * its own, closed behind the response; a retry therefore cannot inherit the
+ * connection the previous attempt failed on ("Retry behavior" above).
+ */
+interface Agents {
+  http: http.Agent;
+  https: https.Agent;
+}
+
+function throwawayAgents(): Agents {
+  const options: http.AgentOptions = { proxyEnv: proxyEnvironment() };
+  return { http: new http.Agent(options), https: new https.Agent(options) };
+}
+
+function idleError(hop: string, idleTimeoutMs: number): BuildError {
+  return new BuildError(`no data from ${hop} for ${idleTimeoutMs}ms`);
+}
+
+/**
+ * GET `hop`, resolving once the response headers are in (the body is still
+ * to be read) and failing if they have not arrived within `idleTimeoutMs`.
+ *
+ * The idle clock is our own timer, and it rejects directly rather than only
+ * destroying the request, because the bun releases that still run this
+ * through their older fetch-based node:http client (1.3.x, the version the
+ * CI images are baked with) neither fire the request's `timeout` option nor
+ * emit 'error' for a destroy() before the response; under them a stalled
+ * github.com would otherwise hang the build instead of being retried.
+ */
+function get(hop: string, agents: Agents, idleTimeoutMs: number): Promise<http.IncomingMessage> {
   const secure = new URL(hop).protocol === "https:";
   const options: https.RequestOptions = {
-    agent: secure ? new https.Agent({ proxyEnv: process.env }) : new http.Agent({ proxyEnv: process.env }),
+    agent: secure ? agents.https : agents.http,
     headers: { "User-Agent": "bun-build-system" },
-    timeout: idleTimeoutMs,
   };
   return new Promise((resolve, reject) => {
     const req = secure ? https.request(hop, options) : http.request(hop, options);
-    let res: http.IncomingMessage | undefined;
-    req.on("response", response => {
-      res = response;
-      resolve(response);
+    const idle = setTimeout(() => {
+      const err = idleError(hop, idleTimeoutMs);
+      reject(err);
+      req.destroy(err);
+    }, idleTimeoutMs);
+    req.on("response", res => {
+      clearTimeout(idle);
+      resolve(res);
     });
-    // 'timeout' is advisory: the socket stays open until something destroys
-    // it. Once the response has started, its consumer (the pipeline in the
-    // caller) is the one waiting, so the error has to be delivered there.
-    req.on("timeout", () => (res ?? req).destroy(new BuildError(`no data from ${hop} for ${idleTimeoutMs}ms`)));
-    // Kept attached for the life of the socket: a mid-body failure is
-    // reported through `res`, but node emits it on the request as well, and
-    // an unhandled 'error' there would take the process down.
-    req.on("error", reject);
+    // Stays attached for the life of the socket: a failure while the body is
+    // being read is reported through the response, but node emits it on the
+    // request as well, and unhandled there it would take the process down.
+    req.on("error", err => {
+      clearTimeout(idle);
+      reject(err);
+    });
     req.end();
   });
+}
+
+/** Stream the body to `file`, failing the attempt if it stops arriving for `idleTimeoutMs`. */
+async function saveBody(res: http.IncomingMessage, hop: string, file: string, idleTimeoutMs: number): Promise<void> {
+  const stalled = () => res.destroy(idleError(hop, idleTimeoutMs));
+  let idle = setTimeout(stalled, idleTimeoutMs);
+  res.on("data", () => {
+    clearTimeout(idle);
+    idle = setTimeout(stalled, idleTimeoutMs);
+  });
+  try {
+    await pipeline(res, createWriteStream(file));
+  } finally {
+    clearTimeout(idle);
+  }
 }
 
 /**
@@ -242,6 +318,10 @@ export async function downloadWithRetry(
     return;
   }
 
+  // Built once, outside the loop: a proxy setting the Agent rejects outright
+  // (ERR_PROXY_INVALID_CONFIG) is a configuration error, not something to
+  // retry ten times.
+  const agents = throwawayAgents();
   const maxAttempts = retry.attempts;
   let lastError: unknown;
   let permanent = false;
@@ -258,12 +338,12 @@ export async function downloadWithRetry(
     // failure can say whether github.com or the host it redirected to failed.
     let hop = url;
     try {
-      let res = await get(hop, retry.idleTimeoutMs);
+      let res = await get(hop, agents, retry.idleTimeoutMs);
       for (let redirects = 0; res.statusCode! >= 300 && res.statusCode! < 400 && res.headers.location; redirects++) {
         res.resume();
         if (redirects === maxRedirects) throw new BuildError(`more than ${maxRedirects} redirects`);
         hop = new URL(res.headers.location, hop).href;
-        res = await get(hop, retry.idleTimeoutMs);
+        res = await get(hop, agents, retry.idleTimeoutMs);
       }
 
       const status = res.statusCode!;
@@ -277,7 +357,7 @@ export async function downloadWithRetry(
         continue;
       }
 
-      await pipeline(res, createWriteStream(tmpPath));
+      await saveBody(res, hop, tmpPath, retry.idleTimeoutMs);
       await rename(tmpPath, dest);
       return;
     } catch (err) {

@@ -660,20 +660,30 @@ static void provideFetchForSyncLoad(Zig::GlobalObject* globalObject, const WTF::
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto key = JSC::Identifier::fromString(vm, specifier);
-    auto* loader = globalObject->moduleLoader();
-    auto* entry = loader->registryEntry(key);
-    if (!entry || entry->status() != JSC::ModuleRegistryEntry::Status::Fetching) {
+    // Only the JavaScript-typed entry is ours: it is the one loadModuleSync() reads, and this source came
+    // from the default loader. An import of the same file with a type attribute has a separate entry.
+    auto* entry = globalObject->moduleLoader()->ensureRegistered(globalObject, key, JSC::ScriptFetchParameters::Type::JavaScript);
+    switch (entry->status()) {
+    case JSC::ModuleRegistryEntry::Status::New:
         scope.release();
-        loader->provideFetch(globalObject, key, JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
+        entry->provideFetch(globalObject, jsSourceCode);
+        return;
+    case JSC::ModuleRegistryEntry::Status::Fetching: {
+        entry->ensureModulePromise(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        JSC::JSPromise* fetchPromise = entry->ensureFetchPromise(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        // fulfillPromise, not fulfill(): pipeFrom() already claimed this promise's resolving functions.
+        // A fetch promise that is already settled has its FetchSettled reaction queued elsewhere;
+        // hostLoadImportedModule replays that step inline when loadModuleSync() gets there.
+        if (fetchPromise->status() == JSC::JSPromise::Status::Pending)
+            fetchPromise->fulfillPromise(vm, jsSourceCode);
         return;
     }
-    entry->ensureModulePromise(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
-    JSC::JSPromise* fetchPromise = entry->ensureFetchPromise(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
-    // fulfillPromise, not fulfill(): pipeFrom() already claimed this promise's resolving functions.
-    if (fetchPromise->status() == JSC::JSPromise::Status::Pending)
-        fetchPromise->fulfillPromise(vm, jsSourceCode);
+    default:
+        // Fetched, or failed earlier: loadModuleSync() reports whatever the entry already holds.
+        return;
+    }
 }
 
 JSValue fetchCommonJSModule(

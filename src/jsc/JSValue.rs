@@ -2826,22 +2826,15 @@ impl JSValue {
         })
     }
     /// `JSValue.jestDeepMatch` — `expect(a).toMatchObject(b)` /
-    /// snapshot-property-matcher subset comparison.
-    ///
-    /// Side-effect free: neither `self` nor `subset` is mutated. For snapshot
-    /// serialization that needs asymmetric matchers substituted into `self`,
-    /// call [`Self::jest_substitute_asymmetric_matchers`] after a successful
-    /// match.
+    /// snapshot-property-matcher subset comparison. Mutates neither side.
     pub fn jest_deep_match(self, subset: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__jestDeepMatch(self, subset, global)
         })
     }
-    /// The value `toMatchSnapshot(matchers)` serializes: a clone of `self` with
-    /// each asymmetric matcher that [`Self::jest_deep_match`] checked put in
-    /// place of the property it checked, so the snapshot records `Any<String>`
-    /// etc. rather than the concrete value. `self` is not mutated. Both `self`
-    /// and `matchers` must be objects and `jest_deep_match` must have passed.
+    /// Clone of `self` with the matchers a passing [`Self::jest_deep_match`]
+    /// checked put in place of the properties they matched; what
+    /// `toMatchSnapshot(matchers)` serializes. Both arguments must be objects.
     pub fn jest_substitute_asymmetric_matchers(
         self,
         matchers: JSValue,

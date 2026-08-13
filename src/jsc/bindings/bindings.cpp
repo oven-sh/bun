@@ -2154,10 +2154,8 @@ bool Bun__deepMatch(
                 ASSERT(gcBuffer != nullptr);
                 gcBuffer->append(prop);
                 gcBuffer->append(subsetProp);
-                // The seen sets hold the objects on the current recursion path
-                // (like Jest's subsetEquality), so a shared sub-object reached
-                // from two different properties is checked at both and only a
-                // genuine cycle is skipped.
+                // The seen sets track the current path only, so a sub-object
+                // reached through two properties is checked at both.
                 auto didInsertProp = seenObjProperties->insert(JSC::JSValue::encode(prop));
                 auto didInsertSubset = seenSubsetProperties->insert(JSC::JSValue::encode(subsetProp));
                 if (!didInsertProp.second || !didInsertSubset.second) {
@@ -2194,9 +2192,7 @@ inline bool deepEqualsWrapperImpl(JSC::EncodedJSValue a, JSC::EncodedJSValue b, 
     RELEASE_AND_RETURN(scope, result);
 }
 
-// Keep this list in sync with the dispatch in
-// `matchAsymmetricMatcherAndGetFlags`; that function is the source of truth
-// for which cell types are asymmetric matchers.
+// Same type list as `matchAsymmetricMatcherAndGetFlags`.
 bool isAsymmetricMatcher(JSValue v)
 {
     if (!v.isCell()) return false;
@@ -2212,29 +2208,24 @@ bool isAsymmetricMatcher(JSValue v)
         || dynamicDowncast<JSExpectCustomAsymmetricMatcher>(cell);
 }
 
-// State for `substituteAsymmetricMatchers`: produces the value that
-// `toMatchSnapshot(propertyMatchers)` serializes. It re-walks `received` and
-// `propertyMatchers` exactly the way `Bun__deepMatch<true>` just did (same
-// property enumeration, same recursion and cycle rules) and records every
-// matcher that walk checked on a clone of the received object at that
-// position, so the received object itself is never written to.
+// Builds the value `toMatchSnapshot(propertyMatchers)` serializes: the walk
+// `Bun__deepMatch<true>` just made over (received, matchers), replayed with the
+// same enumeration and cycle rules, writing each matcher it checked onto a
+// clone of the received object at that position.
 struct AsymmetricMatcherSubstitution {
     JSGlobalObject* globalObject;
     ThrowScope& throwScope;
     MarkedArgumentBuffer& gcBuffer;
-    // One clone per received object for the whole walk, so an object reached
-    // through several properties renders the same everywhere and a reference
-    // back to it renders as [Circular] exactly where the original did.
+    // One clone per received object, so shared objects and back-references
+    // (the formatter's [Circular] is identity-based) render as they did.
     std::unordered_map<EncodedJSValue, JSObject*> clones;
-    // The two recursion paths, mirroring deepMatch's seen sets.
+    // deepMatch's seen sets.
     std::set<EncodedJSValue> receivedPath;
     std::set<EncodedJSValue> matcherPath;
 
-    // Returns the clone standing in for `received`, or nullptr when the
-    // snapshot formatter does not render this kind of object from the
-    // properties a matcher can land on (Date, RegExp, Map, Set, boxed
-    // primitives, ...). For those the original renders the same as the
-    // mutated object used to, so it is serialized as-is.
+    // nullptr for kinds the formatter renders from internal state rather than
+    // from properties (Date, RegExp, Map, Set, boxed primitives, ...): a
+    // matcher on one of those was never visible, so the original is used.
     JSObject* cloneFor(JSObject* received)
     {
         auto& vm = globalObject->vm();
@@ -2253,14 +2244,11 @@ struct AsymmetricMatcherSubstitution {
             bool rendersOwnProperties = type == JSC::FinalObjectType || type == JSC::ObjectType || type == JSC::JSType(JSDOMWrapperType);
             if (!rendersOwnProperties && type != JSC::ErrorInstanceType) return nullptr;
 
-            // Same prototype as the original: the formatter derives the
-            // `ClassName {` prefix (and an Error's name) from the prototype
-            // chain, not from the cell type.
+            // The formatter takes the class name (or Error name) from the prototype.
             JSValue proto = received->getPrototype(globalObject);
             RETURN_IF_EXCEPTION(throwScope, nullptr);
             if (type == JSC::ErrorInstanceType) {
-                // Errors render as `[Name: message]`, so the clone has to stay
-                // an ErrorInstance for a matcher on `message` to show up.
+                // Rendered as `[Name: message]`, which needs an ErrorInstance cell.
                 clone = JSC::ErrorInstance::create(vm, JSC::ErrorInstance::createStructure(vm, globalObject, proto), String(), JSValue(), nullptr, JSC::TypeNothing, JSC::ErrorType::Error, false);
             } else if (proto.isObject()) {
                 clone = JSC::constructEmptyObject(globalObject, proto.getObject());
@@ -2304,8 +2292,7 @@ struct AsymmetricMatcherSubstitution {
         return clone;
     }
 
-    // `received` and `matchers` are objects that deepMatch compared against
-    // each other. Returns what should be serialized in place of `received`.
+    // Returns what to serialize in place of `received`.
     JSValue substitute(JSObject* received, JSObject* matchers)
     {
         if (received == matchers) return received;
@@ -2331,15 +2318,13 @@ struct AsymmetricMatcherSubstitution {
             if (isAsymmetricMatcher(matcherProp)) {
                 replacement = matcherProp;
             } else if (isAsymmetricMatcher(receivedProp) || !receivedProp.isObject() || !matcherProp.isObject()) {
-                // Compared as a whole by deepMatch, and a matcher on the
-                // received side already prints as a matcher: nothing to
-                // substitute.
+                // Compared as a whole; a received-side matcher already prints as one.
                 continue;
             } else {
                 auto onReceivedPath = receivedPath.insert(JSValue::encode(receivedProp));
                 auto onMatcherPath = matcherPath.insert(JSValue::encode(matcherProp));
                 if (!onReceivedPath.second || !onMatcherPath.second) {
-                    // deepMatch stopped at this cycle without checking below it.
+                    // Cycle: deepMatch checked nothing below here.
                     if (onReceivedPath.second) receivedPath.erase(onReceivedPath.first);
                     if (onMatcherPath.second) matcherPath.erase(onMatcherPath.first);
                     continue;
@@ -3381,8 +3366,7 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
     RELEASE_AND_RETURN(scope, Bun__deepMatch<true>(obj, &objVisited, subset, &subsetVisited, globalObject, scope, &gcBuffer, false));
 }
 
-// Only valid after `JSC__JSValue__jestDeepMatch(received, matchers)` returned
-// true; both arguments must be objects.
+// Call after `JSC__JSValue__jestDeepMatch(received, matchers)` passed; both are objects.
 extern "C" JSC::EncodedJSValue Bun__JSValue__substituteAsymmetricMatchers(JSC::EncodedJSValue receivedEncoded, JSC::EncodedJSValue matchersEncoded, JSC::JSGlobalObject* globalObject)
 {
     JSObject* received = JSValue::decode(receivedEncoded).getObject();

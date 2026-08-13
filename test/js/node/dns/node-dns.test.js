@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, isAndroid, isLinux, isWindows } from "harness";
 import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
@@ -491,7 +491,9 @@ test.skipIf(!isLinux)("dns.lookup uses getaddrinfo, not the c-ares resolver", as
   expect(exitCode).toBe(0);
 });
 
-test("dns.getServers", () => {
+// Android's platform resolver does not expose its (per-network) servers, so
+// getServers() reports [] until setServers() hands the resolver explicit ones.
+test.skipIf(isAndroid)("dns.getServers", () => {
   function parseResolvConf() {
     const servers = [];
     if (isWindows) {
@@ -544,6 +546,50 @@ describe("dns.reverse", () => {
     });
     return promise;
   });
+});
+
+// The system resolver answers loopback from the hosts file on every platform
+// (c-ares reads /etc/hosts first; Android goes through bionic/netd).
+test("dns.reverse of loopback comes from the hosts file", async () => {
+  expect(await dns.promises.reverse("127.0.0.1")).toContain("localhost");
+  const { hostname } = await dns.promises.lookupService("127.0.0.1", 22);
+  expect(hostname).toBe("localhost");
+});
+
+// A resolver with no explicit servers uses the platform resolver on Android;
+// setServers([...]) switches it to those servers, setServers([]) switches back.
+test("Resolver getServers/setServers round-trip", async () => {
+  const resolver = new dns.promises.Resolver();
+  if (isAndroid) expect(resolver.getServers()).toEqual([]);
+  resolver.setServers(["1.1.1.1", "8.8.8.8"]);
+  expect(resolver.getServers()).toEqual(["1.1.1.1", "8.8.8.8"]);
+  expect((await resolver.resolve4("example.com")).length).toBeGreaterThan(0);
+  resolver.setServers([]);
+  expect(resolver.getServers()).toEqual([]);
+  if (isAndroid) {
+    // back on the platform resolver: still resolves
+    expect((await resolver.resolve4("example.com")).length).toBeGreaterThan(0);
+  }
+});
+
+test("Resolver#cancel rejects in-flight queries with ECANCELLED", async () => {
+  const resolver = new dns.promises.Resolver();
+  const pending = resolver.resolveTxt("example.com").then(
+    () => "resolved",
+    e => e.code,
+  );
+  resolver.cancel();
+  expect(await pending).toBe("ECANCELLED");
+});
+
+test("Resolver#setServers throws while that resolver has queries in flight", async () => {
+  const resolver = new dns.promises.Resolver();
+  const pending = resolver.resolveMx("example.com").catch(e => e.code);
+  expect(() => resolver.setServers(["1.1.1.1"])).toThrow(
+    expect.objectContaining({ code: "ERR_DNS_SET_SERVERS_FAILED" }),
+  );
+  resolver.cancel();
+  await pending;
 });
 
 test("dns.promises.reverse", async () => {

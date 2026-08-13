@@ -179,6 +179,17 @@ pub enum Metadata {
 impl Metadata {
     pub const DEFAULT: Self = Metadata::MNone;
 
+    /// Cross-arena clone: `MDot` points into its source arena, so a plain
+    /// copy would dangle once that arena resets.
+    pub fn deep_clone(self, bump: &bun_alloc::Arena) -> Self {
+        match self {
+            Metadata::MDot(refs) => {
+                Metadata::MDot(crate::nodes::StoreSlice::new(bump.alloc_slice_copy(&refs)))
+            }
+            other => other,
+        }
+    }
+
     // the logic in finish_union, merge_union, finish_intersection and merge_intersection is
     // translated from:
     // https://github.com/microsoft/TypeScript/blob/e0a324b0503be479f2b33fd2e17c6e86c94d1297/src/compiler/transformers/typeSerializer.ts#L402

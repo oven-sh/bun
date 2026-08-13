@@ -251,20 +251,29 @@ function closeAdoptedTLSRawNowNT(handle, self, isException) {
 // The transport a TLS socket was layered over (tls.connect({ socket }),
 // new TLSSocket(socket)) goes down with it, like the parent wrap of node's
 // TLSWrap: it emits 'close' and, if it was accepted, leaves its server's
-// connection count. Keyed on destroy rather than 'end' because a handshake
-// failure destroys the TLS socket without ever emitting 'end'. A net.Socket
-// holding the raw twin of this socket's TLS handle shares the fd that this
-// socket's own handle close tears down, so it is only detached; anything else
-// (a generic duplex, or a socket still driving its own fd under the
-// stream-level TLS engine) owns its transport and closes it itself, so a late
-// RST on it can't surface as an error after this socket is gone.
-function destroyUpgradedTransport(self) {
-  const upgraded = self[kupgraded];
-  if (!upgraded || upgraded.destroyed) return;
+// connection count. Keyed on _destroy rather than on 'end' because a handshake
+// failure destroys the TLS socket without ever emitting 'end', and run a tick
+// after _destroy's callback so that, as in node, the TLS socket's 'error' (and
+// a tls.Server's 'tlsClientError') still see the transport intact and its
+// 'close' lands between the TLS socket's 'error' and 'close'. A net.Socket
+// holding the raw twin of the TLS handle shares the fd that the TLS handle's
+// own close tears down, so it is only detached; anything else (a generic
+// duplex, or a socket still driving its own fd under the stream-level TLS
+// engine) owns its transport and closes it itself, so a late RST on it can't
+// surface as an error after the TLS socket is gone.
+function destroyUpgradedTransportNT(upgraded) {
+  if (upgraded.destroyed) return;
   if (upgraded._handle?.[kAdoptedTLSRaw]) {
     upgraded._handle = null;
   }
   upgraded.destroy();
+}
+// For a socket whose handle is already gone: a detached transport queues its
+// 'close' inside destroy(), so queuing this socket's 'close' afterwards keeps
+// node's order (transport first).
+function destroyUpgradedTransportAndCloseNT(upgraded, self, hasError) {
+  destroyUpgradedTransportNT(upgraded);
+  process.nextTick(emitCloseNT, self, hasError);
 }
 function detachSocket(self) {
   if (!self) self = this;
@@ -1998,8 +2007,11 @@ Socket.prototype.connect = function connect(...args) {
           // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
           upgradeDuplex = isNamedPipeSocket(socket) || hasUnflushedWrites(connection);
         }
+        // Recorded before the upgrade runs (which may wait for 'connect' below)
+        // so that destroying this socket at any point from here on takes the
+        // connection down with it; see destroyUpgradedTransportNT.
+        this[kupgraded] = connection;
         if (upgradeDuplex) {
-          this[kupgraded] = connection;
           const [result, events] = upgradeDuplexToTLS(connection, {
             data: { self: this, req: { oncomplete: afterConnect } },
             tls,
@@ -2015,7 +2027,6 @@ Socket.prototype.connect = function connect(...args) {
           // connecting (e.g. tls.connect({ socket: net.connect(port) })) must be
           // upgraded once it emits 'connect'.
           if (socket && !connection.connecting) {
-            this[kupgraded] = connection;
             const result = upgradeTLSDeferred(socket, {
               data: { self: this, req: { oncomplete: afterConnect } },
               tls,
@@ -2037,19 +2048,16 @@ Socket.prototype.connect = function connect(...args) {
             // wait to be connected
             connection.once("connect", () => {
               // The TLS socket may have been destroyed before the underlying
-              // socket connected (e.g. tls.connect({ socket }).destroy()); don't
-              // start a handshake on a dead socket.
-              if (this.destroyed) {
-                connection.destroy();
-                return;
-              }
+              // socket connected (e.g. tls.connect({ socket }).destroy()); its
+              // teardown is already destroying the connection, don't start a
+              // handshake on it.
+              if (this.destroyed) return;
               const socket = connection._handle;
               if (!upgradeDuplex && socket) {
                 // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
                 upgradeDuplex = isNamedPipeSocket(socket) || hasUnflushedWrites(connection);
               }
               if (upgradeDuplex) {
-                this[kupgraded] = connection;
                 const [result, events] = upgradeDuplexToTLS(connection, {
                   data: { self: this, req: { oncomplete: afterConnect } },
                   tls,
@@ -2061,7 +2069,6 @@ Socket.prototype.connect = function connect(...args) {
                 connection.on("close", events[3]);
                 this._handle = result;
               } else {
-                this[kupgraded] = connection;
                 const result = upgradeTLSDeferred(socket, {
                   data: { self: this, req: { oncomplete: afterConnect } },
                   tls,
@@ -2148,7 +2155,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
-  destroyUpgradedTransport(this);
+  const upgraded = this[kupgraded];
 
   // Close an fd adopted for synchronous writes (node closes the wrapping
   // libuv handle here). Leave stdio fds 0-2 open: process.stdout/stderr and
@@ -2214,9 +2221,16 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       this._sockname = null;
     }
     callback(err);
+    // After callback(err), which queues this socket's 'error'; 'close' comes
+    // from the handle close above (setImmediate), after the transport's.
+    if (upgraded) process.nextTick(destroyUpgradedTransportNT, upgraded);
   } else {
     callback(err);
-    process.nextTick(emitCloseNT, this, err ? true : false);
+    if (upgraded) {
+      process.nextTick(destroyUpgradedTransportAndCloseNT, upgraded, this, err ? true : false);
+    } else {
+      process.nextTick(emitCloseNT, this, err ? true : false);
+    }
   }
 
   const server = this._server;

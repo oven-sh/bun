@@ -9,49 +9,89 @@ import tls from "tls";
 // caller keyed on the plain socket's 'close' sees it even when the upgrade
 // fails. Releasing it from the TLS socket's 'end' only covered a graceful
 // shutdown: a failed handshake destroys the TLS socket without emitting 'end'.
+// Node's order of events, asserted below: the TLS socket's 'error' first, with
+// the plain socket still intact (a caller can still read its remoteAddress
+// there), then the plain socket's 'close', then the TLS socket's 'close'.
 describe("destroying tls.connect({ socket }) destroys the wrapped net.Socket", () => {
-  // events.once() rejects when 'error' is emitted first, which is the point of
-  // these cases; resolves with the 'close' event's hadError argument.
-  const closed = (socket: net.Socket) => new Promise<boolean>(resolve => socket.once("close", resolve));
+  // Logs both sockets' lifecycle events in order. Resolves once the TLS socket
+  // has closed, plus the plain socket's 'close' if one is still due (a plain
+  // socket that was never destroyed, the bug, would never emit it, so that case
+  // resolves right away and fails on the log). Plain listeners rather than
+  // events.once(): the TLS socket emits 'error' before 'close' here.
+  function observe(plain: net.Socket, secure: tls.TLSSocket) {
+    const events: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<string[]>();
+    plain.on("error", (err: Error & { code?: string }) => events.push(`plain error ${err.code}`));
+    plain.on("close", hadError => events.push(`plain close hadError=${hadError}`));
+    secure.on("error", (err: Error & { code?: string }) =>
+      events.push(`secure error ${err.code} plain.destroyed=${plain.destroyed}`),
+    );
+    secure.on("close", hadError => {
+      events.push(`secure close hadError=${hadError} plain.destroyed=${plain.destroyed}`);
+      if (plain.destroyed && !events.some(event => event.startsWith("plain close"))) {
+        plain.once("close", () => resolve(events));
+      } else {
+        resolve(events);
+      }
+    });
+    return promise;
+  }
 
-  async function upgradeAndFail(server: net.Server, waitForConnect: boolean, options: tls.ConnectionOptions) {
+  async function failedUpgrade(server: net.Server, waitForConnect: boolean, options: tls.ConnectionOptions) {
     const plain = net.connect({ host: "127.0.0.1", port: (server.address() as net.AddressInfo).port });
-    plain.on("error", () => {});
     if (waitForConnect) await once(plain, "connect");
-    const plainClosed = closed(plain);
-
-    const secure = tls.connect({ socket: plain, servername: "localhost", ...options });
-    const secureClosed = closed(secure);
-    const [err] = (await once(secure, "error")) as [Error & { code?: string }];
-    expect(await secureClosed).toBe(true);
-    // The TLS socket's _destroy destroys the wrapped socket synchronously, so it
-    // is already destroyed once the TLS socket has closed, and it emits 'close'
-    // itself, without an error of its own.
-    expect(plain.destroyed).toBe(true);
-    expect(await plainClosed).toBe(false);
-    return err.code;
+    return observe(plain, tls.connect({ socket: plain, servername: "localhost", ...options }));
   }
 
   describe.each([
     ["an already connected socket", true],
     ["a socket that is still connecting", false],
   ])("handshake against a non-TLS peer over %s", (_, waitForConnect) => {
-    test.concurrent("destroys the wrapped socket", async () => {
+    test.concurrent("destroys the wrapped socket after the error", async () => {
       await using server = net.createServer(peer => {
         peer.on("error", () => {});
         peer.on("data", () => peer.write("this is not a TLS ServerHello\r\n"));
       });
       await once(server.listen(0, "127.0.0.1"), "listening");
-      expect(await upgradeAndFail(server, waitForConnect, {})).toBe("ERR_SSL_WRONG_VERSION_NUMBER");
+      expect(await failedUpgrade(server, waitForConnect, {})).toEqual([
+        "secure error ERR_SSL_WRONG_VERSION_NUMBER plain.destroyed=false",
+        "plain close hadError=false",
+        "secure close hadError=true plain.destroyed=true",
+      ]);
     });
   });
 
-  test.concurrent("certificate verification failure destroys the wrapped socket", async () => {
+  test.concurrent("certificate verification failure destroys the wrapped socket after the error", async () => {
     // The server's certificate is self-signed and the client is given no `ca`.
     await using server = tls.createServer(certs, socket => socket.on("error", () => {}));
     server.on("tlsClientError", () => {});
     await once(server.listen(0, "127.0.0.1"), "listening");
-    expect(await upgradeAndFail(server, true, { rejectUnauthorized: true })).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(await failedUpgrade(server, true, { rejectUnauthorized: true })).toEqual([
+      "secure error DEPTH_ZERO_SELF_SIGNED_CERT plain.destroyed=false",
+      "plain close hadError=false",
+      "secure close hadError=true plain.destroyed=true",
+    ]);
+  });
+
+  test.concurrent("destroy() while the wrapped socket is still connecting destroys it too", async () => {
+    // Nothing is listening on the port any more, so the connect would fail:
+    // a wrapped socket left behind would surface that as an error of its own.
+    const server = net.createServer();
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as net.AddressInfo;
+    await new Promise<void>(resolve => server.close(() => resolve()));
+
+    const plain = net.connect({ host: "127.0.0.1", port });
+    const secure = tls.connect({ socket: plain, servername: "localhost" });
+    const events = observe(plain, secure);
+    secure.destroy();
+    // The plain socket still owns its (connecting) handle, so its 'close'
+    // follows the handle close, a later phase than the handle-less TLS
+    // socket's 'close': the set of events is the contract here, not the order.
+    expect((await events).sort()).toEqual([
+      "plain close hadError=false",
+      "secure close hadError=false plain.destroyed=true",
+    ]);
   });
 });
 

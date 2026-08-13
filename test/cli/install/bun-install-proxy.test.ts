@@ -1,7 +1,7 @@
-import { beforeAll, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 import { exec } from "child_process";
 import { rm } from "fs/promises";
-import { bunEnv, bunExe, dockerExe, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, dockerExe, isDockerEnabled, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 import { promisify } from "util";
 const execAsync = promisify(exec);
@@ -95,3 +95,133 @@ if (isDockerEnabled()) {
     await Promise.all(promises);
   }, 60_000);
 }
+
+describe("registry commands honor http_proxy", () => {
+  type ProxiedRequest = { method: string; url: string; otp: string | null };
+
+  // The registry named in bunfig.toml only records the requests that reach it
+  // directly; http_proxy points at `proxy`, which answers in the registry's
+  // place. A request sent through an HTTP proxy names the full registry URL as
+  // its target, which is what `req.url` holds at the proxy.
+  function proxiedRegistry(respond: (req: ProxiedRequest, registryUrl: string) => Response) {
+    const direct: string[] = [];
+    const proxied: ProxiedRequest[] = [];
+    const registry = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req) {
+        direct.push(`${req.method} ${new URL(req.url).pathname}`);
+        return new Response(null, { status: 500 });
+      },
+    });
+    const registryUrl = `http://127.0.0.1:${registry.port}/`;
+    const proxy = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(req) {
+        await req.arrayBuffer();
+        const request = { method: req.method, url: req.url, otp: req.headers.get("npm-otp") };
+        proxied.push(request);
+        return respond(request, registryUrl);
+      },
+    });
+    return {
+      registryUrl,
+      direct,
+      proxied,
+      async run(packageName: string, ...args: string[]) {
+        using dir = tempDir(`proxy-${packageName}`, {
+          "package.json": JSON.stringify({ name: packageName, version: "1.0.0" }),
+          "bunfig.toml": Bun.TOML.stringify({
+            install: { cache: false, registry: { url: registryUrl, token: "unused" } },
+          }),
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          cwd: String(dir),
+          env: {
+            ...bunEnv,
+            NO_PROXY: undefined,
+            no_proxy: undefined,
+            HTTPS_PROXY: undefined,
+            https_proxy: undefined,
+            HTTP_PROXY: undefined,
+            http_proxy: `http://127.0.0.1:${proxy.port}`,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      },
+      [Symbol.dispose]() {
+        registry.stop(true);
+        proxy.stop(true);
+      },
+    };
+  }
+
+  it.concurrent("bun pm whoami", async () => {
+    using setup = proxiedRegistry(() => Response.json({ username: "user-behind-the-proxy" }));
+
+    const { stdout, stderr, exitCode } = await setup.run("whoami-pkg", "pm", "whoami");
+    expect({ proxied: setup.proxied, direct: setup.direct, stdout, stderr, exitCode }).toEqual({
+      proxied: [{ method: "GET", url: `${setup.registryUrl}-/whoami`, otp: null }],
+      direct: [],
+      stdout: "user-behind-the-proxy\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("bun publish", async () => {
+    using setup = proxiedRegistry(() => Response.json({ ok: true }));
+
+    const { stdout, stderr, exitCode } = await setup.run("publish-pkg", "publish");
+    expect({ proxied: setup.proxied, direct: setup.direct, stderr, exitCode }).toEqual({
+      proxied: [{ method: "PUT", url: `${setup.registryUrl}publish-pkg`, otp: null }],
+      direct: [],
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(stdout).toContain(" + publish-pkg@1.0.0");
+  });
+
+  it.concurrent("bun publish --tolerate-republish version lookup", async () => {
+    using setup = proxiedRegistry(({ method }) =>
+      method === "GET" ? Response.json({ versions: { "1.0.0": {} } }) : new Response(null, { status: 500 }),
+    );
+
+    const { stderr, exitCode } = await setup.run("republish-pkg", "publish", "--tolerate-republish");
+    expect({ proxied: setup.proxied, direct: setup.direct, stderr, exitCode }).toEqual({
+      proxied: [{ method: "GET", url: `${setup.registryUrl}republish-pkg`, otp: null }],
+      direct: [],
+      stderr: "warn: Registry already knows about version 1.0.0; skipping.\n",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("bun publish web login poll and OTP retry", async () => {
+    using setup = proxiedRegistry(({ url, otp }, registryUrl) => {
+      if (url.endsWith("/-/done")) return Response.json({ token: "otp-from-web-login" });
+      if (otp === "otp-from-web-login") return Response.json({ ok: true });
+      return Response.json(
+        { authUrl: `${registryUrl}-/auth`, doneUrl: `${registryUrl}-/done` },
+        { status: 401, headers: { "www-authenticate": "OTP" } },
+      );
+    });
+
+    const { stdout, stderr, exitCode } = await setup.run("otp-pkg", "publish");
+    expect({ proxied: setup.proxied, direct: setup.direct, stderr, exitCode }).toEqual({
+      proxied: [
+        { method: "PUT", url: `${setup.registryUrl}otp-pkg`, otp: null },
+        { method: "GET", url: `${setup.registryUrl}-/done`, otp: null },
+        { method: "PUT", url: `${setup.registryUrl}otp-pkg`, otp: "otp-from-web-login" },
+      ],
+      direct: [],
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(stdout).toContain(" + otp-pkg@1.0.0");
+  });
+});

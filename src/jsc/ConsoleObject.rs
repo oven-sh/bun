@@ -534,8 +534,7 @@ fn message_with_type_and_level_(
 
     // Matches Node: a string first arg joins the marker with ": " and stays the format string.
     let mut assert_args: Vec<JSValue> = Vec::new();
-    // Roots the minted prefix string across `format2`; a heap `Vec<JSValue>` is
-    // invisible to the conservative stack scan.
+    // A heap `Vec<JSValue>` is invisible to the GC's stack scan; root the prefix.
     let mut _prefix_guard: Option<jsc::ProtectedJSValue> = None;
     if message_type == MessageType::Assert && print_length > 0 {
         use crate::StringJsc as _;

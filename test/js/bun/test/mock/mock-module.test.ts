@@ -200,6 +200,14 @@ describe("mock.module() tail-called from a callback the runner invokes", () => {
     ["test body", `test("registers", () => mock.module("./dep", ${mocked}));`, 2],
     ["test.each body", `test.each(["./dep"])("registers %s", specifier => mock.module(specifier, ${mocked}));`, 2],
     ["beforeAll with a relative file: URL", `beforeAll(() => mock.module("file:./dep.ts", ${mocked}));`, 1],
+    // Registering inside an AsyncLocalStorage context makes the runner store the callback wrapped in an
+    // AsyncContextFrame. (Hooks and tests registered that way currently wait for a done callback that was
+    // never declared, so describe is the shape that exercises the wrapper.)
+    [
+      "describe body registered under AsyncLocalStorage",
+      `new AsyncLocalStorage().run(1, () => describe("registers", () => mock.module("./dep", ${mocked})));`,
+      1,
+    ],
   ];
 
   test.concurrent.each(shapes)("%s", async (_shape, register, passing) => {
@@ -207,6 +215,7 @@ describe("mock.module() tail-called from a callback the runner invokes", () => {
       "dep.ts": dep,
       "tail.test.ts": `
         import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
+        import { AsyncLocalStorage } from "node:async_hooks";
         import { value } from "./dep";
         ${register}
         test("mock applied to the already-imported module", () => expect(value).toBe("mocked"));
@@ -320,7 +329,9 @@ describe("mock.module() tail-called from a callback the runner invokes", () => {
         let worker: Worker;
         beforeAll(async () => {
           worker = new Worker(new URL("./worker.ts", import.meta.url).href);
-          const ready = new Promise(resolve => (worker.onmessage = resolve));
+          const { promise: ready, resolve, reject } = Promise.withResolvers();
+          worker.onmessage = resolve;
+          worker.onerror = reject;
           worker.postMessage(flags);
           await ready;
         });
@@ -328,9 +339,11 @@ describe("mock.module() tail-called from a callback the runner invokes", () => {
         test("the worker still sees the real module", () => {
           Atomics.store(flags, 0, 1);
           Atomics.notify(flags, 0);
-          // Block here so this callback is the one the runner has on the stack while the worker runs.
-          Atomics.wait(flags, 1, 0);
-          // 1: "./dep" stayed unresolved in the worker, as before; 2: it was resolved against this file.
+          // Block here so this callback is the one the runner has on the stack while the worker runs. The bound
+          // only turns a worker that never reports into a failure (below) instead of a process that never exits.
+          Atomics.wait(flags, 1, 0, 5000);
+          // 0: the worker never reported; 1: "./dep" stayed unresolved in the worker, as before; 2: it was
+          // resolved against this file.
           expect(Atomics.load(flags, 1)).toBe(1);
         });
       `,

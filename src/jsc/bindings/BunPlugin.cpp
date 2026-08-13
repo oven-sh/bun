@@ -513,9 +513,15 @@ static JSC::SourceOrigin onStackTestCallbackSourceOrigin(JSC::JSGlobalObject* gl
     if (!callback)
         return {};
 
-    // test.each() registers the user's function bound to the row's arguments.
-    while (auto* bound = dynamicDowncast<JSC::JSBoundFunction>(callback))
-        callback = bound->targetFunction();
+    // The runner stores the user's function inside an AsyncContextFrame when it was registered under AsyncLocalStorage, and bound to the row's arguments by test.each().
+    for (;;) {
+        if (auto* frame = dynamicDowncast<AsyncContextFrame>(callback))
+            callback = frame->callback.get();
+        else if (auto* bound = dynamicDowncast<JSC::JSBoundFunction>(callback))
+            callback = bound->targetFunction();
+        else
+            break;
+    }
 
     auto* function = dynamicDowncast<JSC::JSFunction>(callback);
     if (!function || function->isHostFunction())

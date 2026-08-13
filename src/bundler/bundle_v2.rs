@@ -7306,11 +7306,10 @@ pub mod bv2_impl {
                             (server_index, Index::INVALID.get())
                         };
 
-                        this.graph
-                            .path_to_source_index_map(result_ast_target)
-                            .put(source_path_text, reference_source_index)
-                            .expect("oom");
-
+                        // The generated files are not registered in the path maps:
+                        // every graph keeps resolving this path to the file it
+                        // parsed itself, and `LinkerGraph::load` redirects the
+                        // import records that cross the boundary to the reference.
                         this.graph
                             .server_component_boundaries
                             .put(

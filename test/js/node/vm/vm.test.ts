@@ -463,6 +463,181 @@ describe("Script", () => {
   });
 });
 
+// Position of the first `<filename>:<line>:<column>` frame in a stack. The header
+// node:vm prepends to thrown errors has no column, so it never matches.
+function frameAt(stack: string, filename: string) {
+  const match = stack.match(new RegExp(`${filename.replaceAll(".", "\\.")}:(-?\\d+):(\\d+)`));
+  expect(match).not.toBeNull();
+  return { line: Number(match![1]), column: Number(match![2]) };
+}
+
+// lineOffset / columnOffset are signed in Node: a negative offset is how a caller
+// compensates for wrapper text it prepended to the source, and V8 reports the
+// resulting positions as-is. JSC clamps the position a source starts at to 1:1,
+// so the negative part has to be re-applied by Bun, both in the arrow header
+// node:vm prepends to a thrown error's stack and in every rendering of the frames.
+describe("negative lineOffset and columnOffset", () => {
+  const fourLines = "1;\n2;\n3;\nthrow new Error('x')";
+
+  // The header node:vm prepends to a thrown error (`<url>:<line>`, source line,
+  // caret line, blank line) and the rest of the stack.
+  function thrown(run: () => unknown) {
+    let stack: string | undefined;
+    try {
+      run();
+    } catch (e: any) {
+      stack = e.stack;
+    }
+    expect(typeof stack).toBe("string");
+    const lines = stack!.split("\n");
+    return { header: lines.slice(0, 4), rest: lines.slice(4).join("\n") };
+  }
+
+  const runners: Record<string, (code: string, options: object) => unknown> = {
+    "Script#runInThisContext": (code, options) => new Script(code, options).runInThisContext(),
+    "Script#runInNewContext": (code, options) => new Script(code, options).runInNewContext({}),
+    "vm.runInThisContext": (code, options) => runInThisContext(code, options),
+  };
+  for (const [name, run] of Object.entries(runners)) {
+    test(`${name}: header line and frames carry a negative lineOffset`, () => {
+      const base = thrown(() => run(fourLines, { filename: "n.js" }));
+      expect(base.header).toEqual(["n.js:4", "throw new Error('x')", expect.stringMatching(/^ *\^$/), ""]);
+      expect(frameAt(base.rest, "n.js").line).toBe(4);
+
+      const offset = thrown(() => run(fourLines, { filename: "n.js", lineOffset: -2 }));
+      expect(offset.header).toEqual(["n.js:2", "throw new Error('x')", base.header[2], ""]);
+      expect(frameAt(offset.rest, "n.js")).toEqual({ ...frameAt(base.rest, "n.js"), line: 2 });
+    });
+  }
+
+  test("the source line shown is the physical one, not the one at line + |offset|", () => {
+    // Before the offset was taken into account here the header showed the line
+    // *after* the throw (with the caret under it) whenever it was long enough.
+    const code = "1;\nthrow new Error('x');\nconsole.log('a line long enough for the caret to fit under it');";
+    const { header } = thrown(() => new Script(code, { filename: "w.js", lineOffset: -1 }).runInThisContext());
+    expect(header).toEqual(["w.js:1", "throw new Error('x');", expect.stringMatching(/^ *\^$/), ""]);
+  });
+
+  test("frames inside functions defined by the script are offset too", () => {
+    const code = "function f() {\n  throw new Error('x');\n}\nf();";
+    const { header, rest } = thrown(() => new Script(code, { filename: "nf.js", lineOffset: -1 }).runInThisContext());
+    expect(header).toEqual(["nf.js:1", "  throw new Error('x');", expect.stringMatching(/^ *\^$/), ""]);
+    expect(rest).toMatch(/^    at f \(nf\.js:1:\d+\)$/m);
+    expect(rest).toMatch(/^    at nf\.js:3:\d+$/m);
+  });
+
+  test("columnOffset shifts the first line's frame columns either way; the caret stays on the text", () => {
+    const code = "      throw new Error('x')";
+    const run = (options: object) =>
+      thrown(() => new Script(code, { filename: "c.js", ...options }).runInThisContext());
+    const base = run({});
+    expect(base.header).toEqual(["c.js:1", code, expect.stringMatching(/^ *\^$/), ""]);
+    const baseFrame = frameAt(base.rest, "c.js");
+
+    for (const columnOffset of [3, -3]) {
+      const offset = run({ columnOffset });
+      // Same caret line: the caret marks a column of the text, which did not move.
+      expect(offset.header).toEqual(base.header);
+      expect(frameAt(offset.rest, "c.js")).toEqual({ line: 1, column: baseFrame.column + columnOffset });
+    }
+  });
+
+  test("header lines at or below zero are reported like Node does", () => {
+    const far = thrown(() => new Script(fourLines, { filename: "nn.js", lineOffset: -10 }).runInThisContext());
+    expect(far.header).toEqual(["nn.js:-6", "throw new Error('x')", expect.stringMatching(/^ *\^$/), ""]);
+
+    const zero = thrown(() =>
+      new Script("  throw new Error('x')", { filename: "z.js", lineOffset: -1, columnOffset: -1 }).runInThisContext(),
+    );
+    expect(zero.header).toEqual(["z.js:0", "  throw new Error('x')", expect.stringMatching(/^ *\^$/), ""]);
+  });
+
+  const makesError = "'line 1';\nfunction f() {\n  return new Error('x');\n}\nf();";
+
+  test("Error.prepareStackTrace call sites see the offsets", () => {
+    // Positions of the call sites in `filename` as [line, column] pairs.
+    const callSites = (code: string, options: { filename: string; lineOffset?: number; columnOffset?: number }) => {
+      const previous = Error.prepareStackTrace;
+      Error.prepareStackTrace = (_, sites) =>
+        sites.filter(s => s.getFileName() === options.filename).map(s => [s.getLineNumber(), s.getColumnNumber()]);
+      try {
+        return new Script(code, options).runInThisContext().stack as [number, number][];
+      } finally {
+        Error.prepareStackTrace = previous;
+      }
+    };
+
+    const base = callSites(makesError, { filename: "cs.js" });
+    expect(base.map(([line]) => line)).toEqual([3, 5]);
+    const lines = callSites(makesError, { filename: "cs.js", lineOffset: -1 });
+    expect(lines).toEqual([
+      [2, base[0][1]],
+      [4, base[1][1]],
+    ]);
+
+    const code = "      new Error('x')";
+    const [[, baseColumn]] = callSites(code, { filename: "cc.js" });
+    expect(callSites(code, { filename: "cc.js", columnOffset: -3 })).toEqual([[1, baseColumn - 3]]);
+  });
+
+  test("Bun.inspect() prints the offset line numbers", () => {
+    const error = new Script(makesError, { filename: "insp.js", lineOffset: -1 }).runInThisContext();
+    const inspected = Bun.inspect(error);
+    expect(inspected).toMatch(/^2 \| +return new Error\('x'\);$/m);
+    expect(inspected).toMatch(/at f \(insp\.js:2:\d+\)$/m);
+    expect(inspected).toMatch(/at insp\.js:4:\d+$/m);
+  });
+
+  test("compileFunction reports body line N as N + lineOffset for every sign of the offset", () => {
+    const body = "1;\nthrow new Error('x')";
+    const lineFor = (lineOffset: number) => {
+      let stack: string | undefined;
+      try {
+        compileFunction(body, [], { filename: "cf.js", lineOffset })();
+      } catch (e: any) {
+        stack = e.stack;
+      }
+      return frameAt(stack!, "cf.js").line;
+    };
+    expect([-1, 0, 3].map(lineFor)).toEqual([1, 2, 5]);
+  });
+
+  test.concurrent("uncaught errors are printed with the offset positions", async () => {
+    const run = async (code: string, options: object) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `require("node:vm").runInThisContext(${JSON.stringify(code)}, ${JSON.stringify(options)})`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("");
+      return { stderr, exitCode };
+    };
+
+    // displayErrors: false leaves err.stack alone, so the error printer shows its
+    // own source excerpt and frames instead of the header checked above.
+    const code = "1;\n2;\nfunction f() {\n  throw new Error('x');\n}\nf();";
+    const [excerpt, belowZero] = await Promise.all([
+      run(code, { filename: "n.js", lineOffset: -2, displayErrors: false }),
+      run(fourLines, { filename: "nn.js", lineOffset: -10 }),
+    ]);
+
+    expect(excerpt.stderr).toMatch(/^2 \| +throw new Error\('x'\);$/m);
+    expect(excerpt.stderr).toMatch(/at f \(n\.js:2:\d+\)$/m);
+    expect(excerpt.stderr).toMatch(/at n\.js:4:\d+$/m);
+    expect(excerpt.exitCode).toBe(1);
+
+    // Offsets that push the lines below 1 still print the error and exit normally.
+    expect(belowZero.stderr).toContain("error: x");
+    expect(belowZero.exitCode).toBe(1);
+  });
+});
+
 type TestRunInContextArg =
   | { fn: typeof runInContext; isIsolated: true; isNew?: boolean }
   | { fn: typeof runInThisContext; isIsolated?: false; isNew?: boolean };
@@ -671,11 +846,38 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
   test.todo("can specify filename", () => {
     //
   });
-  test.todo("can specify lineOffset", () => {
-    //
+  // Runs `code`, which evaluates to a stack string, through whichever entry
+  // point this suite exercises and returns the position of its frame in `file`.
+  const positionOf = (code: string, offsets: { lineOffset?: number; columnOffset?: number } = {}) => {
+    const options = { filename: "offsets.js", ...offsets };
+    const stack: string = isIsolated
+      ? (fn as typeof runInContext)(code, createContext({}), options)
+      : (fn as typeof runInThisContext)(code, options);
+    return frameAt(stack, options.filename);
+  };
+
+  test("can specify lineOffset", () => {
+    // `new Error()` sits on physical line 4; lineOffset is added to it in
+    // either direction (a negative offset is how callers compensate for
+    // wrapper lines they prepended to the source).
+    const code = "\n\n\n  new Error().stack;";
+    expect(positionOf(code).line).toBe(4);
+    expect(positionOf(code, { lineOffset: 10 }).line).toBe(14);
+    expect(positionOf(code, { lineOffset: -2 }).line).toBe(2);
   });
-  test.todo("can specify columnOffset", () => {
-    //
+  test("can specify columnOffset", () => {
+    // columnOffset applies to the first physical line of the source only, in
+    // either direction. The column JSC attributes to the expression is taken
+    // from an un-offset run so only the offset arithmetic is asserted here.
+    const code = "    new Error().stack;";
+    const base = positionOf(code);
+    expect(base.line).toBe(1);
+    expect(positionOf(code, { columnOffset: 10 })).toEqual({ line: 1, column: base.column + 10 });
+    expect(positionOf(code, { columnOffset: -2 })).toEqual({ line: 1, column: base.column - 2 });
+    // Still the first physical line when lineOffset moves its number.
+    expect(positionOf(code, { lineOffset: 5, columnOffset: -2 })).toEqual({ line: 6, column: base.column - 2 });
+    // Not the first physical line: the column is untouched.
+    expect(positionOf("\n" + code, { lineOffset: -1, columnOffset: -2 })).toEqual({ line: 1, column: base.column });
   });
   test.todo("can specify timeout", () => {
     //

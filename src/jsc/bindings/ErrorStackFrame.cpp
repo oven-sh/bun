@@ -1,12 +1,32 @@
 #include "root.h"
+#include "ErrorStackFrame.h"
 #include "JavaScriptCore/CodeBlock.h"
-#include "headers-handwritten.h"
-#include "JavaScriptCore/BytecodeIndex.h"
+#include "JavaScriptCore/StackFrame.h"
 #include "wtf/Assertions.h"
 #include "wtf/text/OrdinalNumber.h"
 
 namespace Bun {
 using namespace JSC;
+
+void applyNegativeSourceStart(CodeBlock* code, int& lineZeroBased, int& columnZeroBased)
+{
+    auto* provider = code->source().provider();
+    if (!provider)
+        return;
+
+    // Function code blocks share the provider of the program they were parsed from, so this is
+    // the whole source's start even for a frame inside a function.
+    TextPosition start = provider->startPosition();
+    int startLine = start.m_line.zeroBasedInt();
+    int startColumn = start.m_column.zeroBasedInt();
+
+    // JSC only adds the start column to positions on the first physical line, which it reports
+    // as the clamped start line.
+    if (startColumn < 0 && lineZeroBased == std::max(startLine, 0))
+        columnZeroBased += startColumn;
+    if (startLine < 0)
+        lineZeroBased += startLine;
+}
 
 /// Adjust a `ZigStackFramePosition` by a number of bytes. This accounts for when the adjustment
 /// crosses line boundaries, and thus requires the source code in order to properly compute
@@ -71,6 +91,7 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
         .column_zero_based = OrdinalNumber::fromOneBasedInt(expr.lineColumn.column).zeroBasedInt(),
         .byte_position = (int)expr.divot,
     };
+    applyNegativeSourceStart(code, pos.line_zero_based, pos.column_zero_based);
 
     auto inst = code->instructionAt(bc);
 
@@ -95,6 +116,18 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
         break;
     }
 
+    return pos;
+}
+
+ZigStackFramePosition getLineColumnForStackFrame(const StackFrame& frame)
+{
+    auto lineColumn = frame.computeLineAndColumn();
+    ZigStackFramePosition pos {
+        .line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt(),
+        .column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt(),
+        .byte_position = -1,
+    };
+    applyNegativeSourceStart(frame.codeBlock(), pos.line_zero_based, pos.column_zero_based);
     return pos;
 }
 

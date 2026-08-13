@@ -188,14 +188,15 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
 
     // The user's body starts on line 2 of the wrapped program (after the
-    // "(function () {\n" prefix). Shift the provider's start position up one
-    // line so reported positions line up with the body the way V8's
-    // CompileFunction does: body line 1 reports as lineOffset+1. JSC clamps
-    // non-positive provider start positions to zero, so once the input is
-    // already <= 0 there is nothing to gain by going further negative; clamp
-    // there to keep the value bounded for downstream arithmetic.
-    int lineZeroBased = position.m_line.zeroBasedInt();
-    TextPosition wrappedPosition(OrdinalNumber::fromZeroBasedInt(lineZeroBased > 0 ? lineZeroBased - 1 : lineZeroBased), position.m_column);
+    // "(function () {\n" prefix). Start the program one line above the
+    // requested offset so body line N reports as N + lineOffset, the way V8's
+    // CompileFunction does. For lineOffset <= 0 this start is negative; JSC
+    // counts from line 1 regardless and the stack formatters add the negative
+    // part back (Bun::applyNegativeSourceStart).
+    int startLine = position.m_line.zeroBasedInt();
+    if (startLine != std::numeric_limits<int>::min())
+        startLine--;
+    TextPosition wrappedPosition(OrdinalNumber::fromZeroBasedInt(startLine), position.m_column);
 
     SourceCode sourceCode(
         JSC::StringSourceProvider::create(code, sourceOrigin, WTF::move(options.filename), sourceTaintOrigin, wrappedPosition, SourceProviderSourceType::Program),
@@ -570,23 +571,32 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
         // Node decorates vm script errors with the offending source line and a
         // caret marker (AppendExceptionLine):
         //   <url>:<line>\n<source line>\n<caret>\n\n<stack>
+        int reportedLine = static_cast<int>(line_and_column.line);
         String sourceLineText;
         unsigned caretColumn = 0;
         if (JSC::CodeBlock* codeBlock = stack_frame.codeBlock()) {
             if (JSC::SourceProvider* provider = codeBlock->source().provider()) {
-                int64_t startLineZeroBased = provider->startPosition().m_line.zeroBasedInt();
-                int64_t physicalLine = static_cast<int64_t>(line_and_column.line) - startLineZeroBased;
+                // JSC::SourceCode clamps the start position it counts from to 1:1,
+                // so line_and_column only carries the non-negative part of
+                // lineOffset/columnOffset: undo that part to index the source
+                // text, then report the physical line with the whole offset, as
+                // Node does (and as Bun::applyNegativeSourceStart does for the
+                // frames below the header).
+                TextPosition start = provider->startPosition();
+                int startLineZeroBased = start.m_line.zeroBasedInt();
+                int64_t physicalLine = static_cast<int64_t>(line_and_column.line) - std::max(startLineZeroBased, 0);
+                reportedLine = static_cast<int>(physicalLine + startLineZeroBased);
                 sourceLineText = nthSourceLineForArrowHeader(provider->source(), physicalLine);
                 if (!sourceLineText.isNull()) {
                     caretColumn = line_and_column.column;
-                    unsigned startColumnZeroBased = static_cast<unsigned>(provider->startPosition().m_column.zeroBasedInt());
+                    unsigned startColumnZeroBased = static_cast<unsigned>(std::max(start.m_column.zeroBasedInt(), 0));
                     if (physicalLine == 1 && caretColumn > startColumnZeroBased)
                         caretColumn -= startColumnZeroBased;
                 }
             }
         }
 
-        writeArrowHeaderStack(vm, errorInstance, source_url, static_cast<int>(line_and_column.line), sourceLineText, caretColumn, stack);
+        writeArrowHeaderStack(vm, errorInstance, source_url, reportedLine, sourceLineText, caretColumn, stack);
 
         JSC::throwException(globalObject, throwScope, exception.get());
         return true;

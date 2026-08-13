@@ -1637,6 +1637,17 @@ impl Poll {
             return;
         }
         let poll = pollable.poll();
+        // FreeBSD reports a changelist entry it could not apply with
+        // `flags == EV_ERROR` and the errno in `data`. ENOENT/EBADF is the
+        // `Cancel` for a oneshot knote that already fired (or an fd that was
+        // already closed): kernel state already matches, nothing to deliver.
+        #[cfg(target_os = "freebsd")]
+        if (event.flags & libc::EV_ERROR) != 0
+            && (event.data == libc::ENOENT as _ || event.data == libc::EBADF as _)
+        {
+            log!("cancel({}) already gone = {}", event.ident, event.data);
+            return;
+        }
         // CYCLEBREAK: owner (ReadFile/WriteFile) is T6; dispatch via link-time
         // `extern "Rust"` defined in `bun_runtime::dispatch`. The
         // container_of(io_poll) recovery happens there.

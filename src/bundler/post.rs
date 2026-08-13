@@ -20,7 +20,9 @@ pub trait Event {
     /// the mini loop links the item into its queue through that field.
     const NODE: usize;
 
-    fn bundle(item: *mut Self::Item) -> *mut BundleV2<'static>;
+    /// # Safety
+    /// `item` is live (it was, or is about to be, passed to [`post`]).
+    unsafe fn bundle(item: *mut Self::Item) -> *mut BundleV2<'static>;
 
     /// Runs on the bundle thread. Owns `item` to whatever extent the event
     /// does: a parse result is freed here, a plugin `Load`/`Resolve` lives in
@@ -43,7 +45,8 @@ pub trait Event {
 /// `item` must stay valid until `run` or `refused` has consumed it, and
 /// `E::bundle(item)` must be the live `BundleV2` this bundle pass belongs to.
 pub unsafe fn post<E: Event>(item: *mut E::Item) {
-    let bv2 = E::bundle(item);
+    // SAFETY: caller contract.
+    let bv2 = unsafe { E::bundle(item) };
     // SAFETY: `linker.loop` and `js_poster` are written once in `BundleV2::init`
     // and never again, so they can be read from a worker or the JS thread while
     // the bundle thread is mutating the rest of `*bv2`; only those two fields
@@ -80,15 +83,15 @@ pub unsafe fn post<E: Event>(item: *mut E::Item) {
 }
 
 fn run_on_js_loop<E: Event>(item: *mut E::Item) -> bun_event_loop::JsResult<()> {
-    let bv2 = E::bundle(item);
     // SAFETY: `post`'s contract; the bundle thread holds no other `&mut BundleV2`
     // while its loop is dispatching queued tasks.
-    unsafe { E::run(item, &mut *bv2) };
+    unsafe { E::run(item, &mut *E::bundle(item)) };
     Ok(())
 }
 
 fn run_on_mini_loop<E: Event>(item: *mut E::Item, bv2: *mut BundleV2<'static>) {
-    debug_assert!(core::ptr::eq(bv2, E::bundle(item)));
+    // SAFETY: `post`'s contract.
+    debug_assert!(core::ptr::eq(bv2, unsafe { E::bundle(item) }));
     // SAFETY: `post`'s contract; `bv2` is the bundle the mini loop is ticking for.
     unsafe { E::run(item, &mut *bv2) };
 }

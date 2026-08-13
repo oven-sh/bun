@@ -2845,8 +2845,8 @@ pub mod parse_worker {
         type Item = Result;
         const NODE: usize = offset_of!(Result, task);
 
-        fn bundle(result: *mut Result) -> *mut BundleV2<'static> {
-            // SAFETY: `result` is live (`post`'s contract).
+        unsafe fn bundle(result: *mut Result) -> *mut BundleV2<'static> {
+            // SAFETY: caller contract.
             unsafe { (*result).ctx }.as_mut_ptr()
         }
 

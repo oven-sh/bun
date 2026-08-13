@@ -4323,8 +4323,8 @@ pub mod bv2_impl {
         type Item = jsc_api::JSBundler::Load;
         const NODE: usize = core::mem::offset_of!(jsc_api::JSBundler::Load, task);
 
-        fn bundle(load: *mut Self::Item) -> *mut BundleV2<'static> {
-            // SAFETY: `load` is live (`post`'s contract); `bv2` is set in `Load::init`.
+        unsafe fn bundle(load: *mut Self::Item) -> *mut BundleV2<'static> {
+            // SAFETY: caller contract; `bv2` is set in `Load::init`.
             unsafe { (*load).bv2 }
         }
 
@@ -4341,8 +4341,8 @@ pub mod bv2_impl {
         type Item = jsc_api::JSBundler::Resolve;
         const NODE: usize = core::mem::offset_of!(jsc_api::JSBundler::Resolve, task);
 
-        fn bundle(resolve: *mut Self::Item) -> *mut BundleV2<'static> {
-            // SAFETY: as for `PluginLoadSettled`; `bv2` is set in `Resolve::init`.
+        unsafe fn bundle(resolve: *mut Self::Item) -> *mut BundleV2<'static> {
+            // SAFETY: caller contract; `bv2` is set in `Resolve::init`.
             unsafe { (*resolve).bv2 }
         }
 
@@ -4361,8 +4361,9 @@ pub mod bv2_impl {
         type Item = jsc_api::JSBundler::Load;
         const NODE: usize = PluginLoadSettled::NODE;
 
-        fn bundle(load: *mut Self::Item) -> *mut BundleV2<'static> {
-            PluginLoadSettled::bundle(load)
+        unsafe fn bundle(load: *mut Self::Item) -> *mut BundleV2<'static> {
+            // SAFETY: same contract.
+            unsafe { PluginLoadSettled::bundle(load) }
         }
 
         unsafe fn run(load: *mut Self::Item, this: &mut BundleV2<'static>) {

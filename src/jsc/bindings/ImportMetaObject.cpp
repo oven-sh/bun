@@ -215,7 +215,10 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (moduleName.isString()) {
             auto moduleString = moduleName.toWTFString(globalObject);
-            if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, from.toWTFString(globalObject))) {
+            RETURN_IF_EXCEPTION(scope, {});
+            auto fromString = from.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, fromString)) {
                 if (moduleString == resolvedString.value())
                     return JSC::JSValue::encode(moduleName);
                 return JSC::JSValue::encode(jsString(vm, resolvedString.value()));
@@ -230,6 +233,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 if (overrideHandler) [[likely]] {
                     ASSERT(overrideHandler->isCallable());
                     JSValue parentModuleObject = globalObject->requireMap()->get(globalObject, from);
+                    RETURN_IF_EXCEPTION(scope, {});
 
                     JSValue parentID = jsUndefined();
                     if (auto* parent = dynamicDowncast<Bun::JSCommonJSModule>(parentModuleObject)) {
@@ -242,6 +246,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     args.append(moduleName);
                     args.append(parentModuleObject);
                     auto parentIdStr = parentID.toWTFString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
                     auto bunStr = Bun::toString(parentIdStr);
                     args.append(jsBoolean(Bun__isBunMain(lexicalGlobalObject, &bunStr)));
 

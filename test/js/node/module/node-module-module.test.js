@@ -478,6 +478,86 @@ console.log("survived", require("./late.js"));`,
     expect(await proc.exited).toBe(0);
   });
 
+  // Before calling an overridden _resolveFilename (or matching Bun.plugin virtual modules), the
+  // native resolver looks `this.filename` up in the require cache and coerces it to a string. A
+  // parent whose filename is not a string makes that coercion throw; BUN_JSC_validateExceptionChecks
+  // additionally aborts (debug builds only) if any of those calls is left without an exception check.
+  test("_resolveFilename override and virtual modules propagate parent lookup exceptions", async () => {
+    using dir = tempDir("resolve-filename-exception-checks", {
+      "target.cjs": `module.exports = "target";`,
+      "main.cjs": `
+        const Module = require("module");
+        const path = require("path");
+        const target = path.join(__dirname, "target.cjs");
+        const original = Module._resolveFilename;
+        let overrideCalls = 0;
+        Module._resolveFilename = () => {
+          overrideCalls++;
+          return target;
+        };
+
+        console.log("require via override =", require("not-a-real-module"));
+        console.log("require.resolve({ paths }) via override =", require.resolve("not-a-real-module", { paths: [__dirname] }) === target);
+
+        // Not in the require cache, and its filename cannot be converted to a string.
+        const throwingParent = { filename: { toString() { throw new Error("boom"); } } };
+        overrideCalls = 0;
+        try {
+          Module.prototype.require.call(throwingParent, "not-a-real-module");
+          console.log("throwing parent via override = returned");
+        } catch (e) {
+          console.log("throwing parent via override =", String(e), "| override calls:", overrideCalls);
+        }
+
+        // Registered only now: once a virtual module exists, every require() coerces the parent in
+        // the virtual-module branch first, which would hide the override branch from the case above.
+        Module._resolveFilename = original;
+        Bun.plugin({
+          name: "virtual",
+          setup(build) {
+            build.module("virtual-module", () => ({ exports: { ok: true }, loader: "object" }));
+          },
+        });
+        for (const specifier of ["virtual-module", "not-a-real-module"]) {
+          try {
+            Module.prototype.require.call(throwingParent, specifier);
+            console.log("throwing parent with virtual modules, " + specifier + " = returned");
+          } catch (e) {
+            console.log("throwing parent with virtual modules, " + specifier + " =", String(e));
+          }
+        }
+        console.log("virtual module still loads =", require("virtual-module").ok);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The validator's report names the unchecked call site; surfacing those lines makes a
+    // failure point at the offending scope instead of just showing a truncated transcript.
+    const uncheckedScopes = stderr
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line.startsWith("This scope can throw") || line.startsWith("But the exception was unchecked"));
+    expect({ transcript: stdout.trimEnd().split("\n"), uncheckedScopes, exitCode }).toEqual({
+      transcript: [
+        "require via override = target",
+        "require.resolve({ paths }) via override = true",
+        "throwing parent via override = Error: boom | override calls: 0",
+        "throwing parent with virtual modules, virtual-module = Error: boom",
+        "throwing parent with virtual modules, not-a-real-module = Error: boom",
+        "virtual module still loads = true",
+      ],
+      uncheckedScopes: [],
+      exitCode: 0,
+    });
+  });
+
   test("Overwriting Module.prototype.require", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", path.join(import.meta.dir, "modulePrototypeOverwrite.cjs")],

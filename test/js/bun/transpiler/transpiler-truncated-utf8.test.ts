@@ -55,13 +55,8 @@ function codePoints(s: string): string {
   return Array.from(s, c => c.codePointAt(0)!.toString(16)).join(" ");
 }
 
-// node decodes a source file with the WHATWG UTF-8 decoder, so every ill-formed
-// sequence becomes U+FFFD: a byte that cannot start a sequence is replaced on its
-// own and a truncated sequence is replaced as a unit. Every expectation in this
-// block is what node prints for the same bytes. Bun used to hand bytes that
-// cannot start a sequence (0x80-0xBF, 0xF8-0xFF) through as Latin-1 code points
-// instead, so `"\xFF"` in a file read as "ÿ" and a raw 0xA0 byte counted as
-// whitespace.
+// Every expectation below is what node prints for the same bytes: one U+FFFD per
+// maximal subpart of an ill-formed sequence (WHATWG UTF-8 decode).
 describe("ill-formed UTF-8 in JS source decodes to U+FFFD", () => {
   const transpiler = new Bun.Transpiler({
     loader: "jsx",

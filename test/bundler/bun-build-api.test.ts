@@ -81,7 +81,7 @@ describe("Bun.build", () => {
     //  - import() of a file that require() already put in require.cache reads the file (and the
     //    sidecar) again, then reuses the existing module, so that copy is discarded right away.
     //  - An overridden module._compile only receives the source text, so the sidecar is discarded
-    //    right away as well.
+    //    right away as well, whether or not the override turns out to be callable.
     //
     // Many statements per function make the sidecar large (~640 KB) relative to the minified
     // source (~110 KB) while keeping each load cheap: JSC decodes function bodies lazily and the
@@ -95,6 +95,7 @@ describe("Bun.build", () => {
       {
         name: "require() followed by import() of the same file",
         load: "(require(path), (await import(path)).default)",
+        sidecarReadsPerLoad: 2,
       },
       {
         name: "require() with an overridden module._compile",
@@ -109,6 +110,27 @@ describe("Bun.build", () => {
           };
         `,
         load: "require(path)",
+      },
+      {
+        name: "require() with module._compile overridden with a non-function",
+        setup: `
+          const Module = require("module");
+          const defaultLoader = Module._extensions[".js"];
+          Module._extensions[".js"] = function (module, filename) {
+            module._compile = {};
+            return defaultLoader(module, filename);
+          };
+          function requireExpectingTypeError() {
+            try {
+              require(path);
+            } catch (e) {
+              if (e instanceof TypeError) return new Array(${FUNCTIONS});
+              throw e;
+            }
+            throw new Error("require() did not throw");
+          }
+        `,
+        load: "requireExpectingTypeError()",
       },
     ];
 
@@ -162,7 +184,7 @@ describe("Bun.build", () => {
       expect(sidecarMB).toBeGreaterThan(0.5);
     }, 30000); // generating the bytecode takes ~1.5s in a debug build
 
-    variants.forEach(({ name }, i) => {
+    variants.forEach(({ name, sidecarReadsPerLoad = 1 }, i) => {
       test(
         name,
         async () => {
@@ -175,11 +197,12 @@ describe("Bun.build", () => {
           expect(result).toSpawn();
 
           const growthMB = Number(result.stdout);
-          console.log(`${name}: sidecar ${sidecarMB.toFixed(2)} MB x ${LOADS} loads, RSS grew ${growthMB} MB`);
-          // Leaking retains at least one sidecar per load (LOADS * sidecarMB, ~37 MB). When they
-          // are freed, the growth is allocator noise plus whatever the last load still holds
-          // (under 10 MB in a debug build).
-          expect(growthMB).toBeLessThan((LOADS * sidecarMB) / 2);
+          // Leaking keeps every sidecar read during the measured loads resident (~37 MB per read
+          // per load). When they are freed, what is left is allocator noise plus whatever the last
+          // load still holds: 1 to 12 MB across these variants in a debug build.
+          const leakMB = LOADS * sidecarReadsPerLoad * sidecarMB;
+          console.log(`${name}: RSS grew ${growthMB} MB, leaking would add ${leakMB.toFixed(1)} MB`);
+          expect(growthMB).toBeLessThan(leakMB / 2);
         },
         30000, // ~2s each in a debug build
       );

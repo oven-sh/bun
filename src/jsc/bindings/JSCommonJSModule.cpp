@@ -1457,6 +1457,10 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     if (JSValue compileFunction = this->m_overriddenCompile.get()) {
         auto& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
+        // The overridden _compile only gets the source text; no SourceProvider
+        // is created on any exit from this branch, so a .jsc sidecar blob has
+        // nowhere else to go.
+        Zig::freeOwnedBytecodeCache(source);
         if (!compileFunction) {
             throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
             return;
@@ -1472,9 +1476,6 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
             source.needsDeref = false;
             source.source_code.deref();
         }
-        // The overridden _compile only gets the source text; no SourceProvider
-        // is created, so a .jsc sidecar blob has nowhere else to go.
-        Zig::freeOwnedBytecodeCache(source);
         // Remove the wrapper from the source string, since the transpiler has added it.
         auto trimStart = sourceString.find('\n');
         WTF::String sourceStringWithoutWrapper;

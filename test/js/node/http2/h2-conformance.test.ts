@@ -1623,3 +1623,137 @@ describe("inbound stream lifecycle", () => {
     }
   });
 });
+
+// A DATA frame that cannot be written right away (the peer's flow-control window is used up, the
+// socket has backpressure, or another stream on the session already has frames waiting) is put on
+// the session's outbound queue and written later, when a WINDOW_UPDATE or a writable socket drains
+// the queue. Draining the last queued frame of a stream whose peer half is already closed
+// completes the stream, and, exactly like the direct-write path, has to release it (the JS stream
+// object and the native entry) while the session lives on. Node releases these streams too; a
+// stream that is only released at session teardown is a per-request leak on a long-lived session.
+describe("stream release after a queued END_STREAM", () => {
+  const STREAMS = 4;
+  // The peer advertises a 1 KiB stream window: a 4 KiB body cannot be written in one go, so its
+  // tail (the frame carrying END_STREAM) is queued and flushed as the peer's WINDOW_UPDATEs arrive.
+  const WINDOW = 1024;
+  const BODY = Buffer.alloc(4 * WINDOW, "x");
+
+  async function liveCount(refs: WeakRef<object>[]): Promise<number> {
+    const live = () => refs.filter(ref => ref.deref() !== undefined).length;
+    // A completed stream's JS teardown is spread over a few immediates, and a WeakRef target
+    // survives the job that dereferenced it, so every pass gets a fresh turn before collecting.
+    for (let i = 0; i < 50 && live() > 0; i++) {
+      await new Promise(resolve => setImmediate(resolve));
+      await gcTick();
+    }
+    return live();
+  }
+
+  /** Sends one request, drains its response, and resolves once the client stream has closed. */
+  function roundTrip(client: http2.ClientHttp2Session, headers: http2.OutgoingHttpHeaders, body?: Buffer) {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const req = client.request(headers);
+    req.on("error", reject);
+    req.on("close", () => resolve());
+    req.resume();
+    req.end(body);
+    return { ref: new WeakRef<object>(req), closed: promise };
+  }
+
+  test("server streams whose response outgrew the client's window are released", async () => {
+    const refs: WeakRef<object>[] = [];
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      refs.push(new WeakRef(stream));
+      stream.respond({ ":status": 200 });
+      stream.end(BODY);
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`, {
+      settings: { initialWindowSize: WINDOW },
+    });
+    try {
+      for (let i = 0; i < STREAMS; i++) {
+        await roundTrip(client, { ":path": "/" }).closed;
+      }
+      expect(refs).toHaveLength(STREAMS);
+      expect(await liveCount(refs)).toBe(0);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
+  test("server streams whose response waited behind another stream's stalled response are released", async () => {
+    const refs: WeakRef<object>[] = [];
+    let stalledResponseFinished = false;
+    const server = http2.createServer();
+    server.on("stream", (stream, headers) => {
+      if (headers[":path"] === "/stalled") {
+        stream.respond({ ":status": 200 });
+        stream.end(Buffer.alloc(256 * 1024, "s"), () => {
+          stalledResponseFinished = true;
+        });
+        return;
+      }
+      refs.push(new WeakRef(stream));
+      stream.resume();
+      // Respond once the request's END_STREAM has been processed (as a handler that consumes the
+      // request body does), so the queued response is the last frame the stream is waiting on.
+      stream.on("end", () => {
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    try {
+      // Never read on the client: once its readable buffer is full the client stops replenishing
+      // the stream's window, so the server keeps the rest of this response (and with it the
+      // session's outbound queue) pending for the whole test; the assertion below checks that.
+      const stalled = client.request({ ":path": "/stalled" });
+      stalled.on("error", () => {});
+      await once(stalled, "response");
+      for (let i = 0; i < STREAMS; i++) {
+        await roundTrip(client, { ":path": "/" }).closed;
+      }
+      expect(refs).toHaveLength(STREAMS);
+      expect(await liveCount(refs)).toBe(0);
+      expect(stalledResponseFinished).toBe(false);
+      stalled.close();
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
+  test("client streams whose request body outgrew the server's window are released", async () => {
+    const refs: WeakRef<object>[] = [];
+    const server = http2.createServer({ settings: { initialWindowSize: WINDOW } });
+    server.on("stream", stream => {
+      // Respond as soon as the headers arrive: the server closes its half of the stream before the
+      // client's queued body tail (and END_STREAM) can go out.
+      stream.resume();
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    try {
+      // The server's window applies to requests opened after its SETTINGS frame has been received.
+      await once(client, "remoteSettings");
+      for (let i = 0; i < STREAMS; i++) {
+        const { ref, closed } = roundTrip(client, { ":method": "POST", ":path": "/" }, BODY);
+        refs.push(ref);
+        await closed;
+      }
+      expect(await liveCount(refs)).toBe(0);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+});

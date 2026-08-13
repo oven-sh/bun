@@ -1889,6 +1889,9 @@ impl Stream {
                         identifier.ensure_still_alive();
                         if self.state == StreamState::HALF_CLOSED_REMOTE {
                             self.state = StreamState::CLOSED;
+                            // Same as send_data's direct-write close. JS skips rstStream for a
+                            // natively closed stream, so nothing else releases it.
+                            self.free_resources::<false>(client);
                         } else {
                             self.state = StreamState::HALF_CLOSED_LOCAL;
                         }

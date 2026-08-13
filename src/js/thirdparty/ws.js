@@ -92,6 +92,35 @@ const eventIds = {
   pong: 6,
 };
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_client.js#L515-L536
+function addRequestTeardown(req, onDestroy) {
+  req.destroyed = false;
+  req.aborted = false;
+  req.destroy = function destroy(err) {
+    if (this.destroyed) return this;
+    this.destroyed = true;
+    process.nextTick(emitRequestDestroyed, this, err, onDestroy);
+    return this;
+  };
+  req.abort = function abort() {
+    if (this.aborted) return;
+    this.aborted = true;
+    process.nextTick(emitRequestAbort, this);
+    this.destroy();
+  };
+}
+
+function emitRequestAbort(req) {
+  req.emit("abort");
+}
+
+// https://github.com/websockets/ws/blob/0d1b5e6c4acad16a6b1a1904426eb266a5ba2f72/lib/websocket.js#L876-L881
+function emitRequestDestroyed(req, err, onDestroy) {
+  onDestroy(err);
+  if (err && req.listenerCount("error") > 0) req.emit("error", err);
+  req.emit("close");
+}
+
 function makeHandshakeResponse(statusCode, statusMessage, rawHeaders, body) {
   const res = new http.IncomingMessage(null);
   res._addHeaderLines(rawHeaders, rawHeaders.length);
@@ -239,14 +268,10 @@ class BunWebSocket extends EventEmitter {
         headersSent: false,
         method: method,
         path: url,
-        abort: function () {
-          // No-op for now, as we don't have a real request to abort
-        },
         end: () => {
-          if (!didCallEnd) {
-            didCallEnd = true;
-            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
-          }
+          if (didCallEnd || nodeHttpClientRequestSimulated.destroyed) return;
+          didCallEnd = true;
+          this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
         },
         write() {},
         writeHead() {},
@@ -272,6 +297,8 @@ class BunWebSocket extends EventEmitter {
         _last: null,
       };
       EventEmitter.$call(nodeHttpClientRequestSimulated);
+      // https://github.com/websockets/ws/blob/0d1b5e6c4acad16a6b1a1904426eb266a5ba2f72/lib/websocket.js#L1019-L1023
+      addRequestTeardown(nodeHttpClientRequestSimulated, () => this.terminate());
       finishRequest(nodeHttpClientRequestSimulated);
       if (!didCallEnd) {
         this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
@@ -338,7 +365,6 @@ class BunWebSocket extends EventEmitter {
       hasHeader() {
         return false;
       },
-      abort() {},
       end() {},
       write() {},
       writeHead() {},
@@ -348,6 +374,9 @@ class BunWebSocket extends EventEmitter {
       [Symbol.toStringTag]: "ClientRequest",
     };
     EventEmitter.$call(req);
+    addRequestTeardown(req, err => {
+      if (err) this.emit("error", err);
+    });
     return req;
   }
 

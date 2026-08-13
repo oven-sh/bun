@@ -81,6 +81,74 @@ test.concurrent("ws emits 'unexpected-response' with status, headers and body on
   expect(exitCode).toBe(0);
 });
 
+// https://github.com/websockets/ws/blob/0d1b5e6c4acad16a6b1a1904426eb266a5ba2f72/doc/ws.md#event-unexpected-response
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_client.js#L515-L536
+test.concurrent("ws 'unexpected-response' request stub supports destroy() and abort()", async () => {
+  const { stdout, exitCode } = await run(/* js */ `
+    const { createServer } = require("net");
+    const { once } = require("events");
+    const { WebSocket } = require("ws");
+
+    const server = createServer(s =>
+      s.once("data", () => s.end("HTTP/1.1 503 Service Unavailable\\r\\n\\r\\n")),
+    ).listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    async function teardown(fn) {
+      const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
+      ws.on("error", () => {});
+      const [req] = await once(ws, "unexpected-response");
+      const before = [req.destroyed, req.aborted];
+      const events = [];
+      req.on("abort", () => events.push("abort"));
+      req.on("close", () => events.push("close"));
+      const returned = fn(req);
+      const after = [req.destroyed, req.aborted];
+      await once(req, "close");
+      await once(ws, "close");
+      return { before, after, returnsSelf: returned === req, events };
+    }
+
+    console.log(JSON.stringify({
+      destroy: await teardown(req => req.destroy()),
+      destroyTwice: await teardown(req => (req.destroy(), req.destroy())),
+      abort: await teardown(req => req.abort()),
+    }));
+    server.close();
+  `);
+  expect(JSON.parse(stdout)).toEqual({
+    destroy: { before: [false, false], after: [true, false], returnsSelf: true, events: ["close"] },
+    destroyTwice: { before: [false, false], after: [true, false], returnsSelf: true, events: ["close"] },
+    abort: { before: [false, false], after: [true, true], returnsSelf: false, events: ["abort", "close"] },
+  });
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/websockets/ws/blob/0d1b5e6c4acad16a6b1a1904426eb266a5ba2f72/lib/websocket.js#L876-L881
+test.concurrent("ws 'unexpected-response' req.destroy(err) surfaces err on the client", async () => {
+  const { stdout, exitCode } = await run(/* js */ `
+    const { createServer } = require("net");
+    const { once } = require("events");
+    const { WebSocket } = require("ws");
+
+    const server = createServer(s =>
+      s.once("data", () => s.end("HTTP/1.1 503 Service Unavailable\\r\\n\\r\\n")),
+    ).listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
+    const [req] = await once(ws, "unexpected-response");
+    const boom = new Error("boom");
+    req.on("error", () => {});
+    req.destroy(boom);
+    const [err] = await once(ws, "error");
+    console.log(JSON.stringify({ sameError: err === boom, message: err.message }));
+    server.close();
+  `);
+  expect(stdout).toMatchInlineSnapshot(`"{"sameError":true,"message":"boom"}"`);
+  expect(exitCode).toBe(0);
+});
+
 // Diverges from real ws: with no 'unexpected-response' listener, real ws emits
 // "Unexpected server response: 503". Bun's shim only registers the native
 // handshake listener when the user subscribes to 'upgrade'/'unexpected-response',

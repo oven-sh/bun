@@ -456,6 +456,46 @@ it("WebSocket finishRequest mocked", async () => {
   await promise;
 });
 
+// https://github.com/websockets/ws/blob/0d1b5e6c4acad16a6b1a1904426eb266a5ba2f72/lib/websocket.js#L1019-L1023
+describe("WebSocket finishRequest teardown", () => {
+  for (const [label, teardown] of [
+    ["req.destroy()", (req: any) => req.destroy()],
+    ["req.abort()", (req: any) => req.abort()],
+    ["req.destroy() then req.end()", (req: any) => (req.destroy(), req.end())],
+  ] as const) {
+    it(`${label} never connects`, async () => {
+      const server = createServer();
+      let connections = 0;
+      server.on("connection", () => connections++);
+      server.listen(0);
+      await once(server, "listening");
+      try {
+        const reqEvents: string[] = [];
+        let flags: [boolean, boolean] | undefined;
+        const ws = new WebSocket(`ws://localhost:${(server.address() as AddressInfo).port}`, {
+          finishRequest(req) {
+            req.on("abort", () => reqEvents.push("abort"));
+            req.on("close", () => reqEvents.push("close"));
+            teardown(req);
+            flags = [req.destroyed, req.aborted];
+          },
+        });
+        let closeCode = 0;
+        ws.on("close", code => (closeCode = code));
+        const [err] = await once(ws, "error");
+        expect(err.message).toContain("closed before the connection is established");
+        expect(closeCode).toBe(1006);
+        expect(ws.readyState).toBe(WebSocket.CLOSED);
+        expect(flags).toEqual([true, label === "req.abort()"]);
+        expect(reqEvents).toEqual(label === "req.abort()" ? ["abort", "close"] : ["close"]);
+        expect(connections).toBe(0);
+      } finally {
+        server.close();
+      }
+    });
+  }
+});
+
 function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) => void, timeout?: number) {
   it(
     label,

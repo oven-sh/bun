@@ -296,4 +296,46 @@ describe("mock.module() tail-called from a callback the runner invokes", () => {
 
     await expectBunTestToPass(String(dir), 2, "app.test.ts");
   });
+
+  test.concurrent("a Worker's mock.module() does not pick up the callback running on the main thread", async () => {
+    using dir = tempDir("mock-module-tail-call-worker", {
+      "dep.ts": dep,
+      "worker.ts": `
+        import { mock } from "bun:test";
+        import { value } from "./dep";
+        self.onmessage = ({ data: flags }) => {
+          Atomics.wait(flags, 0, 0); // until the main thread is blocked inside its test body
+          // A tail call from a native-invoked callback: no JS frame is left below mock.module.
+          queueMicrotask(() => mock.module("./dep", ${mocked}));
+          queueMicrotask(() => {
+            Atomics.store(flags, 1, value === "mocked" ? 2 : 1);
+            Atomics.notify(flags, 1);
+          });
+        };
+        self.postMessage("ready");
+      `,
+      "app.test.ts": `
+        import { afterAll, beforeAll, expect, test } from "bun:test";
+        const flags = new Int32Array(new SharedArrayBuffer(8));
+        let worker: Worker;
+        beforeAll(async () => {
+          worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+          const ready = new Promise(resolve => (worker.onmessage = resolve));
+          worker.postMessage(flags);
+          await ready;
+        });
+        afterAll(() => worker.terminate());
+        test("the worker still sees the real module", () => {
+          Atomics.store(flags, 0, 1);
+          Atomics.notify(flags, 0);
+          // Block here so this callback is the one the runner has on the stack while the worker runs.
+          Atomics.wait(flags, 1, 0);
+          // 1: "./dep" stayed unresolved in the worker, as before; 2: it was resolved against this file.
+          expect(Atomics.load(flags, 1)).toBe(1);
+        });
+      `,
+    });
+
+    await expectBunTestToPass(String(dir), 1, "app.test.ts");
+  });
 });

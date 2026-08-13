@@ -504,12 +504,12 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
     return object;
 }
 
-extern "C" JSC::EncodedJSValue Bun__Jest__onStackCallback();
+extern "C" JSC::EncodedJSValue Bun__Jest__onStackCallback(JSC::JSGlobalObject*);
 
 // `beforeAll(() => mock.module(...))` is a tail call, so callerSourceOrigin() finds no frame; the arrow itself still knows its file.
-static JSC::SourceOrigin onStackTestCallbackSourceOrigin()
+static JSC::SourceOrigin onStackTestCallbackSourceOrigin(JSC::JSGlobalObject* globalObject)
 {
-    JSC::JSValue callback = JSC::JSValue::decode(Bun__Jest__onStackCallback());
+    JSC::JSValue callback = JSC::JSValue::decode(Bun__Jest__onStackCallback(globalObject));
     if (!callback)
         return {};
 
@@ -564,7 +564,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     auto resolveSpecifier = [&]() -> void {
         JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
         if (sourceOrigin.isNull())
-            sourceOrigin = onStackTestCallbackSourceOrigin();
+            sourceOrigin = onStackTestCallbackSourceOrigin(globalObject);
         if (sourceOrigin.isNull())
             return;
         const URL& url = sourceOrigin.url();

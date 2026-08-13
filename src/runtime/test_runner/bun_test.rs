@@ -58,9 +58,13 @@ pub(crate) fn clone_active_strong() -> Option<BunTestPtr> {
 }
 
 // HOST_EXPORT(Bun__Jest__onStackCallback, c)
-pub fn on_stack_callback() -> JSValue {
+pub fn on_stack_callback(global: &JSGlobalObject) -> JSValue {
+    // The runner, its slot and the callback in it all belong to the main thread; a Worker gets nothing.
+    if !global.bun_vm().is_main_thread {
+        return JSValue::ZERO;
+    }
     // `runner_ptr()` rather than `runner()` for the same reason as `js_file_generation`.
-    // SAFETY: RUNNER is only read on the JS thread.
+    // SAFETY: RUNNER and the slot are only written on the main thread, which the check above keeps us on.
     Jest::runner_ptr().map_or(JSValue::ZERO, |runner| unsafe {
         (*runner.as_ptr()).bun_test_root.on_stack_callback.get()
     })

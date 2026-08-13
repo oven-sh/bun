@@ -121,6 +121,8 @@ const jsFixtures = [
   "varargs-inlined-simple-exit.js",
   "loop-unrolling.js",
   "licm-no-pre-header.js",
+  // Parser
+  "unary-plus-operand-evaluation-order.js",
 ];
 
 const wasmFixtures = [

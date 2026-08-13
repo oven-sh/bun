@@ -1299,8 +1299,8 @@ describe.concurrent("REPL history file loading", () => {
     const lines = Array.from({ length: maxEntries + 200 }, (_, i) => `entry_${i}`);
     using dir = tempDir("repl-history-many", { ".bun_repl_history": lines.join("\n") + "\n" });
 
-    // Adding `2 + 2` to the 1000 loaded entries evicts the oldest of them.
-    expect(await loadAndSave(String(dir))).toEqual([...lines.slice(201), "2 + 2", ""]);
+    // The newest maxEntries lines are loaded; adding `2 + 2` evicts the oldest of them.
+    expect(await loadAndSave(String(dir))).toEqual([...lines.slice(lines.length - maxEntries + 1), "2 + 2", ""]);
   });
 
   // A file larger than the limit is read from the end, and the first line of

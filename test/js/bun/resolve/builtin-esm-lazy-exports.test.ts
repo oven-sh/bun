@@ -43,9 +43,9 @@ const helper = `
 // static entries without constructing them; for...in constructs all of them, so the entries below avoid it.) The
 // watched names are a sample of those entries plus the plain function (`write`, `createRequire`) an entry imports.
 //
-// Note that a literal `import ... from "bun"` (and `import("bun")` / `require("bun")`) is rewritten by the
-// transpiler into a read of globalThis.Bun and never loads the module; the module is what `export ... from "bun"`
-// and a non-literal import() specifier go through. Imports of node:process and node:module always load the module.
+// Note that a static `import ... from "bun"` and `require("bun")` resolve to the Bun object without loading the
+// module; the module is what `export ... from "bun"` and import() go through. Imports of node:process and
+// node:module always load the module.
 const WATCHED = ["$", "CryptoHasher", "Glob", "S3Client", "SQL", "TOML", "Transpiler", "secrets", "write"] as const;
 const PROCESS_WATCHED = ["allowedNodeEnvironmentFlags", "config", "release", "stderr", "stdin", "stdout", "versions"];
 const MODULE_WATCHED = [
@@ -74,8 +74,7 @@ const nativeHelper = `
   export function print(result) {
     console.log(JSON.stringify(result));
   }
-  // import(specifier) with this really loads the module; a literal (or a const the transpiler can inline) would be
-  // rewritten to globalThis.Bun instead.
+  // import(specifier) loads the module regardless of how the transpiler treats a literal import("bun").
   export const specifier = "bun";
 `;
 

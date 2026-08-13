@@ -238,7 +238,10 @@ impl TSConfigJSON {
         }
 
         if self.jsx_flags.contains(JsxField::ImportSource) {
+            // "jsxImportSource" sets both: the parser imports jsx/jsxDEV from `import_source`
+            // and the key-after-spread `createElement` fallback from `package_name`.
             out.import_source = self.jsx.import_source.clone();
+            out.package_name = self.jsx.package_name.clone();
         }
 
         if self.jsx_flags.contains(JsxField::Runtime) {

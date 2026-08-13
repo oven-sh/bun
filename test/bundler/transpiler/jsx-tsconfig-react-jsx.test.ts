@@ -20,6 +20,7 @@ const shimFiles = {
     export const Fragment = Symbol.for("F");
     export const jsx = () => (console.log("prod jsx"), {});
     export const jsxs = jsx;
+    export const createElement = () => (console.log("shim createElement"), {});
   `,
   "node_modules/shim/dev.js": `
     export const Fragment = Symbol.for("F");
@@ -67,5 +68,126 @@ describe("tsconfig compilerOptions.jsx", () => {
       expect(stdout).not.toContain(importSource === "shim/jsx-runtime" ? "jsx-dev-runtime" : '"shim/jsx-runtime"');
       expect(exitCode).toBe(0);
     }
+  });
+});
+
+const noNodeEnv = { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined };
+
+// Nothing is installed in these directories: bundled mode marks every import external, so both
+// modes leave the JSX runtime imports in the output, where the test reads them back.
+const buildModes = [
+  ["bun build", ["--external", "*"]],
+  ["bun build --no-bundle", ["--no-bundle"]],
+] as const;
+
+/** Runs `bun build` and returns the module specifiers the output imports, sorted. */
+async function buildImports(
+  cwd: string,
+  args: readonly string[],
+  env: Record<string, string | undefined> = noNodeEnv,
+): Promise<{ imports: string[]; exitCode: number }> {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", ...args],
+    env,
+    cwd,
+    stdout: "pipe",
+    // A key-after-spread element logs a deprecation warning here; it is not what these tests check.
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  return { imports: [...stdout.matchAll(/ from "([^"]+)"/g)].map(m => m[1]).sort(), exitCode };
+}
+
+// A tsconfig.json that does not choose between "react-jsx" and "react-jsxdev" must leave the
+// dev/prod choice to NODE_ENV, exactly like having no tsconfig.json (and like `bun run`, which
+// already behaved that way). `bun build` used to switch to the development runtime as soon as any
+// tsconfig.json existed.
+describe("bun build: NODE_ENV=production with a tsconfig.json that does not choose dev/prod", () => {
+  const productionEnv = { ...noNodeEnv, NODE_ENV: "production" };
+
+  const layouts = [
+    ["no tsconfig.json", {}, "react/jsx-runtime"],
+    ["empty compilerOptions", { "tsconfig.json": JSON.stringify({ compilerOptions: {} }) }, "react/jsx-runtime"],
+    [
+      '"jsx": "preserve"',
+      { "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "preserve" } }) },
+      "react/jsx-runtime",
+    ],
+    [
+      "only jsxImportSource",
+      { "tsconfig.json": JSON.stringify({ compilerOptions: { jsxImportSource: "shim" } }) },
+      "shim/jsx-runtime",
+    ],
+  ] as const;
+
+  for (const [mode, modeArgs] of buildModes) {
+    test.concurrent.each(layouts)(`${mode}, %s`, async (_, files, runtime) => {
+      using dir = tempDir("jsx-tsconfig-node-env", { "m.jsx": shimFiles["m.jsx"], ...files });
+      expect(await buildImports(String(dir), [...modeArgs, "m.jsx"], productionEnv)).toEqual({
+        imports: [runtime],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent(`${mode}, empty compilerOptions, --define process.env.NODE_ENV`, async () => {
+      using dir = tempDir("jsx-tsconfig-define", {
+        "m.jsx": shimFiles["m.jsx"],
+        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+      });
+      const args = [...modeArgs, "--define", 'process.env.NODE_ENV="production"', "m.jsx"];
+      expect(await buildImports(String(dir), args)).toEqual({ imports: ["react/jsx-runtime"], exitCode: 0 });
+    });
+  }
+});
+
+// A key after a {...spread} makes the automatic runtime fall back to `createElement`, imported from
+// the jsxImportSource package itself rather than from its /jsx-runtime entry. Both imports have to
+// follow jsxImportSource, including when the setting arrives through a tsconfig merge: an
+// "extends" chain, or (at build time) a tsconfig.json in the entry point's own directory.
+describe("tsconfig jsxImportSource selects the createElement fallback import too", () => {
+  const files = {
+    ...shimFiles,
+    "k.jsx": `const p = {};\nglobalThis.a = <div {...p} key="k" />;\nglobalThis.b = <span />;\n`,
+  };
+  const shimImports = { imports: ["shim", "shim/jsx-dev-runtime"], exitCode: 0 };
+
+  const rootLayouts = [
+    ["tsconfig.json", { "tsconfig.json": JSON.stringify({ compilerOptions: { jsxImportSource: "shim" } }) }],
+    [
+      "tsconfig.json extending a base config",
+      {
+        "tsconfig.json": JSON.stringify({ extends: "./base.json", compilerOptions: { jsxImportSource: "shim" } }),
+        "base.json": JSON.stringify({ compilerOptions: {} }),
+      },
+    ],
+  ] as const;
+
+  for (const [mode, modeArgs] of buildModes) {
+    test.concurrent.each(rootLayouts)(`${mode}, %s`, async (_, layout) => {
+      using dir = tempDir("jsx-import-source", { ...files, ...layout });
+      expect(await buildImports(String(dir), [...modeArgs, "k.jsx"])).toEqual(shimImports);
+    });
+
+    test.concurrent(`${mode}, tsconfig.json in the entry point's directory`, async () => {
+      using dir = tempDir("jsx-import-source-nested", {
+        "sub/k.jsx": files["k.jsx"],
+        "sub/tsconfig.json": JSON.stringify({ compilerOptions: { jsxImportSource: "shim" } }),
+      });
+      expect(await buildImports(String(dir), [...modeArgs, "sub/k.jsx"])).toEqual(shimImports);
+    });
+  }
+
+  // `bun run` only applies the project root's tsconfig.json, so the nested layout is build-only.
+  test.concurrent.each(rootLayouts)("bun run, %s", async (_, layout) => {
+    using dir = tempDir("jsx-import-source-run", { ...files, ...layout });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "k.jsx"],
+      env: noNodeEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "shim createElement\ndev jsxDEV", exitCode: 0 });
   });
 });

@@ -5345,6 +5345,257 @@ describe.if(isWindows)("windows path handling", () => {
   }
 });
 
+// Node resolves every fs path argument on Windows (path.toNamespacedPath), which
+// drops trailing separators, so "file.txt\" names file.txt there. Win32 itself
+// only accepts the trailing separator on a directory.
+describe.if(isWindows)("windows trailing separators", () => {
+  // `spell` is fixture source: it takes a name relative to the fixture's cwd and
+  // returns it with a trailing separator, in one particular path form.
+  // `absolute` is what path.isAbsolute says about that form (symlink targets are
+  // only resolved for absolute forms, in node as in bun). Bun cannot list or
+  // recursively remove drive-relative directories yet, with or without the
+  // separator, so that form only runs the file operations.
+  const forms = {
+    absolute: { spell: `n => path.join(cwd, n) + "\\\\"`, absolute: true, directories: true },
+    absoluteForwardSlash: {
+      spell: `n => path.join(cwd, n).replaceAll("\\\\", "/") + "/"`,
+      absolute: true,
+      directories: true,
+    },
+    absoluteDoubled: { spell: `n => path.join(cwd, n) + "\\\\\\\\"`, absolute: true, directories: true },
+    rooted: { spell: `n => path.join(cwd, n).slice(2) + "\\\\"`, absolute: true, directories: true },
+    relative: { spell: `n => n + "\\\\"`, absolute: false, directories: true },
+    relativeForwardSlash: { spell: `n => n + "/"`, absolute: false, directories: true },
+    driveRelative: { spell: `n => cwd.slice(0, 2) + n + "\\\\"`, absolute: false, directories: false },
+  };
+
+  const fixture = `
+    import fs from "node:fs";
+    import path from "node:path";
+
+    const cwd = process.cwd();
+    const forms = {
+      ${Object.entries(forms)
+        .map(
+          ([name, form]) =>
+            `${name}: { spell: ${form.spell}, absolute: ${form.absolute}, directories: ${form.directories} },`,
+        )
+        .join("\n      ")}
+    };
+    const code = fn => {
+      try {
+        return fn() ?? "ok";
+      } catch (e) {
+        return e.code;
+      }
+    };
+    const codeAsync = async fn => {
+      try {
+        return (await fn()) ?? "ok";
+      } catch (e) {
+        return e.code;
+      }
+    };
+
+    fs.writeFileSync("file.txt", "contents");
+    fs.mkdirSync("dir");
+    fs.writeFileSync(path.join("dir", "inner.txt"), "");
+    const realFile = fs.realpathSync.native("file.txt");
+    const absoluteFile = path.join(cwd, "file.txt");
+
+    const results = {};
+    let n = 0;
+    const unique = prefix => prefix + "-" + n++;
+    const scratchFile = prefix => {
+      const name = unique(prefix) + ".txt";
+      fs.writeFileSync(name, prefix);
+      return name;
+    };
+
+    for (const [name, { spell, absolute, directories }] of Object.entries(forms)) {
+      const file = spell("file.txt");
+      const link = unique("symlink");
+      fs.symlinkSync("file.txt", link);
+      const hardlink = unique("hardlink") + ".txt";
+      const copy = unique("copy") + ".txt";
+      const promisesCopy = unique("copy") + ".txt";
+      const renamed = scratchFile("rename");
+      const unlinked = scratchFile("unlink");
+      const removed = scratchFile("rm");
+
+      const result = (results[name] = {
+        readFileSync: code(() => fs.readFileSync(file, "utf8")),
+        openSync: code(() => fs.closeSync(fs.openSync(file, "r"))),
+        open: await codeAsync(
+          () =>
+            new Promise((resolve, reject) =>
+              fs.open(file, "r", (err, fd) => (err ? reject(err) : resolve(fs.closeSync(fd)))),
+            ),
+        ),
+        accessSync: code(() => void fs.accessSync(file)),
+        existsSync: fs.existsSync(file),
+        statSyncSize: code(() => fs.statSync(file).size),
+        lstatSyncSize: code(() => fs.lstatSync(file).size),
+        utimesSync: code(() => fs.utimesSync(file, new Date(), new Date())),
+        chmodSync: code(() => fs.chmodSync(file, 0o644)),
+        truncateSync: code(() => fs.truncateSync(file, 4)),
+        truncated: fs.readFileSync("file.txt", "utf8"),
+        appendFileSync: code(() => fs.appendFileSync(file, "ents")),
+        appended: fs.readFileSync("file.txt", "utf8"),
+        statfsSync: code(() => typeof fs.statfsSync(file).bsize),
+        realpathSyncNative: code(() => fs.realpathSync.native(file) === realFile),
+        cpSync: code(() => fs.cpSync(file, copy)),
+        cpSyncCopied: code(() => fs.readFileSync(copy, "utf8")),
+        promisesReadFile: await codeAsync(() => fs.promises.readFile(file, "utf8")),
+        promisesAccess: await codeAsync(() => fs.promises.access(file)),
+        promisesOpen: await codeAsync(() => fs.promises.open(file, "r").then(handle => handle.close())),
+        promisesCp: await codeAsync(() => fs.promises.cp(file, promisesCopy)),
+        promisesCpCopied: code(() => fs.readFileSync(promisesCopy, "utf8")),
+        bunFile: await codeAsync(() => Bun.file(file).text()),
+        linkSync: code(() => fs.linkSync(file, spell(hardlink))),
+        linked: code(() => fs.readFileSync(hardlink, "utf8")),
+        readlinkSync: code(() => fs.readlinkSync(spell(link))),
+        renameSync: code(() => fs.renameSync(spell(renamed), spell(renamed + ".moved"))),
+        renamed: [fs.existsSync(renamed), fs.existsSync(renamed + ".moved")],
+        unlinkSync: code(() => fs.unlinkSync(spell(unlinked))),
+        unlinked: fs.existsSync(unlinked),
+        rmSync: code(() => fs.rmSync(spell(removed))),
+        removed: fs.existsSync(removed),
+      });
+
+      if (absolute) {
+        const absoluteLink = unique("symlink");
+        result.symlinkSync = code(() => fs.symlinkSync(file, absoluteLink));
+        result.symlinkTarget = code(() => fs.readlinkSync(absoluteLink) === absoluteFile || fs.readlinkSync(absoluteLink));
+        result.readThroughSymlink = code(() => fs.readFileSync(absoluteLink, "utf8"));
+      }
+
+      if (directories) {
+        const dir = spell("dir");
+        const created = unique("mkdir");
+        const createdRecursively = unique("mkdir");
+        Object.assign(result, {
+          readdirSyncOnFile: code(() => fs.readdirSync(file)),
+          readdirSync: code(() => fs.readdirSync(dir)),
+          direntPathsExist: code(() =>
+            fs.readdirSync(dir, { withFileTypes: true }).map(dirent => fs.existsSync(path.join(dirent.parentPath, dirent.name))),
+          ),
+          statSyncIsDirectory: code(() => fs.statSync(dir).isDirectory()),
+          accessSyncDirectory: code(() => void fs.accessSync(dir)),
+          existsSyncDirectory: fs.existsSync(dir),
+          mkdirSync: code(() => fs.mkdirSync(spell(created))),
+          rmdirSync: code(() => fs.rmdirSync(spell(created))),
+          removedDirectory: fs.existsSync(created),
+          mkdirSyncRecursive: code(() =>
+            path.basename(fs.mkdirSync(spell(path.join(createdRecursively, "sub")), { recursive: true })),
+          ),
+          createdRecursively: fs.existsSync(path.join(createdRecursively, "sub")),
+          rmSyncRecursive: code(() => fs.rmSync(spell(createdRecursively), { recursive: true })),
+          removedRecursively: fs.existsSync(createdRecursively),
+        });
+      }
+    }
+
+    results.cwdAndRoots = {
+      existsSyncDot: [fs.existsSync("./"), fs.existsSync(".\\\\")],
+      readdirSyncDriveRoot: code(() => Array.isArray(fs.readdirSync(cwd.slice(0, 3)))),
+      existsSyncDriveRoot: fs.existsSync(cwd.slice(0, 3)),
+      statSyncRootedRoot: code(() => fs.statSync("\\\\").isDirectory()),
+    };
+
+    try {
+      fs.readFileSync("missing.txt\\\\");
+    } catch (e) {
+      results.missingFile = { code: e.code, path: e.path, syscall: e.syscall };
+    }
+
+    console.log(JSON.stringify(results));
+  `;
+
+  it("name the same file or directory as without the separator", async () => {
+    using dir = tempDir("fs-trailing-separators", { "fixture.mjs": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const expected: Record<string, unknown> = {};
+    for (const [name, { absolute, directories }] of Object.entries(forms)) {
+      expected[name] = {
+        readFileSync: "contents",
+        openSync: "ok",
+        open: "ok",
+        accessSync: "ok",
+        existsSync: true,
+        statSyncSize: 8,
+        lstatSyncSize: 8,
+        utimesSync: "ok",
+        chmodSync: "ok",
+        truncateSync: "ok",
+        truncated: "cont",
+        appendFileSync: "ok",
+        appended: "contents",
+        statfsSync: "number",
+        realpathSyncNative: true,
+        cpSync: "ok",
+        cpSyncCopied: "contents",
+        promisesReadFile: "contents",
+        promisesAccess: "ok",
+        promisesOpen: "ok",
+        promisesCp: "ok",
+        promisesCpCopied: "contents",
+        bunFile: "contents",
+        linkSync: "ok",
+        linked: "contents",
+        readlinkSync: "file.txt",
+        renameSync: "ok",
+        renamed: [false, true],
+        unlinkSync: "ok",
+        unlinked: false,
+        rmSync: "ok",
+        removed: false,
+        ...(absolute && {
+          symlinkSync: "ok",
+          // The stored target is the resolved path, without the separator.
+          symlinkTarget: true,
+          readThroughSymlink: "contents",
+        }),
+        ...(directories && {
+          readdirSyncOnFile: "ENOTDIR",
+          readdirSync: ["inner.txt"],
+          direntPathsExist: [true],
+          statSyncIsDirectory: true,
+          accessSyncDirectory: "ok",
+          existsSyncDirectory: true,
+          mkdirSync: "ok",
+          rmdirSync: "ok",
+          removedDirectory: false,
+          mkdirSyncRecursive: expect.stringMatching(/^mkdir-\d+$/),
+          createdRecursively: true,
+          rmSyncRecursive: "ok",
+          removedRecursively: false,
+        }),
+      };
+    }
+    expected.cwdAndRoots = {
+      existsSyncDot: [true, true],
+      readdirSyncDriveRoot: true,
+      existsSyncDriveRoot: true,
+      statSyncRootedRoot: true,
+    };
+    // Errors still report the path as the caller spelled it.
+    expected.missingFile = { code: "ENOENT", path: "missing.txt\\", syscall: "open" };
+
+    expect(JSON.parse(stdout)).toEqual(expected);
+  });
+});
+
 it("using writeFile on an fd does not truncate it", () => {
   const filepath = join(tmpdir(), `file-${Math.random().toString(32).slice(2)}.txt`);
   const fd = fs.openSync(filepath, "w+");

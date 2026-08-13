@@ -927,6 +927,8 @@ impl PathLikeExt for PathLike {
         buf: &'a mut PathBuffer,
     ) -> &'a ZStr {
         let sliced = self.slice();
+        #[cfg(windows)]
+        let sliced = strings::without_trailing_separators_windows_arg(sliced);
 
         #[cfg(windows)]
         {
@@ -1024,6 +1026,8 @@ impl PathLikeExt for PathLike {
     #[inline]
     fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong> {
         let sliced = self.slice();
+        #[cfg(windows)]
+        let sliced = strings::without_trailing_separators_windows_arg(sliced);
         if !strings::fits_in_wide_path_buffer(sliced) {
             return Err(NameTooLong);
         }
@@ -1049,7 +1053,7 @@ impl PathLikeExt for PathLike {
     ) -> Result<&'a OSPathSliceZ, NameTooLong> {
         #[cfg(windows)]
         {
-            let s = self.slice();
+            let s = strings::without_trailing_separators_windows_arg(self.slice());
             let mut b = bun_paths::path_buffer_pool::get();
             // RAII guard puts back on Drop.
 

@@ -197,19 +197,11 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
 /// `import.meta.resolve()`, or a `URL`, which arrives here as its href). A URL
 /// of any other scheme is rejected the way `fileURLToPath()` rejects it.
 fn location_to_path(global: &JSGlobalObject, location: BunString) -> JsResult<OwnedString> {
-    if location.has_prefix_comptime(b"file:") {
-        let path = OwnedString::new(jsc::URL::path_from_file_url(location));
-        if path.get().is_dead() {
-            return Err(global
-                .err(
-                    jsc::ErrorCode::INVALID_URL,
-                    format_args!("Invalid URL: {}", location),
-                )
-                .throw());
-        }
-        return Ok(path);
-    }
-    if has_url_scheme(location.to_utf8().slice()) {
+    let location_utf8 = location.to_utf8();
+    let Some(scheme) = url_scheme(location_utf8.slice()) else {
+        return Ok(OwnedString::new(location.dupe_ref()));
+    };
+    if !scheme.eq_ignore_ascii_case(b"file") {
         return Err(global
             .err(
                 jsc::ErrorCode::INVALID_URL_SCHEME,
@@ -217,20 +209,29 @@ fn location_to_path(global: &JSGlobalObject, location: BunString) -> JsResult<Ow
             )
             .throw());
     }
-    Ok(OwnedString::new(location.dupe_ref()))
+    let path = OwnedString::new(jsc::URL::path_from_file_url(location));
+    if path.get().is_dead() {
+        return Err(global
+            .err(
+                jsc::ErrorCode::INVALID_URL,
+                format_args!("Invalid URL: {}", location),
+            )
+            .throw());
+    }
+    Ok(path)
 }
 
-/// `https://`, `data:`, `node:` and the like. A scheme must be at least two
-/// characters so that a Windows drive letter (`C:\`) is still a path.
-fn has_url_scheme(location: &[u8]) -> bool {
-    let Some(colon) = strings::index_of_char_usize(location, b':') else {
-        return false;
-    };
-    colon >= 2
-        && location[0].is_ascii_alphabetic()
-        && location[1..colon]
+/// The `https` of `https://`, the `node` of `node:fs`; `None` for a path. A
+/// scheme must be at least two characters so that a Windows drive letter
+/// (`C:\`) is still a path.
+fn url_scheme(location: &[u8]) -> Option<&[u8]> {
+    let scheme = &location[..strings::index_of_char_usize(location, b':')?];
+    let is_scheme = scheme.len() >= 2
+        && scheme[0].is_ascii_alphabetic()
+        && scheme[1..]
             .iter()
-            .all(|&c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.'))
+            .all(|&c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.'));
+    is_scheme.then_some(scheme)
 }
 
 pub fn stat(path: &[u8]) -> i32 {

@@ -2043,6 +2043,62 @@ test("should be able to abrubtly close a upload request", async () => {
   expect().pass();
 });
 
+// Same failure, but delivered while nothing is reading: the handler takes
+// req.body (which creates the native stream) and only starts reading after the
+// client has gone away. The stored abort must surface from the first read; it
+// used to come out as a clean `{ done: true }`, indistinguishable from a
+// complete upload.
+test("reading an upload whose client went away before the first read rejects", async () => {
+  const bodyTaken = Promise.withResolvers<void>();
+  const clientClosed = Promise.withResolvers<void>();
+  const outcome = Promise.withResolvers<string>();
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const body = req.body!;
+      bodyTaken.resolve();
+      await clientClosed.promise;
+      try {
+        // The abort reaches the body on a later event-loop turn. Bun.inspect(req)
+        // lists the body stream while the body is still pending and stops listing
+        // it once the body holds the error; reading it to find out is the very
+        // thing under test.
+        const deadline = Date.now() + 10_000;
+        while (Bun.inspect(req).includes("ReadableStream")) {
+          if (Date.now() > deadline) throw new Error("the abort never reached the idle body");
+          await Bun.sleep(1);
+        }
+        outcome.resolve(
+          await body
+            .getReader()
+            .read()
+            .then(
+              result => `resolved: ${JSON.stringify(result)}`,
+              error => `rejected: ${(error as Error).name}`,
+            ),
+        );
+      } catch (error) {
+        outcome.reject(error);
+      }
+      return new Response("unreachable by the client");
+    },
+  });
+  const socket = await Bun.connect({
+    hostname: server.hostname,
+    port: server.port,
+    socket: {
+      open(socket) {
+        socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\npartial");
+      },
+      data() {},
+      close: () => clientClosed.resolve(),
+    },
+  });
+  await bodyTaken.promise;
+  socket.end();
+  expect(await outcome.promise).toBe("rejected: AbortError");
+});
+
 // This test is disabled because it can OOM the CI
 test.skip("should be able to stream huge amounts of data", async () => {
   const buf = Buffer.alloc(1024 * 1024 * 256);

@@ -124,11 +124,14 @@ impl ByteStream {
     }
 
     fn on_start(&self) -> streams::Start {
-        if self.has_received_last_chunk.get() && self.buffer.get().is_empty() {
-            return streams::Start::Empty;
-        }
-
         if self.has_received_last_chunk.get() {
+            // `Empty` would close the stream without the pull that returns the stored error.
+            if self.has_pending_error() {
+                return streams::Start::Ready;
+            }
+            if self.buffer.get().is_empty() {
+                return streams::Start::Empty;
+            }
             let buffer = self.buffer.replace(Vec::new());
             return streams::Start::OwnedAndDone(Vec::<u8>::move_from_list(buffer));
         }
@@ -262,9 +265,7 @@ impl ByteStream {
         if sink.is_some() {
             // Upstream error must reach the sink even while back-pressured.
             if let streams::Result::Err(err) = stream {
-                self.sink.set(SinkHandle::None);
-                self.sink_paused.set(false);
-                sink.end(Some(err));
+                self.end_sink(sink, err);
                 return Ok(());
             }
 
@@ -587,7 +588,7 @@ impl ByteStream {
         if self.has_received_last_chunk.get() {
             // Surface a stored terminal error (set by `append(Err)` when no
             // reader was waiting) instead of silently reporting `Done`.
-            if matches!(self.pending.get().result, streams::Result::Err(_)) {
+            if self.has_pending_error() {
                 return self
                     .pending
                     .with_mut(|p| core::mem::replace(&mut p.result, streams::Result::Done));
@@ -694,6 +695,11 @@ impl ByteStream {
         Vec::<u8>::default()
     }
 
+    /// The producer failed before anything attached and [`Self::append`] stored its error.
+    pub(crate) fn has_pending_error(&self) -> bool {
+        matches!(self.pending.get().result, streams::Result::Err(_))
+    }
+
     /// Take a pre-attach `StreamResult::Err` stashed by [`Self::append`].
     pub fn take_pending_error(&self) -> Option<streams::StreamError> {
         self.pending.with_mut(|p| {
@@ -708,8 +714,25 @@ impl ByteStream {
         })
     }
 
+    /// Delivers a stored error to the sink just installed as [`Self::on_data`] would; false if none.
+    pub(crate) fn end_sink_with_pending_error(&self) -> bool {
+        let sink = *self.sink.get();
+        debug_assert!(sink.is_some());
+        let Some(err) = self.take_pending_error() else {
+            return false;
+        };
+        self.end_sink(sink, err);
+        true
+    }
+
+    fn end_sink(&self, sink: SinkHandle, err: streams::StreamError) {
+        self.sink.set(SinkHandle::None);
+        self.sink_paused.set(false);
+        sink.end(Some(err));
+    }
+
     pub(crate) fn to_any_blob(&self) -> Option<blob::Any> {
-        if self.has_received_last_chunk.get() {
+        if self.has_received_last_chunk.get() && !self.has_pending_error() {
             let buffer = self.buffer.replace(Vec::new());
             self.done.set(true);
             self.pending.with_mut(|p| {

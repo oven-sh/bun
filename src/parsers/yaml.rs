@@ -4323,9 +4323,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         let implicit_key = scalar.data.to_expr(scalar_start, self.input, self.bump);
 
-                        // [200] a tag on an earlier line (`foo: !custom` above
-                        // `<<: *base`) is the block mapping's, not the key's.
-                        let key_tag = if node_props
+                        // [200] in block context a tag on an earlier line
+                        // (`foo: !custom` above `<<: *base`) is the block
+                        // mapping's, not the key's. In a flow pair [150] the
+                        // pair takes no properties, so the tag stays the key's.
+                        let key_tag = if matches!(
+                            self.context.get(),
+                            Context::BlockOut | Context::BlockIn
+                        ) && node_props
                             .tag_line()
                             .is_some_and(|line| line != scalar_line)
                         {

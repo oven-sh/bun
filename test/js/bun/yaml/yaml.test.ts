@@ -2804,6 +2804,11 @@ config:
         });
       });
 
+      test("a tag on its own line in a flow sequence pair stays on the key", () => {
+        expect(YAML.parse("[!!str\n<<: {a: 1}]")).toEqual([{ "<<": { a: 1 } }]);
+        expect(YAML.parse('base: &b {a: 1}\nd: [!!merge\n  "<<": *b]')).toEqual({ base: { a: 1 }, d: [{ a: 1 }] });
+      });
+
       test('a "<<" property round-trips through stringify', () => {
         for (const value of [
           { "<<": { admin: true }, user: "x" },

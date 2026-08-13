@@ -125,14 +125,11 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
     return false;
 }
 
-// vm.compileFunction compiles "(function (<params>) {\n<body>\n})" as a program
-// and lifts the function expression out of it (constructAnonymousFunction).
+// compileFunction compiles "(function (<params>) {\n" + body + this as a program.
 static constexpr ASCIILiteral anonymousFunctionSuffix = "\n})"_s;
 
-// A token found where only the end of the source may follow (a stray "}",
-// "case" or "default" at the top level) ends the parse without a message, which
-// Parser::parseInner reports as a bare "Parser error"; Node names the token
-// ("Unexpected token '}'", asserted by test/parallel/test-vm-basic.js).
+// "Parser error" is JSC's placeholder for a token where only EOF may follow (a
+// stray "}", "case", "default"); Node names the token (test-vm-basic.js asserts it).
 static String parseErrorMessage(const ParserError& error, StringView source)
 {
     if (error.message() != "Parser error"_s)
@@ -144,11 +141,9 @@ static String parseErrorMessage(const ParserError& error, StringView source)
     return makeString("Unexpected token '"_s, source.substring(start, end - start), '\'');
 }
 
-// What a function body may contain that a standalone parse of it (as a
-// program) rejects, by the messages Parser.cpp gives those rejections. Only
-// consulted once the wrapped program has already been rejected, so a message
-// missing here costs a less precise diagnostic, never the acceptance or
-// rejection of an input.
+// Program-parse rejections (Parser.cpp wording) of things a function body may
+// contain. Consulted only for input the wrapped compile already rejected, so an
+// omission here can only worsen a message.
 static bool isFunctionBodyOnlyConstruct(const ParserError& error)
 {
     if (error.type() != ParserError::SyntaxError)
@@ -159,10 +154,8 @@ static bool isFunctionBodyOnlyConstruct(const ParserError& error)
         || message == "new.target is not valid inside arrow functions in global code."_s;
 }
 
-// A SyntaxError at `offset` into `body`, shaped like the ones the parser
-// produces for `bodySource`: line() counts up from the source's first line
-// (which carries lineOffset, clamped the way JSC clamps it), and the token's
-// column() is the physical column, which is what decorateParseErrorStack reads.
+// Positioned the way the parser positions its own errors in bodySource: line()
+// counts from the source's first line, the token's column() is physical.
 static ParserError syntaxErrorAtBodyOffset(const SourceCode& bodySource, StringView body, unsigned offset, const String& message)
 {
     int line = bodySource.firstLine().oneBasedInt();
@@ -183,32 +176,23 @@ static void throwParseError(JSGlobalObject* globalObject, ThrowScope& throwScope
 {
     VM& vm = globalObject->vm();
     JSObject* exception = error.toErrorObject(globalObject, source);
-    // Building the error materializes its stack, running a user
-    // Error.prepareStackTrace that may throw; Node throws the SyntaxError
-    // anyway. Terminations survive tryClearException.
+    // Materializing the stack may run a throwing Error.prepareStackTrace; Node
+    // throws the SyntaxError regardless. Terminations survive tryClearException.
     (void)throwScope.tryClearException();
     RETURN_IF_EXCEPTION(throwScope, void());
-    // Node always attaches the arrow header to compile-time SyntaxErrors
-    // (node_contextify.cc DecorateErrorStack), independent of displayErrors.
-    // A parse that ran out of stack or memory has no position to point at.
+    // Node's arrow header (node_contextify.cc DecorateErrorStack) goes on every
+    // compile-time SyntaxError; a stack overflow or OOM has no position.
     if (error.type() == ParserError::SyntaxError)
         decorateParseErrorStack(globalObject, vm, exception, sourceString, url, error, lineOffset);
     throwException(globalObject, throwScope, exception);
 }
 
-// The wrapped program was rejected, either by the parser (`wrapperMessage` at
-// `wrapperOffset` into `wrapper`) or because its function expression ended
-// before the wrapper's own closing brace, meaning a parameter or the body
-// closed it early (`wrapperOffset` is the brace that did). Throws the
-// SyntaxError Node reports for the body.
-//
-// Parsing the body on its own locates the error in the body directly and names
-// the token Node names, both when the wrapper only choked on its own "\n})"
-// suffix (an unterminated body) and when it parsed on past an escaping "}". It
-// cannot tell `return` or `new.target` from an error, though, so when one of
-// those is the first thing it trips over, the wrapper's verdict is reported
-// instead, moved onto the body: an offset in the parameter prefix lands on the
-// start of the body, one in the suffix on its end.
+// The wrapped program was rejected: by the parser (`wrapperMessage` at
+// `wrapperOffset`), or because its function ended early at the brace at
+// `wrapperOffset`. Parsing the body alone yields the error in body coordinates
+// and Node's token for unterminated or escaping bodies, but is blind to
+// `return` and `new.target`; behind one of those the wrapper's verdict is
+// reported, clamped into the body (prefix offsets to its start, suffix to its end).
 static void throwCompileFunctionSyntaxError(JSGlobalObject* globalObject, ThrowScope& throwScope, const String& wrapper, unsigned bodyOffset, const String& wrapperMessage, unsigned wrapperOffset, const SourceOrigin& sourceOrigin, const CompileFunctionOptions& options, SourceTaintedOrigin sourceTaintOrigin)
 {
     VM& vm = globalObject->vm();
@@ -239,9 +223,8 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     TextPosition position(options.lineOffset, options.columnOffset);
     LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
 
-    // Wrap the parameters and body in an anonymous function expression.
-    // Compiling that program is what validates them; the body is only parsed
-    // on its own to report an error (throwCompileFunctionSyntaxError).
+    // Compiling the wrapped program is the only validation; the body is parsed
+    // on its own solely to report an error.
     int bodyOffset = 0;
     String code = stringifyAnonymousFunction(globalObject, args, throwScope, &bodyOffset);
     EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
@@ -315,14 +298,10 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
         return nullptr;
     }
 
-    // The program parsed, but it is only the function the caller asked for if
-    // it consists of one function expression reaching the "}" of the trailing
-    // "\n})", so that everything in between is inside it. A body such as
-    // "}); (function () {" (or a parameter doing the same) also parses, as a
-    // program whose first function ends at the injected brace. Everything
-    // before that brace was accepted as function body, so it is the token Node
-    // (which parses the body as nothing but a function body) rejects.
-    // functionEnd() is the offset of the function's closing brace in `code`.
+    // Only a program made of one function expression ending at the suffix's "}"
+    // is the requested function. A body (or parameter) like "}); (function () {"
+    // parses too, with the first function ending at the injected brace, which is
+    // the token Node rejects; functionEnd() is that brace's offset into `code`.
     unsigned wrapperClosingBrace = code.length() - anonymousFunctionSuffix.length() + 1;
     if (programCodeBlock->numberOfFunctionExprs() != 1 || functionExecutable->functionEnd() != wrapperClosingBrace) {
         throwCompileFunctionSyntaxError(globalObject, throwScope, code, bodyOffset, "Unexpected token '}'"_s, functionExecutable->functionEnd(), sourceOrigin, options, sourceTaintOrigin);
@@ -463,9 +442,8 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
     RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(globalObject, thenResult));
 }
 
-// Helper function to create an anonymous function expression with parameters.
-// The body (args' last entry) is copied in verbatim: it starts at *outOffset
-// and runs up to the anonymousFunctionSuffix that ends the program.
+// Builds the program compileFunction compiles: the body (args' last entry) sits
+// verbatim at *outOffset, followed by anonymousFunctionSuffix.
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset)
 {
     // How we stringify functions is important for creating anonymous function expressions

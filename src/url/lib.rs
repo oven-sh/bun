@@ -599,19 +599,20 @@ impl<'a> URL<'a> {
                 if !is_relative_path {
                     // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
                     if offset > 0 {
-                        // see https://github.com/oven-sh/bun/issues/1390
-                        let first_at =
-                            strings::index_of_char(&base[offset as usize..], b'@').unwrap_or(0);
-                        let first_colon =
-                            strings::index_of_char(&base[offset as usize..], b':').unwrap_or(0);
-
-                        if first_at > first_colon
-                            && first_at
-                                < strings::index_of_char(&base[offset as usize..], b'/')
-                                    .unwrap_or(u32::MAX)
-                        {
-                            offset += url.parse_username(&base[offset as usize..]).unwrap_or(0);
-                            offset += url.parse_password(&base[offset as usize..]).unwrap_or(0);
+                        let rest = &base[offset as usize..];
+                        // Only an `@` inside the authority (before the path, query or
+                        // hash, see https://github.com/oven-sh/bun/issues/1390) delimits
+                        // userinfo. `user@host:port` has its first colon after the `@`,
+                        // so the colon position says nothing about whether userinfo exists.
+                        let authority_len =
+                            strings::index_of_any(rest, b"/?#").unwrap_or(rest.len());
+                        if strings::contains_char(&rest[..authority_len], b'@') {
+                            offset += url.parse_username(rest).unwrap_or(0);
+                            // `parse_username` stops at either `:` or `@`; a password only
+                            // follows the former.
+                            if base[offset as usize - 1] == b':' {
+                                offset += url.parse_password(&base[offset as usize..]).unwrap_or(0);
+                            }
                         }
                     }
 

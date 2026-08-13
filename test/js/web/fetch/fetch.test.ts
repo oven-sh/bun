@@ -3470,3 +3470,30 @@ it("verbose fetch logging prints [redacted] in place of Authorization credential
   expect(stderr).not.toContain("sekret-token");
   expect(exitCode).toBe(0);
 });
+
+describe("connects to the host of a URL whose authority contains an @", () => {
+  // After WHATWG normalization the request URL is re-read by bun's own URL
+  // parser to pick the host to connect to. It used to decide whether userinfo
+  // was present from the position of the first colon, so `user@host:port`
+  // (credentials without a password, plus an explicit port) was connected to
+  // as if `user@host` were the hostname. An @ outside the authority (#1390)
+  // must still not be mistaken for userinfo.
+  it.each([
+    ["user@", "/creds"],
+    ["user:pw@", "/creds"],
+    [":pw@", "/creds"],
+    ["", "/@/path"],
+    ["", "/?next=a@b"],
+  ])("http://%s127.0.0.1:<port>%s", async (userinfo, pathAndQuery) => {
+    using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: req => new Response(new URL(req.url).pathname),
+    });
+    const res = await fetch(`http://${userinfo}127.0.0.1:${server.port}${pathAndQuery}`, { keepalive: false });
+    expect({ status: res.status, pathname: await res.text() }).toEqual({
+      status: 200,
+      pathname: new URL(pathAndQuery, "http://x").pathname,
+    });
+  });
+});

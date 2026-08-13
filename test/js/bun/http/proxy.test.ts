@@ -523,9 +523,9 @@ test("proxy with long password (> 4096 chars) works correctly after redirect", a
 // must still send the colon. bun previously dropped the colon for empty
 // password and sent no header at all for empty username.
 //
-// Exercised via http_proxy in a subprocess (rather than the `{proxy}` option)
-// so the raw env string reaches bun_url::URL::parse without WHATWG
-// normalization first dropping the `:` and tripping the userinfo heuristic.
+// The `{proxy}` option and (since #16182) the env vars both go through the
+// WHATWG parser first, which serializes `user:@host:port` as `user@host:port`;
+// bun_url::URL::parse used to read that whole thing as the hostname.
 describe.each([
   { userinfo: "squidadmin:", decoded: "squidadmin:" },
   { userinfo: ":hunter2", decoded: ":hunter2" },
@@ -537,6 +537,20 @@ describe.each([
   // collapses to "" and the proxy is bypassed.
   const noProxyEnv = { ...bunEnv };
   for (const k of PROXY_ENV_KEYS) delete noProxyEnv[k];
+
+  test.concurrent("http target (absolute-form) via the proxy option", async () => {
+    const proxy = await createAuthCapturingProxy();
+    try {
+      const response = await fetch(httpServer.url, {
+        proxy: `http://${userinfo}@127.0.0.1:${proxy.port}`,
+        keepalive: false,
+      });
+      expect(response.status).toBe(200);
+      expect(proxy.capturedAuths).toEqual([expected]);
+    } finally {
+      await proxy.close();
+    }
+  });
 
   test.concurrent("http target (absolute-form)", async () => {
     const proxy = await createAuthCapturingProxy();
@@ -2318,5 +2332,182 @@ describe("http_proxy env var scheme is case-insensitive", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("ERR UnsupportedProxyProtocol");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("http_proxy/https_proxy env values are normalized like the fetch() proxy option (#16182)", () => {
+  // fetch(url, { proxy }) runs the proxy URL through the WHATWG parser, so each
+  // spelling below is accepted there and means http://127.0.0.1:<port>/. The env
+  // vars used to be handed to the lenient internal parser as written, which sent
+  // the request to a bogus host or port instead of the proxy.
+  const unsetProxyEnv = {
+    NO_PROXY: undefined,
+    no_proxy: undefined,
+    HTTP_PROXY: undefined,
+    http_proxy: undefined,
+    HTTPS_PROXY: undefined,
+    https_proxy: undefined,
+  };
+
+  async function fetchThroughEnvProxy(envKey: string, spell: (proxyPort: number) => string, target: string) {
+    const proxy = await createProxyServer(false);
+    try {
+      const proxyPort = (proxy.server.address() as net.AddressInfo).port;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const r = await fetch(process.env.TARGET, { keepalive: false, tls: { rejectUnauthorized: false } }); console.log(r.status);`,
+        ],
+        env: { ...bunEnv, ...unsetProxyEnv, [envKey]: spell(proxyPort), TARGET: target },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode, proxyLog: [...proxy.log] };
+    } finally {
+      // Not awaited, see the redirect test near the top of the file.
+      proxy.server.close();
+    }
+  }
+
+  const spellings = [
+    ["leading whitespace", "http_proxy", (p: number) => `  http://127.0.0.1:${p}`],
+    ["trailing whitespace", "HTTP_PROXY", (p: number) => `http://127.0.0.1:${p}  `],
+    ["tab inside the authority", "http_proxy", (p: number) => `http://127.0.0.1:\t${p}`],
+    ["backslashes", "HTTP_PROXY", (p: number) => `http:\\\\127.0.0.1:${p}`],
+    ["no slashes after the scheme", "http_proxy", (p: number) => `http:127.0.0.1:${p}`],
+    ["already normalized", "HTTP_PROXY", (p: number) => `http://127.0.0.1:${p}/`],
+    // new URL() rejects this one; it must keep getting the lenient treatment it always had.
+    ["scheme-less host:port", "http_proxy", (p: number) => `127.0.0.1:${p}`],
+  ] as const;
+
+  test.concurrent.each(spellings)("http target, %s", async (_label, envKey, spell) => {
+    const target = `http://127.0.0.1:${httpServer.port}/env-proxy`;
+    const { stdout, stderr, exitCode, proxyLog } = await fetchThroughEnvProxy(envKey, spell, target);
+    expect({ stdout, stderr, exitCode, proxyLog }).toEqual({
+      stdout: "200",
+      stderr: "",
+      exitCode: 0,
+      proxyLog: [`GET 127.0.0.1:${httpServer.port}/env-proxy`],
+    });
+  });
+
+  const httpsSpellings = [
+    ["leading whitespace", "https_proxy", (p: number) => `  http://127.0.0.1:${p}`],
+    ["backslashes", "HTTPS_PROXY", (p: number) => `http:\\\\127.0.0.1:${p}`],
+    ["no slashes after the scheme", "https_proxy", (p: number) => `http:127.0.0.1:${p}`],
+  ] as const;
+
+  test.concurrent.each(httpsSpellings)("https target (CONNECT), %s", async (_label, envKey, spell) => {
+    const target = `https://127.0.0.1:${httpsServer.port}/env-proxy`;
+    const { stdout, stderr, exitCode, proxyLog } = await fetchThroughEnvProxy(envKey, spell, target);
+    expect({ stdout, stderr, exitCode, proxyLog }).toEqual({
+      stdout: "200",
+      stderr: "",
+      exitCode: 0,
+      proxyLog: [`CONNECT 127.0.0.1:${httpsServer.port}`],
+    });
+  });
+
+  test.concurrent("every redirect hop uses the normalized proxy", async () => {
+    using origin = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: req =>
+        new URL(req.url).pathname === "/first"
+          ? new Response(null, { status: 302, headers: { Location: "/second" } })
+          : new Response("done"),
+    });
+    const { stdout, stderr, exitCode, proxyLog } = await fetchThroughEnvProxy(
+      "http_proxy",
+      p => `  http:\\\\127.0.0.1:${p}  `,
+      `http://127.0.0.1:${origin.port}/first`,
+    );
+    expect({ stdout, stderr, exitCode, proxyLog }).toEqual({
+      stdout: "200",
+      stderr: "",
+      exitCode: 0,
+      proxyLog: [`GET 127.0.0.1:${origin.port}/first`, `GET 127.0.0.1:${origin.port}/second`],
+    });
+  });
+
+  /** A proxy that answers every request itself with whatever `respond` builds from the request head. */
+  async function answeringProxy(respond: (headLines: string[]) => string) {
+    const log: string[] = [];
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      let head = "";
+      socket.on("data", chunk => {
+        head += chunk.toString("latin1");
+        const end = head.indexOf("\r\n\r\n");
+        if (end === -1) return;
+        socket.removeAllListeners("data");
+        const lines = head.slice(0, end).split("\r\n");
+        log.push(lines[0]);
+        socket.end(respond(lines));
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return { port: (server.address() as net.AddressInfo).port, log, [Symbol.dispose]: () => server.close() };
+  }
+
+  test.concurrent("credentials survive normalization", async () => {
+    // The WHATWG parser percent-encodes the space in the password and leaves the
+    // %40 alone; Proxy-Authorization must still carry the decoded credentials.
+    using proxy = await answeringProxy(lines => {
+      const auth = lines
+        .find(l => /^proxy-authorization:/i.test(l))
+        ?.slice("proxy-authorization:".length)
+        .trim();
+      return `HTTP/1.1 200 OK\r\nContent-Length: ${String(auth).length}\r\nConnection: close\r\n\r\n${auth}`;
+    });
+    const target = `http://127.0.0.1:${httpServer.port}/env-proxy-auth`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log(await (await fetch(process.env.TARGET, { keepalive: false })).text());`],
+      env: {
+        ...bunEnv,
+        ...unsetProxyEnv,
+        http_proxy: `  http://us%40er:p ss@127.0.0.1:${proxy.port}  `,
+        TARGET: target,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, proxyLog: proxy.log }).toEqual({
+      stdout: `Basic ${btoa("us@er:p ss")}`,
+      stderr: "",
+      exitCode: 0,
+      proxyLog: [`GET ${target} HTTP/1.1`],
+    });
+  });
+
+  test.concurrent("S3 requests read the same normalized value", async () => {
+    // S3 reads the env var through a different code path than fetch(), so it
+    // gets its own case. The proxy answers the absolute-form HEAD itself; the
+    // endpoint (this file's plain http origin) would answer without an ETag.
+    using proxy = await answeringProxy(
+      () => `HTTP/1.1 200 OK\r\nContent-Length: 5\r\nETag: "abc"\r\nConnection: close\r\n\r\n`,
+    );
+    const endpoint = `http://127.0.0.1:${httpServer.port}`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const s = await Bun.S3Client.stat("key", { accessKeyId: "x", secretAccessKey: "y", bucket: "b", endpoint: process.env.ENDPOINT }); console.log(s.size);`,
+      ],
+      env: { ...bunEnv, ...unsetProxyEnv, HTTP_PROXY: `http:127.0.0.1:${proxy.port}`, ENDPOINT: endpoint },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, proxyLog: proxy.log }).toEqual({
+      stdout: "5",
+      stderr: "",
+      exitCode: 0,
+      proxyLog: [`HEAD ${endpoint}/b/key HTTP/1.1`],
+    });
   });
 });

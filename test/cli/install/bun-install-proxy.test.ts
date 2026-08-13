@@ -1,7 +1,7 @@
-import { beforeAll, it } from "bun:test";
+import { beforeAll, expect, it } from "bun:test";
 import { exec } from "child_process";
 import { rm } from "fs/promises";
-import { bunEnv, bunExe, dockerExe, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, dockerExe, isDockerEnabled, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 import { promisify } from "util";
 const execAsync = promisify(exec);
@@ -95,3 +95,65 @@ if (isDockerEnabled()) {
     await Promise.all(promises);
   }, 60_000);
 }
+
+// No squid needed: the proxy below only records what reaches it. `bun install`
+// resolves the proxy through the same env lookup as fetch(), which since
+// #16182 normalizes the value the way new URL() would, so this padded spelling
+// has to reach the proxy instead of being parsed into a bogus host.
+it("bun install routes registry requests through a non-normalized http_proxy value", async () => {
+  let directRegistryHits = 0;
+  using registry = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch() {
+      directRegistryHits++;
+      return new Response(null, { status: 500 });
+    },
+  });
+  const proxyLog: string[] = [];
+  using proxy = Bun.listen<{ head: string }>({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        socket.data = { head: "" };
+      },
+      data(socket, chunk) {
+        const head = (socket.data.head += new TextDecoder("latin1").decode(chunk));
+        if (!head.includes("\r\n\r\n")) return;
+        proxyLog.push(head.slice(0, head.indexOf("\r\n")));
+        socket.end("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+      },
+    },
+  });
+  using dir = tempDir("install-env-proxy", {
+    "package.json": JSON.stringify({ name: "app", dependencies: { "only-behind-the-proxy": "1.0.0" } }),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install", "--registry", `http://127.0.0.1:${registry.port}/`],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
+      NO_PROXY: undefined,
+      no_proxy: undefined,
+      HTTP_PROXY: undefined,
+      HTTPS_PROXY: undefined,
+      https_proxy: undefined,
+      http_proxy: `  http:\\\\127.0.0.1:${proxy.port}  `,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const manifestUrl = `http://127.0.0.1:${registry.port}/only-behind-the-proxy`;
+  expect({ proxyLog, directRegistryHits, stdout, stderr, exitCode }).toEqual({
+    proxyLog: [`GET ${manifestUrl} HTTP/1.1`],
+    directRegistryHits: 0,
+    stdout: expect.stringContaining("bun install v"),
+    // The proxy's 404 is what fails the install, not a failure to reach the proxy.
+    stderr: expect.stringContaining(`error: GET ${manifestUrl} - 404`),
+    exitCode: 1,
+  });
+});

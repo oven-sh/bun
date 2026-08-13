@@ -1681,10 +1681,8 @@ pub(crate) fn download_to_path(
             // `progress.end()` below is sufficient: no fallible call sits between
             // `refresher.start` and it, so every exit path (including the
             // error returns after it) ends the node exactly once.
-            // Note: reshaped for borrowck — `get_http_proxy_for` borrows
-            // `env` for the proxy URL lifetime; read the bool first.
             let reject_unauthorized = env.get_tls_reject_unauthorized();
-            let http_proxy: Option<bun_url::URL<'_>> = env.get_http_proxy_for(&url);
+            let http_proxy = env.get_http_proxy_for(&url);
             let progress = refresher.start(b"Downloading", 0);
 
             let mut async_http = Box::new(bun_http::AsyncHTTP::init_sync(
@@ -1693,7 +1691,7 @@ pub(crate) fn download_to_path(
                 Default::default(),
                 b"",
                 b"",
-                http_proxy,
+                http_proxy.as_ref().map(|proxy| proxy.url()),
                 None,
                 bun_http::FetchRedirect::Follow,
             ));

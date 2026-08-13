@@ -265,7 +265,7 @@ impl UpgradeCommand {
             header_entries,
             headers_buf,
             b"",
-            http_proxy,
+            http_proxy.as_ref().map(|proxy| proxy.url()),
             None,
             HTTP::FetchRedirect::Follow,
         ));
@@ -657,7 +657,7 @@ impl UpgradeCommand {
                 headers::EntryList::default(),
                 b"",
                 b"",
-                http_proxy,
+                http_proxy.as_ref().map(|proxy| proxy.url()),
                 None,
                 HTTP::FetchRedirect::Follow,
             ));
@@ -687,8 +687,6 @@ impl UpgradeCommand {
                 200 => {}
                 _ => return Err(crate::Error::HTTPError),
             }
-            // Release the immutable borrow of `env_loader` (via `http_proxy`)
-            // before the map mutations below.
             drop(async_http);
 
             let bytes = zip_file_buffer.slice();

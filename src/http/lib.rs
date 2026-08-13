@@ -662,54 +662,38 @@ pub struct ProxySettings {
 }
 
 impl ProxySettings {
-    /// Returns `None` when neither proxy is set: no re-evaluation is needed.
-    pub(crate) fn new(
-        http_proxy: Option<&[u8]>,
-        https_proxy: Option<&[u8]>,
-        no_proxy: Option<&[u8]>,
+    /// An empty href means "no proxy for that scheme". Returns `None` when
+    /// neither proxy is set: no re-evaluation is needed.
+    fn new(
+        http_proxy: Box<[u8]>,
+        https_proxy: Box<[u8]>,
+        env: &bun_dotenv::Loader,
     ) -> Option<Box<Self>> {
-        let http_proxy = http_proxy.unwrap_or(b"");
-        let https_proxy = https_proxy.unwrap_or(b"");
         if http_proxy.is_empty() && https_proxy.is_empty() {
             return None;
         }
         Some(Box::new(Self {
-            http_proxy: http_proxy.into(),
-            https_proxy: https_proxy.into(),
-            no_proxy: no_proxy.unwrap_or(b"").into(),
+            http_proxy,
+            https_proxy,
+            no_proxy: env.get_no_proxy().unwrap_or(b"").into(),
         }))
     }
 
     /// Capture `http_proxy` / `https_proxy` / `no_proxy` from the process env.
+    /// The env loader hands back the proxies already normalized, so every hop
+    /// parses the same href an explicit `proxy` option would have produced.
     pub fn from_env(env: &bun_dotenv::Loader) -> Option<Box<Self>> {
-        #[inline]
-        fn is_emptyish(v: &[u8]) -> bool {
-            v.is_empty() || v == b"\"\"" || v == b"''"
-        }
-        // lowercase first; an empty lowercase value falls through to uppercase.
-        let read = |lower: &[u8], upper: &[u8]| -> Option<&[u8]> {
-            let v = env
-                .get(lower)
-                .filter(|v| !v.is_empty())
-                .or_else(|| env.get(upper))?;
-            if is_emptyish(v) { None } else { Some(v) }
+        let proxy_href = |is_http: bool| -> Box<[u8]> {
+            env.get_http_proxy(is_http, None, None)
+                .map_or_else(Box::default, bun_url::OwnedURL::into_href)
         };
-        Self::new(
-            read(b"http_proxy", b"HTTP_PROXY"),
-            read(b"https_proxy", b"HTTPS_PROXY"),
-            read(b"no_proxy", b"NO_PROXY"),
-        )
+        Self::new(proxy_href(true), proxy_href(false), env)
     }
 
     /// Build from an explicit `fetch(url, { proxy })` option. The same proxy is
     /// used for both schemes; NO_PROXY is still consulted per hop.
     pub fn from_explicit(proxy_href: &[u8], env: &bun_dotenv::Loader) -> Option<Box<Self>> {
-        let no_proxy = env
-            .get(b"no_proxy")
-            .filter(|v| !v.is_empty())
-            .or_else(|| env.get(b"NO_PROXY"))
-            .filter(|v| !(v.is_empty() || *v == b"\"\"" || *v == b"''"));
-        Self::new(Some(proxy_href), Some(proxy_href), no_proxy)
+        Self::new(proxy_href.into(), proxy_href.into(), env)
     }
 
     /// Proxy href to use for `url`, or `None` for a direct connection.

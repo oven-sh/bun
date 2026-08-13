@@ -239,6 +239,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) dirname_ref: Ref,
     pub(crate) import_meta_ref: Ref,
     pub(crate) hmr_api_ref: Ref,
+    /// Unbound `module` created by `value_for_import_meta_main` for iife output. It is
+    /// never printed; being unbound, it makes the renamer keep every bundled binding off
+    /// that name, so the `module` the lowering prints is the host's.
+    pub(crate) import_meta_main_host_module_ref: Ref,
 
     /// If bake is enabled and this is a server-side file, we want to use
     /// special `Response` class inside the `bun:app` built-in module to
@@ -5273,10 +5277,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The printer can handle this for us, but we need to reference
         // a handle to the `__require` function.
         //
-        // The non-ESM lowering is `__require.main == module`, so iife output needs
-        // `__require` as well (for cjs output this is a no-op and `require` is printed).
-        if self.options.lower_import_meta_main_for_node_js || !self.options.output_format.is_esm() {
+        // An iife is loaded as a CommonJS script instead, so there it becomes
+        //
+        //     var import_meta_main = __require.main == module;
+        //
+        // where `module` is the host's. cjs output reserves that name for every
+        // bundle (see `compute_initial_reserved_names`); for the iife an unbound
+        // `module` in this file's scope reserves it the same way, so a bundled
+        // binding of that name gets renamed instead of being compared against.
+        if self.options.lower_import_meta_main {
             self.record_usage_of_runtime_require();
+            if self.options.output_format == options::Format::Iife
+                && self.import_meta_main_host_module_ref.is_empty()
+            {
+                self.import_meta_main_host_module_ref =
+                    self.declare_generated_symbol(js_ast::symbol::Kind::Unbound, b"module");
+            }
         }
         Expr {
             loc,
@@ -8673,6 +8689,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             dirname_ref: Ref::NONE,
             import_meta_ref: Ref::NONE,
             hmr_api_ref: Ref::NONE,
+            import_meta_main_host_module_ref: Ref::NONE,
             response_ref: Ref::NONE,
             bun_app_namespace_ref: Ref::NONE,
             bundler_feature_flag_ref: Ref::NONE,

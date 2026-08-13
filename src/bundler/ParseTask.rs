@@ -2607,8 +2607,16 @@ pub mod parse_worker {
         // in which we inline `true`.
         if topts.inline_entrypoint_import_meta_main || !task.is_entry_point {
             opts.import_meta_main_value = Some(task.is_entry_point && !topts.has_dev_server());
-        } else if target == options::Target::Node {
-            opts.lower_import_meta_main_for_node_js = true;
+        } else {
+            // Must agree with `EImportMetaMain` in the printer. cjs output lowers it too,
+            // but to the host's own `require`, which needs nothing from the parser.
+            opts.lower_import_meta_main = match output_format {
+                options::Format::Esm => target == options::Target::Node,
+                // Bun loads its `// @bun` iife as an ES module (see post_process_js_chunk),
+                // so `import.meta.main` is kept as is there.
+                options::Format::Iife => !target.is_bun(),
+                options::Format::Cjs | options::Format::InternalBakeDev => false,
+            };
         }
 
         opts.tree_shaking = if task.source_index.is_runtime() {

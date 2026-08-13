@@ -2994,11 +2994,16 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EImportMetaMain(data) => {
-                    if self.options.module_type == bundle_opts::Format::Esm
-                        && self.options.target != bun_ast::Target::Node
-                    {
+                    // Must agree with `lower_import_meta_main` in the bundler's ParseTask.
+                    let keep_import_meta_main = match self.options.module_type {
                         // Node.js doesn't support import.meta.main
-                        // Most of the time, leave it in there
+                        bundle_opts::Format::Esm => self.options.target != bun_ast::Target::Node,
+                        // Bun loads its `// @bun` iife as an ES module, where import.meta.main
+                        // works and the `module` binding printed below does not exist.
+                        bundle_opts::Format::Iife => self.options.target.is_bun(),
+                        bundle_opts::Format::Cjs | bundle_opts::Format::InternalBakeDev => false,
+                    };
+                    if keep_import_meta_main {
                         if data.inverted {
                             self.add_source_mapping(expr.loc);
                             self.print(b"!");
@@ -3015,6 +3020,14 @@ pub(crate) mod __gated_printer {
                             self.options.module_type != bundle_opts::Format::InternalBakeDev
                         );
 
+                        // This prints as an `==` / `!=` expression, so it needs the same
+                        // parentheses one would: `!import.meta.main` must not become
+                        // `!x.main == module`.
+                        let wrap = level.gte(Level::Equals);
+                        if wrap {
+                            self.print(b"(");
+                        }
+
                         self.print_space_before_identifier();
                         self.add_source_mapping(expr.loc);
 
@@ -3030,24 +3043,32 @@ pub(crate) mod __gated_printer {
                             self.print_whitespacer(ws!(b".main == "));
                         }
 
-                        if self.options.target == bun_ast::Target::Node {
-                            match self.options.require_ref {
-                                // "__require.module": ESM output has no `module` binding,
-                                // so this compares against the createRequire() function's
-                                // own (undefined) `.module`. cjs and iife output are loaded
-                                // as CommonJS scripts, where the host's `module` exists.
-                                Some(require)
-                                    if self.options.module_type == bundle_opts::Format::Esm =>
-                                {
-                                    self.print_symbol(require);
-                                    self.print(b".module");
-                                }
-                                _ => self.print(b"module"),
+                        match self.options.require_ref {
+                            // "__require.module": ESM output (node only, see above) has no
+                            // `module` binding, so this compares against the createRequire()
+                            // function's own (undefined) `.module`.
+                            Some(require)
+                                if self.options.module_type == bundle_opts::Format::Esm =>
+                            {
+                                self.print_symbol(require);
+                                self.print(b".module");
                             }
-                        } else if self.options.commonjs_module_ref.is_valid() {
-                            self.print_symbol(self.options.commonjs_module_ref);
-                        } else {
-                            self.print(b"module");
+                            // The host's `module`: cjs output reserves the name in the
+                            // renamer, iife output through the unbound symbol the parser
+                            // declares in `value_for_import_meta_main`.
+                            _ if self.options.module_type == bundle_opts::Format::Iife
+                                || self.options.target == bun_ast::Target::Node =>
+                            {
+                                self.print(b"module");
+                            }
+                            _ if self.options.commonjs_module_ref.is_valid() => {
+                                self.print_symbol(self.options.commonjs_module_ref);
+                            }
+                            _ => self.print(b"module"),
+                        }
+
+                        if wrap {
+                            self.print(b")");
                         }
                     }
                 }

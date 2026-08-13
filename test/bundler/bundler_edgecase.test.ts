@@ -2146,15 +2146,20 @@ describe("bundler", () => {
       api.expectFile("/out.js").toMatch(/[^\.:]module/); // `.module` and `node:module` are not ok.
     },
   });
-  // In iife output `import.meta.main` is lowered to a comparison against the
-  // runtime's `__require`, so the runtime part defining it has to be kept. The
-  // iife is loaded as a CommonJS script, so the host's `module` is the thing
-  // to compare against (as in cjs output), not the `__require.module` form the
-  // esm lowering uses for node.
-  const importMetaMainIIFEFiles = {
+  // The entry point's four forms are lowered (or, where the output supports
+  // import.meta.main, kept); `other` is not an entry point, so its two fold to
+  // `false`. The bundle is run twice: as the main module and required from
+  // runner.cjs, which flips every entry point value.
+  const importMetaMainLoweringFiles = {
     "/entry.ts": /* js */ `
       import {other} from './other';
-      console.log(capture(import.meta.main), capture(require.main === module), ...other);
+      console.log(
+        capture(import.meta.main),
+        capture(require.main === module),
+        capture(!import.meta.main),
+        capture(require.main !== module),
+        ...other,
+      );
     `,
     "/other.ts": /* js */ `
       globalThis['ca' + 'pture'] = x => x;
@@ -2162,25 +2167,99 @@ describe("bundler", () => {
       export const other = [capture(require.main === module), capture(import.meta.main)];
     `,
   };
+  const importMetaMainRunner = {
+    "/runner.cjs": /* js */ `require("./out.js");`,
+  };
+  const importMetaMainAsMain = "true true false false false false";
+  const importMetaMainWhenRequired = "false false true true false false";
+  // node and browsers load an iife as a CommonJS script, so the lowering
+  // compares against the host's `module`, the same as cjs output does (the
+  // `__require.module` operand is only for esm output, which has no `module`).
+  const importMetaMainIIFECapture = [
+    "false",
+    "false",
+    "__require.main == module",
+    "__require.main == module",
+    "!(__require.main == module)",
+    "__require.main != module",
+  ];
+  const importMetaMainIIFERuns = [
+    { stdout: importMetaMainAsMain },
+    { runtime: "node" as const, stdout: importMetaMainAsMain },
+    { file: "/runner.cjs", stdout: importMetaMainWhenRequired },
+    { file: "/runner.cjs", runtime: "node" as const, stdout: importMetaMainWhenRequired },
+  ];
   itBundled("edgecase/ImportMetaMainIIFE", {
-    files: importMetaMainIIFEFiles,
+    files: importMetaMainLoweringFiles,
+    runtimeFiles: importMetaMainRunner,
     format: "iife",
-    capture: ["false", "false", "__require.main == module", "__require.main == module"],
+    capture: importMetaMainIIFECapture,
     onAfterBundle(api) {
       api.expectFile("/out.js").toMatch(/var __require = /);
     },
-    run: [{ stdout: "true true false false" }, { runtime: "node", stdout: "true true false false" }],
+    run: importMetaMainIIFERuns,
   });
   itBundled("edgecase/ImportMetaMainIIFETargetNode", {
-    files: importMetaMainIIFEFiles,
+    files: importMetaMainLoweringFiles,
+    runtimeFiles: importMetaMainRunner,
     target: "node",
     format: "iife",
-    capture: ["false", "false", "__require.main == module", "__require.main == module"],
+    capture: importMetaMainIIFECapture,
     onAfterBundle(api) {
       api.expectFile("/out.js").toMatch(/var __require = /);
       api.expectFile("/out.js").not.toContain("createRequire");
     },
-    run: [{ stdout: "true true false false" }, { runtime: "node", stdout: "true true false false" }],
+    run: importMetaMainIIFERuns,
+  });
+  // Bun loads the `// @bun` iife as an ES module, where import.meta.main works
+  // and neither `require` nor `module` exist, so nothing is lowered there.
+  itBundled("edgecase/ImportMetaMainIIFETargetBun", {
+    files: importMetaMainLoweringFiles,
+    runtimeFiles: importMetaMainRunner,
+    target: "bun",
+    format: "iife",
+    capture: ["false", "false", "import.meta.main", "import.meta.main", "!import.meta.main", "!import.meta.main"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__require");
+    },
+    run: [{ stdout: importMetaMainAsMain }, { file: "/runner.cjs", stdout: importMetaMainWhenRequired }],
+  });
+  // The esm lowering for node prints as a binary expression too, so it needs
+  // parentheses under a unary operator.
+  itBundled("edgecase/ImportMetaMainInvertedTargetNode", {
+    files: importMetaMainLoweringFiles,
+    target: "node",
+    capture: [
+      "false",
+      "false",
+      "__require.main == __require.module",
+      "__require.main == __require.module",
+      "!(__require.main == __require.module)",
+      "__require.main != __require.module",
+    ],
+    run: { runtime: "node", stdout: importMetaMainAsMain },
+  });
+  // The `module` the iife lowering prints has to be the host's even when the
+  // bundle declares bindings of that name: they get renamed, as in cjs output.
+  itBundled("edgecase/ImportMetaMainIIFEShadowedModuleBinding", {
+    files: {
+      "/entry.ts": /* js */ `
+        import {sibling} from './sibling';
+        const module = { name: "entry" };
+        console.log(import.meta.main, module.name, sibling);
+      `,
+      "/sibling.ts": /* js */ `
+        let module = { name: "sibling" };
+        export const sibling = module.name;
+      `,
+    },
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__require.main == module");
+      api.expectFile("/out.js").toMatch(/var module2 = \{/);
+      api.expectFile("/out.js").toMatch(/var module3 = \{/);
+    },
+    run: [{ stdout: "true entry sibling" }, { runtime: "node", stdout: "true entry sibling" }],
   });
   itBundled("edgecase/IdentifierInEnum#13081", {
     files: {

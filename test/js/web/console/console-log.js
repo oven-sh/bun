@@ -280,3 +280,13 @@ console.log(explicitEnumerable);
 // (Bun.inspect({ sorted: true }), console.table, and the test runner's
 // toEqual/snapshot diff printer all go through this separate code path)
 console.log(Bun.inspect(explicitEnumerable, { sorted: true }));
+
+// same check, forced onto the generic/slow property-walk path, a getter
+const nonEnumerableWithGetter = {
+  a: 1,
+  get c() {
+    return 3;
+  },
+};
+Object.defineProperty(nonEnumerableWithGetter, "b", { value: 2, enumerable: false });
+console.log(nonEnumerableWithGetter);

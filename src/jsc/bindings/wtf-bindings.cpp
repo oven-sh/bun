@@ -17,6 +17,12 @@ static_assert(WTF::maxECMAScriptTime == 8.64e15, "bun_jsc::wtf::MAX_ECMASCRIPT_T
 #include <uv.h>
 #endif
 
+#if OS(FREEBSD)
+#include <link.h>
+#include <pthread_np.h>
+#include <sys/resource.h>
+#endif
+
 #if !OS(WINDOWS)
 #include <stdatomic.h>
 
@@ -293,16 +299,67 @@ size_t toISOString(JSC::VM& vm, double date, char in[64])
     return charactersWritten;
 }
 
-static thread_local WTF::StackBounds stackBoundsForCurrentThread = WTF::StackBounds::emptyBounds();
+static thread_local void* stackEndForCurrentThread = nullptr;
+
+#if OS(FREEBSD)
+// FreeBSD's exec reserves the main-thread stack from the executable's
+// PT_GNU_STACK p_memsz when that is non-zero (we link with -z stack-size),
+// but libthr — and therefore WTF::StackBounds — reports RLIMIT_STACK for the
+// main thread, which is normally far larger. Return the size the kernel
+// actually used so the recursion guard fires before the real end of stack.
+static size_t freebsdMainThreadStackReservation()
+{
+    struct Query {
+        uintptr_t self;
+        size_t gnuStackSize;
+    } query = { reinterpret_cast<uintptr_t>(&freebsdMainThreadStackReservation), 0 };
+    dl_iterate_phdr([](struct dl_phdr_info* info, size_t, void* data) -> int {
+        auto* query = static_cast<Query*>(data);
+        const ElfW(Phdr)* gnuStack = nullptr;
+        bool containsSelf = false;
+        for (unsigned i = 0; i < info->dlpi_phnum; i++) {
+            const ElfW(Phdr)& phdr = info->dlpi_phdr[i];
+            if (phdr.p_type == PT_GNU_STACK)
+                gnuStack = &phdr;
+            else if (phdr.p_type == PT_LOAD) {
+                uintptr_t start = info->dlpi_addr + phdr.p_vaddr;
+                if (query->self >= start && query->self < start + phdr.p_memsz)
+                    containsSelf = true;
+            }
+        }
+        if (!containsSelf)
+            return 0;
+        if (gnuStack)
+            query->gnuStackSize = gnuStack->p_memsz;
+        return 1; },
+        &query);
+
+    struct rlimit limit;
+    size_t size = getrlimit(RLIMIT_STACK, &limit) == 0 && limit.rlim_cur != RLIM_INFINITY ? limit.rlim_cur : 0;
+    if (query.gnuStackSize && (!size || query.gnuStackSize < size))
+        size = query.gnuStackSize;
+    return size;
+}
+#endif
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__StackCheck__initialize()
 {
-    stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBounds();
+    WTF::StackBounds bounds = WTF::StackBounds::currentThreadStackBounds();
+    void* end = bounds.end();
+#if OS(FREEBSD)
+    if (pthread_main_np()) {
+        size_t reservation = freebsdMainThreadStackReservation();
+        char* reservedEnd = static_cast<char*>(bounds.origin()) - reservation;
+        if (reservation && reservedEnd > static_cast<char*>(end))
+            end = reservedEnd;
+    }
+#endif
+    stackEndForCurrentThread = end;
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((__always_inline__)) void* Bun__StackCheck__getMaxStack()
 {
-    return stackBoundsForCurrentThread.end();
+    return stackEndForCurrentThread;
 }
 
 extern "C" void WTF__DumpStackTrace(void** stack, size_t stack_count)

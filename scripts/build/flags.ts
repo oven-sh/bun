@@ -1374,14 +1374,10 @@ export const linkerFlags: Flag[] = [
     desc: "FreeBSD 13+ clang defaults to PIE; opt out (matches Linux, avoids -fPIC rebuild of WebKit/deps)",
   },
   {
-    // No `-z stack-size`: unlike Linux, FreeBSD's exec uses PT_GNU_STACK's
-    // size as the main-thread stack reservation, while libthr reports the
-    // main thread's stack as RLIMIT_STACK — so a value here smaller than the
-    // rlimit makes WTF::StackBounds overshoot and stack-overflow guards never
-    // fire (the process dies with SIGILL once the real stack is exhausted).
     flag: [
       "-Wl,-O2",
       "-Wl,--as-needed",
+      "-Wl,-z,stack-size=12800000",
       "-Wl,-z,lazy",
       "-Wl,-z,norelro",
       "-Wl,--gdb-index",
@@ -1390,7 +1386,9 @@ export const linkerFlags: Flag[] = [
       "-Wl,--build-id=sha1",
     ],
     when: c => c.freebsd,
-    desc: "FreeBSD linker tuning (same as Linux ELF minus stack-size)",
+    // Unlike Linux, FreeBSD sizes the *main-thread* stack from -z stack-size
+    // (PT_GNU_STACK); Bun__StackCheck__initialize accounts for that.
+    desc: "FreeBSD linker tuning (same as Linux ELF)",
   },
   {
     // rust-lang/llvm-project doesn't enable `LLVM_ENABLE_ZLIB` (or `_ZSTD`) for

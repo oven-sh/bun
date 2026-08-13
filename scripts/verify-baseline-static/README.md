@@ -30,6 +30,12 @@ base one without editing it.
 
 Exit `0` = clean, `1` = violations, `2` = tool error.
 
+In CI the `build-bun` step builds this crate (`scripts/build/verify-baseline-static.ts`,
+cross-compiled for the host the `verify-baseline` step runs on) and uploads it as the
+`verify-baseline-static[.exe]` artifact; the `verify-baseline` step downloads that and
+passes it to `scripts/verify-baseline.ts --static-checker`, so the test-fleet images need
+neither a rust toolchain nor the crates. The `cargo build` above is for local use.
+
 Use the `-profile` artifact. The stripped release binary has no `.symtab`
 (ELF) and no companion `.pdb` (PE) — every violation becomes `<no-symbol@addr>`
 and nothing in the allowlist matches. Windows auto-discovers `<binary>.pdb`

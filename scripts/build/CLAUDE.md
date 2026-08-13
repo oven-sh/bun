@@ -204,6 +204,7 @@ Split CI modes: `rust-only` (lolhtml+codegen+cargo → libbun_rust.a), `cpp-only
 | `error.ts`                     | `BuildError` with hint/file/cause, `assert()`                                                                           |
 | `download.ts`                  | `downloadWithRetry()`, archive extraction                                                                               |
 | `winsysroot.ts`                | Windows MSVC CRT + SDK sysroot (xwin): validates, adds case aliases, CI fetch                                           |
+| `verify-baseline-static.ts`    | `--verify-baseline-static=on`: cargo edge building the static ISA scanner for the CI verify-baseline step's host        |
 | `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads                                                                              |
 | `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                                     |
 | `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                    |

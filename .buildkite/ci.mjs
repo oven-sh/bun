@@ -482,6 +482,13 @@ function getBuildArgs(target, options, mode) {
   if (baseline) args.push("--baseline=on");
   if (profile === "asan") args.push("--asan=on");
 
+  // Targets that get a verify-baseline step also build the static scanner
+  // that step runs and upload it as an artifact (scripts/build/
+  // verify-baseline-static.ts): the step's test-fleet host has neither the
+  // pinned rust toolchain nor the scanner's crates, and building it there
+  // downloaded both on every job. getVerifyBaselineStep() downloads it.
+  if (needsBaselineVerification(target)) args.push("--verify-baseline-static=on");
+
   // canary: options.canary can be number (revision count) or undefined
   // (default on). Old system used CANARY_REVISION as a counter; build.ts
   // has only on/off — disabled only when explicitly 0.
@@ -511,7 +518,8 @@ function getBuildCommand(target, options, mode) {
 }
 
 /**
- * deps + C++ + cargo + link on one agent; also uploads libbun-*.a, libbun_rust.a and the dep libs.
+ * deps + C++ + cargo + link on one agent; also uploads libbun-*.a, libbun_rust.a and the dep libs
+ * (and, for targets with a verify-baseline step, that step's verify-baseline-static scanner).
  *
  * @param {Platform} platform
  * @param {PipelineOptions} options
@@ -666,6 +674,13 @@ function getVerifyBaselineStep(platform, options) {
   const profileDir = `${triplet}-profile`;
   const profileExe = os === "windows" ? "bun-profile.exe" : "bun-profile";
 
+  // The static scanner, built for this step's host by the build-bun step
+  // (getBuildArgs passes --verify-baseline-static=on; the artifact name is
+  // verifyBaselineStaticArtifact() in scripts/build/ci.ts). Downloading it
+  // is what keeps this step off static.rust-lang.org and crates.io: the
+  // image it runs on has neither the pinned nightly nor the scanner's crates.
+  const staticChecker = os === "windows" ? "verify-baseline-static.exe" : "verify-baseline-static";
+
   const setupCommands =
     os === "windows"
       ? [
@@ -674,13 +689,15 @@ function getVerifyBaselineStep(platform, options) {
           // becomes the step result.
           `echo Downloading build artifacts...`,
           `buildkite-agent artifact download ${profileDir}.zip . --step ${targetKey}-build-bun || exit /b 1`,
+          `buildkite-agent artifact download ${staticChecker} . --step ${targetKey}-build-bun || exit /b 1`,
           `echo Extracting ${profileDir}.zip...`,
           `tar -xf ${profileDir}.zip || exit /b 1`,
         ]
       : [
           `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
+          `buildkite-agent artifact download '${staticChecker}' . --step ${targetKey}-build-bun`,
           `unzip -o '${profileDir}.zip'`,
-          `chmod +x ${profileDir}/${profileExe}`,
+          `chmod +x ${profileDir}/${profileExe} ${staticChecker}`,
           // Linux lanes pin a known-good qemu (see PINNED_QEMU). sha256 check makes a
           // truncated/hijacked download a hard failure before anything runs under it.
           ...(abi === "android"
@@ -713,8 +730,7 @@ function getVerifyBaselineStep(platform, options) {
     timeout_in_minutes: hasWebKitChanges(options) ? 30 : 10,
     command: [
       ...setupCommands,
-      `cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml${os === "windows" ? " || exit /b 1" : ""}`,
-      `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --arch ${platform.arch} --emulator ${emulator}${skipEmulationFlag}${jitStressFlag}`,
+      `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --static-checker ${staticChecker} --arch ${platform.arch} --emulator ${emulator}${skipEmulationFlag}${jitStressFlag}`,
     ],
   };
 }

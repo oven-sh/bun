@@ -331,6 +331,8 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
     const targets = [defaultTarget, "check"];
     if (output.dsym !== undefined) targets.push(n.rel(output.dsym));
     for (const stamp of output.uploadStamps ?? []) targets.push(n.rel(stamp));
+    // Same situation as dsym: nothing links against it, so it has to be a default.
+    if (output.verifyBaselineStatic !== undefined) targets.push(n.rel(output.verifyBaselineStatic));
     n.default(targets);
   }
 

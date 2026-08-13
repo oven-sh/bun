@@ -157,6 +157,14 @@ export interface Config {
    * acquire atomic load per syscall, zero when compiled out.
    */
   socketFaultInjection: boolean;
+  /**
+   * Also build `scripts/verify-baseline-static` (the static ISA scanner) for
+   * the host the CI `verify-baseline` step runs on, so that step downloads it
+   * from `build-bun` instead of installing a rust toolchain and fetching
+   * crates itself. See verify-baseline-static.ts. Off unless the pipeline
+   * asks for it (`.buildkite/ci.mjs` passes it for the targets it verifies).
+   */
+  verifyBaselineStatic: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
   unifiedSources: boolean;
   /**
@@ -350,6 +358,7 @@ export interface PartialConfig {
   valgrind?: boolean;
   fuzzilli?: boolean;
   socketFaultInjection?: boolean;
+  verifyBaselineStatic?: boolean;
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
@@ -1204,6 +1213,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     valgrind,
     fuzzilli,
     socketFaultInjection,
+    verifyBaselineStatic: partial.verifyBaselineStatic ?? false,
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,

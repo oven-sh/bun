@@ -578,6 +578,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // Cargo build: runs `cargo build` in the manifest dir. Only registered
   // if cargo is available — a missing rust toolchain makes ninja fail with
   // a clear "unknown build rule 'dep_cargo'" instead of a cryptic sh error.
+  // Shared with verify-baseline-static.ts (no dep uses it at the moment).
   //
   // Env is passed via stream.ts --env (ninja has no native env support).
   // restat: cargo's incremental build doesn't touch unchanged outputs.

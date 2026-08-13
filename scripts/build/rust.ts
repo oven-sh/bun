@@ -113,9 +113,11 @@ function windowsShimDestPath(cfg: Config): string {
  * Path to the `rustup` binary that owns `cfg.cargo`, or `undefined` if
  * `cfg.cargo` isn't a rustup proxy (a distro/Homebrew cargo, say).
  * `rustup target add` is only meaningful when rustup is the toolchain
- * manager — `rust_build_cross` requires it; everyone else gets `rust_build`.
+ * manager — `rust_build_cross` (and `dep_cargo_cross`, which
+ * verify-baseline-static.ts picks the same way) require it; everyone else
+ * gets the plain rule.
  */
-function findRustup(cfg: Config): string | undefined {
+export function findRustup(cfg: Config): string | undefined {
   if (cfg.cargo === undefined) return undefined;
   const rustup = join(dirname(cfg.cargo), `rustup${cfg.host.exeSuffix}`);
   return existsSync(rustup) ? rustup : undefined;

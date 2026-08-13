@@ -1419,10 +1419,8 @@ const kKeepAliveTimeoutSet = Symbol("keepAliveTimeoutSet");
 // When the keep-alive idle period on a connection started (the last response
 // finish). onResponseFinishHandleSocket records this instead of rescheduling
 // the socket timer on every response; onSocketTimeoutTimerExpired reads it to
-// grant the remaining idle budget when the timer actually fires. Taken with
-// monotonicNowMs(), not Date.now(): bun:test's setSystemTime() / fake timers
-// move Date.now(), which would expire the connection early or re-arm it for
-// however far the clock was moved.
+// grant the remaining idle budget when the timer actually fires. Read from
+// monotonicNowMs(), which setSystemTime() / fake timers cannot move.
 const kKeepAliveIdleStart = Symbol("keepAliveIdleStart");
 // HTTP/1.1 pipelining (responses queued behind an in-flight response):
 // - on the socket: array of queued ServerResponses, in arrival order

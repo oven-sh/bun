@@ -17,8 +17,12 @@
  * The graph under test is what registerRustRules() + emitRust() emit, pointed
  * at a scratch repo and at a cargo stand-in that writes the PE where cargo
  * would. Driving it takes ninja itself and a non-windows host: the stand-in is
- * a shell script, and the rule's shell dialect follows the host. The emission
- * test at the end runs everywhere.
+ * a shell script, and the rule's shell dialect follows the host. The `ninja`
+ * on PATH may also be samurai (Alpine), which logs every edge's post-command
+ * mtime and so never had the extra rebuild; there the build test only checks
+ * that the restat rule still converges and still notices the sibling's
+ * overwrite, and the driver's messages are not parsed beyond what the two
+ * implementations share. The emission test at the end runs everywhere.
  */
 import { which } from "bun";
 import { describe, expect, test } from "bun:test";
@@ -174,27 +178,44 @@ function edge(
   };
 }
 
-function buildShim(buildDir: string, ...flags: string[]): { stdout: string; stderr: string; exitCode: number } {
-  const { stdout, stderr, exitCode } = Bun.spawnSync({
-    cmd: [ninjaExe!, "-C", buildDir, ...flags, "bun-shim"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
-}
-
 /**
- * What the next build would do, per a dry run with `-d explain`: a failing
- * assertion then shows ninja's own reason, e.g. "recorded mtime of
- * .../bun_shim_impl.stamp older than most recent input .../bun_shim_impl.exe".
+ * Drives the stamp edge with the `ninja` on PATH. It is run from the build dir
+ * and asked for the stamp itself rather than via `-C` and the `bun-shim`
+ * phony: `-C` makes samurai announce the directory on stderr, and samurai 1.2
+ * crashes on a dry run that reaches a pending edge through a phony.
  */
-function nextBuild(buildDir: string): { noWorkToDo: boolean; explain: string[] } {
-  const { stdout, stderr, exitCode } = buildShim(buildDir, "-n", "-d", "explain");
-  const explain = stderr.split("\n").filter(line => line.startsWith("ninja explain: "));
-  expect(stderr.replace(/^ninja explain: .*\n?/gm, "")).toBe("");
-  expect(exitCode).toBe(0);
-  return { noWorkToDo: stdout.includes("ninja: no work to do."), explain };
+function shimDriver(buildDir: string, shimStamp: string) {
+  const target = slash(relative(buildDir, shimStamp));
+  const run = (...flags: string[]) => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [ninjaExe!, ...flags, target],
+      cwd: buildDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
+  };
+  return {
+    build: () => run(),
+    /**
+     * What the next build would do, per a dry run with `-d explain`. Both
+     * implementations print a `[N/M] <description>` line per edge they would
+     * run and one `explain` line per reason on stderr (ninja: "ninja explain:
+     * recorded mtime of .../bun_shim_impl.stamp older than most recent input
+     * .../bun_shim_impl.exe"), so a failing assertion shows the reason; a
+     * clean graph yields neither (ninja's "no work to do" / samurai's
+     * "nothing to do" notes are the only other output).
+     */
+    nextBuild: () => {
+      const { stdout, stderr, exitCode } = run("-n", "-d", "explain");
+      expect({ stderr, exitCode }).toMatchObject({ exitCode: 0 });
+      return {
+        runsEdge: /^\[\d+\/\d+\] /m.test(stdout),
+        explain: stderr.split("\n").filter(line => line.includes("explain")),
+      };
+    },
+  };
 }
 
 describe("rust_shim edge", () => {
@@ -218,16 +239,17 @@ describe("rust_shim edge", () => {
       expect(stampEdge.bindings).toMatchObject({ shim_src: quote(shimSrc, false), shim_dest: quote(shimDest, false) });
       // emitRust() pre-creates the 0-byte placeholder so the input exists.
       expect(readFileSync(shimDest, "utf8")).toBe("");
+      const driver = shimDriver(buildDir, shimStamp);
 
       // Fresh build dir: builds the PE and copies it over the placeholder.
-      expect(buildShim(buildDir)).toMatchObject({ stderr: "", exitCode: 0 });
+      expect(driver.build()).toMatchObject({ stderr: "", exitCode: 0 });
       expect(readFileSync(shimDest, "utf8")).toBe(pe);
       expect(existsSync(shimStamp)).toBe(true);
 
       // Nothing has changed since, so the next build has nothing to do. Without
       // restat, ninja recorded the command's start time for the stamp, the
       // copy above postdates it, and the edge (then bun_bin's) runs once more.
-      expect(nextBuild(buildDir)).toEqual({ noWorkToDo: true, explain: [] });
+      expect(driver.nextBuild()).toEqual({ runsEdge: false, explain: [] });
 
       // A build dir for another arch/profile copies its own PE over the shared
       // exe, after this dir's stamp. This dir has to notice and put its PE
@@ -235,15 +257,15 @@ describe("rust_shim edge", () => {
       writeFileSync(shimDest, "MZ shim copied by a sibling build dir\n");
       const afterStamp = new Date(statSync(shimStamp).mtimeMs + 1_000);
       utimesSync(shimDest, afterStamp, afterStamp);
-      const overwritten = nextBuild(buildDir);
-      expect(overwritten.noWorkToDo).toBe(false);
-      expect(overwritten.explain.join("\n")).toContain("bun_shim_impl.stamp is dirty");
+      const overwritten = driver.nextBuild();
+      expect(overwritten.runsEdge).toBe(true);
+      expect(overwritten.explain.join("\n")).toContain("bun_shim_impl.stamp");
 
-      expect(buildShim(buildDir)).toMatchObject({ stderr: "", exitCode: 0 });
+      expect(driver.build()).toMatchObject({ stderr: "", exitCode: 0 });
       expect(readFileSync(shimDest, "utf8")).toBe(pe);
       // That rebuild rewrote the exe during the command just like the fresh
       // build did, and has to converge the same way.
-      expect(nextBuild(buildDir)).toEqual({ noWorkToDo: true, explain: [] });
+      expect(driver.nextBuild()).toEqual({ runsEdge: false, explain: [] });
     },
     // Each of the two real builds starts bunExe() once, to run stream.ts;
     // that alone is ~2.5s per build in a debug build (~50ms in a release one).

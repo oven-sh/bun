@@ -228,6 +228,16 @@ describe.concurrent("bunshell cp -R replaces an existing destination with the co
     return { isLink: lstatSync(path).isSymbolicLink(), reads: readFileSync(path, "utf8") };
   }
 
+  test("links are still created where nothing exists yet", async () => {
+    using dir = setup("fresh");
+
+    expect(await cp(dir, "cp -R link dirlink src dest")).toEqual(copied);
+    expect(entry(at(dir, "dest", "link"))).toEqual({ isLink: true, reads: "new" });
+    expect(entry(at(dir, "dest", "dirlink", "marker.txt"))).toEqual({ isLink: false, reads: "new" });
+    expect(lstatSync(at(dir, "dest", "dirlink")).isSymbolicLink()).toBe(true);
+    expect(entry(at(dir, "dest", "src", "link"))).toEqual({ isLink: true, reads: "new" });
+  });
+
   test("a stale link at the destination is replaced", async () => {
     using dir = setup("link");
     symlinkSync(at(dir, "old.txt"), at(dir, "dest", "link"));

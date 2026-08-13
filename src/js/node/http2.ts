@@ -6809,6 +6809,9 @@ class Http2SecureServer extends tls.Server {
       this.maxHeaderSize = http1Options.maxHeaderSize;
       this.insecureHTTPParser = http1Options.insecureHTTPParser;
       this.httpValidation = http1Options.httpValidation;
+      const joinDuplicateHeaders = http1Options.joinDuplicateHeaders;
+      if (joinDuplicateHeaders !== undefined) validateBoolean(joinDuplicateHeaders, "options.joinDuplicateHeaders");
+      this.joinDuplicateHeaders = joinDuplicateHeaders;
     }
     if (typeof onRequestHandler === "function") {
       this.on("request", onRequestHandler);

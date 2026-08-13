@@ -4139,3 +4139,54 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     expect(serverSide.destroyed).toBe(true);
   }
 });
+
+it("connectionListener applies the server's joinDuplicateHeaders option like Node", async () => {
+  // Node keeps only the first value of a header it treats as single-valued (Authorization,
+  // Content-Type, ...) unless the server was created with joinDuplicateHeaders; Cookie and unknown
+  // headers are joined either way. A socket fed in through server.emit("connection", ...) is served
+  // by the JS parser path, which has to read the option off the server like the native path does.
+  const rawRequest =
+    "GET / HTTP/1.1\r\nHost: example.test\r\n" +
+    "Authorization: one\r\nAuthorization: two\r\n" +
+    "Content-Type: text/plain\r\nContent-Type: text/html\r\n" +
+    "Cookie: a=1\r\nCookie: b=2\r\n" +
+    "X-Custom: first\r\nX-Custom: second\r\n" +
+    "Connection: close\r\n\r\n";
+
+  async function headersSeenOverEmittedConnection(options: { joinDuplicateHeaders?: boolean }) {
+    const { promise: seen, resolve, reject } = Promise.withResolvers<Record<string, string | undefined>>();
+    const server = createServer(options, (req, res) => {
+      const { authorization, "content-type": contentType, cookie, "x-custom": xCustom } = req.headers;
+      resolve({ authorization, "content-type": contentType, cookie, "x-custom": xCustom as string });
+      res.end();
+    });
+    const [clientSide, serverSide] = duplexPair();
+    clientSide.on("error", reject);
+    serverSide.on("error", reject);
+    serverSide.on("close", () => reject(new Error("the server closed the connection without dispatching the request")));
+    clientSide.resume();
+    server.emit("connection", serverSide);
+    clientSide.write(rawRequest);
+    try {
+      return await seen;
+    } finally {
+      clientSide.destroy();
+      serverSide.destroy();
+    }
+  }
+
+  const joined = {
+    authorization: "one, two",
+    "content-type": "text/plain, text/html",
+    cookie: "a=1; b=2",
+    "x-custom": "first, second",
+  };
+  const firstValueWins = { ...joined, authorization: "one", "content-type": "text/plain" };
+  expect(
+    await Promise.all([
+      headersSeenOverEmittedConnection({ joinDuplicateHeaders: true }),
+      headersSeenOverEmittedConnection({ joinDuplicateHeaders: false }),
+      headersSeenOverEmittedConnection({}),
+    ]),
+  ).toEqual([joined, firstValueWins, firstValueWins]);
+});

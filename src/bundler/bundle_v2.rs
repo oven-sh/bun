@@ -3754,9 +3754,9 @@ pub mod bv2_impl {
             })?;
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
-            // `bun.new(ServerComponentParseTask, …)` — heap-owned by the
-            // worker pool; freed via `bun.destroy` in `on_complete` after the
-            // result posts back to the bundle thread.
+            // Handed to the worker pool; `ServerComponentParseTask`'s pool
+            // callback takes the box back and frees it once the file has been
+            // generated.
             let task = bun_core::heap::into_raw(Box::new(ServerComponentParseTask {
                 data,
                 // SAFETY: `from_mut(self)` is the live bundle (write provenance for
@@ -3774,7 +3774,9 @@ pub mod bv2_impl {
 
             self.increment_scan_counter();
 
-            // SAFETY: `task` is the just-allocated arena box; sole reference here.
+            // SAFETY: `task` is the just-allocated box and this is its only
+            // pointer; projecting through it (not through a `&mut` to the field)
+            // keeps whole-allocation provenance for the callback's `heap::take`.
             self.graph
                 .pool()
                 .worker_pool()

@@ -34,8 +34,9 @@ pub(crate) struct ServerComponentParseTask {
     pub source: Source,
 }
 
-// `ServerComponentParseTask` is bump-arena-allocated; boxing the large arm
-// would leak. The size diff is acceptable.
+// One heap allocation per generated file, freed as soon as the file has been
+// generated (`task_callback_wrap`); boxing the large arm would only add a
+// second allocation with the same lifetime.
 #[allow(clippy::large_enum_variant)]
 pub enum Data {
     /// Generate server-side code for a "use client" module. Given the
@@ -55,21 +56,32 @@ pub struct ClientEntryWrapper {
     pub(crate) path: Box<[u8]>,
 }
 
-/// Raw thread-pool callback. Recovers `&mut ServerComponentParseTask` from the
-/// intrusive `task` field and dispatches the parse, then posts the result back
-/// to the owning event loop.
+/// Raw thread-pool callback. Takes back the `Box<ServerComponentParseTask>`
+/// that `BundleV2::enqueue_server_component_generated_file` handed to the
+/// pool, generates the file, frees the task, then posts the result back to the
+/// owning event loop.
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // `ServerComponentParseTask` (heap-allocated, scheduled exactly once). Writes:
 // own fields + `Log` (local) + result is posted via
 // `ctx.loop_.enqueue_task_concurrent` (MPSC). Reads `ctx: &BundleV2` shared.
 // `ServerComponentParseTask` is `Send` because `ctx: *mut BundleV2` is a
 // backref to a `Send` type and `Source`/`Data` payloads are bundle-arena
-// slices.
+// slices. Dropping it here (off the bundle thread that built it) is fine for
+// the same reason: the only heap-owning payloads are global-heap `Cow`/`Box`
+// buffers and the `NamedExports` clone, whose `AstAlloc` storage is reclaimed
+// by its arena, not by `Drop` (`AstAlloc::deallocate` is a no-op).
 fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
-    // SAFETY: `thread_pool_task` points to the `task` field of a heap-allocated
-    // `ServerComponentParseTask` enqueued by BundleV2; offset_of recovers the parent.
-    let task: &mut ServerComponentParseTask = unsafe {
-        &mut *(bun_core::from_field_ptr!(ServerComponentParseTask, task, thread_pool_task))
+    // SAFETY: `thread_pool_task` is the `task` field of the
+    // `ServerComponentParseTask` that `enqueue_server_component_generated_file`
+    // leaked with `heap::into_raw` and scheduled; the pool runs a task exactly
+    // once and never touches it after this callback, so ownership of the box
+    // is ours to reclaim.
+    let mut task: Box<ServerComponentParseTask> = unsafe {
+        bun_core::heap::take(bun_core::from_field_ptr!(
+            ServerComponentParseTask,
+            task,
+            thread_pool_task
+        ))
     };
 
     // `ctx` is a `ParentRef` BACKREF to the owning BundleV2 (set at enqueue).
@@ -84,11 +96,16 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     // worker-owned bump arena; lives for the worker's lifetime.
     let arena: &Arena = worker.arena();
 
-    let value = match task_callback(task, &mut log, arena) {
+    let value = match task_callback(&mut task, &mut log, arena) {
         Ok(success) => ResultValue::Success(success),
         // Only possible error is OOM; abort like `bun.outOfMemory()`.
         Err(_oom) => bun_core::out_of_memory(),
     };
+    // Everything the generated AST refers to was copied into the worker arena
+    // by `task_callback`, and `source` was moved into `value`; nothing points
+    // back into the task, so it is freed before the result becomes visible to
+    // the bundle thread.
+    drop(task);
 
     let result = Box::new(parse_task::Result {
         // `ctx` already a `ParentRef<BundleV2>` with write provenance
@@ -225,10 +242,11 @@ impl Default for ServerComponentParseTask {
 }
 
 fn generate_client_entry_wrapper(data: &ClientEntryWrapper, b: &mut AstBuilder) -> Result<(), OOM> {
-    // `add_import_record` stores the slice raw in the `ImportRecord`; `data.path`
-    // outlives the bundle pass (owned by the heap-allocated task). Route through
-    // `StoreStr` so the lifetime erasure goes through one audited unsafe.
-    let path = bun_ast::StoreStr::new(&data.path[..]);
+    // `add_import_record` stores the slice raw in the `ImportRecord`, and
+    // `data.path` dies with the task as soon as this file is generated, so the
+    // record gets a copy in the AST arena. Route through `StoreStr` so the
+    // lifetime erasure goes through one audited unsafe.
+    let path = bun_ast::StoreStr::new(b.bump.alloc_slice_copy(&data.path));
     let record = b.add_import_record(path.slice(), ImportKind::Stmt)?;
     let namespace_ref = b.new_symbol(symbol::Kind::Other, b"main")?;
     b.append_stmt(S::Import {
@@ -293,7 +311,10 @@ fn generate_client_reference_proxy(
     ));
 
     for key in client_named_exports.keys() {
-        let key: &[u8] = key.as_ref();
+        // `new_symbol` stores the name raw, and `client_named_exports` dies with
+        // the task as soon as this file is generated, so the symbol (and the
+        // string literal below) gets a copy in the AST arena.
+        let key: &[u8] = b.bump.alloc_slice_copy(key.as_ref());
         let is_default = key == b"default";
 
         // This error message is taken from
@@ -359,7 +380,7 @@ fn generate_client_reference_proxy(
                     ..Default::default()
                 }),
                 module_path,
-                b.new_expr(E::String::init(b.bump.alloc_slice_copy(key))),
+                b.new_expr(E::String::init(key)),
             ]),
             ..Default::default()
         });

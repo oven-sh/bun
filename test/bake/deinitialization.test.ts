@@ -1,4 +1,5 @@
-import { bunEnv, bunExe } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import path from "node:path";
 
 test("dev server deinitializes itself", () => {
@@ -13,3 +14,86 @@ test("dev server deinitializes itself", () => {
   // The child runs a whole `bun test` suite (nine GC-heavy cases plus leak
   // reporting at exit), which takes longer than the 5s default under ASAN.
 }, 60_000);
+
+// With separateSSRGraph, every "use client" module the server graph imports
+// makes the bundler generate a "reference proxy" module in its place. The
+// proxy is built on the thread pool from a heap-allocated
+// ServerComponentParseTask, which used to be scheduled and never freed (one
+// allocation per client module per bundle). LeakSanitizer reports that
+// allocation at exit, so this needs the ASAN build. The proxy's exports must
+// still come out right after the task is freed: their names are printed from
+// the generated module long after the task is gone.
+test.skipIf(!isASAN)(
+  'bundling a "use client" reference proxy does not leak its ServerComponentParseTask',
+  async () => {
+    using dir = tempDir("bake-reference-proxy-leak", {
+      "main.ts": `
+        using server = Bun.serve({
+          port: 0,
+          development: true,
+          app: {
+            framework: {
+              serverComponents: {
+                separateSSRGraph: true,
+                serverRuntimeImportSource: "./framework/server.ts",
+                serverRegisterClientReferenceExport: "registerClientReference",
+              },
+              fileSystemRouterTypes: [
+                {
+                  root: "routes",
+                  serverEntryPoint: "./framework/server.ts",
+                  style: "nextjs-pages",
+                },
+              ],
+            },
+          },
+        });
+        const response = await fetch(server.url);
+        console.log(response.status, await response.text());
+      `,
+      "framework/server.ts": `
+        export function render(request, meta) {
+          return new Response(meta.pageModule.default());
+        }
+        // Called once per export of the client module by the generated proxy.
+        export function registerClientReference(value, file, exportName) {
+          return () => exportName;
+        }
+      `,
+      // The server graph imports the client module, so it gets the proxy.
+      "routes/index.ts": `
+        import Widget, { Alpha, Beta } from "../components/Widget";
+        export default () => [Widget(), Alpha(), Beta()].join(" ");
+      `,
+      "components/Widget.ts": `
+        "use client";
+        export function Alpha() {}
+        export function Beta() {}
+        export default function Widget() {}
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dir, "../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("200 default Alpha Beta\n");
+    // The dev server logs its bundle timing here; a leak report would follow it.
+    expect(stderr).not.toContain("LeakSanitizer");
+    expect(exitCode).toBe(0);
+  },
+  // Starting a dev server and bundling the route takes a few seconds under
+  // ASAN, and when LSan does find something, symbolizing the report against
+  // the debug binary takes longer still.
+  90_000,
+);

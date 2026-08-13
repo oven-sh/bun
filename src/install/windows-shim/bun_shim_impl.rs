@@ -11,6 +11,12 @@
 //! launcher exe. We read that (see `BinLinkingShim.rs` for the creation of this file)
 //! and then we call NtCreateProcess to spawn the correct child process.
 //!
+//! The target path stored in the `.bunx` file is usually relative to the parent of the
+//! directory the launcher lives in, and is read into memory directly after that directory's
+//! path to form the absolute path without copying. When the `.bunx` file carries
+//! `Flags::is_absolute_target`, the stored path is already absolute and is used as-is from
+//! where it was read.
+//!
 //! Every attempt possible to make this file as minimal as possible has been made.
 //! Which has unfortunatly made is difficult to read. To make up for this, every
 //! part of this program is documented as much as possible, including links to
@@ -899,6 +905,8 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         );
     }
 
+    let metadata_ptr: *mut u16 = read_ptr;
+
     // All three `read_len` outcomes land on initialized memory:
     //   - SUCCESS, read_len >= 2  → inside the bytes NtReadFile just wrote.
     //   - SUCCESS, read_len < 2   → moves *backward* into the image-path prefix we
@@ -925,6 +933,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         debug!("    is_node_or_bun: {}", flags.is_node_or_bun());
         debug!("    is_node: {}", flags.is_node());
         debug!("    has_shebang: {}", flags.has_shebang());
+        debug!("    is_absolute_target: {}", flags.is_absolute_target());
         debug!("    version_tag: {}", flags.version_tag().bits());
     }
 
@@ -937,6 +946,26 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
         return LauncherMode::fail(MODE, FailReason::InvalidShimValidation);
     }
+
+    // Where the target's absolute path starts in buf1. A relative bin path was read in directly
+    // after the parent of the launcher's directory, so the absolute path starts right after the
+    // NT object prefix. An absolute bin path is complete on its own, so it starts where it was
+    // read and the directory left in front of it is never used:
+    //
+    //   relative: '\??\C:\Users\chloe\project\node_modules\my-cli\src\app.js"#...'
+    //                 ^ bin_path_start
+    //   absolute: '\??\C:\Users\chloe\.bun\E:\store\node_modules\my-cli\src\app.js"#...'
+    //                                     ^ bin_path_start (== metadata_ptr)
+    //
+    // Either way the u16 right before it is a `\` (the end of the NT prefix, or the separator
+    // the directory walk above stopped on) which the no-shebang path below may overwrite.
+    let bin_path_start: *mut u16 = if flags.is_absolute_target() {
+        metadata_ptr
+    } else {
+        // SAFETY: NT_OBJECT_PREFIX was written at the start of buf1 above.
+        unsafe { buf1_u16.add(NT_OBJECT_PREFIX.len()) }
+    };
+    debug_assert!(unsafe { *bin_path_start.sub(1) } == '\\' as u16);
 
     let mut spawn_command_line: *mut u16 = if !flags.has_shebang() {
         'spawn_command_line: {
@@ -951,12 +980,13 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             //                                                                  ^^ flags
             //                                                         zero char|
 
-            // change the \ from '\??\' to '""
+            // change the \ before the path (the one from '\??\' here) to '"'
             // the ending quote is assumed to already exist as per the format
             // BUF1: '\??"C:\Users\chloe\project\node_modules\my-cli\src\app.js"##!!!!!!!!!!'
-            //           ^
-            // SAFETY: index 3 is within buf1.
-            unsafe { *buf1_u16.add(3) = '"' as u16 };
+            //           ^ opening_quote_ptr
+            // SAFETY: the u16 before bin_path_start is inside buf1 (see where it is computed).
+            let opening_quote_ptr: *mut u16 = unsafe { bin_path_start.sub(1) };
+            unsafe { *opening_quote_ptr = '"' as u16 };
 
             // Copy user arguments in, overwriting old data. Remember that we ensured the arguments
             // this started with a space.
@@ -996,12 +1026,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     .write_unaligned(0);
             }
 
-            // SAFETY: buf1_u8 + 2*(4-1) is 2-byte-aligned (buf1 is u16-aligned, offset is even).
-            break 'spawn_command_line unsafe {
-                buf1_u8
-                    .add(2 * (NT_OBJECT_PREFIX.len() - 1/* "\"".len */))
-                    .cast::<u16>()
-            };
+            break 'spawn_command_line opening_quote_ptr;
         }
     } else {
         'spawn_command_line: {
@@ -1080,17 +1105,15 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 }
                 // BUF1: '\??\C:\Users\chloe\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
                 //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^  ^ read_ptr
-                let len = ((read_ptr as usize) - (buf1_u8 as usize) - shebang_arg_len_u8 as usize)
+                //            ^ bin_path_start
+                let len = ((read_ptr as usize)
+                    - shebang_arg_len_u8 as usize
+                    - (bin_path_start as usize))
                     / 2
-                    - NT_OBJECT_PREFIX.len()
                     - 2 /* "\"\x00".len */;
-                // SAFETY: buf1_u16 + 4 .. + 4 + len is within buf1; the next char is '"' (the metadata format places '"' after the bin path).
-                let launch_slice =
-                    unsafe { bun_core::ffi::slice_mut(buf1_u16.add(NT_OBJECT_PREFIX.len()), len) };
-                debug_assert_eq!(
-                    unsafe { *buf1_u16.add(NT_OBJECT_PREFIX.len() + len) },
-                    '"' as u16
-                );
+                // SAFETY: bin_path_start .. + len is within buf1; the next char is '"' (the metadata format places '"' after the bin path).
+                let launch_slice = unsafe { bun_core::ffi::slice_mut(bin_path_start, len) };
+                debug_assert_eq!(unsafe { *bin_path_start.add(len) }, '"' as u16);
                 bun_ctx.direct_launch_with_bun_js(launch_slice);
                 return LauncherMode::fail(MODE, FailReason::CouldNotDirectLaunch);
             }
@@ -1112,9 +1135,9 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             //
             // BUF1: '\??\C:\Users\chloe\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
             //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^ ^ read_ptr
-            let length_of_filename_u8 = (read_ptr as usize)
-                - (buf1_u8 as usize)
-                - 2 * (NT_OBJECT_PREFIX.len() + 1/* "\x00".len */);
+            //            ^ bin_path_start
+            let length_of_filename_u8 =
+                (read_ptr as usize) - (bin_path_start as usize) - 2 * 1 /* "\x00".len */;
             if shebang_arg_len_u8 as usize
                 + 2 /* "\"".len */
                 + length_of_filename_u8
@@ -1147,18 +1170,15 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             // Copy the filename in. There is no leading " but there is a trailing "
             // BUF1: '\??\C:\Users\chloe\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
             //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^ ^ read_ptr
+            //            ^ bin_path_start
             // BUF2: 'node "C:\Users\chloe\project\node_modules\my-cli\src\app.js"!!!!!!!!!!!!!!!!!!!!'
             // SAFETY: slice within buf1.
-            let filename: &[u8] = unsafe {
-                bun_core::ffi::slice(
-                    buf1_u8.add(2 * NT_OBJECT_PREFIX.len()),
-                    length_of_filename_u8,
-                )
-            };
-            // `filename` is a UTF-16 byte view: its base is `buf1_u8 + 2*NT_OBJECT_PREFIX.len()`
-            // (even offset from a `*mut u16`-derived pointer ⇒ 2-aligned) and its length is the
-            // difference of two `*mut u16`-derived addresses minus an even constant ⇒ even.
-            // `bytemuck::cast_slice` checks both invariants at runtime, so no `unsafe` needed.
+            let filename: &[u8] =
+                unsafe { bun_core::ffi::slice(bin_path_start.cast::<u8>(), length_of_filename_u8) };
+            // `filename` is a UTF-16 byte view: its base is a `*mut u16` into buf1 (⇒ 2-aligned)
+            // and its length is the difference of two `*mut u16`-derived addresses minus an even
+            // constant ⇒ even. `bytemuck::cast_slice` checks both invariants at runtime, so no
+            // `unsafe` needed.
             let filename_u16: &[u16] = bytemuck::cast_slice(filename);
             if DBG {
                 debug!("filename and quote: '{}'", fmt16(filename_u16));

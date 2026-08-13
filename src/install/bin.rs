@@ -1179,12 +1179,19 @@ impl<'a> Linker<'a> {
             resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes()),
             abs_target.as_bytes(),
         );
-        debug_assert!(strings::has_prefix(rel_target.as_bytes(), b"..\\"));
 
-        let rel_target_w = strings::to_w_path_normalized(
-            target_buf.as_mut_slice(),
-            &rel_target.as_bytes()[b"..\\".len()..],
-        );
+        // The shim resolves `bin_path` against the parent of its own directory,
+        // so the leading `..\` is implied. `relative` yields no `..\` when the
+        // target is on another drive (it returns the absolute path) or when the
+        // target is inside the bin directory itself, both of which happen with
+        // global installs; those shims store the absolute target.
+        let (bin_path, is_absolute_target): (&[u8], bool) =
+            match strings::without_prefix_if_possible_comptime(rel_target.as_bytes(), b"..\\") {
+                Some(rel_to_parent) => (rel_to_parent, false),
+                None => (abs_target.as_bytes(), true),
+            };
+
+        let bin_path_w = strings::to_w_path_normalized(target_buf.as_mut_slice(), bin_path);
 
         let shebang = 'shebang: {
             let first_content_chunk: Option<&[u8]> = 'contents: {
@@ -1201,7 +1208,7 @@ impl<'a> Linker<'a> {
             };
 
             if let Some(chunk) = first_content_chunk {
-                match WinShimShebang::parse(chunk, rel_target_w) {
+                match WinShimShebang::parse(chunk, bin_path_w) {
                     Ok(s) => break 'shebang s,
                     Err(_) => {
                         self.err = Some(crate::Error::InvalidBinCount);
@@ -1209,12 +1216,13 @@ impl<'a> Linker<'a> {
                     }
                 }
             } else {
-                break 'shebang WinShimShebang::parse_from_bin_path(rel_target_w);
+                break 'shebang WinShimShebang::parse_from_bin_path(bin_path_w);
             }
         };
 
         let shim = WinBinLinkingShim {
-            bin_path: rel_target_w,
+            bin_path: bin_path_w,
+            is_absolute_target,
             shebang,
         };
 

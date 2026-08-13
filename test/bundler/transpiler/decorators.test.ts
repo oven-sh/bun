@@ -1323,7 +1323,8 @@ describe("accessor keyword with experimentalDecorators", () => {
 
   test("TypeScript modifiers are stripped and decorated siblings are lowered as usual", () => {
     // tsc accepts a class that mixes legacy decorators with accessor members, so
-    // the accessors must not make the rest of the class an error.
+    // the accessors must not make the rest of the class an error. A decorated
+    // abstract accessor is decorated like an abstract field (no body member).
     expect(
       transpile(`
         declare const dec: any;
@@ -1335,6 +1336,7 @@ describe("accessor keyword with experimentalDecorators", () => {
           public static accessor d = 4;
           protected static override accessor e = 5;
           abstract accessor f: number;
+          @dec abstract accessor g: number;
           @dec save() {}
         }
       `),
@@ -1383,6 +1385,9 @@ describe("accessor keyword with experimentalDecorators", () => {
       __legacyDecorateClassTS([
         dec
       ], Entity.prototype, "id", undefined);
+      __legacyDecorateClassTS([
+        dec
+      ], Entity.prototype, "g", undefined);
       __legacyDecorateClassTS([
         dec
       ], Entity.prototype, "save", null);"

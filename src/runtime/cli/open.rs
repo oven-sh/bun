@@ -11,11 +11,6 @@ use crate::api::bun::process::sync;
 
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(target_os = "macos")]
-const OPENER: &[u8] = b"/usr/bin/open";
-
-// ──────────────────────────────────────────────────────────────────────────
-
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash, strum::IntoStaticStr, enum_map::Enum)]
 #[strum(serialize_all = "snake_case")] // Vscode → "vscode"
@@ -173,10 +168,9 @@ impl Editor {
             }};
         }
 
-        // Runs the editor in a new Terminal.app window.
         #[cfg(target_os = "macos")]
         if matches!(self, Editor::Vim | Editor::Emacs | Editor::Neovim) {
-            push_arg!(OPENER);
+            push_arg!(super::open::OPENER);
             push_arg!(binary);
             push_arg!(b"--args");
         }

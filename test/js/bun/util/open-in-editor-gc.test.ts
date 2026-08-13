@@ -190,6 +190,8 @@ printf '%s\\n' "\${0##*/}" "$@" > "$file.tmp" && mv "$file.tmp" "$file"
   // .cmd stub does not have, so this form only reaches these editors on Linux.
   if (!isWindows) cases.push(["nvim", "absolute path"]);
 
+  // Not concurrent: five debug builds starting at once on a loaded machine ran
+  // past the default per-test timeout; one at a time each row takes ~0.5s.
   test.each(cases)("%s given as %s", async (editor, how) => {
     const stub = isWindows ? `${editor}.cmd` : editor;
     using dir = tempDir("open-in-editor-terminal", {

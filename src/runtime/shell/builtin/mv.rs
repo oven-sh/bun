@@ -487,7 +487,7 @@ impl ShellMvBatchedTask {
         match bun_sys::renameat(src_dir, src, dst_dir, dst) {
             Err(e) if e.get_errno() == bun_sys::E::EXDEV => {
                 Self::move_across_devices(src_dir, src, dst_dir, dst).map_err(|e| {
-                    if e.path.is_empty() {
+                    if e.path.is_none() {
                         e.with_path(src.as_bytes())
                     } else {
                         e

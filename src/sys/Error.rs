@@ -14,6 +14,16 @@ fn fd_unwrap_valid(fd: Fd) -> Option<Fd> {
     if fd == Fd::INVALID { None } else { Some(fd) }
 }
 
+/// `SystemError__toErrorInstance` skips `path`/`dest` strings tagged `Empty`,
+/// which is what `clone_utf8` returns for zero bytes; an operand that really is
+/// "" goes over as a zero-length static string so the property still lands.
+fn operand_string(operand: &[u8]) -> BunString {
+    if operand.is_empty() {
+        return BunString::static_(b"");
+    }
+    BunString::clone_utf8(operand)
+}
+
 #[cfg(windows)]
 const RETRY_ERRNO: Int = E::EINTR as Int;
 #[cfg(not(windows))]
@@ -29,11 +39,11 @@ pub struct Error {
     pub fd: Fd,
     #[cfg(windows)]
     pub from_libuv: bool,
-    // Box<[u8]> per PORTING.md; `with_path*` eagerly clones. Revisit if
-    // profiling shows regressions.
-    pub path: Box<[u8]>,
+    // `None`: the operation had no path operand. `Some("")` is a real (empty)
+    // operand and is reported like any other, as Node does.
+    pub path: Option<Box<[u8]>>,
     pub syscall: Tag,
-    pub dest: Box<[u8]>,
+    pub dest: Option<Box<[u8]>>,
 }
 
 impl Default for Error {
@@ -43,9 +53,9 @@ impl Default for Error {
             fd: Fd::INVALID,
             #[cfg(windows)]
             from_libuv: false,
-            path: Box::default(),
+            path: None,
             syscall: Tag::TODO,
-            dest: Box::default(),
+            dest: None,
         }
     }
 }
@@ -222,7 +232,7 @@ impl Error {
             errno: self.errno,
             syscall: self.syscall,
             // PERF: clones the slice into a Box — profile if hot.
-            path: Box::from(path),
+            path: Some(Box::from(path)),
             ..Default::default()
         }
     }
@@ -233,7 +243,7 @@ impl Error {
             errno: self.errno,
             syscall: syscall_,
             // PERF: clones the slice into a Box — profile if hot.
-            path: Box::from(path),
+            path: Some(Box::from(path)),
             ..Default::default()
         }
     }
@@ -253,7 +263,7 @@ impl Error {
             #[cfg(windows)]
             from_libuv: self.from_libuv,
             path: self.path.clone(),
-            dest: Box::from(dest),
+            dest: Some(Box::from(dest)),
         }
     }
 
@@ -263,8 +273,8 @@ impl Error {
             errno: self.errno,
             syscall: self.syscall,
             // PERF: clones the slices into Boxes — profile if hot.
-            path: Box::from(path),
-            dest: Box::from(dest),
+            path: Some(Box::from(path)),
+            dest: Some(Box::from(dest)),
             ..Default::default()
         }
     }
@@ -280,8 +290,8 @@ impl Error {
             #[cfg(windows)]
             from_libuv: self.from_libuv,
             syscall: self.syscall,
-            path: Box::default(),
-            dest: Box::default(),
+            path: None,
+            dest: None,
         }
     }
 
@@ -378,12 +388,12 @@ impl Error {
             (code, map[system_errno])
         });
 
-        if !self.path.is_empty() {
-            err.path = BunString::clone_utf8(&self.path).into();
+        if let Some(path) = self.path.as_deref() {
+            err.path = operand_string(path).into();
         }
 
-        if !self.dest.is_empty() {
-            err.dest = BunString::clone_utf8(&self.dest).into();
+        if let Some(dest) = self.dest.as_deref() {
+            err.dest = operand_string(dest).into();
         }
 
         if let Some(valid) = fd_unwrap_valid(self.fd) {
@@ -444,22 +454,22 @@ impl Error {
                 {
                     break 'brk;
                 }
-                if !self.path.is_empty() {
+                if let Some(path) = self.path.as_deref() {
                     if cursor.write_all(b" '").is_err() {
                         break 'brk;
                     }
-                    if cursor.write_all(&self.path).is_err() {
+                    if cursor.write_all(path).is_err() {
                         break 'brk;
                     }
                     if cursor.write_all(b"'").is_err() {
                         break 'brk;
                     }
 
-                    if !self.dest.is_empty() {
+                    if let Some(dest) = self.dest.as_deref() {
                         if cursor.write_all(b" -> '").is_err() {
                             break 'brk;
                         }
-                        if cursor.write_all(&self.dest).is_err() {
+                        if cursor.write_all(dest).is_err() {
                             break 'brk;
                         }
                         if cursor.write_all(b"'").is_err() {
@@ -497,8 +507,8 @@ impl fmt::Display for Error {
         let mut that = self.without_path().to_shell_system_error();
         debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
         debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
-        that.path = BunString::borrow_utf8(&self.path).into();
-        that.dest = BunString::borrow_utf8(&self.dest).into();
+        that.path = BunString::borrow_utf8(self.path.as_deref().unwrap_or_default()).into();
+        that.dest = BunString::borrow_utf8(self.dest.as_deref().unwrap_or_default()).into();
         debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
         debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
 

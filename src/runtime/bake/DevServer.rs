@@ -5783,9 +5783,8 @@ impl DevServer {
     }
 
     pub(crate) fn on_watch_error(&self, err: sys::Error) {
-        if !err.path.is_empty() {
-            // Note: split out path before moving `err` into `Output::err`.
-            let path = err.path.clone();
+        // Note: split out path before moving `err` into `Output::err`.
+        if let Some(path) = err.path.clone() {
             Output::err(
                 err,
                 "failed to watch {} for hot-reloading",

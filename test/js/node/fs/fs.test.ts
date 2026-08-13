@@ -6401,3 +6401,100 @@ describe("fs.Utf8Stream", () => {
     await done;
   });
 });
+
+// Node reports an operand that happens to be the empty string like any other
+// operand: it is quoted in the message and set as `err.path` / `err.dest`.
+describe("an empty string operand is reported like any other path", () => {
+  type Form = "sync" | "callback" | "promises";
+  const tmp = tempDirWithFiles("fs-empty-operand", { "existing.txt": "" });
+  const existing = join(tmp, "existing.txt");
+
+  // Resolves with the error the operation failed with, or undefined if it succeeded.
+  function failureOf(form: Form, op: string, ...args: unknown[]): Promise<unknown> {
+    switch (form) {
+      case "sync":
+        try {
+          (fs as any)[`${op}Sync`](...args);
+          return Promise.resolve(undefined);
+        } catch (err) {
+          return Promise.resolve(err);
+        }
+      case "callback": {
+        const { promise, resolve } = Promise.withResolvers<unknown>();
+        (fs as any)[op](...args, (err: unknown) => resolve(err ?? undefined));
+        return promise;
+      }
+      case "promises":
+        return (fs.promises as any)[op](...args).then(
+          () => undefined,
+          (err: unknown) => err,
+        );
+    }
+  }
+
+  // `dest` is always picked so one-operand errors are also checked for not having one.
+  const shapeOf = (err: any) =>
+    err && { code: err.code, syscall: err.syscall, message: err.message, path: err.path, dest: err.dest };
+
+  const oneOperand: [label: string, op: string, syscall: string, args: unknown[]][] = [
+    ["stat", "stat", "stat", []],
+    ["lstat", "lstat", "lstat", []],
+    ["statfs", "statfs", "statfs", []],
+    ["access", "access", "access", []],
+    ["open", "open", "open", ["r"]],
+    ["readFile", "readFile", "open", []],
+    ["mkdir", "mkdir", "mkdir", []],
+    ["mkdir recursive", "mkdir", "mkdir", [{ recursive: true }]],
+    ["rmdir", "rmdir", "rmdir", []],
+    ["unlink", "unlink", "unlink", []],
+    ["rm", "rm", "lstat", []],
+    ["readlink", "readlink", "readlink", []],
+    ["chmod", "chmod", "chmod", [0o644]],
+    ["utimes", "utimes", "utime", [0, 0]],
+    ["opendir", "opendir", "opendir", []],
+  ];
+  // On Windows readdir("") currently lists the cwd instead of failing (tracked separately).
+  if (!isWindows) oneOperand.push(["readdir", "readdir", "scandir", []]);
+
+  const twoOperand: [op: string, syscall: string][] = [
+    ["copyFile", "copyfile"],
+    ["rename", "rename"],
+    ["link", "link"],
+    ["symlink", "symlink"],
+  ];
+  // On Windows the async copyFile(src, "") currently segfaults (tracked separately).
+  const twoOperandEmptyDest = twoOperand.filter(([op]) => !(isWindows && op === "copyFile"));
+
+  describe.each(["sync", "callback", "promises"] as Form[])("%s", form => {
+    it.each(oneOperand)("%s('')", async (_label, op, syscall, args) => {
+      expect(shapeOf(await failureOf(form, op, "", ...args))).toEqual({
+        code: "ENOENT",
+        syscall,
+        message: `ENOENT: no such file or directory, ${syscall} ''`,
+        path: "",
+        dest: undefined,
+      });
+    });
+
+    it.each(twoOperand)("%s('', other)", async (op, syscall) => {
+      const other = join(tmp, `${op}-${form}-other`);
+      expect(shapeOf(await failureOf(form, op, "", other))).toEqual({
+        code: "ENOENT",
+        syscall,
+        message: `ENOENT: no such file or directory, ${syscall} '' -> '${other}'`,
+        path: "",
+        dest: other,
+      });
+    });
+
+    it.each(twoOperandEmptyDest)("%s(existing, '')", async (op, syscall) => {
+      expect(shapeOf(await failureOf(form, op, existing, ""))).toEqual({
+        code: "ENOENT",
+        syscall,
+        message: `ENOENT: no such file or directory, ${syscall} '${existing}' -> ''`,
+        path: existing,
+        dest: "",
+      });
+    });
+  });
+});

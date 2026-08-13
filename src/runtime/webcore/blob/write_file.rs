@@ -793,7 +793,7 @@ mod windows_impl {
                         this,
                         sys::Error {
                             errno: err as _,
-                            path,
+                            path: Some(path),
                             syscall: sys::Tag::open,
                             ..Default::default()
                         },
@@ -871,7 +871,7 @@ mod windows_impl {
                         this,
                         sys::Error {
                             errno: err as _,
-                            path,
+                            path: Some(path),
                             syscall: sys::Tag::open,
                             ..Default::default()
                         },

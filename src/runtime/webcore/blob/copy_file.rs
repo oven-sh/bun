@@ -1421,7 +1421,7 @@ impl<'a> CopyFileWindows<'a> {
                         return bun_sys::Result::Err(bun_sys::Error {
                             errno: bun_sys::SystemErrno::EMFILE as u16,
                             syscall: bun_sys::Tag::open,
-                            path: path.slice().into(),
+                            path: Some(path.slice().into()),
                             ..Default::default()
                         });
                     }
@@ -1627,7 +1627,7 @@ impl<'a> CopyFileWindows<'a> {
                     errno
                 },
                 syscall: bun_sys::Tag::copyfile,
-                path: old_path.as_bytes().into(),
+                path: Some(old_path.as_bytes().into()),
                 ..Default::default()
             });
             return;

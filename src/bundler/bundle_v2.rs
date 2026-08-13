@@ -2957,11 +2957,21 @@ pub mod bv2_impl {
 
             this.linker.dev_server = this.dev_server;
 
-            let tp = ThreadPool::init(&*this, thread_pool)?;
+            let mut tp = ThreadPool::init(&*this, thread_pool)?;
+            if let Err(errno) = tp.start() {
+                tp.deinit();
+                let hint = bun_threading::thread_pool::thread_limit_hint(errno)
+                    .map_or_else(String::new, |hint| format!(". {hint}"));
+                this.transpiler.log_mut().add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("Failed to create a worker thread for the bundler: {errno}{hint}"),
+                );
+                return Err(Error::ThreadSpawnFailed);
+            }
             // errdefer this.graph.heap.deinit() — Drop handles arena teardown.
             this.graph.pool = bun_ptr::BackRef::new_mut(this.arena().alloc(tp));
-            // Install the watcher only after `ThreadPool::init()` has succeeded —
-            // the `?` above is the last early-return in this fn, so the watcher's
+            // Install the watcher only after the last early-return above, so the watcher's
             // raw `*mut BundleV2` can't outlive the box it points at (the caller
             // drops the box on every error path until `generate_from_cli` leaks it).
             if cli_watch_flag {
@@ -2970,8 +2980,6 @@ pub mod bv2_impl {
                 // via this extern hook and writes `bun_watcher`.
                 dispatch::enable_hot_module_reloading_for_bundler(core::ptr::from_mut(&mut *this));
             }
-            // `Graph::pool` wraps the `BackRef` deref; `start()` takes `&self`.
-            this.graph.pool().start();
             Ok(this)
         }
 

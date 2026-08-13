@@ -42,6 +42,11 @@ impl WaitGroup {
         self.add(1);
     }
 
+    /// `add`s not yet matched by a `finish`.
+    pub(crate) fn pending(&self) -> usize {
+        self.raw_count.load(Ordering::Acquire)
+    }
+
     pub fn finish(&self) {
         // Fast path: decrement lock-free while there are other outstanding
         // tasks. We cannot unconditionally `fetch_sub(1)` and then lock/signal

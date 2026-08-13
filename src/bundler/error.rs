@@ -38,6 +38,9 @@ pub enum Error {
     FormatError,
     #[error("ResolveMessage")]
     ResolveMessage,
+    /// The pool got no worker at all (OS error in the log); `BundleV2::init` raises it before the CLI watcher exists.
+    #[error("ThreadSpawnFailed")]
+    ThreadSpawnFailed,
     #[error("JSError")]
     Js(bun_core::JsError),
     #[error(transparent)]
@@ -123,6 +126,7 @@ impl Error {
             Self::EmptyAST => "EmptyAST",
             Self::FormatError => "FormatError",
             Self::ResolveMessage => "ResolveMessage",
+            Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::Js(bun_core::JsError::OutOfMemory) => "OutOfMemory",
             Self::Js(_) => "JSError",
             Self::Sys(e) => <&'static str>::from(e),

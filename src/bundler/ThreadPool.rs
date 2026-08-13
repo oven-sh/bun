@@ -249,11 +249,13 @@ impl ThreadPool {
         self.io_pool.as_deref()
     }
 
-    pub(crate) fn start(&self) {
-        self.worker_pool().warm(8);
+    /// Fails only if a pool got no worker at all; see `ThreadPoolLib::ThreadPool::warm`.
+    pub(crate) fn start(&self) -> Result<(), bun_errno::SystemErrno> {
+        self.worker_pool().warm(8)?;
         if let Some(io) = self.io_pool_ref() {
-            io.warm(1);
+            io.warm(1)?;
         }
+        Ok(())
     }
 
     pub(crate) fn uses_io_pool() -> bool {

@@ -287,6 +287,26 @@ describe.concurrent("bunshell ls", () => {
         .run();
     });
 
+    // On Windows the shell's openat emulation used to resolve an empty operand
+    // to the cwd itself, so `ls ""` listed the cwd and exited 0.
+    test.each(['ls ""', 'ls -R ""'])("%s fails with ENOENT", async cmd => {
+      await TestBuilder.command`${{ raw: cmd }}`
+        .file("a", "")
+        .exitCode(1)
+        .stdout("")
+        .stderr("ls: No such file or directory\n")
+        .run();
+    });
+
+    test("the other operands are still listed when one is empty", async () => {
+      await TestBuilder.command`ls a ""`
+        .file("a", "")
+        .exitCode(1)
+        .stdout("a\n")
+        .stderr("ls: No such file or directory\n")
+        .run();
+    });
+
     test("invalid flag", async () => {
       await TestBuilder.command`ls -z`
         .exitCode(1)

@@ -2,7 +2,7 @@ use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
+    ParseFlagResult, ShellTask, parse_flags, reject_empty_path, unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -265,13 +265,8 @@ impl ShellTouchTask {
     pub(crate) fn run_from_thread_pool(this: &mut ShellTouchTask) {
         use bun_paths::resolve_path::{self, Platform, platform};
         use bun_sys::FdExt as _;
-        // Joining an empty operand onto the cwd yields the cwd itself, so it
-        // would touch the directory instead of failing like `utimensat("")`.
-        if this.filepath.is_empty() {
-            this.err = Some(bun_sys::Error::from_code(
-                bun_sys::E::ENOENT,
-                bun_sys::Tag::utime,
-            ));
+        if let Err(e) = reject_empty_path(&this.filepath, bun_sys::Tag::utime) {
+            this.err = Some(e);
             return;
         }
         // We have to give an absolute path.

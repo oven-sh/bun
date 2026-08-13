@@ -3,7 +3,7 @@ use bun_paths::resolve_path;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
+    ParseFlagResult, ShellTask, parse_flags, reject_empty_path, unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -588,13 +588,10 @@ impl ShellCpTask {
     fn run_from_thread_pool_impl(&mut self) -> Option<ShellErr> {
         use resolve_path::{Platform, platform};
 
-        // Joining an empty operand onto the cwd yields the cwd itself, so it
-        // would copy the cwd (or into it) instead of failing like `stat("")`.
-        if self.src.is_empty() || self.tgt.is_empty() {
-            return Some(ShellErr::new_sys(&bun_sys::Error::from_code(
-                bun_sys::E::ENOENT,
-                bun_sys::Tag::copyfile,
-            )));
+        if let Err(e) = reject_empty_path(&self.src, bun_sys::Tag::copyfile)
+            .and_then(|()| reject_empty_path(&self.tgt, bun_sys::Tag::copyfile))
+        {
+            return Some(ShellErr::new_sys(&e));
         }
 
         let mut buf2 = bun_paths::PathBuffer::uninit();

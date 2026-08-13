@@ -2224,6 +2224,18 @@ pub(crate) fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<b
     }
 }
 
+/// Fails an empty path operand with ENOENT, which is what every POSIX syscall
+/// returns for `""`. The shell's own path handling does not: joining `""` onto
+/// the cwd yields the cwd, and the Windows `*at()` emulation opens the
+/// directory handle itself for an empty name, so without this `touch ""`,
+/// `rm -r ""`, `cp -R "" x`, ... operate on the current directory.
+pub(crate) fn reject_empty_path(path: &[u8], syscall: bun_sys::Tag) -> bun_sys::Result<()> {
+    if path.is_empty() {
+        return Err(bun_sys::Error::from_code(bun_sys::E::ENOENT, syscall));
+    }
+    Ok(())
+}
+
 /// POSIX: `bun_sys::openat` with the error tagged `.with_path(path)`.
 /// Windows: for `O_DIRECTORY` opens, rewrite POSIX-absolute paths via
 /// `shell_get_path` and use `openDirAtWindowsA(.iterable=true)` +
@@ -2235,6 +2247,7 @@ pub(crate) fn shell_openat(
     flags: i32,
     perm: bun_sys::Mode,
 ) -> bun_sys::Result<Fd> {
+    reject_empty_path(path.as_bytes(), bun_sys::Tag::open)?;
     #[cfg(windows)]
     {
         use bun_sys::FdExt;

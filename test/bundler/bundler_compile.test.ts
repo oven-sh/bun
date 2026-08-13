@@ -716,6 +716,8 @@ describe("bundler", () => {
           console.log("entry import.meta.path:", import.meta.path);
           if (__dirname !== import.meta.dir) throw new Error("__dirname !== import.meta.dir");
           if (__filename !== import.meta.path) throw new Error("__filename !== import.meta.path");
+          if (__dirname !== import.meta.dirname) throw new Error("__dirname !== import.meta.dirname");
+          if (__filename !== import.meta.filename) throw new Error("__filename !== import.meta.filename");
           nested.report();
         `,
         "/nested.cjs": /* js */ `

@@ -1227,18 +1227,34 @@ describe("Bun REPL (Terminal) Ctrl+C", () => {
 
   // The REPL does not read stdin while JavaScript runs, so a Ctrl+C typed then
   // would sit in the console input buffer until the next prompt. On Windows the
-  // REPL turns ENABLE_PROCESSED_INPUT back on for the duration of an evaluation,
-  // so conhost raises CTRL_C_EVENT and the process ends instead of hanging.
-  // (POSIX re-enables ISIG only around the promise wait and interrupts the wait
-  // rather than exiting, so this assertion is Windows-specific.)
-  test.skipIf(!isWindows)("Ctrl+C during an evaluation still ends the process", async () => {
-    await withTerminalRepl(async ({ send, waitFor, proc }) => {
-      // The marker is printed from inside the evaluation; it is split so the
-      // echoed input does not match it.
-      send('console.log("EVAL" + "UATING"); await new Promise(() => {})\n');
-      await waitFor("EVALUATING");
+  // REPL sets ENABLE_PROCESSED_INPUT for the duration of an evaluation, so
+  // conhost raises CTRL_C_EVENT instead, and clears it again for the prompt.
+  // The flag is observed from inside the evaluation rather than by sending
+  // Ctrl+C during one: CI job trees run with Ctrl+C ignored (an inherited
+  // per-process flag), and a process that ignores Ctrl+C never sees the event.
+  test.skipIf(!isWindows)("evaluation runs with ENABLE_PROCESSED_INPUT set, the prompt without", async () => {
+    const ENABLE_PROCESSED_INPUT = 0x1;
+    using dir = tempDir("repl-console-mode", {
+      "mode.js": `
+        const ffi = require("bun:ffi");
+        const kernel32 = ffi.dlopen("kernel32.dll", {
+          GetStdHandle: { args: ["i32"], returns: "ptr" },
+          GetConsoleMode: { args: ["ptr", "ptr"], returns: "i32" },
+        });
+        const mode = new Uint32Array(1);
+        const STD_INPUT_HANDLE = -10;
+        kernel32.symbols.GetConsoleMode(kernel32.symbols.GetStdHandle(STD_INPUT_HANDLE), ffi.ptr(mode));
+        "conmode=" + mode[0].toString(16);
+      `,
+    });
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send(`.load ${path.join(String(dir), "mode.js")}\n`);
+      const output = await waitFor(/conmode=[0-9a-f]+/);
+      const mode = parseInt(output.match(/conmode=([0-9a-f]+)/)![1], 16);
+      expect(mode & ENABLE_PROCESSED_INPUT).toBe(ENABLE_PROCESSED_INPUT);
+      // Back at the prompt the flag is off again, so Ctrl+C arrives as a key.
       send("\x03");
-      expect(await proc.exited).not.toBe(0);
+      await waitFor("press Ctrl+C again to exit");
     });
   });
 });

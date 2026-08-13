@@ -2171,8 +2171,7 @@ pub(crate) fn install_isolated_packages(
                     entry_steps[entry_id.get() as usize]
                         .store(installer::Step::Done as u32, Ordering::Relaxed);
 
-                    // Dependents link to it unchecked, so fail here if the `bun link`
-                    // registration is gone (same openat as hoisted's `install_from_link`).
+                    // Same target check as the hoisted linker's `install_from_link`.
                     let mut link_target: AbsPath = AbsPath::init_top_level_dir();
                     installer.append_store_path(&mut link_target, entry_id);
                     match sys::openat(

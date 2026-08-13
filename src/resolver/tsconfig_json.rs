@@ -114,6 +114,60 @@ impl JsonCache {
     }
 }
 
+/// A directory covered by a "files"/"include" entry, derived at parse time
+/// (dir is config-relative until the resolver absolutizes it).
+pub(crate) struct CoverageDir {
+    pub dir: Box<[u8]>,
+    /// Whether subdirectories are covered too. Only `**` globs and bare
+    /// directory includes recurse; file entries and single-`*` globs
+    /// (`vite.config.*`, `src/*.ts`) match files directly in `dir` only, so
+    /// a root-level entry must not claim the whole tree.
+    pub recursive: bool,
+}
+
+const SOURCE_EXTENSIONS: &[&[u8]] = &[
+    b".ts", b".tsx", b".mts", b".cts", b".js", b".jsx", b".mjs", b".cjs", b".json",
+];
+
+fn looks_like_file(path: &[u8]) -> bool {
+    SOURCE_EXTENSIONS
+        .iter()
+        .any(|ext| strings::ends_with(path, ext))
+}
+
+/// The directory an "include" pattern covers: the literal prefix before the
+/// first wildcard, truncated to the last separator (empty = the config dir).
+/// Recursion requires a `**` segment or a wildcard-free directory include.
+pub(crate) fn include_pattern_coverage(pattern: &[u8]) -> CoverageDir {
+    match strings::index_of_any(pattern, b"*?") {
+        Some(glob) => {
+            let prefix = &pattern[..glob];
+            let dir = match prefix.iter().rposition(|&c| bun_paths::is_sep_any(c)) {
+                Some(sep) => &prefix[..sep],
+                None => b"",
+            };
+            CoverageDir {
+                dir: Box::from(dir),
+                recursive: strings::contains(pattern, b"**"),
+            }
+        }
+        None => {
+            if looks_like_file(pattern) {
+                CoverageDir {
+                    dir: Box::from(bun_paths::dirname(pattern).unwrap_or(b"")),
+                    recursive: false,
+                }
+            } else {
+                // A bare directory include covers its whole subtree.
+                CoverageDir {
+                    dir: Box::from(pattern),
+                    recursive: true,
+                }
+            }
+        }
+    }
+}
+
 // Heuristic: you probably don't have 100 of these
 // Probably like 5-10
 // Array iteration is faster and deterministically ordered in that case.
@@ -145,6 +199,38 @@ pub struct TSConfigJSON {
     pub(crate) base_url_for_paths: Box<[u8]>,
 
     pub(crate) extends: Box<[u8]>,
+
+    /// Paths from "references[].path", made absolute by the resolver.
+    /// Non-empty for solution-style configs; consumed by the dir-info walk,
+    /// which loads them into `reference_configs`.
+    pub(crate) references: Box<[Box<[u8]>]>,
+
+    /// Parsed configs for `references`, owned by this (solution-style) config
+    /// and dropped with it. Loaded lazily by
+    /// `Resolver::load_tsconfig_references` on the first directory this
+    /// config does not cover; read via `reference_configs()`. The
+    /// `UnsafeCell` is sound because every access runs under the resolver
+    /// lock (like the DirInfo cache itself).
+    pub(crate) reference_configs: core::cell::UnsafeCell<Box<[Box<TSConfigJSON>]>>,
+
+    /// Whether `reference_configs` has been populated (set even when loading
+    /// produced nothing, so a broken solution is not retried per lookup).
+    pub(crate) references_loaded: core::cell::Cell<bool>,
+
+    /// Directories derived from the "files" entries (never recursive);
+    /// `None` when the key is absent. Absolute after `parse_tsconfig`.
+    pub(crate) files_dirs: Option<Box<[CoverageDir]>>,
+
+    /// Directories derived from the "include" patterns; `None` when the key
+    /// is absent. Absolute after `parse_tsconfig`.
+    pub(crate) include_dirs: Option<Box<[CoverageDir]>>,
+
+    /// Directories from wildcard-free "exclude" entries (always recursive);
+    /// vetoes `include` and default coverage, never `files`. Glob excludes
+    /// are ignored rather than over-excluding. Absolute after
+    /// `parse_tsconfig`.
+    pub(crate) exclude_dirs: Box<[Box<[u8]>]>,
+
     /// The verbatim values of "compilerOptions.paths". The keys are patterns to
     /// match and the values are arrays of fallback paths to search. Each key and
     /// each fallback path can optionally have a single "*" wildcard character.
@@ -172,6 +258,12 @@ impl Default for TSConfigJSON {
             base_url: Box::default(),
             base_url_for_paths: Box::default(),
             extends: Box::default(),
+            references: Box::default(),
+            reference_configs: core::cell::UnsafeCell::new(Box::default()),
+            references_loaded: core::cell::Cell::new(false),
+            files_dirs: None,
+            include_dirs: None,
+            exclude_dirs: Box::default(),
             paths: PathsMap::default(),
             jsx: options::jsx::Pragma::default(),
             jsx_flags: JsxFieldSet::empty(),
@@ -224,6 +316,100 @@ impl TSConfigJSON {
 
     pub(crate) fn has_base_url(&self) -> bool {
         !self.base_url.is_empty()
+    }
+
+    /// Read access to the lazily-loaded referenced projects.
+    pub(crate) fn reference_configs(&self) -> &[Box<TSConfigJSON>] {
+        // SAFETY: written at most once via `set_reference_configs` (under the
+        // resolver lock, which serializes all tsconfig access) before any
+        // reader observes `references_loaded() == true`.
+        unsafe { &*self.reference_configs.get() }
+    }
+
+    pub(crate) fn references_loaded(&self) -> bool {
+        self.references_loaded.get()
+    }
+
+    /// Publishes the loaded referenced projects; see `reference_configs`.
+    pub(crate) fn set_reference_configs(&self, configs: Box<[Box<TSConfigJSON>]>) {
+        // SAFETY: sole write site, serialized by the resolver lock; no
+        // `reference_configs()` borrow is live across a resolver call.
+        unsafe { *self.reference_configs.get() = configs };
+        self.references_loaded.set(true);
+    }
+
+    /// Whether files in `source_dir` belong to this project, judged by the
+    /// directories its "files"/"include" entries cover (minus wildcard-free
+    /// "exclude" directories). When neither key is present, TypeScript
+    /// defaults "include" to `**/*`, so the config covers its whole
+    /// directory subtree.
+    pub(crate) fn covers_dir(&self, source_dir: &[u8]) -> bool {
+        use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
+        // `is_parent_or_equal` strips the parent's trailing separators but
+        // not the child's; a trailing slash on `source_dir` would turn an
+        // exact match into `Parent` and defeat non-recursive entries.
+        let mut source_dir = source_dir;
+        while let [head @ .., last] = source_dir {
+            if !bun_paths::is_sep_any(*last) {
+                break;
+            }
+            source_dir = head;
+        }
+        let matches = |c: &CoverageDir| match is_parent_or_equal(&c.dir, source_dir) {
+            ParentEqual::Equal => !c.dir.is_empty(),
+            ParentEqual::Parent => c.recursive && !c.dir.is_empty(),
+            ParentEqual::Unrelated => false,
+        };
+        // "files" entries are exempt from "exclude".
+        if self.files_dirs.iter().flatten().any(matches) {
+            return true;
+        }
+        let include_match = match (&self.include_dirs, &self.files_dirs) {
+            (Some(dirs), _) => dirs.iter().any(matches),
+            // Neither key: default "include" of `**/*` under the config dir.
+            (None, None) => {
+                let config_dir = bun_paths::dirname(&self.abs_path).unwrap_or(b"");
+                !config_dir.is_empty()
+                    && is_parent_or_equal(config_dir, source_dir) != ParentEqual::Unrelated
+            }
+            // "files" present without "include": include defaults to [].
+            (None, Some(_)) => false,
+        };
+        include_match
+            && !self.exclude_dirs.iter().any(|dir| {
+                !dir.is_empty() && is_parent_or_equal(dir, source_dir) != ParentEqual::Unrelated
+            })
+    }
+
+    /// Ordered configs to consult for files in `source_dir`. A config
+    /// covering the directory owns its files outright (references are never
+    /// consulted, matching tsc). Otherwise each loaded referenced project
+    /// covering the directory is tried in reference order, and the config
+    /// itself comes last so its own paths/baseUrl still apply when no
+    /// referenced project resolves the import (the common pre-references
+    /// workaround of putting paths on the solution root).
+    pub(crate) fn candidates_for_dir<'a, 'b>(
+        &'a self,
+        source_dir: &'b [u8],
+    ) -> impl Iterator<Item = &'a TSConfigJSON> + use<'a, 'b> {
+        let refs: &'a [Box<TSConfigJSON>] = if self.covers_dir(source_dir) {
+            &[]
+        } else {
+            self.reference_configs()
+        };
+        refs.iter()
+            .map(|r| &**r)
+            .filter(move |r| r.covers_dir(source_dir))
+            .chain(core::iter::once(self))
+    }
+
+    /// The primary config for files in `source_dir`: the first candidate
+    /// from `candidates_for_dir` (used where only one config can apply,
+    /// e.g. jsx/decorator options).
+    pub(crate) fn for_source_dir<'a>(&'a self, source_dir: &[u8]) -> &'a TSConfigJSON {
+        self.candidates_for_dir(source_dir)
+            .next()
+            .expect("candidates_for_dir always yields self")
     }
 
     pub fn merge_jsx(&self, current: options::jsx::Pragma) -> options::jsx::Pragma {
@@ -346,6 +532,10 @@ impl TSConfigJSON {
         // `jsxImportSource`) is preserved.
         let mut extends_value: Option<&bun_ast::E::JsonValue> = None;
         let mut compiler_opts: Option<&bun_ast::E::JsonValue> = None;
+        let mut references_value: Option<&bun_ast::E::JsonValue> = None;
+        let mut files_value: Option<&bun_ast::E::JsonValue> = None;
+        let mut include_value: Option<&bun_ast::E::JsonValue> = None;
+        let mut exclude_value: Option<&bun_ast::E::JsonValue> = None;
         if let bun_ast::ExprData::EObjectJSON(obj) = &json.data {
             for property in obj.get().properties() {
                 match property.key.slice() {
@@ -353,6 +543,12 @@ impl TSConfigJSON {
                     b"compilerOptions" if compiler_opts.is_none() => {
                         compiler_opts = Some(&property.value)
                     }
+                    b"references" if references_value.is_none() => {
+                        references_value = Some(&property.value)
+                    }
+                    b"files" if files_value.is_none() => files_value = Some(&property.value),
+                    b"include" if include_value.is_none() => include_value = Some(&property.value),
+                    b"exclude" if exclude_value.is_none() => exclude_value = Some(&property.value),
                     _ => {}
                 }
             }
@@ -363,6 +559,93 @@ impl TSConfigJSON {
                 if let Some(str) = extends_value.as_str() {
                     result.extends = Box::from(str);
                 }
+            }
+        }
+
+        // Parse "references" (solution-style configs). Like "extends", skipped
+        // inside node_modules.
+        if let Some(references_value) = references_value {
+            if !source.path.is_node_module() {
+                if let Some(array) = references_value.as_array() {
+                    let mut refs: Vec<Box<[u8]>> = Vec::with_capacity(array.items().len());
+                    for item in array.items() {
+                        if let Some(obj) = item.as_object() {
+                            if let Some(path) = obj.get(b"path").and_then(|v| v.as_str()) {
+                                if !path.is_empty() {
+                                    let path = match Self::str_replacing_templates(
+                                        Box::from(path),
+                                        source,
+                                    ) {
+                                        Ok(v) => v,
+                                        Err(_) => return Ok(None),
+                                    };
+                                    refs.push(path);
+                                }
+                            }
+                        }
+                    }
+                    result.references = refs.into_boxed_slice();
+                }
+            }
+        }
+
+        // Parse "files"/"include"/"exclude" into the directories they cover,
+        // used to pick the referenced project for a source directory. `Some`
+        // records that the key was present even when it covers nothing
+        // ("files": []).
+        if let Some(files_value) = files_value {
+            if let Some(array) = files_value.as_array() {
+                let mut dirs: Vec<CoverageDir> = Vec::with_capacity(array.items().len());
+                for item in array.items() {
+                    if let Some(str) = item.as_str() {
+                        let str = match Self::str_replacing_templates(Box::from(str), source) {
+                            Ok(v) => v,
+                            Err(_) => return Ok(None),
+                        };
+                        dirs.push(CoverageDir {
+                            dir: Box::from(bun_paths::dirname(&str).unwrap_or(b"")),
+                            recursive: false,
+                        });
+                    }
+                }
+                result.files_dirs = Some(dirs.into_boxed_slice());
+            }
+        }
+
+        if let Some(include_value) = include_value {
+            if let Some(array) = include_value.as_array() {
+                let mut dirs: Vec<CoverageDir> = Vec::with_capacity(array.items().len());
+                for item in array.items() {
+                    if let Some(str) = item.as_str() {
+                        let str = match Self::str_replacing_templates(Box::from(str), source) {
+                            Ok(v) => v,
+                            Err(_) => return Ok(None),
+                        };
+                        dirs.push(include_pattern_coverage(&str));
+                    }
+                }
+                result.include_dirs = Some(dirs.into_boxed_slice());
+            }
+        }
+
+        if let Some(exclude_value) = exclude_value {
+            if let Some(array) = exclude_value.as_array() {
+                let mut dirs: Vec<Box<[u8]>> = Vec::new();
+                for item in array.items() {
+                    if let Some(str) = item.as_str() {
+                        // Only wildcard-free directory entries; a glob or file
+                        // exclude cannot be applied at directory granularity
+                        // without over-excluding.
+                        if strings::index_of_any(str, b"*?").is_none() && !looks_like_file(str) {
+                            let str = match Self::str_replacing_templates(Box::from(str), source) {
+                                Ok(v) => v,
+                                Err(_) => return Ok(None),
+                            };
+                            dirs.push(str);
+                        }
+                    }
+                }
+                result.exclude_dirs = dirs.into_boxed_slice();
             }
         }
         let mut has_base_url = false;

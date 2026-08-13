@@ -4897,6 +4897,12 @@ impl NodeFS {
             let dest = args.dest.slice_z(&mut dest_buf);
 
             if args.mode.is_force_clone() {
+                // A copy onto itself is a Node no-op; clonefile would fail EEXIST.
+                if let Ok(src_stat) = Syscall::stat(src) {
+                    if Self::copy_file_onto_itself(&src_stat, &Syscall::stat(dest)) {
+                        return Ok(());
+                    }
+                }
                 // https://www.manpagez.com/man/2/clonefile/
                 return Maybe::<ret::CopyFile>::errno_sys_p(
                     bun_sys::c::clonefile_rc(src, dest, 0),

@@ -9,6 +9,7 @@ import {
   isGlibc,
   isIntelMacOS,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
   tempDir,
@@ -959,7 +960,9 @@ describe("copyFileSync", () => {
     expect(readFileSync(file).equals(content)).toBe(true);
   });
 
-  it.skipIf(!isLinux)("FICLONE_FORCE of a file onto itself is a no-op", () => {
+  // Linux and macOS implement the same-file no-op for the force-clone mode;
+  // FreeBSD refuses the mode itself and Windows ignores it.
+  it.skipIf(!isLinux && !isMacOS)("FICLONE_FORCE of a file onto itself is a no-op", () => {
     const tempdir = tmpdirTestMkdir();
     const file = tempdir + "/self-force.blob";
     const content = Buffer.alloc(256 * 1024, "B");

@@ -398,18 +398,15 @@ function tlsHandshakeError(verifyError) {
 }
 
 // True once a TLS engine owns `self`'s bytes (kTLSUpgradeSink); they were
-// handed to it and must not become `data` on `self`. Runs after the bytesRead
-// accounting: node's wrapped socket keeps counting the ciphertext too.
+// handed to it and must not become `data` on `self`. Called after a table's
+// bytesRead accounting, where it has one: node's wrapped socket keeps counting
+// the ciphertext too.
 function sinkUpgradedBytes(self, buffer) {
   const sink = self[kTLSUpgradeSink];
   if (sink === undefined) return false;
   sink(buffer);
   return true;
 }
-
-// kTLSUpgradeSink for fd adoption: the `raw` half of upgradeTLS only mirrors
-// the ciphertext the engine already consumed.
-function discardUpgradedBytes() {}
 
 const SocketHandlers: SocketHandler = {
   close(socket, err) {
@@ -1891,6 +1888,20 @@ Socket.prototype[kCloseRawConnection] = function () {
   connection.destroy();
 };
 
+// upgradeTLS adopted `connection`'s fd for `self`: `tlsHandle` is the decrypting
+// side, `raw` the retired plaintext side, which keeps `connection`'s handlers
+// and is still shown the ciphertext. Nothing is left to do with those bytes,
+// the engine already consumed them, so the sink just drops them.
+function discardUpgradedBytes() {}
+function adoptTLSPair(self, connection, [raw, tlsHandle]) {
+  connection._handle = raw;
+  raw[kAdoptedTLSRaw] = true;
+  connection[kTLSUpgradeSink] = discardUpgradedBytes;
+  self.once("end", self[kCloseRawConnection]);
+  raw.connecting = false;
+  self._handle = tlsHandle;
+}
+
 Socket.prototype.connect = function connect(...args) {
   $debug("Socket.prototype.connect");
   {
@@ -2016,10 +2027,10 @@ Socket.prototype.connect = function connect(...args) {
             tls,
             socket: this[khandlers],
           });
+          attachTLSFeeder(connection, events[0]);
           connection.on("end", events[1]);
           connection.on("drain", events[2]);
           connection.on("close", events[3]);
-          attachTLSFeeder(connection, events[0]);
           this._handle = result;
         } else {
           // upgradeTLS requires an established socket; a socket that is still
@@ -2034,14 +2045,7 @@ Socket.prototype.connect = function connect(...args) {
               isServer: false,
             });
             if (result) {
-              const [raw, tls] = result;
-              // replace socket
-              connection._handle = raw;
-              raw[kAdoptedTLSRaw] = true;
-              connection[kTLSUpgradeSink] = discardUpgradedBytes;
-              this.once("end", this[kCloseRawConnection]);
-              raw.connecting = false;
-              this._handle = tls;
+              adoptTLSPair(this, connection, result);
             } else {
               this._handle = null;
               throw new Error("Invalid socket");
@@ -2068,10 +2072,10 @@ Socket.prototype.connect = function connect(...args) {
                   tls,
                   socket: this[khandlers],
                 });
+                attachTLSFeeder(connection, events[0]);
                 connection.on("end", events[1]);
                 connection.on("drain", events[2]);
                 connection.on("close", events[3]);
-                attachTLSFeeder(connection, events[0]);
                 this._handle = result;
               } else {
                 this[kupgraded] = connection;
@@ -2082,14 +2086,7 @@ Socket.prototype.connect = function connect(...args) {
                   isServer: false,
                 });
                 if (result) {
-                  const [raw, tls] = result;
-                  // replace socket
-                  connection._handle = raw;
-                  raw[kAdoptedTLSRaw] = true;
-                  connection[kTLSUpgradeSink] = discardUpgradedBytes;
-                  this.once("end", this[kCloseRawConnection]);
-                  raw.connecting = false;
-                  this._handle = tls;
+                  adoptTLSPair(this, connection, result);
                 } else {
                   this._handle = null;
                   throw new Error("Invalid socket");
@@ -2386,10 +2383,10 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       socket: serverHandlersFor(this),
       isServer: true,
     });
+    attachTLSFeeder(connection, events[0]);
     connection.on("end", events[1]);
     connection.on("drain", events[2]);
     connection.on("close", events[3]);
-    attachTLSFeeder(connection, events[0]);
     this[kupgraded] = connection;
     this._handle = result;
     return;
@@ -2415,10 +2412,10 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
         socket: serverHandlersFor(this),
         isServer: true,
       });
+      attachTLSFeeder(connection, events[0]);
       connection.on("end", events[1]);
       connection.on("drain", events[2]);
       connection.on("close", events[3]);
-      attachTLSFeeder(connection, events[0]);
       this._handle = result;
       this.emit(kUpgradeAttached);
       return;
@@ -2427,9 +2424,6 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     // the connection's readable buffer; hand them to the TLS engine so the
     // handshake doesn't stall.
     const pending = connection.read();
-    // Before the upgrade: initialData is mirrored through the raw half
-    // synchronously and must not land back in the connection's buffer.
-    connection[kTLSUpgradeSink] = discardUpgradedBytes;
     const result = handle.upgradeTLS({
       data: this,
       tls,
@@ -2438,17 +2432,11 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       initialData: pending || undefined,
     });
     if (!result) {
-      connection[kTLSUpgradeSink] = undefined;
       this._handle = null;
       this.destroy(new Error("Invalid socket"));
       return;
     }
-    const [raw, tlsHandle] = result;
-    connection._handle = raw;
-    raw[kAdoptedTLSRaw] = true;
-    this.once("end", this[kCloseRawConnection]);
-    raw.connecting = false;
-    this._handle = tlsHandle;
+    adoptTLSPair(this, connection, result);
     this.emit(kUpgradeAttached);
   });
 };

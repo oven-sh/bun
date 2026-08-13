@@ -110,6 +110,27 @@ function wrapAndEcho(accepted: net.Socket, reject: (err: Error) => void) {
   secure.on("data", chunk => secure.write(chunk));
 }
 
+// Server for clients that send "STARTTLS" and start the handshake right away:
+// it wraps the accepted socket as soon as the command arrives and never writes
+// anything in plaintext, so whatever the client's plaintext side sees after
+// that is TLS traffic leaking through.
+function listenOptimisticSTARTTLS(reject: (err: Error) => void) {
+  return listenTCP(accepted => {
+    accepted.on("error", reject);
+    accepted.once("data", chunk => {
+      if (chunk.toString("latin1", 0, 8) !== "STARTTLS") {
+        reject(new Error(`unexpected plaintext ${JSON.stringify(chunk.toString("latin1"))}`));
+        return;
+      }
+      // The ClientHello may already be in this chunk or arrive before the wrap
+      // lands; keep it buffered for the wrap to hand over.
+      accepted.pause();
+      if (chunk.length > 8) accepted.unshift(chunk.subarray(8));
+      wrapAndEcho(accepted, reject);
+    });
+  });
+}
+
 test.concurrent(
   "tls.connect({ socket }) does not re-emit post-upgrade bytes on the original socket (STARTTLS) #32239",
   async () => {
@@ -166,30 +187,76 @@ test.concurrent.each([
   ],
 ])("tls.connect({ socket }) takes the client socket over: %s", async (_, sendSTARTTLSAndUpgrade) => {
   const { promise: failure, reject } = Promise.withResolvers<never>();
-  using server = await listenTCP(accepted => {
-    accepted.on("error", reject);
-    accepted.once("data", chunk => {
-      if (chunk.toString("latin1", 0, 8) !== "STARTTLS") {
-        reject(new Error(`unexpected plaintext ${JSON.stringify(chunk.toString("latin1"))}`));
-        return;
-      }
-      // The ClientHello may already be in this chunk or arrive before the wrap
-      // lands; keep it buffered for the wrap to hand over.
-      accepted.pause();
-      if (chunk.length > 8) accepted.unshift(chunk.subarray(8));
-      wrapAndEcho(accepted, reject);
-    });
-  });
+  using server = await listenOptimisticSTARTTLS(reject);
 
   const socket = net.connect(server.port, "127.0.0.1");
   try {
     socket.on("error", reject);
     await Promise.race([once(socket, "connect"), failure]);
-    // The plaintext-phase listener stays attached, as in the issue. This server
-    // never writes plaintext, so whatever it sees is TLS traffic leaking through.
+    // The plaintext-phase listener stays attached, as in the issue.
     const surfaced = watchSurfacing(socket);
     const echoed = await Promise.race([sendSTARTTLSAndUpgrade(socket, () => pingOverTLS(socket, reject)), failure]);
     expect({ echoed, ...surfaced() }).toEqual({ echoed: "ping", emitted: 0, buffered: 0 });
+  } finally {
+    socket.destroy();
+  }
+});
+
+test.concurrent("stream-level upgrade of a setEncoding() socket with buffered input reports an error", async () => {
+  // Bytes buffered on a setEncoding() socket are strings, which the engine
+  // rejects. They are handed over once tls.connect() has returned, so that
+  // rejection reaches the TLS socket's listeners instead of stalling it.
+  const { promise: outcome, resolve } = Promise.withResolvers<string>();
+  using server = await listenTCP(accepted => {
+    accepted.on("error", () => {});
+    accepted.write("greeting");
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  try {
+    socket.on("error", () => {});
+    socket.setEncoding("utf8");
+    await once(socket, "readable");
+    expect(socket.readableLength).toBeGreaterThan(0);
+    socket.cork();
+    socket.write("STARTTLS");
+    const tlsSocket = tls.connect({ socket, ...clientTLS });
+    tlsSocket.on("error", err => resolve(err instanceof Error ? "error" : `error event with ${typeof err}`));
+    tlsSocket.on("secureConnect", () => resolve("secureConnect"));
+    socket.uncork();
+    expect(await outcome).toBe("error");
+  } finally {
+    socket.destroy();
+  }
+});
+
+test.concurrent("tls.connect({ socket }) takes over a client socket that uses the onread option", async () => {
+  // onread sockets deliver through their own handler table, straight into the
+  // user's callback, so that table has to stop delivering as well.
+  const { promise: failure, reject } = Promise.withResolvers<never>();
+  using server = await listenOptimisticSTARTTLS(reject);
+
+  let upgraded = false;
+  let deliveredAfterUpgrade = 0;
+  const socket = net.connect({
+    port: server.port,
+    host: "127.0.0.1",
+    onread: {
+      buffer: Buffer.alloc(64 * 1024),
+      callback(nread: number) {
+        if (upgraded) deliveredAfterUpgrade += nread;
+        return true;
+      },
+    },
+  });
+  try {
+    socket.on("error", reject);
+    await Promise.race([once(socket, "connect"), failure]);
+    const flushed = new Promise<void>(resolve => socket.write("STARTTLS", () => resolve()));
+    await Promise.race([flushed, failure]);
+    upgraded = true;
+    const echoed = await Promise.race([pingOverTLS(socket, reject), failure]);
+    expect({ echoed, deliveredAfterUpgrade }).toEqual({ echoed: "ping", deliveredAfterUpgrade: 0 });
   } finally {
     socket.destroy();
   }
@@ -263,9 +330,13 @@ test.concurrent(
   async () => {
     // Paused-mode STARTTLS: the ClientHello that PROCEED triggers is sitting in
     // the accepted socket's readable buffer when the wrap runs, so the wrap has
-    // to take it from there. Pre-fix it was handed to TLS and pushed back.
+    // to take it from there. Pre-fix it was handed to TLS and also delivered to
+    // the accepted socket a second time: pushed back into its buffer and counted
+    // in bytesRead again. bytesRead has to keep matching what actually came in
+    // over the wire (node's wrapped socket keeps counting), which a relay in
+    // front of the server measures.
     const { promise: failure, reject } = Promise.withResolvers<never>();
-    const { promise: buffered, resolve } = Promise.withResolvers<number>();
+    const { promise: accountedOnServer, resolve } = Promise.withResolvers<{ buffered: number; bytesRead: number }>();
     using server = await listenTCP(accepted => {
       accepted.on("error", reject);
       accepted.once("data", command => {
@@ -278,20 +349,37 @@ test.concurrent(
         accepted.once("readable", () => {
           const secure = new tls.TLSSocket(accepted, { isServer: true, ...serverTLS });
           secure.on("error", reject);
-          secure.on("secure", () => resolve(accepted.readableLength));
+          // By the time application data is decrypted, everything the client
+          // ever sent has been read off the wire.
+          secure.once("data", () => resolve({ buffered: accepted.readableLength, bytesRead: accepted.bytesRead }));
         });
       });
     });
+    let wireBytesToServer = 0;
+    using relay = await listenTCP(fromClient => {
+      const toServer = net.connect(server.port, "127.0.0.1");
+      fromClient.on("error", reject);
+      toServer.on("error", reject);
+      fromClient.on("data", chunk => {
+        wireBytesToServer += chunk.length;
+        toServer.write(chunk);
+      });
+      toServer.pipe(fromClient);
+      fromClient.on("close", () => toServer.destroy());
+    });
 
-    const socket = net.connect(server.port, "127.0.0.1");
+    const socket = net.connect(relay.port, "127.0.0.1");
     try {
       socket.on("error", reject);
       await Promise.race([once(socket, "connect"), failure]);
       socket.write("STARTTLS");
       const [proceed] = await Promise.race([once(socket, "data"), failure]);
       expect(proceed.toString("latin1")).toBe("PROCEED");
-      tls.connect({ socket, ...clientTLS }).on("error", reject);
-      expect(await Promise.race([buffered, failure])).toBe(0);
+      const tlsSocket = tls.connect({ socket, ...clientTLS });
+      tlsSocket.on("error", reject);
+      tlsSocket.on("secureConnect", () => tlsSocket.write("ping"));
+      const accounted = await Promise.race([accountedOnServer, failure]);
+      expect(accounted).toEqual({ buffered: 0, bytesRead: wireBytesToServer });
     } finally {
       socket.destroy();
     }
@@ -304,9 +392,13 @@ test.concurrent(
     // A TLSSocket used as the transport always goes through the stream-level
     // engine. The server wraps in paused mode, so the inner ClientHello is
     // already sitting in the outer socket's readable buffer when the wrap runs
-    // and has to be handed over from there (node's initRead does the same).
+    // and has to be handed over from there. Like node's initRead, that hand-over
+    // read()s the buffer, which also emits those (and only those) bytes to a
+    // `data` listener that is already attached; everything received afterwards
+    // must stay with the inner TLS layer.
     const { promise: failure, reject } = Promise.withResolvers<never>();
-    const { promise: serverSide, resolve: innerSecured } = Promise.withResolvers<ReturnType<typeof watchSurfacing>>();
+    const { promise: serverSide, resolve: innerSecured } =
+      Promise.withResolvers<() => { handedOver: number; emitted: number; buffered: number }>();
     const outerServer = tls.createServer(serverTLS, outer => {
       outer.on("error", reject);
       outer.once("data", command => {
@@ -317,11 +409,12 @@ test.concurrent(
         outer.pause();
         outer.write("PROCEED");
         outer.once("readable", () => {
+          const handedOver = outer.readableLength;
           const inner = new tls.TLSSocket(outer, { isServer: true, ...serverTLS });
           inner.on("error", reject);
           inner.on("data", chunk => inner.write(chunk));
           const surfaced = watchSurfacing(outer);
-          inner.on("secure", () => innerSecured(surfaced));
+          inner.on("secure", () => innerSecured(() => ({ handedOver, ...surfaced() })));
         });
       });
     });
@@ -341,11 +434,14 @@ test.concurrent(
       expect(proceed.toString("latin1")).toBe("PROCEED");
       const clientSurfaced = watchSurfacing(outer);
       const echoed = await Promise.race([pingOverTLS(outer, reject), failure]);
-      const serverSurfaced = await Promise.race([serverSide, failure]);
-      expect({ echoed, client: clientSurfaced(), server: serverSurfaced() }).toEqual({
+      // Sampled once the echo is back, i.e. after the server side has finished
+      // dispatching everything the client sent.
+      const server = (await Promise.race([serverSide, failure]))();
+      expect(server.handedOver).toBeGreaterThan(0);
+      expect({ echoed, client: clientSurfaced(), server }).toEqual({
         echoed: "ping",
         client: { emitted: 0, buffered: 0 },
-        server: { emitted: 0, buffered: 0 },
+        server: { handedOver: server.handedOver, emitted: server.handedOver, buffered: 0 },
       });
     } finally {
       outer.destroy();

@@ -3676,8 +3676,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: `raw` came from `TLSSocket::new` (heap::alloc); intrusive +1 held.
         tls.twin
             .set(Some(unsafe { IntrusiveRc::from_raw(raw.as_ptr()) }));
-        // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-        bun_opaque::opaque_deref_mut(new_raw.as_ptr()).set_ssl_raw_tap(true);
 
         let tls_js_value = tls.get_this_value(global);
         let raw_js_value = raw_ref.get_this_value(global);
@@ -3718,6 +3716,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !initial_data.is_empty() {
             bun_opaque::opaque_deref_mut(new_raw.as_ptr()).tls_feed(initial_data.as_slice());
         }
+        // `raw` observes the ciphertext that arrives from here on. Enabled only
+        // now: `initial_data` already went through these same handlers once, on
+        // its way in, so feeding it must not dispatch it to them a second time.
+        // Nothing can have been dispatched between `resume()` and this point,
+        // wire bytes only arrive from the event loop. (`us_socket_t` is an
+        // `opaque_ffi!` ZST, so the deref is safe.)
+        bun_opaque::opaque_deref_mut(new_raw.as_ptr()).set_ssl_raw_tap(true);
 
         let array = JSValue::create_empty_array(global, 2)?;
         array.put_index(global, 0, raw_js_value)?;

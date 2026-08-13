@@ -383,10 +383,10 @@ function upgradeRawSocketToH2(
   // Wire up the raw TCP socket to feed encrypted data into the TLS layer.
   // events[0..3] are native event handlers returned by upgradeDuplexToTLS that
   // the native TLS engine expects to receive data/end/drain/close through.
+  attachTLSFeeder(rawSocket, events[0]);
   rawSocket.on("end", events[1]);
   rawSocket.on("drain", events[2]);
   rawSocket.on("close", events[3]);
-  attachTLSFeeder(rawSocket, events[0]);
 
   // When the TLS socket closes (e.g. H2 session destroyed), clean up the raw socket
   // listeners to prevent memory leaks and stale callback references.

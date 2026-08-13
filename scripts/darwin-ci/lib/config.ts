@@ -8,9 +8,9 @@ export const config = {
   tart: {
     bin: "/opt/homebrew/bin/tart",
     // One guest image per `release-tier` that .buildkite/ci.mjs schedules a darwin
-    // aarch64 lane on (`latest` and `previous`; every build runs one job of each).
-    // A host bakes every image and runs `spawn` agents per image, so each host
-    // serves both lanes. `--release N` bakes and serves just one (with `--spawn 2`
+    // aarch64 lane on (`latest` and `previous`; every build runs the same test step
+    // once per tier). A host bakes every image and runs `spawn` agents per image,
+    // so by default each host serves both lanes. `--release N` bakes and serves just one (with `--spawn 2`
     // to keep the host full), for a host whose macOS is older than the newest
     // guest (a guest cannot be newer than its host) or that lacks the disk for
     // two images.

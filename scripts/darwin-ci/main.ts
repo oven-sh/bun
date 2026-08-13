@@ -23,7 +23,7 @@ type GuestImages = [release: number, base: string][];
 const configuredReleases = config.tart.guests.map(({ release }) => release);
 
 const usage = `usage:
-  main.ts provision <hostname> <tart|bare> [--tags <tailscale tags>] [--release N] [--spawn N]
+  main.ts provision <hostname> <tart|bare> [--tags <tailscale tags>] [tart: --release N --spawn N --base <image> --ref <bun ref>]
                                                    converge a freshly imaged (or previously provisioned) host
   main.ts setup-user                               create the auto-login ${config.ciUser} user
   main.ts bake [--release N [--base <image>]] [--ref <bun ref>]
@@ -129,8 +129,9 @@ async function provision(name: string, mode: "tart" | "bare"): Promise<void> {
 /**
  * Safe to re-run on a host that is already serving: the images are baked by a
  * staged copy of these scripts while the existing agents keep using installDir's
- * hooks and images, and install-agent swaps both over at the end. A failed bake
- * leaves the host as it was.
+ * hooks (each bake swaps its own image in once it verifies), and install-agent
+ * replaces hooks and agents together at the end. A failed bake leaves the
+ * agents and hooks as they were.
  */
 async function provisionTart(images: GuestImages): Promise<void> {
   const user = config.ciUser;

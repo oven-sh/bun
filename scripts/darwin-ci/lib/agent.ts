@@ -11,9 +11,11 @@ const path = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 const launchAgents = "/Library/LaunchAgents";
 // One launchd job per guest release, `<prefix>.<release>`. Hosts set up when there
 // was one image per host have a single job named just `<prefix>`; the prefix match
-// in retireTartAgents() covers it too.
+// in retireAgents() covers it too.
 const agentLabelPrefix = "com.buildkite.buildkite-agent";
 const cleanupLabel = "com.buildkite.cleanup";
+// what scripts/agent.mjs installs on a bare host (label `buildkite-agent`)
+const bareAgentPlist = "/Library/LaunchDaemons/buildkite-agent.plist";
 
 export type TartAgentOptions = { releases: readonly number[]; spawn: number };
 type AgentConfig = { release: number; spawn: number; token: string; home: string };
@@ -78,8 +80,7 @@ export async function installTartAgent(options: TartAgentOptions): Promise<void>
 
   await $`sudo install -d -o ${user} -g staff ${builds} ${logs} ${configDir}`;
 
-  await $`sudo launchctl bootout system/buildkite-agent`.quiet().nothrow();
-  await retireTartAgents();
+  await retireAgents();
   await $`sudo find ${configDir} -name ${"buildkite-agent*.cfg"} -delete`;
   // the configs below point at installDir's hooks, which look images up the same way these agents are tagged
   await installSelf();
@@ -139,20 +140,22 @@ export async function installTartAgent(options: TartAgentOptions): Promise<void>
 }
 
 /**
- * Stop and remove every agent job on this host, whatever layout installed it, and
- * the nightly reboot that would otherwise fire while the agents are being replaced.
- * installTartAgent() puts both back. Returns the agent labels retired.
+ * Stop and remove every agent job on this host, whichever layout installed it
+ * (per-image or single-image tart jobs, or scripts/agent.mjs's bare daemon), and
+ * the nightly reboot that would otherwise fire while they are being replaced.
+ * installTartAgent() puts the tart jobs and the reboot back.
  */
-async function retireTartAgents(): Promise<string[]> {
+async function retireAgents(): Promise<void> {
   await $`sudo launchctl bootout system/${cleanupLabel}`.quiet().nothrow();
+  await $`sudo launchctl bootout system/buildkite-agent`.quiet().nothrow();
+  await $`sudo rm -f ${bareAgentPlist}`;
   const labels = installedAgentLabels();
-  if (!labels.length) return labels;
+  if (!labels.length) return;
   const uid = await ciUserId();
   for (const label of labels) {
     await unload(`gui/${uid}/${label}`);
     await $`sudo rm -f ${join(launchAgents, `${label}.plist`)}`;
   }
-  return labels;
 }
 
 function installedAgentLabels(): string[] {

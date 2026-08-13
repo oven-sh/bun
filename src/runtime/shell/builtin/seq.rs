@@ -1,15 +1,24 @@
 use std::io::Write as _;
 
-use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
-use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinState, Impl, Kind};
+use crate::shell::interpreter::{Interpreter, NodeId, OutputNeedsIOSafeGuard};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
+use crate::shell::states::cmd::Exec;
 use crate::shell::yield_::Yield;
+
+/// The sequence is rendered and written one chunk at a time, cut at the first
+/// value boundary at or past this size, so a long sequence streams to its
+/// consumer and the builtin never holds more than about one chunk of it.
+const CHUNK_SIZE: usize = 64 * 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum State {
     #[default]
     Idle,
+    /// A chunk is being written to stdout and more values follow it.
+    Writing,
     Err,
+    /// The chunk being written (if any) is the last one.
     Done,
 }
 
@@ -18,6 +27,10 @@ pub struct Seq {
     start: f32,
     end: f32,
     increment: f32,
+    /// Next value to render.
+    current: f32,
+    /// The chunk currently being written; reused for every chunk.
+    buf: Vec<u8>,
     /// Borrowed from argv (NUL-terminated arena strings) or `'static` literals;
     /// argv outlives the builtin — `RawSlice` invariant.
     separator: bun_ptr::RawSlice<u8>,
@@ -31,6 +44,8 @@ impl Default for Seq {
             start: 1.0,
             end: 1.0,
             increment: 1.0,
+            current: 1.0,
+            buf: Vec::new(),
             separator: bun_ptr::RawSlice::new(b"\n"),
             terminator: bun_ptr::RawSlice::EMPTY,
         }
@@ -156,46 +171,83 @@ impl Seq {
     }
 
     fn do_(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
-        // Render entirely into a local Vec, then either enqueue it or
-        // write_no_io it; we buffer once for simplicity.
-        let (start, end, incr, sep, term) = {
+        {
             let me = Self::state_mut(interp, cmd);
-            (me.start, me.end, me.increment, me.separator, me.terminator)
-        };
-        let mut out = Vec::new();
-        let mut current = start;
-        while if incr > 0.0 {
-            current <= end
+            me.current = me.start;
+        }
+        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+            return Self::enqueue_chunk(interp, cmd, safeguard);
+        }
+        loop {
+            let cmd_node = interp.as_cmd_mut(cmd);
+            let shell = cmd_node.base.shell;
+            let Exec::Builtin(bltn) = &mut cmd_node.exec else {
+                unreachable!()
+            };
+            let (stdout, me) = Self::split_stdout_state(bltn);
+            let last = me.render_chunk();
+            // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd.
+            let written = unsafe { stdout.write_no_io_to(shell, &me.buf) };
+            // The only error here is a full `> ${buffer}` target, which the
+            // remaining chunks would not fit into either.
+            if last || written.is_err() {
+                break;
+            }
+        }
+        Self::state_mut(interp, cmd).state = State::Done;
+        Builtin::done(interp, cmd, 0)
+    }
+
+    /// Renders the next chunk and queues it on stdout; `on_io_writer_chunk`
+    /// continues with the following one once it has been written.
+    fn enqueue_chunk(
+        interp: &Interpreter,
+        cmd: NodeId,
+        safeguard: OutputNeedsIOSafeGuard,
+    ) -> Yield {
+        let child = ChildPtr::new(cmd, WriterTag::Builtin);
+        let (stdout, me) = Self::split_stdout_state(Builtin::of_mut(interp, cmd));
+        me.state = if me.render_chunk() {
+            State::Done
         } else {
-            current >= end
-        } {
+            State::Writing
+        };
+        stdout.enqueue(child, &me.buf, safeguard)
+    }
+
+    fn has_next(&self) -> bool {
+        if self.increment > 0.0 {
+            self.current <= self.end
+        } else {
+            self.current >= self.end
+        }
+    }
+
+    /// Replaces `buf` with the next run of values, stopping once it holds
+    /// `CHUNK_SIZE` bytes. Returns true when the sequence ended inside this
+    /// chunk, in which case the terminator has been appended too.
+    fn render_chunk(&mut self) -> bool {
+        self.buf.clear();
+        while self.has_next() {
+            if self.buf.len() >= CHUNK_SIZE {
+                return false;
+            }
             // Rust `{}` for f32 prints the shortest decimal that round-trips
             // (no exponent, no trailing ".0").
-            let _ = write!(&mut out, "{}", current);
-            out.extend_from_slice(sep.slice());
-            let next = current + incr;
-            if next == current {
+            let _ = write!(&mut self.buf, "{}", self.current);
+            self.buf.extend_from_slice(self.separator.slice());
+            let next = self.current + self.increment;
+            if next == self.current {
                 // f32 rounding can make `current + incr` equal `current`
                 // (e.g. `seq 1 99999999` saturates at 2^24, or a tiny
                 // increment relative to `current`). Without this check the
-                // loop never terminates and `out` grows without bound.
+                // sequence would never end.
                 break;
             }
-            current = next;
+            self.current = next;
         }
-        out.extend_from_slice(term.slice());
-
-        Self::state_mut(interp, cmd).state = State::Done;
-        if needs_io {
-            let safeguard = Builtin::of(interp, cmd).stdout.needs_io().unwrap();
-            let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stdout
-                .enqueue(child, &out, safeguard);
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &out);
-        Builtin::done(interp, cmd, 0)
+        self.buf.extend_from_slice(self.terminator.slice());
+        true
     }
 
     pub(crate) fn on_io_writer_chunk(
@@ -209,12 +261,28 @@ impl Seq {
             return Builtin::done(interp, cmd, 1);
         }
         match Self::state_mut(interp, cmd).state {
+            State::Writing => {
+                // Chunks are only ever queued on an fd stdout, so the callback
+                // implies `needs_io()`.
+                debug_assert!(Builtin::of(interp, cmd).stdout.needs_io().is_some());
+                Self::enqueue_chunk(interp, cmd, OutputNeedsIOSafeGuard::OutputNeedsIo)
+            }
             State::Done => Builtin::done(interp, cmd, 0),
             State::Err => Builtin::done(interp, cmd, 1),
             State::Idle => {
                 crate::shell::interpreter::unreachable_state("Seq.onIOWriterChunk", "idle")
             }
         }
+    }
+
+    /// Split-borrow `&mut Builtin` into `(&mut stdout, &mut Seq)`; the fields
+    /// are disjoint so this is a sound reborrow without `unsafe`.
+    #[inline]
+    fn split_stdout_state(bltn: &mut Builtin) -> (&mut BuiltinIO, &mut Seq) {
+        let Impl::Seq(me) = &mut bltn.impl_ else {
+            unreachable!()
+        };
+        (&mut bltn.stdout, &mut **me)
     }
 }
 

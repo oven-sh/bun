@@ -31,14 +31,16 @@ export const libspng: Dependency = {
   build: cfg => ({
     kind: "direct",
     sources: ["spng/spng.c"],
-    includes: ["spng"],
+    // zlib's build dir holds the generated zlib.h (an `includes` entry, not a
+    // hand-written -I in cflags, so emitDirect spells it the way compile()
+    // requires for build-dir directories).
+    includes: ["spng", depBuildDir(cfg, "zlib")],
     defines: {
       SPNG_STATIC: true,
       // 1 = SSE2. spng's defilter SIMD is gated on __SSE2__ anyway, so this
       // is a no-op on arm64 (the #if falls through to scalar).
       ...(cfg.x64 ? { SPNG_SSE: 1 } : {}),
     },
-    cflags: [`-I${depBuildDir(cfg, "zlib")}`],
   }),
 
   provides: () => ({

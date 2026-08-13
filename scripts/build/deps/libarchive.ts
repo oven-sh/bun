@@ -127,7 +127,8 @@ export const libarchive: Dependency = {
     kind: "direct",
     sources: [...SOURCES, ...(cfg.windows ? SOURCES_WIN : [])].map(s => `libarchive/${s}.c`),
     // zlib's build dir holds the generated zlib.h (subst'd from .in) that
-    // the gzip filter includes. Absolute path → emitDirect quotes it.
+    // the gzip filter includes. Absolute path → emitDirect spells it
+    // build-dir-relative (includeFlags).
     // android: archive.h does `#include <android_lf.h>` under __ANDROID__;
     // that header lives under contrib/android/include.
     includes: ["libarchive", depBuildDir(cfg, "zlib"), ...(cfg.abi === "android" ? ["contrib/android/include"] : [])],

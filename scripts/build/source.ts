@@ -21,7 +21,7 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { ar, cc, cxx, nasm } from "./compile.ts";
+import { ar, cc, cxx, includeFlags, nasm } from "./compile.ts";
 import type { BuildType, Config } from "./config.ts";
 import { assert } from "./error.ts";
 import { computeSourceIdentity, fetchCliPath } from "./fetch-cli.ts";
@@ -1499,14 +1499,20 @@ function emitDirect(
     picFlags.push("-fno-pic", "-fno-pie");
   }
 
-  const incFlags = (spec.includes ?? []).map(i => `-I${q(resolve(srcDir, i))}`);
+  // Entries may be absolute (another dep's build dir, e.g. zlib's generated
+  // zlib.h for libarchive); includeFlags() gives those the build-dir-relative
+  // spelling compile() insists on. q(): a vendor path with a space in it.
+  const incFlags = includeFlags(
+    n,
+    (spec.includes ?? []).map(i => resolve(srcDir, i)),
+  ).map(flag => q(flag));
   const defFlags = Object.entries(spec.defines ?? {}).map(([k, v]) => defineFlag(k, v));
   const libFlags = [...baseFlags, ...picFlags, ...incFlags, ...defFlags, ...(spec.cflags ?? [])];
 
   // Sources must exist before compile attempts. sourceStamp (or the fetch
   // .ref) is order-only: we don't want every .o recompiling when the stamp
   // mtime bumps but the .c files are unchanged — the depfile knows better.
-  const orderOnly = [sourceStamp, ...fetchDepStamps];
+  const orderOnly = [sourceStamp];
 
   // ─── Generated headers (optional) ───
   // Literal-string headers are written at configure time via writeIfChanged
@@ -1586,9 +1592,17 @@ function emitDirect(
   // Generated headers (codegen + subst) are implicit inputs to every .o —
   // library sources include them. buildDir goes on -I so #include "foo.h"
   // finds literal, subst, and codegen headers alike.
+  //
+  // The fetchDeps' outputs (a cross dep's generated headers + source stamp,
+  // e.g. zlib's zlib.h/zconf.h for libarchive) are implicit too, as in
+  // emitNestedCmake and bun.ts's depHeaderSignal: the .o files include those
+  // headers, and a rebuild of the cross dep has to reach them in the same
+  // run. Order-only would leave that to the depfile, which only catches a
+  // declared, identically spelled header (see includeFlags) and never a
+  // re-fetched source tree.
   if (generatedHeader !== undefined) generated.push(generatedHeader);
-  const implicit = generated;
-  const genInc = needsBuildDirInc ? [`-I${q(buildDir)}`] : [];
+  const implicit = [...generated, ...fetchDepStamps];
+  const genInc = needsBuildDirInc ? includeFlags(n, [buildDir]) : [];
 
   const objects = spec.sources.map(s => {
     const path = typeof s === "string" ? s : s.path;
@@ -1598,8 +1612,13 @@ function emitDirect(
     // integrated assembler handles .S), prepending `-x c++` when lang:"cxx"
     // forces a C source through the C++ frontend (mimalloc). Everything
     // else (.cc/.cpp/.cxx) → cxx().
+    // Same dependency shape for all three; only the flags differ.
     if (path.endsWith(".asm")) {
-      return nasm(n, cfg, abs, { flags: [...(spec.nasmflags ?? []), ...extra], orderOnlyInputs: orderOnly });
+      return nasm(n, cfg, abs, {
+        flags: [...(spec.nasmflags ?? []), ...extra],
+        orderOnlyInputs: orderOnly,
+        implicitInputs: implicit,
+      });
     }
     const isC = path.endsWith(".c");
     const isAsm = path.endsWith(".S");

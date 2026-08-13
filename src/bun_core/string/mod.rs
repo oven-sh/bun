@@ -1428,8 +1428,9 @@ impl ZigString {
     // encoder bodies live in `bun_runtime`.
 
     /// `ZigString.githubAction` — returns a `Display`
-    /// formatter that escapes the string for GitHub Actions annotation output
-    /// (`%0A` for newlines, ANSI stripped). Encoding-aware via `to_slice`.
+    /// formatter that escapes the string for the data part of a GitHub Actions
+    /// annotation (see `crate::fmt::github_action_writer`). Encoding-aware via
+    /// `to_slice`.
     #[inline]
     pub fn github_action(self) -> ZigStringGithubActionFormatter {
         ZigStringGithubActionFormatter { text: self }

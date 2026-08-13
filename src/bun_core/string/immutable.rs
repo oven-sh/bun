@@ -1387,8 +1387,6 @@ pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
     }
 }
 
-pub use index_of_newline_or_non_ascii as index_of_newline_or_non_ascii_or_ansi;
-
 /// Checks if slice[offset..] has any < 0x20 or > 127 characters
 // PERF: `#[inline]` — this is the predicate of the source-map column-tracking
 // fast path (`Chunk.rs::update_generated_line_and_column`) and the per-rune

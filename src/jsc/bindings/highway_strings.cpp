@@ -800,9 +800,6 @@ size_t IndexOfNewlineOrNonASCIIImpl(const uint8_t* HWY_RESTRICT start_ptr, size_
     const auto vec_max_ascii = hn::Set(d, uint8_t { 127 });
     const auto vec_min_ascii = hn::Set(d, uint8_t { 0x20 });
 
-    // FUTURE TODO: normalize tabs
-    // Some tests involving githubactions depend on tabs not being normalized right now.
-
     size_t i = 0;
     const size_t simd_text_len = search_len - (search_len % N);
     // Process full vectors

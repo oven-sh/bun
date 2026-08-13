@@ -1291,68 +1291,28 @@ impl Display for FormatValidIdentifier<'_> {
 // GitHub Actions formatting
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Formats a string to be safe to output in a Github action.
-/// - Encodes "\n" as "%0A" to support multi-line strings.
-///   https://github.com/actions/toolkit/issues/193#issuecomment-605394935
-/// - Strips ANSI output as it will appear malformed.
+/// Escapes a string for the data part of a GitHub Actions workflow command (the
+/// text after the `::` in `::error ...::<data>`), as actions/toolkit's
+/// `escapeData` does: `%`->`%25`, `\r`->`%0D`, `\n`->`%0A`. The runner decodes
+/// exactly those three sequences, so a literal `%` has to be encoded too or text
+/// like `%0A` comes back out as a newline. A CRLF pair is written as one `%0A`.
+/// ANSI colour sequences are dropped as they would otherwise be rendered verbatim.
 pub(crate) fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::Result {
-    let mut offset: usize = 0;
-    let end = self_.len() as u32;
-    while (offset as u32) < end {
-        if let Some(i) = crate::strings::index_of_newline_or_non_ascii_or_ansi(self_, offset as u32)
-        {
-            let i = i as usize;
-            let byte = self_[i];
-            if byte > 0x7F {
-                let seq_len = strings::wtf8_byte_sequence_length(byte) as usize;
-                if i + seq_len > end as usize {
-                    // Truncated trailing sequence; emit the pending ASCII and stop
-                    // rather than hand an invalid slice to from_utf8_unchecked.
-                    write_bytes(writer, &self_[offset..i])?;
-                    break;
-                }
-                write_bytes(writer, &self_[offset..i + seq_len])?;
-                offset = i + seq_len;
-                continue;
-            }
-            if i > 0 {
-                write_bytes(writer, &self_[offset..i])?;
-            }
-            let mut n: usize = 1;
-            if byte == b'\n' {
-                writer.write_str("%0A")?;
-            } else if (i + 1) < end as usize {
-                let next = self_[i + 1];
-                if byte == b'\r' && next == b'\n' {
-                    n += 1;
-                    writer.write_str("%0A")?;
-                } else if byte == 0x1b && next == b'[' {
-                    n += 1;
-                    if (i + 2) < end as usize {
-                        let upper = (i + 5).min(end as usize);
-                        let remain = &self_[(i + 2)..upper];
-                        if let Some(j) = crate::strings::index_of_char_usize(remain, b'm') {
-                            n += j + 1;
-                        }
-                    }
-                }
-            }
-            offset = i + n;
-        } else {
-            write_bytes(writer, &self_[offset..end as usize])?;
-            break;
-        }
-    }
-    Ok(())
+    github_action_escape_writer::<false>(writer, self_)
 }
 
-/// Formats a string to be safe to use as a Github Actions workflow-command
-/// *property* value (e.g. the `title=` in `::error title=...::`). Unlike
-/// [`github_action`] (which only escapes the message-class metacharacters), this
-/// escapes the property-class metacharacters per the actions/toolkit spec:
-/// `%`->`%25`, `\r`->`%0D`, `\n`->`%0A`, `:`->`%3A`, `,`->`%2C`.
-/// ANSI colour sequences are dropped, matching [`github_action`].
+/// Escapes a string for a workflow-command *property* value (e.g. the `title=`
+/// in `::error title=...::`), as actions/toolkit's `escapeProperty` does: the
+/// [`github_action_writer`] set plus `:`->`%3A` and `,`->`%2C`, which would
+/// otherwise terminate the value.
 pub(crate) fn github_action_property_writer(
+    writer: &mut impl fmt::Write,
+    self_: &[u8],
+) -> fmt::Result {
+    github_action_escape_writer::<true>(writer, self_)
+}
+
+fn github_action_escape_writer<const PROPERTY: bool>(
     writer: &mut impl fmt::Write,
     self_: &[u8],
 ) -> fmt::Result {
@@ -1363,10 +1323,14 @@ pub(crate) fn github_action_property_writer(
         let mut skip: usize = 1;
         let replacement: &str = match byte {
             b'%' => "%25",
+            b'\r' if self_.get(i + 1) == Some(&b'\n') => {
+                skip = 2;
+                "%0A"
+            }
             b'\r' => "%0D",
             b'\n' => "%0A",
-            b':' => "%3A",
-            b',' => "%2C",
+            b':' if PROPERTY => "%3A",
+            b',' if PROPERTY => "%2C",
             0x1b if self_.get(i + 1) == Some(&b'[') => {
                 skip = 2;
                 if i + 2 < self_.len() {

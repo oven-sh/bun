@@ -4650,19 +4650,14 @@ enum StdinBehavior {
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
-    /// `<spawn.h>` extension the `libc` crate does not bind: keeps `fd` open in
-    /// the child when `POSIX_SPAWN_CLOEXEC_DEFAULT` closes everything else.
     fn posix_spawn_file_actions_addinherit_np(
         actions: *mut libc::posix_spawn_file_actions_t,
         fd: core::ffi::c_int,
     ) -> core::ffi::c_int;
-    /// src/jsc/bindings/spawn.cpp: default dispositions for every signal and an
-    /// empty signal mask, the same reset `bun_spawn_sys` applies.
+    // Implemented in src/jsc/bindings/spawn.cpp.
     fn posix_spawnattr_reset_signals(attr: *mut libc::posix_spawnattr_t) -> core::ffi::c_int;
 }
 
-/// Owns an initialized `posix_spawnattr_t` + `posix_spawn_file_actions_t`
-/// pair and destroys both on every exit path of the macOS spawn arm.
 #[cfg(target_os = "macos")]
 struct DarwinSpawnSetup {
     attr: libc::posix_spawnattr_t,
@@ -4724,10 +4719,7 @@ fn spawn_sync_inherit_impl(
     // SAFETY: argv strings are owned `ZBox`es (NUL-terminated) kept alive in
     // `cargs` for the duration of the spawn; `ptrs`/`environ` are null-
     // terminated `*const c_char` arrays as required by `posix_spawn_bun` /
-    // `posix_spawnp`. On Darwin the attr/file-actions objects handed to
-    // `posix_spawnp` and its `add*`/`setflags` helpers stay initialized inside
-    // `DarwinSpawnSetup` until after the spawn call. `waitpid` is passed a
-    // valid `&mut c_int` out-param.
+    // `posix_spawnp`. `waitpid` is passed a valid `&mut c_int` out-param.
     unsafe {
         let cargs: Vec<ZBox> = argv
             .iter()
@@ -4804,11 +4796,7 @@ fn spawn_sync_inherit_impl(
         // for the non-PTY inherit case. PTY spawns go through spawn_sys.
         #[cfg(target_os = "macos")]
         let pid: libc::pid_t = {
-            // Same child setup as the Linux arm gets from posix_spawn_bun: every
-            // signal back to its default disposition (Bun ignores SIGPIPE
-            // process-wide), and only the stdio named in the file actions
-            // survives the exec. Without POSIX_SPAWN_CLOEXEC_DEFAULT the child
-            // would inherit every descriptor Bun opened without CLOEXEC.
+            // Same child scrub as posix_spawn_bun on Linux: default signals, only fds 0-2.
             let mut setup = DarwinSpawnSetup::init()?;
             let flags = libc::POSIX_SPAWN_SETSIGDEF
                 | libc::POSIX_SPAWN_SETSIGMASK

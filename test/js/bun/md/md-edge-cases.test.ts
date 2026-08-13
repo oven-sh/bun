@@ -1363,6 +1363,32 @@ describe.concurrent("importing .md modules", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a file that is not valid UTF-8 is decoded like Bun.file().text() before rendering", async () => {
+    // E2 starts a 3-byte sequence that "AB" does not continue; FF is never valid.
+    // Each ill-formed subsequence becomes one U+FFFD and the surrounding text
+    // survives, exactly as TextDecoder would decode the file.
+    const bytes = Buffer.from([0x68, 0x69, 0x20, 0xe2, 0x41, 0x42, 0x20, 0xff, 0x0a]);
+    using dir = tempDir("md-import-ill-formed-utf8", {
+      "doc.md": bytes,
+      "entry.ts": `
+        import html from "./doc.md";
+        console.log(JSON.stringify([...html].map(c => c.codePointAt(0))));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const rendered = Markdown.html(new TextDecoder().decode(bytes));
+    expect(rendered).toBe("<p>hi \uFFFDAB \uFFFD</p>\n");
+    expect(JSON.parse(stdout)).toEqual([...rendered].map(c => c.codePointAt(0)));
+    expect(exitCode).toBe(0);
+  });
+
   test("empty .md file produces a module with no default export", async () => {
     using dir = tempDir("md-import-empty", {
       "empty.md": "",

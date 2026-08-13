@@ -974,8 +974,7 @@ impl PackageManager {
                 );
             }
         } else {
-            // No JS-side handler (bun build CLI): surface the specific
-            // failure on the manager's log.
+            // No JS-side handler (bun build CLI): log the failure detail.
             self.log_mut().add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,

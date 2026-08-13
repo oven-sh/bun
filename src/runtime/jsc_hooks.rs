@@ -486,8 +486,7 @@ unsafe fn init_runtime_state(
                                 id: bun_resolver::install_types::DependencyID,
                                 err: &'static str,
                             ) {
-                                // `Queue` is JS-thread-affine: only the
-                                // thread whose VM owns `ctx` may run this.
+                                // `Queue` is JS-thread-affine: dispatch only on its owning VM's thread.
                                 let Some(vm) = VirtualMachine::get_or_null() else {
                                     return;
                                 };

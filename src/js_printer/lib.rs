@@ -5717,7 +5717,9 @@ pub(crate) mod __gated_printer {
 
                         let mut printed: usize = 0;
                         for item in slice_of(s.items).iter() {
-                            if !self.import_item_prints_in_clause(hide_aliased_items, item.name.ref_) {
+                            if !self
+                                .import_item_prints_in_clause(hide_aliased_items, item.name.ref_)
+                            {
                                 continue;
                             }
                             if printed != 0 {

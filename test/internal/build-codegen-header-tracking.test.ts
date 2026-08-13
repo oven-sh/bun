@@ -39,7 +39,7 @@ import {
 import type { Sources } from "../../scripts/glob-sources.ts";
 
 /** A fully-populated fake toolchain; resolveConfig never spawns any of these. */
-function mockToolchain(): Toolchain {
+function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
   return {
     cc: "/fake/llvm/bin/clang",
     cxx: "/fake/llvm/bin/clang++",
@@ -70,6 +70,7 @@ function mockToolchain(): Toolchain {
     rc: undefined,
     mt: undefined,
     nasm: undefined,
+    ...overrides,
   };
 }
 
@@ -77,10 +78,10 @@ function mockToolchain(): Toolchain {
  * A linux-x64 debug target resolves on every host once it is told where its
  * sysroot is (the path is only recorded, never opened).
  */
-function linuxDebugConfig(buildDir: string): Config {
+function linuxDebugConfig(buildDir: string, toolchain: Partial<Toolchain> = {}): Config {
   return resolveConfig(
     { os: "linux", arch: "x64", abi: "gnu", buildType: "Debug", buildDir, linuxSysroot: buildDir },
-    mockToolchain(),
+    mockToolchain(toolchain),
   );
 }
 
@@ -223,14 +224,15 @@ describe("compile constructors", () => {
 describe("emitDirect", () => {
   /**
    * A direct dep generating one header into its build dir, and a second direct
-   * dep whose sources include it (the libarchive/libspng/lsquic -> zlib shape).
-   * Both live inside the scratch build dir so nothing under the repo is read or
+   * dep whose sources include it (the libarchive/libspng/lsquic -> zlib shape),
+   * with one source per compile constructor emitDirect dispatches to. Both deps
+   * live inside the scratch build dir so nothing under the repo is read or
    * touched; their source files only have to exist as paths.
    */
   test("a fetchDeps producer's generated headers are implicit inputs, included via the declared spelling", () => {
     using dir = tempDir("build-direct-dep", { "producer-src/.keep": "", "consumer-src/.keep": "" });
     const buildDir = String(dir);
-    const cfg = linuxDebugConfig(buildDir);
+    const cfg = linuxDebugConfig(buildDir, { nasm: "/fake/bin/nasm" });
     const n = new Ninja({ buildDir });
     registerDirStamps(n, cfg);
     registerCompileRules(n, cfg);
@@ -252,7 +254,7 @@ describe("emitDirect", () => {
       fetchDeps: ["producer"],
       build: cfg => ({
         kind: "direct",
-        sources: ["c.c"],
+        sources: ["c.c", "cxx.cpp", "asm.asm"],
         includes: [depBuildDir(cfg, "producer")],
       }),
       provides: () => ({ libs: [], includes: [] }),
@@ -269,14 +271,20 @@ describe("emitDirect", () => {
     const ninja = n.toString();
     expect(edgeProducing(ninja, n.rel(generatedHeader))).toBeDefined();
 
-    const [object] = consumerDep.objects;
-    const edge = edgeProducing(ninja, n.rel(object!))!;
-    // Implicit, not order-only: a regenerated gen.h (or a re-fetched producer)
-    // rebuilds c.c.o in the run that regenerated it.
-    expect(implicitInputs(edge)).toEqual(expect.arrayContaining(producerDep.outputs.map(o => n.rel(o))));
+    expect(consumerDep.objects).toHaveLength(3);
+    const edges = consumerDep.objects.map(object => edgeProducing(ninja, n.rel(object))!);
+    // Implicit, not order-only, on every object (cc, cxx and nasm alike): a
+    // regenerated gen.h or a re-fetched producer rebuilds them in the run that
+    // regenerated it.
+    const producerOutputs = producerDep.outputs.map(o => n.rel(o));
+    for (const edge of edges) {
+      expect(implicitInputs(edge)).toEqual(expect.arrayContaining(producerOutputs));
+    }
     // And the -I is the spelling gen.h is declared under, so the depfile agrees.
-    const includes = edge.vars.cflags!.split(" ").filter(f => f.startsWith("-I"));
-    expect(includes).toEqual([`-I${relative(buildDir, depBuildDir(cfg, "producer"))}`]);
+    const [cEdge, cxxEdge] = edges;
+    const expectedInclude = `-I${relative(buildDir, depBuildDir(cfg, "producer"))}`;
+    expect(cEdge!.vars.cflags!.split(" ").filter(f => f.startsWith("-I"))).toEqual([expectedInclude]);
+    expect(cxxEdge!.vars.cxxflags!.split(" ").filter(f => f.startsWith("-I"))).toEqual([expectedInclude]);
   });
 });
 

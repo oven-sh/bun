@@ -326,7 +326,7 @@ export function nasm(
   n: Ninja,
   cfg: Config,
   src: string,
-  opts: { flags: string[]; orderOnlyInputs?: string[] },
+  opts: Pick<CompileOpts, "flags" | "implicitInputs" | "orderOnlyInputs">,
 ): string {
   assert(extname(src) === ".asm", `nasm() expects .asm source, got: ${src}`);
   assert(cfg.nasm !== undefined, "nasm not found in toolchain", {
@@ -336,13 +336,15 @@ export function nasm(
         : "Install nasm from your distro (apt/dnf/brew install nasm) or https://nasm.us",
   });
   const out = objectPath(cfg, src);
-  n.build({
+  const node: BuildNode = {
     outputs: [out],
     rule: "nasm",
     inputs: [resolve(cfg.cwd, src)],
     orderOnlyInputs: [objectDirStamp(cfg), ...(opts.orderOnlyInputs ?? [])],
     vars: { nasmflags: opts.flags.join(" ") },
-  });
+  };
+  if (opts.implicitInputs !== undefined && opts.implicitInputs.length > 0) node.implicitInputs = opts.implicitInputs;
+  n.build(node);
   return out;
 }
 

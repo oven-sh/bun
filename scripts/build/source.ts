@@ -1612,8 +1612,13 @@ function emitDirect(
     // integrated assembler handles .S), prepending `-x c++` when lang:"cxx"
     // forces a C source through the C++ frontend (mimalloc). Everything
     // else (.cc/.cpp/.cxx) → cxx().
+    // Same dependency shape for all three; only the flags differ.
     if (path.endsWith(".asm")) {
-      return nasm(n, cfg, abs, { flags: [...(spec.nasmflags ?? []), ...extra], orderOnlyInputs: orderOnly });
+      return nasm(n, cfg, abs, {
+        flags: [...(spec.nasmflags ?? []), ...extra],
+        orderOnlyInputs: orderOnly,
+        implicitInputs: implicit,
+      });
     }
     const isC = path.endsWith(".c");
     const isAsm = path.endsWith(".S");

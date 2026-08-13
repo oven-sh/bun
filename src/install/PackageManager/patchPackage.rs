@@ -22,13 +22,28 @@ use crate::package_manager_real::package_manager_directories::{
     compute_cache_dir_and_subpath, get_temporary_directory,
 };
 use crate::{
-    BuntagHashBuf, DependencyID, Features, PackageID, buntaghashbuf_make, initialize_store,
-    invalid_package_id,
+    BuntagHashBuf, DependencyID, Features, PackageID, Resolution, buntaghashbuf_make,
+    initialize_store, invalid_package_id,
 };
 
 #[inline]
 fn string_hash(s: &[u8]) -> u64 {
     bun_semver::semver_string::Builder::string_hash(s)
+}
+
+/// Formats `resolution` as the version half of a `name@version` patch key into
+/// `label` (cleared first, so one allocation serves a whole candidate loop).
+/// Tarball, folder and git resolutions repeat a user-supplied path or URL, so
+/// the label has no length bound.
+fn print_resolution_label<'a>(
+    label: &'a mut Vec<u8>,
+    resolution: &Resolution,
+    string_buf: &[u8],
+) -> &'a [u8] {
+    label.clear();
+    write!(label, "{}", resolution.fmt(string_buf, PathSep::Posix))
+        .expect("formatting into a Vec is infallible");
+    label
 }
 
 #[derive(Default)]
@@ -144,7 +159,6 @@ pub fn do_patch_commit(
     };
 
     let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(&lockfile);
-    let mut resolution_buf = [0u8; 1024];
     // reshaped for borrowck — `compute_cache_dir_and_subpath` borrows
     // `manager` mutably while the package name/resolution borrow `lockfile`
     // (which itself sometimes aliases `manager.lockfile`). Clone the slice/
@@ -219,20 +233,15 @@ pub fn do_patch_commit(
                     }
                     Some(PackageIndexEntry::Id(id)) => *lockfile.packages.get(*id as usize),
                     Some(PackageIndexEntry::Ids(ids)) => 'brk: {
+                        let mut resolution_label = Vec::new();
                         for &id in ids.as_slice() {
                             let pkg = *lockfile.packages.get(id as usize);
-                            let total = resolution_buf.len();
-                            let mut cursor: &mut [u8] = &mut resolution_buf[..];
-                            write!(
-                                &mut cursor,
-                                "{}",
-                                pkg.resolution
-                                    .fmt(lockfile.buffers.string_bytes.as_slice(), PathSep::Posix)
-                            )
-                            .expect("unreachable");
-                            let written = total - cursor.len();
-                            let resolution_label = &resolution_buf[..written];
-                            if resolution_label == version {
+                            if print_resolution_label(
+                                &mut resolution_label,
+                                &pkg.resolution,
+                                lockfile.buffers.string_bytes.as_slice(),
+                            ) == version
+                            {
                                 break 'brk pkg;
                             }
                         }
@@ -305,20 +314,15 @@ pub fn do_patch_commit(
     let pkg: Package = pkg;
 
     let name = pkg.name.slice(lockfile.buffers.string_bytes.as_slice());
-    let resolution_label_len = {
-        let total = resolution_buf.len();
-        let mut cursor: &mut [u8] = &mut resolution_buf[..];
-        write!(
-            &mut cursor,
-            "{}@{}",
-            bstr::BStr::new(name),
-            pkg.resolution
-                .fmt(lockfile.buffers.string_bytes.as_slice(), PathSep::Posix)
-        )
-        .expect("unreachable");
-        total - cursor.len()
-    };
-    let resolution_label = &resolution_buf[..resolution_label_len];
+    let mut patch_key = Vec::new();
+    write!(
+        &mut patch_key,
+        "{}@{}",
+        bstr::BStr::new(name),
+        pkg.resolution
+            .fmt(lockfile.buffers.string_bytes.as_slice(), PathSep::Posix)
+    )
+    .expect("formatting into a Vec is infallible");
 
     let patchfile_contents: Vec<u8> = 'brk: {
         let new_folder = changes_dir;
@@ -402,7 +406,7 @@ pub fn do_patch_commit(
         // If the package was already patched then it might have a ".bun-tag-XXXXXXXX"
         // we need to rename this out and back too.
         let bun_patch_tag: Option<&[u8]> = 'has_bun_patch_tag: {
-            let name_and_version_hash = string_hash(resolution_label);
+            let name_and_version_hash = string_hash(&patch_key);
             let patch_tag: &[u8] = 'patch_tag: {
                 if let Some(patchdep) = lockfile.patched_dependencies.get(&name_and_version_hash) {
                     if let Some(hash) = patchdep.patchfile_hash() {
@@ -585,17 +589,11 @@ pub fn do_patch_commit(
         Global::crash();
     }
 
-    resolution_buf[resolution_label_len..resolution_label_len + b".patch".len()]
-        .copy_from_slice(b".patch");
-    let mut patch_filename: &[u8] = &resolution_buf[0..resolution_label_len + b".patch".len()];
-    let escaped_owned: Option<Box<[u8]>>;
-    if let Some(escaped) = escape_patch_filename(patch_filename) {
-        escaped_owned = Some(escaped);
-        patch_filename = escaped_owned.as_deref().unwrap();
-    } else {
-        escaped_owned = None;
-    }
-    let _ = &escaped_owned;
+    let unescaped_patch_filename = [patch_key.as_slice(), b".patch"].concat();
+    let escaped_patch_filename = escape_patch_filename(&unescaped_patch_filename);
+    let patch_filename: &[u8] = escaped_patch_filename
+        .as_deref()
+        .unwrap_or(&unescaped_patch_filename);
 
     let patches_dir: &[u8] = match &manager.options.patch_features {
         PatchFeatures::Commit { patches_dir } => patches_dir,
@@ -632,16 +630,6 @@ pub fn do_patch_commit(
         Global::crash();
     }
 
-    let mut patch_key = Vec::new();
-    // re-slice instead of reusing `resolution_label` so its borrow ends
-    // before the `.patch` suffix write above; the prefix bytes are unchanged.
-    write!(
-        &mut patch_key,
-        "{}",
-        bstr::BStr::new(&resolution_buf[..resolution_label_len])
-    )
-    .expect("infallible: in-memory write");
-    let patch_key: Box<[u8]> = patch_key.into_boxed_slice();
     let patchfile_path: Box<[u8]> = Box::<[u8]>::from(path_in_patches_dir.as_bytes());
     let _ = sys::unlink(resolve_path::join_z::<platform::Auto>(&[
         changes_dir,
@@ -649,7 +637,7 @@ pub fn do_patch_commit(
     ]));
 
     Ok(Some(PatchCommitResult {
-        patch_key,
+        patch_key: patch_key.into_boxed_slice(),
         patchfile_path,
         not_in_workspace_root,
     }))
@@ -729,7 +717,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     let arg_kind: PatchArgKind = PatchArgKind::from_arg(argument);
 
     let mut folder_path_buf = PathBuffer::uninit();
-    let mut resolution_buf = [0u8; 1024];
 
     #[cfg(windows)]
     let mut win_normalizer = PathBuffer::uninit();
@@ -840,19 +827,15 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                     }
                     Some(PackageIndexEntry::Id(id)) => *lockfile.packages.get(*id as usize),
                     Some(PackageIndexEntry::Ids(ids)) => 'id: {
+                        let mut resolution_label = Vec::new();
                         for &id in ids.as_slice() {
                             let pkg = *lockfile.packages.get(id as usize);
-                            let total = resolution_buf.len();
-                            let mut cursor: &mut [u8] = &mut resolution_buf[..];
-                            write!(
-                                &mut cursor,
-                                "{}",
-                                pkg.resolution.fmt(strbuf, PathSep::Posix)
-                            )
-                            .expect("unreachable");
-                            let written = total - cursor.len();
-                            let resolution_label = &resolution_buf[..written];
-                            if resolution_label == version {
+                            if print_resolution_label(
+                                &mut resolution_label,
+                                &pkg.resolution,
+                                strbuf,
+                            ) == version
+                            {
                                 break 'id pkg;
                             }
                         }
@@ -1295,7 +1278,7 @@ fn pkg_info_for_name_and_version(
 
     let strbuf = lockfile.buffers.string_bytes.as_slice();
 
-    let mut buf = [0u8; 1024];
+    let mut resolution_label = Vec::new();
     let dependencies = lockfile.buffers.dependencies.as_slice();
 
     for (dep_id, dep) in dependencies.iter().enumerate() {
@@ -1308,19 +1291,7 @@ fn pkg_info_for_name_and_version(
         }
         let pkg = *lockfile.packages.get(pkg_id as usize);
         if let Some(v) = version {
-            let written = {
-                let total = buf.len();
-                let mut cursor: &mut [u8] = &mut buf[..];
-                write!(
-                    &mut cursor,
-                    "{}",
-                    pkg.resolution.fmt(strbuf, PathSep::Posix)
-                )
-                .expect("Resolution name too long");
-                total - cursor.len()
-            };
-            let label = &buf[..written];
-            if label == v {
+            if print_resolution_label(&mut resolution_label, &pkg.resolution, strbuf) == v {
                 pairs.push((dep_id as DependencyID, pkg_id));
             }
         } else {

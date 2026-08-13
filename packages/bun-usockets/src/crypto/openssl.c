@@ -2029,7 +2029,15 @@ static void ssl_update_handshake(struct us_socket_t *s) {
     }
     s->ssl_handshake_state = HANDSHAKE_PENDING;
     s->ssl_write_wants_read = 1;
-    s->flags.last_write_failed = 1;
+    /* Keep writable interest only for a blocked write. Setting this for
+     * WANT_READ too kept the always-writable socket's writable event firing
+     * every tick with zero progress (100% CPU) whenever writable interest
+     * existed while the handshake stalled, e.g. pause() mid-handshake.
+     * WANT_WRITE's blocked BIO write normally sets it in us_socket_raw_write
+     * already; kept for BIO retry paths that buffer without a send. */
+    if (err == SSL_ERROR_WANT_WRITE) {
+      s->flags.last_write_failed = 1;
+    }
     return;
   }
 

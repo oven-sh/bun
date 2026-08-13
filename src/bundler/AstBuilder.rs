@@ -112,8 +112,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         unsafe { &mut *self.current_scope }
     }
 
-    /// Adds a symbol without declaring it in the current scope or in the
-    /// generated part.
     fn push_symbol(&mut self, kind: SymbolKind, identifier: &[u8]) -> Ref {
         let inner_index: RefInt = RefInt::try_from(self.symbols.len()).unwrap();
         self.symbols.push(Symbol {
@@ -289,12 +287,10 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             ..Default::default()
         });
 
-        // The linker binds `import * as ns`, `export * as ns`, `require()` and
-        // `import()` of this module to `exports_ref` and declares it in the
-        // namespace export part (`create_exports_for_file`), the same as the
-        // `exports` symbol js_parser gives every file. It is created after the
-        // `symbol_uses` above so the code part does not depend on the namespace
-        // export part, which keeps the namespace object tree-shakeable.
+        // Same as the `exports` symbol js_parser gives every file: the linker
+        // declares it in the namespace export part and binds `import * as ns`
+        // to it. Created after `symbol_uses` above so the code part does not
+        // depend on the namespace export part and keep it from being tree shaken.
         let exports_ref = self.push_symbol(SymbolKind::Other, b"exports");
 
         let mut top_level_symbols_to_parts = TopLevelSymbolToParts::default();

@@ -141,16 +141,20 @@ describe("given a source file with syntax errors", () => {
 
 // TinyCC reports a diagnostic through a callback; cc() stores the text and
 // throws it later. The wrapper path used to build the Error around the stored
-// bytes without copying them, and cc() freed them on return, so the message
-// reached JS with its first bytes replaced by allocator metadata (a use after
-// free under ASan).
+// bytes without copying them (cc() freed them on return, so the message reached
+// JS with its first bytes replaced by allocator metadata, a use after free
+// under ASan) and read them as Latin-1 although TinyCC echoes UTF-8 source.
 describe("TinyCC diagnostics thrown by cc()", () => {
   // One spawned fixture covers both places cc() can fail:
   // - unresolved.c compiles but does not link, so the diagnostic is collected
   //   and thrown under a "N errors while compiling" header;
   // - clash.c defines JSFunctionCall, the entry point of the wrapper cc()
   //   compiles around every symbol, so the user's C compiles and the wrapper
-  //   does not, and that diagnostic is thrown on its own.
+  //   does not, and that diagnostic is thrown on its own;
+  // - nonascii.c exports its function under the asm label "y ñ" (TinyCC keeps
+  //   asm labels verbatim, hence the underscore macOS symbols otherwise get),
+  //   so the wrapper's declaration of it is a syntax error whose diagnostic
+  //   quotes the non-ASCII token.
   it("reach JS byte for byte", async () => {
     using dir = tempDir("bun-ffi-cc-diagnostics", {
       "unresolved.c": /* c */ `
@@ -160,26 +164,35 @@ describe("TinyCC diagnostics thrown by cc()", () => {
       "clash.c": /* c */ `
         int JSFunctionCall(int a) { return a + 1; }
       `,
+      "nonascii.c": /* c */ `
+        #ifdef __APPLE__
+        int add(int a, int b) __asm__("_y ñ");
+        #else
+        int add(int a, int b) __asm__("y ñ");
+        #endif
+        int add(int a, int b) { return a + b; }
+      `,
       "fixture.js": /* js */ `
         import { cc } from "bun:ffi";
         import path from "path";
 
-        function messageOf(options) {
+        function messageOf(file, symbols) {
           try {
-            cc(options);
+            cc({ source: path.join(import.meta.dir, file), symbols });
           } catch (error) {
             return error.message;
           }
           return "cc() did not throw";
         }
 
-        const source = path.join(import.meta.dir, "unresolved.c");
-        const unresolved = messageOf({ source, symbols: { add: { args: ["int", "int"], returns: "int" } } });
-        const clash = messageOf({
-          source: path.join(import.meta.dir, "clash.c"),
-          symbols: { JSFunctionCall: { args: ["int"], returns: "int" } },
-        });
-        console.log(JSON.stringify({ source, unresolved, clash }));
+        console.log(
+          JSON.stringify({
+            source: path.join(import.meta.dir, "unresolved.c"),
+            unresolved: messageOf("unresolved.c", { add: { args: ["int", "int"], returns: "int" } }),
+            clash: messageOf("clash.c", { JSFunctionCall: { args: ["int"], returns: "int" } }),
+            nonascii: messageOf("nonascii.c", { "y ñ": { args: ["int", "int"], returns: "int" } }),
+          }),
+        );
       `,
     });
 
@@ -203,6 +216,7 @@ describe("TinyCC diagnostics thrown by cc()", () => {
       messages: {
         unresolved: `1 errors while compiling ${messages.source}\ntcc: error: unresolved reference to 'bun_test_missing_symbol'\n`,
         clash: expect.stringMatching(/^<string>:\d+: error: .*'JSFunctionCall'$/),
+        nonascii: expect.stringMatching(/^<string>:\d+: error: .*'ñ'/),
       },
       exitCode: 0,
     });

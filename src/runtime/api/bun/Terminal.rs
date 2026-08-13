@@ -1570,7 +1570,6 @@ impl Terminal {
 
         #[cfg(unix)]
         {
-
             let winsize = bun_core::Winsize {
                 row: new_rows,
                 col: new_cols,

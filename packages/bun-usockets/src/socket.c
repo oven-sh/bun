@@ -413,7 +413,7 @@ struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned cha
  * a paused socket: us_poll_change sets absolute flags, so including READABLE
  * unconditionally would silently undo us_socket_pause mid-backpressure and
  * deliver data the caller asked to defer. */
-static void us_internal_rearm_writable(struct us_socket_t *s) {
+void us_internal_rearm_writable(struct us_socket_t *s) {
     us_poll_change(&s->p, s->group->loop,
                    LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
 }
@@ -553,8 +553,18 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
         return 0;
     }
     if (s->ssl) {
-        /* TLS writes have their own error propagation; keep the existing path. */
-        return us_socket_write(s, data, length);
+        int written = us_socket_write(s, data, length);
+        /* ssl_fatal_error was clear on entry (us_socket_is_shut_down above),
+         * so it was this write that failed inside the TLS layer; the SSL layer
+         * is closing the connection (see us_internal_ssl_write). Report it the
+         * way a peer-gone send is reported, so the caller fails the write
+         * instead of buffering it as backpressure that never drains. Failures
+         * before the handshake has been reported stay with the handshake
+         * dispatch, which carries the real reason. */
+        if (fatal_write_error && s->ssl_fatal_error && us_internal_ssl_handshake_callback_has_fired(s)) {
+            *fatal_write_error = EPROTO;
+        }
+        return written;
     }
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);

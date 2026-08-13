@@ -1901,8 +1901,9 @@ export function getCpuDescription() {
  * @returns {string | undefined}
  */
 export function getCloudInstanceType() {
-  // Set by scripts/agent.mjs on the cloud agents; absent on the darwin fleet
-  // and GitHub Actions, where there is no metadata service to ask.
+  // The `cloud` tag scripts/agent.mjs puts on the agents we launch ourselves.
+  // Anything without it (the darwin fleet, GitHub Actions) is not a machine
+  // whose type we chose, so there is nothing to compare against and no request.
   const cloud = getEnv("BUILDKITE_AGENT_META_DATA_CLOUD", false);
   let request;
   if (cloud === "aws") {

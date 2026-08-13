@@ -92,6 +92,17 @@ pub type RequestContextStackAllocator<
     REQUEST_CONTEXT_POOL_CAPACITY,
 >;
 
+#[derive(Clone, Copy)]
+pub(crate) enum UpgradeState {
+    /// Plain HTTP request.
+    None,
+    /// WebSocket handshake waiting for `server.upgrade()`. uWS owns the
+    /// context (one per `.ws()` route) and it outlives the request.
+    Pending(NonNull<WebSocketUpgradeContext>),
+    /// `server.upgrade()` handed the socket over to a `ServerWebSocket`.
+    Upgraded,
+}
+
 ///
 pub struct RequestContext<
     ThisServer,
@@ -120,7 +131,7 @@ pub struct RequestContext<
 
     pub(crate) flags: Flags<DEBUG_MODE>,
 
-    pub(crate) upgrade_context: Cell<Option<*mut WebSocketUpgradeContext>>,
+    pub(crate) upgrade_context: Cell<UpgradeState>,
 
     /// We can only safely free once the request body promise is finalized
     /// and the response is rejected
@@ -1323,7 +1334,7 @@ where
                 signal: Cell::new(None),
                 cookies: JsCell::new(None),
                 flags: Flags::<DEBUG_MODE>::default(),
-                upgrade_context: Cell::new(None),
+                upgrade_context: Cell::new(UpgradeState::None),
                 response_jsvalue: Cell::new(JSValue::ZERO),
                 ref_count: Cell::new(1),
                 pin_count: Cell::new(0),
@@ -2258,10 +2269,7 @@ where
     }
 
     pub(crate) fn did_upgrade_web_socket(&self) -> bool {
-        self.upgrade_context
-            .get()
-            .map(|p| p as usize == usize::MAX)
-            .unwrap_or(false)
+        matches!(self.upgrade_context.get(), UpgradeState::Upgraded)
     }
 
     fn to_async_without_abort_handler(

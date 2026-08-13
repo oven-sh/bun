@@ -2047,6 +2047,9 @@ pub(crate) mod strings_impl {
         if let Some(r) = starts_with_redacted_item(str, b"_password") {
             return Some(r);
         }
+        if let Some(r) = starts_with_redacted_item(str, b"password") {
+            return Some(r);
+        }
         if let Some(r) = starts_with_redacted_item(str, b"token") {
             return Some(r);
         }
@@ -2556,6 +2559,9 @@ pub mod ffi {
     // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::pollfd {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::tm {}
     // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::Dl_info {}

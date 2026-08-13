@@ -72,7 +72,7 @@ public:
     }
 
 private:
-    static ExceptionOr<Ref<DOMURL>> create(const String& url, const URL& base);
+    static ExceptionOr<Ref<DOMURL>> create(const String& url, const URL& base, const String& baseInput);
     DOMURL(URL&& completeURL);
 
     URL fullURL() const final

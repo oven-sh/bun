@@ -149,13 +149,10 @@ export function requireResolve(
   id: string,
   options: { paths?: string[] } = {},
 ) {
-  return $resolveSync(
-    id,
-    typeof this === "string" ? this : (this?.filename ?? this?.id ?? ""),
-    false,
-    true,
-    options ? options.paths : undefined,
-  );
+  // Only `options.paths` extraction happens here; builtin bypass and paths
+  // validation are native (functionImportMeta__resolveSyncPrivate).
+  const paths = typeof options === "object" && options !== null ? options.paths : undefined;
+  return $resolveSync(id, typeof this === "string" ? this : (this?.filename ?? this?.id ?? ""), false, true, paths);
 }
 
 $visibility = "Private";

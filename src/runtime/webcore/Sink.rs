@@ -113,6 +113,57 @@ macro_rules! impl_js_sink_abi {
     };
 }
 
+/// Emits the `JsSinkType` items that every sink forwards 1:1 to an inherent
+/// method of the same name (`memory_cost`, `write_bytes` -> `write`,
+/// `write_utf16`, `write_latin1`, `end`, `flush`, `flush_from_js`, `start`).
+/// Invoke inside the `impl JsSinkType for T` block; `Self::name` resolves to
+/// the inherent method ahead of the trait item being defined, so the forward
+/// does not recurse. Items whose bodies differ per sink (`finalize`,
+/// `construct`, `end_from_js`, `source`, `done`, the `HAS_*` consts) stay
+/// hand-written.
+#[macro_export]
+macro_rules! impl_js_sink_forwarders {
+    () => {
+        fn memory_cost(&self) -> usize {
+            Self::memory_cost(self)
+        }
+        fn write_bytes(
+            &mut self,
+            data: &$crate::webcore::streams::Result,
+        ) -> $crate::webcore::streams::result::Writable {
+            Self::write(self, data)
+        }
+        fn write_utf16(
+            &mut self,
+            data: &$crate::webcore::streams::Result,
+        ) -> $crate::webcore::streams::result::Writable {
+            Self::write_utf16(self, data)
+        }
+        fn write_latin1(
+            &mut self,
+            data: &$crate::webcore::streams::Result,
+        ) -> $crate::webcore::streams::result::Writable {
+            Self::write_latin1(self, data)
+        }
+        fn end(&mut self, err: ::core::option::Option<::bun_sys::Error>) -> ::bun_sys::Result<()> {
+            Self::end(self, err)
+        }
+        fn flush(&mut self) -> ::bun_sys::Result<()> {
+            Self::flush(self)
+        }
+        fn flush_from_js(
+            &mut self,
+            global: &::bun_jsc::JSGlobalObject,
+            wait: bool,
+        ) -> ::bun_sys::Result<::bun_jsc::JSValue> {
+            Self::flush_from_js(self, global, wait)
+        }
+        fn start(&mut self, config: $crate::webcore::streams::Start) -> ::bun_sys::Result<()> {
+            Self::start(self, &config)
+        }
+    };
+}
+
 /// Per-sink C ABI surface. `&str` const-generics can't drive `#[link_name]`,
 /// so each `SinkType` provides the resolved `${abi}__*` externs here (normally
 /// via `impl_js_sink_abi!`) for the generic `JSSink<T>` host-fn bodies to call.
@@ -273,7 +324,14 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     const START_TAG: Option<streams::StartTag> = None;
 
     fn memory_cost(&self) -> usize;
-    fn finalize(&mut self);
+    /// `${abi}__finalize`: the JS cell holding `this` as `m_sinkPtr` is giving
+    /// up its claim on the sink. Raw pointer, not `&mut self`: for
+    /// `ArrayBufferSink`, `FileSink` and `FetchRequestBodySink` that releases
+    /// the allocation, and freeing under a live reference argument is UB.
+    ///
+    /// # Safety
+    /// `this` is the cell's live sink and must not be used after the call.
+    unsafe fn finalize(this: *mut Self);
     fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
@@ -560,9 +618,14 @@ impl<T: JsSinkType> JSSink<T> {
     }
 
     /// `${abi_name}__finalize` body.
+    ///
+    /// # Safety
+    /// As [`JsSinkType::finalize`].
     #[inline]
-    pub(crate) fn js_finalize(this: &mut T) {
-        this.finalize();
+    pub(crate) unsafe fn js_finalize(this: *mut T) {
+        debug_assert!(!this.is_null());
+        // SAFETY: the caller's contract is the same one.
+        unsafe { T::finalize(this) }
     }
 
     /// `${abi_name}__controllerDetached` body — called from

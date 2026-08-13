@@ -31,19 +31,6 @@ extern "C" void Bun__RsaKeyPairJobCtx__runFromJS(RsaKeyPairJobCtx* ctx, JSGlobal
     *out = ctx->runFromJS(globalObject);
 }
 
-extern "C" RsaKeyPairJob* Bun__RsaKeyPairJob__create(JSGlobalObject* globalObject, RsaKeyPairJobCtx* ctx, EncodedJSValue callback);
-RsaKeyPairJob* RsaKeyPairJob::create(JSGlobalObject* globalObject, RsaKeyPairJobCtx&& ctx, JSValue callback)
-{
-    RsaKeyPairJobCtx* ctxCopy = new RsaKeyPairJobCtx(WTF::move(ctx));
-    return Bun__RsaKeyPairJob__create(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
-extern "C" void Bun__RsaKeyPairJob__schedule(RsaKeyPairJob* job);
-void RsaKeyPairJob::schedule()
-{
-    Bun__RsaKeyPairJob__schedule(this);
-}
-
 extern "C" void Bun__RsaKeyPairJob__createAndSchedule(JSGlobalObject* globalObject, RsaKeyPairJobCtx* ctx, EncodedJSValue callback);
 void RsaKeyPairJob::createAndSchedule(JSGlobalObject* globalObject, RsaKeyPairJobCtx&& ctx, JSValue callback)
 {

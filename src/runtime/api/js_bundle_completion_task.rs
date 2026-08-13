@@ -24,7 +24,6 @@ use bun_core::String as BunString;
 use bun_core::env::OperatingSystem;
 use bun_io::KeepAlive;
 use bun_jsc::WorkPool;
-use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
@@ -55,15 +54,25 @@ pub struct JSBundleCompletionTask {
     // `unsafe impl Send` below for the thread-affinity constraint this imposes.
     pub(crate) ref_count: RefCount<Self>,
     pub(crate) config: JSBundlerConfig,
-    // BACKREF — the JS-thread `EventLoop` outlives every completion task; safe
-    // `Deref` so call sites read `self.jsc_event_loop.enqueue_task_concurrent(..)`.
-    pub(crate) jsc_event_loop: BackRef<EventLoop>,
+    /// How the bundle thread (and plugin hops) reach the VM that called Bun.build.
+    pub(crate) loop_handle: jsc::LoopHandle,
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
     pub(crate) env: *mut bun_dotenv::Loader,
     pub(crate) log: bun_ast::Log,
-    pub(crate) cancelled: bool,
+    /// Set by the owner giving up on the result (HTMLBundle route torn down)
+    /// or by the VM's stop phase; read by `on_complete` (skip delivery) and by
+    /// the bundle thread (`CompletionDispatch::is_cancelled`: stop waiting on
+    /// plugins, fail the build).
+    pub(crate) cancelled: core::sync::atomic::AtomicBool,
+    /// The bundle thread's uws loop while this build runs there, so a
+    /// cancelling VM can wake its Mini loop out of an idle wait.
+    pub(crate) bundle_loop: core::sync::atomic::AtomicPtr<bun_uws::Loop>,
+    /// [`Stage`]: whether the (single, process-wide) bundle thread has taken
+    /// this build off its queue yet. A VM tearing down releases a build that
+    /// is still queued itself instead of waiting behind other VMs' builds.
+    pub(crate) stage: core::sync::atomic::AtomicU8,
 
     pub(crate) html_build_task: Option<*mut html_bundle::Route>,
 
@@ -77,6 +86,21 @@ pub struct JSBundleCompletionTask {
     pub(crate) started_at_ns: u64,
 }
 
+#[repr(u8)]
+pub(crate) enum Stage {
+    /// On the bundle thread's queue; nothing there has touched it.
+    Queued = 0,
+    /// The bundle thread is (or was) running it.
+    Started = 1,
+    /// Its VM is tearing down first and is releasing the JS side right now;
+    /// the bundle thread, if it dequeues it meanwhile, waits for
+    /// `ReleasedUnstarted` before freeing.
+    Releasing = 2,
+    /// The JS side is released and the count returned; the bundle thread
+    /// frees the rest when it dequeues it.
+    ReleasedUnstarted = 3,
+}
+
 impl JSBundleCompletionTask {
     /// `RefCounted` destructor — last ref dropped.
     ///
@@ -86,7 +110,11 @@ impl JSBundleCompletionTask {
         // SAFETY: refcount hit zero; `this` is the sole owner of a
         // `heap::alloc`'d allocation.
         let mut boxed = unsafe { bun_core::heap::take(this) };
-        boxed.poll_ref.disable();
+        // Already `Done` (and this may be the bundle thread) for a build
+        // released unstarted; see `stop_for_vm_teardown`.
+        if boxed.poll_ref.is_active() {
+            boxed.poll_ref.disable();
+        }
         if let Some(plugin) = boxed.plugins.take() {
             // `plugin` is the live FFI handle stashed at construction;
             // last-ref drop is the only place that releases it.
@@ -111,22 +139,21 @@ pub(crate) fn create_and_schedule_completion_task(
     config: JSBundlerConfig,
     plugins: Option<NonNull<Plugin>>,
     global_this: &JSGlobalObject,
-    event_loop: *mut EventLoop,
 ) -> crate::Result<*mut JSBundleCompletionTask> {
     let vm = global_this.bun_vm_ptr();
     let env = global_this.bun_vm().transpiler.env;
     let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
         ref_count: RefCount::init(),
         config,
-        // `event_loop` is the live JS-thread loop (caller derives it from
-        // `vm.event_loop()`); never null once `Bun.build` is reachable.
-        jsc_event_loop: BackRef::from(core::ptr::NonNull::new(event_loop).expect("event_loop")),
+        loop_handle: global_this.bun_vm().loop_handle(),
         global_this: BackRef::new(global_this),
         promise: jsc::JSPromiseStrong::default(),
         poll_ref: KeepAlive::init(),
         env,
         log: bun_ast::Log::init(),
-        cancelled: false,
+        cancelled: core::sync::atomic::AtomicBool::new(false),
+        bundle_loop: core::sync::atomic::AtomicPtr::new(ptr::null_mut()),
+        stage: core::sync::atomic::AtomicU8::new(Stage::Queued as u8),
         html_build_task: None,
         result: BundleV2Result::Pending,
         next: bun_threading::Link::new(),
@@ -145,6 +172,13 @@ pub(crate) fn create_and_schedule_completion_task(
     // conditions from creating two
     let _ = WorkPool::get();
 
+    // Out on the bundle thread from here until it posts the completion: it
+    // reads this VM's env loader and the plugin cell, so the VM cancels it at
+    // teardown (registry) and waits for it (embedded work).
+    // SAFETY: `completion` is live (refcount==1), JS thread.
+    unsafe { (*completion).loop_handle.embedded_work_scheduled() };
+    crate::jsc_hooks::ActiveHandle::Bundle(NonNull::new(completion).expect("completion"))
+        .register();
     bun_bundler::bundle_v2::singleton::enqueue::<JSBundleCompletionTask>(completion);
 
     // SAFETY: `completion` is live (refcount==1); `vm` outlives this call.
@@ -526,6 +560,7 @@ impl JSBundleCompletionTask {
     }
 
     pub(crate) fn on_complete_anytask(ctx: *mut Self) -> bun_event_loop::JsResult<()> {
+        crate::jsc_hooks::ActiveHandle::Bundle(NonNull::new(ctx).expect("completion")).unregister();
         // For the +1 taken by `complete_on_bundle_thread` enqueue.
         // SAFETY: `ctx` is the live heap allocation; `adopt` consumes the prior +1 on Drop.
         let _drop_ref = unsafe { bun_ptr::ScopedRef::<Self>::adopt(ctx) };
@@ -537,13 +572,65 @@ impl JSBundleCompletionTask {
         unsafe { &mut *ctx }.on_complete()
     }
 
+    /// VM teardown's stop phase (JS thread): give up on the result.
+    ///
+    /// * Still queued behind other builds: release the JS side here (plugin
+    ///   cell, promise, keep-alive), return the count, and leave the inert rest
+    ///   for the bundle thread to free when it dequeues it — the VM does not
+    ///   wait behind other VMs' builds.
+    /// * Already on the bundle thread: tombstone the plugin, cancel and wake it;
+    ///   it fails what the plugins hold, fails the build and posts the
+    ///   completion, which teardown waits for and releases.
+    ///
+    /// # Safety
+    /// `this` is live (registered ⇒ its completion has not run); JS thread.
+    pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
+        use core::sync::atomic::Ordering;
+        // SAFETY: fn contract; the plugin cell is protected by this task; the
+        // loop pointer is a thread's uws loop, valid for that thread's
+        // lifetime, and wakeup is thread-safe.
+        unsafe {
+            if (*this)
+                .stage
+                .compare_exchange(
+                    Stage::Queued as u8,
+                    Stage::Releasing as u8,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+            {
+                (*this).poll_ref.disable();
+                if let Some(plugin) = (*this).plugins.take() {
+                    Plugin::destroy(plugin.as_ptr());
+                }
+                (*this).promise = jsc::JSPromiseStrong::default();
+                let handle = (*this).loop_handle.clone();
+                // Publish only now: from here the bundle thread may free `this`.
+                (*this)
+                    .stage
+                    .store(Stage::ReleasedUnstarted as u8, Ordering::Release);
+                handle.embedded_work_finished();
+                return;
+            }
+            if let Some(plugins) = (*this).plugins {
+                crate::api::JSBundler::PluginJscExt::tombstone(plugins.as_ref());
+            }
+            (*this).cancelled.store(true, Ordering::Release);
+            let l = (*this).bundle_loop.load(Ordering::Acquire);
+            if !l.is_null() {
+                bun_uws::us_wakeup_loop(l);
+            }
+        }
+    }
+
     fn on_complete(&mut self) -> bun_event_loop::JsResult<()> {
         let this = self;
         let vm = this.global_this.bun_vm_ptr();
         // SAFETY: `vm` is the live per-thread VM (`global_this.bun_vm_ptr()`).
         this.poll_ref
             .unref(unsafe { jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm) });
-        if this.cancelled {
+        if this.cancelled.load(core::sync::atomic::Ordering::Acquire) {
             return Ok(());
         }
 
@@ -769,14 +856,21 @@ fn from_completion_handle<'a>(c: NonNull<Bv2OpaqueCompletion>) -> &'a JSBundleCo
 
 static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDispatch {
     result_is_err: |c| matches!(from_completion_handle(c).result, BundleV2Result::Err(_)),
+    is_cancelled: |c| {
+        from_completion_handle(c)
+            .cancelled
+            .load(core::sync::atomic::Ordering::Acquire)
+    },
     enqueue_task_concurrent: |c, task| {
-        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
-        // SAFETY: `task` is a fresh heap-allocated non-null `ConcurrentTaskItem`
-        // passed through from the bundler vtable; the queue takes ownership.
+        // SAFETY: `task` is a fresh non-null `ConcurrentTaskItem` passed through
+        // from the bundler vtable; the queue takes ownership. The VM waits for
+        // this build (embedded work) before closing its handle: always queued.
         unsafe {
-            from_completion_handle(c)
-                .jsc_event_loop
-                .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(task))
+            let task = core::ptr::NonNull::new_unchecked(task);
+            let c = from_completion_handle(c);
+            let jsc::vm_handle::Posted::Queued = c.loop_handle.post_task(task) else {
+                unreachable!("VM handle closed with a Bun.build outstanding");
+            };
         }
     },
 };
@@ -793,6 +887,35 @@ unsafe impl bun_threading::Linked for JSBundleCompletionTask {
 }
 
 impl CompletionStruct for JSBundleCompletionTask {
+    fn try_start(&mut self) -> bool {
+        use core::sync::atomic::Ordering;
+        self.stage
+            .compare_exchange(
+                Stage::Queued as u8,
+                Stage::Started as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    #[allow(clippy::not_unsafe_ptr_arg_deref)] // trait contract: dequeued ⇒ sole owner
+    fn free_released_unstarted(this: *mut Self) {
+        use core::sync::atomic::Ordering;
+        // `try_start` lost to the VM's teardown, which may still be releasing
+        // the JS side (`Releasing`): a handful of stores on the JS thread.
+        // SAFETY: dequeued and not started ⇒ live until we free it below.
+        while unsafe { (*this).stage.load(Ordering::Acquire) } != Stage::ReleasedUnstarted as u8 {
+            core::hint::spin_loop();
+        }
+        // The VM released everything thread-affine (`stop_for_vm_teardown`);
+        // what is left — config, log, an empty promise slot, a `Done`
+        // keep-alive, the handle clone — is ours to drop here. The queue held
+        // the creation reference.
+        // SAFETY: dequeued ⇒ sole owner; nothing JS-affine remains.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+
     /// Port of `JSBundleCompletionTask.configureBundler` — the post-init half
     /// (everything after `transpiler.* = try Transpiler.init(...)`).
     /// `Transpiler::init` itself is called by `create_and_configure_transpiler`
@@ -992,12 +1115,17 @@ impl CompletionStruct for JSBundleCompletionTask {
     }
 
     fn complete_on_bundle_thread(&mut self) {
-        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
-        // `ConcurrentTask::create` heap-allocates a fresh task; the
-        // queue takes ownership of it.
+        // The bundle thread's last touch of this task and of the VM's memory:
+        // hand it back (always queued — the VM waits for it) and stop counting.
+        self.bundle_loop
+            .store(ptr::null_mut(), core::sync::atomic::Ordering::Release);
+        let handle = self.loop_handle.clone();
         let this = std::ptr::from_mut::<Self>(self);
-        self.jsc_event_loop
-            .enqueue_task_concurrent(jsc::ConcurrentTask::create(jsc::Task::init(this)));
+        let ct = jsc::ConcurrentTask::create(jsc::Task::init(this));
+        let jsc::vm_handle::Posted::Queued = handle.post_task(ct) else {
+            unreachable!("VM handle closed with a Bun.build outstanding");
+        };
+        handle.embedded_work_finished();
     }
     fn set_result(&mut self, result: BundleV2Result) {
         self.result = result;
@@ -1092,6 +1220,11 @@ impl CompletionStruct for JSBundleCompletionTask {
         let mut any_loop = bun_event_loop::AnyEventLoop::default();
         let event_loop: bun_bundler::linker_context_mod::EventLoop =
             Some(NonNull::from(&mut any_loop).cast::<bun_event_loop::AnyEventLoop>());
+        if let bun_event_loop::AnyEventLoop::Mini(mini) = &any_loop {
+            // So a cancelling VM can wake us out of an idle wait for plugins.
+            self.bundle_loop
+                .store(mini.loop_ptr(), core::sync::atomic::Ordering::Release);
+        }
 
         // `thread_pool` is the `WorkPool` singleton (`OnceLock`-backed,
         // process-lifetime, concurrently read by worker threads). Do NOT
@@ -1143,4 +1276,10 @@ impl CompletionStruct for JSBundleCompletionTask {
 
 impl bun_event_loop::Taskable for JSBundleCompletionTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::JSBundleCompletionTask;
+    /// A Bun.build the bundle thread handed back during teardown (cancelled in
+    /// the stop phase): its completion releases the keep-alive, plugin cell
+    /// and promise against the live heap.
+    unsafe fn release_unrun(this: *mut Self) {
+        let _ = JSBundleCompletionTask::on_complete_anytask(this);
+    }
 }

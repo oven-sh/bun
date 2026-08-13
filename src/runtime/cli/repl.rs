@@ -1209,6 +1209,18 @@ impl<'a> Repl<'a> {
     }
 
     fn refresh_line(&self) {
+        // Non-TTY mirrors node's terminal:false repl: input is never echoed/redrawn — per-key
+        // CLEAR_LINE rewrites fill a socketpair's send buffer and wedge write(2) after a few
+        // hundred keystrokes. Print the prompt once when a fresh line begins, like node.
+        if !self.is_tty {
+            if self.line_editor.buffer.is_empty() && self.input_mode == InputMode::Normal {
+                Output::flush();
+                self.write(self.get_prompt());
+                Output::flush();
+            }
+            return;
+        }
+
         // Flush any buffered output (e.g., from console.log in JS) before drawing prompt
         Output::flush();
 
@@ -1323,7 +1335,9 @@ impl<'a> Repl<'a> {
             // Note: reshaped for borrowck — call disable_signals_during_wait() explicitly on each return path below
 
             // Wait for the promise to settle
-            vm.as_mut()
+            // Interrupted (SIGINT forbids execution) ⇒ handled just below.
+            let _ = vm
+                .as_mut()
                 .wait_for_promise(jsc::AnyPromise::Normal(promise));
 
             // If execution was forbidden by SIGINT, clear it and report
@@ -1484,7 +1498,9 @@ impl<'a> Repl<'a> {
             // SAFETY: `promise` is a live JSC heap cell; `vm.jsc_vm` is the
             // owning JSC VM handle for this thread.
             jsc::JSPromise::opaque_mut(promise).set_handled();
-            vm.as_mut()
+            // Interrupted (SIGINT forbids execution) ⇒ handled just below.
+            let _ = vm
+                .as_mut()
                 .wait_for_promise(jsc::AnyPromise::Normal(promise));
             let jsc_vm_ref = vm.jsc_vm();
             match jsc::JSPromise::opaque_mut(promise).status() {
@@ -1624,7 +1640,9 @@ impl<'a> Repl<'a> {
             jsc::JSPromise::opaque_mut(promise).set_handled();
             self.enable_signals_during_wait();
             // Note: reshaped for borrowck — disable_signals_during_wait called on each path
-            vm.as_mut()
+            // Interrupted (SIGINT forbids execution) ⇒ handled just below.
+            let _ = vm
+                .as_mut()
                 .wait_for_promise(jsc::AnyPromise::Normal(promise));
             if vm.jsc_vm().execution_forbidden() {
                 vm.jsc_vm().set_execution_forbidden(false);

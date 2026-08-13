@@ -93,13 +93,24 @@ void JSVMClientData::JSHeapDataDeleter::operator()(JSHeapData* heapData) const
 
 JSVMClientData::~JSVMClientData()
 {
+    while (!m_clients.isEmpty()) {
+        auto* client = &*m_clients.begin();
+        client->remove();
+        client->willDestroyVM();
+    }
+
     m_normalWorld = nullptr;
+    if (vmHandle)
+        Bun__VmHandle__release(std::exchange(vmHandle, nullptr));
 }
-void JSVMClientData::create(VM* vm, void* bunVM)
+void JSVMClientData::create(VM* vm, void* bunVM, bool isWorkerVM)
 {
     auto provider = WebCore::createBuiltinsSourceProvider();
     JSVMClientData* clientData = new JSVMClientData(*vm, provider);
     clientData->bunVM = bunVM;
+    clientData->m_isWorkerVM = isWorkerVM;
+    clientData->vmHandle = Bun__VmHandle__retain(bunVM);
+    clientData->vmHandleState = Bun__VmHandle__stateAddress(clientData->vmHandle);
     vm->deferredWorkTimer->onAddPendingWork = [clientData](Ref<JSC::DeferredWorkTimer::Ticket>&& ticket, JSC::DeferredWorkTimer::WorkType kind) -> void {
         Bun::JSCTaskScheduler::onAddPendingWork(clientData, WTF::move(ticket), kind);
     };

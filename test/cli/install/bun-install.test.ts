@@ -1,6 +1,6 @@
 import { file, listen, Socket, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
-import { readlinkSync, realpathSync } from "fs";
+import { readFileSync, readlinkSync, realpathSync, statSync } from "fs";
 import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
 import {
   bunEnv,
@@ -65,6 +65,59 @@ async function withContext(
 
 // Default context options for most tests
 const defaultOpts = { linker: "hoisted" as const };
+
+const gitEnv = {
+  ...bunEnv,
+  GIT_AUTHOR_NAME: "bun-test",
+  GIT_AUTHOR_EMAIL: "bun-test@example.com",
+  GIT_COMMITTER_NAME: "bun-test",
+  GIT_COMMITTER_EMAIL: "bun-test@example.com",
+  GIT_CONFIG_NOSYSTEM: "1",
+};
+
+async function git(cwd: string, args: string[], stdin?: string): Promise<string> {
+  await using proc = spawn({
+    cmd: ["git", ...args],
+    cwd,
+    env: gitEnv,
+    stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) {
+    throw new Error(`git ${args.join(" ")} exited with ${exitCode}: ${stderr}`);
+  }
+  return stdout.trim();
+}
+
+async function createDumbHttpGitRepo(dir: string, symlinks: Record<string, string>): Promise<string> {
+  const work = join(dir, "work");
+  await git(work, ["-c", "init.defaultBranch=main", "init", "--quiet"]);
+  await git(work, ["add", "-A"]);
+  for (const [path, target] of Object.entries(symlinks)) {
+    const oid = await git(work, ["hash-object", "-w", "--no-filters", "--stdin"], target);
+    await git(work, ["update-index", "--add", "--cacheinfo", `120000,${oid},${path}`]);
+  }
+  await git(work, ["-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "init"]);
+  const sha = await git(work, ["rev-parse", "HEAD"]);
+  await git(dir, ["clone", "--quiet", "--bare", "work", "repo.git"]);
+  await git(join(dir, "repo.git"), ["update-server-info"]);
+  return sha;
+}
+
+function serveDirectory(root: string) {
+  return Bun.serve({
+    port: 0,
+    fetch(req) {
+      const path = join(root, decodeURIComponent(new URL(req.url).pathname));
+      if (!statSync(path, { throwIfNoEntry: false })?.isFile()) {
+        return new Response(null, { status: 404 });
+      }
+      return new Response(file(path));
+    },
+  });
+}
 
 describe.concurrent("bun-install", () => {
   for (let input of ["abcdef", "65537", "-1"]) {
@@ -5245,6 +5298,96 @@ describe.concurrent("bun-install", () => {
       expect(package_json.name).toBe("uglify-js");
       expect(package_json.version).toBe("3.14.1");
       await access(join(ctx.package_dir, "bun.lockb"));
+    });
+  });
+
+  it("does not keep a checked-in node_modules entry from a git dependency", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      using dir = tempDir("git-dep-node-modules", {
+        "work/package.json": JSON.stringify({ name: "has-node-modules", version: "1.0.0" }),
+        "outside/keep.txt": "keep",
+      });
+      const sha = await createDumbHttpGitRepo(String(dir), { node_modules: join(String(dir), "outside") });
+      using server = serveDirectory(String(dir));
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: {
+            "has-node-modules": `git+http://localhost:${server.port}/repo.git`,
+          },
+        }),
+      );
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).toContain("Saved lockfile");
+      expect(out).toContain("1 package installed");
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".cache", `@G@${sha}`))).toEqual([
+        ".bun-tag",
+        "package.json",
+      ]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "has-node-modules"))).toEqual([
+        ".bun-tag",
+        "package.json",
+      ]);
+      expect(await readdirSorted(join(String(dir), "outside"))).toEqual(["keep.txt"]);
+      expect(urls).toBeEmpty();
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  it("does not follow a symlinked .bun-tag when tagging a git dependency checkout", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      using dir = tempDir("git-dep-bun-tag", {
+        "work/package.json": JSON.stringify({ name: "has-bun-tag", version: "1.0.0" }),
+        "outside/target.txt": "original\n",
+      });
+      const target = join(String(dir), "outside", "target.txt");
+      const sha = await createDumbHttpGitRepo(String(dir), { ".bun-tag": target });
+      using server = serveDirectory(String(dir));
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: {
+            "has-bun-tag": `git+http://localhost:${server.port}/repo.git`,
+          },
+        }),
+      );
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).toContain("Saved lockfile");
+      expect(out).toContain("1 package installed");
+      expect(readFileSync(target, "utf8")).toBe("original\n");
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".cache", `@G@${sha}`))).toEqual(
+        isWindows ? [".bun-tag", "package.json"] : ["package.json"],
+      );
+      expect(await file(join(ctx.package_dir, "node_modules", "has-bun-tag", "package.json")).json()).toEqual({
+        name: "has-bun-tag",
+        version: "1.0.0",
+      });
+      expect(urls).toBeEmpty();
+      expect(exitCode).toBe(0);
     });
   });
 

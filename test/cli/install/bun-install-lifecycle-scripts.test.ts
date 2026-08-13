@@ -3103,6 +3103,68 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(trusted![1]).not.toContain(colliderName);
       });
 
+      for (const linker of ["hoisted", "isolated"]) {
+        test(`only trusts packages resolved inside the trusted subtree, not same-named dependencies elsewhere (${linker})`, async () => {
+          using ctx = await setupTest();
+          const { packageDir, packageJson, env } = ctx;
+          const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+          const localPath = join(packageDir, "local-what-bin");
+          await mkdir(localPath, { recursive: true });
+          await Promise.all([
+            writeFile(
+              join(localPath, "package.json"),
+              JSON.stringify({
+                name: "what-bin",
+                version: "9.9.9",
+                scripts: {
+                  postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall-ran.txt', 'ran')"`,
+                },
+              }),
+            ),
+            writeFile(
+              packageJson,
+              JSON.stringify({
+                name: "foo",
+                dependencies: {
+                  "what-bin": "file:./local-what-bin",
+                },
+              }),
+            ),
+          ]);
+
+          const { stderr, exited } = spawn({
+            cmd: [bunExe(), "i", `--linker=${linker}`, "--trust", "uses-what-bin@1.0.0"],
+            cwd: packageDir,
+            stdout: "pipe",
+            stderr: "pipe",
+            stdin: "ignore",
+            env: testEnv,
+          });
+
+          const err = await stderr.text();
+          expect(err).toContain("Saved lockfile");
+          expect(err).not.toContain("error:");
+          expect(await exited).toBe(0);
+
+          expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
+          expect(await exists(join(packageDir, "node_modules", "what-bin", "postinstall-ran.txt"))).toBeFalse();
+          expect(await file(join(packageDir, "node_modules", "what-bin", "package.json")).json()).toMatchObject({
+            name: "what-bin",
+            version: "9.9.9",
+          });
+
+          const pkgJson = await file(packageJson).json();
+          expect(pkgJson.trustedDependencies).toEqual(["uses-what-bin"]);
+
+          const lockfile = await file(join(packageDir, "bun.lock")).text();
+          const trusted = lockfile.match(/"trustedDependencies":\s*\[([^\]]*)\]/);
+          expect(trusted).not.toBeNull();
+          expect(trusted![1]).toContain('"uses-what-bin"');
+          expect(trusted![1]).not.toContain('"what-bin"');
+        });
+      }
+
       const trustTests = [
         {
           label: "only name",

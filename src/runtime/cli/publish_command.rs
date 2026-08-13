@@ -31,8 +31,6 @@ use bun_install::dependency;
 use bun_install::{AuthType, LogLevel};
 use bun_sys::FdExt as _;
 
-use crate::api::bun_process::sync as spawn_sync;
-
 // `json_mod::parse_utf8` returns `bun_ast::Expr` (the value-shaped
 // JSON-only `Expr`), not `bun_ast::Expr`, so `Expr::get_string_cloned`
 // can't be applied. Mirror the lookup as a free fn over the JSON `Expr` using
@@ -648,12 +646,6 @@ impl PublishCommand {
                             (),
                         );
                     }
-                    PackError::MissingPackageJSON => {
-                        Output::err_generic(
-                            "failed to find package.json from: '{}'",
-                            (bstr::BStr::new(FileSystem::instance().top_level_dir),),
-                        );
-                    }
                     PackError::RestrictedUnscopedPackage => {
                         Output::err_generic("unable to restrict access to unscoped package", ());
                     }
@@ -1122,14 +1114,7 @@ impl PublishCommand {
             }
         }
 
-        let _ = spawn_sync::spawn(&spawn_sync::Options {
-            argv: vec![Box::from(open::OPENER), Box::from(auth_url.as_bytes())],
-            envp: None,
-            stdin: spawn_sync::SyncStdio::Inherit,
-            stdout: spawn_sync::SyncStdio::Inherit,
-            stderr: spawn_sync::SyncStdio::Inherit,
-            ..Default::default()
-        });
+        let _ = bun_core::spawn_sync_inherit(&[open::OPENER, auth_url.as_bytes()]);
     }
 
     fn get_otp<const DIRECTORY_PUBLISH: bool>(
@@ -1929,11 +1914,11 @@ impl PublishCommand {
             headers.count(b"accept-encoding", b"gzip,deflate");
 
             if !registry.token.is_empty() {
-                write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token)).ok();
+                let _ = write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token));
                 headers.count(b"authorization", &**print_buf);
                 print_buf.clear();
             } else if !registry.auth.is_empty() {
-                write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth)).ok();
+                let _ = write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth));
                 headers.count(b"authorization", &**print_buf);
                 print_buf.clear();
             }
@@ -1949,7 +1934,7 @@ impl PublishCommand {
             }
             headers.count(b"npm-command", b"publish");
 
-            write!(
+            let _ = write!(
                 print_buf,
                 "{} {} {} workspaces/{}{}{}",
                 Global::user_agent,
@@ -1958,8 +1943,7 @@ impl PublishCommand {
                 uses_workspaces,
                 if ci_name.is_some() { " ci/" } else { "" },
                 bstr::BStr::new(ci_name.unwrap_or(b"")),
-            )
-            .ok();
+            );
             // headers.count("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.count(b"user-agent", &**print_buf);
             print_buf.clear();
@@ -1968,7 +1952,7 @@ impl PublishCommand {
             headers.count(b"Host", registry.url.url().host);
 
             if let Some(json_len) = maybe_json_len {
-                write!(print_buf, "{}", json_len).ok();
+                let _ = write!(print_buf, "{}", json_len);
                 headers.count(b"Content-Length", &**print_buf);
                 print_buf.clear();
             }
@@ -1981,11 +1965,11 @@ impl PublishCommand {
             headers.append(b"accept-encoding", b"gzip,deflate");
 
             if !registry.token.is_empty() {
-                write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token)).ok();
+                let _ = write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token));
                 headers.append(b"authorization", &**print_buf);
                 print_buf.clear();
             } else if !registry.auth.is_empty() {
-                write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth)).ok();
+                let _ = write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth));
                 headers.append(b"authorization", &**print_buf);
                 print_buf.clear();
             }
@@ -2001,7 +1985,7 @@ impl PublishCommand {
             }
             headers.append(b"npm-command", b"publish");
 
-            write!(
+            let _ = write!(
                 print_buf,
                 "{} {} {} workspaces/{}{}{}",
                 Global::user_agent,
@@ -2010,8 +1994,7 @@ impl PublishCommand {
                 uses_workspaces,
                 if ci_name.is_some() { " ci/" } else { "" },
                 bstr::BStr::new(ci_name.unwrap_or(b"")),
-            )
-            .ok();
+            );
             // headers.append("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.append(b"user-agent", &**print_buf);
             print_buf.clear();
@@ -2020,7 +2003,7 @@ impl PublishCommand {
             headers.append(b"Host", registry.url.url().host);
 
             if let Some(json_len) = maybe_json_len {
-                write!(print_buf, "{}", json_len).ok();
+                let _ = write!(print_buf, "{}", json_len);
                 headers.append(b"Content-Length", &**print_buf);
                 print_buf.clear();
             }
@@ -2050,42 +2033,39 @@ impl PublishCommand {
                 + encoded_tarball_len,
         );
 
-        write!(
+        let _ = write!(
             &mut buf,
             "{{\"_id\":\"{}\",\"name\":\"{}\"",
             bstr::BStr::new(&ctx.package_name),
             bstr::BStr::new(&ctx.package_name),
-        )
-        .ok();
+        );
 
-        write!(
+        let _ = write!(
             &mut buf,
             ",\"dist-tags\":{{{}:\"{}\"}}",
             bun_fmt::format_json_string_utf8(tag, Default::default()),
             bstr::BStr::new(version_without_build_tag),
-        )
-        .ok();
+        );
 
         // "versions"
         {
-            write!(
+            let _ = write!(
                 &mut buf,
                 ",\"versions\":{{\"{}\":{}}}",
                 bstr::BStr::new(version_without_build_tag),
                 bstr::BStr::new(&ctx.normalized_pkg_info),
-            )
-            .ok();
+            );
         }
 
         if let Some(access) = ctx.manager.options.publish_config.access {
-            write!(&mut buf, ",\"access\":\"{}\"", access.as_str()).ok();
+            let _ = write!(&mut buf, ",\"access\":\"{}\"", access.as_str());
         } else {
             buf.extend_from_slice(b",\"access\":null");
         }
 
         // "_attachments"
         {
-            write!(
+            let _ = write!(
                 &mut buf,
                 ",\"_attachments\":{{\"{}\":{{\"content_type\":\"application/octet-stream\",\"data\":\"",
                 pack::fmt_tarball_filename(
@@ -2093,8 +2073,7 @@ impl PublishCommand {
                     &ctx.package_version,
                     pack::TarballNameStyle::Raw
                 ),
-            )
-            .ok();
+            );
 
             // SAFETY: `encode_raw` writes exactly `encoded_tarball_len`
             // (= `base64::encode_len(tarball_bytes.len(), false)`) bytes into the
@@ -2108,7 +2087,7 @@ impl PublishCommand {
             };
             debug_assert!(count == encoded_tarball_len);
 
-            write!(&mut buf, "\",\"length\":{}}}}}}}", ctx.tarball_bytes.len(),).ok();
+            let _ = write!(&mut buf, "\",\"length\":{}}}}}}}", ctx.tarball_bytes.len());
         }
 
         Ok(buf.into_boxed_slice())

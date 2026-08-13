@@ -2,7 +2,7 @@ use bstr::BStr;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_ast as js_ast;
 use bun_collections::StringArrayHashMap;
-use bun_core::{ZStr, strings};
+use bun_core::strings;
 use bun_glob as glob;
 use bun_paths as path;
 use bun_paths::resolve_path;
@@ -117,13 +117,13 @@ impl<'a> NamesArray<'a> {
 
 fn process_workspace_name(
     json_cache: &mut WorkspacePackageJSONCache,
-    abs_package_json_path: &ZStr,
+    abs_package_json_path: &[u8],
     log: &mut bun_ast::Log,
 ) -> crate::Result<Entry> {
     let workspace_json = json_cache
         .get_with_path(
             log,
-            abs_package_json_path.as_bytes(),
+            abs_package_json_path,
             GetJSONOptions {
                 init_reset_store: false,
                 guess_indentation: true,
@@ -159,7 +159,7 @@ fn process_workspace_name(
     bun_output::scoped_log!(
         Lockfile,
         "processWorkspaceName({}) = {}",
-        BStr::new(abs_package_json_path.as_bytes()),
+        BStr::new(abs_package_json_path),
         BStr::new(&entry.name)
     );
 
@@ -215,48 +215,52 @@ impl WorkspaceMap {
                 continue;
             }
 
-            let abs_package_json_path: &ZStr =
-                resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                    source.path.name().dir,
-                    filepath_buf,
-                    &[input_path, b"package.json"],
-                );
-
-            // skip root package.json
-            if strings::eql_long(
-                resolve_path::dirname::<path::platform::Auto>(abs_package_json_path.as_bytes()),
+            let processed = match resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
                 source.path.name().dir,
-                true,
+                filepath_buf,
+                &[input_path, b"package.json"],
             ) {
-                continue;
-            }
+                Some(abs_package_json_path) => {
+                    // skip root package.json
+                    if strings::eql_long(
+                        resolve_path::dirname::<path::platform::Auto>(abs_package_json_path),
+                        source.path.name().dir,
+                        true,
+                    ) {
+                        continue;
+                    }
 
-            let workspace_entry =
-                match process_workspace_name(json_cache, abs_package_json_path, log) {
-                    Ok(e) => e,
-                    Err(err) => {
-                        if err == crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
-                            || err == crate::Error::Sys(bun_errno::SystemErrno::EPERM)
-                            || err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                        {
-                            let _ = log.add_error_fmt(
-                                Some(source),
-                                arr.item_loc(source, i),
-                                format_args!("Workspace not found \"{}\"", BStr::new(input_path)),
-                            );
-                        } else if err == crate::Error::MissingPackageName {
-                            let _ = log.add_error_fmt(
-                                Some(source),
-                                loc,
-                                format_args!(
-                                    "Missing \"name\" from package.json in {}",
-                                    BStr::new(input_path)
-                                ),
-                            );
-                        } else {
-                            let mut cwd_buf = vec![0u8; MAX_PATH_BYTES];
-                            let cwd_len = bun_sys::getcwd(&mut cwd_buf).expect("unreachable");
-                            let _ = log.add_error_fmt(
+                    process_workspace_name(json_cache, abs_package_json_path, log)
+                        .map(|entry| (abs_package_json_path, entry))
+                }
+                None => Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)),
+            };
+
+            let (abs_package_json_path, workspace_entry) = match processed {
+                Ok(processed) => processed,
+                Err(err) => {
+                    if err == crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
+                        || err == crate::Error::Sys(bun_errno::SystemErrno::EPERM)
+                        || err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                    {
+                        let _ = log.add_error_fmt(
+                            Some(source),
+                            arr.item_loc(source, i),
+                            format_args!("Workspace not found \"{}\"", BStr::new(input_path)),
+                        );
+                    } else if err == crate::Error::MissingPackageName {
+                        let _ = log.add_error_fmt(
+                            Some(source),
+                            loc,
+                            format_args!(
+                                "Missing \"name\" from package.json in {}",
+                                BStr::new(input_path)
+                            ),
+                        );
+                    } else {
+                        let mut cwd_buf = vec![0u8; MAX_PATH_BYTES];
+                        let cwd_len = bun_sys::getcwd(&mut cwd_buf).expect("unreachable");
+                        let _ = log.add_error_fmt(
                             Some(source),
                             arr.item_loc(source, i),
                             format_args!(
@@ -266,10 +270,10 @@ impl WorkspaceMap {
                                 BStr::new(&cwd_buf[..cwd_len]),
                             ),
                         );
-                        }
-                        continue;
                     }
-                };
+                    continue;
+                }
+            };
 
             if workspace_entry.name.len() == 0 {
                 continue;
@@ -278,7 +282,7 @@ impl WorkspaceMap {
             let rel_input_path = resolve_path::relative_platform::<path::platform::Auto, true>(
                 source.path.name().dir,
                 strings::without_suffix_comptime(
-                    abs_package_json_path.as_bytes(),
+                    abs_package_json_path,
                     const_format::concatcp!(SEP_STR, "package.json").as_bytes(),
                 ),
             );
@@ -333,7 +337,10 @@ impl WorkspaceMap {
                     b"package.json"
                 } else {
                     let parts: [&[u8]; 2] = [user_pattern, b"package.json"];
-                    arena.alloc_slice_copy(resolve_path::join::<path::platform::Auto>(&parts))
+                    let mut spill: Vec<u8> = Vec::new();
+                    arena.alloc_slice_copy(resolve_path::join_spill::<path::platform::Auto>(
+                        &mut spill, &parts,
+                    ))
                 };
 
                 let mut cwd = resolve_path::dirname::<path::platform::Auto>(source.path.text);
@@ -436,22 +443,20 @@ impl WorkspaceMap {
                         BStr::new(entry_dir)
                     );
 
-                    let abs_package_json_path = resolve_path::join_abs_string_buf_z::<
+                    let processed = match resolve_path::join_abs_string_buf_checked::<
                         path::platform::Auto,
                     >(
                         cwd, filepath_buf, &[entry_dir, b"package.json"]
-                    );
-                    let abs_workspace_dir_path: &[u8] = strings::without_suffix_comptime(
-                        abs_package_json_path.as_bytes(),
-                        b"package.json",
-                    );
-
-                    let workspace_entry = match process_workspace_name(
-                        json_cache,
-                        abs_package_json_path,
-                        log,
                     ) {
-                        Ok(e) => e,
+                        Some(abs_package_json_path) => {
+                            process_workspace_name(json_cache, abs_package_json_path, log)
+                                .map(|entry| (abs_package_json_path, entry))
+                        }
+                        None => Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)),
+                    };
+
+                    let (abs_package_json_path, workspace_entry) = match processed {
+                        Ok(processed) => processed,
                         Err(err) => {
                             let entry_base: &[u8] = path::basename(matched_path);
                             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -488,6 +493,8 @@ impl WorkspaceMap {
                         continue;
                     }
 
+                    let abs_workspace_dir_path: &[u8] =
+                        strings::without_suffix_comptime(abs_package_json_path, b"package.json");
                     let workspace_path: &[u8] =
                         resolve_path::relative_platform::<path::platform::Auto, true>(
                             source.path.name().dir,

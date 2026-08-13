@@ -2595,8 +2595,7 @@ pub mod parse_worker {
         opts.ignore_dce_annotations =
             topts.ignore_dce_annotations && !task.source_index.is_runtime();
 
-        // The client transpiler for HTML imports inherits `compile_mode`, but its
-        // browser chunks have no `import.meta.dir` to defer `__dirname` to.
+        // HTML-import browser chunks inherit `compile_mode` but have no `import.meta.dir`.
         opts.compile = topts.compile_mode.is_executable() && target.is_bun();
 
         // For files that are not user-specified entrypoints, set `import.meta.main` to `false`.

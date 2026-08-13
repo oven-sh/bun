@@ -94,8 +94,7 @@ pub struct Options<'a> {
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
 
-    /// Bundling into a standalone executable: `__dirname` / `__filename` resolve
-    /// to the virtual `/$bunfs/` path at runtime instead of being inlined.
+    /// Standalone executable: `__dirname` / `__filename` resolve to the virtual path at runtime.
     pub compile: bool,
 
     /// When using react fast refresh or server components, the framework is
@@ -1134,9 +1133,7 @@ impl<'a> Parser<'a> {
         //    var __dirname = "foo/bar"
         //    var __filename = "foo/bar/baz.js"
         //
-        // except for `--compile`, where the values come from `import.meta` (ESM) or,
-        // since `import.meta` is a syntax error inside the CJS wrapper, from the
-        // wrapper's own `__filename` / `__dirname` parameters (no declaration at all).
+        // except under `--compile`: ESM uses `import.meta`; CJS keeps the wrapper's own parameters.
         if p.options.compile && p.options.output_format == options::Format::Cjs {
             uses_dirname = false;
             uses_filename = false;

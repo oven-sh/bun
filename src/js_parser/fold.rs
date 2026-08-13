@@ -515,8 +515,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         || (p.options.bundle
                             && p.options.output_format == js_parser::options::Format::Cjs)
                     {
-                        // Compiled CJS chunks take the virtual path from the wrapper's
-                        // `__dirname` / `__filename` parameters, so point these there.
+                        // Compiled CJS chunks read these from the wrapper's parameters.
                         if p.options.compile {
                             if name == b"dir" || name == b"dirname" {
                                 p.record_usage(p.dirname_ref);

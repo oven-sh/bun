@@ -1356,6 +1356,46 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
+  // bun.lock only records the patchedDependencies entries that match an
+  // installed version, so this one is in package.json alone until the fix
+  // installs the version it is for. package.json has not changed since the
+  // last install, which is also the case where it has to be applied.
+  test.concurrent("applies the patchedDependencies entry written for the version it installs", async () => {
+    await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
+    const patchedDependencies = { "no-deps@1.0.1": "patches/no-deps@1.0.1.patch" };
+    using dir = await setup(
+      server,
+      { name: "foo", dependencies: { "one-range-dep": "1.0.0", "no-deps": "1.0.0" }, patchedDependencies },
+      {
+        "patches/no-deps@1.0.1.patch": `diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -1,4 +1,5 @@
+ {
+     "name": "no-deps",
++    "patched": true,
+     "version": "1.0.1"
+ }
+`,
+      },
+    );
+    await reinstall(dir, { name: "foo", dependencies: { "one-range-dep": "1.0.0" }, patchedDependencies });
+    let lockfile = await lock(dir);
+    expect(lockfile).toContain('"no-deps@1.0.0"');
+    expect(lockfile).not.toContain("patchedDependencies");
+
+    const { stdout, stderr, exitCode } = await auditFix(dir);
+    expect(stdout).toContain("  ^ no-deps 1.0.0 -> 1.0.1");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(await pkgJson(dir, "node_modules", "no-deps")).toEqual({ name: "no-deps", patched: true, version: "1.0.1" });
+
+    lockfile = await lock(dir);
+    expect(lockfile).toContain('"no-deps@1.0.1": "patches/no-deps@1.0.1.patch"');
+
+    await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
+  });
+
   test.concurrent("reports a fix that would violate a dependent's range and changes nothing", async () => {
     const bulkHits = { count: 0 };
     await using server = startRegistry({ "no-deps": [adv("<1.1.0")] }, { bulkHits });

@@ -7616,6 +7616,9 @@ describe.concurrent("bun-install", () => {
         env,
       });
       const err2 = await new Response(stderr2).text();
+      // the lockfile already matches package.json, so nothing is re-resolved
+      // (which is what used to create node_modules/.cache here) or re-saved
+      expect(err2).not.toContain("Saved lockfile");
       const out2 = await new Response(stdout2).text();
       expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
@@ -7626,7 +7629,7 @@ describe.concurrent("bun-install", () => {
       ]);
       expect(await exited2).toBe(0);
       expect(ctx.requested).toBe(0);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual(["bar"]);
       expect(await readlink(join(ctx.package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
       expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
       await access(join(ctx.package_dir, "bun.lockb"));
@@ -9109,6 +9112,10 @@ describe.concurrent("bun-install", () => {
       });
       const err2 = await new Response(stderr2).text();
       expect(err2).not.toContain("error:");
+      // the lockfile already matches the package.jsons, so nothing is
+      // re-resolved (which is what used to create node_modules/.cache here)
+      // or re-saved
+      expect(err2).not.toContain("Saved lockfile");
       const out2 = await new Response(stdout2).text();
       expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
@@ -9120,7 +9127,7 @@ describe.concurrent("bun-install", () => {
       expect(await exited2).toBe(0);
       expect(urls.sort()).toBeEmpty();
       expect(ctx.requested).toBe(0);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar", "baz"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual(["bar", "baz"]);
       expect(await readlink(join(ctx.package_dir, "node_modules", "bar"))).toBeWorkspaceLink(
         join("..", "packages", "bar"),
       );

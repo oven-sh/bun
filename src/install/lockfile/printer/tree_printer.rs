@@ -505,18 +505,33 @@ where
         let bin = bins[package_id as usize];
 
         let package_name = name.slice(string_buf);
+        let resolved_package_name = slice.items_name()[package_id as usize].slice(string_buf);
+        let resolution = resolved[package_id as usize];
+        let is_npm_alias =
+            resolution.tag == resolution::Tag::Npm && package_name != resolved_package_name;
 
         match bin.tag {
             bin::Tag::None | bin::Tag::Dir => {
                 printed_installed_update_request = true;
 
-                bun_core::write_pretty!(
-                    writer,
-                    ENABLE_ANSI_COLORS,
-                    "<r><green>installed<r> <b>{s}<r><d>@{f}<r>\n",
-                    bstr::BStr::new(package_name),
-                    resolved[package_id as usize].fmt(string_buf, PathSep::Posix),
-                )?;
+                if is_npm_alias {
+                    bun_core::write_pretty!(
+                        writer,
+                        ENABLE_ANSI_COLORS,
+                        "<r><green>installed<r> <b>{s}<r><d>@npm:<r><b>{s}<r><d>@{f}<r>\n",
+                        bstr::BStr::new(package_name),
+                        bstr::BStr::new(resolved_package_name),
+                        resolution.fmt(string_buf, PathSep::Posix),
+                    )?;
+                } else {
+                    bun_core::write_pretty!(
+                        writer,
+                        ENABLE_ANSI_COLORS,
+                        "<r><green>installed<r> <b>{s}<r><d>@{f}<r>\n",
+                        bstr::BStr::new(package_name),
+                        resolution.fmt(string_buf, PathSep::Posix),
+                    )?;
+                }
             }
             bin::Tag::Map | bin::Tag::File | bin::Tag::NamedFile => {
                 printed_installed_update_request = true;
@@ -534,13 +549,22 @@ where
                     extern_string_buf: this.lockfile.buffers.extern_strings.as_slice(),
                 };
 
-                {
+                if is_npm_alias {
+                    bun_core::write_pretty!(
+                        writer,
+                        ENABLE_ANSI_COLORS,
+                        "<r><green>installed<r> <b>{s}<r><d>@npm:<r><b>{s}<r><d>@{f}<r> with binaries:\n",
+                        bstr::BStr::new(package_name),
+                        bstr::BStr::new(resolved_package_name),
+                        resolution.fmt(string_buf, PathSep::Posix),
+                    )?;
+                } else {
                     bun_core::write_pretty!(
                         writer,
                         ENABLE_ANSI_COLORS,
                         "<r><green>installed<r> {s}<r><d>@{f}<r> with binaries:\n",
                         bstr::BStr::new(package_name),
-                        resolved[package_id as usize].fmt(string_buf, PathSep::Posix),
+                        resolution.fmt(string_buf, PathSep::Posix),
                     )?;
                 }
 

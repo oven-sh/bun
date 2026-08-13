@@ -302,6 +302,11 @@ impl BodyMixin for Response {
         })
     }
     #[inline]
+    fn materialize_headers(&self, global_object: &JSGlobalObject) -> JsResult<()> {
+        self.get_or_create_headers(global_object)?;
+        Ok(())
+    }
+    #[inline]
     fn get_form_data_encoding(
         &self,
     ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
@@ -424,6 +429,10 @@ impl Response {
     #[inline]
     pub(crate) fn swap_init_headers(&self) -> Option<HeadersRef> {
         self.init.with_mut(|init| init.headers.take())
+    }
+
+    pub fn headers_from_init(&self) -> bool {
+        self.init.get().headers_from_init
     }
 
     #[inline]
@@ -1378,6 +1387,9 @@ impl Response {
 // the remaining `status_text` is still dropped at scope end via field drop glue.
 pub struct Init {
     pub(crate) headers: Option<HeadersRef>,
+    /// Set from the caller's `ResponseInit`. `headers` alone can't tell: the
+    /// lazy `.headers` getter and body consumers also populate it.
+    pub(crate) headers_from_init: bool,
     pub(crate) status_code: u16,
     pub(crate) status_text: OwnedString,
     pub method: Method,
@@ -1387,6 +1399,7 @@ impl Default for Init {
     fn default() -> Self {
         Self {
             headers: None,
+            headers_from_init: false,
             status_code: 0,
             status_text: OwnedString::new(BunString::empty()),
             method: Method::GET,
@@ -1405,6 +1418,7 @@ impl Init {
         };
         Ok(Init {
             headers,
+            headers_from_init: self.headers_from_init,
             status_code: self.status_code,
             status_text: self.status_text.clone(),
             method: self.method,
@@ -1446,6 +1460,7 @@ impl Init {
                 }
 
                 result.method = req.method;
+                result.headers_from_init = result.headers.is_some();
                 return Ok(Some(result));
             }
 
@@ -1453,7 +1468,10 @@ impl Init {
                 // SAFETY: `as_direct` returned a live `*mut Response` owned by the
                 // JS wrapper cell; rooted by `response_init` for this call.
                 let resp = unsafe { &*resp };
-                return Ok(Some(resp.init.get().clone(global_this)?));
+                let mut result = resp.init.get().clone(global_this)?;
+                // Decided for this init, not inherited from how the donor got its headers.
+                result.headers_from_init = result.headers.is_some();
+                return Ok(Some(result));
             }
         }
 
@@ -1519,6 +1537,7 @@ impl Init {
             }
         }
 
+        result.headers_from_init = result.headers.is_some();
         Ok(Some(result))
     }
 }

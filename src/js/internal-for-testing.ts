@@ -83,7 +83,9 @@ export const shellInternals = {
   lex: (a, ...b) => shellLex(a.raw, b),
   parse: (a, ...b) => shellParse(a.raw, b),
   /**
-   * Checks if the given builtin is disabled on the current platform
+   * Checks if the shell runs the system binary instead of the given builtin in
+   * this process: true on POSIX for the builtins gated behind
+   * `BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS` unless that variable is set.
    *
    * @example
    * ```typescript

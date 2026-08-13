@@ -3114,12 +3114,14 @@ describe("rm", () => {
   });
 
   // Builds a single chain of at least `depth` nested directories under `parent`
-  // without handing the fs a path longer than ~100 bytes past `parent` (macOS
-  // PATH_MAX is 1024): every chunk of the chain is created on its own, and the
-  // part of the chain built so far is renamed to the bottom of the new chunk.
-  // Returns the top of the chain and the directory the last rename moved.
+  // in chunks, each created with one mkdir and the part of the chain built so
+  // far renamed to its bottom, so that no path handed to the fs is longer than
+  // ~400 bytes past `parent` (macOS PATH_MAX is 1024; ~100 bytes on Windows for
+  // MAX_PATH) and a 2000-deep chain needs only 9 renames, which are slow on a
+  // busy host. Returns the top of the chain and the directory the last rename
+  // moved.
   function makeDeepChain(parent: string, depth: number) {
-    const chunk = 50;
+    const chunk = isWindows ? 50 : 200;
     let top: string | undefined;
     let seam: string | undefined;
     for (let i = 0; depth > 0; i++) {
@@ -3137,16 +3139,15 @@ describe("rm", () => {
     return { top: top!, seam: seam! };
   }
 
-  // One directory stays open per level, so the walk visits each directory once:
-  // a 2000-deep chain costs ~0.4 s of CPU in a Linux debug+ASAN build, against
-  // 27 s or more for a walk quadratic in the depth (#37939). That quadratic work
-  // is pure CPU (re-reading cached directories), so the bound is on CPU time,
-  // which process.cpuUsage() also counts for the fs thread pool; wall-clock time,
-  // and hence the test timeout, mostly tracks I/O contention on the machine.
-  // Windows machines differ ~60x in what removing one directory costs (0.05 ms
-  // of CPU on a fast box, 3 ms on CI), so no bound is both safe on CI and below
-  // what the quadratic walk costs on a fast box; Windows only checks that a
-  // chain far deeper than the walk's initial 16-slot stack reservation is
+  // Removing the 2000-deep chain costs ~0.4 s of CPU in a debug+ASAN build and
+  // 27 s or more with a walk quadratic in the depth (#37939). The bound is on CPU
+  // time, which process.cpuUsage() also counts for the fs thread pool, because
+  // the quadratic work is pure CPU while the wall-clock time of building and
+  // removing 2000 directories is dominated by fs contention on a busy machine
+  // (hence also the test timeout). Windows gets no bound: removing a directory
+  // costs 0.05 ms of CPU on a fast box but 3 ms on CI, so no bound is both safe
+  // on CI and below the quadratic walk's cost on a fast box; it only checks that
+  // a chain far deeper than the walk's 16-slot initial stack reservation is
   // removed and cleaned up after.
   const deepChain = isWindows ? { depth: 200, cpuBudgetMs: undefined } : { depth: 2000, cpuBudgetMs: 5_000 };
   it.each([

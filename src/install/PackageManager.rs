@@ -1,7 +1,6 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::io::Write as _;
 
 use crate::Error;
 use crate::bun_fs as fs;
@@ -21,7 +20,7 @@ use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
 use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
-use bun_paths::{DELIMITER, PathBuffer, SEP, SEP_STR};
+use bun_paths::{DELIMITER, PathBuffer, SEP};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
@@ -1064,6 +1063,7 @@ impl PackageManager {
         // The body is
         // already idempotent (early-returns when `node_gyp_tempdir_name` is
         // non-empty), so a simple `AtomicBool` ran-flag suffices.
+        // Provisions `$cache/bin/node-gyp`, not a hashed `$TMPDIR` stub.
         // NB: not `bun_core::run_once!` — body is fallible and the contract is
         // "2nd call = Ok(()) regardless of 1st outcome" (D006).
         if ENSURE_TEMP_NODE_GYP_SCRIPT_ONCE.swap(true, Ordering::AcqRel) {
@@ -1204,133 +1204,274 @@ fn configure_env_for_scripts_run(
 
 static ENSURE_TEMP_NODE_GYP_SCRIPT_ONCE: AtomicBool = AtomicBool::new(false);
 
+/// Install-cache folder for a full `node-gyp` tree (`bun add`). Distinct from
+/// the extracted `node-gyp@<ver>@@@<cachever>` / `node-gyp/<ver>` index.
+const NODE_GYP_PROVIDER_DIR: &[u8] = b".node-gyp";
+const NODE_GYP_BIN_DIR: &[u8] = b"bin";
+
+#[cfg(windows)]
+const NODE_GYP_BIN_NAME: &[u8] = b"node-gyp.cmd";
+#[cfg(not(windows))]
+const NODE_GYP_BIN_NAME: &[u8] = b"node-gyp";
+
+#[cfg(windows)]
+const NODE_GYP_LAUNCHER_MODE: u32 = 0;
+#[cfg(not(windows))]
+const NODE_GYP_LAUNCHER_MODE: u32 = 0o755;
+
+fn join_cache_subpath(cache_path: &[u8], parts: &[&[u8]]) -> Vec<u8> {
+    let cache = strings::without_trailing_slash(cache_path);
+    let mut out =
+        Vec::with_capacity(cache.len() + parts.iter().map(|p| p.len() + 1).sum::<usize>());
+    out.extend_from_slice(cache);
+    for part in parts {
+        out.push(SEP);
+        out.extend_from_slice(part);
+    }
+    out
+}
+
+#[cfg(not(windows))]
+fn posix_single_quote(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len() + 2);
+    out.push(b'\'');
+    for &b in bytes {
+        if b == b'\'' {
+            out.extend_from_slice(b"'\\''");
+        } else {
+            out.push(b);
+        }
+    }
+    out.push(b'\'');
+    out
+}
+
+fn toml_quoted(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len() + 2);
+    out.push(b'"');
+    for &b in bytes {
+        if b == b'\\' || b == b'"' {
+            out.push(b'\\');
+        }
+        out.push(b);
+    }
+    out.push(b'"');
+    out
+}
+
+fn crash_node_gyp_io(e: &bun_sys::Error, what: &str) -> ! {
+    bun_core::pretty_errorln!(
+        "<r><red>error<r>: <b><red>{}<r> creating {}",
+        bstr::BStr::new(e.name()),
+        what,
+    );
+    Global::crash();
+}
+
+fn write_cache_file(dir: bun_sys::Fd, name: &[u8], contents: &[u8], mode: u32) {
+    let file = match bun_sys::File::openat(
+        dir,
+        name,
+        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
+        mode,
+    ) {
+        Ok(f) => f,
+        Err(e) => crash_node_gyp_io(&e, "node-gyp cache file"),
+    };
+    if let Err(e) = file.write_all(contents) {
+        crash_node_gyp_io(&e, "node-gyp cache file");
+    }
+}
+
+fn node_gyp_js_candidates(provider_dir: &[u8]) -> [Vec<u8>; 2] {
+    [
+        join_cache_subpath(
+            provider_dir,
+            &[b"node_modules", b"node-gyp", b"bin", b"node-gyp.js"],
+        ),
+        join_cache_subpath(
+            provider_dir,
+            &[b"node_modules", b"node-gyp", b"node-gyp.js"],
+        ),
+    ]
+}
+
+fn node_gyp_launcher_script(bun_exe: &[u8], provider_dir: &[u8], registry: &[u8]) -> Vec<u8> {
+    let [js_bin, js_root] = node_gyp_js_candidates(provider_dir);
+    #[cfg(windows)]
+    {
+        let mut script = Vec::with_capacity(
+            640 + bun_exe.len()
+                + provider_dir.len()
+                + js_bin.len()
+                + js_root.len()
+                + registry.len(),
+        );
+        script.extend_from_slice(b"@echo off\r\n");
+        script.extend_from_slice(b"if defined npm_config_node_gyp (\r\n");
+        script.extend_from_slice(b"  \"");
+        script.extend_from_slice(bun_exe);
+        script.extend_from_slice(b"\" \"%npm_config_node_gyp%\" %*\r\n");
+        script.extend_from_slice(b"  goto :eof\r\n");
+        script.extend_from_slice(b")\r\n");
+        script.extend_from_slice(b"set \"JS=");
+        script.extend_from_slice(&js_bin);
+        script.extend_from_slice(b"\"\r\n");
+        script.extend_from_slice(b"if not exist \"%JS%\" set \"JS=");
+        script.extend_from_slice(&js_root);
+        script.extend_from_slice(b"\"\r\n");
+        script.extend_from_slice(b"if not exist \"%JS%\" (\r\n");
+        if !registry.is_empty() {
+            script.extend_from_slice(b"  set \"NPM_CONFIG_REGISTRY=");
+            script.extend_from_slice(registry);
+            script.extend_from_slice(b"\"\r\n");
+        }
+        script.extend_from_slice(b"  \"");
+        script.extend_from_slice(bun_exe);
+        script.extend_from_slice(b"\" add --cwd \"");
+        script.extend_from_slice(provider_dir);
+        script.extend_from_slice(b"\" --ignore-scripts --no-summary --silent node-gyp\r\n");
+        script.extend_from_slice(b"  if errorlevel 1 exit /b 1\r\n");
+        script.extend_from_slice(b"  set \"JS=");
+        script.extend_from_slice(&js_bin);
+        script.extend_from_slice(b"\"\r\n");
+        script.extend_from_slice(b"  if not exist \"%JS%\" set \"JS=");
+        script.extend_from_slice(&js_root);
+        script.extend_from_slice(b"\"\r\n");
+        script.extend_from_slice(b")\r\n");
+        script.extend_from_slice(b"if not exist \"%JS%\" exit /b 1\r\n");
+        script.extend_from_slice(b"\"");
+        script.extend_from_slice(bun_exe);
+        script.extend_from_slice(b"\" \"%JS%\" %*\r\n");
+        script
+    }
+    #[cfg(not(windows))]
+    {
+        #[cfg(target_os = "android")]
+        const SHEBANG: &[u8] = b"#!/system/bin/sh\n";
+        #[cfg(not(target_os = "android"))]
+        const SHEBANG: &[u8] = b"#!/bin/sh\n";
+
+        let bun_q = posix_single_quote(bun_exe);
+        let provider_q = posix_single_quote(provider_dir);
+        let js_bin_q = posix_single_quote(&js_bin);
+        let js_root_q = posix_single_quote(&js_root);
+        let mut script = Vec::with_capacity(
+            400 + bun_q.len()
+                + provider_q.len()
+                + js_bin_q.len()
+                + js_root_q.len()
+                + registry.len(),
+        );
+        script.extend_from_slice(SHEBANG);
+        script.extend_from_slice(b"if [ \"x$npm_config_node_gyp\" != \"x\" ]; then\n");
+        script.extend_from_slice(b"  exec ");
+        script.extend_from_slice(&bun_q);
+        script.extend_from_slice(b" \"$npm_config_node_gyp\" \"$@\"\n");
+        script.extend_from_slice(b"fi\n");
+        script.extend_from_slice(b"JS=");
+        script.extend_from_slice(&js_bin_q);
+        script.extend_from_slice(b"\n");
+        script.extend_from_slice(b"if [ ! -f \"$JS\" ]; then JS=");
+        script.extend_from_slice(&js_root_q);
+        script.extend_from_slice(b"; fi\n");
+        script.extend_from_slice(b"if [ ! -f \"$JS\" ]; then\n");
+        if !registry.is_empty() {
+            script.extend_from_slice(b"  NPM_CONFIG_REGISTRY=");
+            script.extend_from_slice(&posix_single_quote(registry));
+            script.extend_from_slice(b"\n  export NPM_CONFIG_REGISTRY\n");
+        }
+        script.extend_from_slice(b"  ");
+        script.extend_from_slice(&bun_q);
+        script.extend_from_slice(b" add --cwd ");
+        script.extend_from_slice(&provider_q);
+        script.extend_from_slice(b" --ignore-scripts --no-summary --silent node-gyp || exit 1\n");
+        script.extend_from_slice(b"  JS=");
+        script.extend_from_slice(&js_bin_q);
+        script.extend_from_slice(b"\n");
+        script.extend_from_slice(b"  if [ ! -f \"$JS\" ]; then JS=");
+        script.extend_from_slice(&js_root_q);
+        script.extend_from_slice(b"; fi\n");
+        script.extend_from_slice(b"fi\n");
+        script.extend_from_slice(b"if [ ! -f \"$JS\" ]; then exit 1; fi\n");
+        script.extend_from_slice(b"exec ");
+        script.extend_from_slice(&bun_q);
+        script.extend_from_slice(b" \"$JS\" \"$@\"\n");
+        script
+    }
+}
+
 fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), Error> {
     if !manager.node_gyp_tempdir_name.is_empty() {
         return Ok(());
     }
 
-    let tempdir = get_temporary_directory(manager);
-    let mut path_buf = PathBuffer::uninit();
-    let node_gyp_tempdir_name =
-        fs::FileSystem::tmpname(b"node-gyp", &mut path_buf.0, bun_core::fast_random())?;
+    let cache_fd = get_cache_directory(manager);
+    let cache_dir = bun_sys::Dir::borrow(&cache_fd);
+    let cache_path = strings::without_trailing_slash(manager.cache_directory_path.as_bytes());
 
-    // used later for adding to path for scripts
-    manager.node_gyp_tempdir_name = Box::<[u8]>::from(node_gyp_tempdir_name.as_ref());
-
-    let node_gyp_tempdir = match tempdir
-        .handle
-        .make_open_path(&manager.node_gyp_tempdir_name, Default::default())
-    {
+    let bin_dir = match cache_dir.make_open_path(NODE_GYP_BIN_DIR, Default::default()) {
         Ok(d) => d,
-        Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
-            // it should not exist
-            bun_core::pretty_errorln!("<r><red>error<r>: node-gyp tempdir already exists");
-            Global::crash();
-        }
-        Err(e) => {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
-                bstr::BStr::new(e.name()),
-            );
-            Global::crash();
-        }
+        Err(e) => crash_node_gyp_io(&e, "install-cache bin directory"),
+    };
+    let provider_dir = match cache_dir.make_open_path(NODE_GYP_PROVIDER_DIR, Default::default()) {
+        Ok(d) => d,
+        Err(e) => crash_node_gyp_io(&e, "install-cache node-gyp directory"),
     };
 
-    #[cfg(windows)]
-    const FILE_NAME: &str = "node-gyp.cmd";
-    #[cfg(not(windows))]
-    const FILE_NAME: &str = "node-gyp";
+    let bin_dir_path = join_cache_subpath(cache_path, &[NODE_GYP_BIN_DIR]);
+    let provider_dir_path = join_cache_subpath(cache_path, &[NODE_GYP_PROVIDER_DIR]);
 
-    #[cfg(windows)]
-    const MODE: u32 = 0; // windows does not have an executable bit
-    #[cfg(not(windows))]
-    const MODE: u32 = 0o755;
-
-    // `bun_sys::Dir` has no `create_file`; route through `File::openat` with
-    // create-file flags (`O_WRONLY|O_CREAT|O_TRUNC`).
-    let node_gyp_file = match bun_sys::File::openat(
-        node_gyp_tempdir.fd,
-        FILE_NAME.as_bytes(),
-        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
-        MODE,
-    ) {
-        Ok(f) => f,
-        Err(e) => {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
-                bstr::BStr::new(e.name()),
-            );
-            Global::crash();
+    let registry = manager.options.scope.url.href();
+    if !sys_file_exists_at(provider_dir.fd(), b"package.json") {
+        write_cache_file(provider_dir.fd(), b"package.json", b"{}\n", 0o644);
+    }
+    {
+        let mut bunfig = Vec::with_capacity(64 + cache_path.len() + registry.len());
+        bunfig.extend_from_slice(b"[install]\ncache = ");
+        bunfig.extend_from_slice(&toml_quoted(cache_path));
+        bunfig.push(b'\n');
+        if !registry.is_empty() {
+            bunfig.extend_from_slice(b"registry = ");
+            bunfig.extend_from_slice(&toml_quoted(registry));
+            bunfig.push(b'\n');
         }
-    };
-
-    #[cfg(windows)]
-    const CONTENT: &str = "if not defined npm_config_node_gyp (\n  bun x --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n";
-    #[cfg(all(not(windows), not(target_os = "android")))]
-    const CONTENT: &str = concat!(
-        "#!/bin/sh\n",
-        "if [ \"x$npm_config_node_gyp\" = \"x\" ]; then\n",
-        "  bun x --silent node-gyp $@\n",
-        "else\n",
-        "  \"$npm_config_node_gyp\" $@\n",
-        "fi\n"
-    );
-    #[cfg(target_os = "android")]
-    const CONTENT: &str = concat!(
-        "#!/system/bin/sh\n",
-        "if [ \"x$npm_config_node_gyp\" = \"x\" ]; then\n",
-        "  bun x --silent node-gyp $@\n",
-        "else\n",
-        "  \"$npm_config_node_gyp\" $@\n",
-        "fi\n"
-    );
-
-    if let Err(e) = node_gyp_file.write_all(CONTENT.as_bytes()) {
-        bun_core::pretty_errorln!(
-            "<r><red>error<r>: <b><red>{}<r> writing to {} file",
-            bstr::BStr::new(e.name()),
-            FILE_NAME,
-        );
-        Global::crash();
+        write_cache_file(provider_dir.fd(), b"bunfig.toml", &bunfig, 0o644);
     }
 
-    // Add our node-gyp tempdir to the path
-    let existing_path = manager.env().get(b"PATH").unwrap_or(b"");
-    let mut path_var: Vec<u8> = Vec::with_capacity(
-        existing_path.len() + 1 + tempdir.name.len() + 1 + manager.node_gyp_tempdir_name.len(),
+    let bun_exe = bun_core::self_exe_path()
+        .map(|p| p.as_bytes())
+        .unwrap_or(b"bun");
+    let launcher = node_gyp_launcher_script(bun_exe, &provider_dir_path, registry);
+    write_cache_file(
+        bin_dir.fd(),
+        NODE_GYP_BIN_NAME,
+        &launcher,
+        NODE_GYP_LAUNCHER_MODE,
     );
+
+    manager.node_gyp_tempdir_name = Box::<[u8]>::from(bin_dir_path.as_slice());
+
+    let existing_path = manager.env().get(b"PATH").unwrap_or(b"");
+    let mut path_var: Vec<u8> = Vec::with_capacity(existing_path.len() + 1 + bin_dir_path.len());
     path_var.extend_from_slice(existing_path);
     if !existing_path.is_empty() && existing_path[existing_path.len() - 1] != DELIMITER {
         path_var.push(DELIMITER);
     }
-    path_var.extend_from_slice(strings::without_trailing_slash(tempdir.name));
-    path_var.push(SEP);
-    path_var.extend_from_slice(&manager.node_gyp_tempdir_name);
+    path_var.extend_from_slice(&bin_dir_path);
     manager.env_mut().map.put(b"PATH", &path_var)?;
 
-    let path_buf_len = path_buf.len();
-    let mut cursor = &mut path_buf[..];
-    write!(
-        cursor,
-        "{}{}{}{}{}",
-        bstr::BStr::new(strings::without_trailing_slash(tempdir.name)),
-        SEP_STR,
-        bstr::BStr::new(strings::without_trailing_slash(
-            &manager.node_gyp_tempdir_name
-        )),
-        SEP_STR,
-        FILE_NAME
-    )?;
-    let written = path_buf_len - cursor.len();
-    let npm_config_node_gyp = &path_buf[..written];
-
-    let node_gyp_abs_dir = bun_core::dirname(npm_config_node_gyp).unwrap();
-    manager
-        .env_mut()
-        .map
-        .put_alloc_key_and_value(b"BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir)?;
-
     Ok(())
+}
+
+fn sys_file_exists_at(dir: bun_sys::Fd, name: &[u8]) -> bool {
+    let mut buf = PathBuffer::uninit();
+    if name.len() >= buf.len() {
+        return false;
+    }
+    buf[..name.len()].copy_from_slice(name);
+    buf[name.len()] = 0;
+    bun_sys::exists_at(dir, ZStr::from_buf(&buf, name.len()))
 }
 
 fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::InitOpts) -> ! {

@@ -1,5 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { existsSync, mkdirSync, rmSync, statSync } from "fs";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
 import {
   VerdaccioRegistry,
@@ -11,6 +12,7 @@ import {
   readdirSorted,
   runBunInstall,
 } from "harness";
+import { homedir, tmpdir } from "os";
 import { join, sep } from "path";
 
 var verdaccio = new VerdaccioRegistry();
@@ -259,9 +261,42 @@ test.concurrent(
   },
 );
 
-test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a randomized name", async () => {
+function hashedNodeGypStubDirs(root: string): string[] {
+  if (!existsSync(root)) {
+    return [];
+  }
+  return Array.from(new Bun.Glob(".*.node-gyp").scanSync({ cwd: root, onlyFiles: false, dot: true }));
+}
+
+function disposableDir(parent: string, prefix: string): string & Disposable {
+  const dir = join(parent, `${prefix}-${crypto.randomUUID()}`);
+  mkdirSync(dir, { recursive: true });
+  return Object.assign(dir, {
+    [Symbol.dispose]() {
+      rmSync(dir, { recursive: true, force: true });
+    },
+  });
+}
+
+function otherFilesystemParent(): string | null {
+  const tmpDev = statSync(tmpdir()).dev;
+  for (const candidate of [homedir(), process.cwd()]) {
+    try {
+      if (statSync(candidate).dev !== tmpDev) {
+        return candidate;
+      }
+    } catch {
+      // keep looking
+    }
+  }
+  return null;
+}
+
+test.concurrent("node-gyp for lifecycle scripts comes from the install cache bin, not a hashed TMPDIR stub", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;
+  const cacheDir = join(packageDir, ".bun-cache");
+  const tmpDir = join(packageDir, ".bun-tmp");
 
   await writeFile(
     packageJson,
@@ -272,7 +307,7 @@ test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a r
         "no-deps": "1.0.0",
       },
       scripts: {
-        postinstall: `${bunExe()} -e 'await Bun.write("path.txt", String(process.env.PATH))'`,
+        postinstall: `${bunExe()} -e 'await Bun.write("path.txt", String(process.env.PATH)); await Bun.write("which.txt", Bun.which("node-gyp") ?? "")'`,
       },
     }),
   );
@@ -288,15 +323,20 @@ test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a r
 
   const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
   expect(err).not.toContain("error:");
+  expect(out).toBeDefined();
   expect(exitCode).toBe(0);
 
   const pathVar = await file(join(packageDir, "path.txt")).text();
-  const match = pathVar.match(/\.([0-9a-f]{1,16})-[0-9A-F]{1,16}\.node-gyp/);
-  expect(match).not.toBeNull();
-  const derived = BigInt("0x" + match![1]) ^ 12345n;
-  const nowNs = BigInt(Date.now()) * 1_000_000n;
-  const distance = derived > nowNs ? derived - nowNs : nowNs - derived;
-  expect(distance > 21_600_000_000_000n).toBe(true);
+  const which = (await file(join(packageDir, "which.txt")).text()).trim();
+  const cacheBin = join(cacheDir, "bin");
+  const advertised = join(cacheBin, isWindows ? "node-gyp.cmd" : "node-gyp");
+  const pathParts = pathVar.split(isWindows ? ";" : ":");
+
+  expect(pathParts).toContain(cacheBin);
+  expect(pathVar).not.toMatch(/\.([0-9a-f]{1,16})-[0-9A-F]{1,16}\.node-gyp/);
+  expect(hashedNodeGypStubDirs(tmpDir)).toEqual([]);
+  expect(await exists(advertised)).toBe(true);
+  expect(which).toBe(advertised);
 });
 
 test.concurrent("default trusted dependencies require the canonical registry tarball URL", async () => {
@@ -3759,6 +3799,138 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("warn:");
       expect(await exited).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+    });
+
+    test("lifecycle spawn('node-gyp') uses a cache-local binary when TMPDIR is on another filesystem", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const otherFs = otherFilesystemParent();
+      using cacheDir = otherFs
+        ? disposableDir(otherFs, "bun-node-gyp-cache")
+        : disposableDir(join(packageDir, "alt-cache-parent"), "bun-node-gyp-cache");
+      using tmpDir = disposableDir(tmpdir(), "bun-node-gyp-tmpdir");
+      const testEnv = {
+        ...(forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env),
+        BUN_INSTALL_CACHE_DIR: String(cacheDir),
+        BUN_TMPDIR: String(tmpDir),
+        TMPDIR: String(tmpDir),
+        TEMP: String(tmpDir),
+        PATH: "",
+      };
+
+      await writeFile(
+        join(packageDir, "preinstall.mjs"),
+        `import { spawnSync } from "child_process";
+import { existsSync } from "fs";
+const which = Bun.which("node-gyp") ?? "";
+await Bun.write("which.txt", which);
+await Bun.write("path.txt", String(process.env.PATH));
+await Bun.write("exists.txt", which && existsSync(which) ? "yes" : "no");
+const r = spawnSync("node-gyp", ["--version"], { encoding: "utf8" });
+if (r.error) {
+  console.error(r.error);
+  process.exit(1);
+}
+if (r.status !== 0) {
+  console.error(r.stderr);
+  process.exit(r.status ?? 1);
+}
+await Bun.write("ok.txt", r.stdout || "ok");
+`,
+      );
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          scripts: {
+            preinstall: `${bunExe()} preinstall.mjs`,
+          },
+        }),
+      );
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        env: testEnv,
+      });
+
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(out).toBeDefined();
+      expect(exitCode).toBe(0);
+
+      const cacheBin = join(String(cacheDir), "bin");
+      const advertised = join(cacheBin, isWindows ? "node-gyp.cmd" : "node-gyp");
+      const which = (await file(join(packageDir, "which.txt")).text()).trim();
+      const pathVar = await file(join(packageDir, "path.txt")).text();
+      const existsAtSpawn = (await file(join(packageDir, "exists.txt")).text()).trim();
+
+      expect(pathVar.split(isWindows ? ";" : ":")).toContain(cacheBin);
+      expect(pathVar).not.toMatch(/\.([0-9a-f]{1,16})-[0-9A-F]{1,16}\.node-gyp/);
+      expect(hashedNodeGypStubDirs(String(tmpDir))).toEqual([]);
+      expect(await exists(advertised)).toBe(true);
+      expect(which).toBe(advertised);
+      expect(existsAtSpawn).toBe("yes");
+      expect(await exists(join(packageDir, "ok.txt"))).toBe(true);
+
+      if (otherFs) {
+        expect(statSync(String(cacheDir)).dev).not.toBe(statSync(String(tmpDir)).dev);
+      }
+    });
+
+    test("bun x node-gyp does not loop when the cache-local provider is on PATH", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+      const cacheBin = join(packageDir, ".bun-cache", "bin");
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          scripts: {
+            preinstall: "node-gyp --version",
+          },
+        }),
+      );
+
+      {
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "ignore",
+          env: testEnv,
+        });
+        const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+        expect(err).not.toContain("error:");
+        expect(out).toBeDefined();
+        expect(exitCode).toBe(0);
+      }
+
+      const bunxEnv = {
+        ...testEnv,
+        PATH: `${cacheBin}${isWindows ? ";" : ":"}${testEnv.PATH ?? ""}`,
+      };
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "x", "node-gyp", "--version"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        env: bunxEnv,
+      });
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).not.toContain("error:");
+      expect(out).toBeDefined();
+      expect(exitCode).toBe(0);
     });
 
     test("bun pm trust and untrusted on missing package", async () => {

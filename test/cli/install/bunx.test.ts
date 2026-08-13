@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, readdirSorted, tmpdirSync } from "harness";
 import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
@@ -482,6 +482,49 @@ describe("bunx --no-install", () => {
       expect(out).not.toBeEmpty();
       expect(code).toBe(0);
     }
+  });
+
+  // What `bun install` leaves behind for a dependency with a `bin`. The shebang
+  // in `script` decides whether exec'ing it succeeds, so these are POSIX-only.
+  async function installLocalBin(x_dir: string, name: string, script: string) {
+    const packageDir = join(x_dir, "node_modules", name);
+    const binDir = join(x_dir, "node_modules", ".bin");
+    await mkdir(packageDir, { recursive: true });
+    await mkdir(binDir, { recursive: true });
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name, version: "1.0.0", bin: { [name]: "cli" } }),
+    );
+    await writeFile(join(packageDir, "cli"), script, { mode: 0o755 });
+    symlinkSync(join("..", name, "cli"), join(binDir, name));
+  }
+
+  it.concurrent.skipIf(isWindows)("reports a bin that fails to exec instead of exiting silently", async () => {
+    const ctx = setup();
+    const name = "bunx-unexecutable-bin-fixture";
+    // execve() of a script whose interpreter does not exist fails with ENOENT.
+    await installLocalBin(ctx.x_dir, name, `#!${join(ctx.x_dir, "missing-interpreter")}\n`);
+
+    const [err, out, exited] = await run(ctx, "--no-install", name);
+
+    expect(normalizeBunSnapshot(err, ctx.x_dir)).toMatchInlineSnapshot(`
+      "error: Failed to run "bunx-unexecutable-bin-fixture" due to:
+      ENOENT: <dir>/node_modules/.bin/bunx-unexecutable-bin-fixture: No such file or directory (posix_spawn())"
+    `);
+    expect(out).toBe("");
+    expect(exited).toBe(1);
+  });
+
+  it.concurrent.skipIf(isWindows)("passes through a bin's exit code without reporting it", async () => {
+    const ctx = setup();
+    const name = "bunx-failing-bin-fixture";
+    await installLocalBin(ctx.x_dir, name, "#!/bin/sh\necho ran; exit 3\n");
+
+    const [err, out, exited] = await run(ctx, "--no-install", name);
+
+    expect(err).toBe("");
+    expect(out).toBe("ran\n");
+    expect(exited).toBe(3);
   });
 });
 

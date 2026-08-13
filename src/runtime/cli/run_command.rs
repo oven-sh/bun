@@ -2048,14 +2048,14 @@ impl RunCommand {
         )
     }
 
-    fn run_binary_generic_error(executable: &[u8], silent: bool, err: &sys::Error) -> ! {
-        if !silent {
-            pretty_errorln!(
-                "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to:\n{}",
-                bstr::BStr::new(Self::basename_or_bun(executable)),
-                err.with_path(executable),
-            );
-        }
+    /// Not gated on `--silent` (which bunx also sets): unlike the exit code and
+    /// signal messages below, nothing else reports a binary that never ran.
+    fn run_binary_generic_error(executable: &[u8], err: &sys::Error) -> ! {
+        pretty_errorln!(
+            "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to:\n{}",
+            bstr::BStr::new(Self::basename_or_bun(executable)),
+            err.with_path(executable),
+        );
         Global::exit(1);
     }
 
@@ -2109,42 +2109,42 @@ impl RunCommand {
             Err(err) => {
                 bun_core::handle_error_return_trace(&err);
 
-                // an error occurred before the process was spawned
+                // an error occurred before the process was spawned; printed
+                // regardless of `silent` for the same reason as
+                // `run_binary_generic_error`.
                 #[allow(unused_labels)]
                 'print_error: {
-                    if !silent {
-                        #[cfg(unix)]
-                        {
-                            match sys::stat(executable_z) {
-                                Ok(stat) => {
-                                    if sys::S::ISDIR(stat.st_mode as _) {
-                                        pretty_errorln!(
-                                            "<r><red>error<r>: Failed to run directory \"<b>{}<r>\"\n",
-                                            bstr::BStr::new(Self::basename_or_bun(executable)),
-                                        );
-                                        break 'print_error;
-                                    }
+                    #[cfg(unix)]
+                    {
+                        match sys::stat(executable_z) {
+                            Ok(stat) => {
+                                if sys::S::ISDIR(stat.st_mode as _) {
+                                    pretty_errorln!(
+                                        "<r><red>error<r>: Failed to run directory \"<b>{}<r>\"\n",
+                                        bstr::BStr::new(Self::basename_or_bun(executable)),
+                                    );
+                                    break 'print_error;
                                 }
-                                Err(err2) => match err2.get_errno() {
-                                    sys::E::ENOENT | sys::E::EPERM | sys::E::ENOTDIR => {
-                                        pretty_errorln!(
-                                            "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to error:\n{}",
-                                            bstr::BStr::new(Self::basename_or_bun(executable)),
-                                            err2,
-                                        );
-                                        break 'print_error;
-                                    }
-                                    _ => {}
-                                },
                             }
+                            Err(err2) => match err2.get_errno() {
+                                sys::E::ENOENT | sys::E::EPERM | sys::E::ENOTDIR => {
+                                    pretty_errorln!(
+                                        "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to error:\n{}",
+                                        bstr::BStr::new(Self::basename_or_bun(executable)),
+                                        err2,
+                                    );
+                                    break 'print_error;
+                                }
+                                _ => {}
+                            },
                         }
-
-                        pretty_errorln!(
-                            "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to <r><red>{}<r>",
-                            bstr::BStr::new(Self::basename_or_bun(executable)),
-                            bstr::BStr::new(err.name()),
-                        );
                     }
+
+                    pretty_errorln!(
+                        "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to <r><red>{}<r>",
+                        bstr::BStr::new(Self::basename_or_bun(executable)),
+                        bstr::BStr::new(err.name()),
+                    );
                 }
                 Global::exit(1);
             }
@@ -2153,14 +2153,14 @@ impl RunCommand {
         match spawn_result {
             Err(err) => {
                 // an error occurred while spawning the process
-                Self::run_binary_generic_error(executable, silent, &err);
+                Self::run_binary_generic_error(executable, &err);
             }
             Ok(result) => {
                 let signal_code = result.status.signal_code();
                 match result.status {
                     // An error occurred after the process was spawned.
                     SpawnStatus::Err(err) => {
-                        Self::run_binary_generic_error(executable, silent, &err);
+                        Self::run_binary_generic_error(executable, &err);
                     }
 
                     SpawnStatus::Signaled(signal) => {

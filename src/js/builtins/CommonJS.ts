@@ -79,11 +79,13 @@ export function requireCommonJSModule(this: JSCommonJSModule, originalId: string
     }
   }
 
+  const recordedParent = $argumentCount() > 2 ? $argument(2) : this;
+
   // A resolved id may carry a `?query` suffix (part of the module cache key);
   // match the native-addon extension against the path portion only.
   const queryIndex = id.indexOf("?");
   if (queryIndex === -1 ? id.endsWith(".node") : id.endsWith(".node", queryIndex)) {
-    return $internalRequire(id, this);
+    return $internalRequire(id, recordedParent);
   }
 
   if (id === "bun:test") {
@@ -92,7 +94,7 @@ export function requireCommonJSModule(this: JSCommonJSModule, originalId: string
 
   // To handle import/export cycles, we need to create a module object and put
   // it into the map before we import it.
-  const mod = $createCommonJSModule(id, {}, false, $argumentCount() > 2 ? $argument(2) : this);
+  const mod = $createCommonJSModule(id, {}, false, recordedParent);
   $requireMap.$set(id, mod);
 
   var out: LoaderModule | -1;
@@ -174,7 +176,7 @@ export function requireResolve(
 }
 
 $visibility = "Private";
-export function internalRequire(id: string, parent: JSCommonJSModule) {
+export function internalRequire(id: string, parent: unknown) {
   $assert($requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should not be in the map");
   // `id` keys the module cache and may carry a `?query` suffix;
   // `process.dlopen` needs the on-disk path.

@@ -360,7 +360,7 @@ declare function $host(): TODO;
 declare function $hostname(): TODO;
 declare function $ignoreBOM(): TODO;
 declare function $importer(): TODO;
-declare function $internalRequire(id: string, parent: JSCommonJSModule): TODO;
+declare function $internalRequire(id: string, parent: unknown): TODO;
 declare function $isAbortSignal(signal: unknown): signal is AbortSignal;
 declare function $isAbsolute(): TODO;
 declare function $join(): TODO;
@@ -421,7 +421,8 @@ declare function $createCommonJSModule(
   id: string,
   exports: any,
   hasEvaluated: boolean,
-  parent: JSCommonJSModule | undefined,
+  /** Becomes `module.parent` verbatim: normally the requiring module, but `Module._load` may pass any value. */
+  parent: unknown,
 ): JSCommonJSModule;
 declare function $evaluateCommonJSModule(
   moduleToEvaluate: JSCommonJSModule,

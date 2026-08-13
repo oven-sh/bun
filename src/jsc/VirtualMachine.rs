@@ -6597,8 +6597,7 @@ impl VirtualMachine {
                         ": {}::",
                         bun_core::fmt::github_action_property(title)
                     );
-                    // expect() messages are laid out `header\n\nbody`: drop that one blank
-                    // separator line, but any other second line is part of the body.
+                    // expect() separates its header line from the body with one blank line.
                     let body = rest
                         .strip_prefix(b"\n")
                         .or_else(|| rest.strip_prefix(b"\r\n"))

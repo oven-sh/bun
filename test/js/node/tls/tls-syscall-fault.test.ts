@@ -197,7 +197,7 @@ describe.skipIf(skip)("fatal SSL_write after the handshake", () => {
     using p = await connectedTLSPair();
     const events: string[] = [];
     p.client.on("error", () => {});
-    const clientClosed = once(p.client, "close");
+    const clientClosed = new Promise<void>(resolve => p.client.on("close", () => resolve()));
     const serverClosed = Promise.withResolvers<boolean>();
     p.serverSock.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
     p.serverSock.on("close", hadError => {

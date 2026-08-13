@@ -173,8 +173,7 @@ impl Editor {
             }};
         }
 
-        // Opens the editor in a new Terminal.app window; xdg-open and start have
-        // no equivalent, so elsewhere terminal editors are run directly.
+        // Runs the editor in a new Terminal.app window.
         #[cfg(target_os = "macos")]
         if matches!(self, Editor::Vim | Editor::Emacs | Editor::Neovim) {
             push_arg!(OPENER);

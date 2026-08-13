@@ -271,9 +271,8 @@ impl Binding {
         Ok(async_::Readdir::create(global, this, rd_args, vm))
     }
 
-    /// `callAsync(.open)`. On Windows `async_::Open` is a libuv request, which
-    /// cannot see embedded `/$bunfs/` files; those take the thread-pool task
-    /// (`NodeFS::open`) that POSIX uses for every open.
+    /// On Windows `async_::Open` is a libuv request, which cannot open embedded
+    /// `/$bunfs/` files; those use the thread-pool task POSIX uses for every open.
     pub(crate) fn open(
         this: &Self,
         global: &JSGlobalObject,

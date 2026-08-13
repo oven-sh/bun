@@ -318,17 +318,17 @@ fn standalone_module_graph() -> Option<&'static bun_standalone_graph::Graph> {
     bun_standalone_graph::Graph::get_ref()
 }
 
-/// `fs.open()` of an embedded file: a descriptor (memfd on Linux, otherwise an
-/// already-unlinked temp file) holding a copy of `contents`, positioned at 0.
-/// Closing it is the only cleanup.
-fn embedded_file_fd(contents: &[u8]) -> Maybe<FD> {
+/// A read-only descriptor over an embedded file's bytes, positioned at 0.
+/// Linux reopens the file's shared memfd, so an open() costs no copy; anywhere
+/// else each open() copies the bytes into a temp file that is unlinked before
+/// its descriptor is returned, so closing the descriptor is the only cleanup.
+fn embedded_file_fd(file: &bun_standalone_graph::File) -> Maybe<FD> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    if sys::can_use_memfd() {
-        if let Ok(fd) = sys::memfd_create(c"bunfs", sys::MemfdFlags::NonExecutable) {
-            let file = sys::File::from_fd(fd);
-            file.pwrite_all(contents, 0)?;
-            return Ok(file.into_raw());
-        }
+    if let Some(fd) = file
+        .shared_memfd()
+        .and_then(|memfd| sys::reopen_read_only(memfd).ok())
+    {
+        return Ok(fd);
     }
 
     let mut name_buf = [0u8; 64];
@@ -340,16 +340,17 @@ fn embedded_file_fd(contents: &[u8]) -> Maybe<FD> {
         &mut path_buf[..],
         &[name.as_bytes()],
     );
-    let file = sys::File::open(
+    let writer = sys::File::open(
         path,
-        sys::O::RDWR | sys::O::CREAT | sys::O::EXCL | sys::O::CLOEXEC,
+        sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL | sys::O::CLOEXEC,
         0o600,
     )?;
-    let written = file.pwrite_all(contents, 0);
-    // A failed unlink only leaves a stray temp file; the descriptor is still good.
+    let reader = writer
+        .pwrite_all(file.contents.as_bytes(), 0)
+        .and_then(|()| sys::File::open(path, sys::O::RDONLY | sys::O::CLOEXEC, 0));
+    // A failed unlink only leaves a stray temp file behind.
     let _ = Syscall::unlink(path);
-    written?;
-    Ok(file.into_raw())
+    Ok(reader?.into_raw())
 }
 
 /// Local shim for `Maybe(void)::aborted` (node.rs:302). `bun_sys::Maybe` is
@@ -4671,10 +4672,15 @@ impl NodeFS {
             let is_dir = graph.find_dir(p);
             if is_dir || graph.contains_file(p) {
                 let mode = args.mode.as_int();
-                if (mode & sys::posix::W_OK) != 0 || ((mode & sys::posix::X_OK) != 0 && !is_dir) {
-                    return Err(sys::Error::from_code(E::EACCES, sys::Tag::access).with_path(p));
-                }
-                return Ok(Null);
+                // Same answers as a real read-only filesystem holding 0644 files.
+                let denied = if (mode & sys::posix::W_OK) != 0 {
+                    E::EROFS
+                } else if (mode & sys::posix::X_OK) != 0 && !is_dir {
+                    E::EACCES
+                } else {
+                    return Ok(Null);
+                };
+                return Err(sys::Error::from_code(denied, sys::Tag::access).with_path(p));
             }
         }
         // The `bun_sys::access` Windows
@@ -6010,9 +6016,8 @@ impl NodeFS {
         }
     }
 
-    /// `None` unless `args.path` is embedded in this compiled executable.
-    /// Embedded files are read-only, so write access is refused with EROFS
-    /// rather than served by the private copy [`embedded_file_fd`] hands out.
+    /// `None` unless `args.path` is embedded. Embedded files live on what
+    /// behaves as a read-only filesystem, hence EROFS for any write access.
     fn open_standalone(args: &args::Open) -> Option<Maybe<ret::Open>> {
         let graph = standalone_module_graph()?;
         let path = args.path.slice();
@@ -6027,7 +6032,7 @@ impl NodeFS {
             ));
         }
         Some(
-            embedded_file_fd(file.contents.as_bytes()).map_err(|err| {
+            embedded_file_fd(file).map_err(|err| {
                 sys::Error::from_code(err.get_errno(), sys::Tag::open).with_path(path)
             }),
         )

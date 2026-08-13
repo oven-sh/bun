@@ -63,6 +63,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           dirLstatIsDir: fs.lstatSync(assetDir).isDirectory(),
           accessOk: errcode(() => fs.accessSync(assetDir)) === "",
           accessWriteErr: errcode(() => fs.accessSync(asset, fs.constants.W_OK)),
+          accessExecErr: errcode(() => fs.accessSync(asset, fs.constants.X_OK)),
           readdir: fs.readdirSync(assetDir).sort(),
           readdirHasAsset: fs.readdirSync(assetDir).includes(path.basename(asset)),
         };
@@ -108,20 +109,31 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           readdirCode: errcode(() => fs.readdirSync(cfg)),
         };
 
-        // fs.open() hands out a real descriptor for an embedded file.
-        // createReadStream and FileHandle are built on open + read + close.
+        // fs.open() hands out a real, read-only descriptor for an embedded file;
+        // each one has its own offset. createReadStream and FileHandle are built
+        // on open + read + close.
         const buf = Buffer.alloc(64);
         const fd = fs.openSync(nestedCss, "r");
+        const fd2 = fs.openSync(nestedCss, "r");
         const empty = fs.openSync(path.join(import.meta.dir, "empty.txt"), "r");
+        const readAll = (d: number) => buf.subarray(0, fs.readSync(d, buf, 0, buf.length, null)).toString();
+        // highWaterMark: 4 forces several sequential reads through each descriptor
+        const streamAll = (p: string) => fs.createReadStream(p, { highWaterMark: 4 }).toArray();
         const open = {
-          firstRead: buf.subarray(0, fs.readSync(fd, buf, 0, buf.length, null)).toString(),
+          firstRead: readAll(fd),
           secondReadIsEof: fs.readSync(fd, buf, 0, buf.length, null),
+          secondDescriptorStartsAtZero: readAll(fd2),
           pread: buf.subarray(0, fs.readSync(fd, buf, 0, 6, 5)).toString(),
           fstat: { isFile: fs.fstatSync(fd).isFile(), size: fs.fstatSync(fd).size },
+          writeToFdCode: errcode(() => fs.writeSync(fd, "x")),
+          contentAfterWriteAttempt: fs.readFileSync(nestedCss, "utf8"),
+          preadAfterWriteAttempt: buf.subarray(0, fs.readSync(fd2, buf, 0, buf.length, 0)).toString(),
           emptyRead: fs.readSync(empty, buf, 0, buf.length, null),
           emptySize: fs.fstatSync(empty).size,
-          // highWaterMark: 4 forces several sequential reads through the descriptor
-          stream: Buffer.concat(await fs.createReadStream(indexHtml, { highWaterMark: 4 }).toArray()).toString(),
+          // two streams of the same file at once must not share an offset
+          streams: (await Promise.all([streamAll(indexHtml), streamAll(indexHtml)])).map(chunks =>
+            Buffer.concat(chunks).toString(),
+          ),
           streamRange: Buffer.concat(await fs.createReadStream(nestedCss, { start: 5, end: 10 }).toArray()).toString(),
           streamMissing: await new Promise<string>(resolve =>
             fs.createReadStream(missing).on("error", (e: any) => resolve(e.code)),
@@ -140,6 +152,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           missingCode: errcode(() => fs.openSync(missing)),
         };
         fs.closeSync(fd);
+        fs.closeSync(fd2);
         fs.closeSync(empty);
 
         console.log(JSON.stringify({ fileLoader, client, enoent, singleFile, open }));
@@ -166,10 +179,10 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         "index.html",
       ].sort();
 
-      // open() on an embedded file is served from a memfd on Linux and from a
-      // temp file everywhere else (and on Linux without memfd), so the Linux run
-      // is repeated with memfd disabled to cover both. The binary's temp dir is
-      // pointed at scratch-tmp so the temp-file variant can be checked for leftovers.
+      // open() on an embedded file reopens a shared memfd on Linux and copies the
+      // file into a temp file everywhere else (and on Linux without memfd), so the
+      // Linux run is repeated with memfd disabled to cover both. The binary's temp
+      // dir is pointed at scratch-tmp so the temp-file variant can be checked for leftovers.
       const scratch = join(String(dir), "scratch-tmp");
       const runs: Record<string, string>[] = [{}];
       if (process.platform === "linux") runs.push({ BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" });
@@ -192,7 +205,9 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
             dirStatIsDir: true,
             dirLstatIsDir: true,
             accessOk: true,
-            accessWriteErr: "EACCES",
+            // embedded files behave like 0644 files on a read-only filesystem
+            accessWriteErr: "EROFS",
+            accessExecErr: "EACCES",
             // the hashed file-loader name is covered by readdirHasAsset
             readdir: expect.arrayContaining(["client", "config.json", "empty.txt"]),
             readdirHasAsset: true,
@@ -222,11 +237,15 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           open: {
             firstRead: "body{margin:0}",
             secondReadIsEof: 0,
+            secondDescriptorStartsAtZero: "body{margin:0}",
             pread: "margin",
             fstat: { isFile: true, size: "body{margin:0}".length },
+            writeToFdCode: "EBADF",
+            contentAfterWriteAttempt: "body{margin:0}",
+            preadAfterWriteAttempt: "body{margin:0}",
             emptyRead: 0,
             emptySize: 0,
-            stream: "<!doctype html><h1>hi</h1>",
+            streams: ["<!doctype html><h1>hi</h1>", "<!doctype html><h1>hi</h1>"],
             streamRange: "margin",
             streamMissing: "ENOENT",
             fileHandle: { content: `{"ok":true}`, size: `{"ok":true}`.length },

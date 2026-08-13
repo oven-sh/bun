@@ -3448,10 +3448,13 @@ mod posix_impl {
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     impl MemfdFlags {
+        /// The same flags without `MFD_EXEC` / `MFD_NOEXEC_SEAL` (Linux 6.3+).
         #[inline]
         fn older_kernel_flag(self) -> u32 {
             match self {
-                MemfdFlags::NonExecutable | MemfdFlags::Executable => libc::MFD_CLOEXEC,
+                MemfdFlags::NonExecutable | MemfdFlags::Executable => {
+                    libc::MFD_ALLOW_SEALING | libc::MFD_CLOEXEC
+                }
                 MemfdFlags::CrossProcess => 0,
             }
         }
@@ -3519,6 +3522,32 @@ mod posix_impl {
             }
             return Ok(Fd::from_native(rc));
         }
+    }
+
+    /// Seals a memfd from [`memfd_create`] (`Executable` / `NonExecutable`
+    /// flags) against every later write, resize and writable shared mapping,
+    /// through any descriptor; those fail with EPERM from now on.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn memfd_seal(fd: Fd) -> Maybe<()> {
+        let seals =
+            libc::F_SEAL_SEAL | libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_WRITE;
+        fcntl(fd, libc::F_ADD_SEALS, seals as isize)?;
+        Ok(())
+    }
+
+    /// Opens the file behind `fd` again, read-only, as a new open file
+    /// description with its own offset. Goes through `/proc/self/fd`, so it
+    /// works for memfds and unlinked files and fails where `/proc` is missing.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn reopen_read_only(fd: Fd) -> Maybe<Fd> {
+        let mut proc = [0u8; 32];
+        let n = {
+            use std::io::Write as _;
+            let mut c = std::io::Cursor::new(&mut proc[..]);
+            let _ = write!(c, "/proc/self/fd/{}\0", fd.native());
+            c.position() as usize - 1
+        };
+        open(ZStr::from_buf(&proc[..], n), O::RDONLY | O::CLOEXEC, 0)
     }
 
     /// `sendfile(src, dest, len)`. Clamps `len` (avoid EINVAL on

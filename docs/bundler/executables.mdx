@@ -839,7 +839,7 @@ If you're using `@mapbox/node-pre-gyp` or similar tools, the `.node` file must b
 
 ### Embed directories
 
-Use `--asset` (or `compile.assets` in the JavaScript API) to embed a file or directory tree into the executable under its original relative path. The embedded files live under `import.meta.dir` at runtime and are reachable via `node:fs` (`existsSync`, `statSync`, `readdirSync`, `readFileSync`) and `Bun.file()`.
+Use `--asset` (or `compile.assets` in the JavaScript API) to embed a file or directory tree into the executable under its original relative path. The embedded files live under `import.meta.dir` at runtime and are reachable via `node:fs` (`existsSync`, `statSync`, `readdirSync`, `readFileSync`, `openSync`, `createReadStream`) and `Bun.file()`. They are read-only: opening one for writing fails with `EROFS`. On Linux, every descriptor `fs.open()` (and therefore `createReadStream`) returns for a given file shares one in-memory copy of it; on macOS and Windows each open copies the file into a temporary file that goes away when the descriptor is closed.
 
 <Tabs>
   <Tab title="CLI">

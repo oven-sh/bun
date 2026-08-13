@@ -6545,6 +6545,25 @@ pub mod bv2_impl {
                 };
                 import_record.loader = Some(import_record_loader);
 
+                // Same as the `with { type: "sqlite" }` case above, for databases the
+                // loader map (or a `.sqlite` extension) selects: the import stays as
+                // written and the printer re-attaches the type. Bundling the file would
+                // bake the build machine's absolute path into the output. Other targets
+                // still reach the parse task, which reports that sqlite needs target bun.
+                if import_record_loader == Loader::Sqlite
+                    && target.is_bun()
+                    && self.dev_server.is_none()
+                    && matches!(
+                        import_record.kind,
+                        ImportKind::Stmt | ImportKind::Require | ImportKind::Dynamic
+                    )
+                {
+                    import_record
+                        .flags
+                        .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                    continue;
+                }
+
                 let is_html_entrypoint = import_record_loader == Loader::Html
                     && target.is_server_side()
                     && self.dev_server.is_none();

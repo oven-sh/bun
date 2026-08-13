@@ -1465,7 +1465,8 @@ void JSCommonJSModule::evaluate(
 // Returns the source with the wrapper removed: every line in front of the wrapper is replaced
 // by an empty line so the body keeps the line numbers of the source text, and the comment lines
 // after the wrapper are kept. Returns nullopt when the source is not shaped like the above, for
-// example `bun build --footer` with code after the wrapper.
+// example `bun build --footer` with code after the wrapper; the caller then evaluates the source
+// as it is.
 static std::optional<WTF::String> commonJSSourceWithoutWrapper(const WTF::String& source)
 {
     StringView text { source };
@@ -1489,22 +1490,28 @@ static std::optional<WTF::String> commonJSSourceWithoutWrapper(const WTF::String
     // Walk back over what may follow the closing "})": whitespace, line comments and the ";"
     // the transpiler prints after the expression statement.
     unsigned end = text.length();
+    unsigned lineStart = 0;
     while (true) {
         while (end > bodyStart && isASCIIWhitespace(text[end - 1]))
             end--;
         if (end <= bodyStart)
-            break;
+            return std::nullopt;
         size_t previousNewline = text.reverseFind('\n', end - 1);
-        unsigned lineStart = previousNewline == WTF::notFound ? 0 : previousNewline + 1;
+        lineStart = previousNewline == WTF::notFound ? 0 : previousNewline + 1;
         if (lineStart < bodyStart || !text.hasInfixStartingAt("//"_s, lineStart))
             break;
         end = lineStart;
     }
-    if (end > bodyStart && text[end - 1] == ';')
+    if (text[end - 1] == ';')
         end--;
     if (end < bodyStart + 2 || text[end - 2] != '}' || text[end - 1] != ')')
         return std::nullopt;
     unsigned bodyEnd = end - 2;
+    // Both producers put the closing "})" either on a line of its own or, when the whole module is
+    // one line, on the line that opened the wrapper. A "})" ending a line of other code is the end
+    // of something else, such as a `bun build --footer`.
+    if (lineStart != bodyEnd && lineStart >= bodyStart)
+        return std::nullopt;
 
     StringView afterWrapper = text.substring(bodyEnd + 2);
     if (afterWrapper.startsWith(';'))

@@ -220,7 +220,7 @@ describe("module._compile override receives the module body", () => {
   const wrapper = "(function(exports, require, module, __filename, __dirname) {";
 
   test("files with the // @bun @bun-cjs pragma, in every shape bun build --target=bun --format=cjs emits", () => {
-    using dir = tempDir("compile-hook-pragma", {
+    const files = {
       "pragma.js": `// @bun @bun-cjs\n${wrapper}// entry.cjs\nmodule.exports = { shape: "pragma" };\n})\n`,
       "bytecode.js": `// @bun @bytecode @bun-cjs\n${wrapper}// entry.cjs\nmodule.exports = { shape: "bytecode" };\n})\n`,
       "hashbang.js": `#!/usr/bin/env bun\n// @bun @bun-cjs\n${wrapper}\n// entry.cjs\nmodule.exports = { shape: "hashbang" };\n})\n`,
@@ -228,12 +228,15 @@ describe("module._compile override receives the module body", () => {
       "sourcemap.js": `// @bun @bun-cjs\n${wrapper}\nmodule.exports = { shape: "sourcemap" };\n})\n\n//# debugId=0123456789ABCDEF\n//# sourceMappingURL=data:application/json;base64,e30=\n`,
       "crlf.js": `// @bun @bun-cjs\r\n${wrapper}\r\nmodule.exports = { shape: "crlf" };\r\n})\r\n`,
       // Code after the wrapper is not something the body extraction understands, so the file
-      // is evaluated as-is instead of being handed to _compile.
+      // is evaluated as-is instead of being handed to _compile. That includes a footer whose
+      // own last characters are "})".
       "footer.js": `// @bun @bun-cjs\n${wrapper}\nmodule.exports = { shape: "footer" };\n})\n\nvar afterTheWrapper = 1;\n`,
-    });
+      "footerEndingInClose.js": `// @bun @bun-cjs\n${wrapper}\nmodule.exports = { shape: "footerEndingInClose" };\n})\n\nvar afterTheWrapper = String(function(){})\n`,
+    };
+    using dir = tempDir("compile-hook-pragma", files);
     const results: Record<string, unknown> = {};
-    for (const name of ["pragma", "bytecode", "hashbang", "minified", "sourcemap", "crlf", "footer"]) {
-      results[name] = requireThroughCompileHook(".js", path.join(String(dir), `${name}.js`));
+    for (const file of Object.keys(files)) {
+      results[path.basename(file, ".js")] = requireThroughCompileHook(".js", path.join(String(dir), file));
     }
     // Every line in front of the wrapper is replaced by an empty line, so the body keeps the line
     // numbers it has in the file; the comment lines after the wrapper are kept.
@@ -251,6 +254,7 @@ describe("module._compile override receives the module body", () => {
       },
       crlf: { code: '\n\r\nmodule.exports = { shape: "crlf" };\r\n', exports: { shape: "crlf" } },
       footer: { code: undefined, exports: { shape: "footer" } },
+      footerEndingInClose: { code: undefined, exports: { shape: "footerEndingInClose" } },
     });
   });
 

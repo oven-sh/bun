@@ -1,7 +1,8 @@
+import { $ } from "bun";
 import { join } from "node:path";
 import { config, guestImage, toolchain } from "./config";
 import { ensureHostKey, guest } from "./guest";
-import { fail, log } from "./shell";
+import { fail, log, output } from "./shell";
 import { tart } from "./tart";
 
 type BakeOptions = { release: number; base: string; ref: string };
@@ -11,6 +12,11 @@ export async function bake({ release, base, ref }: BakeOptions): Promise<void> {
   const image = guestImage(release);
   const staging = `${image}-new`;
   const publicKey = await ensureHostKey();
+
+  const hostMajor = Number((await output($`sw_vers -productVersion`)).split(".")[0]);
+  if (hostMajor < release) {
+    fail(`this host runs macOS ${hostMajor} and cannot boot a macOS ${release} guest; pass --release <= ${hostMajor}`);
+  }
 
   log(`pull ${base}`);
   await tart.pull(base);

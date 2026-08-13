@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { $ } from "bun";
 import { parseArgs } from "node:util";
-import { installBareAgent, installTartAgent, retireTartAgents } from "./lib/agent";
+import { checkTartAgentOptions, installBareAgent, installTartAgent } from "./lib/agent";
 import { bake } from "./lib/bake";
 import { ciUserExists, enableAutoLogin, ensureCiUser } from "./lib/ci-user";
 import { config, guestBase, guestImage, releaseTier } from "./lib/config";
@@ -32,8 +32,9 @@ const usage = `usage:
 
 A tart host bakes one image per configured guest release (${configuredReleases.join(", ")}) and runs
 one agent, i.e. one concurrent guest, per image, so it serves every darwin lane.
---spawn N runs N agents per image (default ${config.tart.spawn}), so the host runs images x N guests.
---release N limits the host to one release; --base overrides that release's base image.
+--spawn N runs N agents per image (default ${config.tart.spawn}); images x N may not exceed the
+${config.tart.maxGuests} guests macOS allows per host. --release N limits the host to one release
+(add --spawn ${config.tart.maxGuests} to keep it full); --base overrides that release's base image.
 
 provision, setup-user and install-agent need passwordless sudo.`;
 
@@ -101,6 +102,7 @@ async function provision(name: string, mode: "tart" | "bare"): Promise<void> {
   let images: GuestImages = [];
   if (mode === "tart") {
     if (process.arch !== "arm64") fail("tart mode needs Apple Silicon; use bare on Intel");
+    checkTartAgentOptions(agentOptions);
     images = guestImages();
   }
 
@@ -114,17 +116,8 @@ async function provision(name: string, mode: "tart" | "bare"): Promise<void> {
   step("tailscale");
   await joinTailnet(name, values.tags);
 
-  if (mode === "tart") {
-    // everything below replaces what running agents use (binary, hooks, images); install-agent brings them back
-    const retired = await retireTartAgents();
-    if (retired.length) console.log(`retired ${retired.join(", ")} until the agents are reinstalled`);
-  }
-
   step(`buildkite-agent ${config.buildkiteAgent.version}`);
   await installBuildkiteAgent();
-
-  step(`install scripts to ${config.installDir}`);
-  await installSelf();
 
   if (mode === "tart") await provisionTart(images);
   else await provisionBare();
@@ -133,9 +126,15 @@ async function provision(name: string, mode: "tart" | "bare"): Promise<void> {
   console.log(`tailscale: ${await tailnetSummary()}`);
 }
 
+/**
+ * Safe to re-run on a host that is already serving: the images are baked by a
+ * staged copy of these scripts while the existing agents keep using installDir's
+ * hooks and images, and install-agent swaps both over at the end. A failed bake
+ * leaves the host as it was.
+ */
 async function provisionTart(images: GuestImages): Promise<void> {
   const user = config.ciUser;
-  const main = `${config.installDir}/main.ts`;
+  const staging = `${config.installDir}.next`;
 
   step("tart");
   await brewInstall("cirruslabs/cli/tart");
@@ -151,16 +150,22 @@ async function provisionTart(images: GuestImages): Promise<void> {
     return;
   }
 
+  step(`stage scripts in ${staging}`);
+  await installSelf(staging);
   for (const [release, base] of images) {
     step(`bake ${guestImage(release)} (${releaseTier(release)}) from ${base} as ${user}`);
-    await $`sudo -u ${user} -H /usr/local/bin/bun ${main} bake --release ${release} --base ${base} --ref ${values.ref!}`;
+    await $`sudo -u ${user} -H /usr/local/bin/bun ${staging}/main.ts bake --release ${release} --base ${base} --ref ${values.ref!}`;
   }
 
-  step(`agents for macOS ${releases.join(", ")}`);
+  step(`scripts to ${config.installDir}, agents for macOS ${releases.join(", ")}`);
   await installTartAgent(agentOptions);
+  await $`sudo rm -rf ${staging}`;
 }
 
 async function provisionBare(): Promise<void> {
+  step(`install scripts to ${config.installDir}`);
+  await installSelf();
+
   step("toolchain (scripts/bootstrap.sh)");
   await bootstrapToolchain();
 

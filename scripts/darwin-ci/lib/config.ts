@@ -10,9 +10,10 @@ export const config = {
     // One guest image per `release-tier` that .buildkite/ci.mjs schedules a darwin
     // aarch64 lane on (`latest` and `previous`; every build runs one job of each).
     // A host bakes every image and runs `spawn` agents per image, so each host
-    // serves both lanes. `--release N` bakes and serves just one, for a host
-    // whose macOS is older than the newest guest (a guest cannot be newer than
-    // its host) or that lacks the disk for two images.
+    // serves both lanes. `--release N` bakes and serves just one (with `--spawn 2`
+    // to keep the host full), for a host whose macOS is older than the newest
+    // guest (a guest cannot be newer than its host) or that lacks the disk for
+    // two images.
     guests: [
       { release: 26, base: "ghcr.io/cirruslabs/macos-tahoe-xcode:latest" },
       { release: 15, base: "ghcr.io/cirruslabs/macos-sequoia-xcode:latest" },
@@ -21,6 +22,8 @@ export const config = {
     cpu: 8,
     memoryMb: 24576,
     spawn: 1,
+    // Virtualization.framework runs at most two macOS guests per host; images x spawn must fit.
+    maxGuests: 2,
   },
 } as const;
 

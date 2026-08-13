@@ -18,6 +18,22 @@ const cleanupLabel = "com.buildkite.cleanup";
 export type TartAgentOptions = { releases: readonly number[]; spawn: number };
 type AgentConfig = { release: number; spawn: number; token: string; home: string };
 
+/** Guests a host runs at once with these agents installed: every agent boots one. */
+export function concurrentGuests({ releases, spawn }: TartAgentOptions): number {
+  return releases.length * spawn;
+}
+
+export function checkTartAgentOptions(options: TartAgentOptions): void {
+  const { releases, spawn } = options;
+  if (!releases.length) fail("no guest releases to serve");
+  const guests = concurrentGuests(options);
+  if (guests > config.tart.maxGuests) {
+    fail(
+      `${releases.length} image(s) x --spawn ${spawn} = ${guests} guests, but macOS runs at most ${config.tart.maxGuests} at once per host`,
+    );
+  }
+}
+
 /** buildkite-agent.cfg for the agents that boot the macOS `release` guest image. */
 export function tartAgentConfig({ release, spawn, token, home }: AgentConfig): string {
   return [
@@ -40,9 +56,10 @@ async function agentToken(): Promise<string> {
   );
 }
 
-export async function installTartAgent({ releases, spawn }: TartAgentOptions): Promise<void> {
+export async function installTartAgent(options: TartAgentOptions): Promise<void> {
+  const { releases, spawn } = options;
   const user = config.ciUser;
-  if (!releases.length) fail("no guest releases to serve");
+  checkTartAgentOptions(options);
   if ((await consoleUser()) !== user)
     fail(`${user} is not logged in at the console; run setup-user, reboot, then retry`);
   for (const release of releases) {
@@ -62,7 +79,6 @@ export async function installTartAgent({ releases, spawn }: TartAgentOptions): P
   await $`sudo install -d -o ${user} -g staff ${builds} ${logs} ${configDir}`;
 
   await $`sudo launchctl bootout system/buildkite-agent`.quiet().nothrow();
-  await $`sudo launchctl bootout system/${cleanupLabel}`.quiet().nothrow();
   await retireTartAgents();
   await $`sudo find ${configDir} -name ${"buildkite-agent*.cfg"} -delete`;
   // the configs below point at installDir's hooks, which look images up the same way these agents are tagged
@@ -123,11 +139,12 @@ export async function installTartAgent({ releases, spawn }: TartAgentOptions): P
 }
 
 /**
- * Stop and remove every agent job on this host, whatever layout installed it, so
- * no job is picked up while the images and hooks underneath them are replaced.
- * Returns the labels retired; nothing to do on a fresh host.
+ * Stop and remove every agent job on this host, whatever layout installed it, and
+ * the nightly reboot that would otherwise fire while the agents are being replaced.
+ * installTartAgent() puts both back. Returns the agent labels retired.
  */
-export async function retireTartAgents(): Promise<string[]> {
+async function retireTartAgents(): Promise<string[]> {
+  await $`sudo launchctl bootout system/${cleanupLabel}`.quiet().nothrow();
   const labels = installedAgentLabels();
   if (!labels.length) return labels;
   const uid = await ciUserId();

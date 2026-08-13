@@ -15,7 +15,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { tartAgentConfig } from "../../../scripts/darwin-ci/lib/agent.ts";
+import { concurrentGuests, tartAgentConfig } from "../../../scripts/darwin-ci/lib/agent.ts";
 import {
   agentGuestRelease,
   config,
@@ -72,6 +72,12 @@ describe("scripts/darwin-ci serves every darwin release-tier that .buildkite/ci.
     expect(guests.map(({ release }) => guestBase(release))).toEqual(guests.map(({ base }) => base));
     const unconfigured = Math.max(...guests.map(({ release }) => release)) + 1;
     expect(guestBase(unconfigured)).toBeUndefined();
+  });
+
+  test("the default agents per image fit the guests a host can run at once", () => {
+    // install-agent refuses anything larger, so a default that did not fit would leave every host unprovisionable
+    const releases = guests.map(({ release }) => release);
+    expect(concurrentGuests({ releases, spawn: config.tart.spawn })).toBeLessThanOrEqual(config.tart.maxGuests);
   });
 
   test("each image's agents are tagged with its release and tier, and the hook boots that image", () => {

@@ -61,6 +61,8 @@ unsafe extern "C" {
 // ============================================================================
 
 const MAX_HISTORY_SIZE: usize = 1000;
+/// Only the tail of a larger history file is read at startup.
+const MAX_HISTORY_FILE_BYTES: usize = 4 * 1024 * 1024;
 const HISTORY_FILENAME: &[u8] = b".bun_repl_history";
 
 // ANSI escape codes
@@ -198,24 +200,54 @@ impl History {
         );
         self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
 
-        let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path) {
-            sys::Result::Ok(bytes) => bytes.into(),
-            sys::Result::Err(_) => return Ok(()),
+        let Some(file) = Self::open_file(path.as_bytes(), sys::O::RDONLY) else {
+            return Ok(());
+        };
+        let Ok(size) = file.get_end_pos() else {
+            return Ok(());
+        };
+        let offset = size.saturating_sub(MAX_HISTORY_FILE_BYTES);
+        let mut content = vec![0u8; size - offset];
+        let Ok(len) = file.pread_all(&mut content, offset as u64) else {
+            return Ok(());
         };
 
-        for line in strings::split(&content, b"\n") {
+        // Newest entries are at the end of the file, so walk it backwards and
+        // stop once MAX_HISTORY_SIZE entries are collected.
+        let mut rest = &content[..len];
+        let mut newest_first: Vec<Box<[u8]>> = Vec::new();
+        loop {
+            let (before, line) = match strings::rsplit_once_char(rest, b'\n') {
+                Some(split) => split,
+                // A tail read starts somewhere inside an older entry.
+                None if offset > 0 => break,
+                None => (&[][..], rest),
+            };
             if !line.is_empty() {
-                self.entries.push(Box::<[u8]>::from(line));
+                newest_first.push(Box::<[u8]>::from(line));
             }
+            if before.is_empty() || newest_first.len() == MAX_HISTORY_SIZE {
+                break;
+            }
+            rest = before;
         }
-
-        // Trim to max size
-        while self.entries.len() > MAX_HISTORY_SIZE {
-            let _ = self.entries.remove(0);
-        }
+        newest_first.reverse();
+        self.entries = newest_first;
 
         self.position = self.entries.len();
         Ok(())
+    }
+
+    /// Without `O_NONBLOCK`, opening a FIFO left at the history path waits for a
+    /// peer and hangs the REPL before it prints anything. The flag has no effect
+    /// on the regular file this accepts.
+    fn open_file(path: &[u8], flags: i32) -> Option<sys::File> {
+        let flags = flags | sys::O::NONBLOCK | sys::O::NOCTTY | sys::O::CLOEXEC;
+        let file = sys::File::openat(Fd::cwd(), path, flags, 0o600).ok()?;
+        match file.kind() {
+            Ok(sys::FileKind::File) => Some(file),
+            _ => None,
+        }
     }
 
     fn save(&mut self) {
@@ -239,15 +271,14 @@ impl History {
             content.push(b'\n');
         }
 
-        let file = match sys::open_a(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o600) {
-            sys::Result::Ok(fd) => sys::File::from_fd(fd),
-            sys::Result::Err(_) => return,
+        let Some(file) = Self::open_file(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC)
+        else {
+            return;
         };
         #[cfg(unix)]
         let _ = sys::fchmod(file.fd(), 0o600);
-        match file.write_all(&content) {
-            sys::Result::Ok(()) => {}
-            sys::Result::Err(_) => return,
+        if file.write_all(&content).is_err() {
+            return;
         }
 
         self.modified = false;

@@ -1,7 +1,8 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { chmodSync, statSync } from "node:fs";
+import { mkfifo } from "mkfifo";
+import { chmodSync, statSync, truncateSync } from "node:fs";
 import path from "path";
 
 // Helper to run REPL with piped stdin (non-TTY mode) and capture output
@@ -10,7 +11,7 @@ async function runRepl(
   options: {
     env?: Record<string, string>;
   } = {},
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+): Promise<{ stdout: string; stderr: string; exitCode: number; maxRSS: number }> {
   const inputStr = Array.isArray(input) ? input.join("\n") + "\n" : input;
   const { env = {} } = options;
 
@@ -32,7 +33,7 @@ async function runRepl(
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();
 
-  return { stdout, stderr, exitCode };
+  return { stdout, stderr, exitCode, maxRSS: proc.resourceUsage()!.maxRSS };
 }
 
 const stripAnsi = Bun.stripANSI;
@@ -1263,6 +1264,115 @@ describe.skipIf(isWindows)("REPL history file permissions", () => {
 
     expect(stripAnsi(stdout)).toContain("Welcome to Bun");
     expect(exitCode).toBe(0);
+  });
+});
+
+// Startup reads $HOME/.bun_repl_history and exit rewrites it, both without any
+// output, so whatever is at that path must not be able to hang the REPL or
+// balloon its memory. See History::load and History::open_file in
+// src/runtime/cli/repl.rs.
+describe.concurrent("REPL history file loading", () => {
+  // MAX_HISTORY_SIZE and MAX_HISTORY_FILE_BYTES in src/runtime/cli/repl.rs.
+  const maxEntries = 1000;
+  const maxFileBytes = 4 * 1024 * 1024;
+
+  const homeEnv = (home: string) => ({ HOME: home, USERPROFILE: home });
+
+  // What the REPL printed after the banner: with piped stdin the input is not
+  // echoed, so this is a "> " prompt per top-level line plus each result.
+  function session(stdout: string) {
+    const output = stripAnsi(stdout);
+    return output.slice(output.indexOf("> "));
+  }
+
+  // Runs one session that evaluates `2 + 2` on top of the given history file
+  // and returns the lines the REPL saved back. Since only entries that were
+  // loaded get saved, this shows exactly what was loaded.
+  async function loadAndSave(home: string) {
+    const { stdout, stderr, exitCode } = await runRepl(["2 + 2", ".exit"], { env: homeEnv(home) });
+    expect({ session: session(stdout), stderr, exitCode }).toEqual({ session: "> \n4\n> \n", stderr: "", exitCode: 0 });
+    const saved = await Bun.file(path.join(home, ".bun_repl_history")).text();
+    return saved.split("\n");
+  }
+
+  test("keeps the newest entries of a file with more than the maximum", async () => {
+    const lines = Array.from({ length: maxEntries + 200 }, (_, i) => `entry_${i}`);
+    using dir = tempDir("repl-history-many", { ".bun_repl_history": lines.join("\n") + "\n" });
+
+    // Adding `2 + 2` to the 1000 loaded entries evicts the oldest of them.
+    expect(await loadAndSave(String(dir))).toEqual([...lines.slice(201), "2 + 2", ""]);
+  });
+
+  // A file larger than the limit is read from the end, and the first line of
+  // that tail is cut off somewhere in the middle, so it is not an entry.
+  async function loadAndSaveFileOfSize(prefix: string, size: number) {
+    const newerEntries = "\nafter_one\nafter_two\n";
+    const firstLine = Buffer.alloc(size - newerEntries.length, "x").toString();
+    using dir = tempDir(prefix, { ".bun_repl_history": firstLine + newerEntries });
+
+    return (await loadAndSave(String(dir))).map(line => (line === firstLine ? "<first line>" : line));
+  }
+
+  test("loads a file exactly at the size limit in full", async () => {
+    expect(await loadAndSaveFileOfSize("repl-history-at-limit", maxFileBytes)).toEqual([
+      "<first line>",
+      "after_one",
+      "after_two",
+      "2 + 2",
+      "",
+    ]);
+  });
+
+  test("loads only the tail of a file over the size limit", async () => {
+    expect(await loadAndSaveFileOfSize("repl-history-over-limit", maxFileBytes + 1)).toEqual([
+      "after_one",
+      "after_two",
+      "2 + 2",
+      "",
+    ]);
+  });
+
+  // Skipped on Windows: node:fs cannot extend a file this far without NTFS
+  // allocating all of it, whereas on POSIX the extension is a hole.
+  test.skipIf(isWindows)("does not read a huge file into memory", async () => {
+    const fileSize = 256 * 1024 * 1024;
+    using emptyHome = tempDir("repl-history-empty", { ".bun_repl_history": "" });
+    using hugeHome = tempDir("repl-history-huge", { ".bun_repl_history": "" });
+    truncateSync(path.join(String(hugeHome), ".bun_repl_history"), fileSize);
+
+    const [empty, huge] = await Promise.all([
+      runRepl([".exit"], { env: homeEnv(String(emptyHome)) }),
+      runRepl([".exit"], { env: homeEnv(String(hugeHome)) }),
+    ]);
+
+    const outcome = ({ stdout, stderr, exitCode }: typeof empty) => ({ session: session(stdout), stderr, exitCode });
+    expect({ empty: outcome(empty), huge: outcome(huge) }).toEqual({
+      empty: { session: "> \n", stderr: "", exitCode: 0 },
+      huge: { session: "> \n", stderr: "", exitCode: 0 },
+    });
+    // Reading the whole file would grow the peak by at least fileSize; the
+    // tail read adds at most maxFileBytes, leaving the rest of the margin for
+    // run-to-run noise.
+    expect(huge.maxRSS - empty.maxRSS).toBeLessThan(fileSize / 2);
+  });
+
+  // Skipped on Windows: FIFOs do not exist in its filesystem namespace.
+  test.skipIf(isWindows)("a FIFO at the history path hangs neither startup nor exit", async () => {
+    using dir = tempDir("repl-history-fifo", {});
+    const historyPath = path.join(String(dir), ".bun_repl_history");
+    mkfifo(historyPath);
+
+    // Nothing ever opens the other end of the FIFO: a blocking open() while
+    // loading history at startup, or while saving the `1 + 1` entry at exit,
+    // hangs the REPL until the test times out.
+    const { stdout, stderr, exitCode } = await runRepl(["1 + 1", ".exit"], { env: homeEnv(String(dir)) });
+
+    expect({ session: session(stdout), stderr, exitCode, stillFifo: statSync(historyPath).isFIFO() }).toEqual({
+      session: "> \n2\n> \n",
+      stderr: "",
+      exitCode: 0,
+      stillFifo: true,
+    });
   });
 });
 

@@ -437,11 +437,8 @@ fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> May
     sys::openat_windows(dirfd, path.as_slice(), flags, mode)
 }
 
-/// What is at `(fd, path)` after `mkdir` reported it as existing — dispatches on path
-/// element width. On Windows `OSPathSliceZ` is already `&WStr`, so forward to the wide
-/// overload instead of narrowing to UTF-8 and re-widening. POSIX is a forwarder.
-/// The error is the probe's own (`ENOENT` for a symlink to nowhere, `ELOOP` for a
-/// symlink loop); callers decide whether to report it.
+/// `sys::exists_at_type` dispatched on path element width: on Windows `OSPathSliceZ`
+/// is already `&WStr`, so forward to the wide overload instead of re-widening.
 #[inline]
 fn exists_at_type_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<sys::ExistsAtType> {
     #[cfg(not(windows))]
@@ -5669,13 +5666,10 @@ impl NodeFS {
                 // it is unclear if macOS lies about if the existing item is
                 // a directory or not, so it is checked.
                 E::EISDIR | E::EEXIST => {
-                    // Same as node's MKDirpSync: an existing directory is success, an
-                    // existing non-directory is the mkdir's EEXIST, and an entry that
-                    // cannot be stat'd (a symlink to nowhere or a symlink loop) is
-                    // reported with the stat error rather than as EEXIST.
                     let errno = match exists_at_type_os_path(FD::INVALID, path) {
                         Ok(sys::ExistsAtType::Directory) => return Ok(StringOrUndefined::None),
                         Ok(sys::ExistsAtType::File) => err.errno,
+                        // Like node: a symlink to nowhere is ENOENT, a symlink loop ELOOP.
                         Err(stat_err) => stat_err.errno,
                     };
                     return Err(sys::Error {
@@ -5750,9 +5744,7 @@ impl NodeFS {
                         // is never observed with its terminator clobbered.
                         match err.get_errno() {
                             E::EEXIST => {
-                                // On Windows, this may happen if trying to mkdir replacing a file.
-                                // Anything else (a directory, or a probe failure) breaks out so
-                                // the mkdir of the next component reports what is wrong.
+                                // On Windows, this may happen if trying to mkdir replacing a file
                                 #[cfg(windows)]
                                 {
                                     if let Ok(sys::ExistsAtType::File) =

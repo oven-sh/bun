@@ -95,11 +95,11 @@ it("retries a manifest whose redirect target 500s once", async () => {
 });
 
 // The registry (reached as `localhost`) redirects the manifest to a second
-// server standing in for a CDN. Whether that hop keeps the token depends only
-// on the hostname: bun install, like npm, keeps it when just the port (or
-// scheme) changes and drops it when the hostname changes. Either way the
-// install retry restarts from the original registry URL and must carry the
-// original headers, including Authorization, again.
+// server standing in for a CDN, and the retry restarts from the registry URL.
+// 127.0.0.1 is a different hostname, so that hop strips the token and the
+// retry must carry the original headers again; localhost:<other port> keeps
+// it, and the retry must apply the same rule. Which redirects keep the token
+// is covered by "registry token across redirects" in bun-install.test.ts.
 const token = "test-registry-token";
 it.each([
   { cdnHost: "localhost", expectedCdnAuth: [`Bearer ${token}`, `Bearer ${token}`] },

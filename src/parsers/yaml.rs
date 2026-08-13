@@ -772,13 +772,7 @@ impl<Enc: Encoding> YamlString<Enc> {
     }
 
     pub(crate) fn to_expr(&self, pos: Pos, input: &[Enc::Unit], bump: &bun_alloc::Arena) -> Expr {
-        // For `Utf16` we route through `E::String::init_utf16`.
-        //
-        // LIFETIME: `YamlString::List` is a global-alloc `Vec` that is
-        // dropped with the scalar token shortly after this returns — the
-        // resulting `EString.data` would dangle. Dupe the list bytes into
-        // the bump arena; `.range` already borrows `input` (source text)
-        // which outlives the Expr → JS conversion.
+        // A `List` is freed with the token, so the Expr gets a copy that lives in the arena.
         let s: &[Enc::Unit] = match self {
             YamlString::Range(range) => range.slice(input),
             YamlString::List(list) => bump.alloc_slice_copy(list.as_slice()),
@@ -962,8 +956,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         let line_indent = self.line_indent;
         let line = self.line;
         let resolved_scalar_len = self.resolved_scalar_len;
-        // The first characters may have resolved to something that more
-        // characters then followed (`true_story`); that is a string.
+        // A resolved prefix that more text followed (`true_story`) is a string.
         let resolved = self
             .scalar
             .filter(|_| self.str_builder.len() == resolved_scalar_len);
@@ -1514,10 +1507,7 @@ impl NodeTag {
         }
     }
 
-    /// Whether a plain scalar the core schema resolves to `scalar` is that
-    /// value under this tag. Otherwise the scalar is its text: a tag of
-    /// another kind only switches the core-schema resolution off, it does
-    /// not validate the text (`!!int foo` is the string "foo").
+    /// Whether a plain scalar resolving to `scalar` keeps it under this tag; otherwise it is its text.
     pub(crate) fn keeps(self, scalar: NodeScalar) -> bool {
         match self {
             NodeTag::None => true,
@@ -1531,8 +1521,7 @@ impl NodeTag {
     }
 }
 
-/// [10.2.1.2] What the core schema resolves a plain scalar's text to when
-/// that is not a string.
+/// [10.2.1.2] Core-schema value of a plain scalar that is not a string.
 #[derive(Clone, Copy)]
 pub enum NodeScalar {
     Null,
@@ -1682,10 +1671,7 @@ pub enum TokenData<Enc: Encoding> {
 #[derive(Clone)]
 pub struct TokenScalar<Enc: Encoding> {
     pub(crate) text: YamlString<Enc>,
-    /// The core-schema value of a plain `text`, if it has one. Whether the
-    /// node is that value or `text` depends on the node's tag, which only
-    /// the parser knows (the token after a property may not even belong to
-    /// the tagged node), so the scanner records both and `to_expr` decides.
+    /// Core-schema value of a plain `text`; only the parser knows the tag that picks between them.
     pub(crate) resolved: Option<NodeScalar>,
     pub(crate) style: ScalarStyle,
 }
@@ -4110,10 +4096,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         _ => unreachable!("token.data was Scalar at match guard"),
                     };
 
-                    // The collected properties are this scalar's, unless it
-                    // turns out to be an implicit key they precede on an
-                    // earlier line: then they are the [200] block mapping's
-                    // (the tag analogue of `take_implicit_key_anchors`).
                     let tag = node_props.tag();
 
                     let json_key = if scalar.style == ScalarStyle::Quoted {
@@ -4189,6 +4171,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             break 'node scalar.to_expr(tag, scalar_start, self.input, self.bump);
                         }
 
+                        // [200] A tag on an earlier line is the mapping's, like the anchors below.
                         let key_tag = if node_props.tag_line() == Some(scalar_line) {
                             tag
                         } else {

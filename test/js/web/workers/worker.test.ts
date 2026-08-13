@@ -547,18 +547,28 @@ describe("web worker", () => {
     });
 
     // process.exit() stops the worker at the call (Node's Stop): the 'exit'
-    // handlers it runs first are the last script; the reactions queued before
-    // it never run, so neither does the process.exit(42) in one of them. What
+    // handlers it runs first are the last script; the reactions and nextTicks
+    // queued before it never run (so neither does the process.exit(42) in one
+    // of them), whether it is called from the top level or from an event
+    // handler, whose dispatcher runs a checkpoint of its own afterwards. What
     // ran is recorded in shared memory, read once the worker is gone.
-    test("process.exit() does not run the microtasks queued before it", async () => {
+    test.each([
+      ["the top level", "exit();"],
+      ["an onmessage handler", "self.onmessage = exit;"],
+    ])("process.exit() from %s does not run what was queued before it", async (_, trigger) => {
       const log = new Int32Array(new SharedArrayBuffer(4 * 8));
       const src = `const log = require("node:worker_threads").workerData;
         const put = tag => Atomics.store(log, Atomics.add(log, 0, 1) + 1, tag);
         process.on("exit", () => put(1));
-        Promise.resolve().then(() => { put(2); process.exit(42); });
-        queueMicrotask(() => put(3));
-        process.exit(0);`;
+        function exit() {
+          Promise.resolve().then(() => { put(2); process.exit(42); });
+          queueMicrotask(() => put(3));
+          process.nextTick(() => put(4));
+          process.exit(0);
+        }
+        ${trigger}`;
       const w = new Worker(URL.createObjectURL(new Blob([src])), { workerData: log });
+      w.postMessage("go");
       const [ev] = await once(w, "close");
       expect({ code: ev.code, ran: Array.from(log.slice(1, 1 + log[0])) }).toEqual({ code: 0, ran: [1] });
     });

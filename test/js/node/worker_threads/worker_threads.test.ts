@@ -2733,17 +2733,18 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
   });
 });
 
-// A worker that stops by its own script's decision (process.exit(), an uncaught
-// error) is stopped at that request, as Node's Stop(env) stops it: the promise
-// reactions and queueMicrotask callbacks queued before the request never run
-// ('exit' handlers do: process.exit() runs them before requesting the stop),
+// A worker is stopped at the request that stops it, its own script's
+// (process.exit(), an uncaught error) or its parent's terminate(), as Node's
+// Stop(env) stops it: the promise reactions, queueMicrotask callbacks and
+// nextTicks queued before the request never run ('exit' handlers do for the
+// worker's own requests: process.exit() runs them before making the request),
 // and the request's code is the exit code whatever else happens to run. Each
 // worker records what ran in shared memory its parent reads after 'exit', so
 // nothing here depends on the dying thread delivering anything; the parent is
 // a subprocess so that the worker's uncaught error is its parent's 'error'
 // event and not this test's. The fixtures print the same results under Node.
-describe("a worker's own exit discards what it queued before it", () => {
-  const TAG = { exitHandler: 1, then: 2, microtask: 3 } as const;
+describe("stopping a worker discards what it queued before the request", () => {
+  const TAG = { exitHandler: 1, then: 2, microtask: 3, nextTick: 4 } as const;
   type Entry = "eval" | ".cjs" | ".mjs";
   const workerSource = (entry: Entry, body: string) => `
     ${
@@ -2756,12 +2757,15 @@ describe("a worker's own exit discards what it queued before it", () => {
     const queueLeaks = () => {
       Promise.resolve().then(() => put(${TAG.then}));
       queueMicrotask(() => put(${TAG.microtask}));
+      process.nextTick(() => put(${TAG.nextTick}));
     };
     process.on("exit", () => put(${TAG.exitHandler}));
     ${body}
   `;
   // "go" is delivered once the worker's top level has run; a worker that exits
-  // from its top level is gone before that and the message is dropped.
+  // from its top level is gone before that and the message is dropped. A worker
+  // that asks to be terminated is terminated while whatever asked is still on
+  // its stack.
   const parentSource = (entry: Entry, body: string) => `
     import { Worker } from "node:worker_threads";
     const log = new Int32Array(new SharedArrayBuffer(4 * 16));
@@ -2772,6 +2776,7 @@ describe("a worker's own exit discards what it queued before it", () => {
     };
     const errors = [];
     w.on("error", e => errors.push(e.message));
+    w.on("message", () => w.terminate());
     w.on("exit", code => {
       const n = Math.min(Atomics.load(log, 0), log.length - 1);
       console.log(JSON.stringify({ code, tags: Array.from(log.slice(1, 1 + n)), errors }));
@@ -2829,6 +2834,19 @@ describe("a worker's own exit discards what it queued before it", () => {
       code: 1,
       tags: [TAG.exitHandler],
       errors: ["boom"],
+    });
+  });
+
+  test.concurrent("terminate() landing inside an event callback", async () => {
+    // The callback never returns on its own; the parent's terminate() unwinds
+    // it, and the checkpoint its dispatcher runs afterwards has nothing left to
+    // run. A terminated worker runs no 'exit' handlers and exits 1.
+    expect(
+      await run(`parentPort.on("message", () => { queueLeaks(); parentPort.postMessage("terminate"); for (;;) {} });`),
+    ).toEqual({
+      code: 1,
+      tags: [],
+      errors: [],
     });
   });
 

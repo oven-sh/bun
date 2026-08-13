@@ -5363,7 +5363,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     // if it's a file descriptor, we assume they want manual control over that behavior
     scopeguard::defer! {
         if truncate.get() {
-            let _ = bun_sys::ftruncate(fd, i64::try_from(written.get()).expect("int cast"));
+            let _ = bun_sys::ftruncate_if_longer(fd, i64::try_from(written.get()).expect("int cast"));
         }
     }
 
@@ -5480,7 +5480,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             bun_sys::windows::kernel32::SetEndOfFile(fd.native())
         };
         #[cfg(not(windows))]
-        let _ = bun_sys::ftruncate(fd, i64::try_from(written).expect("int cast"));
+        let _ = bun_sys::ftruncate_if_longer(fd, i64::try_from(written).expect("int cast"));
     }
 
     JSPromise::resolved_promise_value(global_this, JSValue::js_number(written as f64))

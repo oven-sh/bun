@@ -2589,13 +2589,10 @@ pub mod parse_worker {
             opts.lower_import_meta_main_for_node_js = true;
         }
 
-        // `import.meta` is a syntax error outside of an ES module. cjs output is
-        // never a module (for bun it is evaluated through the `@bun-cjs` function
-        // wrapper, which is also what `--bytecode` compiles), and iife output is a
-        // script everywhere except for bun, which loads its `// @bun` output as a
-        // module. The runtime source is excluded: its only `import.meta` uses are
-        // the `__require` definitions (RUNTIME_REQUIRE_*), which an empty object
-        // could not satisfy.
+        // `import.meta` is a syntax error outside of an ES module: cjs output
+        // never is one, and iife output is a script except on bun, which loads
+        // `// @bun` output as a module. The runtime's `__require` definitions
+        // need the real `import.meta`, so the runtime is excluded.
         opts.lower_import_meta = !task.source_index.is_runtime()
             && match output_format {
                 options::Format::Cjs => true,

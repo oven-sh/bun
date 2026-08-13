@@ -3203,6 +3203,7 @@ pub mod bv2_impl {
                                 bake::Graph::Server
                             },
                             abs_path,
+                            None,
                             // SAFETY: `transpiler` points at one of self's transpilers, live for `'a`.
                             unsafe { (*transpiler).log }.cast_const(),
                             std::ptr::from_mut(self),
@@ -4592,6 +4593,8 @@ pub mod bv2_impl {
                     if let Some(dev) = this.dev_server {
                         let source = &this.graph.input_files.items_source()
                             [load.source_index.get() as usize];
+                        let loader =
+                            this.graph.input_files.items_loader()[load.source_index.get() as usize];
                         // A stack-allocated Log object containing the singular message
                         let kind = msg.kind;
                         let temp_log = bun_ast::Log {
@@ -4605,6 +4608,7 @@ pub mod bv2_impl {
                             crate::Error::Plugin,
                             load.bake_graph(),
                             source.path.key_for_incremental_graph(),
+                            Some(loader),
                             &raw const temp_log,
                             this,
                         )
@@ -5378,6 +5382,7 @@ pub mod bv2_impl {
                                         crate::Error::InvalidCssImport,
                                         bake::Graph::Client,
                                         sources[index].path.text,
+                                        Some(loaders[index]),
                                         &raw const log,
                                         self,
                                     )
@@ -6480,10 +6485,15 @@ pub mod bv2_impl {
 
                 if let Some(dev_server) = self.dev_server_handle() {
                     'brk: {
-                        if path.loader(&self.transpiler.options.loaders) == Some(Loader::Html)
-                            && (import_record.loader.is_none()
-                                || import_record.loader.unwrap() == Loader::Html)
-                        {
+                        // The loader the import will use: `with { type: "html" }` makes
+                        // it html whatever the extension is.
+                        let imported_as_html = match import_record.loader {
+                            Some(loader) => loader == Loader::Html,
+                            None => {
+                                path.loader(&self.transpiler.options.loaders) == Some(Loader::Html)
+                            }
+                        };
+                        if imported_as_html {
                             // This use case is currently not supported. This error
                             // blocks an assertion failure because the DevServer
                             // reserves the HTML file's spot in IncrementalGraph for the
@@ -7358,17 +7368,20 @@ pub mod bv2_impl {
                 parse_task::ResultValue::Err(err) => {
                     if process_log {
                         if let Some(dev_server) = this.dev_server {
-                            // Copy out the `'static` path slice so the `input_files`
-                            // borrow ends before we coerce `this` to `*mut _`.
+                            // Copy out the `'static` path slice and the loader so the
+                            // `input_files` borrow ends before we coerce `this` to `*mut _`.
                             let abs_path: &'static [u8] = this.graph.input_files.items_source()
                                 [err.source_index.get() as usize]
                                 .path
                                 .text;
+                            let loader = this.graph.input_files.items_loader()
+                                [err.source_index.get() as usize];
                             dev_server
                                 .handle_parse_task_failure(
                                     err.err,
                                     err.target.bake_graph(),
                                     abs_path,
+                                    Some(loader),
                                     &raw const err.log,
                                     std::ptr::from_mut(this),
                                 )

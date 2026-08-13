@@ -109,10 +109,11 @@ pub struct File {
     pub(crate) kind: FileKind,
     /// If the file has an error, the failure can be looked up in `dev.bundling_failures`.
     pub(crate) failed: bool,
-    /// The loader this file was last bundled with, `None` until it has been
-    /// bundled once. The loader can come from the importer's `with { type }`
+    /// The loader of this file's last bundle attempt, `None` until there has
+    /// been one. The loader can come from the importer's `with { type }`
     /// attribute rather than the file extension, and a rebundle of the file
-    /// (which receives it as a bare path entry point) must use the same one.
+    /// (which receives it as a bare path entry point) must use the same one;
+    /// read it through [`File::rebundle_loader`].
     pub(crate) loader: Option<Loader>,
     // ── server-side ────────────────────────────────────────────────────
     pub(crate) is_rsc: bool,
@@ -131,6 +132,19 @@ impl File {
     #[inline]
     pub(crate) fn file_kind(&self) -> FileKind {
         self.kind
+    }
+
+    /// The loader to bundle this file with when it is queued by path alone.
+    /// A route's HTML file is bundled as the route even if client code also
+    /// imported it with another loader (the graph has one entry per path, so
+    /// such an import may have recorded its own loader here first).
+    #[inline]
+    pub(crate) fn rebundle_loader(&self) -> Option<Loader> {
+        if self.html_route_bundle_index.is_some() {
+            Some(Loader::Html)
+        } else {
+            self.loader
+        }
     }
 
     /// `ServerFile.stopsDependencyTrace` / `ClientFile.stopsDependencyTrace`.
@@ -355,13 +369,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         self.bundled_files
             .get_index(abs_path)
             .map(|i| FileIndex::init(i as u32))
-    }
-
-    /// `IncrementalGraph(.client).htmlRouteBundleIndex`.
-    pub(crate) fn html_route_bundle_index(&self, index: FileIndex<SIDE>) -> route_bundle::Index {
-        self.bundled_files.values()[index.get() as usize]
-            .html_route_bundle_index
-            .expect("html_route_bundle_index on non-HTML file")
     }
 
     // ── per-bundle scratch accessors (kept for existing call sites) ────────
@@ -1425,9 +1432,15 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     }
 
     /// `IncrementalGraph(side).insertFailure` (spec :1419).
+    ///
+    /// `loader` is the loader of the attempt that failed, when the caller
+    /// knows it (`None` keeps whatever the file has recorded), so that a file
+    /// whose very first bundle fails is still rebundled with the loader its
+    /// importer chose once it is fixed.
     pub(crate) fn insert_failure(
         &mut self,
         key: InsertFailureKey<'_>,
+        loader: Option<Loader>,
         log: &bun_ast::Log,
         is_ssr_graph: bool,
     ) -> Result<(), bun_alloc::AllocError> {
@@ -1483,6 +1496,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     f.failed = true;
                 }
             }
+        }
+        if loader.is_some() {
+            self.bundled_files.values_mut()[idx].loader = loader;
         }
 
         // SAFETY: see `owner()`.
@@ -1562,7 +1578,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             debug_assert_eq!(dep.imported.get(), index.get());
             let dependency = dep.dependency.get() as usize;
             let key = &self.bundled_files.keys()[dependency];
-            let loader = self.bundled_files.values()[dependency].loader;
+            let loader = self.bundled_files.values()[dependency].rebundle_loader();
             bun_core::handle_oom(
                 bv2.enqueue_file_from_dev_server_incremental_graph_invalidation(
                     key, target, loader,

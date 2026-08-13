@@ -1166,9 +1166,9 @@ bun_bundler::link_impl_DevServerHandle! {
             super::dev_server_body::finalize_bundle(&mut *this, &mut *bv2.cast(), &mut *result)
                 .map_err(|e| bun_bundler::Error::from(crate::Error::from(e)))
         },
-        handle_parse_task_failure(err, graph, abs_path, log, bv2) => {
+        handle_parse_task_failure(err, graph, abs_path, loader, log, bv2) => {
             (*this)
-                .handle_parse_task_failure(&err.into(), graph, abs_path, &*log, &mut *bv2)
+                .handle_parse_task_failure(&err.into(), graph, abs_path, loader, &*log, &mut *bv2)
                 .map_err(Into::into)
         },
         put_or_overwrite_asset(path, contents, content_hash) => {

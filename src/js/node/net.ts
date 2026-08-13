@@ -2197,14 +2197,19 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     } else if (this._closeAfterHandlingError) {
       // Enqueue closing the socket as a microtask, so that the socket can be
       // accessible when an `error` event is handled in the `next tick queue`.
-      queueMicrotask(() => closeSocketHandle(this, isException, true));
+      // Close the handle captured above rather than re-reading _handle: when
+      // the TLS engine runs over a stream (upgradeDuplexToTLS) its close
+      // callback fires right after the failed handshake that brought us here
+      // and detaches _handle before this microtask runs. Nothing else emits
+      // 'close' once _destroy has run, so the deferred close must not bail.
+      queueMicrotask(() => closeSocketHandle(this, currentHandle, isException, true));
     } else if (currentHandle[kAdoptedTLSRaw]) {
       // Shared-fd TLS pair: defer the close two check-phase turns
       // (test-tls-socket-close); see closeAdoptedTLSRawNT.
       currentHandle.pause?.();
       setImmediate(closeAdoptedTLSRawNT, currentHandle, this, isException);
     } else {
-      closeSocketHandle(this, isException);
+      closeSocketHandle(this, currentHandle, isException);
     }
 
     if (!this._closeAfterHandlingError) {
@@ -4272,25 +4277,25 @@ function initSocketHandle(self) {
 // intercepts close on `socket._handle` and invokes it, so always pass one.
 function onSocketHandleClosed() {}
 
-function closeSocketHandle(self, isException, isCleanupPending = false) {
-  const handle = self._handle;
-  $debug("closeSocketHandle", isException, isCleanupPending, !!handle);
-  if (handle) {
-    handle.close(onSocketHandleClosed);
-    setImmediate(() => {
-      $debug("emit close", isCleanupPending);
-      self.emit("close", isException);
-      if (isCleanupPending) {
-        // A second destroy() before this runs clears self._handle, and a
-        // re-attach replaces it - only tear down the handle captured here.
-        handle.onread = noop;
-        if (self._handle === handle) {
-          self._handle = null;
-          self._sockname = null;
-        }
+// Closes the handle _destroy found on the socket and emits 'close' for it. The
+// handle may have closed natively and detached itself (self._handle is null by
+// now) in the meantime; closing it again is a no-op and 'close' is still owed.
+function closeSocketHandle(self, handle, isException, isCleanupPending = false) {
+  $debug("closeSocketHandle", isException, isCleanupPending);
+  handle.close(onSocketHandleClosed);
+  setImmediate(() => {
+    $debug("emit close", isCleanupPending);
+    self.emit("close", isException);
+    if (isCleanupPending) {
+      // A second destroy() before this runs clears self._handle, and a
+      // re-attach replaces it - only tear down the handle captured here.
+      handle.onread = noop;
+      if (self._handle === handle) {
+        self._handle = null;
+        self._sockname = null;
       }
-    });
-  }
+    }
+  });
 }
 
 // Reformat a native listen error to Node's "listen <CODE>: <description> <addr>"

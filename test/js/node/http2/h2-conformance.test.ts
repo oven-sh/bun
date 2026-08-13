@@ -800,6 +800,124 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
   });
 });
 
+describe("promised stream ids (RFC 9113 §5.1.1)", () => {
+  /** A raw server with a connected `http2.connect()` client that has `requests` requests in
+   *  flight (streams 1, 3, ...) and the SETTINGS exchange done. Pushed streams delivered to the
+   *  client are collected in `pushedIds`. */
+  async function clientWithRawServer(requests = 1) {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    const errors: any[] = [];
+    client.on("error", err => errors.push(err));
+    const sessionClosed = new Promise<void>(resolve => client.once("close", resolve));
+    const pushedIds: number[] = [];
+    client.on("stream", (pushed: any) => {
+      pushedIds.push(pushed.id);
+      pushed.on("error", () => {});
+    });
+    const reqs: http2.ClientHttp2Stream[] = [];
+    for (let i = 0; i < requests; i++) {
+      const req = client.request({ ":path": `/${i}` });
+      req.on("error", () => {});
+      reqs.push(req);
+    }
+    await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 2 * requests - 1);
+    raw.sendFrame(FrameType.SETTINGS, 0, 0);
+    raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+    /** PUSH_PROMISE on stream 1 reserving `promisedId`. */
+    function sendPushPromise(promisedId: number) {
+      const promised = Buffer.alloc(4);
+      promised.writeUInt32BE(promisedId, 0);
+      raw.sendFrame(
+        FrameType.PUSH_PROMISE,
+        0x4 /* END_HEADERS */,
+        1,
+        Buffer.concat([promised, requestHeaderBlock("GET")]),
+      );
+    }
+    /** A legal PUSH_PROMISE: resolves with the pushed stream once the client has delivered it. */
+    async function pushPromise(promisedId: number): Promise<http2.ClientHttp2Stream> {
+      const delivered = once(client, "stream");
+      sendPushPromise(promisedId);
+      const [pushed] = await delivered;
+      return pushed;
+    }
+    async function expectSessionProtocolError() {
+      const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY);
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.PROTOCOL_ERROR);
+      await sessionClosed;
+      expect(errors.map(err => err.code)).toEqual(["ERR_HTTP2_ERROR"]);
+      expect(client.destroyed).toBe(true);
+    }
+    /** PING round trip: the client has finished processing everything sent before it, and the
+     *  connection is still alive. */
+    async function ping() {
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+    }
+    function close() {
+      client.destroy();
+      raw.close();
+    }
+    return { raw, reqs, errors, pushedIds, sendPushPromise, pushPromise, expectSessionProtocolError, ping, close };
+  }
+
+  test("a PUSH_PROMISE whose promised id does not exceed the previous one is a connection PROTOCOL_ERROR", async () => {
+    const peer = await clientWithRawServer();
+    try {
+      await peer.pushPromise(4);
+      peer.sendPushPromise(2);
+      await peer.expectSessionProtocolError();
+      expect(peer.pushedIds).toEqual([4]);
+    } finally {
+      peer.close();
+    }
+  });
+
+  test("a PUSH_PROMISE reusing the id of a pushed stream the server already reset is a connection PROTOCOL_ERROR", async () => {
+    const peer = await clientWithRawServer();
+    try {
+      const pushed = await peer.pushPromise(2);
+      const pushedClosed = new Promise<void>(resolve => pushed.once("close", resolve));
+      const cancel = Buffer.alloc(4);
+      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+      peer.raw.sendFrame(FrameType.RST_STREAM, 0, 2, cancel);
+      await pushedClosed;
+      // Stream 2 is closed on the client and its state released, but the id stays used up.
+      await peer.ping();
+      peer.sendPushPromise(2);
+      await peer.expectSessionProtocolError();
+      expect(peer.pushedIds).toEqual([2]);
+    } finally {
+      peer.close();
+    }
+  });
+
+  // The mark a promised id is checked against only counts the server's ids: the client's own
+  // requests are numbered above the push here (the response on stream 3 has already been
+  // received), and that must not make promised id 2 look reused.
+  test("a promised id below the client's own stream ids is accepted", async () => {
+    const peer = await clientWithRawServer(2);
+    try {
+      const response = once(peer.reqs[1], "response");
+      peer.raw.sendFrame(
+        FrameType.HEADERS,
+        0x5 /* END_STREAM | END_HEADERS */,
+        3,
+        Buffer.from([0x88]) /* :status 200 */,
+      );
+      await response;
+      await peer.pushPromise(2);
+      await peer.ping();
+      expect(peer.pushedIds).toEqual([2]);
+      expect(peer.raw.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+      expect(peer.errors).toEqual([]);
+    } finally {
+      peer.close();
+    }
+  });
+});
+
 describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {
   // Regression coverage for the test-http2-pipe failure mode: the server responds and ends its
   // side before the request body arrives, the request body is piped into a backpressured

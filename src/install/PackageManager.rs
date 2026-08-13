@@ -2558,7 +2558,7 @@ fn init_with_runtime_once(
         let uws_loop = unsafe { &mut *uws_loop };
         EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop);
         if let AnyEventLoop::Mini(mini) = &mut manager.event_loop {
-            let mini_ptr: *mut MiniEventLoop<'static> = &raw mut **mini;
+            let mini_ptr: *mut MiniEventLoop = &raw mut **mini;
             mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
         }
     }

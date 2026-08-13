@@ -89,8 +89,7 @@ pub struct JSBundleCompletionTask {
     /// `configure_bundler`.
     pub(crate) global_cache: options::GlobalCache,
     pub(crate) install: Option<NonNull<api::BunInstall>>,
-    pub(crate) prefer_offline_install: bool,
-    pub(crate) prefer_latest_install: bool,
+    pub(crate) install_preference: options::OfflineMode,
 }
 
 #[repr(u8)]
@@ -173,8 +172,7 @@ pub(crate) fn create_and_schedule_completion_task(
         // it into `Transpiler.options` (and transitively the resolver).
         global_cache: vm_opts.global_cache,
         install: vm_opts.install,
-        prefer_offline_install: vm_opts.prefer_offline_install,
-        prefer_latest_install: vm_opts.prefer_latest_install,
+        install_preference: vm_opts.install_preference,
     }));
     // SAFETY: freshly-boxed allocation with ref_count == 1; sole handle.
     unsafe {
@@ -1116,8 +1114,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         // auto-install missing packages from the global cache or npm.
         transpiler.options.global_cache = self.global_cache;
         transpiler.options.install = self.install;
-        transpiler.options.prefer_offline_install = self.prefer_offline_install;
-        transpiler.options.prefer_latest_install = self.prefer_latest_install;
+        transpiler.options.install_preference = self.install_preference;
 
         transpiler.configure_linker();
         transpiler.configure_defines()?;

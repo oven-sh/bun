@@ -174,7 +174,8 @@ test("mocking a builtin", async () => {
 // has to be resolved against the file the callback was defined in. Each scenario imports the module
 // first: the mock only takes effect if the specifier resolves to the path that is already loaded.
 describe("mock.module() tail-called from a callback the runner invokes", () => {
-  async function runBunTest(dir: string, ...args: string[]) {
+  // bun test reports to stderr; the inner test's failure output ends up in the assertion message.
+  async function expectBunTestToPass(dir: string, passing: number, ...args: string[]) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", ...args],
       cwd: dir,
@@ -182,8 +183,11 @@ describe("mock.module() tail-called from a callback the runner invokes", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    return { stderr, exitCode };
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({
+      stderr: expect.stringContaining(` ${passing} pass\n`),
+      exitCode: 0,
+    });
   }
 
   const dep = `export const value = "real";\n`;
@@ -209,9 +213,7 @@ describe("mock.module() tail-called from a callback the runner invokes", () => {
       `,
     });
 
-    const { stderr, exitCode } = await runBunTest(String(dir), "tail.test.ts");
-    expect(stderr).toContain(` ${passing} pass`);
-    expect(exitCode).toBe(0);
+    await expectBunTestToPass(String(dir), passing, "tail.test.ts");
   });
 
   test.concurrent("a package specifier is resolved to the loaded package", async () => {
@@ -226,9 +228,7 @@ describe("mock.module() tail-called from a callback the runner invokes", () => {
       `,
     });
 
-    const { stderr, exitCode } = await runBunTest(String(dir), "tail.test.ts");
-    expect(stderr).toContain(" 1 pass");
-    expect(exitCode).toBe(0);
+    await expectBunTestToPass(String(dir), 1, "tail.test.ts");
   });
 
   test.concurrent("a hook from --preload resolves against the preload file, not the test file", async () => {
@@ -249,8 +249,6 @@ describe("mock.module() tail-called from a callback the runner invokes", () => {
       `,
     });
 
-    const { stderr, exitCode } = await runBunTest(String(dir), "--preload", "./setup/preload.ts", "app.test.ts");
-    expect(stderr).toContain(" 1 pass");
-    expect(exitCode).toBe(0);
+    await expectBunTestToPass(String(dir), 1, "--preload", "./setup/preload.ts", "app.test.ts");
   });
 });

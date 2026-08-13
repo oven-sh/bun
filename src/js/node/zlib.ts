@@ -586,11 +586,9 @@ function Zlib(opts, mode) {
 }
 $toClass(Zlib, "Zlib", ZlibBase);
 
-// This callback is used by `.params()` to wait until a full flush happened before adjusting the parameters.
-// In particular, the call to the native `params()` function must not happen while a write is in progress on the
-// threadpool (the handle throws ERR_INVALID_STATE). Node makes the call from the flush's write callback, but the
-// writable machinery hands the next buffered chunk to the handle before it runs write callbacks, so a write() queued
-// behind the params() call would already be in flight by then; processCallback() runs this as the flush retires.
+// Runs once the Z_SYNC_FLUSH issued by .params() has retired. Unlike node this is not the flush's write callback:
+// the writable machinery dispatches the next buffered chunk before running write callbacks, and the native params()
+// throws while a write is in flight, so processCallback() invokes it through kAfterFlush instead.
 function paramsAfterFlushCallback(level, strategy, callback) {
   $assert(this._handle, "zlib binding closed");
   this._handle.params(level, strategy);
@@ -601,8 +599,7 @@ function paramsAfterFlushCallback(level, strategy, callback) {
   }
 }
 
-// The user's callback still runs as the flush's write callback, i.e. at the same point as in node, so that a
-// write() or end() issued from it is dispatched the same way. It is skipped if applying the parameters failed.
+// The user's callback keeps node's timing: it is the flush's write callback (test-zlib-params.js depends on this).
 function paramsWriteCallback(callback) {
   if (!this.destroyed) callback();
 }
@@ -613,8 +610,7 @@ Zlib.prototype.params = function params(level, strategy, callback) {
 
   if (this._level !== level || this._strategy !== strategy) {
     if (this.writableEnded) {
-      // Nothing can be queued behind the Z_FINISH chunk anymore, but _final() above lets 'finish' fire while that
-      // chunk may still be on the threadpool; the handle is idle again once it has produced 'end'.
+      // 'finish' fires while the Z_FINISH chunk may still be in flight (see _final); the handle is idle again at 'end'.
       this.once("end", paramsAfterFlushCallback.bind(this, level, strategy, callback));
     } else {
       const flush = Buffer.from(dummyArrayBuffer);

@@ -3996,20 +3996,26 @@ CREATE TABLE ${table_name} (
       }
     });
     test("reserve connection", async () => {
-      const sql = postgres({ ...options, max: 1 });
+      await using sql = postgres({ ...options, max: 1 });
       const reserved = await sql.reserve();
 
-      setTimeout(() => reserved.release(), 510);
+      const resolved: number[] = [];
+      const track = (query: Promise<{ x: number }[]>) =>
+        query.then(([{ x }]) => {
+          resolved.push(x);
+        });
 
-      const xs = await Promise.all([
-        reserved`select 1 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
-        sql`select 2 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
-        reserved`select 3 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
-      ]);
+      const first = track(reserved`select 1 as x`);
+      // max is 1 and that one connection is reserved, so the pool cannot run this until release()
+      const pooled = track(sql`select 2 as x`);
+      const third = track(reserved`select 3 as x`);
 
-      if (xs[1].time - xs[2].time < 500) throw new Error("Wrong time");
+      await Promise.all([first, third]);
+      expect(resolved).toEqual([1, 3]);
 
-      expect(xs.map(x => x.x).join("")).toBe("123");
+      await reserved.release();
+      await pooled;
+      expect(resolved).toEqual([1, 3, 2]);
     });
 
     test("keeps process alive when it should", async () => {

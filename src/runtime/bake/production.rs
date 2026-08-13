@@ -112,11 +112,13 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // SAFETY: `init_bake` returns a freshly-allocated VM owned by this thread;
     // unique access for the rest of this function.
     let vm = unsafe { &mut *vm_ptr };
-    // defer vm.deinit() — handled by `vm.destroy()` on the unwind path below.
+    // Runs only on the `Err` return below (a bundler or I/O failure). Every
+    // other way out of this function exits the process, and the normal one,
+    // `global_exit()` at the end, tears the VM down itself.
     // Note: pass `vm_ptr` by value into the guard so the drop closure does
     // not borrow the local (`defer!` would capture `&vm_ptr`, which under
     // edition-2024 disjoint-capture rules collides with the `&mut *vm_ptr`
-    // re-borrows on the JSError path).
+    // re-borrows below).
     let _vm_guard = scopeguard::guard(vm_ptr, |p| {
         // SAFETY: p is the unique live VM on this thread; its loop is alive, so
         // queued work is released here rather than by a thread teardown.
@@ -211,28 +213,32 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // LIFO order — under the API lock, before the VM is destroyed.
     let mut pt = PerThread::placeholder(vm_ptr);
 
-    match build_with_vm(ctx, &cwd, &mut pt) {
+    let result = build_with_vm(ctx, &cwd, &mut pt);
+    // SAFETY: the reborrows `build_with_vm` made through `pt.vm` died when it
+    // returned, so this frame has exclusive access again; the VM stays
+    // allocated until `global_exit` (or `_vm_guard`) destroys it.
+    let vm = unsafe { &mut *vm_ptr };
+    match result {
         Ok(()) => {}
         Err(crate::Error::JSError) => {
-            // SAFETY: vm.global is live for VM lifetime.
-            let global = unsafe { &*(*vm_ptr).global };
-            let err_value = global.take_exception(jsc::JsError::Thrown);
-            // SAFETY: see above.
-            unsafe {
-                (*vm_ptr)
-                    .print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value))
-            };
-            // SAFETY: see above.
-            let vm = unsafe { &mut *vm_ptr };
+            let err_value = vm.global().take_exception(jsc::JsError::Thrown);
+            vm.print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value));
             if vm.exit_handler.exit_code == 0 {
                 vm.exit_handler.exit_code = 1;
             }
-            vm.on_exit();
-            vm.global_exit();
         }
         Err(e) => return Err(e),
     }
-    Ok(())
+
+    // A rendered build exits the same way a failed one does: `on_exit` runs the
+    // `process.on("exit")` handlers the config and prerender registered, and
+    // `global_exit` exits with `process.exitCode`, tearing the VM down first
+    // under BUN_DESTRUCT_VM_ON_EXIT. Returning `Ok` instead would free only the
+    // Rust side of the VM (`_vm_guard`); the JSC heap would never be destroyed,
+    // so the natives still owned by the prerender's JS objects (timers, blobs,
+    // decoders, ...) would never be freed.
+    vm.on_exit();
+    vm.global_exit()
 }
 
 /// Ported inline from `bun.bun_js.failWithBuildError` to avoid the

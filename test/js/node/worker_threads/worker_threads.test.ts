@@ -1977,6 +1977,23 @@ describe("a port whose peer closed is closed too", () => {
     carrier.port2.close();
   });
 
+  // The wait-for-the-queue-to-drain rule is for an explicit close only: nothing would ever
+  // re-notify a 'close'-listening port that never starts, and until 'close' has been dispatched
+  // such a port is pinned in the heap. This is what main did before the change, kept as is.
+  test("a 'close'-listening port with an unread message is still told when its peer is garbage collected", async () => {
+    let closes = 0;
+    const port1 = await survivorOfCollectedPeer((survivor, doomed) => {
+      survivor.on("close", () => closes++);
+      doomed.postMessage("unread");
+    });
+    for (let i = 0; i < 20 && closes === 0; i++) await tick();
+    expect({ closes, unread: receiveMessageOnPort(port1), rejected: isRejectedAsDetached(port1) }).toEqual({
+      closes: 1,
+      unread: { message: "unread" },
+      rejected: false,
+    });
+  });
+
   // ...and an idle port is not even told: its one 'close' event has to stay available for
   // the close() that eventually happens (node's test-worker-message-port.js relies on this).
   test("a port whose peer was garbage collected still delivers close(cb) when it is closed later", async () => {

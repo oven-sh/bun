@@ -285,10 +285,6 @@ void MessagePort::peerClosed()
     // A handler in that flush closed or transferred this port.
     if (m_isDetached || m_isClosing)
         return;
-    // Not receiving, messages still queued: node's close notification waits behind them.
-    // attach() notifies again once the port starts; tryTakeMessage() closes on the empty read.
-    if (MessagePortPipe::queuedCount(m_pipe->state(m_side)) > 0)
-        return;
     if (!m_pipe->isOtherSideClosedByRequest(m_side)) {
         // Peer collected, not closed: node never closes a channel over that (see jsRef()), so
         // only release the loop refs of a port that is started or listening for 'close'. An
@@ -299,6 +295,10 @@ void MessagePort::peerClosed()
         }
         return;
     }
+    // Not receiving, messages still queued: node's close notification waits behind them.
+    // attach() notifies again once the port starts; tryTakeMessage() closes on the empty read.
+    if (MessagePortPipe::queuedCount(m_pipe->state(m_side)) > 0)
+        return;
     close();
 }
 
@@ -394,7 +394,9 @@ JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject, bool& h
     auto message = m_pipe->takeOne(m_side);
     if (!message) {
         // This read reached the peer's close: node closes the port here (see peerClosed()).
-        if (m_pipe->isOtherSideClosedByRequest(m_side))
+        // Peer state before our queue, as in virtualHasPendingActivity(): a message the peer
+        // sent between takeOne() and its close() is then visible and must not be dropped.
+        if (m_pipe->isOtherSideClosedByRequest(m_side) && !MessagePortPipe::queuedCount(m_pipe->state(m_side)))
             close();
         return jsUndefined();
     }

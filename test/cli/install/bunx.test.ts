@@ -541,7 +541,9 @@ describe("bunx --no-install", () => {
     const subprocess = spawn({
       cmd: ["perl", "-e", '$SIG{CHLD} = "IGNORE"; exec @ARGV or die $!', "--", bunExe(), "x", "--no-install", name],
       cwd: x_dir,
-      env,
+      // The ASAN CI lanes set this; the no-orphans wait loop never notices a
+      // child the kernel already reaped and hangs (tracked separately).
+      env: { ...env, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });

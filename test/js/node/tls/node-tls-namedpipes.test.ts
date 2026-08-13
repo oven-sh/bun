@@ -105,6 +105,7 @@ async function serverWrapRoundTrip(wrap: ServerWrap) {
   const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
   const echoed = Promise.withResolvers<string>();
   const server = net.createServer(accepted => {
+    accepted.on("error", echoed.reject);
     wrap(
       accepted,
       secure => {
@@ -120,7 +121,13 @@ async function serverWrapRoundTrip(wrap: ServerWrap) {
     await once(server, "listening");
     client = connect({ socket: net.connect(pipeName), rejectUnauthorized: false }, () => client!.write("ping"));
     client.on("error", echoed.reject);
-    client.once("data", chunk => echoed.resolve(chunk.toString()));
+    // Read through to the server's close_notify before tearing down: a pipe
+    // write is only complete once the peer has read it, so closing on the
+    // first data chunk would fail the server's still-pending close_notify
+    // write with EPIPE.
+    let received = "";
+    client.on("data", chunk => (received += chunk));
+    client.on("end", () => echoed.resolve(received));
     expect(await echoed.promise).toBe("echo:ping");
   } finally {
     client?.destroy();

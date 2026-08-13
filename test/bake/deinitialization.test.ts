@@ -60,16 +60,24 @@ test.skipIf(!isASAN)(
           return () => file + "#" + exportName;
         }
       `,
-      // The server graph imports the client module, so it gets the proxy.
+      // The server graph imports both client modules, so it gets a proxy for
+      // each: the proxies, not the modules, run on the server, which is why
+      // Empty's side effect must not be visible to the route.
       "routes/index.ts": `
         import Widget, { Alpha, Beta } from "../components/Widget";
-        export default () => [Widget(), Alpha(), Beta()].join(" ");
+        import "../components/Empty";
+        export default () => [Widget(), Alpha(), Beta(), String(globalThis.emptyRanOnServer)].join(" ");
       `,
       "components/Widget.ts": `
         "use client";
         export function Alpha() {}
         export function Beta() {}
         export default function Widget() {}
+      `,
+      // A client module with no exports gets a proxy with no exports.
+      "components/Empty.ts": `
+        "use client";
+        globalThis.emptyRanOnServer = true;
       `,
     });
 
@@ -87,7 +95,9 @@ test.skipIf(!isASAN)(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toBe("200 components/Widget.ts#default components/Widget.ts#Alpha components/Widget.ts#Beta\n");
+    expect(stdout).toBe(
+      "200 components/Widget.ts#default components/Widget.ts#Alpha components/Widget.ts#Beta undefined\n",
+    );
     // The dev server logs its bundle timing here; a leak report would follow it.
     expect(stderr).not.toContain("LeakSanitizer");
     expect(exitCode).toBe(0);

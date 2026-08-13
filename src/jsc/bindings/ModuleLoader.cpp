@@ -670,8 +670,8 @@ static void provideFetchForSyncLoad(Zig::GlobalObject* globalObject, const WTF::
     entry->ensureModulePromise(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
     JSC::JSPromise* fetchPromise = entry->ensureFetchPromise(globalObject);
-    // fulfillPromise, not fulfill(): pipeFrom() already claimed this promise for the transpiler
-    // thread's result, which will find it settled and be dropped.
+    RETURN_IF_EXCEPTION(scope, void());
+    // fulfillPromise, not fulfill(): pipeFrom() already claimed this promise's resolving functions.
     if (fetchPromise->status() == JSC::JSPromise::Status::Pending)
         fetchPromise->fulfillPromise(vm, jsSourceCode);
 }

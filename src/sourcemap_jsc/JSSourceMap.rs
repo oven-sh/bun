@@ -114,11 +114,14 @@ impl JSSourceMap {
 
         // Parse the payload to create a proper sourcemap
 
-        // Extract mappings string from payload
-        let Some(mappings_value) = payload_arg.get_stringish(global, b"mappings")? else {
-            return Err(
-                global.throw_invalid_arguments(format_args!("payload 'mappings' must be a string"))
-            );
+        // Extract mappings string from payload. Not `get_stringish`: it drops ""
+        // and `"mappings": ""` is a valid map with no segments.
+        let mappings_value = match payload_arg.get(global, b"mappings")? {
+            Some(value) if !value.is_undefined_or_null() => value.to_bun_string(global)?,
+            _ => {
+                return Err(global
+                    .throw_invalid_arguments(format_args!("payload 'mappings' must be a string")));
+            }
         };
         let mappings_value = bstring::OwnedString::new(mappings_value);
 

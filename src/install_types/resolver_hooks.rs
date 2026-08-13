@@ -1291,31 +1291,21 @@ pub struct TaskCallbackContext {
     pub root_request_id: u32,
 }
 
-/// Opaque
-/// (ctx-ptr + fn-ptr) handle the runtime installs to nudge the JS event
-/// loop when a network task completes. The resolver only stores and forwards
-/// it; the fields are `Option` so `Default` is all-None.
-///
+/// Opaque (ctx-ptr + fn-ptr) handle the runtime installs to nudge the JS
+/// event loop when a network task completes. The resolver only stores and
+/// forwards it; `Default` is unregistered (`None`).
+// Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
+// installed; the fn-ptr is POD.
+#[derive(Default, Copy, Clone)]
+pub struct WakeHandler(pub Option<WakeTarget>);
+
 /// `handler`'s second parameter (`*PackageManager`) is erased to
 /// `*mut c_void` because that concrete type lives in `bun_install` (a higher
-/// tier); `bun_install::PackageManager::wake` casts at the call site.
-// Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
-// installed; the handler fn-ptr is POD.
-#[derive(Default, Copy, Clone)]
-pub struct WakeHandler {
-    pub context: Option<NonNull<c_void>>,
-    pub handler: Option<fn(*mut c_void, *mut c_void)>,
-}
-
-impl WakeHandler {
-    #[inline]
-    pub fn get_handler(&self) -> fn(*mut c_void, *mut c_void) {
-        // `handler` is Some whenever `context` is Some: the sole installer
-        // (runtime::jsc_hooks) sets `context` and `handler` together in one
-        // struct literal, and callers gate on `context.is_some()` before
-        // invoking — so this unwrap cannot fire.
-        self.handler.unwrap()
-    }
+/// tier); `bun_install::PackageManager::wake_raw` casts at the call site.
+#[derive(Copy, Clone)]
+pub struct WakeTarget {
+    pub context: NonNull<c_void>,
+    pub handler: fn(*mut c_void, *mut c_void),
 }
 
 // ─── DependencyGroup (lockfile::Package::DependencyGroup) ─────────────────

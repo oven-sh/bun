@@ -619,7 +619,7 @@ pub enum TrackInstalledBin {
     Basename(Box<[u8]>),
 }
 
-// MOVE_DOWN: data struct + accessors live in `bun_install_types::WakeHandler`
+// MOVE_DOWN: the data struct lives in `bun_install_types::WakeHandler`
 // (single definition the resolver also stores). The `handler` second arg is
 // erased to `*mut c_void` there because that crate cannot name
 // `PackageManager`; `wake_raw()` casts it back at the call site.
@@ -907,12 +907,10 @@ impl PackageManager {
         // only form field pointers via `addr_of!`/`addr_of_mut!` (no whole-struct
         // borrow) and `wakeup()` is internally synchronized for cross-thread use.
         unsafe {
-            let on_wake = &*core::ptr::addr_of!((*this).on_wake);
-            if let Some(ctx) = on_wake.context {
-                // `WakeHandler.handler`'s second arg is the erased
-                // `*mut PackageManager` (`bun_install_types` cannot name this
-                // type); cast back to `*mut c_void` here.
-                (on_wake.get_handler())(ctx.as_ptr(), this.cast::<c_void>());
+            if let Some(wake) = (*core::ptr::addr_of!((*this).on_wake)).0 {
+                // `handler`'s second arg is the erased `*mut PackageManager`
+                // (`bun_install_types` cannot name this type).
+                (wake.handler)(wake.context.as_ptr(), this.cast::<c_void>());
             }
             (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
         }

@@ -50,13 +50,6 @@ fn verbose_install() -> bool {
 // `PatchTask.callback` discriminant — routed to the real
 // `patch_install::Callback` enum (CalcHash / Apply).
 
-// `SuccessFn` is a bare `fn(&mut PackageManager, ...)` pointer; the real
-// bodies are inherent methods, so reference them via the type path.
-#[allow(non_upper_case_globals)]
-const assign_resolution: SuccessFn = PackageManager::assign_resolution;
-#[allow(non_upper_case_globals)]
-const assign_root_resolution: SuccessFn = PackageManager::assign_root_resolution;
-
 // The `use package_manager_real::PackageManager`
 // above already pulls the `declare_scope!`-generated `static PackageManager: ScopedLogger`
 // (value namespace) alongside the struct (type namespace), so re-declaring it here
@@ -83,7 +76,7 @@ pub fn enqueue_dependency_with_main(
         dependency,
         resolution,
         install_peer,
-        assign_resolution,
+        PackageManager::assign_resolution,
         false,
     )
 }
@@ -459,7 +452,7 @@ pub fn enqueue_dependency_to_root(
             &dependency,
             invalid_package_id,
             false,
-            assign_root_resolution,
+            PackageManager::assign_root_resolution,
             true,
         ) {
             return DependencyToEnqueue::Failure(err);
@@ -641,17 +634,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     resolution: PackageID,
     install_peer: bool,
     success_fn: SuccessFn,
-    // True for the dependencies runtime auto-install enqueues on the root
-    // (`enqueue_dependency_to_root`). Every resolution error of those goes to
-    // `this.log`, which the runtime attaches to the import's error, and the
-    // dependency stays unresolved; `bun install` propagates the ones that have
-    // no dedicated message below.
-    //
-    // The two `SuccessFn` candidates
-    // (`assign_resolution` / `assign_root_resolution`) have byte-identical
-    // bodies in release builds, so Apple ld64 (which ignores `.llvm_addrsig`)
-    // folds them and a runtime fn-pointer address comparison is unsound. Thread
-    // an explicit flag instead.
+    // True for runtime auto-install's root enqueues
+    // (`enqueue_dependency_to_root`): their resolution errors go to `this.log`
+    // instead of propagating. An explicit flag, not a `success_fn` address
+    // comparison: the linker may fold the byte-identical fn bodies.
     is_root: bool,
 ) -> crate::Result<()> {
     if dependency.behavior.is_optional_peer() {

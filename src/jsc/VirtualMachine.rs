@@ -4698,15 +4698,11 @@ impl VirtualMachine {
                     }
                 }
             };
-            // The resolver and the auto-install package manager report the
-            // reason a resolution failed (a `GET <tarball url> - 404`, an
-            // unreadable directory, ...) as ordinary errors/warnings in the
-            // scoped `log`, which dies with this frame. Carry them on the
-            // `ResolveMessage` as notes so they are printed with it. `_resolve`
-            // retries once after busting the directory cache, and a failure the
-            // package manager derives from a manifest it already has (no such
-            // version or tag) is logged again by the retry, so keep one copy of
-            // each line.
+            // The resolver and auto-install log why a resolution failed
+            // (`GET <url> - 404`, an unreadable directory, ...) in the scoped
+            // `log`, which dies with this frame; carry those lines as notes on
+            // the `ResolveMessage`. Dedup by text: `_resolve` retries once
+            // after busting the directory cache and can log a failure twice.
             let mut notes = core::mem::take(&mut msg.notes).into_vec();
             for (i, logged) in log.msgs.iter().enumerate() {
                 if Some(i) == resolve_msg_index

@@ -55,10 +55,7 @@ fn hmac(password: &[u8], data: &[u8]) -> Option<[u8; 32]> {
 }
 
 impl SASL {
-    /// Largest server-first `i=` we will run PBKDF2 for. `compute_salted_password`
-    /// blocks the JS thread, so this bounds how long a hostile server can stall
-    /// it. Anything >= 1 is a legal server value (PostgreSQL 16+ `scram_iterations`
-    /// defaults to 4096 and may be set as low as 1), so only the upper end is capped.
+    /// PBKDF2 runs on the JS thread, so bound the work a server-chosen `i=` can demand.
     pub(crate) const MAX_ITERATION_COUNT: u32 = 10_000_000;
 
     // Note: takes the password slice rather than `&mut PostgresSQLConnection` —

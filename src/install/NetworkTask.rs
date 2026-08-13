@@ -461,11 +461,25 @@ impl NetworkTask {
                 name
             };
 
+            // npm appends the package name as a new path segment whether or not
+            // the configured registry ends in "/"; WHATWG resolution would
+            // instead replace the last segment of a slash-less base.
+            let registry_href = scope.url.href();
+            let base_storage;
+            let base: &[u8] = if strings::has_prefix_comptime(registry_href, b"https://")
+                || strings::has_prefix_comptime(registry_href, b"http://")
+            {
+                base_storage = [strings::without_trailing_slash(registry_href), b"/"].concat();
+                &base_storage
+            } else {
+                registry_href
+            };
+
             // `OwnedString` derefs the WTF-backed result on scope exit —
             // covers both the
             // success path and the InvalidURL early returns below.
             let tmp = bun_core::OwnedString::new(bun_url::join(
-                &bun_core::String::borrow_utf8(scope.url.href()),
+                &bun_core::String::borrow_utf8(base),
                 &bun_core::String::borrow_utf8(encoded_name),
             ));
 

@@ -105,77 +105,6 @@ describe("extensionless import with case-differing sibling (#22686)", () => {
       expect(exitCode).not.toBe(0);
     });
 
-    test("index: lib/index.ts + lib/Index.tsx: import './lib' resolves to index.ts", async () => {
-      using dir = tempDir("22686-e", {
-        "lib/index.ts": `export const which = "lower-ts";`,
-        "lib/Index.tsx": `export const which = "upper-tsx";`,
-        "entry.ts": `
-          import { which } from "./lib";
-          console.log(which);
-          console.log(Bun.resolveSync("./lib", import.meta.dir));
-        `,
-      });
-      const { stdout, stderr, exitCode } = await run(String(dir), "entry.ts");
-      expect(stderr).toBe("");
-      const lines = stdout.trim().split("\n");
-      expect(lines[0]).toBe("lower-ts");
-      expect(lines[1]).toBe(join(String(dir), "lib", "index.ts"));
-      expect(exitCode).toBe(0);
-    });
-
-    test("js->ts rewrite: import './mod.js' with Mod.ts + mod.tsx resolves to mod.tsx", async () => {
-      using dir = tempDir("22686-f", {
-        "Mod.ts": `export const which = "upper-ts";`,
-        "mod.tsx": `export const which = "lower-tsx";`,
-        "entry.ts": `
-          import { which } from "./mod.js";
-          console.log(which);
-        `,
-      });
-      const { stdout, stderr, exitCode } = await run(String(dir), "entry.ts");
-      expect(stderr).toBe("");
-      expect(stdout.trim()).toBe("lower-tsx");
-      expect(exitCode).toBe(0);
-    });
-
-    test("exports wildcard: pkg/foo with dist/foo.ts + dist/Foo.tsx resolves to foo.ts", async () => {
-      using dir = tempDir("22686-j", {
-        "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { "./*": "./dist/*" } }),
-        "node_modules/pkg/dist/foo.ts": `export const which = "lower-ts";`,
-        "node_modules/pkg/dist/Foo.tsx": `export const which = "upper-tsx";`,
-        "entry.ts": `
-          import { which } from "pkg/foo";
-          console.log(which);
-          console.log(Bun.resolveSync("pkg/foo", import.meta.dir));
-        `,
-      });
-      const { stdout, stderr, exitCode } = await run(String(dir), "entry.ts");
-      expect(stderr).toBe("");
-      const lines = stdout.trim().split("\n");
-      expect(lines[0]).toBe("lower-ts");
-      expect(lines[1]).toBe(join(String(dir), "node_modules", "pkg", "dist", "foo.ts"));
-      expect(exitCode).toBe(0);
-    });
-
-    test("exports wildcard js->ts rewrite: pkg/mod with dist/Mod.ts + dist/mod.tsx resolves to mod.tsx", async () => {
-      using dir = tempDir("22686-k", {
-        "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { "./*": "./dist/*.js" } }),
-        "node_modules/pkg/dist/Mod.ts": `export const which = "upper-ts";`,
-        "node_modules/pkg/dist/mod.tsx": `export const which = "lower-tsx";`,
-        "entry.ts": `
-          import { which } from "pkg/mod";
-          console.log(which);
-          console.log(Bun.resolveSync("pkg/mod", import.meta.dir));
-        `,
-      });
-      const { stdout, stderr, exitCode } = await run(String(dir), "entry.ts");
-      expect(stderr).toBe("");
-      const lines = stdout.trim().split("\n");
-      expect(lines[0]).toBe("lower-tsx");
-      expect(lines[1]).toBe(join(String(dir), "node_modules", "pkg", "dist", "mod.tsx"));
-      expect(exitCode).toBe(0);
-    });
-
     test("bun build: todos.ts + Todos.tsx bundle correctly", async () => {
       using dir = tempDir("22686-g", {
         "todos.ts": `export const todos = ["lower-ts"];`,
@@ -206,32 +135,71 @@ describe("extensionless import with case-differing sibling (#22686)", () => {
     });
   });
 
-  // This test runs on all filesystems. The extensions differ so the two files
-  // coexist regardless of case-sensitivity; the resolved target depends on
-  // whether `config.ts` opens `Config.ts`.
-  test("Config.ts + config.json: import './config' respects extension priority", async () => {
-    using dir = tempDir("22686-h", {
-      "Config.ts": `export default "upper-ts";`,
-      "config.json": `{ "which": "lower-json" }`,
+  // One row per extension-probe site. In every row the higher-priority
+  // extension exists only under a different case, so the two files coexist on
+  // any filesystem. A case-insensitive filesystem opens the probed spelling and
+  // keeps extension priority (the "upper" file); a case-sensitive one rejects
+  // it and falls through to the exact-case "lower" file. Both branches also
+  // assert the resolved path is the on-disk spelling.
+  const rows: [site: string, files: Record<string, string>, specifier: string, insensitive: string, sensitive: string][] = [
+    [
+      "load_extension",
+      { "Config.ts": `export const which = "upper";`, "config.json": `{ "which": "lower" }` },
+      "./config",
+      "Config.ts",
+      "config.json",
+    ],
+    [
+      "load_index_with_extension",
+      { "lib/Index.tsx": `export const which = "upper";`, "lib/index.ts": `export const which = "lower";` },
+      "./lib",
+      "lib/Index.tsx",
+      "lib/index.ts",
+    ],
+    [
+      "js->ts rewrite",
+      { "Mod.ts": `export const which = "upper";`, "mod.tsx": `export const which = "lower";` },
+      "./mod.js",
+      "Mod.ts",
+      "mod.tsx",
+    ],
+    [
+      "exports wildcard",
+      {
+        "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { "./*": "./dist/*" } }),
+        "node_modules/pkg/dist/Foo.tsx": `export const which = "upper";`,
+        "node_modules/pkg/dist/foo.ts": `export const which = "lower";`,
+      },
+      "pkg/foo",
+      "node_modules/pkg/dist/Foo.tsx",
+      "node_modules/pkg/dist/foo.ts",
+    ],
+    [
+      "exports wildcard js->ts rewrite",
+      {
+        "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { "./*": "./dist/*.js" } }),
+        "node_modules/pkg/dist/Mod.ts": `export const which = "upper";`,
+        "node_modules/pkg/dist/mod.tsx": `export const which = "lower";`,
+      },
+      "pkg/mod",
+      "node_modules/pkg/dist/Mod.ts",
+      "node_modules/pkg/dist/mod.tsx",
+    ],
+  ];
+
+  test.each(rows)("%s: case-mismatched probe is kept only if it opens", async (_site, files, specifier, insensitive, sensitive) => {
+    using dir = tempDir("22686-matrix", {
+      ...files,
       "entry.ts": `
-        import v from "./config";
-        console.log(JSON.stringify(v));
-        console.log(Bun.resolveSync("./config", import.meta.dir));
+        import { which } from ${JSON.stringify(specifier)};
+        console.log(which);
+        console.log(Bun.resolveSync(${JSON.stringify(specifier)}, import.meta.dir));
       `,
     });
     const { stdout, stderr, exitCode } = await run(String(dir), "entry.ts");
     expect(stderr).toBe("");
-    const lines = stdout.trim().split("\n");
-    if (isCaseSensitiveFS) {
-      // `config.ts` does not exist; `.json` is the first extension that hits.
-      expect(JSON.parse(lines[0])).toEqual({ which: "lower-json" });
-      expect(lines[1]).toBe(join(String(dir), "config.json"));
-    } else {
-      // `config.ts` opens `Config.ts`; `.ts` comes before `.json` in the
-      // extension order, so `Config.ts` wins.
-      expect(JSON.parse(lines[0])).toBe("upper-ts");
-      expect(lines[1]).toBe(join(String(dir), "Config.ts"));
-    }
+    const expected = isCaseSensitiveFS ? ["lower", join(String(dir), sensitive)] : ["upper", join(String(dir), insensitive)];
+    expect(stdout.trim().split("\n")).toEqual(expected);
     expect(exitCode).toBe(0);
   });
 

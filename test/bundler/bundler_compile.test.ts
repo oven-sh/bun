@@ -850,7 +850,10 @@ describe("bundler", () => {
   for (const variant of [
     { suffix: "", options: {} },
     { suffix: "+cjs", options: { format: "cjs" } },
-    { suffix: "+cjs+minify", options: { format: "cjs", minifySyntax: true, minifyWhitespace: true } },
+    {
+      suffix: "+cjs+minify",
+      options: { format: "cjs", minifySyntax: true, minifyWhitespace: true, minifyIdentifiers: true },
+    },
     { suffix: "+bytecode", options: { bytecode: true } },
   ] as const) {
     itBundled("compile/EmbeddedSqlite" + variant.suffix, {

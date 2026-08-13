@@ -3,6 +3,7 @@
 #include "root.h"
 
 #include <JavaScriptCore/ScriptFetcher.h>
+#include <JavaScriptCore/SourceProvider.h>
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/WeakInlines.h>
 #include <wtf/Scope.h>
@@ -43,11 +44,20 @@ public:
 
     // vm.compileFunction compiles `(function (<params>) {<body>` with the body
     // starting on the same line as the wrapper so that body line N is reported
-    // as line lineOffset + N. This is the length of that wrapper text, which
-    // precedes the user's source on the provider's first line; 0 for sources
-    // that are compiled as written (vm.Script, modules).
-    unsigned wrapperPrefixLength() const { return m_wrapperPrefixLength; }
-    void setWrapperPrefixLength(unsigned length) { m_wrapperPrefixLength = length; }
+    // as line lineOffset + N. Records the provider holding that program and the
+    // length of the wrapper text preceding the user's source on its first line.
+    // Keyed by provider because eval() and new Function() inside the body create
+    // providers that inherit this fetcher through the SourceOrigin but contain
+    // no wrapper; for those, and for vm.Script sources, this returns 0.
+    void setWrapper(JSC::SourceProvider& provider, unsigned prefixLength)
+    {
+        m_wrapperSourceID = provider.asID();
+        m_wrapperPrefixLength = prefixLength;
+    }
+    unsigned wrapperPrefixLength(JSC::SourceProvider& provider) const
+    {
+        return m_wrapperPrefixLength && provider.asID() == m_wrapperSourceID ? m_wrapperPrefixLength : 0;
+    }
 
 private:
     JSC::Strong<JSC::Unknown> m_dynamicImportCallback;
@@ -58,6 +68,7 @@ private:
     // as a GC root). Use Weak instead: when the owner is collected its
     // SourceCode chain drops the last RefPtr to this fetcher.
     JSC::Weak<JSC::JSCell> m_owner;
+    JSC::SourceID m_wrapperSourceID = 0;
     unsigned m_wrapperPrefixLength = 0;
     bool m_isUsingDefaultLoader = false;
 

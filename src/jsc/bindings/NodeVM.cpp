@@ -198,14 +198,14 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     int columnOffset = position.m_column.zeroBasedInt();
     TextPosition wrappedPosition(position.m_line, OrdinalNumber::fromZeroBasedInt(columnOffset > wrapperPrefixLength ? columnOffset - wrapperPrefixLength : 0));
 
+    Ref<JSC::SourceProvider> provider = JSC::StringSourceProvider::create(code, sourceOrigin, WTF::move(options.filename), sourceTaintOrigin, wrappedPosition, SourceProviderSourceType::Program);
+
     // Lets handleException map a frame on the first line back to the user's
     // source when decorating a runtime error with the offending line.
     if (auto* fetcher = sourceOrigin.fetcher(); fetcher && fetcher->fetcherType() == ScriptFetcher::Type::NodeVM)
-        static_cast<NodeVMScriptFetcher*>(fetcher)->setWrapperPrefixLength(static_cast<unsigned>(wrapperPrefixLength));
+        static_cast<NodeVMScriptFetcher*>(fetcher)->setWrapper(provider.get(), static_cast<unsigned>(wrapperPrefixLength));
 
-    SourceCode sourceCode(
-        JSC::StringSourceProvider::create(code, sourceOrigin, WTF::move(options.filename), sourceTaintOrigin, wrappedPosition, SourceProviderSourceType::Program),
-        wrappedPosition.m_line.oneBasedInt(), wrappedPosition.m_column.oneBasedInt());
+    SourceCode sourceCode(WTF::move(provider), wrappedPosition.m_line.oneBasedInt(), wrappedPosition.m_column.oneBasedInt());
 
     CodeCache* cache = vm.codeCache();
     ProgramExecutable* programExecutable = ProgramExecutable::create(globalObject, sourceCode);
@@ -505,7 +505,9 @@ JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::So
 // AppendExceptionLine helpers shared by the runtime (handleException) and
 // compile-time (decorateParseErrorStack) paths — a single implementation of
 // Node's arrow-header format so the two call sites cannot drift.
-static String nthSourceLineForArrowHeader(StringView source, int64_t physicalLine1Based)
+// firstLineSkip is the length of compileFunction's wrapper, which shares the
+// first line with the user's source and is not part of it.
+static String nthSourceLineForArrowHeader(StringView source, int64_t physicalLine1Based, unsigned firstLineSkip = 0)
 {
     if (physicalLine1Based < 1 || physicalLine1Based > static_cast<int64_t>(source.length()) + 1)
         return {};
@@ -520,6 +522,8 @@ static String nthSourceLineForArrowHeader(StringView source, int64_t physicalLin
     if (lineEnd == WTF::notFound)
         lineEnd = source.length();
     StringView lineView = source.substring(lineStart, lineEnd - lineStart);
+    if (physicalLine1Based == 1)
+        lineView = lineView.substring(firstLineSkip);
     if (lineView.endsWith('\r'))
         lineView = lineView.left(lineView.length() - 1);
     // Like Node, skip the decoration for excessively long lines.
@@ -589,17 +593,17 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
         unsigned caretColumn = 0;
         if (JSC::CodeBlock* codeBlock = stack_frame.codeBlock()) {
             if (JSC::SourceProvider* provider = codeBlock->source().provider()) {
-                // The user's source starts after compileFunction's wrapper prefix
-                // (if any), which shares the first line with it; JSC's columns on
-                // that line count the prefix too.
+                // In a compileFunction program the user's first line starts after
+                // the wrapper prefix, and JSC's columns on that line count the
+                // prefix too. Zero for every other provider, including eval() code
+                // from inside such a function, which shares the fetcher.
                 unsigned wrapperPrefixLength = 0;
                 if (auto* fetcher = provider->sourceOrigin().fetcher(); fetcher && fetcher->fetcherType() == ScriptFetcher::Type::NodeVM)
-                    wrapperPrefixLength = static_cast<NodeVMScriptFetcher*>(fetcher)->wrapperPrefixLength();
-                StringView userSource = provider->source().substring(wrapperPrefixLength);
+                    wrapperPrefixLength = static_cast<NodeVMScriptFetcher*>(fetcher)->wrapperPrefixLength(*provider);
 
                 int64_t startLineZeroBased = provider->startPosition().m_line.zeroBasedInt();
                 int64_t physicalLine = static_cast<int64_t>(line_and_column.line) - startLineZeroBased;
-                sourceLineText = nthSourceLineForArrowHeader(userSource, physicalLine);
+                sourceLineText = nthSourceLineForArrowHeader(provider->source(), physicalLine, wrapperPrefixLength);
                 if (!sourceLineText.isNull()) {
                     caretColumn = line_and_column.column;
                     if (physicalLine == 1) {

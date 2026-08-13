@@ -417,6 +417,20 @@ describe("vm", () => {
         scriptCaret,
         "",
       ]);
+
+      // Code eval'd from inside the body gets its own source, which has no
+      // wrapper, even though it inherits the function's origin.
+      for (const evalCall of ["eval", "(0, eval)"]) {
+        const [headerLine, sourceLine, caret] = header(
+          callFromScript(compileFunction(`${evalCall}(${JSON.stringify(line1)})`, [], { filename: "cf-header.js" })),
+        );
+        expect({ evalCall, headerLine: headerLine.replace(/^.*:/, ":"), sourceLine, caret }).toEqual({
+          evalCall,
+          headerLine: ":1",
+          sourceLine: line1,
+          caret: scriptCaret,
+        });
+      }
     });
   });
 });

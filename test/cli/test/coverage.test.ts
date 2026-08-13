@@ -115,11 +115,21 @@ export class Derived extends Base {
   return "ok";
 }
 `,
+    // uncovered lines 1 and 4: the old sentinel couldn't tell line index 0 apart from "no run yet".
+    "line1.ts": `export function miss(): never {
+  throw new Error("a");
+}
+export function also(): never {
+  throw new Error("b");
+}
+export function ok2() { return "ok"; }
+`,
     "demo.test.ts": `import { test, expect } from "bun:test";
 import { Base, Derived } from "./classes";
 import { check } from "./many";
 import { only } from "./one";
 import { mix } from "./mix";
+import { ok2 } from "./line1";
 test("paths", () => {
   const d = new Derived();
   d.x = 5;
@@ -129,6 +139,7 @@ test("paths", () => {
   expect(check(0)).toBe("ok");
   expect(only(1)).toBe("ok");
   expect(mix(2)).toBe("ok");
+  expect(ok2()).toBe("ok");
 });
 `,
   });
@@ -149,8 +160,9 @@ test("paths", () => {
     .join("\n");
   expect(normalizeBunSnapshot(table, dir)).toMatchInlineSnapshot(`
 "File        | % Funcs | % Lines | Uncovered Line #s
-All files   |  100.00 |   80.68 |
+All files   |   86.67 |   76.55 |
  classes.ts |  100.00 |  100.00 | 
+ line1.ts   |   33.33 |   60.00 | 1,4
  many.ts    |  100.00 |   72.73 | 3,6,9
  mix.ts     |  100.00 |   70.00 | 3-4,8
  one.ts     |  100.00 |   80.00 | 3"
@@ -161,6 +173,7 @@ All files   |  100.00 |   80.68 |
     [...lcov.matchAll(/^SF:(.+)\nFNF:(\d+)\nFNH:(\d+)/gm)].map(m => [m[1], { found: +m[2], hit: +m[3] }]),
   );
   expect(fn["classes.ts"]).toEqual({ found: 2, hit: 2 });
+  expect(fn["line1.ts"]).toEqual({ found: 3, hit: 1 });
   expect(fn["many.ts"]).toEqual({ found: 1, hit: 1 });
 
   expect(result.exitCode).toBe(0);

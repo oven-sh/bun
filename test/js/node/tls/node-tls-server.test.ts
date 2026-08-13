@@ -2019,12 +2019,30 @@ it("destroys a server wrap whose socket was destroyed before the deferred upgrad
   }
 });
 
-it("completes a server wrap of a socket that is still connecting", async () => {
-  // Node wraps the handle synchronously whatever state it is in. The deferred
-  // native adoption needs an established socket, so a socket whose lookup is
-  // still in flight has to take the stream-level engine; it used to throw
-  // "upgradeTLS requires an established socket" from nextTick, uncaught.
+// Node wraps the handle synchronously whatever state it is in. Bun's deferred
+// native adoption needs an established socket, so a socket wrapped while its
+// lookup is still in flight is adopted once it connects (or the wrap closes
+// with it if it never does); it used to throw "upgradeTLS requires an
+// established socket" from nextTick, uncaught. The lookup settles on a later
+// turn, so the wrap and the tick after it both run before the socket has a
+// handle to adopt.
+function connectLater(port: number, lookupError: Error | null = null) {
+  const outgoing = net.connect({
+    port,
+    host: "localhost",
+    family: 4,
+    lookup: (_host, _options, callback) => setImmediate(callback, lookupError, "127.0.0.1", 4),
+  });
+  expect(outgoing.connecting).toBe(true);
+  return outgoing;
+}
+
+it("adopts a socket that was still connecting when wrapped as the server side", async () => {
   const echoed = Promise.withResolvers<string>();
+  // The wrap must end up on the fd like a wrap of a connected socket does,
+  // which is observable as the peer's address; the stream-level engine has no
+  // fd and reports none.
+  const peer = Promise.withResolvers<{ remoteAddress: string | undefined; remotePort: number | undefined }>();
   // The listener plays the TLS client over the connection it accepts; the
   // outgoing socket below is the side wrapped as the TLS server.
   const rawServer = net.createServer(accepted => {
@@ -2042,23 +2060,47 @@ it("completes a server wrap of a socket that is still connecting", async () => {
     rawServer.once("error", listening.reject);
     rawServer.listen(0, "127.0.0.1", listening.resolve);
     await listening.promise;
-    outgoing = net.connect({
-      port: (rawServer.address() as AddressInfo).port,
-      host: "localhost",
-      family: 4,
-      // Resolves on a later turn, so both the wrap and its deferred step run
-      // while the socket has no established handle yet.
-      lookup: (_host, _options, callback) => setImmediate(callback, null, "127.0.0.1", 4),
-    });
-    expect(outgoing.connecting).toBe(true);
+    const port = (rawServer.address() as AddressInfo).port;
+    outgoing = connectLater(port);
+    const outgoingClosed = once(outgoing, "close");
     wrapped = new TLSSocket(outgoing, { isServer: true, ...COMMON_CERT });
     wrapped.on("error", echoed.reject);
-    wrapped.on("data", chunk => wrapped!.end(`echo:${chunk}`));
+    wrapped.on("data", chunk => {
+      peer.resolve({ remoteAddress: wrapped!.remoteAddress, remotePort: wrapped!.remotePort });
+      wrapped!.end(`echo:${chunk}`);
+    });
     expect(await echoed.promise).toBe("echo:ping");
+    expect(await peer.promise).toEqual({ remoteAddress: "127.0.0.1", remotePort: port });
+    // Ending the exchange releases the wrapped connection as well.
+    await outgoingClosed;
   } finally {
     wrapped?.destroy();
     outgoing?.destroy();
     rawServer.close();
+  }
+});
+
+it("closes a server wrap whose connecting socket fails to connect", async () => {
+  // Node closes the wrap, without an error of its own, when the wrapped
+  // socket fails; the failure itself is reported on that socket.
+  const outgoing = connectLater(1, Object.assign(new Error("getaddrinfo ENOTFOUND localhost"), { code: "ENOTFOUND" }));
+  const outgoingFailed = Promise.withResolvers<string>();
+  outgoing.on("error", err => outgoingFailed.resolve((err as NodeJS.ErrnoException).code!));
+  const wrapped = new TLSSocket(outgoing, { isServer: true, ...COMMON_CERT });
+  try {
+    const events: string[] = [];
+    const wrapClosed = Promise.withResolvers<void>();
+    wrapped.on("error", err => events.push(`error: ${err.message}`));
+    wrapped.on("close", hadError => {
+      events.push(`close: hadError=${hadError}`);
+      wrapClosed.resolve();
+    });
+    expect(await outgoingFailed.promise).toBe("ENOTFOUND");
+    await wrapClosed.promise;
+    expect(events).toEqual(["close: hadError=false"]);
+  } finally {
+    wrapped.destroy();
+    outgoing.destroy();
   }
 });
 

@@ -5828,9 +5828,10 @@ describe.if(isWindows)("kernel32 paths are normalized before the \\\\?\\ prefix 
   });
 
   // Relative paths and rooted paths (`\dir\file`, no drive letter: resolved
-  // against the cwd's drive) depend on the cwd, so they run in a child
-  // started inside the temp dir. Every result is collected into one object so
-  // a failure shows the whole matrix.
+  // against the cwd's drive) depend on the cwd, so they run in a child started
+  // inside the temp dir, together with the existsSync/mkdirSync cases that use
+  // the same converter. Every result is collected into one object so a
+  // failure shows the whole matrix.
   it("relative and rooted spellings", async () => {
     using dir = tempDir("fs-kernel32-normalize", { "src.txt": "payload" });
     const fixture = `
@@ -5869,6 +5870,9 @@ describe.if(isWindows)("kernel32 paths are normalized before the \\\\?\\ prefix 
       attempt("existsRootedFileTrailingSep", () => fs.existsSync(rooted + sep + "src.txt" + sep));
       attempt("existsRootedFileDotDotAboveRoot", () => fs.existsSync(sep + ".." + rooted + sep + "src.txt"));
       attempt("existsDriveFileTrailingSep", () => fs.existsSync(cwd + sep + "src.txt" + sep));
+      attempt("existsUncFileDotDotAboveShareRoot", () =>
+        fs.existsSync(sep + sep + "localhost" + sep + drive[0] + "$" + sep + ".." + sep + ".." + rooted + sep + "src.txt"),
+      );
       attempt("mkdirRootedTrailingSep", () => fs.mkdirSync(rooted + sep + "made-rooted" + sep, { recursive: true }));
       attempt("mkdirDriveTrailingSep", () => fs.mkdirSync(cwd + sep + "made-drive" + sep, { recursive: true }));
       attempt("mkdirDriveDotDotAboveRoot", () =>
@@ -5901,6 +5905,7 @@ describe.if(isWindows)("kernel32 paths are normalized before the \\\\?\\ prefix 
       existsRootedFileTrailingSep: true,
       existsRootedFileDotDotAboveRoot: true,
       existsDriveFileTrailingSep: true,
+      existsUncFileDotDotAboveShareRoot: true,
       mkdirRootedTrailingSep: `\\\\?\\${join(cwd, "made-rooted")}`,
       mkdirDriveTrailingSep: `\\\\?\\${join(cwd, "made-drive")}`,
       mkdirDriveDotDotAboveRoot: `\\\\?\\${join(cwd, "made-above")}`,

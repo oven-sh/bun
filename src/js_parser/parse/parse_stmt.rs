@@ -1214,19 +1214,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     });
                     p.lexer.next()?;
                     p.lexer.expect_contextual_keyword(b"from")?;
-                    path = if opts.is_typescript_declare {
-                        p.parse_type_only_path()?
-                    } else {
-                        p.parse_path()?
-                    };
+                    path = p.parse_path_inner(opts.is_typescript_declare)?;
                 } else {
                     // "export * from 'path'"
                     p.lexer.expect_contextual_keyword(b"from")?;
-                    path = if opts.is_typescript_declare {
-                        p.parse_type_only_path()?
-                    } else {
-                        p.parse_path()?
-                    };
+                    path = p.parse_path_inner(opts.is_typescript_declare)?;
                     // Sanitize the basename into an identifier and copy into the arena.
                     let name: &'a [u8] = {
                         use std::io::Write as _;
@@ -1289,15 +1281,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if p.lexer.is_contextual_keyword(b"from") {
                     p.lexer.expect_contextual_keyword(b"from")?;
                     // Erased when every clause is type-only or inside `declare module`.
-                    let parsed_path = if (Self::IS_TYPESCRIPT_ENABLED
+                    let is_type_only = (Self::IS_TYPESCRIPT_ENABLED
                         && export_clause.clauses.is_empty()
                         && export_clause.had_type_only_exports)
-                        || opts.is_typescript_declare
-                    {
-                        p.parse_type_only_path()?
-                    } else {
-                        p.parse_path()?
-                    };
+                        || opts.is_typescript_declare;
+                    let parsed_path = p.parse_path_inner(is_type_only)?;
 
                     p.lexer.expect_or_insert_semicolon()?;
 
@@ -1550,11 +1538,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.expect(T::TIdentifier)?;
                     p.lexer.expect_contextual_keyword(b"from")?;
 
-                    let path = if opts.is_typescript_declare {
-                        p.parse_type_only_path()?
-                    } else {
-                        p.parse_path()?
-                    };
+                    let path = p.parse_path_inner(opts.is_typescript_declare)?;
                     p.lexer.expect_or_insert_semicolon()?;
                     return p.process_import_statement(stmt, path, loc, false);
                 }
@@ -1662,11 +1646,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        let path = if opts.is_typescript_declare {
-            p.parse_type_only_path()?
-        } else {
-            p.parse_path()?
-        };
+        let path = p.parse_path_inner(opts.is_typescript_declare)?;
         p.lexer.expect_or_insert_semicolon()?;
 
         p.process_import_statement(stmt, path, loc, was_originally_bare_import)

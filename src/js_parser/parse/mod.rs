@@ -1309,17 +1309,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(G::DeclList::from_arena_slice(&decls))
     }
 
-    pub(crate) fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {
-        self.parse_path_inner(false)
-    }
-
     /// For erased TypeScript constructs (`import type`, `declare module` bodies):
     /// allows unsupported attribute keys such as TS 5.3's `resolution-mode`.
     pub(crate) fn parse_type_only_path(&mut self) -> Result<ParsedPath<'a>, Error> {
         self.parse_path_inner(true)
     }
 
-    fn parse_path_inner(&mut self, is_type_only: bool) -> Result<ParsedPath<'a>, Error> {
+    pub(crate) fn parse_path_inner(&mut self, is_type_only: bool) -> Result<ParsedPath<'a>, Error> {
         let p = self;
         let path_text = p.lexer.to_utf8_e_string()?;
         let mut path = ParsedPath {

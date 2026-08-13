@@ -2789,7 +2789,7 @@ config:
         expect(YAML.parse('base: &b {a: 1}\n!!merge "<<": *b\nc: 3')).toEqual({ base: { a: 1 }, a: 1, c: 3 });
       });
 
-      test("a \"<<\" property round-trips through stringify", () => {
+      test('a "<<" property round-trips through stringify', () => {
         for (const value of [
           { "<<": { admin: true }, user: "x" },
           { "<<": [1, 2] },
@@ -2800,7 +2800,7 @@ config:
         }
       });
 
-      test("the .yaml loader keeps a quoted \"<<\" key too", async () => {
+      test('the .yaml loader keeps a quoted "<<" key too', async () => {
         using dir = tempDir("yaml-quoted-merge-key", {
           "config.yaml": 'base: &base {a: 1}\nquoted:\n  "<<": *base\n  b: 2\nmerged:\n  <<: *base\n  b: 2\n',
           "index.ts": `

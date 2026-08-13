@@ -1497,8 +1497,7 @@ pub struct ParseStatementOptions<'a> {
     pub(crate) is_name_optional: bool,
     pub(crate) is_typescript_declare: bool,
     pub(crate) is_for_loop_init: bool,
-    /// The statement is a direct child of a `case`/`default` clause, where a
-    /// `using`/`await using` declaration is a syntax error unless wrapped in a block.
+    /// Directly inside a `case`/`default` clause, not in a block nested within one.
     pub(crate) is_switch_case_body: bool,
 }
 

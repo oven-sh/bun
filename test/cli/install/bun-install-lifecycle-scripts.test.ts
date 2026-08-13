@@ -2,7 +2,6 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, mkdtempSync, rmSync, statSync } from "fs";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
-import { tmpdir } from "os";
 import {
   VerdaccioRegistry,
   assertManifestsPopulated,
@@ -13,6 +12,7 @@ import {
   readdirSorted,
   runBunInstall,
 } from "harness";
+import { tmpdir } from "os";
 import { join, sep } from "path";
 
 var verdaccio = new VerdaccioRegistry();

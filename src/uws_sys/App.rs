@@ -287,8 +287,7 @@ impl<const SSL: bool> App<SSL> {
         }
     }
 
-    /// Accept on an already-bound `fd`; it is owned by the listen socket the handler
-    /// receives, or still by the caller when the handler receives null.
+    /// Accept on an already-bound `fd`, owned by the listen socket on success and still by the caller on null.
     pub fn listen_fd(
         &mut self,
         handler: c::uws_listen_handler,

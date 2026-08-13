@@ -55,8 +55,7 @@ pub struct ServerConfig {
     pub(crate) websocket: Option<WebSocketServerContext>,
 
     pub(crate) reuse_port: bool,
-    /// Accept on this already-bound descriptor (node:http in a cluster worker) instead
-    /// of binding `address`, which still describes it for `address`/`url`/errors.
+    /// Accept on this already-bound descriptor instead of binding `address` (which still describes it).
     pub(crate) listen_fd: Option<uws::LIBUS_SOCKET_DESCRIPTOR>,
     pub(crate) id: Box<[u8]>,
     pub(crate) allow_hot: bool,

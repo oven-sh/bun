@@ -1072,8 +1072,7 @@ public:
         return socket;
     }
 
-    /* Accept on an already-bound fd (a cluster primary's shared listen socket). The returned
-     * listen socket owns the fd; on failure (nullptr) the caller still does. */
+    /* Accept on an already-bound fd; the returned listen socket owns it, on failure (nullptr) the caller still does. */
     us_listen_socket_t *listen_fd(struct ssl_ctx_st *sslCtx, LIBUS_SOCKET_DESCRIPTOR fd, int options) {
         int error = 0;
         auto* socket = us_socket_group_listen_fd(&group, socketKind(), sslCtx, fd, 512, options | LIBUS_LISTEN_DEFER_ACCEPT, socketExtSize(), &error);

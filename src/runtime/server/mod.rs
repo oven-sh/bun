@@ -3045,6 +3045,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         match addr {
             Addr::Fd(fd) => {
                 // No H3 listener to pair with it: `from_js` rejects http3 together with a descriptor.
+
                 // SAFETY: app is a live uws handle owned by this server. No
                 // `&*this` is live across this call; the trampoline's
                 // `&mut *this` is the sole borrow while it runs.

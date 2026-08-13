@@ -716,8 +716,7 @@ function notifyPrimaryWhenListening(server, port, host, socketPath) {
   });
 }
 
-// net.Server's listenInCluster, minus round-robin: Bun.serve accepts natively, so like a TLS
-// net.Server it always asks for the shared handle (the primary's bound socket) of its key.
+// net.Server's listenInCluster, but always sharedOnly (like TLS there): Bun.serve accepts natively.
 function listenInCluster(server, tls, port, host, socketPath, onListen) {
   const listeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
   const listenArgs = { server, listeningId, tls, port, host, socketPath, onListen };

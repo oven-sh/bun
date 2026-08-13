@@ -64,8 +64,9 @@ public:
     // already queued (e.g. after transfer). Passing a null port is allowed and
     // means "just buffer, don't dispatch" (used before start()).
     void attach(uint8_t side, ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<MessagePort>);
-    // Called when a MessagePort is created for this side: records ctxId/port so the peer's close()
-    // reaches a port that never started, without enabling drains. No-op once attached/registered/closed.
+    // Records ctxId/port (unless already attached/registered) so the peer's close() reaches a port
+    // that never started, without enabling drains, and reports a peer that is already closed. Called
+    // when a MessagePort is created for this side and when it gains a 'close' listener.
     void registerCloseContext(uint8_t side, ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<MessagePort>);
     void detach(uint8_t side);
     // Explicit == a real, permanent close: close(), context teardown, or an orphaned

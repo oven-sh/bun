@@ -247,15 +247,17 @@ void MessagePortPipe::registerCloseContext(uint8_t side, ScriptExecutionContextI
     {
         Locker locker { s.lock };
         uint64_t st = s.state.load(std::memory_order_relaxed);
-        // Already closed, or context already known (started or previously registered).
-        if ((st & Closed) || (st & (Attached | ContextKnown)))
+        if (st & Closed)
             return;
-        s.ctxId = ctxId;
-        s.port = WTF::move(port);
-        s.state.store(st | ContextKnown, std::memory_order_release);
+        // Already known (started, or registered at creation): keep that, only re-check the peer.
+        if (!(st & (Attached | ContextKnown))) {
+            s.ctxId = ctxId;
+            s.port = WTF::move(port);
+            s.state.store(st | ContextKnown, std::memory_order_release);
+        }
     }
-    // See attach(): re-deliver a peer-close that fired while this side had no
-    // context (in transit or never registered).
+    // See attach(). Also how a port that ignored a collected peer while it had no listener
+    // (MessagePort::peerClosed) hears about it again once it gets a 'close' listener.
     if (m_sides[1 - side].state.load(std::memory_order_acquire) & Closed)
         notifyPeerClosed(side);
 }

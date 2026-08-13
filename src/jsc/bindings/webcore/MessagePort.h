@@ -146,6 +146,10 @@ private:
     const uint8_t m_side { 0 };
 
     bool m_started { false };
+    // Node's receiving_messages_: set by start() (explicitly or through a 'message' listener),
+    // cleared when the last 'message' listener is removed. While clear, a peer's close waits
+    // behind the queued messages (peerClosed()); m_started itself is never cleared.
+    bool m_receiving { false };
     bool m_isDetached { false };
     bool m_isClosing { false };
     // True while a 'message' handler is on the stack. close() called from inside one

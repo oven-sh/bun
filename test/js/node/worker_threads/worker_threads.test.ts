@@ -1867,6 +1867,44 @@ describe("a port whose peer closed is closed too", () => {
     expect(rejected).toBe(true);
   });
 
+  test("a 'close' listener added once the port has closed is not called (the event has passed)", async () => {
+    const { port1, port2 } = new MessageChannel();
+    port2.close();
+    let rejected = false;
+    for (let i = 0; i < 100 && !rejected; i++) {
+      await tick();
+      rejected = isRejectedAsDetached(port1);
+    }
+    expect(rejected).toBe(true);
+
+    let closes = 0;
+    port1.on("close", () => closes++);
+    for (let i = 0; i < 4; i++) await tick();
+    expect(closes).toBe(0);
+  });
+
+  // postMessage() on a closed port still serializes (node does, so transfers keep their side
+  // effects): the ArrayBuffer is detached and a port in the list is consumed, and since the
+  // message goes nowhere that port's own peer sees it close.
+  test("postMessage() on the closed port is dropped but still consumes its transfer list", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const closed = once(port1, "close");
+    port2.close();
+    await closed;
+
+    const third = new MessageChannel();
+    let thirdPeerCloses = 0;
+    third.port2.on("close", () => thirdPeerCloses++);
+    const ab = new ArrayBuffer(8);
+    expect(() => port1.postMessage({ ab, port: third.port1 }, [ab, third.port1])).not.toThrow();
+    for (let i = 0; i < 20 && thirdPeerCloses === 0; i++) await tick();
+    expect({ byteLength: ab.byteLength, consumed: isRejectedAsDetached(third.port1), thirdPeerCloses }).toEqual({
+      byteLength: 0,
+      consumed: true,
+      thirdPeerCloses: 1,
+    });
+  });
+
   test("Worker.postMessage() and the Worker constructor's transferList reject it as well", async () => {
     const { port1, port2 } = new MessageChannel();
     const closed = once(port1, "close");
@@ -1922,6 +1960,71 @@ describe("a port whose peer closed is closed too", () => {
     expect(closes).toBe(1);
   });
 
+  // Removing the last 'message' listener stops a port in node (setupPortReferencing calls
+  // stopMessagePort), so a port paused that way is "not receiving" as well: what the peer sent
+  // before closing waits for the next listener, and only then does the port close.
+  test.each([
+    [
+      "on() then off()",
+      async (port: MessagePort) => {
+        const handler = () => {};
+        port.on("message", handler);
+        port.off("message", handler);
+      },
+    ],
+    [
+      "a once() listener that has fired",
+      async (port: MessagePort, peer: MessagePort) => {
+        const fired = once(port, "message");
+        peer.postMessage("consumed by once()");
+        await fired;
+      },
+    ],
+    [
+      "onmessage set, then cleared",
+      async (port: MessagePort) => {
+        port.onmessage = () => {};
+        port.onmessage = null;
+      },
+    ],
+  ])("a port paused by %s stays open until the next 'message' listener drains the queue", async (_name, pause) => {
+    const { port1, port2 } = new MessageChannel();
+    await pause(port1, port2);
+    let closes = 0;
+    port1.on("close", () => closes++);
+    port2.postMessage("while paused");
+    port2.close();
+    for (let i = 0; i < 4; i++) await tick();
+    expect({ closes, rejected: isRejectedAsDetached(port1) }).toEqual({ closes: 0, rejected: false });
+
+    const [message] = await once(port1, "message");
+    for (let i = 0; i < 20 && closes === 0; i++) await tick();
+    expect({ message, closes, rejected: isRejectedAsDetached(port1) }).toEqual({
+      message: "while paused",
+      closes: 1,
+      rejected: true,
+    });
+  });
+
+  // Whereas a port that was start()ed and never given a listener is receiving: node emits its
+  // messages into the void and reaches the close. Bun keeps them buffered instead, so nothing
+  // would ever drain it; the close must not wait for that, or a ref()'d one pins the loop forever.
+  test("a start()ed port without a 'message' listener is closed even with a message queued", async () => {
+    const { port1, port2 } = new MessageChannel();
+    port1.ref();
+    port1.start();
+    let closes = 0;
+    port1.on("close", () => closes++);
+    port2.postMessage("dropped");
+    port2.close();
+    for (let i = 0; i < 20 && closes === 0; i++) await tick();
+    expect({ closes, rejected: isRejectedAsDetached(port1), hasRef: port1.hasRef() }).toEqual({
+      closes: 1,
+      rejected: true,
+      hasRef: false,
+    });
+  });
+
   test("a port left open that way is still a valid transferable; the receiver gets the queue and the close", async () => {
     const { port1, port2 } = new MessageChannel();
     const carrier = new MessageChannel();
@@ -1940,6 +2043,43 @@ describe("a port whose peer closed is closed too", () => {
     await closed;
     events.push("close");
     expect(events).toEqual(["m1", "close"]);
+    carrier.port1.close();
+    carrier.port2.close();
+  });
+
+  // For a received port whose peer is already gone, the close notification is processed before
+  // the first drain, so peerClosed() itself delivers the queue. A once() handler stops the port
+  // after one message; the delivery must stop there too and leave the rest for the next listener.
+  test("a once() handler on a received port stops the delivery; the next listener gets the rest", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const carrier = new MessageChannel();
+    port2.postMessage("m1");
+    port2.postMessage("m2");
+    port2.close();
+    carrier.port1.postMessage(port1, [port1]);
+
+    const { promise, resolve } = Promise.withResolvers<{ received: MessagePort; first: unknown }>();
+    carrier.port2.on("message", (received: MessagePort) => {
+      // Registered synchronously on receipt, like a handler that sets up the port it was handed.
+      received.once("message", first => resolve({ received, first }));
+    });
+    const { received, first } = await promise;
+    let closes = 0;
+    received.on("close", () => closes++);
+    for (let i = 0; i < 4; i++) await tick();
+    expect({ first, closes, rejected: isRejectedAsDetached(received) }).toEqual({
+      first: "m1",
+      closes: 0,
+      rejected: false,
+    });
+
+    const [second] = await once(received, "message");
+    for (let i = 0; i < 20 && closes === 0; i++) await tick();
+    expect({ second, closes, rejected: isRejectedAsDetached(received) }).toEqual({
+      second: "m2",
+      closes: 1,
+      rejected: true,
+    });
     carrier.port1.close();
     carrier.port2.close();
   });
@@ -2017,6 +2157,17 @@ describe("a port whose peer closed is closed too", () => {
       unread.on("message", m => closeCallbackFires(unread).then(cb => resolve(`${m}, close(cb) ${cb}`)));
     });
     expect(unreadResult).toBe("queued, close(cb) called");
+  });
+
+  // ...but once it does start listening for 'close' it is told after all (as on main): unlike the
+  // explicitly closed case above, the port is still open, and until that event has been delivered
+  // a 'close'-listening port is kept alive in the heap.
+  test("a 'close' listener added after the peer was garbage collected is still told", async () => {
+    const port1 = await survivorOfCollectedPeer(() => {});
+    let closes = 0;
+    port1.on("close", () => closes++);
+    for (let i = 0; i < 20 && closes === 0; i++) await tick();
+    expect({ closes, rejected: isRejectedAsDetached(port1) }).toEqual({ closes: 1, rejected: false });
   });
 
   // The same missing notification left a ref()'d port with no listeners pinning the loop

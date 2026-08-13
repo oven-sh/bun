@@ -178,6 +178,30 @@ describe("Bun.build", () => {
         sourcemap: "invalid",
       } as any),
     ).toThrow();
+    expect(() =>
+      Bun.build({
+        entrypoints: ["hello"],
+        loader: { ".cfg": 42 },
+      } as any),
+    ).toThrow("loader must be a string");
+  });
+
+  test("error for an unknown loader name lists the current loaders", () => {
+    let error: Error | undefined;
+    try {
+      Bun.build({
+        entrypoints: ["hello"],
+        loader: { ".cfg": "not-a-loader" },
+      } as any);
+    } catch (e) {
+      error = e as Error;
+    }
+    expect(error?.message).toStartWith("loader must be one of ");
+    // Same names `--loader` accepts. The old hard-coded message listed none of
+    // these except "napi", which it listed but then rejected.
+    for (const name of ["jsonc", "json5", "yaml", "xml", "md", "sqlite", "sqlite_embedded", "napi"]) {
+      expect(error?.message).toContain(`"${name}"`);
+    }
   });
 
   test("returns errors properly", async () => {

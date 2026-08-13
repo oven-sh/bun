@@ -2605,14 +2605,12 @@ class Http2Stream extends Duplex {
     // node keeps the never-index list visible on sentTrailers (symbol keys are not iterated by
     // the wire-encoding path, so re-attaching is safe).
     if (sensitives !== undefined) headers[sensitiveHeaders] = sensitives;
-    // RFC 9113 §8.1 doesn't explicitly forbid an empty trailer HEADERS frame,
-    // but strict peer implementations (nghttp2, used by curl and Node) reject
-    // a zero-length HPACK block as a callback failure. When the user passes an
-    // empty trailer object (which the compat Http2ServerResponse does
-    // unconditionally from onStreamTrailersReady), emit an empty DATA frame
-    // with END_STREAM instead — this matches Node's wire output. The native
-    // sendTrailers() does the same when every field is skipped (undefined
-    // values, empty arrays); this is just the short-cut for the common case.
+    // node ends a stream whose trailer list came out empty (sendTrailers({}), which the compat
+    // Http2ServerResponse calls unconditionally from onStreamTrailersReady) with an empty DATA
+    // frame carrying END_STREAM rather than a zero-length trailer block, so the peer sees the
+    // stream end without a 'trailers' event. The native sendTrailers() falls back to the same
+    // frame when every field it was given is skipped (undefined values, empty arrays); this
+    // branch is only the short-cut for the common case.
     // Mark before the native call so a re-entrant sendTrailers() from a header-value
     // coercion hits ERR_HTTP2_TRAILERS_ALREADY_SENT, but clear it if validation throws
     // (no frame is written then) so a corrected retry succeeds like node.

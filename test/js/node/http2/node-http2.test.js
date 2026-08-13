@@ -4214,6 +4214,9 @@ describe("http2 undefined header values", () => {
         stream.on("wantTrailers", () => {
           try {
             stream.sendTrailers({
+              // A trailer block rejects every pseudo-header name, so this one is skipped only
+              // because its value is looked at first.
+              ":status": undefined,
               "bad name": undefined,
               "content-type": undefined,
               "Content-Type": "text/plain",
@@ -4279,10 +4282,13 @@ describe("http2 undefined header values", () => {
 
   it("the compat layer still rejects undefined in writeEarlyHints() but passes writeInformation() through", async () => {
     // Http2ServerResponse validates header values itself, like setHeader() does, and node's
-    // writeEarlyHints() is one of those validating entry points; writeInformation() hands its
-    // headers straight to additionalHeaders(), which skips the undefined value.
+    // writeEarlyHints() is one of those validating entry points: every hint is checked the way
+    // setHeader() checks a header, before the link list is even looked at. writeInformation()
+    // hands its headers straight to additionalHeaders(), which skips the undefined value.
     const { promise: failure, reject } = Promise.withResolvers();
+    const link = "</s.css>; rel=preload";
     let calls;
+    let sentInfoHeaders;
     const server = http2.createServer((req, res) => {
       const attempt = fn => {
         try {
@@ -4292,10 +4298,13 @@ describe("http2 undefined header values", () => {
         }
       };
       calls = {
-        earlyHintsUndefined: attempt(() => res.writeEarlyHints({ link: "</s.css>; rel=preload", "x-hint": undefined })),
-        earlyHints: attempt(() => res.writeEarlyHints({ link: "</s.css>; rel=preload", " X-Hint ": "h" })),
+        earlyHintsUndefined: attempt(() => res.writeEarlyHints({ link, "x-hint": undefined })),
+        earlyHintsPseudo: attempt(() => res.writeEarlyHints({ link, ":status": 103 })),
+        earlyHintsWithoutLink: attempt(() => res.writeEarlyHints({ link: [], "x-hint": undefined })),
+        earlyHints: attempt(() => res.writeEarlyHints({ link, " X-Hint ": "h" })),
         information: attempt(() => res.writeInformation(103, { "x-undefined": undefined, "x-info": "i" })),
       };
+      sentInfoHeaders = res.stream.sentInfoHeaders.map(block => Object.keys(block));
       res.end("body");
     });
     server.on("sessionError", reject);
@@ -4307,13 +4316,21 @@ describe("http2 undefined header values", () => {
       const { status, info, rstCode } = await Promise.race([failure, observe(client, { ":path": "/" })]);
       expect(calls).toEqual({
         earlyHintsUndefined: "ERR_HTTP2_INVALID_HEADER_VALUE",
+        earlyHintsPseudo: "ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED",
+        earlyHintsWithoutLink: "ERR_HTTP2_INVALID_HEADER_VALUE",
         earlyHints: true,
         information: true,
       });
+      // The blocks handed down: hint names trimmed and lowercased, then the link list, then the
+      // status; writeInformation() passes its object through as given.
+      expect(sentInfoHeaders).toEqual([
+        ["x-hint", "Link", ":status"],
+        ["x-undefined", "x-info", ":status"],
+      ]);
       expect({ status, info, rstCode }).toEqual({
         status: 200,
         info: [
-          ["x-hint", "h", "link", "</s.css>; rel=preload"],
+          ["x-hint", "h", "link", link],
           ["x-info", "i"],
         ],
         rstCode: 0,

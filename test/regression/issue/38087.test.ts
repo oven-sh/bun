@@ -11,6 +11,7 @@ test("custom inspect on web platform prototypes is writable like in Node", () =>
     TransformStream,
     ReadableStreamDefaultReader,
     WritableStreamDefaultWriter,
+    BroadcastChannel,
   ]) {
     const descriptor = Object.getOwnPropertyDescriptor(Class.prototype, inspectSymbol);
     expect(descriptor, Class.name).toMatchObject({

@@ -151,6 +151,92 @@ pub trait WatcherContext {
     }
 }
 
+// ─── exit coordination ──────────────────────────────────────────────────────
+//
+// Global list of running watchers so that `stop_all_for_exit` can signal them
+// before the process tears down heap memory. The watcher thread accesses
+// globals like the resolver's directory cache (a process-global `BSSMap`
+// singleton) whose storage is freed by `transpiler.deinit()` on the
+// `BUN_DESTRUCT_VM_ON_EXIT` path and poisoned by ASAN's `libc_exit` teardown
+// otherwise. Without stopping the thread first those accesses become
+// use-after-free / use-after-poison (observed on the x64-asan CI lane as a
+// crash in `bustDirCache` on the "File Watcher" thread).
+//
+// Pointers are stored as `usize` because a raw `*mut Watcher` is not `Send`;
+// every access below reconstitutes the pointer under `ACTIVE_WATCHERS` and the
+// watcher's own `mutex`, matching the alias-allowed `*Watcher` model the rest
+// of the port uses (see `VirtualMachine::bun_watcher_ptr`).
+static ACTIVE_WATCHERS: bun_core::Mutex<Vec<usize>> = bun_core::Mutex::new(Vec::new());
+
+/// Set once `stop_all_for_exit` runs. `Global::is_exiting()` covers the plain
+/// `Global::exit` path, but `VirtualMachine::global_exit` calls
+/// `stop_all_for_exit` directly and tears the heap down *before* it reaches
+/// `Global::exit` (which is what sets `IS_EXITING`). Read by `register_active`
+/// (refuse new watchers) and the `thread_main` teardown guard (skip reclaiming
+/// the Box) so both cover both exit paths.
+static STOPPING_FOR_EXIT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// `extern "C"` thunk matching `bun_core::Global::ExitFn`, registered once so
+/// `Global::exit` stops every watcher before the heap teardown / ASAN poison.
+extern "C" fn stop_all_for_exit_hook() {
+    stop_all_for_exit();
+}
+
+/// Returns `false` if the process is already exiting, in which case the caller
+/// must not spawn a watcher thread — it would race the exit-time teardown.
+/// The check runs under the same lock `stop_all_for_exit` holds, so a watcher
+/// that wins the register race is already in the list when the stop sweep
+/// iterates.
+fn register_active(this: *mut Watcher) -> bool {
+    // Install the `Global::exit` hook on first use. `add_early_exit_callback`
+    // dedups, but a `Once` keeps the lock traffic off the common path.
+    static HOOK: std::sync::Once = std::sync::Once::new();
+    HOOK.call_once(|| bun_core::Global::add_early_exit_callback(stop_all_for_exit_hook));
+
+    let mut list = ACTIVE_WATCHERS.lock();
+    if STOPPING_FOR_EXIT.load(std::sync::atomic::Ordering::Acquire)
+        || bun_core::Global::is_exiting()
+    {
+        return false;
+    }
+    list.push(this as usize);
+    true
+}
+
+fn unregister_active(this: *mut Watcher) {
+    let addr = this as usize;
+    let mut list = ACTIVE_WATCHERS.lock();
+    if let Some(idx) = list.iter().position(|&p| p == addr) {
+        list.swap_remove(idx);
+    }
+}
+
+/// Called from the exit path (main thread) before tearing down heap memory.
+/// Acquires each watcher's `mutex` — which serialises with the watcher
+/// thread's `dispatch_file_updates` (it holds `mutex` across `on_file_update`)
+/// — then sets `running = false` and closes the platform handle so the next
+/// loop iteration exits. Any `bust_dir_cache` already in flight completes
+/// before this returns. Callers are serialised by `ACTIVE_WATCHERS`; the
+/// platform `stop()` implementations are idempotent, so a second sequential
+/// call is a no-op.
+pub fn stop_all_for_exit() {
+    STOPPING_FOR_EXIT.store(true, std::sync::atomic::Ordering::Release);
+    let list = ACTIVE_WATCHERS.lock();
+    for &addr in list.iter() {
+        // SAFETY: pointers in the list are live `Box<Watcher>` allocations
+        // (removed in `thread_main`/`shutdown` before the Box is reclaimed,
+        // both of which also take `ACTIVE_WATCHERS`). We hold that lock here,
+        // so no entry can be freed concurrently. The watcher's own `mutex`
+        // serialises the `running`/`platform` writes with the watcher thread.
+        let w = unsafe { &mut *(addr as *mut Watcher) };
+        w.mutex.lock();
+        w.running.store(false);
+        w.platform.stop();
+        w.mutex.unlock();
+    }
+}
+
 impl Watcher {
     /// Initializes a watcher. Each watcher is tied to some context type, which
     /// receives watch callbacks on the watcher thread. This function does not
@@ -233,10 +319,19 @@ impl Watcher {
 
     pub fn start(&mut self) -> Result<(), crate::Error> {
         debug_assert!(!self.watchloop_handle.load());
-        self.watchloop_handle.store(true);
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.
-        let this = std::ptr::from_mut::<Watcher>(self) as usize;
+        let this_ptr = std::ptr::from_mut::<Watcher>(self);
+        // If the process is already exiting, don't spawn — the watcher would
+        // race the exit-time teardown of the resolver's BSSMap singletons (and
+        // ASAN's `libc_exit` heap poisoning). Callers can't usefully recover
+        // and the process is about to die anyway. `register_active` also adds
+        // `self` to the global list so `stop_all_for_exit` can signal it.
+        if !register_active(this_ptr) {
+            return Ok(());
+        }
+        self.watchloop_handle.store(true);
+        let this = this_ptr as usize;
         let spawn = || {
             std::thread::Builder::new()
                 .name("FileWatcher".into())
@@ -256,6 +351,9 @@ impl Watcher {
         });
         self.thread = Some(handle.map_err(|e| {
             self.watchloop_handle.store(false);
+            // Spawn failed: drop the registration so the global list doesn't
+            // retain a pointer to a thread that never started.
+            unregister_active(this_ptr);
             // Windows: raw_os_error() is a Win32 GetLastError() code, so
             // route it through the u32 (Win32Error) mapper rather than
             // from_errno's i64 discriminant-cast path.
@@ -306,6 +404,9 @@ impl Watcher {
             }
         };
         if free {
+            // No thread ever ran, so drop any registration before the Box is
+            // reclaimed (idempotent — usually a no-op on this path).
+            unregister_active(this);
             // watchlist freed by Drop on Box
             // SAFETY: this was heap-allocated by caller of init(); no borrow of it
             // is live here.
@@ -337,6 +438,21 @@ impl Watcher {
 
         Output::flush();
 
+        // Drop out of the active list before the allocation can go away so a
+        // later `stop_all_for_exit` can't observe a dangling pointer.
+        unregister_active(this);
+
+        // If we were stopped for process exit, the main thread is now tearing
+        // the heap down (`transpiler.deinit()` on the destruct path, and under
+        // ASAN `libc_exit` poisoning it on the plain path). Don't reclaim the
+        // Box here: freeing on this thread would race that teardown. The
+        // process is about to die; let it reclaim everything.
+        if STOPPING_FOR_EXIT.load(std::sync::atomic::Ordering::Acquire)
+            || bun_core::Global::is_exiting()
+        {
+            return Ok(());
+        }
+
         if !owner_still_alive {
             // SAFETY: `this` is the heap allocation from init(); the watcher thread
             // owns it now and no `&`/`&mut` borrow of it remains live (the scoped
@@ -356,8 +472,16 @@ impl Watcher {
         let owner_still_alive = match self.watch_loop() {
             Err(err) => {
                 self.watchloop_handle.store(false);
+                // Take `mutex` around `platform.stop()` and the `running`
+                // read: `stop_all_for_exit` on the main thread holds the same
+                // mutex while it calls `platform.stop()`, so without this the
+                // two `stop()` calls race (a double-`CloseHandle` on Windows).
+                // `running` is also written under `mutex` by
+                // `stop_all_for_exit`/`shutdown`, so read it here too.
+                self.mutex.lock();
                 self.platform.stop();
                 let running = self.running.load();
+                self.mutex.unlock();
                 if running {
                     (self.on_error)(self.ctx, err);
                 }

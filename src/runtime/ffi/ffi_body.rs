@@ -465,7 +465,7 @@ impl CompileC {
         if this_.is_null() {
             return;
         }
-        let mut msg: &[u8] = if message.is_null() {
+        let msg: &[u8] = if message.is_null() {
             b""
         } else {
             // SAFETY: TCC guarantees `message` is a valid NUL-terminated string when non-null.
@@ -474,17 +474,6 @@ impl CompileC {
         if msg.is_empty() {
             return;
         }
-
-        let mut offset: usize = 0;
-        // the message we get from TCC sometimes has garbage in it
-        // i think because we're doing in-memory compilation
-        while offset < msg.len() {
-            if msg[offset] > 0x20 && msg[offset] < 0x7f {
-                break;
-            }
-            offset += 1;
-        }
-        msg = &msg[offset..];
 
         // SAFETY: TinyCC threads our own `&mut CompileC` back as `ctx`; the
         // caller is suspended in the TCC call, so this access is exclusive.
@@ -1232,7 +1221,10 @@ impl FFI {
             }
             match &function.step {
                 Step::Failed { msg, .. } => {
-                    let res = ZigString::init(msg).to_error_instance(global_this);
+                    // `to_error_instance` wraps an untagged `ZigString` without
+                    // copying, and `msg` is freed with `compile_c` when this
+                    // returns; the UTF-8 tag makes it copy.
+                    let res = ZigString::init_utf8(msg).to_error_instance(global_this);
                     return Err(global_this.throw_value(res));
                 }
                 Step::Pending => {
@@ -1988,19 +1980,7 @@ impl Function {
     pub(crate) unsafe extern "C" fn handle_tcc_error(ctx: *mut Function, message: *const c_char) {
         debug_assert!(!ctx.is_null());
         // SAFETY: TCC passes a valid NUL-terminated string
-        let mut msg: &[u8] = unsafe { bun_core::ffi::cstr(message) }.to_bytes();
-        if !msg.is_empty() {
-            let mut offset: usize = 0;
-            // the message we get from TCC sometimes has garbage in it
-            // i think because we're doing in-memory compilation
-            while offset < msg.len() {
-                if msg[offset] > 0x20 && msg[offset] < 0x7f {
-                    break;
-                }
-                offset += 1;
-            }
-            msg = &msg[offset..];
-        }
+        let msg: &[u8] = unsafe { bun_core::ffi::cstr(message) }.to_bytes();
 
         // SAFETY: TinyCC threads our own `&mut Function` back as `ctx`; the
         // caller is suspended in the TCC call, so this access is exclusive.

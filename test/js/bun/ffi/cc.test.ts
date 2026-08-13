@@ -139,6 +139,76 @@ describe("given a source file with syntax errors", () => {
   });
 });
 
+// TinyCC reports a diagnostic through a callback; cc() stores the text and
+// throws it later. The wrapper path used to build the Error around the stored
+// bytes without copying them, and cc() freed them on return, so the message
+// reached JS with its first bytes replaced by allocator metadata (a use after
+// free under ASan).
+describe("TinyCC diagnostics thrown by cc()", () => {
+  // One spawned fixture covers both places cc() can fail:
+  // - unresolved.c compiles but does not link, so the diagnostic is collected
+  //   and thrown under a "N errors while compiling" header;
+  // - clash.c defines JSFunctionCall, the entry point of the wrapper cc()
+  //   compiles around every symbol, so the user's C compiles and the wrapper
+  //   does not, and that diagnostic is thrown on its own.
+  it("reach JS byte for byte", async () => {
+    using dir = tempDir("bun-ffi-cc-diagnostics", {
+      "unresolved.c": /* c */ `
+        int bun_test_missing_symbol(int);
+        int add(int a, int b) { return bun_test_missing_symbol(a) + b; }
+      `,
+      "clash.c": /* c */ `
+        int JSFunctionCall(int a) { return a + 1; }
+      `,
+      "fixture.js": /* js */ `
+        import { cc } from "bun:ffi";
+        import path from "path";
+
+        function messageOf(options) {
+          try {
+            cc(options);
+          } catch (error) {
+            return error.message;
+          }
+          return "cc() did not throw";
+        }
+
+        const source = path.join(import.meta.dir, "unresolved.c");
+        const unresolved = messageOf({ source, symbols: { add: { args: ["int", "int"], returns: "int" } } });
+        const clash = messageOf({
+          source: path.join(import.meta.dir, "clash.c"),
+          symbols: { JSFunctionCall: { args: ["int"], returns: "int" } },
+        });
+        console.log(JSON.stringify({ source, unresolved, clash }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    let messages: any = stdout;
+    try {
+      messages = JSON.parse(stdout);
+    } catch {}
+
+    // stderr is part of the received object so a crashed fixture shows why,
+    // but it is not asserted empty: debug builds print benign warnings.
+    expect({ messages, stderr, exitCode }).toMatchObject({
+      messages: {
+        unresolved: `1 errors while compiling ${messages.source}\ntcc: error: unresolved reference to 'bun_test_missing_symbol'\n`,
+        clash: expect.stringMatching(/^<string>:\d+: error: .*'JSFunctionCall'$/),
+      },
+      exitCode: 0,
+    });
+  });
+});
+
 describe.skip("given a ping(cstr) function", () => {
   const library = makeValidCase(
     "ping",

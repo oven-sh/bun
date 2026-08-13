@@ -5749,11 +5749,8 @@ impl NodeFS {
                 let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
                 match mkdir_os_path(parent, mode) {
                     Err(err) => {
-                        // The SEP-restore must NOT happen before the errno match:
-                        // `OSPathSliceZ` (`WStr`/`ZStr`) carries a hard
-                        // `ptr[len] == 0` invariant, and the EEXIST arm below still
-                        // reads `parent`. Defer the SEP-restore into each arm so `parent`
-                        // is never observed with its terminator clobbered.
+                        // The SEP is restored inside the arms, not before the match: the
+                        // EEXIST arm still reads `parent`, which is terminated by that NUL.
                         match err.get_errno() {
                             E::EEXIST => {
                                 // On Windows, this may happen if trying to mkdir replacing a file
@@ -5788,12 +5785,11 @@ impl NodeFS {
                                 i -= 1;
                                 continue;
                             }
-                            // Report the requested path, as the other error arms here and
-                            // node's mkdirSync do, not the prefix that failed.
+                            // Names the requested path, like the other error arms.
                             _ => {
-                                // SAFETY: `working_mem` (and `parent`, which points into it) is
-                                // not used after this return; the re-derived &mut PathBuffer is
-                                // scoped to the call.
+                                // SAFETY: neither `working_mem` nor `parent` (which points into
+                                // it) is used after this return; the re-derived &mut PathBuffer
+                                // is scoped to the call.
                                 return Err(err.with_path(Self::os_path_into_buf(
                                     unsafe { &mut *sync_error_buf_ptr },
                                     without_nt_prefix(&path[..]),

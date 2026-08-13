@@ -1,3 +1,6 @@
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+
 // tbh, we should have more tests for this
 test("Symbol.dispose exists", () => {
   expect(Symbol.dispose).toBeDefined();
@@ -143,4 +146,95 @@ test("await using syntax works and doesnt collide with user symbols", async () =
       var _hasErr = 1;
     }
   }
+});
+
+// `using` / `await using` may not appear directly in a switch case or default clause, but a
+// function nested in such a clause is a fresh statement list. JSC used to reject these at load
+// time with "'using' declaration is not allowed directly in a switch case or default clause".
+// The sync cases need a real resource: bun's transpiler folds `using a = null` into `let a = null`,
+// and JSC would never see the declaration.
+describe("using declarations in a function nested in a switch case clause", () => {
+  const cases: [name: string, program: string][] = [
+    [
+      "await using in an async arrow called from a case clause",
+      `const r = { [Symbol.asyncDispose]() { console.log("disposed"); } };
+async function g() {
+  switch (1) {
+    case 1:
+      await (async () => {
+        await using a = r;
+        console.log("body");
+      })();
+      console.log("after");
+  }
+}
+await g();`,
+    ],
+    [
+      "await using in an async function declared in a default clause",
+      `const r = { [Symbol.asyncDispose]() { console.log("disposed"); } };
+async function j() {
+  switch (1) {
+    default:
+      async function inner() {
+        await using a = r;
+        console.log("body");
+      }
+      await inner();
+      console.log("after");
+  }
+}
+await j();`,
+    ],
+    [
+      "using in an arrow called from a case clause",
+      `const r = { [Symbol.dispose]() { console.log("disposed"); } };
+switch (1) {
+  case 1:
+    (() => {
+      using a = r;
+      console.log("body");
+    })();
+    console.log("after");
+}`,
+    ],
+    [
+      "using in a function declared in a default clause",
+      `const r = { [Symbol.dispose]() { console.log("disposed"); } };
+switch (1) {
+  default:
+    function inner() {
+      using a = r;
+      console.log("body");
+    }
+    inner();
+    console.log("after");
+}`,
+    ],
+    [
+      "using in a method of an object literal in a case clause",
+      `const r = { [Symbol.dispose]() { console.log("disposed"); } };
+switch (1) {
+  case 1:
+    ({
+      m() {
+        using a = r;
+        console.log("body");
+      },
+    }).m();
+    console.log("after");
+}`,
+    ],
+  ];
+
+  test.concurrent.each(cases)("%s", async (_name, program) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", program],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "body\ndisposed\nafter\n", stderr: "", exitCode: 0 });
+  });
 });

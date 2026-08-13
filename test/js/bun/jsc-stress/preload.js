@@ -32,3 +32,6 @@ globalThis.fullGC = jsc.fullGC;
 globalThis.edenGC = jsc.edenGC;
 globalThis.numberOfDFGCompiles = jsc.numberOfDFGCompiles;
 globalThis.noDFG = jsc.noFTL;
+
+// drainMicrotasks: the jsc shell's way of settling promises synchronously.
+globalThis.drainMicrotasks = jsc.drainMicrotasks;

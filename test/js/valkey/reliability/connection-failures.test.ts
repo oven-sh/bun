@@ -1,5 +1,6 @@
 import { RedisClient } from "bun";
 import { describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import net from "net";
 import { DEFAULT_REDIS_OPTIONS, DEFAULT_REDIS_URL, delay, isEnabled } from "../test-utils";
 
@@ -439,5 +440,93 @@ describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
         socket.destroy();
       }
     }
+  });
+});
+
+describe("Valkey: Recovering After fail()", () => {
+  function helloServer(onConnection?: (socket: net.Socket, connection: number) => void) {
+    let connections = 0;
+    const server = net.createServer(socket => {
+      connections += 1;
+      onConnection?.(socket, connections);
+      socket.on("data", chunk => {
+        const text = chunk.toString("latin1");
+        if (text.includes("HELLO")) socket.write("+OK\r\n");
+        if (text.includes("PING")) socket.write("+PONG\r\n");
+      });
+    });
+    return {
+      server,
+      get connections() {
+        return connections;
+      },
+      listen: () =>
+        new Promise<number>(resolve =>
+          server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port)),
+        ),
+    };
+  }
+
+  test("an idle timeout while connected closes the socket, fires onclose, and connect() reconnects", async () => {
+    const closed = Promise.withResolvers<Error>();
+    const fake = helloServer();
+    const port = await fake.listen();
+    try {
+      const client = new RedisClient(`redis://127.0.0.1:${port}`, {
+        // The timer armed by connect() is only re-armed by send(), so on an idle
+        // connection the idle timeout fires once connectionTimeout elapses.
+        connectionTimeout: 100,
+        idleTimeout: 50,
+        autoReconnect: false,
+      });
+      client.onclose = err => closed.resolve(err);
+      await client.connect();
+      expect(client.connected).toBe(true);
+      const err = await closed.promise;
+      expect(err).toBeInstanceOf(Error);
+      expect(client.connected).toBe(false);
+      await client.connect();
+      expect(await client.ping()).toBe("PONG");
+      expect(fake.connections).toBe(2);
+      client.close();
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  test("connect() rejects again after a failed attempt instead of hanging", async () => {
+    // Nothing listens on the port a just-closed listener used.
+    const fake = helloServer();
+    const port = await fake.listen();
+    await new Promise(resolve => fake.server.close(resolve));
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
+    expect(client.connect()).rejects.toThrow();
+    await client.connect().catch(() => {});
+    expect(client.connect()).rejects.toThrow();
+    await client.connect().catch(() => {});
+    client.close();
+  });
+
+  test("the process exits once auto-reconnect gives up", async () => {
+    const fake = helloServer();
+    const port = await fake.listen();
+    await new Promise(resolve => fake.server.close(resolve));
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const client = new Bun.RedisClient("redis://127.0.0.1:${port}", { autoReconnect: true, maxRetries: 1 });
+        client.onclose = err => console.log("onclose", err.code);
+        await client.connect().catch(err => console.log("connect rejected", err.code));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("connect rejected");
+    expect(exitCode).toBe(0);
   });
 });

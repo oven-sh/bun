@@ -1937,10 +1937,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let _guard = this.ref_scope();
         // Ensure the socket pointer is updated.
         this.client_mut().socket = Socket::SocketTcp(uws::SocketTCP::detached());
-        let _defer = scopeguard::guard(BackRef::new(this), |p| {
-            p.client_mut().status = valkey::Status::Disconnected;
-            p.update_poll_ref();
-        });
+        // Before `on_close()`: it runs `onclose` and settles the connect()
+        // promise, and a connect() called from either must see Disconnected.
+        this.client_mut().status = valkey::Status::Disconnected;
+        let _defer = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
 
         let _ = this.client_mut().on_close(); // TODO: properly propagate exception upwards
     }
@@ -1962,10 +1962,8 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // Ensure the socket pointer is updated.
         this.client_mut().socket = Socket::SocketTcp(uws::SocketTCP::detached());
         let _guard = this.ref_scope();
-        let _defer = scopeguard::guard(BackRef::new(this), |p| {
-            p.client_mut().status = valkey::Status::Disconnected;
-            p.update_poll_ref();
-        });
+        this.client_mut().status = valkey::Status::Disconnected;
+        let _defer = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
 
         narrow_terminated(this.client_mut().on_close())
     }

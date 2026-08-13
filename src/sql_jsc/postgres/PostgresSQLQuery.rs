@@ -522,10 +522,8 @@ impl PostgresSQLQuery {
             }
             JsError::Thrown
         };
-        // Reached from user JS that another request's encoder is calling (a
-        // parameter's valueOf/toString/toJSON dispatched this query): only
-        // enqueue. Writing now would land inside that request's half-encoded
-        // message; see PostgresSQLConnection::while_dispatching.
+        // Dispatched from inside another request's encoder: enqueue only
+        // (PostgresSQLConnection::while_dispatching).
         let dispatching = connection.is_dispatching();
 
         if this.flags.get().simple {
@@ -674,13 +672,10 @@ impl PostgresSQLQuery {
                                 this.update_flags(|f| f.binary = !stmt.fields.is_empty());
                                 bun_core::scoped_log!(Postgres, "bindAndExecute");
 
-                                // Enqueue before encoding: bind_and_execute runs user
-                                // JS, and a query dispatched from there has to queue
-                                // up behind this one, since replies are attributed in
-                                // queue order. It goes in as Binding rather than
-                                // Pending because it is never counted in
-                                // pending_requests (the tail below only counts
-                                // requests still Pending).
+                                // Enqueued before encoding so that queries dispatched
+                                // from user JS during the encode queue up behind it
+                                // (replies are attributed in queue order); Binding
+                                // because it is not counted in pending_requests.
                                 if connection
                                     .requests
                                     .with_mut(|q| q.write_item(this_ptr))
@@ -702,9 +697,7 @@ impl PostgresSQLQuery {
                                         writer,
                                     )
                                 }) {
-                                    // If the encoder threw, its exception has to be off
-                                    // the VM while discard_failed_request dispatches what
-                                    // user JS enqueued meanwhile; it is rethrown below.
+                                    // taken while discard_failed_request dispatches, rethrown below
                                     let exception = global_object.try_take_exception();
                                     this.status.set(Status::Fail);
                                     connection.discard_failed_request(this_ptr);

@@ -667,9 +667,7 @@ impl PostgresSQLConnection {
             debug!("flushData: has backpressure");
             return;
         }
-        // Re-entered from user JS running inside an encoder: the buffer may end
-        // in a message whose length prefix is still to be patched in place.
-        // The dispatching caller flushes once it is done.
+        // the buffer may end in a half-encoded message; the encoder flushes when it is done
         if flags.contains(ConnectionFlags::IS_DISPATCHING) {
             debug!("flushData: dispatching");
             return;
@@ -1563,14 +1561,10 @@ impl PostgresSQLConnection {
         self.requests.with_mut(|q| q.discard(1));
     }
 
-    /// Disposes of a request (already marked `Fail`) whose enqueue-time Bind
-    /// failed before any of its bytes were written, the same way `advance()`
-    /// disposes of its own failures: dropped right away while it heads the
-    /// queue, otherwise left in place behind the in-flight requests for
-    /// `advance()` to sweep when they finish. Queries that user JS dispatched
-    /// while the Bind was being encoded were only enqueued (see
-    /// [`Self::while_dispatching`]) and are dispatched here, so the caller
-    /// must have taken the encoder's exception off the VM first.
+    /// Same disposal `advance()` gives a request it failed to encode: popped if
+    /// it heads the queue, otherwise (marked `Fail`) swept by a later `advance()`.
+    /// Then dispatches whatever was enqueued during the encode, so the caller
+    /// must have taken the encoder's exception off the VM.
     pub(crate) fn discard_failed_request(&self, request: *mut PostgresSQLQuery) {
         debug_assert!(!self.is_dispatching());
         self.discard_request(request);
@@ -1584,20 +1578,16 @@ impl PostgresSQLConnection {
         self.flags.get().contains(ConnectionFlags::IS_DISPATCHING)
     }
 
-    /// Runs `encode`, which appends queued requests' messages to `write_buffer`,
-    /// with [`ConnectionFlags::IS_DISPATCHING`] set.
+    /// Runs `encode` (appends requests' messages to `write_buffer`) with
+    /// [`ConnectionFlags::IS_DISPATCHING`] set.
     ///
-    /// Encoding a Bind calls into user JS for every parameter (`valueOf`,
-    /// `toString`, `toJSON`, getters), and that JS can synchronously dispatch
-    /// another query on this very connection (`PostgresSQLQuery::do_run`).
-    /// While the flag is set that nested dispatch only enqueues its request,
-    /// `advance()` returns without draining, and `flush_data()` leaves the
-    /// buffer alone. Otherwise the nested call would splice its own frames into
-    /// the message under construction, bind the request being encoded a second
-    /// time (`advance()` leaves it Pending at the head of the queue until the
-    /// encoder returns), or flush the buffer out from under the outer encoder,
-    /// whose length prefixes are offsets into it. The caller drains the queue
-    /// and flushes once `encode` returns.
+    /// Encoding a Bind converts each parameter through user JS, which can
+    /// synchronously dispatch another query on this connection. While the flag
+    /// is set such a dispatch only enqueues (`PostgresSQLQuery::do_run`),
+    /// `advance()` returns at once and `flush_data()` is a no-op: the buffer may
+    /// end in a message whose length prefix has yet to be patched, and the
+    /// request in progress still looks unwritten to `advance()`. The caller
+    /// drains and flushes once `encode` returns.
     pub(crate) fn while_dispatching<T>(&self, encode: impl FnOnce() -> T) -> T {
         debug_assert!(!self.is_dispatching());
         self.update_flags(|f| f.insert(ConnectionFlags::IS_DISPATCHING));
@@ -1862,13 +1852,10 @@ impl PostgresSQLConnection {
 
     /// Writes out as many queued requests as the connection state allows.
     ///
-    /// Not re-entrant: a call made while a request is being encoded (user JS
-    /// inside the encoder dispatched a query, see [`Self::while_dispatching`])
-    /// returns at once. The request it was asked to write sits at the tail of
-    /// the queue: when the encoder runs inside this loop, the loop re-reads the
-    /// queue length on every iteration and gets to it once the current request
-    /// is done; when it runs inside `PostgresSQLQuery::do_run`, the request
-    /// being encoded is in flight and the ReadyForQuery it ends with gets here.
+    /// A call made from inside an encoder ([`Self::while_dispatching`]) returns
+    /// at once; the newly enqueued request is reached by the outer loop (it
+    /// re-reads the queue length every iteration) or by the ReadyForQuery that
+    /// ends the request being encoded.
     fn advance(&self) {
         if self.is_dispatching() {
             debug!("advance: already dispatching");

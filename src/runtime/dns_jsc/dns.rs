@@ -4749,11 +4749,23 @@ impl Resolver {
         // SAFETY: `self` is the heap allocation from `init`; ref_scope keeps count > 0 across re-entrant callbacks.
         let _deref = unsafe { Self::ref_scope(self.as_ctx_ptr()) };
 
+        // A pending socket error (ICMP port unreachable on the UDP socket of a
+        // nameserver nothing listens on) is reported by epoll as EPOLLERR
+        // without EPOLLIN/EPOLLOUT, which `from_epoll_event` maps to Eof/Hup.
+        // Hand the fd to c-ares as readable and writable anyway so it recv()s
+        // the error and fails over to the next server; otherwise the
+        // level-triggered EPOLLERR re-fires every tick until the query times
+        // out. Same as `on_dns_poll_uv` and Node's cares_wrap.
+        let errored =
+            poll.flags.contains(Async::PollFlag::Eof) || poll.flags.contains(Async::PollFlag::Hup);
+        let readable = poll.is_readable() || errored;
+        let writable = poll.is_writable() || errored;
+
         // SAFETY: `channel` is the live c-ares channel owned by `self`; no `&mut`
         // to `*self` is held across this re-entrant call (all fields are
         // UnsafeCell-backed).
         unsafe {
-            (*channel).process(poll.fd.native(), poll.is_readable(), poll.is_writable());
+            (*channel).process(poll.fd.native(), readable, writable);
         }
 
         // c-ares detaches a query only *after* its callback returns, so

@@ -1792,6 +1792,80 @@ it.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple 
   });
 });
 
+// The recursive promise walk is one body per result type; the string and
+// Dirent variants are compared against Node in the fs/promises block below, so
+// these cover the `buffer` variant's two endings: a join of every subtask's
+// list (including an empty one) and a discard after a subtask fails.
+it("promises.readdir({encoding: 'buffer', recursive: true}) joins every subdirectory's entries", async () => {
+  using dir = tempDir("readdir-buffer-recursive", {
+    "a.txt": "",
+    "sub1": { "b.txt": "", "deep": { "c.txt": "" } },
+    "sub2": { "d.txt": "", "e.txt": "" },
+    "empty": {},
+  });
+  const entries = await promises.readdir(String(dir), { encoding: "buffer", recursive: true });
+  const summarize = (list: Buffer[]) =>
+    list.map(entry => [Buffer.isBuffer(entry), entry.toString("utf8")] as const).sort((a, b) => (a[1] < b[1] ? -1 : 1));
+  expect(summarize(entries)).toEqual(
+    [
+      "a.txt",
+      "empty",
+      "sub1",
+      join("sub1", "b.txt"),
+      join("sub1", "deep"),
+      join("sub1", "deep", "c.txt"),
+      "sub2",
+      join("sub2", "d.txt"),
+      join("sub2", "e.txt"),
+    ]
+      .sort()
+      .map(name => [true, name] as const),
+  );
+});
+
+it.skipIf(isWindows)(
+  "promises.readdir({encoding: 'buffer', recursive: true}) rejects once a subtask fails, after other subtasks collected entries",
+  async () => {
+    using dir = tempDir("readdir-buffer-recursive-error", {
+      "keep.txt": "",
+      "sub1": { "a.txt": "", "b.txt": "" },
+      "sub2": { "c.txt": "" },
+    });
+    // Self-referencing symlinks: opening one with O_DIRECTORY fails with
+    // ELOOP, which the recursive walker does not swallow.
+    for (let i = 0; i < 8; i++) {
+      const link = join(String(dir), `loop${i}`);
+      symlinkSync(link, link);
+    }
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          fs.promises.readdir(${JSON.stringify(String(dir))}, { encoding: "buffer", recursive: true }).then(
+            r => console.log("resolved", r.length),
+            e => console.log("rejected", e.code),
+          );
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "rejected ELOOP",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+);
+
 describe("readSync", () => {
   it("rejects the read when the length argument detaches the destination buffer during coercion", () => {
     const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");

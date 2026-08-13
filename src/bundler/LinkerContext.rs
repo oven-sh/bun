@@ -3466,6 +3466,8 @@ impl<'a> LinkerContext<'a> {
                         // form: the external export may be type-only and the
                         // named ESM import would fail to link at runtime, so it
                         // takes the namespace property rewrite below instead.
+                        // Direct imports only: a re-export chain reads the
+                        // intermediate file's (unguarded) symbol here.
                         && self.graph.symbol(tracker.import_ref).import_item_status
                             != ImportItemStatus::MetadataGuarded
                     {

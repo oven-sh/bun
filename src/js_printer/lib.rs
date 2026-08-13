@@ -2657,11 +2657,15 @@ pub(crate) mod __gated_printer {
             self.print(quote);
         }
 
-        /// When bundling, a clause item whose symbol carries a namespace
-        /// alias prints as `ns.alias` at every use, so the named binding
-        /// itself must not print (the export may be type-only).
-        fn import_item_prints_in_clause(&self, ref_: Ref) -> bool {
-            if !self.options.bundling {
+        /// A clause item whose symbol carries a namespace alias prints as
+        /// `ns.alias` at every use, so the named binding must not print when
+        /// the statement's star binding replaces it (the export may be
+        /// type-only). `hide_aliased` is true only when that star prints:
+        /// bundling and the record carries `CONTAINS_IMPORT_STAR`. HMR also
+        /// aliases every import item but declares the namespace itself, so
+        /// its clauses stay as written.
+        fn import_item_prints_in_clause(&self, hide_aliased: bool, ref_: Ref) -> bool {
+            if !hide_aliased {
                 return true;
             }
             let ref_ = self.symbols().follow(ref_);
@@ -5638,14 +5642,16 @@ pub(crate) mod __gated_printer {
                         return Ok(());
                     }
 
-                    // When bundling, an item whose symbol carries a namespace
-                    // alias prints as `ns.alias` at every use (a guarded
-                    // metadata import from an external module); its named
-                    // binding must leave the clause or the failing import
-                    // comes back.
+                    // A guarded metadata import from an external module prints
+                    // as `ns.alias` at every use; its named binding must leave
+                    // the clause or the failing import comes back.
+                    let hide_aliased_items = self.options.bundling
+                        && record
+                            .flags
+                            .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR);
                     let mut visible_items: usize = 0;
                     for item in slice_of(s.items).iter() {
-                        if self.import_item_prints_in_clause(item.name.ref_) {
+                        if self.import_item_prints_in_clause(hide_aliased_items, item.name.ref_) {
                             visible_items += 1;
                         }
                     }
@@ -5689,7 +5695,7 @@ pub(crate) mod __gated_printer {
                     let mut item_count: usize = 0;
 
                     if let Some(name) = &s.default_name {
-                        if self.import_item_prints_in_clause(name.ref_) {
+                        if self.import_item_prints_in_clause(hide_aliased_items, name.ref_) {
                             self.print(b" ");
                             self.print_symbol(name.ref_);
                             item_count += 1;
@@ -5711,7 +5717,7 @@ pub(crate) mod __gated_printer {
 
                         let mut printed: usize = 0;
                         for item in slice_of(s.items).iter() {
-                            if !self.import_item_prints_in_clause(item.name.ref_) {
+                            if !self.import_item_prints_in_clause(hide_aliased_items, item.name.ref_) {
                                 continue;
                             }
                             if printed != 0 {

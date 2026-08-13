@@ -3106,6 +3106,14 @@ fn transpile_source_code_inner(
                     };
                     let (bytecode_cache, bytecode_cache_size) =
                         node_compile_cache_blob.unwrap_or((core::ptr::null_mut(), 0));
+                    // Mirrors the print path below: without this, a cache-hit
+                    // main module leaves `has_loaded` false and later
+                    // `require` calls take the pre-load loader fallbacks
+                    // (skipping `require.extensions` dispatch, among others).
+                    if is_main {
+                        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                        unsafe { (*jsc_vm).has_loaded = true };
+                    }
                     return Ok(OwnedResolvedSource::from(ResolvedSource {
                         source_code,
                         specifier: input_specifier.dupe_ref(),

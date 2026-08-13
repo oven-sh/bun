@@ -7332,9 +7332,7 @@ pub enum ExistsAtType {
     File,
     Directory,
 }
-/// `FileAttributes` of an already NT-prefixed wide path via `NtQueryAttributesFile`,
-/// shared by `exists_at_type` and `exists_at_type_w`. Like `GetFileAttributesW` it
-/// describes a reparse point itself, not what it points at.
+/// Like `GetFileAttributesW`, this describes a reparse point itself, not its target.
 #[cfg(windows)]
 fn query_attributes_nt(dir: Fd, mut path: &[u16]) -> Maybe<u32> {
     use bun_windows_sys::externs as w;
@@ -7379,9 +7377,7 @@ fn query_attributes_nt(dir: Fd, mut path: &[u16]) -> Maybe<u32> {
     }
     Ok(basic_info.FileAttributes)
 }
-/// `FILE_ATTRIBUTE_READONLY` on a directory is a folder-customization
-/// marker (OneDrive sets it) and does not affect directory-ness; only
-/// `FILE_ATTRIBUTE_DIRECTORY` decides the type.
+/// Only `FILE_ATTRIBUTE_DIRECTORY` counts: OneDrive sets `FILE_ATTRIBUTE_READONLY` on folders.
 #[cfg(windows)]
 fn exists_at_type_from_attributes(attributes: u32) -> ExistsAtType {
     if (attributes & bun_windows_sys::FILE_ATTRIBUTE_DIRECTORY) != 0 {
@@ -7390,8 +7386,7 @@ fn exists_at_type_from_attributes(attributes: u32) -> ExistsAtType {
         ExistsAtType::File
     }
 }
-/// `fstatat` then `S_ISDIR`. The Windows arm does not follow a symlink or
-/// junction (`exists_at_type_w` does).
+/// `fstatat` then `S_ISDIR`; on Windows this does not follow links (`exists_at_type_w` does).
 pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
     #[cfg(unix)]
     {
@@ -7411,8 +7406,7 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
         query_attributes_nt(dir, path).map(exists_at_type_from_attributes)
     }
 }
-/// Wide-path arm of `exists_at_type` that follows a symlink or junction like the
-/// POSIX arm's `fstatat`, failing with the open error when it cannot be followed.
+/// Wide-path `exists_at_type` that follows symlinks and junctions, like `fstatat`.
 #[cfg(windows)]
 pub fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
     use bun_windows_sys::externs as w;
@@ -7424,8 +7418,7 @@ pub fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
     if (attributes & w::FILE_ATTRIBUTE_REPARSE_POINT) == 0 {
         return Ok(exists_at_type_from_attributes(attributes));
     }
-    // A directory-type link carries FILE_ATTRIBUTE_DIRECTORY even when it points nowhere;
-    // without FILE_OPEN_REPARSE_POINT this open lands on whatever the link resolves to.
+    // A directory-type link has FILE_ATTRIBUTE_DIRECTORY even when it points nowhere.
     let fd = open_file_at_windows(
         dir,
         sub,

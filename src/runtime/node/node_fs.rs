@@ -437,8 +437,7 @@ fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> May
     sys::openat_windows(dirfd, path.as_slice(), flags, mode)
 }
 
-/// `exists_at_type` over an `OSPathSliceZ`: `fstatat` on POSIX, the link-following wide
-/// arm on Windows (where `OSPathSliceZ` is already `&WStr`), so both follow symlinks.
+/// Follows symlinks on both platforms (`fstatat`; the wide arm on Windows).
 #[inline]
 fn exists_at_type_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<sys::ExistsAtType> {
     #[cfg(not(windows))]
@@ -5741,8 +5740,7 @@ impl NodeFS {
                         // is never observed with its terminator clobbered.
                         match err.get_errno() {
                             E::EEXIST => {
-                                // Only a file is ENOTDIR here; an unfollowable link falls through
-                                // to the next mkdir's ENOENT.
+                                // Files: ENOTDIR. Unfollowable links: the next mkdir's ENOENT.
                                 #[cfg(windows)]
                                 {
                                     if let Ok(sys::ExistsAtType::File) =

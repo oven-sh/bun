@@ -176,7 +176,5 @@ extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObje
         }
     }
 
-    // Nothing was awaiting the promise (consumed via .then()/.catch(), a combinator, or
-    // top-level await), so the error keeps its empty trace; still give it a .stack.
     Bun::installLazyStackIfFrameless(vm, globalObject, instance);
 }

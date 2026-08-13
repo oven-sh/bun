@@ -217,8 +217,7 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
         // exception were thrown by ErrorInstance::create)
         return uncheckedDowncast<JSObject>(thrown_exception->value());
     }
-    // Native code also builds these while no JS is running (e.g. the redis client reporting
-    // a dropped connection), which would otherwise leave them with no .stack at all.
+    // Native code also builds these from I/O callbacks (e.g. the redis client), with no JS on the stack.
     Bun::installLazyStackIfFrameless(vm, globalObject, created_error);
     return created_error;
 }

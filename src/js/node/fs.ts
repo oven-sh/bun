@@ -62,7 +62,7 @@ var access = function access(path, mode, callback) {
     }
 
     callback = ensureCallback(callback);
-    fs.access(path, mode).then(callback, callback);
+    fs.access(path, mode).then(callOnceWithNull.bind(null, callback), callback);
   },
   appendFile = function appendFile(path, data, options, callback) {
     if (!$isCallable(callback)) {

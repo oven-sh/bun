@@ -1190,6 +1190,21 @@ impl Task {
                                 }
                             }
                         }
+
+                        // The clone/hardlink/copy walk only visits names in
+                        // the cache folder, so rebuilding in place merges:
+                        // a removed patch's `.bun-tag-<hash>` marker would
+                        // survive and make the next patched install skip
+                        // this entry. Delete to replace.
+                        let mut prev_build = AutoAbsPath::init_top_level_dir();
+                        installer.append_real_store_path(
+                            &mut prev_build,
+                            self.entry_id,
+                            Which::Final,
+                        );
+                        if let Some(e) = Fd::cwd().delete_tree(prev_build.slice()).err() {
+                            return Ok(Yield::failure(TaskError::LinkPackage(e)));
+                        }
                     }
 
                     if uses_global_store {

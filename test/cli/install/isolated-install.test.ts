@@ -724,6 +724,134 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
   await checkInstall();
 });
 
+test("removing, re-adding, and editing a patch rebuilds the store entry", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const cacheDir = join(packageDir, ".bun-cache");
+
+  // Patch A modifies index.js and creates patched.txt, covering both a file
+  // a later rebuild must revert and one it must delete. Patch B only
+  // modifies index.js, so the A -> B rebuild must also delete patched.txt.
+  const patchA = `diff --git a/index.js b/index.js
+index bb9c6f6876154493527577cd78279aa6bb686ebb..3ae17d1f0a4f3d561aa40e21ff6808d1440a9661 100644
+--- a/index.js
++++ b/index.js
+@@ -1,7 +1 @@
+-module.exports = require(\`./package.json\`);
+-
+-for (const key of [\`dependencies\`, \`devDependencies\`, \`peerDependencies\`]) {
+-  for (const dep of Object.keys(module.exports[key] || {})) {
+-    module.exports[key][dep] = require(dep);
+-  }
+-}
++module.exports = "patched-a";
+diff --git a/patched.txt b/patched.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..1023de9a151ad14964d6afa5a86dbcb9ef068a7b
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++added by patch
+`;
+  const patchB = `diff --git a/index.js b/index.js
+index bb9c6f6876154493527577cd78279aa6bb686ebb..1f700ec137ee6ca2f03769e4ba67840ca28cd4c8 100644
+--- a/index.js
++++ b/index.js
+@@ -1,7 +1 @@
+-module.exports = require(\`./package.json\`);
+-
+-for (const key of [\`dependencies\`, \`devDependencies\`, \`peerDependencies\`]) {
+-  for (const dep of Object.keys(module.exports[key] || {})) {
+-    module.exports[key][dep] = require(dep);
+-  }
+-}
++module.exports = "patched-b";
+`;
+  const patchFile = join(packageDir, "patches", "no-deps@1.0.0.patch");
+
+  const packageJsonOf = (patched: boolean) =>
+    JSON.stringify({
+      name: "patch-toggle",
+      dependencies: { "no-deps": "1.0.0" },
+      ...(patched ? { patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" } } : {}),
+    });
+
+  async function install(): Promise<string> {
+    const { stdout, stderr, exited } = spawn({
+      // Force the hardlink backend: macOS defaults to clonefile, whose
+      // whole-tree clone already replaced the store entry, so the merge bug
+      // this test pins only exists under the walking backends.
+      cmd: [bunExe(), "install", "--backend", "hardlink"],
+      cwd: packageDir,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return out;
+  }
+
+  const indexJs = join(packageDir, "node_modules", "no-deps", "index.js");
+  const patchedTxt = join(packageDir, "node_modules", "no-deps", "patched.txt");
+  const storePkgDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+  // The patched build's completeness marker. Exactly one must exist after a
+  // patched install and none after an unpatched one; a stale survivor is
+  // what made later installs skip the entry.
+  const storeMarkers = async () => (await readdirSorted(storePkgDir)).filter(name => name.startsWith(".bun-tag-"));
+
+  await write(packageJson, packageJsonOf(false));
+  await install();
+  const original = await file(indexJs).text();
+  expect(original).not.toBe('module.exports = "patched-a";\n');
+  expect(await storeMarkers()).toEqual([]);
+
+  await write(patchFile, patchA);
+  await write(packageJson, packageJsonOf(true));
+  await install();
+  expect(await file(indexJs).text()).toBe('module.exports = "patched-a";\n');
+  expect(await file(patchedTxt).exists()).toBe(true);
+  expect(await storeMarkers()).toHaveLength(1);
+
+  // Removing the patch must rebuild the store entry from the unpatched
+  // package with nothing left over from the patched build.
+  await write(packageJson, packageJsonOf(false));
+  await install();
+  expect(await file(indexJs).text()).toBe(original);
+  expect(await file(patchedTxt).exists()).toBe(false);
+  expect(await storeMarkers()).toEqual([]);
+
+  // Re-adding the same patch must reinstall the patched content. A stale
+  // `.bun-tag-<hash>` marker surviving the unpatched rebuild used to make
+  // this install skip the entry entirely and report "(no changes)".
+  await write(packageJson, packageJsonOf(true));
+  expect(await install()).not.toContain("(no changes)");
+  expect(await file(indexJs).text()).toBe('module.exports = "patched-a";\n');
+  expect(await file(patchedTxt).exists()).toBe(true);
+  expect(await storeMarkers()).toHaveLength(1);
+
+  // A repeat install in the same state must still take the skip path: the
+  // marker survives the delete-and-relink round trip.
+  expect(await install()).toContain("(no changes)");
+  expect(await file(indexJs).text()).toBe('module.exports = "patched-a";\n');
+
+  // Editing the patch contents is the other door into the same bug: the
+  // rebuild from B's cache folder must replace A's build and marker.
+  await write(patchFile, patchB);
+  await install();
+  expect(await file(indexJs).text()).toBe('module.exports = "patched-b";\n');
+  expect(await file(patchedTxt).exists()).toBe(false);
+  expect(await storeMarkers()).toHaveLength(1);
+
+  // Editing it back reuses A's still-cached folder; a stale `.bun-tag-<A>`
+  // marker would false-skip this install.
+  await write(patchFile, patchA);
+  expect(await install()).not.toContain("(no changes)");
+  expect(await file(indexJs).text()).toBe('module.exports = "patched-a";\n');
+  expect(await file(patchedTxt).exists()).toBe(true);
+  expect(await storeMarkers()).toHaveLength(1);
+});
+
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {
   test(`isolated install with backend: ${backend}`, async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

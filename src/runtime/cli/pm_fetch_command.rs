@@ -21,7 +21,7 @@ impl PmFetchCommand {
 
         if pm.options.should_print_command_name() {
             bun_core::prettyln!(
-                "<r><b>bun pm fetch <r><d>v{}<r>\n",
+                "<r><b>bun pm fetch <r><d>v{}<r>\n\n",
                 Global::package_json_version_with_sha,
             );
             Output::flush();

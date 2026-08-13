@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { exists, readdir, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env } from "harness";
+import { exists, mkdir, readdir, rm, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, normalizeBunSnapshot } from "harness";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -21,217 +21,152 @@ beforeEach(async () => {
 });
 afterEach(dummyAfterEach);
 
-async function writeBunfig(dir: string) {
+const packageJson = JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "^0.0.2" } });
+
+// `package_dir` is created per test by dummyBeforeEach, so derive paths lazily.
+const bunfigPath = () => join(package_dir, "bunfig.toml");
+const cacheDir = () => join(package_dir, ".bun-cache");
+
+async function writeProject() {
   // The default dummy.registry bunfig disables the global cache; override it
   // so `bun pm fetch` uses BUN_INSTALL_CACHE_DIR.
-  await writeFile(
-    join(dir, "bunfig.toml"),
-    `
-[install]
-registry = "${root_url}/"
-saveTextLockfile = false
-`,
-  );
+  await writeFile(bunfigPath(), `[install]\nregistry = "${root_url}/"\nsaveTextLockfile = false\n`);
+  await writeFile(join(package_dir, "package.json"), packageJson);
+}
+
+async function runBun(args: string[], extraEnv: Record<string, string> = {}) {
+  await using proc = spawn({
+    cmd: [bunExe(), ...args],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+    env: { ...env, ...extraEnv },
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+async function fetchIntoCache(cache: string, extraArgs: string[] = [], extraEnv: Record<string, string> = {}) {
+  const { stdout, stderr, exitCode } = await runBun(["pm", ...extraArgs, "fetch"], {
+    ...extraEnv,
+    BUN_INSTALL_CACHE_DIR: cache,
+  });
+  // The cache path is asserted through the cache's contents instead.
+  return { stdout: normalizeBunSnapshot(stdout.replace(/^Cache: .*$/m, "Cache: <cache>")), stderr, exitCode };
+}
+
+async function cachedPackages(cache: string) {
+  return (await readdir(cache)).filter(name => name.startsWith("bar@0.0.2")).length;
 }
 
 it("should fetch dependencies into the cache without installing", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
-  await writeBunfig(package_dir);
-  await writeFile(
-    join(package_dir, "package.json"),
-    JSON.stringify({
-      name: "foo",
-      version: "0.0.1",
-      dependencies: {
-        bar: "^0.0.2",
-      },
-    }),
-  );
+  await writeProject();
 
-  const cache_dir = join(package_dir, ".bun-cache");
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "pm", "fetch"],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env: {
-      ...env,
-      BUN_INSTALL_CACHE_DIR: cache_dir,
-    },
-  });
-  const out = await stdout.text();
-  const err = await stderr.text();
+  const { stdout, stderr, exitCode } = await fetchIntoCache(cacheDir());
+  expect(stdout).toMatchInlineSnapshot(`
+    "bun pm fetch <version> (<revision>)
 
-  expect(err).not.toContain("error:");
-  expect(out).toContain("bun pm fetch");
-  expect(out).toContain("Fetched 1 package");
-  expect(out).toContain("Cache:");
-  expect(await exited).toBe(0);
+    Fetched 1 package into cache
+    Cache: <cache>"
+  `);
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
 
-  // The tarball was requested and downloaded.
-  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
-
-  // The package was extracted into the cache.
-  const cache_contents = await readdir(cache_dir);
-  expect(cache_contents.some(name => name.startsWith("bar@0.0.2"))).toBe(true);
-
-  // node_modules was NOT created, and no lockfile was written.
-  expect(await exists(join(package_dir, "node_modules"))).toBe(false);
-  expect(await exists(join(package_dir, "bun.lock"))).toBe(false);
-  expect(await exists(join(package_dir, "bun.lockb"))).toBe(false);
+  expect(urls).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(await cachedPackages(cacheDir())).toBe(1);
+  expect(
+    await Promise.all(["node_modules", "bun.lock", "bun.lockb"].map(name => exists(join(package_dir, name)))),
+  ).toEqual([false, false, false]);
 }, 30_000);
 
 it("should fetch packages missing from cache when lockfile exists", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
-  await writeBunfig(package_dir);
-  await writeFile(
-    join(package_dir, "package.json"),
-    JSON.stringify({
-      name: "foo",
-      version: "0.0.1",
-      dependencies: {
-        bar: "^0.0.2",
-      },
-    }),
-  );
+  await writeProject();
 
-  const cache_dir = join(package_dir, ".bun-cache");
-
-  // First: install normally to generate a lockfile and populate the cache.
   {
-    const { stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: package_dir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env: {
-        ...env,
-        BUN_INSTALL_CACHE_DIR: cache_dir,
-      },
-    });
-    const err = await stderr.text();
-    expect(err).not.toContain("error:");
-    expect(err).toContain("Saved lockfile");
-    expect(await exited).toBe(0);
+    const { stderr, exitCode } = await runBun(["install"], { BUN_INSTALL_CACHE_DIR: cacheDir() });
+    expect(stderr).toContain("Saved lockfile");
+    expect(exitCode).toBe(0);
   }
-
-  // Wipe the cache and node_modules, but keep the lockfile.
-  await rm(cache_dir, { recursive: true, force: true });
+  await rm(cacheDir(), { recursive: true, force: true });
   await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
   urls.length = 0;
 
-  // Now: fetch should repopulate the cache from the existing lockfile.
-  {
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "pm", "fetch"],
-      cwd: package_dir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env: {
-        ...env,
-        BUN_INSTALL_CACHE_DIR: cache_dir,
-      },
-    });
-    const out = await stdout.text();
-    const err = await stderr.text();
+  const { stdout, stderr, exitCode } = await fetchIntoCache(cacheDir());
+  expect(stdout).toMatchInlineSnapshot(`
+    "bun pm fetch <version> (<revision>)
 
-    expect(err).not.toContain("error:");
-    expect(out).toContain("Fetched 1 package");
-    expect(await exited).toBe(0);
-  }
+    Fetched 1 package into cache
+    Cache: <cache>"
+  `);
+  // Nothing needed resolving, so only the second pass (the one that walks the
+  // lockfile) printed anything.
+  expect(stderr).toBe("Fetching packages\n");
+  expect(exitCode).toBe(0);
 
-  // The tarball was downloaded directly from the URL stored in the lockfile.
+  // Downloaded straight from the URL stored in the lockfile, no manifest request.
   expect(urls).toEqual([`${root_url}/bar-0.0.2.tgz`]);
-
-  // The package was extracted into the cache.
-  const cache_contents = await readdir(cache_dir);
-  expect(cache_contents.some(name => name.startsWith("bar@0.0.2"))).toBe(true);
-
-  // node_modules was NOT created.
+  expect(await cachedPackages(cacheDir())).toBe(1);
   expect(await exists(join(package_dir, "node_modules"))).toBe(false);
 }, 30_000);
 
 it("should report when all packages are already cached", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
-  await writeBunfig(package_dir);
-  await writeFile(
-    join(package_dir, "package.json"),
-    JSON.stringify({
-      name: "foo",
-      version: "0.0.1",
-      dependencies: {
-        bar: "^0.0.2",
-      },
-    }),
-  );
+  await writeProject();
 
-  const cache_dir = join(package_dir, ".bun-cache");
-
-  // First fetch: populates cache.
-  {
-    const { exited, stderr } = spawn({
-      cmd: [bunExe(), "pm", "fetch"],
-      cwd: package_dir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env: {
-        ...env,
-        BUN_INSTALL_CACHE_DIR: cache_dir,
-      },
-    });
-    const err = await stderr.text();
-    expect(err).not.toContain("error:");
-    expect(await exited).toBe(0);
-  }
-
+  expect((await fetchIntoCache(cacheDir())).exitCode).toBe(0);
   urls.length = 0;
 
-  // Second fetch: everything already cached.
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "pm", "fetch"],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env: {
-      ...env,
-      BUN_INSTALL_CACHE_DIR: cache_dir,
-    },
-  });
-  const out = await stdout.text();
-  const err = await stderr.text();
+  const { stdout, stderr, exitCode } = await fetchIntoCache(cacheDir());
+  expect(stdout).toMatchInlineSnapshot(`
+    "bun pm fetch <version> (<revision>)
 
-  expect(err).not.toContain("error:");
-  expect(out).toContain("already in cache");
-  expect(await exited).toBe(0);
+    Done! 1 package already in cache
+    Cache: <cache>"
+  `);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 
-  // No network requests at all on the second run.
   expect(urls).toEqual([]);
-
-  // node_modules still not created.
   expect(await exists(join(package_dir, "node_modules"))).toBe(false);
 }, 30_000);
 
-// `bun pm` (no subcommand) and `bun pm --help` print separate copies of the
-// subcommand list; both must mention `fetch`.
-it.each([[[]], [["--help"]]])("should appear in bun pm help (%j)", async extraArgs => {
-  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
-  const { stdout, exited } = spawn({
-    cmd: [bunExe(), "pm", ...extraArgs],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
+it("should fetch the global install's dependencies with -g", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeProject();
+  const bunInstall = join(package_dir, "global-install");
+  const globalDir = join(bunInstall, "install", "global");
+  await mkdir(globalDir, { recursive: true });
+  await writeFile(join(globalDir, "package.json"), packageJson);
+
+  const { stdout, stderr, exitCode } = await fetchIntoCache(cacheDir(), ["-g", `--config=${bunfigPath()}`], {
+    BUN_INSTALL: bunInstall,
   });
-  const out = await stdout.text();
-  expect(out).toContain("bun pm fetch");
-  expect(await exited).toBe(0);
+  expect(stdout).toMatchInlineSnapshot(`
+    "bun pm fetch <version> (<revision>)
+
+    Fetched 1 package into cache
+    Cache: <cache>"
+  `);
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  expect(urls).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(await cachedPackages(cacheDir())).toBe(1);
+  expect(await readdir(globalDir)).toEqual(["package.json"]);
+}, 30_000);
+
+// A bare `bun pm` and `bun pm --help` print separate copies of the subcommand list.
+it.each([[[]], [["--help"]]])("should appear in bun pm help (%j)", async extraArgs => {
+  await writeFile(join(package_dir, "package.json"), packageJson);
+
+  const { stdout, exitCode } = await runBun(["pm", ...extraArgs]);
+  expect(stdout).toMatch(/^\s*bun pm fetch\s+fetch all dependencies into the cache without installing$/m);
+  expect(exitCode).toBe(0);
 });

@@ -21,6 +21,7 @@ const httpServerAddServerName = $newRustFunction("node_http_binding.rs", "httpSe
 
 const ArrayPrototypeShift = Array.prototype.shift;
 const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeSplice = Array.prototype.splice;
 const ObjectAssign = Object.assign;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const JSONStringify = JSON.stringify;
@@ -553,7 +554,7 @@ Server.prototype.addContext = function (hostname, context) {
   // Last context added for a hostname wins, as in Node; Bun.serve rejects duplicate serverNames.
   for (let i = contexts.length - 1; i >= 0; i--) {
     if (contexts[i].serverName === hostname) {
-      contexts.splice(i, 1);
+      ArrayPrototypeSplice.$call(contexts, i, 1);
     }
   }
   ArrayPrototypePush.$call(contexts, entry);

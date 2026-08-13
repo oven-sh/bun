@@ -520,8 +520,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // is wrapped in `(function(exports, require, module, __filename,
                         // __dirname) {...})`, and those parameters are populated at
                         // runtime with the virtual `/$bunfs/root/...` path, so rewrite
-                        // `import.meta.dir` / `.dirname` / `.path` to reference them
-                        // instead of inlining a string literal.
+                        // `import.meta.dir` / `.dirname` / `.path` / `.filename` to
+                        // reference them instead of inlining a string literal.
                         if p.options.compile {
                             if name == b"dir" || name == b"dirname" {
                                 p.record_usage(p.dirname_ref);
@@ -532,7 +532,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     },
                                     name_loc,
                                 ));
-                            } else if name == b"path" {
+                            } else if name == b"path" || name == b"filename" {
                                 p.record_usage(p.filename_ref);
                                 return Some(p.new_expr(
                                     E::Identifier {

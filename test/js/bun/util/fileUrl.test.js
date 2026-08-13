@@ -4,8 +4,20 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { pathToFileURL as nodePathToFileURL } from "node:url";
 
 describe("pathToFileURL", () => {
-  it("should convert a path to a file url", () => {
-    expect(pathToFileURL("/path/to/file.js").href).toBe("file:///path/to/file.js");
+  it("should convert an absolute path to a file url", () => {
+    if (isWindows) {
+      expect(pathToFileURL("C:\\path\\to\\file.js").href).toBe("file:///C:/path/to/file.js");
+    } else {
+      expect(pathToFileURL("/path/to/file.js").href).toBe("file:///path/to/file.js");
+    }
+  });
+
+  // On Windows a path with no drive letter is resolved against the cwd's
+  // drive, as path.resolve() and node's pathToFileURL() do.
+  it.skipIf(!isWindows)("should resolve a rooted path against the current drive on Windows", () => {
+    const drive = pathToFileURL(process.cwd()).href.slice(0, "file:///C:".length);
+    expect(pathToFileURL("/path/to/file.js").href).toBe(`${drive}/path/to/file.js`);
+    expect(pathToFileURL("\\path\\to\\file.js").href).toBe(`${drive}/path/to/file.js`);
   });
 
   it("should handle relative paths longer than PATH_MAX", () => {
@@ -89,6 +101,7 @@ describe("pathToFileURL", () => {
       "x\\..\\y",
       "日本\\語",
       "a b#c?d%e[f]^g|h~i",
+      "/rooted/file.js",
       process.cwd(),
       `${process.cwd()}/`,
       `${process.cwd()}/child/..`,

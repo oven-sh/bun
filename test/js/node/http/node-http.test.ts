@@ -4140,11 +4140,12 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
   }
 });
 
-it("connectionListener applies the server's joinDuplicateHeaders option like Node", async () => {
+it("connectionListener applies the server's joinDuplicateHeaders option like the native path and Node", async () => {
   // Node keeps only the first value of a header it treats as single-valued (Authorization,
   // Content-Type, ...) unless the server was created with joinDuplicateHeaders; Cookie and unknown
-  // headers are joined either way. A socket fed in through server.emit("connection", ...) is served
-  // by the JS parser path, which has to read the option off the server like the native path does.
+  // headers are joined either way. The same raw request goes through server.emit("connection", ...)
+  // (the JS parser path, which has to read the option off the server itself) and through the same
+  // server options listening normally (the native path); both must produce Node's req.headers.
   const rawRequest =
     "GET / HTTP/1.1\r\nHost: example.test\r\n" +
     "Authorization: one\r\nAuthorization: two\r\n" +
@@ -4153,40 +4154,69 @@ it("connectionListener applies the server's joinDuplicateHeaders option like Nod
     "X-Custom: first\r\nX-Custom: second\r\n" +
     "Connection: close\r\n\r\n";
 
-  async function headersSeenOverEmittedConnection(options: { joinDuplicateHeaders?: boolean }) {
-    const { promise: seen, resolve, reject } = Promise.withResolvers<Record<string, string | undefined>>();
+  function serverRecordingHeaders(options: { joinDuplicateHeaders?: boolean }) {
+    const { promise: headers, resolve, reject } = Promise.withResolvers<http.IncomingHttpHeaders>();
     const server = createServer(options, (req, res) => {
-      const { authorization, "content-type": contentType, cookie, "x-custom": xCustom } = req.headers;
-      resolve({ authorization, "content-type": contentType, cookie, "x-custom": xCustom as string });
+      resolve({ ...req.headers });
       res.end();
     });
+    // A no-op once the handler has resolved, so the connection closing after the response is fine.
+    const closedEarly = () => reject(new Error("the connection closed before the request was dispatched"));
+    return { server, headers, reject, closedEarly };
+  }
+
+  async function headersSeenOverEmittedConnection(options: { joinDuplicateHeaders?: boolean }) {
+    const { server, headers, reject, closedEarly } = serverRecordingHeaders(options);
     const [clientSide, serverSide] = duplexPair();
     clientSide.on("error", reject);
     serverSide.on("error", reject);
-    serverSide.on("close", () => reject(new Error("the server closed the connection without dispatching the request")));
+    serverSide.on("close", closedEarly);
     clientSide.resume();
     server.emit("connection", serverSide);
     clientSide.write(rawRequest);
     try {
-      return await seen;
+      return await headers;
     } finally {
       clientSide.destroy();
       serverSide.destroy();
     }
   }
 
+  async function headersSeenOverListeningServer(options: { joinDuplicateHeaders?: boolean }) {
+    const { server, headers, reject, closedEarly } = serverRecordingHeaders(options);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    socket.on("error", reject);
+    socket.on("close", closedEarly);
+    socket.resume();
+    socket.write(rawRequest);
+    try {
+      return await headers;
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  }
+
   const joined = {
+    host: "example.test",
     authorization: "one, two",
     "content-type": "text/plain, text/html",
     cookie: "a=1; b=2",
     "x-custom": "first, second",
+    connection: "close",
   };
   const firstValueWins = { ...joined, authorization: "one", "content-type": "text/plain" };
-  expect(
-    await Promise.all([
-      headersSeenOverEmittedConnection({ joinDuplicateHeaders: true }),
-      headersSeenOverEmittedConnection({ joinDuplicateHeaders: false }),
-      headersSeenOverEmittedConnection({}),
-    ]),
-  ).toEqual([joined, firstValueWins, firstValueWins]);
+  for (const [options, expected] of [
+    [{ joinDuplicateHeaders: true }, joined],
+    [{ joinDuplicateHeaders: false }, firstValueWins],
+    [{}, firstValueWins],
+  ] as const) {
+    expect({
+      options,
+      emitted: await headersSeenOverEmittedConnection(options),
+      listening: await headersSeenOverListeningServer(options),
+    }).toEqual({ options, emitted: expected, listening: expected });
+  }
 });

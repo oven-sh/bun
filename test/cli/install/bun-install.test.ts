@@ -4533,47 +4533,51 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  // #16181 / the second repro of #7416: the URL parser took `user@127.0.0.1` for
-  // the hostname when the userinfo had no password but the URL had a port, so
-  // the download never reached the server. (Sending the credentials as Basic
-  // auth, the rest of #7416, is a separate feature.)
-  it("connects to the host of a tarball URL that has a username but no password", async () => {
-    const requests: string[] = [];
-    using server = Bun.serve({
-      hostname: "127.0.0.1",
-      port: 0,
-      fetch(req) {
-        requests.push(`${req.method} ${new URL(req.url).pathname}`);
-        return new Response(null, { status: 404 });
-      },
-    });
-    const tarballUrl = `http://user@127.0.0.1:${server.port}/pkg.tgz`;
-    using dir = tempDir("tarball-userinfo", {
-      "package.json": JSON.stringify({ name: "foo", dependencies: { pkg: tarballUrl } }),
-    });
-    await using proc = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: {
-        ...env,
-        BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
-        http_proxy: undefined,
-        HTTP_PROXY: undefined,
-        https_proxy: undefined,
-        HTTPS_PROXY: undefined,
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ requests, stdout, stderr, exitCode }).toEqual({
-      requests: ["GET /pkg.tgz"],
-      stdout: expect.stringContaining("bun install v1."),
-      // The server's 404 is what fails the install; before, the request never left the machine.
-      stderr: expect.stringContaining(`error: GET ${tarballUrl} - 404`),
-      exitCode: 1,
-    });
-  });
+  // Tarball URLs reach the URL parser as written, without WHATWG normalization.
+  // `user@` with a port used to be read as the hostname `user@127.0.0.1`
+  // (#16181, the second repro of #7416; sending the credentials as Basic auth,
+  // the rest of #7416, is a separate feature), and userinfo is delimited by the
+  // last `@` of the authority, so an unencoded `@` inside it stays userinfo.
+  it.each(["user@", "user:pw@", "user@pass@", "user:p@ss@"])(
+    "connects to the host of http://%s127.0.0.1:<port>/pkg.tgz",
+    async userinfo => {
+      const requests: string[] = [];
+      using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch(req) {
+          requests.push(`${req.method} ${new URL(req.url).pathname}`);
+          return new Response(null, { status: 404 });
+        },
+      });
+      const tarballUrl = `http://${userinfo}127.0.0.1:${server.port}/pkg.tgz`;
+      using dir = tempDir("tarball-userinfo", {
+        "package.json": JSON.stringify({ name: "foo", dependencies: { pkg: tarballUrl } }),
+      });
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: {
+          ...env,
+          BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
+          http_proxy: undefined,
+          HTTP_PROXY: undefined,
+          https_proxy: undefined,
+          HTTPS_PROXY: undefined,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ requests, stdout, stderr, exitCode }).toEqual({
+        requests: ["GET /pkg.tgz"],
+        stdout: expect.stringContaining("bun install v1."),
+        // The server's 404 is what fails the install; before, the request never left the machine.
+        stderr: expect.stringContaining(`error: GET ${tarballUrl} - 404`),
+        exitCode: 1,
+      });
+    },
+  );
 
   it("should handle GitHub URL with existing lockfile", async () => {
     await withContext(defaultOpts, async ctx => {

@@ -336,7 +336,6 @@ impl Loader {
     /// Get proxy URL for HTTP/HTTPS requests, respecting NO_PROXY.
     /// `hostname` is the host without port (e.g., "localhost")
     /// `host` is the host with port if present (e.g., "localhost:3000")
-    ///
     /// Normalized like `fetch()`'s `proxy` option (#16182); a value WTF::URL rejects is used as is.
     pub fn get_http_proxy(
         &self,

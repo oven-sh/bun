@@ -600,15 +600,19 @@ impl<'a> URL<'a> {
                     // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
                     if offset > 0 {
                         let rest = &base[offset as usize..];
-                        // An `@` is userinfo only inside the authority (#1390 had one in the path).
-                        let authority_len =
-                            strings::index_of_any(rest, b"/?#").unwrap_or(rest.len());
-                        if strings::contains_char(&rest[..authority_len], b'@') {
-                            offset += url.parse_username(rest).unwrap_or(0);
-                            // The username ended at `:` (password follows) or at `@` (none).
-                            if base[offset as usize - 1] == b':' {
-                                offset += url.parse_password(&base[offset as usize..]).unwrap_or(0);
+                        // Userinfo ends at the last `@` of the authority (#1390 had one in the path).
+                        let authority =
+                            &rest[..strings::index_of_any(rest, b"/?#").unwrap_or(rest.len())];
+                        if let Some(at) = strings::last_index_of_char(authority, b'@') {
+                            let userinfo = &authority[..at];
+                            match strings::index_of_char_usize(userinfo, b':') {
+                                Some(colon) => {
+                                    url.username = &userinfo[..colon];
+                                    url.password = &userinfo[colon + 1..];
+                                }
+                                None => url.username = userinfo,
                             }
+                            offset += u32::try_from(at + 1).expect("int cast");
                         }
                     }
 
@@ -715,30 +719,6 @@ impl<'a> URL<'a> {
             }
         }
 
-        None
-    }
-
-    pub(crate) fn parse_username(&mut self, str: &'a [u8]) -> Option<u32> {
-        // reset it
-        self.username = b"";
-
-        if str.len() < b"@".len() {
-            return None;
-        }
-        for i in 0..str.len() {
-            match str[i] {
-                b':' | b'@' => {
-                    // we found a username, everything before this point in the slice is a username
-                    self.username = &str[0..i];
-                    return Some(u32::try_from(i + 1).expect("int cast"));
-                }
-                // if we reach a slash or "?", there's no username
-                b'?' | b'/' => {
-                    return None;
-                }
-                _ => {}
-            }
-        }
         None
     }
 

@@ -688,7 +688,8 @@ static void noteBindingBeforeOverride(Zig::GlobalObject* globalObject, ModuleMoc
     // Unmaterialized builtin export: restore reads it off the default export, the object the engine itself reads lazy exports from.
     auto source = readExportBinding(globalObject, binding->record, vm.propertyNames->defaultKeyword);
     RETURN_IF_EXCEPTION(scope, void());
-    if (!source)
+    // No value to read from if `default` is itself a lazy export nothing has materialized.
+    if (!source || !source->value)
         return;
     // The live slot may hold a spy or (if this test mocked `default` too) a mock; the log then has the real object.
     JSValue sourceValue = Bun::unwrapSpyOriginal(source->value);

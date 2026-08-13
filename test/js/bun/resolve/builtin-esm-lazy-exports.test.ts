@@ -331,6 +331,36 @@ test.concurrent("a lazy export is restored from the real object even while defau
   expect(exitCode).toBe(0);
 });
 
+test.concurrent("a lazy export stays mocked after restore when the default export is itself lazy", async () => {
+  const { stderr, exitCode } = await run(
+    {
+      "lazy.test.ts": `
+        import { expect, mock, test } from "bun:test";
+        const events = require("node:events");
+
+        // An enumerable accessor on the exports object before the module record exists makes that export lazy, default included.
+        let defaultReads = 0;
+        Object.defineProperty(events, "default", { configurable: true, enumerable: true, get: () => (defaultReads++, events) });
+
+        test("defaultMaxListeners", async () => {
+          const ns = await import("node:events");
+          mock.module("node:events", () => ({ defaultMaxListeners: 123 }));
+          expect(ns.defaultMaxListeners).toBe(123);
+          mock.restore();
+          expect(ns.defaultMaxListeners).toBe(123);
+          expect(defaultReads).toBe(0);
+          expect(ns.default).toBe(events);
+          expect(defaultReads).toBe(1);
+        });
+      `,
+    },
+    ["test", "lazy.test.ts"],
+  );
+  expect(stderr).toContain(" 1 pass");
+  expect(stderr).toContain(" 0 fail");
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent('"bun": re-exports construct the properties that get bound, not the rest of the object', async () => {
   const result = await runEntry(
     `

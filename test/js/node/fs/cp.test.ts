@@ -281,6 +281,67 @@ for (const [name, copy] of impls) {
       expect(fs.readFileSync(copiedLink, "utf8")).toBe("a");
     });
 
+    // A symlink already present at the destination is replaced by the source
+    // link. That must also hold when the existing link does not resolve: the
+    // sync walker used to stat() through it to ask whether it points at a
+    // directory and let that ENOENT / ELOOP escape from cpSync.
+    test("symlinks - recursive copy replaces dest links that do not resolve", async () => {
+      await using basename = tempDir("cp", {
+        "target.txt": "t",
+        "from": {},
+        "result": {},
+      });
+      const target = join(basename, "target.txt");
+      fs.symlinkSync(target, join(basename, "from", "dangling"));
+      fs.symlinkSync(target, join(basename, "from", "loop"));
+      fs.symlinkSync("missing", join(basename, "result", "dangling"));
+      fs.symlinkSync("loop", join(basename, "result", "loop"));
+
+      await copy(join(basename, "from"), join(basename, "result"), { recursive: true });
+
+      expect({
+        dangling: fs.readlinkSync(join(basename, "result", "dangling")),
+        loop: fs.readlinkSync(join(basename, "result", "loop")),
+        danglingContent: fs.readFileSync(join(basename, "result", "dangling"), "utf8"),
+        loopContent: fs.readFileSync(join(basename, "result", "loop"), "utf8"),
+      }).toEqual({
+        dangling: target,
+        loop: target,
+        danglingContent: "t",
+        loopContent: "t",
+      });
+    });
+
+    test("symlinks - single link copied over a dangling dest link replaces it", async () => {
+      await using basename = tempDir("cp", {
+        "target.txt": "t",
+      });
+      const target = join(basename, "target.txt");
+      fs.symlinkSync(target, join(basename, "link"));
+      fs.symlinkSync("missing", join(basename, "result"));
+
+      await copy(join(basename, "link"), join(basename, "result"));
+
+      expect(fs.readlinkSync(join(basename, "result"))).toBe(target);
+      expect(fs.readFileSync(join(basename, "result"), "utf8")).toBe("t");
+    });
+
+    // The same stat() still drives the refusal when the dest link does resolve
+    // to a directory that contains the source link's target.
+    test("symlinks - dest link to a directory containing the source link's target is refused", async () => {
+      await using basename = tempDir("cp", {
+        "dir/sub": {},
+        "from": {},
+        "result": {},
+      });
+      fs.symlinkSync(join(basename, "dir", "sub"), join(basename, "from", "link"));
+      fs.symlinkSync(join(basename, "dir"), join(basename, "result", "link"));
+
+      const e = await copyShouldThrow(join(basename, "from"), join(basename, "result"), { recursive: true });
+      expect(e.code).toBe("ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY");
+      expect(fs.readlinkSync(join(basename, "result", "link"))).toBe(join(basename, "dir"));
+    });
+
     test.skipIf(isWindows)("recursive - file and directory modes are preserved into a fresh destination", async () => {
       await using basename = tempDir("cp", {
         "from/d/f.txt": "x",
@@ -653,6 +714,8 @@ test.skipIf(!isPosix)(
     expect(stdout.trim()).toBe("ok");
     expect(exitCode).toBe(0);
   },
+  // The 20 iterations take around 5s under a debug + ASAN build.
+  30_000,
 );
 
 test.skipIf(!isLinux)("fs.cp and fs.copyFile create the destination with the source file's mode", async () => {

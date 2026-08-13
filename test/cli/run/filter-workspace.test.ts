@@ -662,6 +662,91 @@ describe("bun", () => {
     expect(stderr).toContain("skipping this workspace package");
     expect(exitCode).toBe(0);
   });
+
+  test("each script gets the npm_* env of its own package and script", async () => {
+    const printEnv = `${bunExe()} print-env.js`;
+    const printEnvJs = `
+      const { npm_package_name, npm_package_version, npm_package_json, npm_lifecycle_event, npm_lifecycle_script, npm_command } = process.env;
+      console.log(JSON.stringify({ npm_package_name, npm_package_version, npm_package_json, npm_lifecycle_event, npm_lifecycle_script, npm_command }));
+    `;
+    using dir = tempDir("filter-npm-env", {
+      packages: {
+        a: {
+          "print-env.js": printEnvJs,
+          "package.json": JSON.stringify({
+            name: "pkg-a",
+            version: "1.0.0",
+            scripts: { prepresent: printEnv, present: printEnv },
+          }),
+        },
+        b: {
+          "print-env.js": printEnvJs,
+          "package.json": JSON.stringify({ name: "pkg-b", version: "2.0.0", scripts: { present: printEnv } }),
+        },
+      },
+      "package.json": JSON.stringify({ workspaces: ["packages/*"] }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "*", "present"],
+      cwd: dir,
+      env: {
+        ...bunEnv,
+        // What the environment looks like when a root package.json script
+        // invokes `bun run --filter`. Every value must be replaced per package.
+        npm_package_name: "outer",
+        npm_package_version: "0.0.0-outer",
+        npm_package_json: "outer/package.json",
+        npm_lifecycle_event: "outer",
+        npm_lifecycle_script: "outer",
+        npm_command: "outer",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Output lines look like `pkg-a present: {...}`; the packages run concurrently.
+    const envs = stdout
+      .split("\n")
+      .map(line => line.match(/\{.*\}/)?.[0])
+      .filter(json => json !== undefined)
+      .map(json => JSON.parse(json))
+      .map(env => ({ ...env, npm_package_json: env.npm_package_json.replaceAll("\\", "/") }))
+      .sort((x, y) =>
+        `${x.npm_package_name} ${x.npm_lifecycle_event}` < `${y.npm_package_name} ${y.npm_lifecycle_event}` ? -1 : 1,
+      );
+    const packageJson = (pkg: string) => join(String(dir), "packages", pkg, "package.json").replaceAll("\\", "/");
+    expect({ envs, exitCode }).toEqual({
+      envs: [
+        {
+          npm_package_name: "pkg-a",
+          npm_package_version: "1.0.0",
+          npm_package_json: packageJson("a"),
+          npm_lifecycle_event: "prepresent",
+          npm_lifecycle_script: printEnv,
+          npm_command: "run-script",
+        },
+        {
+          npm_package_name: "pkg-a",
+          npm_package_version: "1.0.0",
+          npm_package_json: packageJson("a"),
+          npm_lifecycle_event: "present",
+          npm_lifecycle_script: printEnv,
+          npm_command: "run-script",
+        },
+        {
+          npm_package_name: "pkg-b",
+          npm_package_version: "2.0.0",
+          npm_package_json: packageJson("b"),
+          npm_lifecycle_event: "present",
+          npm_lifecycle_script: printEnv,
+          npm_command: "run-script",
+        },
+      ],
+      exitCode: 0,
+    });
+  });
 });
 
 // #20319: on Windows, `bun --filter` / `bun run --parallel` spawn each script

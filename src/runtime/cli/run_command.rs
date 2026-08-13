@@ -71,6 +71,76 @@ impl NpmArgs {
     const PACKAGE_VERSION: &'static [u8] = b"npm_package_version";
 }
 
+/// The env vars that differ between the scripts one `bun run` spawns
+/// (`--filter`, `--parallel`, `--sequential`): the package's `$PATH` and the
+/// `npm_package_*` / `npm_lifecycle_*` vars `bun run <script>` sets when run
+/// inside that package. Those runners share one env loader, which
+/// `configure_env_for_run` seeded from the cwd package, so [`Self::create_envp`]
+/// overlays these vars on it only while building each script's envp.
+#[derive(Clone)]
+pub(crate) struct ScriptEnv {
+    vars: Vec<(&'static [u8], Box<[u8]>)>,
+}
+
+impl ScriptEnv {
+    /// `path` is the `$PATH` built for the package directory by
+    /// `configure_path_for_run_with_package_json_dir`.
+    pub(crate) fn new(path: &[u8], package_json: Option<&PackageJSON>) -> Self {
+        let mut vars: Vec<(&'static [u8], Box<[u8]>)> = vec![(b"PATH", Box::from(path))];
+        if let Some(package_json) = package_json {
+            vars.push((
+                b"npm_package_json",
+                Box::from(package_json.source.path.text),
+            ));
+            // Like `configure_env_for_run` (and npm), a package.json without a
+            // name or version leaves the inherited values alone.
+            if !package_json.name.is_empty() {
+                vars.push((NpmArgs::PACKAGE_NAME, package_json.name.clone()));
+            }
+            if !package_json.version.is_empty() {
+                vars.push((NpmArgs::PACKAGE_VERSION, package_json.version.clone()));
+            }
+        }
+        Self { vars }
+    }
+
+    /// The env for one package.json script of this package. `script` is the
+    /// body as written in package.json: `npm_lifecycle_script` carries it
+    /// verbatim, not the rewritten command that actually runs.
+    pub(crate) fn with_script(&self, name: &[u8], script: &[u8]) -> Self {
+        let mut env = self.clone();
+        env.vars.push((b"npm_lifecycle_event", Box::from(name)));
+        env.vars.push((b"npm_lifecycle_script", Box::from(script)));
+        env
+    }
+
+    /// Builds the script's envp from the shared `map` with these vars applied.
+    /// `map` is put back the way it was found, so nothing set for this script
+    /// is seen by the next script spawned from the same map.
+    pub(crate) fn create_envp(
+        &self,
+        map: &mut DotEnv::Map,
+    ) -> Result<DotEnv::NullDelimitedEnvMap, bun_alloc::AllocError> {
+        let previous: Vec<(&'static [u8], Option<Box<[u8]>>)> = self
+            .vars
+            .iter()
+            .map(|(key, _)| (*key, map.get(key).map(Box::from)))
+            .collect();
+        let envp = self
+            .vars
+            .iter()
+            .try_for_each(|(key, value)| map.put(key, value))
+            .and_then(|()| map.create_null_delimited_env_map());
+        for (key, value) in &previous {
+            match value {
+                Some(value) => map.put(key, value)?,
+                None => map.remove(key),
+            }
+        }
+        envp
+    }
+}
+
 /// Runtime knobs `Command::start` passes through to select the per-tag exec
 /// behavior.
 #[derive(Clone, Copy)]

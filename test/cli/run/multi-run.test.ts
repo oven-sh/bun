@@ -2143,3 +2143,112 @@ describe("workspace integration", () => {
     expect(r.exitCode).toBe(0);
   });
 });
+
+// ─── npm_* ENV PER SCRIPT ───────────────────────────────────────────────────
+
+describe.concurrent("npm_* env per script", () => {
+  const printEnv = `${bunExe()} print-env.js`;
+  const printEnvJs = `
+    const { npm_package_name, npm_package_version, npm_package_json, npm_lifecycle_event, npm_lifecycle_script, npm_command } = process.env;
+    console.log(JSON.stringify({ npm_package_name, npm_package_version, npm_package_json, npm_lifecycle_event, npm_lifecycle_script, npm_command }));
+  `;
+  // What the environment looks like when a package.json script invokes
+  // `bun run --parallel`; values a script's own package does not define are
+  // inherited from here.
+  const inherited = {
+    npm_package_name: "outer",
+    npm_package_version: "0.0.0-outer",
+    npm_package_json: "outer/package.json",
+    npm_lifecycle_event: "outer",
+    npm_lifecycle_script: "outer",
+    npm_command: "outer",
+  };
+  const posix = (p: string) => p.replaceAll("\\", "/");
+  /** The JSON objects printed by `print-env.js`, one per `label | {...}` line, in output order. */
+  const printedEnvs = (stdout: string) =>
+    stdout
+      .split("\n")
+      .map(line => line.match(/\{.*\}/)?.[0])
+      .filter(json => json !== undefined)
+      .map(json => JSON.parse(json))
+      .map(env => ({ ...env, npm_package_json: posix(env.npm_package_json) }));
+
+  test("package.json scripts get npm_lifecycle_*; a raw command run after them does not", async () => {
+    using dir = tempDir("mr-npm-env", {
+      "print-env.js": printEnvJs,
+      "package.json": JSON.stringify({ name: "solo", version: "3.0.0", scripts: { a: printEnv } }),
+    });
+    const r = await runMulti(["run", "--sequential", "a", "./print-env.js"], String(dir), inherited);
+    const pkg = {
+      npm_package_name: "solo",
+      npm_package_version: "3.0.0",
+      npm_package_json: posix(path.join(String(dir), "package.json")),
+      npm_command: "run-script",
+    };
+    expect({ envs: printedEnvs(r.stdout), exitCode: r.exitCode }).toEqual({
+      envs: [
+        { ...pkg, npm_lifecycle_event: "a", npm_lifecycle_script: printEnv },
+        { ...pkg, npm_lifecycle_event: "outer", npm_lifecycle_script: "outer" },
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("workspace packages each get their own npm_package_* and pre/post npm_lifecycle_event", async () => {
+    using dir = tempDir("mr-ws-npm-env", {
+      "package.json": JSON.stringify({ workspaces: ["packages/*"] }),
+      "packages/a/print-env.js": printEnvJs,
+      "packages/a/package.json": JSON.stringify({
+        name: "pkg-a",
+        version: "1.0.0",
+        scripts: { prebuild: printEnv, build: printEnv, postbuild: printEnv },
+      }),
+      "packages/b/print-env.js": printEnvJs,
+      "packages/b/package.json": JSON.stringify({ name: "pkg-b", version: "2.0.0", scripts: { build: printEnv } }),
+      // No name or version: those stay inherited (the "packages/noname" label
+      // is only for output), but the script still gets its own package.json.
+      "packages/noname/print-env.js": printEnvJs,
+      "packages/noname/package.json": JSON.stringify({ scripts: { build: printEnv } }),
+    });
+    const r = await runMulti(
+      ["run", "--parallel", "--filter", "*", "--filter", "./packages/noname", "build"],
+      String(dir),
+      inherited,
+    );
+    const packageJson = (pkg: string) => posix(path.join(String(dir), "packages", pkg, "package.json"));
+    const envs = printedEnvs(r.stdout).sort((x, y) =>
+      `${x.npm_package_json} ${x.npm_lifecycle_event}` < `${y.npm_package_json} ${y.npm_lifecycle_event}` ? -1 : 1,
+    );
+    const a = {
+      npm_package_name: "pkg-a",
+      npm_package_version: "1.0.0",
+      npm_package_json: packageJson("a"),
+      npm_lifecycle_script: printEnv,
+      npm_command: "run-script",
+    };
+    expect({ envs, exitCode: r.exitCode }).toEqual({
+      envs: [
+        { ...a, npm_lifecycle_event: "build" },
+        { ...a, npm_lifecycle_event: "postbuild" },
+        { ...a, npm_lifecycle_event: "prebuild" },
+        {
+          npm_package_name: "pkg-b",
+          npm_package_version: "2.0.0",
+          npm_package_json: packageJson("b"),
+          npm_lifecycle_event: "build",
+          npm_lifecycle_script: printEnv,
+          npm_command: "run-script",
+        },
+        {
+          npm_package_name: "outer",
+          npm_package_version: "0.0.0-outer",
+          npm_package_json: packageJson("noname"),
+          npm_lifecycle_event: "build",
+          npm_lifecycle_script: printEnv,
+          npm_command: "run-script",
+        },
+      ],
+      exitCode: 0,
+    });
+  });
+});

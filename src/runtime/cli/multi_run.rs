@@ -15,7 +15,7 @@ use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 
 use crate::Command;
 use crate::filter_arg as FilterArg;
-use crate::run_command::RunCommand;
+use crate::run_command::{RunCommand, ScriptEnv};
 
 // `bun.spawn` (Process/Status/SpawnOptions/Rusage/spawnProcess) —
 // lives under crate::api::bun::process.
@@ -41,8 +41,9 @@ struct ScriptConfig {
     label: Box<[u8]>,
     command: Box<[u8]>,
     cwd: Box<[u8]>,
-    /// PATH env var value for this script
-    path: Box<[u8]>,
+    /// `$PATH` and the `npm_*` vars specific to this script's package and
+    /// (for package.json scripts) to the script itself.
+    env: ScriptEnv,
 }
 
 /// Wraps a BufferedReader and tracks whether it represents stdout or stderr,
@@ -156,19 +157,13 @@ impl<'a> ProcessHandle<'a> {
         ];
 
         self.start_time = Instant::now().into();
-        let envp;
-        let env_ptr = state.env;
         let spawned: SpawnProcessResult = {
-            // SAFETY: state.env points at the process-lifetime DotEnv loader.
-            let env = unsafe { &mut *env_ptr };
-            let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
-            let _ = env.map.put(b"PATH", &self.config.path);
-            let _restore = scopeguard::guard(original_path, move |original_path| {
-                // SAFETY: env_ptr is the process-lifetime loader; outlives this scope.
-                let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
-            });
-            // SAFETY: same loader; the `_restore` guard's closure has not fired yet.
-            envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
+            // SAFETY: state.env points at the process-lifetime DotEnv loader; this
+            // is the only borrow of it while `create_envp` runs.
+            let envp = self
+                .config
+                .env
+                .create_envp(unsafe { &mut (*state.env).map })?;
             // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
             // with argv[0] non-null; valid for this call.
             unsafe {
@@ -723,7 +718,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
     raw_name: &[u8],
     scripts_map: Option<&StringArrayHashMap<V>>,
     cwd: &[u8],
-    path: &[u8],
+    package_env: &ScriptEnv,
     label_prefix: Option<&[u8]>,
 ) -> Result<(), Error> {
     let group_start = configs.len();
@@ -766,7 +761,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
                 label: label.clone(),
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
-                path: Box::from(path),
+                env: package_env.with_script(&pre_name, pc),
             });
         }
 
@@ -779,7 +774,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
                 label: label.clone(),
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
-                path: Box::from(path),
+                env: package_env.with_script(raw_name, content),
             });
         }
 
@@ -791,7 +786,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
                 label,
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
-                path: Box::from(path),
+                env: package_env.with_script(&post_name, pc),
             });
         }
     } else {
@@ -824,7 +819,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             label,
             command: command_z,
             cwd: Box::from(cwd),
-            path: Box::from(path),
+            env: package_env.clone(),
         });
     }
 
@@ -881,6 +876,11 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     let _ = RunCommand::configure_env_for_run(ctx, &mut this_transpiler_slot, None, true, false)?;
     // SAFETY: `configure_env_for_run` fully writes the slot on the success path.
     let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
+    // Same value `bun run <script>` exports (see `RunCommand::exec`).
+    this_transpiler
+        .env_mut()
+        .map
+        .put(b"npm_command", b"run-script")?;
     let cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
 
     // SAFETY: transpiler.env is a process-lifetime *mut Loader set in init.
@@ -958,7 +958,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             name: Box<[u8]>,
             dirpath: Box<[u8]>,
             scripts: OwnedScriptsMap,
-            path: Box<[u8]>,
+            env: ScriptEnv,
         }
         let mut matched_packages: Vec<MatchedPackage> = Vec::new();
 
@@ -1021,7 +1021,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 name: pkg_name,
                 dirpath,
                 scripts: owned_scripts,
-                path: pkg_path_env.into(),
+                env: ScriptEnv::new(&pkg_path_env, Some(&pkgjson)),
             });
         }
 
@@ -1053,7 +1053,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                             matched_name,
                             Some(&pkg.scripts),
                             &pkg.dirpath,
-                            &pkg.path,
+                            &pkg.env,
                             Some(&pkg.name),
                         )?;
                     }
@@ -1065,7 +1065,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                             raw_name,
                             Some(&pkg.scripts),
                             &pkg.dirpath,
-                            &pkg.path,
+                            &pkg.env,
                             Some(&pkg.name),
                         )?;
                     } else if ctx.workspaces && !ctx.if_present {
@@ -1116,6 +1116,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
         let package_json = (*root_dir_info).enclosing_package_json;
         let scripts_map: Option<&ScriptsMap> = package_json.and_then(|pkg| pkg.scripts.as_deref());
+        let package_env = ScriptEnv::new(&path_env, package_json);
 
         for raw_name in &script_names {
             // Check if this is a glob pattern
@@ -1147,7 +1148,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                             matched_name,
                             scripts_map,
                             cwd,
-                            &path_env,
+                            &package_env,
                             None,
                         )?;
                     }
@@ -1165,7 +1166,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                     raw_name,
                     scripts_map,
                     cwd,
-                    &path_env,
+                    &package_env,
                     None,
                 )?;
             }

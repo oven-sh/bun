@@ -673,9 +673,9 @@ describe("bundler", () => {
   for (const bytecode of [false, true]) {
     itBundled(`compile/DirnameFilenameUsesVirtualPath${bytecode ? "Bytecode" : ""}`, {
       compile: true,
-      // With --bytecode, the synthetic `var __dirname = import.meta.dir` may be
-      // a module's only `import.meta` reference; it still has to be recorded so
-      // the bytecode module record is created with import.meta enabled.
+      // With --bytecode the chunk is never parsed by JSC at runtime: the module
+      // record only gets import.meta because the printer saw the synthesized
+      // `import.meta.dir` and flagged the chunk, so that path is covered too.
       bytecode,
       format: "esm",
       files: {
@@ -702,43 +702,42 @@ describe("bundler", () => {
       },
     });
   }
-  for (const bytecode of [false, true]) {
-    itBundled(`compile/DirnameFilenameUsesVirtualPathCJS${bytecode ? "Bytecode" : ""}`, {
-      compile: true,
-      bytecode,
-      format: "cjs",
-      files: {
-        "/entry.ts": /* js */ `
-          const nested = require("./nested.cjs");
-          console.log("entry __dirname:", __dirname);
-          console.log("entry __filename:", __filename);
-          console.log("entry import.meta.dir:", import.meta.dir);
-          console.log("entry import.meta.path:", import.meta.path);
-          if (__dirname !== import.meta.dir) throw new Error("__dirname !== import.meta.dir");
-          if (__filename !== import.meta.path) throw new Error("__filename !== import.meta.path");
-          if (__dirname !== import.meta.dirname) throw new Error("__dirname !== import.meta.dirname");
-          if (__filename !== import.meta.filename) throw new Error("__filename !== import.meta.filename");
-          nested.report();
-        `,
-        "/nested.cjs": /* js */ `
-          module.exports.report = function () {
-            console.log("nested __dirname:", __dirname);
-            console.log("nested __filename:", __filename);
-          };
-        `,
-      },
-      run: {
-        stdout: [
-          `entry __dirname: ${bunfsCjs[0]}`,
-          `entry __filename: ${bunfsCjs[1]}`,
-          `entry import.meta.dir: ${bunfsCjs[0]}`,
-          `entry import.meta.path: ${bunfsCjs[1]}`,
-          `nested __dirname: ${bunfsCjs[0]}`,
-          `nested __filename: ${bunfsCjs[1]}`,
-        ].join("\n"),
-      },
-    });
-  }
+  // The `--bytecode` (implied CJS) variant is in compile-asset-bunfs.test.ts so
+  // that it also runs on Windows, where the wrapper's separator handling matters.
+  itBundled("compile/DirnameFilenameUsesVirtualPathCJS", {
+    compile: true,
+    format: "cjs",
+    files: {
+      "/entry.ts": /* js */ `
+        const nested = require("./nested.cjs");
+        console.log("entry __dirname:", __dirname);
+        console.log("entry __filename:", __filename);
+        console.log("entry import.meta.dir:", import.meta.dir);
+        console.log("entry import.meta.path:", import.meta.path);
+        if (__dirname !== import.meta.dir) throw new Error("__dirname !== import.meta.dir");
+        if (__filename !== import.meta.path) throw new Error("__filename !== import.meta.path");
+        if (__dirname !== import.meta.dirname) throw new Error("__dirname !== import.meta.dirname");
+        if (__filename !== import.meta.filename) throw new Error("__filename !== import.meta.filename");
+        nested.report();
+      `,
+      "/nested.cjs": /* js */ `
+        module.exports.report = function () {
+          console.log("nested __dirname:", __dirname);
+          console.log("nested __filename:", __filename);
+        };
+      `,
+    },
+    run: {
+      stdout: [
+        `entry __dirname: ${bunfsCjs[0]}`,
+        `entry __filename: ${bunfsCjs[1]}`,
+        `entry import.meta.dir: ${bunfsCjs[0]}`,
+        `entry import.meta.path: ${bunfsCjs[1]}`,
+        `nested __dirname: ${bunfsCjs[0]}`,
+        `nested __filename: ${bunfsCjs[1]}`,
+      ].join("\n"),
+    },
+  });
   // Browser-side chunks produced by the client transpiler for HTML imports
   // must keep the string-literal lowering for `__dirname`/`__filename`;
   // `import.meta.dir`/`.path` are Bun-only and undefined in a real browser.

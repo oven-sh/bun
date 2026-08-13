@@ -918,6 +918,51 @@ pub(crate) trait PathOrFdExt {
         Self: Sized;
 }
 
+/// `C:foo` or `C:`: a drive letter and colon not followed by a separator.
+/// Win32 resolves such a path against that drive's current directory. An
+/// alternate data stream name (`file.txt:stream`) has more than one character
+/// before its colon and is not one of these.
+#[cfg(windows)]
+fn is_drive_relative_windows(path: &[u8]) -> bool {
+    path.len() >= 2
+        && bun_paths::is_drive_letter(path[0])
+        && path[1] == b':'
+        && (path.len() == 2 || !bun_paths::is_sep_any(path[2]))
+}
+
+/// Resolve a drive-relative path (see [`is_drive_relative_windows`]) to the
+/// absolute path Win32 would open for it, written into `scratch`.
+///
+/// Node's fs gets this resolution for free because libuv hands the string to
+/// Win32, and so do bun's libuv-backed operations. The ones that open through
+/// bun's own `NtCreateFile` paths relative to the cwd handle (readdir,
+/// recursive rm, writeFile, the mkdir -p existence probe) do not: to NT,
+/// `C:foo` relative to a directory names a file `C` with an alternate data
+/// stream `foo`, so they reported ENOENT or, for writeFile, created that
+/// stream. Resolving here hands them the same absolute path Win32 would use.
+///
+/// `None` when Win32 cannot resolve the path; the caller then keeps its
+/// existing handling of the path as given.
+#[cfg(windows)]
+fn resolve_drive_relative_windows<'a>(
+    path: &[u8],
+    scratch: &'a mut PathBuffer,
+) -> Option<&'a [u8]> {
+    debug_assert!(is_drive_relative_windows(path));
+    if !strings::fits_in_wide_path_buffer(path) {
+        return None;
+    }
+    let mut wide_path = bun_paths::w_path_buffer_pool::get();
+    let mut wide_resolved = bun_paths::w_path_buffer_pool::get();
+    let resolved = bun_sys::windows::get_full_path_name_w(
+        strings::paths::to_w_path(&mut wide_path[..], path),
+        &mut wide_resolved[..],
+    )?;
+    // `MAX_PATH_BYTES` is sized so that any wide path re-encodes into a
+    // `PathBuffer`, so this cannot truncate.
+    Some(strings::paths::from_w_path(&mut scratch[..], resolved.as_slice()).as_bytes())
+}
+
 impl PathLikeExt for PathLike {
     // Const-generics can't change return mutability, so this always returns
     // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a
@@ -930,6 +975,19 @@ impl PathLikeExt for PathLike {
 
         #[cfg(windows)]
         {
+            // A drive-relative path is rebound to the absolute path Win32
+            // resolves it to, so the drive-absolute branch below handles it
+            // like any other absolute argument. The scratch is declared before
+            // the shadowing `sliced` so it outlives the borrow; the plain copy
+            // at the bottom still sees the argument as given.
+            let mut drive_relative_scratch;
+            let sliced = if is_drive_relative_windows(sliced) {
+                drive_relative_scratch = bun_paths::path_buffer_pool::get();
+                resolve_drive_relative_windows(sliced, &mut drive_relative_scratch)
+                    .unwrap_or(sliced)
+            } else {
+                sliced
+            };
             // Only take the fast path for paths that can exist on NT at
             // all (≤ ~32757 UTF-16 units). That bounds the `\\?\`-prefixed
             // copy below in bytes too (≤ 3×32757 + 5 < MAX_PATH_BYTES);
@@ -1103,6 +1161,24 @@ impl PathLikeExt for PathLike {
                 // SAFETY: same alignment note as above.
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
                 return Ok(strings::to_kernel32_path(buf_u16, normal));
+            }
+            if is_drive_relative_windows(s) {
+                // Same buffer roles as the rooted branch above. The resolved
+                // path is drive-absolute, so `to_kernel32_path` prefixes it
+                // with `\\?\` and mkdir -p's NT-level existence probe gets an
+                // absolute object name. If Win32 cannot resolve it, the path
+                // is passed on as given, below.
+                if let Some(resolved) = resolve_drive_relative_windows(s, buf) {
+                    let normal = bun_paths::resolve_path::normalize_buf::<
+                        bun_paths::platform::Windows,
+                    >(resolved, &mut b[..]);
+                    if !strings::fits_in_wide_path_buffer(normal) {
+                        return Err(NameTooLong);
+                    }
+                    // SAFETY: same alignment note as above.
+                    let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
+                    return Ok(strings::to_kernel32_path(buf_u16, normal));
+                }
             }
             // Handle "." specially since normalizeStringBuf strips it to an empty string
             if s.len() == 1 && s[0] == b'.' {

@@ -322,6 +322,15 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_mark_wrote_content_length_header(Self::ssl_flag(), self.as_raw())
     }
 
+    /// The body is a file of known size being delivered by the runtime under
+    /// a Content-Length that is already on the wire. uWS then finishes it after
+    /// a peer FIN (`HttpContext::onEnd`) the way it drains a `try_end` tail,
+    /// instead of closing on the FIN as it does for a body the application is
+    /// still producing.
+    pub(crate) fn mark_fixed_length_file_body(&mut self) {
+        c::uws_res_mark_fixed_length_file_body(Self::ssl_flag(), self.as_raw())
+    }
+
     pub(crate) fn mark_wrote_date_header(&mut self) {
         c::uws_res_mark_wrote_date_header(Self::ssl_flag(), self.as_raw())
     }
@@ -721,6 +730,11 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.mark_wrote_content_length_header())
     }
 
+    /// See `Response::mark_fixed_length_file_body`.
+    pub fn mark_fixed_length_file_body(self) {
+        any_dispatch!(self, |r| r.mark_fixed_length_file_body())
+    }
+
     pub fn mark_wrote_date_header(self) {
         any_dispatch!(self, |r| r.mark_wrote_date_header())
     }
@@ -1081,6 +1095,7 @@ pub mod c {
     // unsafe.
     unsafe extern "C" {
         pub(crate) safe fn uws_res_mark_wrote_content_length_header(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_mark_fixed_length_file_body(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_mark_wrote_date_header(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_write_mark(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn us_socket_mark_needs_more_not_ssl(socket: &mut uws_res);

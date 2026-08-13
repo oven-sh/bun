@@ -108,7 +108,10 @@ pub(crate) struct StartOptions {
     /// Byte offset into the file to begin reading from.
     pub offset: u64,
     /// Maximum bytes to send; `None` reads to EOF. For regular files this
-    /// should be `stat.size - offset` (after Range/slice clamping).
+    /// should be `stat.size - offset` (after Range/slice clamping), and the
+    /// caller must already have written it as the response's Content-Length:
+    /// `start()` tells uWS the body is fixed-length on that basis, which is
+    /// what keeps a client's half-close from cutting the transfer short.
     pub length: Option<u64>,
     pub idle_timeout: u8,
     pub ctx: *mut c_void,
@@ -158,6 +161,11 @@ impl FileResponseStream {
 
         let resp = this_ref.resp.get();
         resp.timeout(opts.idle_timeout);
+        // A `None` body (pipe, socket) is chunked and open-ended, so a peer
+        // FIN aborts it like any other stream.
+        if opts.length.is_some() {
+            resp.mark_fixed_length_file_body();
+        }
         resp.on_aborted(
             |p: *mut FileResponseStream, r| {
                 // SAFETY: uWS hands back the userdata pointer set below; the

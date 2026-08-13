@@ -248,19 +248,11 @@ function closeAdoptedTLSRawNowNT(handle, self, isException) {
   handle.close(onSocketHandleClosed);
   setImmediate(emitCloseNT, self, isException);
 }
-// The transport a TLS socket was layered over (tls.connect({ socket }),
-// new TLSSocket(socket)) goes down with it, like the parent wrap of node's
-// TLSWrap: it emits 'close' and, if it was accepted, leaves its server's
-// connection count. Keyed on _destroy rather than on 'end' because a handshake
-// failure destroys the TLS socket without ever emitting 'end', and run a tick
-// after _destroy's callback so that, as in node, the TLS socket's 'error' (and
-// a tls.Server's 'tlsClientError') still see the transport intact and its
-// 'close' lands between the TLS socket's 'error' and 'close'. A net.Socket
-// holding the raw twin of the TLS handle shares the fd that the TLS handle's
-// own close tears down, so it is only detached; anything else (a generic
-// duplex, or a socket still driving its own fd under the stream-level TLS
-// engine) owns its transport and closes it itself, so a late RST on it can't
-// surface as an error after the TLS socket is gone.
+// A TLS socket takes the transport it was layered over down with it, like
+// node's TLSWrap does its parent wrap: on the tick after _destroy, so the TLS
+// socket's 'error' still sees the transport intact and the transport's 'close'
+// precedes the TLS socket's. The raw twin of an adopted fd is closed by the
+// TLS handle, so it is detached rather than closed a second time.
 function destroyUpgradedTransportNT(upgraded) {
   if (upgraded.destroyed) return;
   if (upgraded._handle?.[kAdoptedTLSRaw]) {
@@ -268,9 +260,7 @@ function destroyUpgradedTransportNT(upgraded) {
   }
   upgraded.destroy();
 }
-// For a socket whose handle is already gone: a detached transport queues its
-// 'close' inside destroy(), so queuing this socket's 'close' afterwards keeps
-// node's order (transport first).
+// Handle-less TLS socket: its 'close' is queued behind the transport's.
 function destroyUpgradedTransportAndCloseNT(upgraded, self, hasError) {
   destroyUpgradedTransportNT(upgraded);
   process.nextTick(emitCloseNT, self, hasError);
@@ -2007,9 +1997,8 @@ Socket.prototype.connect = function connect(...args) {
           // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
           upgradeDuplex = isNamedPipeSocket(socket) || hasUnflushedWrites(connection);
         }
-        // Recorded before the upgrade runs (which may wait for 'connect' below)
-        // so that destroying this socket at any point from here on takes the
-        // connection down with it; see destroyUpgradedTransportNT.
+        // Before the upgrade, which may wait for 'connect': from here on
+        // destroying this socket destroys the connection too.
         this[kupgraded] = connection;
         if (upgradeDuplex) {
           const [result, events] = upgradeDuplexToTLS(connection, {
@@ -2047,10 +2036,7 @@ Socket.prototype.connect = function connect(...args) {
           } else {
             // wait to be connected
             connection.once("connect", () => {
-              // The TLS socket may have been destroyed before the underlying
-              // socket connected (e.g. tls.connect({ socket }).destroy()); its
-              // teardown is already destroying the connection, don't start a
-              // handshake on it.
+              // Destroyed while connecting: _destroy is taking the connection down.
               if (this.destroyed) return;
               const socket = connection._handle;
               if (!upgradeDuplex && socket) {
@@ -2221,8 +2207,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       this._sockname = null;
     }
     callback(err);
-    // After callback(err), which queues this socket's 'error'; 'close' comes
-    // from the handle close above (setImmediate), after the transport's.
+    // Queued after the 'error' that callback(err) queues.
     if (upgraded) process.nextTick(destroyUpgradedTransportNT, upgraded);
   } else {
     callback(err);

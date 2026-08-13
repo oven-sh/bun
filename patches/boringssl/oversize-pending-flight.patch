@@ -1,0 +1,56 @@
+Let do_tls_write send a pending flight larger than write_buffer.
+
+A TLS 1.3 server queues its NewSessionTickets (two by default) after the
+client's Finished and, over TCP, holds them in pending_flight until the
+first SSL_write (tls13_server.cc, do_send_new_session_ticket). Each ticket
+serializes the whole session, including the client's certificate chain
+(ssl_asn1.cc, kCertChainTag), so with requestCert the flight is about twice
+the size of whatever chain the client chose to send.
+
+do_tls_write copies that flight into write_buffer ahead of the record it is
+about to seal. SSLBuffer keeps 16-bit lengths, so EnsureCap refuses anything
+over 0xffff bytes with ERR_R_INTERNAL_ERROR. A client chain over ~32 KB
+therefore completed the handshake and then made every SSL_write (and the
+close_notify) fail before a single byte reached the BIO; the connection
+stayed open and silent.
+
+Write a flight that does not fit straight to the BIO instead, the way
+tls_flush writes flights during the handshake, and buffer only the record.
+Flights that fit keep taking the existing single-buffer path.
+
+--- a/ssl/s3_pkt.cc
++++ b/ssl/s3_pkt.cc
+@@ -191,6 +191,33 @@
+     return 1;
+   }
+ 
++  // `write_buffer` holds at most 0xffff bytes (see `SSLBuffer::EnsureCap`),
++  // but `pending_flight` is sized by the handshake, not the record layer: a
++  // TLS 1.3 server queues `num_tickets` NewSessionTickets, each embedding the
++  // client's whole certificate chain, so the flight may not fit in the buffer
++  // alongside the record. Write such a flight to the transport directly, as
++  // `tls_flush` does during the handshake, and buffer only the record. A short
++  // write is resumed from `pending_flight_offset` when the caller retries after
++  // `SSL_ERROR_WANT_WRITE`. `wbio` was checked by `ssl_write_buffer_flush`.
++  if (!pending_flight.empty() && max_out > 0xffff) {
++    const BUF_MEM *flight = ssl->s3->pending_flight.get();
++    while (ssl->s3->pending_flight_offset < flight->length) {
++      size_t written;
++      if (!BIO_write_ex(ssl->wbio.get(),
++                        flight->data + ssl->s3->pending_flight_offset,
++                        flight->length - ssl->s3->pending_flight_offset,
++                        &written)) {
++        ssl->s3->rwstate = SSL_ERROR_WANT_WRITE;
++        return -1;
++      }
++      ssl->s3->pending_flight_offset += static_cast<uint32_t>(written);
++    }
++    ssl->s3->pending_flight.reset();
++    ssl->s3->pending_flight_offset = 0;
++    max_out -= pending_flight.size();
++    pending_flight = Span<const uint8_t>();
++  }
++
+   if (!buf->EnsureCap(pending_flight.size() + tls_seal_align_prefix_len(ssl),
+                       max_out)) {
+     return -1;

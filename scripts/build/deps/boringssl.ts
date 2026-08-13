@@ -36,10 +36,17 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
-  // Upstream mem.cc gates OPENSSL_memory_* weak-symbol overrides on __ELF__;
-  // on Mach-O/COFF the hooks compile to static nullptr and OPENSSL_malloc goes
-  // straight to libc. Declare them as plain externs so lib.rs binds everywhere.
-  patches: ["patches/boringssl/require-memory-hooks.patch"],
+  // require-memory-hooks: upstream mem.cc gates OPENSSL_memory_* weak-symbol
+  // overrides on __ELF__; on Mach-O/COFF the hooks compile to static nullptr
+  // and OPENSSL_malloc goes straight to libc. Declare them as plain externs so
+  // lib.rs binds everywhere.
+  //
+  // oversize-pending-flight: a TLS 1.3 server's deferred NewSessionTicket
+  // flight embeds the client's certificate chain and did not fit the 64 KB
+  // record write buffer once that chain passed ~32 KB, so the first SSL_write
+  // after a requestCert handshake failed and the connection went silent. The
+  // patch header has the details.
+  patches: ["patches/boringssl/require-memory-hooks.patch", "patches/boringssl/oversize-pending-flight.patch"],
 
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)

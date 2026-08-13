@@ -934,6 +934,47 @@ it("keeps socket.authorized false when a client without a certificate resumes a 
   ]);
 });
 
+it("replies to a requestCert client whose certificate chain is larger than 32 KiB over TLSv1.3", async () => {
+  // After a TLSv1.3 handshake the server queues two NewSessionTickets, each
+  // embedding the client's whole chain, and sends them along with its first
+  // write. Past ~32 KiB of chain that flight no longer fit the record layer's
+  // 64 KiB write buffer: the handshake completed, but the server never sent
+  // another byte.
+  const fixtures = join(import.meta.dir, "fixtures");
+  const agent1Key = readFileSync(join(fixtures, "agent1-key.pem"), "utf8");
+  const agent1Cert = readFileSync(join(fixtures, "agent1-cert.pem"), "utf8");
+  const ca1 = readFileSync(join(fixtures, "ca1-cert.pem"), "utf8");
+  // 52 copies of ca1 (920 bytes of DER each) pad the chain the client sends to
+  // ~48 KiB; agent1 still verifies against ca1. Chains past ~64 KiB are a
+  // different case: BoringSSL declines to issue tickets for them at all.
+  const paddedChain = agent1Cert + Buffer.alloc(ca1.length * 52, ca1).toString();
+
+  const accepted = Promise.withResolvers<{ authorized: boolean; protocol: string | null }>();
+  await using server = createServer(
+    { key: agent1Key, cert: agent1Cert, ca: [ca1], requestCert: true, minVersion: "TLSv1.3", maxVersion: "TLSv1.3" },
+    socket => {
+      accepted.resolve({ authorized: socket.authorized, protocol: socket.getProtocol() });
+      socket.on("data", chunk => socket.write(`pong:${chunk}`));
+    },
+  );
+  server.on("tlsClientError", accepted.reject);
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const client = connect({ port, host: "127.0.0.1", key: agent1Key, cert: paddedChain, rejectUnauthorized: false });
+  await once(client, "secureConnect");
+  expect(await accepted.promise).toEqual({ authorized: true, protocol: "TLSv1.3" });
+
+  // Without the fix this is where it hangs: the server's write() returns true,
+  // but nothing reaches the wire.
+  client.write("ping");
+  const [reply] = await once(client, "data");
+  client.end();
+  await once(client, "close");
+
+  expect(String(reply)).toBe("pong:ping");
+});
+
 it("keeps socket.authorized false when a client without a certificate resumes a TLSv1.3 session against an https server", async () => {
   type Verdict = { authorized: boolean | undefined; authorizationError: unknown };
   const verdicts: Verdict[] = [];

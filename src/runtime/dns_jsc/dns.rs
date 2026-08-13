@@ -4693,9 +4693,115 @@ impl Resolver {
             if let Some(err) = c_ares::Channel::init(self, opts) {
                 return ChannelResult::Err(err);
             }
+            #[cfg(target_os = "android")]
+            Self::apply_termux_resolv_conf(self.channel.get().unwrap());
         }
         // SAFETY: channel set by init() on success
         ChannelResult::Result(unsafe { &mut *self.channel.get().unwrap() })
+    }
+
+    /// c-ares' Android sysconfig never reads a resolv.conf (there is no /etc one
+    /// and no JNI here), so a fresh channel is left on the `127.0.0.1` fallback and
+    /// every resolve*() times out. Under Termux, `$PREFIX/etc/resolv.conf` is the
+    /// user's resolver configuration (Termux patches its own c-ares to read it):
+    /// use its nameservers when the channel is still on that fallback. Best effort;
+    /// `dns.setServers()` afterwards overrides this as usual.
+    #[cfg(target_os = "android")]
+    fn apply_termux_resolv_conf(channel: *mut c_ares::Channel) {
+        let Some(prefix) = bun_core::getenv_z(bun_core::zstr!("PREFIX")) else {
+            return;
+        };
+        if prefix.is_empty() {
+            return;
+        }
+
+        // Only when c-ares found nothing itself: exactly one server, 127.0.0.1.
+        {
+            let mut servers: *mut c_ares::struct_ares_addr_port_node = ptr::null_mut();
+            // SAFETY: `channel` is a live handle from `ares_init_options`; `servers` is a stack out-param.
+            if unsafe { c_ares::ares_get_servers_ports(channel, &raw mut servers) }
+                != c_ares::ARES_SUCCESS
+            {
+                return;
+            }
+            scopeguard::defer! {
+                // SAFETY: allocated by ares_get_servers_ports; ares_free_data is its deallocator.
+                unsafe { c_ares::ares_free_data(servers.cast()) }
+            };
+            // SAFETY: non-null checked; c-ares-owned list node.
+            let on_fallback = !servers.is_null()
+                && unsafe {
+                    let s = &*servers;
+                    s.next.is_null()
+                        && s.family == libc::AF_INET
+                        && core::slice::from_raw_parts(s.addr_ptr().cast::<u8>(), 4)
+                            == [127, 0, 0, 1]
+                };
+            if !on_fallback {
+                return;
+            }
+        }
+
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let path = bun_paths::resolve_path::join_string_buf::<
+            bun_paths::resolve_path::platform::Posix,
+        >(&mut *path_buf, &[prefix, b"etc/resolv.conf"]);
+        let contents = match sys::File::read_from(sys::Fd::cwd(), path) {
+            Ok(bytes) => bytes,
+            Err(_) => return,
+        };
+
+        let mut entries: Vec<c_ares::struct_ares_addr_port_node> = Vec::new();
+        for line in strings::split(&contents, b"\n") {
+            let line = line.trim_ascii();
+            let Some(rest) = line.strip_prefix(b"nameserver") else {
+                continue;
+            };
+            if !rest.first().is_some_and(u8::is_ascii_whitespace) {
+                continue;
+            }
+            let addr = rest.trim_ascii();
+            let end = strings::index_of_any(addr, b" \t#;").unwrap_or(addr.len());
+            let addr = &addr[..end];
+            if addr.is_empty() || addr.len() > 64 {
+                continue;
+            }
+            let mut addr_z = [0u8; 65];
+            addr_z[..addr.len()].copy_from_slice(addr);
+            let mut node: c_ares::struct_ares_addr_port_node = bun_core::ffi::zeroed();
+            for af in [libc::AF_INET, libc::AF_INET6] {
+                // SAFETY: `addr_z` is NUL-terminated; the node's addr union has room for in6_addr.
+                if unsafe {
+                    c_ares::ares_inet_pton(
+                        af,
+                        addr_z.as_ptr().cast::<c_char>(),
+                        node.addr_mut_ptr(),
+                    )
+                } == 1
+                {
+                    node.family = af;
+                    entries.push(node);
+                    break;
+                }
+            }
+        }
+        if entries.is_empty() {
+            return;
+        }
+        for i in 1..entries.len() {
+            let next: *mut _ = &raw mut entries[i];
+            entries[i - 1].next = next;
+        }
+        // SAFETY: channel is live; `entries` is a valid list for the duration of the call
+        // (c-ares copies it).
+        let r = unsafe { c_ares::ares_set_servers_ports(channel, entries.as_mut_ptr()) };
+        if r != c_ares::ARES_SUCCESS {
+            bun_output::scoped_log!(
+                DNSResolver,
+                "resolv.conf servers rejected: {}",
+                c_ares::Error::get(r).map_or("?", |e| e.label())
+            );
+        }
     }
 
     fn get_channel_from_vm(global_this: &JSGlobalObject) -> JsResult<*mut c_ares::Channel> {

@@ -736,84 +736,6 @@ fn copy_nul_terminated(buf: &mut [u8], src: &[u8]) -> *const c_char {
     buf.as_ptr().cast::<c_char>()
 }
 
-#[cfg(target_os = "android")]
-mod termux {
-    use super::Channel;
-    use core::ffi::{CStr, c_char, c_int};
-
-    unsafe extern "C" {
-        fn ares_set_servers_csv(channel: *mut Channel, servers: *const c_char) -> c_int;
-    }
-
-    /// If `$PREFIX/etc/resolv.conf` exists, point `channel` at its nameservers.
-    /// Best effort: any failure leaves the channel as ares_init_options made it.
-    ///
-    /// # Safety
-    /// `channel` must be a live channel.
-    pub(super) unsafe fn apply_resolv_conf(channel: *mut Channel) {
-        // SAFETY: getenv returns null or a NUL-terminated string owned by environ.
-        let prefix = unsafe { libc::getenv(c"PREFIX".as_ptr()) };
-        if prefix.is_null() {
-            return;
-        }
-        // SAFETY: non-null and NUL-terminated per getenv's contract.
-        let prefix = unsafe { CStr::from_ptr(prefix) }.to_bytes();
-        const SUFFIX: &[u8] = b"/etc/resolv.conf\0";
-        let mut path = [0u8; 512];
-        if prefix.is_empty() || prefix.len() + SUFFIX.len() > path.len() {
-            return;
-        }
-        path[..prefix.len()].copy_from_slice(prefix);
-        path[prefix.len()..prefix.len() + SUFFIX.len()].copy_from_slice(SUFFIX);
-
-        let mut contents = [0u8; 4096];
-        let len = {
-            // SAFETY: `path` is NUL-terminated; plain open/read/close on a regular file.
-            let fd = unsafe { libc::open(path.as_ptr().cast(), libc::O_RDONLY | libc::O_CLOEXEC) };
-            if fd < 0 {
-                return;
-            }
-            let n = unsafe { libc::read(fd, contents.as_mut_ptr().cast(), contents.len() - 1) };
-            unsafe { libc::close(fd) };
-            if n <= 0 {
-                return;
-            }
-            n as usize
-        };
-
-        // Collect `nameserver <addr>` entries as "a,b,c\0" for ares_set_servers_csv.
-        let mut csv = [0u8; 1024];
-        let mut csv_len = 0usize;
-        for line in bun_core::strings::split(&contents[..len], b"\n") {
-            let line = line.trim_ascii();
-            let Some(rest) = line.strip_prefix(b"nameserver") else {
-                continue;
-            };
-            if !rest.first().is_some_and(u8::is_ascii_whitespace) {
-                continue;
-            }
-            let addr = rest.trim_ascii();
-            let end = bun_core::strings::index_of_any(addr, b" \t#;").unwrap_or(addr.len());
-            let addr = &addr[..end];
-            if addr.is_empty() || csv_len + addr.len() + 2 > csv.len() {
-                continue;
-            }
-            if csv_len > 0 {
-                csv[csv_len] = b',';
-                csv_len += 1;
-            }
-            csv[csv_len..csv_len + addr.len()].copy_from_slice(addr);
-            csv_len += addr.len();
-        }
-        if csv_len == 0 {
-            return;
-        }
-        csv[csv_len] = 0;
-        // SAFETY: caller guarantees `channel` is live; `csv` is NUL-terminated.
-        let _ = unsafe { ares_set_servers_csv(channel, csv.as_ptr().cast()) };
-    }
-}
-
 impl Channel {
     pub fn init<C: ChannelContainer>(this: &C, options: ChannelOptions) -> Option<Error> {
         let mut channel: *mut Channel = ptr::null_mut();
@@ -833,13 +755,12 @@ impl Channel {
         }
 
         let mut opts = Options {
-            // Android note: outside Termux (see `termux::apply_resolv_conf`) c-ares
-            // can't auto-discover servers (no /etc/resolv.conf, no JNI), so it
-            // falls back to 127.0.0.1 and queries time out. We do NOT set
-            // ARES_FLAG_NO_DFLT_SVR here — that makes init fail with ENOSERVER,
-            // which breaks dns.setServers() (it needs an initialized channel to
-            // call ares_set_servers_ports). Letting the 127.0.0.1 default stand
-            // means setServers() works as the documented workaround.
+            // Android note: c-ares can't auto-discover servers (no /etc/resolv.conf,
+            // no JNI), so it falls back to 127.0.0.1 and queries time out. We do
+            // NOT set ARES_FLAG_NO_DFLT_SVR here — that makes init fail with
+            // ENOSERVER, which breaks dns.setServers() (it needs an initialized
+            // channel to call ares_set_servers_ports). Letting the 127.0.0.1
+            // default stand means setServers() works as the documented workaround.
             flags: ARES_FLAG_NOCHECKRESP,
             sock_state_cb: Some(on_sock_state::<C>),
             // R-2: `*mut` spelling is signature-only (c-ares stores a `void*`); the
@@ -862,15 +783,6 @@ impl Channel {
             // `Channel::init()` running against an uninitialized c-ares.
             return Some(err);
         }
-
-        // Termux ships `$PREFIX/etc/resolv.conf` (and patches its own c-ares to
-        // read it); c-ares' Android sysconfig path never looks at a resolv.conf,
-        // so apply its nameservers here to give resolve*() real servers there.
-        #[cfg(target_os = "android")]
-        // SAFETY: `channel` is the live handle just returned by ares_init_options.
-        unsafe {
-            termux::apply_resolv_conf(channel)
-        };
 
         this.set_channel(channel);
         None

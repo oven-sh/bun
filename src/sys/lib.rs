@@ -8701,10 +8701,9 @@ pub mod elf {
         pub name: Box<[u8]>,
     }
 
-    /// Walk loaded ELF objects
-    /// via `dl_iterate_phdr`, returning the one whose `PT_LOAD` segment contains
-    /// `address`. Shared by `bun_crash_handler::StackLine::from_address` and
-    /// `bun_jsc::btjs::SelfInfo::lookup_module_dl` / `lookup_module_name_dl`.
+    /// Walk loaded ELF objects via `dl_iterate_phdr`, returning the one whose
+    /// `PT_LOAD` segment contains `address` (matched by address, so it does not
+    /// depend on how a libc names or orders the main program).
     #[cfg(not(any(windows, target_os = "macos")))]
     pub fn find_loaded_module(address: usize) -> Option<LoadedModule> {
         use core::ffi::{c_int, c_void};

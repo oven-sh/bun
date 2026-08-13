@@ -28,6 +28,7 @@ unsafe extern "system" {
 }
 
 const CTRL_Z: u16 = 0x1A;
+const LF: u16 = b'\n' as u16;
 
 /// UTF-16 units requested from the console per call. In line-input mode the
 /// conhost of Windows 10 / Server 2019 stops accepting keystrokes once the line
@@ -53,6 +54,10 @@ struct State {
     /// High surrogate that ended the previous chunk; its low surrogate is the
     /// first unit of the next one. 0 when none.
     pending_lead: u16,
+    /// The previous chunk was line input that did not end in '\n': the line is
+    /// longer than a chunk (newer consoles deliver such a line over several
+    /// reads), so the next chunk continues it instead of starting a line.
+    mid_line: bool,
 }
 
 // Stdin is one stream per process. The lock is held across the blocking read:
@@ -63,6 +68,7 @@ static STATE: bun_core::Mutex<State> = bun_core::Mutex::new(State {
     start: 0,
     end: 0,
     pending_lead: 0,
+    mid_line: false,
 });
 
 /// `Some` when `fd` (the process stdin) is a console, `None` when it is a pipe
@@ -99,16 +105,16 @@ impl State {
         let has_lead = self.pending_lead != 0;
         self.units[0] = core::mem::take(&mut self.pending_lead);
         let n = read_units(fd, &mut self.units[1..])?;
+        let continues_line = self.mid_line;
+        self.mid_line = line_input && n > 0 && self.units[n] != LF;
         let first = if has_lead { 0 } else { 1 };
         let mut end = 1 + n;
         if first == end {
             return Ok(false);
         }
         // Same as ReadFile: in line-input mode a line that starts with Ctrl+Z is
-        // end of input and the rest of the line is dropped. A line-input read
-        // returns exactly one line, so the chunk starts where the line does;
-        // a carried-over surrogate means this chunk continues the previous one.
-        if line_input && !has_lead && self.units[1] == CTRL_Z {
+        // end of input and is not delivered.
+        if line_input && n > 0 && !continues_line && self.units[1] == CTRL_Z {
             return Ok(false);
         }
         // The low half of a pair that ends the chunk is still in the console;

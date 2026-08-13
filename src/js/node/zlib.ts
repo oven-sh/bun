@@ -586,9 +586,8 @@ function Zlib(opts, mode) {
 }
 $toClass(Zlib, "Zlib", ZlibBase);
 
-// Runs once the Z_SYNC_FLUSH issued by .params() has retired. Unlike node this is not the flush's write callback:
-// the writable machinery dispatches the next buffered chunk before running write callbacks, and the native params()
-// throws while a write is in flight, so processCallback() invokes it through kAfterFlush instead.
+// Invoked by processCallback() as the flush issued by .params() retires. Node runs this as the flush's write callback,
+// but write callbacks run after the next buffered chunk was handed to the handle, and native params() throws then.
 function paramsAfterFlushCallback(level, strategy, callback) {
   $assert(this._handle, "zlib binding closed");
   this._handle.params(level, strategy);

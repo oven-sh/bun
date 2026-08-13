@@ -239,14 +239,12 @@ mod _impl {
                     )
                     .throw());
             }
-            // ToInt32 like node's `Int32Value()`; zlib.ts only range-checks, so
-            // 1.5 / NaN / undefined reach here.
+            // ToInt32 (zlib.ts only range-checks, so 1.5 / NaN reach here), like node's `Int32Value()`:
             // https://github.com/nodejs/node/blob/v24.0.0/src/node_zlib.cc#L763-L766
             let level = arguments.ptr[0].coerce_to_i32(global)?;
             let strategy = arguments.ptr[1].coerce_to_i32(global)?;
 
-            // After the coercions: a `valueOf()` in there can start a write, whose
-            // `deflate()` would race `set_params`' `deflateParams` on the `z_stream`.
+            // After the coercions: a `valueOf()` in there can start a write that `set_params` would race.
             CompressionStream::<Self>::throw_unless_idle(self, global)?;
 
             let err = self.stream.with_mut(|s| s.set_params(level, strategy));

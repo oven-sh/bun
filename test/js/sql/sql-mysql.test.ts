@@ -1382,3 +1382,90 @@ test("MySQL: a row split across several maximum-size wire packets is reassembled
     await new Promise<void>(r => server.close(() => r()));
   }
 }, 90_000);
+
+// `like '%${term}%'` puts the placeholder inside a string literal, so the
+// server's prepare-OK reports 0 parameters while bun still holds 1 value. The
+// mismatch is only detected when the prepare-OK arrives and the queue re-runs
+// the query; that rejection used to be dropped, leaving the promise pending
+// forever (the connection itself moved on to the next query).
+test("MySQL: a query whose prepare-OK reports fewer parameters than were bound rejects instead of hanging", async () => {
+  const COM_QUERY = 0x03;
+  const COM_STMT_PREPARE = 0x16;
+  const COM_STMT_EXECUTE = 0x17;
+
+  let sawStmtExecute = false;
+  const { server, port } = await listeningServer(socket => {
+    let buffered = Buffer.alloc(0);
+    let authed = false;
+    socket.write(mysqlHandshakeV10());
+    socket.on("data", chunk => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+        if (!authed) {
+          authed = true;
+          socket.write(mysqlOkPacket(seq + 1));
+          return;
+        }
+        switch (payload[0]) {
+          case COM_STMT_PREPARE:
+            // What a real server answers for `like '%?%'`: statement 1, no columns, no parameters.
+            socket.write(mysqlStmtPrepareOk(1, 1, 0, 0));
+            break;
+          case COM_STMT_EXECUTE:
+            // Binding 1 value to a 0-parameter statement must fail client-side.
+            sawStmtExecute = true;
+            socket.end();
+            break;
+          case COM_QUERY:
+            socket.write(mysqlOkPacket(1));
+            break;
+          default:
+            socket.end();
+        }
+      });
+    });
+    socket.on("error", () => {});
+  });
+
+  try {
+    const fixture = /* js */ `
+      const { SQL } = require("bun");
+      const sql = new SQL({ url: "mysql://root@127.0.0.1:${port}/db", max: 1 });
+      const term = "needle";
+
+      let result = "pending";
+      sql\`select * from t where name like '%\${term}%'\`.then(
+        () => (result = { state: "resolved" }),
+        e => (result = { state: "rejected", code: e.code }),
+      );
+
+      // Queued behind the query above on the same connection, so once this
+      // round-trips the first query has either settled or never will.
+      const after = await sql.unsafe("select 1").then(() => "ok", e => "err:" + e.code);
+      await Promise.resolve();
+
+      console.log(JSON.stringify({ result, after }));
+      process.exit(0);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stderr, stdout: stdout.trim(), sawStmtExecute }).toEqual({
+      stderr: expect.any(String),
+      stdout: JSON.stringify({
+        result: { state: "rejected", code: "ERR_MYSQL_WRONG_NUMBER_OF_PARAMETERS_PROVIDED" },
+        after: "ok",
+      }),
+      sawStmtExecute: false,
+    });
+    expect(exitCode).toBe(0);
+  } finally {
+    await new Promise<void>(r => server.close(() => r()));
+  }
+});

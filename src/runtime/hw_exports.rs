@@ -146,11 +146,21 @@ pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSVal
     false
 }
 
-/// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
-/// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
+/// Called by JSCommonJSModule.cpp right before the module loader evaluates
+/// `specifier` as CommonJS. Marks `evaluated_as_cjs` when that module is the one
+/// being loaded at top level (the preload `load_preloads` is importing, else the
+/// entry); the path compare filters out CJS that an ESM preload or entry `import`s.
 // HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
 pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
-    if this.entry_point_result.evaluated_as_cjs || this.main().is_empty() {
+    if this.entry_point_result.evaluated_as_cjs || !specifier.is_string() {
+        return;
+    }
+    let loading = this
+        .entry_point_result
+        .loading_preload
+        .as_deref()
+        .unwrap_or(this.main());
+    if loading.is_empty() {
         return;
     }
     let global = this.global();
@@ -160,7 +170,7 @@ pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
         return;
     };
     let specifier_str = bun_core::OwnedString::new(specifier_str);
-    if specifier_str.eql_utf8(this.main()) {
+    if specifier_str.eql_utf8(loading) {
         this.entry_point_result.evaluated_as_cjs = true;
     }
 }

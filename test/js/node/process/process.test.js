@@ -1533,6 +1533,113 @@ describe.concurrent(() => {
   });
 });
 
+// Node require()s -r preloads and a CommonJS entry synchronously, so a throw at
+// their top level reaches uncaughtException listeners with origin
+// "uncaughtException"; an ES module (--import preload or entry) rejects instead,
+// which reports origin "unhandledRejection".
+describe("origin of a top-level throw in a preload or entry", () => {
+  const listener = `process.on("uncaughtException", (e, origin) => console.log("caught", e.message, origin));`;
+  // `module.exports` keeps a fixture CommonJS regardless of how bun sniffs it.
+  const throwingCjs = message => `${listener}\nmodule.exports = {};\nthrow new Error(${JSON.stringify(message)});\n`;
+  const throwingEsm = message => `${listener}\nthrow new Error(${JSON.stringify(message)});\n`;
+  const okPreload = `module.exports = {};\nconsole.log("ok preload ran");\n`;
+
+  async function run(files, args) {
+    using dir = tempDir("uncaught-origin", { "main.js": "", ...files });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it.concurrent("CommonJS -r preload: uncaughtException", async () => {
+    expect(await run({ "preload.cjs": throwingCjs("preload boom") }, ["-r", "./preload.cjs", "main.js"])).toEqual({
+      stdout: "caught preload boom uncaughtException\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("CommonJS bunfig preload: uncaughtException", async () => {
+    expect(
+      await run({ "bunfig.toml": `preload = ["./preload.cjs"]\n`, "preload.cjs": throwingCjs("preload boom") }, [
+        "main.js",
+      ]),
+    ).toEqual({ stdout: "caught preload boom uncaughtException\n", stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("CommonJS preload that is not the first preload: uncaughtException", async () => {
+    expect(
+      await run({ "ok.cjs": okPreload, "preload.cjs": throwingCjs("preload boom") }, [
+        "-r",
+        "./ok.cjs",
+        "-r",
+        "./preload.cjs",
+        "main.js",
+      ]),
+    ).toEqual({ stdout: "ok preload ran\ncaught preload boom uncaughtException\n", stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("ES module preload: unhandledRejection", async () => {
+    expect(await run({ "preload.mjs": throwingEsm("preload boom") }, ["-r", "./preload.mjs", "main.js"])).toEqual({
+      stdout: "caught preload boom unhandledRejection\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("ES module preload whose CommonJS import throws: unhandledRejection", async () => {
+    // The CommonJS module evaluated here is a dependency, not the preload itself.
+    expect(
+      await run(
+        {
+          "preload.mjs": `${listener}\nawait import("./dep.cjs");\n`,
+          "dep.cjs": `module.exports = {};\nthrow new Error("dep boom");\n`,
+        },
+        ["-r", "./preload.mjs", "main.js"],
+      ),
+    ).toEqual({ stdout: "caught dep boom unhandledRejection\n", stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("CommonJS entry after a CommonJS preload: uncaughtException", async () => {
+    expect(
+      await run({ "ok.cjs": okPreload, "entry.cjs": throwingCjs("entry boom") }, ["-r", "./ok.cjs", "entry.cjs"]),
+    ).toEqual({ stdout: "ok preload ran\ncaught entry boom uncaughtException\n", stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("ES module entry after a CommonJS preload: unhandledRejection", async () => {
+    expect(
+      await run({ "ok.cjs": okPreload, "entry.mjs": throwingEsm("entry boom") }, ["-r", "./ok.cjs", "entry.mjs"]),
+    ).toEqual({ stdout: "ok preload ran\ncaught entry boom unhandledRejection\n", stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent(
+    "CommonJS preload of a worker_threads Worker: uncaughtException",
+    async () => {
+      expect(
+        await run(
+          {
+            "preload.cjs": throwingCjs("worker preload boom"),
+            "worker.js": "",
+            "index.js": `const { Worker } = require("node:worker_threads");
+                         const path = require("node:path");
+                         new Worker(path.join(__dirname, "worker.js"), { preload: [path.join(__dirname, "preload.cjs")] })
+                           .on("exit", code => console.log("worker exit", code));`,
+          },
+          ["index.js"],
+        ),
+      ).toEqual({ stdout: "caught worker preload boom uncaughtException\nworker exit 0\n", stderr: "", exitCode: 0 });
+    },
+    // Starting a Worker alone takes several seconds in a debug + ASAN build.
+    60_000,
+  );
+});
+
 it("process.hasUncaughtExceptionCaptureCallback", () => {
   process.setUncaughtExceptionCaptureCallback(null);
   expect(process.hasUncaughtExceptionCaptureCallback()).toBe(false);

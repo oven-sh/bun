@@ -1462,13 +1462,10 @@ folded: >
           expect(() => YAML.parse("key:\n|\n text\n")).toThrow("Unexpected token");
         });
 
-        test("rewind only applies to plain single-line scalars", () => {
-          // Quoted scalars: token.start is past the opening quote, and
-          // ScanOptions.tag doesn't affect their resolution anyway.
+        test("tag on an e-node leaves a quoted or block sibling alone", () => {
           expect(YAML.parse('a: !!str\n"b": c\n')).toEqual({ a: "", b: "c" });
           expect(YAML.parse("a: !!str\n'b': c\n")).toEqual({ a: "", b: "c" });
-          // Same for a seq entry; the tag resolves e-scalar and the quoted
-          // sibling is not re-scanned.
+          // Same for a seq entry; the tag resolves e-scalar.
           expect(YAML.parse('- !!str\n- "123"\n')).toEqual(["", "123"]);
           expect(YAML.parse("- !!str\n- '123'\n")).toEqual(["", "123"]);
           // A quoted scalar that *is* content (indent > n) takes the tag as-is.
@@ -1500,15 +1497,87 @@ folded: >
         });
 
         test("tag does not leak to abandoned sibling key", () => {
-          // The post-tag re-scan resolves a plain scalar under that tag; when
-          // belongs_to_parent then abandons it, the sibling key must be
-          // re-scanned tag-neutral.
+          // The token after the tag is the sibling key, not the tagged
+          // node's content; the tag resolves the e-scalar and the key
+          // resolves under the core schema.
           expect(YAML.parse("a: !!str\n0xFF: c\n")).toEqual({ a: "", 255: "c" });
           expect(YAML.parse("a: !!str\n~: c\n")).toEqual({ a: "", null: "c" });
           expect(YAML.parse("a: !!int\ntrue: c\n")).toEqual({ a: null, true: "c" });
           // Content (indent > n) keeps the tag.
           expect(YAML.parse("a: !!str\n  0xFF\n")).toEqual({ a: "0xFF" });
           expect(YAML.parse("a:\n  !!str\n  0xFF\n")).toEqual({ a: "0xFF" });
+        });
+
+        test("tag on a scalar value does not leak into the next key", () => {
+          // The tag applies to the scalar it precedes; the key on the next
+          // line resolves under the core schema like any other key.
+          expect(YAML.parse("a: !!str b\n0x10: x\n")).toEqual({ a: "b", 16: "x" });
+          expect(YAML.parse("a: !!str b\n~: x\n")).toEqual({ a: "b", null: "x" });
+          // Same text as value and as key: only the value carries the tag.
+          expect(YAML.parse("a: !!str 0x10\n0x10: x\n")).toEqual({ a: "0x10", 16: "x" });
+          expect(YAML.parse("a: !!str b\n0x10: x\n0o10: y\nc: z\n")).toEqual({ a: "b", 16: "x", 8: "y", c: "z" });
+        });
+
+        test("every tag kind on a value leaves the next key alone", () => {
+          // !!str / ! / !local / verbatim force a string; !!int, !!float,
+          // !!bool and !!null each only resolve their own kind, so any of
+          // them mis-resolves a key of another kind if carried over.
+          expect(YAML.parse("a: ! b\n0x10: x\n")).toEqual({ a: "b", 16: "x" });
+          expect(YAML.parse("a: !foo b\n0x10: x\n")).toEqual({ a: "b", 16: "x" });
+          expect(YAML.parse("a: !<tag:yaml.org,2002:str> b\n0x10: x\n")).toEqual({ a: "b", 16: "x" });
+          expect(YAML.parse("a: !!int 1\n~: x\n")).toEqual({ a: 1, null: "x" });
+          expect(YAML.parse("a: !!float 1.5\n~: x\n")).toEqual({ a: 1.5, null: "x" });
+          expect(YAML.parse("a: !!bool true\n0x10: x\n")).toEqual({ a: true, 16: "x" });
+          expect(YAML.parse("a: !!null ~\n0x10: x\n")).toEqual({ a: null, 16: "x" });
+        });
+
+        test("tagged value of any scalar style does not leak into the next key", () => {
+          expect(YAML.parse('a: !!str "b"\n0x10: x\n')).toEqual({ a: "b", 16: "x" });
+          expect(YAML.parse("a: !!str 'b'\n0x10: x\n")).toEqual({ a: "b", 16: "x" });
+          expect(YAML.parse("a: !!str |\n  b\n0x10: x\n")).toEqual({ a: "b\n", 16: "x" });
+          expect(YAML.parse("a: !!str >-\n  b\n0x10: x\n")).toEqual({ a: "b", 16: "x" });
+          // Tag on the `:` line, content on the next line.
+          expect(YAML.parse("a: !!str\n  b\n0x10: x\n")).toEqual({ a: "b", 16: "x" });
+          // Anchor and tag together, in both orders.
+          expect(YAML.parse("a: &x !!str b\n0x10: x\n")).toEqual({ a: "b", 16: "x" });
+          expect(YAML.parse("a: !!str &x b\n~: x\n")).toEqual({ a: "b", null: "x" });
+        });
+
+        test("tagged scalar does not leak into the next key, wherever that key is", () => {
+          // Explicit key with no value.
+          expect(YAML.parse("? !!str a\n0x10: x\n")).toEqual({ a: null, 16: "x" });
+          // Explicit value.
+          expect(YAML.parse("? a\n: !!str b\n0x10: x\n")).toEqual({ a: "b", 16: "x" });
+          // Compact mapping inside a sequence item.
+          expect(YAML.parse("- a: !!str b\n  0x10: x\n")).toEqual([{ a: "b", 16: "x" }]);
+          // Nested mapping.
+          expect(YAML.parse("m:\n  a: !!str b\n  0x10: x\n")).toEqual({ m: { a: "b", 16: "x" } });
+          // The next key closes one or more inner collections and belongs
+          // to an outer mapping.
+          expect(YAML.parse("m:\n  a: !!str b\n0x10: x\n")).toEqual({ m: { a: "b" }, 16: "x" });
+          expect(YAML.parse("s:\n- !!str b\n0x10: x\n")).toEqual({ s: ["b"], 16: "x" });
+          expect(YAML.parse("s:\n  - a: !!str b\n0x10: x\n")).toEqual({ s: [{ a: "b" }], 16: "x" });
+          expect(YAML.parse("m:\n  s:\n    - !!str b\n~: x\n")).toEqual({ m: { s: ["b"] }, null: "x" });
+          // Flow form of the same mapping.
+          expect(YAML.parse("{a: !!str b, 0x10: x}\n")).toEqual({ a: "b", 16: "x" });
+        });
+
+        test("tag on a line before an implicit key is the [200] block mapping's, not the key's", () => {
+          // Same split as `take_implicit_key_anchors`: `&m\n0x10: a` anchors
+          // the mapping and the key still resolves to 16.
+          expect(YAML.parse("&m\n0x10: a\n")).toEqual({ 16: "a" });
+          expect(YAML.parse("!!map\n0x10: a\n")).toEqual({ 16: "a" });
+          expect(YAML.parse("x: !!map\n  0x10: a\n")).toEqual({ x: { 16: "a" } });
+          expect(YAML.parse("x: !!map\n  ~: a\n")).toEqual({ x: { null: "a" } });
+          expect(YAML.parse("x:\n  !!map\n  0x10: a\n")).toEqual({ x: { 16: "a" } });
+          expect(YAML.parse("- !!map\n  0x10: a\n")).toEqual([{ 16: "a" }]);
+          // On the key's own line the tag is the key's.
+          expect(YAML.parse("!!str 0x10: a\n")).toEqual({ "0x10": "a" });
+          expect(YAML.parse("x:\n  !!str 0x10: a\n")).toEqual({ x: { "0x10": "a" } });
+          expect(YAML.parse("!!map\n!!str 0x10: a\n")).toEqual({ "0x10": "a" });
+          // A scalar that is not a key takes a tag from an earlier line.
+          expect(YAML.parse("!!str\n0x10\n")).toBe("0x10");
+          expect(YAML.parse("? !!str\n  0x10\n: a\n")).toEqual({ "0x10": "a" });
         });
 
         test("tag on e-node resolves per resolve_null", () => {
@@ -1576,7 +1645,7 @@ folded: >
           expect(() => YAML.parse("a: 1\n\tb: 2\n")).toThrow(TAB_ERR);
           expect(() => YAML.parse("foo:\n  a: 1\n  \tb: 2\n")).toThrow(TAB_ERR);
           expect(() => YAML.parse("? a\n\t? b\n")).toThrow(TAB_ERR);
-          // Tag-neutral rewind in the helper preserves the taint.
+          // Also when a property precedes the sibling.
           expect(() => YAML.parse("a: !!str\n\tb: 2\n")).toThrow(TAB_ERR);
         });
 
@@ -1653,10 +1722,10 @@ folded: >
           expect(YAML.parse("a: 1\n  \tb\n")).toEqual({ a: "1 b" });
         });
 
-        // The tag-neutral rewind in parse_block_indented re-scans an
-        // abandoned scalar from token.start (past the tab), so the original
-        // taint must be preserved across the rewind. Exhaustive over each
-        // indicator × each property prefix × each tab position.
+        // A sibling abandoned to the parent by parse_block_indented's
+        // property loop must keep the taint recorded when it was scanned.
+        // Exhaustive over each indicator × each property prefix × each tab
+        // position.
         describe("property prefix does not lose tab taint on abandoned sibling", () => {
           const indicators = [
             ["map-value", (n: string, p: string, t: string) => `${n}a: ${p}\n${t}b: 2\n`],
@@ -2475,6 +2544,27 @@ explicit_null: !!null "anything"
         explicit_bool: "yes",
         explicit_null: "anything",
       });
+    });
+
+    test("explicit tag on a plain scalar keeps the core-schema value only if it is of the tag's kind", () => {
+      const yaml = `
+- [!!int 0x10, !!int -5, !!float 1.5, !!float .inf, !!int 1.5, !!float 0x10]
+- [!!int true, !!int ~, !!int foo, !!float true]
+- [!!bool true, !!bool False, !!bool 1, !!bool ~, !!bool foo]
+- [!!null ~, !!null null, !!null 0, !!null false, !!null foo]
+- [!!str 0x10, !!str -5, !!str true, !!str ~, !!str .inf, !!str foo]
+- [! 1, ! true, ! ~, !local 1, !local ~, !<tag:yaml.org,2002:str> 1]
+- [&a !!str 1, !!str &b 1, *a, *b]
+`;
+      expect(YAML.parse(yaml)).toEqual([
+        [16, -5, 1.5, Infinity, 1.5, 16],
+        ["true", "~", "foo", "true"],
+        [true, false, "1", "~", "foo"],
+        [null, null, "0", "false", "foo"],
+        ["0x10", "-5", "true", "~", ".inf", "foo"],
+        ["1", "true", "~", "1", "~", "1"],
+        ["1", "1", "1", "1"],
+      ]);
     });
 
     test("handles strings that look like numbers", () => {

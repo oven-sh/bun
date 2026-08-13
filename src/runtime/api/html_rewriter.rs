@@ -1139,10 +1139,8 @@ impl RewriterPipe {
         // GC destructor), so it owns a ref until `release_pump_ref`.
         this.pump_controller_attached.set(true);
         this.ref_();
-        // The pump's result ends the rewrite on this path (the controller's
-        // `close()`/`end()` do not; see the `JsSinkType` impl). A stream that
-        // is already errored or closed settles it inside `assign_to_stream`,
-        // which is what the settled branches below are for.
+        // An already-errored or already-closed stream settles the pump inside
+        // `assign_to_stream`; the settled branches below are its terminal step.
         let assignment_result =
             JSSink::<RewriterPipe>::assign_to_stream(global, stream.value, pipe.into());
         assignment_result.ensure_still_alive();
@@ -1273,9 +1271,8 @@ impl RewriterPipe {
         Writable::Owned(len)
     }
 
-    /// Input EOF or terminal upstream error. Entered from `SinkHandle::end`
-    /// (native sources) and from the JS pump's result ([`Self::wire_input`],
-    /// `on_resolve_input_stream` / `on_reject_input_stream`).
+    /// Input EOF or terminal upstream error, from `SinkHandle::end` (native
+    /// sources) or from the JS pump's result.
     pub fn end_from_stream(&self, err: Option<StreamError>) {
         // Detach via `detach_input_source` (not a bare `.set(None)`) so a
         // `JSController`'s `m_sinkPtr` is nulled before any path can free the
@@ -1668,12 +1665,9 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
         let _ = buf.write_latin1(bytes);
         RewriterPipe::write(self, &StreamResult::Temporary(RawSlice::new(&buf)))
     }
-    // The pump controller's `close()`/`end()` are not terminal: `close(error)`
-    // arrives here without its error (the generated `__close` drops it), and
-    // `readStreamIntoSink` calls it before rejecting the pump promise. The
-    // pump's result ends the rewrite instead (`wire_input`,
-    // `on_resolve_input_stream` / `on_reject_input_stream`), as for
-    // `FetchRequestBodySink`; native sources end it via `SinkHandle::end`.
+    // Not terminal: the controller's `close(error)` arrives here without its
+    // error, so the pump's result (`wire_input` / the `.then()` reactions) ends
+    // the rewrite instead, as in `FetchRequestBodySink`.
     fn end(&mut self, _err: Option<SysError>) -> bun_sys::Result<()> {
         bun_sys::Result::Ok(())
     }

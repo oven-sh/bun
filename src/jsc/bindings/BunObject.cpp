@@ -755,11 +755,8 @@ JSC_DEFINE_HOST_FUNCTION(functionBunNanoseconds, (JSGlobalObject * globalObject,
     return JSValue::encode(jsNumber(time));
 }
 
-// Same steps as node's url.pathToFileURL(): path.resolve() for the host
-// platform, then the trailing slash path.resolve() strips is put back.
-// path.resolve() is used rather than bun's internal path joiner, which treats
-// "\" as a separator on POSIX as well, and the result is fully resolved before
-// it reaches the URL parser, which would serialize "/a/b/.." as "/a/".
+// Mirrors node's url.pathToFileURL(): path.resolve() for the host platform,
+// then put back the trailing slash that path.resolve() strips.
 static WTF::String resolvePathForFileURL(JSC::JSGlobalObject* globalObject, JSC::JSString* pathJSString, const WTF::String& path)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -767,8 +764,7 @@ static WTF::String resolvePathForFileURL(JSC::JSGlobalObject* globalObject, JSC:
 
 #if OS(WINDOWS)
     constexpr bool isWindows = true;
-    // UNC paths (\\server\share\...) keep the server as the URL host; node
-    // hands them to the URL layer unresolved too.
+    // UNC paths become file://server/share/...; node leaves them unresolved too.
     if (path.startsWith("\\\\"_s))
         return path;
 #else

@@ -46,8 +46,6 @@ class ScriptExecutionContext;
 struct StructuredSerializeOptions;
 struct WorkerOptions;
 
-// Rejects `file://` URLs whose host is neither empty nor "localhost" with
-// Node's ERR_INVALID_FILE_URL_HOST (posix only; Windows uses UNC hosts).
 ExceptionOr<void> validateFileURLHost(JSC::JSGlobalObject*, const WTF::URL&);
 
 // The script-visible Worker object. Lives entirely on the thread that constructed it; everything

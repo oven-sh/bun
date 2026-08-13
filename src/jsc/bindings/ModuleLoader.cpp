@@ -660,8 +660,7 @@ static void provideFetchForSyncLoad(Zig::GlobalObject* globalObject, const WTF::
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto key = JSC::Identifier::fromString(vm, specifier);
-    // Only the JavaScript-typed entry is ours: it is the one loadModuleSync() reads, and this source came
-    // from the default loader. An import of the same file with a type attribute has a separate entry.
+    // The JavaScript-typed entry is the one loadModuleSync() reads; a typed import has its own entry.
     auto* entry = globalObject->moduleLoader()->ensureRegistered(globalObject, key, JSC::ScriptFetchParameters::Type::JavaScript);
     switch (entry->status()) {
     case JSC::ModuleRegistryEntry::Status::New:
@@ -674,8 +673,6 @@ static void provideFetchForSyncLoad(Zig::GlobalObject* globalObject, const WTF::
         JSC::JSPromise* fetchPromise = entry->ensureFetchPromise(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         // fulfillPromise, not fulfill(): pipeFrom() already claimed this promise's resolving functions.
-        // A fetch promise that is already settled has its FetchSettled reaction queued elsewhere;
-        // hostLoadImportedModule replays that step inline when loadModuleSync() gets there.
         if (fetchPromise->status() == JSC::JSPromise::Status::Pending)
             fetchPromise->fulfillPromise(vm, jsSourceCode);
         return;

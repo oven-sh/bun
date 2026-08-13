@@ -411,6 +411,12 @@ describe.concurrent("bun info", () => {
         config: "env-latest",
       },
       {
+        name: "bun info with an empty selector resolves latest",
+        args: ["info", "manifestless-latest-pkg@", "name"],
+        packageName: "manifestless-latest-pkg",
+        config: "env-empty-selector",
+      },
+      {
         name: "bun info with --registry before the spec",
         args: ["info", "--registry", "$REGISTRY", "manifestless-option-before-pkg@1.0.0", "name"],
         packageName: "manifestless-option-before-pkg",
@@ -504,12 +510,21 @@ describe.concurrent("bun info", () => {
       { name: "bun info .", args: ["info", "."] },
       { name: "bun info with a path", args: ["info", "./package.json"] },
       { name: "bun info with a URL", args: ["info", "https://example.com/package.tgz"] },
+      { name: "bun info with a named path", args: ["info", "pkg@file:./local"] },
+      { name: "bun info with a named URL", args: ["info", "pkg@https://example.com/package.tgz"] },
+      { name: "bun info with an unsupported named selector", args: ["info", "pkg@workspace:*"] },
       { name: "bun info with malformed package syntax", args: ["info", "@"] },
       { name: "bun info with only a valued registry option", args: ["info", "--registry", "$REGISTRY"] },
       { name: "bun pm view", args: ["pm", "view"] },
       { name: "bun pm view .", args: ["pm", "view", "."] },
       { name: "bun pm view with a path", args: ["pm", "view", "./package.json"] },
       { name: "bun pm view with a URL", args: ["pm", "view", "https://example.com/package.tgz"] },
+      { name: "bun pm view with a named path", args: ["pm", "view", "pkg@file:./local"] },
+      {
+        name: "bun pm view with a named URL",
+        args: ["pm", "view", "pkg@https://example.com/package.tgz"],
+      },
+      { name: "bun pm view with an unsupported named selector", args: ["pm", "view", "pkg@foo:bar"] },
       { name: "bun pm view with malformed package syntax", args: ["pm", "view", "@"] },
     ])("$name still requires project context", async ({ args }) => {
       let requestCount = 0;

@@ -23,6 +23,7 @@ use bun_http_types::MimeType::MimeType;
 use bun_jsc::StringJsc as _;
 use bun_sys::{self, Fd};
 
+use crate::webcore::body::BodyMixin as _;
 use crate::webcore::node_types::{PathOrBlob, PathOrFileDescriptor};
 use crate::webcore::s3 as S3;
 use crate::webcore::{self, Lifetime, ReadableStream, Request, Response, streams};
@@ -5204,7 +5205,13 @@ pub(crate) fn write_file_internal(
         // `as_class_ref` is the safe shared-borrow downcast (one audited unsafe
         // in `JSValue`); `get_body_value` / `get_body_readable_stream` both
         // take `&self` (interior mutability for the body cell).
+        //
+        // A consumed body must be rejected before dispatch: `use_()` turns a
+        // `Used` body into an empty blob, which would replace the destination
+        // with 0 bytes and resolve 0, and a drained stream has no producer
+        // left to settle the locked-body wait.
         if let Some(response) = data.as_class_ref::<Response>() {
+            response.throw_if_body_unusable(global_this)?;
             let bv = std::ptr::from_mut(response.get_body_value());
             match body_dispatch(bv, &mut |g| response.get_body_readable_stream(g))? {
                 core::ops::ControlFlow::Break(v) => return Ok(v),
@@ -5213,6 +5220,7 @@ pub(crate) fn write_file_internal(
         }
 
         if let Some(request) = data.as_class_ref::<Request>() {
+            request.throw_if_body_unusable(global_this)?;
             let bv = std::ptr::from_mut(request.get_body_value());
             match body_dispatch(bv, &mut |g| request.get_body_readable_stream(g))? {
                 core::ops::ControlFlow::Break(v) => return Ok(v),

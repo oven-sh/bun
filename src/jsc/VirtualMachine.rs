@@ -6345,6 +6345,9 @@ impl VirtualMachine {
                     let formatter = &mut *restore.f;
 
                     let pad_left = longest_name.saturating_sub(field.length());
+                    if !is_first_property {
+                        pretty_write!(writer, "<r><d>,<r>\n")?;
+                    }
                     is_first_property = false;
                     splat_space(writer, pad_left as u64)?;
                     pretty_write!(writer, " {}<r><d>:<r> ", field)?;
@@ -6371,24 +6374,28 @@ impl VirtualMachine {
                     } else if global_ref.has_exception() || formatter.failed {
                         return Ok(());
                     }
-
-                    pretty_write!(writer, "<r><d>,<r>\n")?;
                 }
             }
 
             if let Some(code_str) = code {
                 let pad_left = longest_name.saturating_sub(b"code".len());
+                if !is_first_property {
+                    pretty_write!(writer, "<r><d>,<r>\n")?;
+                }
                 is_first_property = false;
                 splat_space(writer, pad_left as u64)?;
                 pretty_write!(
                     writer,
-                    " code<r><d>:<r> <green>{}<r>\n",
+                    " code<r><d>:<r> <green>{}",
                     bun_core::fmt::quote(code_str)
                 )?;
             }
 
             if !is_first_property {
-                writer.write_all(b"\n")?;
+                // Separators are written before each property after the first,
+                // so the last line (a regular property or `code`) ends without a
+                // comma; the second newline is the blank line before the stack.
+                pretty_write!(writer, "<r>\n\n")?;
             }
 
             // "cause" is not enumerable, so the above loop won't see it.

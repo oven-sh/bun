@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, normalizeBunSnapshot } from "harness";
 import { join } from "node:path";
 
@@ -119,6 +119,52 @@ test("throwing inside an error suppresses the error and continues printing prope
     code: "ENOENT"
 `);
   expect(exitCode).toBe(1);
+});
+
+describe("own properties of a printed error are comma-separated, with no comma after the last one", () => {
+  // An error prints as: message line, one line per own property, a blank line,
+  // then the stack frames. Returns the lines between the message line and the
+  // first stack frame.
+  function linesBetweenMessageAndStack(output: string, messageLine: string): string[] {
+    const lines = output.split("\n");
+    const message = lines.indexOf(messageLine);
+    if (message === -1) throw new Error(`${JSON.stringify(messageLine)} not found in:\n${output}`);
+    const firstFrame = lines.findIndex((line, i) => i > message && line.trimStart().startsWith("at "));
+    if (firstFrame === -1) throw new Error(`no stack frame after ${JSON.stringify(messageLine)} in:\n${output}`);
+    return lines.slice(message + 1, firstFrame);
+  }
+
+  test.each([
+    ["one property", { rethrow: true }, [" rethrow: true", ""]],
+    ["two properties", { extra: 42, rethrow: true }, ["   extra: 42,", " rethrow: true", ""]],
+    [
+      "a property and a string code (code is always printed last)",
+      { code: "E_X", extra: 42 },
+      [" extra: 42,", '  code: "E_X"', ""],
+    ],
+    ["only a string code", { code: "E_X" }, [' code: "E_X"', ""]],
+    ["a non-string code", { code: 42 }, [" code: 42", ""]],
+    ["no properties", {}, []],
+  ])("%s", (_, properties, expected) => {
+    const err = Object.assign(new Error("own properties"), properties);
+    expect(linesBetweenMessageAndStack(Bun.inspect(err), "error: own properties")).toEqual(expected);
+    expect(
+      linesBetweenMessageAndStack(Bun.stripANSI(Bun.inspect(err, { colors: true })), "error: own properties"),
+    ).toEqual(expected);
+  });
+
+  test("uncaught error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const err = new Error("uncaught"); err.extra = 42; err.rethrow = true; throw err;`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(linesBetweenMessageAndStack(stderr, "error: uncaught")).toEqual(["   extra: 42,", " rethrow: true", ""]);
+    expect(exitCode).toBe(1);
+  });
 });
 
 test("Async functions frame should be included in stack trace", async () => {

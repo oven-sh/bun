@@ -3137,38 +3137,42 @@ describe("rm", () => {
     return { top: top!, seam: seam! };
   }
 
-  // The recursive walk keeps one directory open per level of nesting. It used
-  // to keep at most 16 open and handle anything deeper by re-walking that
-  // subtree from its top once per directory it removed, which is O(depth^2):
-  // removing this 2000-deep chain took 27 s in a release build and about 40 s
-  // in a debug build. The linear walk takes ~0.4 s in a debug+ASAN build.
+  // One directory stays open per level, so the walk visits each directory once:
+  // this 2000-deep chain costs ~0.4 s of CPU in a debug+ASAN build, against 27 s
+  // or more for a walk quadratic in the depth (#37939). That quadratic work is
+  // pure CPU (re-reading cached directories), so the bound is on CPU time, which
+  // process.cpuUsage() also counts for the fs thread pool; wall-clock time, and
+  // hence the test timeout, mostly tracks I/O contention on the machine.
   it.each([
     ["rmSync", (p: string) => rmSync(p, { recursive: true, force: true })],
     ["promises.rm", (p: string) => promises.rm(p, { recursive: true, force: true })],
-  ])("%s removes a directory chain nested 2000 levels deep in linear time", async (_, rm) => {
-    using dir = tempDir("rm-deep-chain", {});
-    const { top, seam } = makeDeepChain(String(dir), 2000);
-    expect(statSync(seam).isDirectory()).toBe(true);
+  ])(
+    "%s removes a directory chain nested 2000 levels deep in linear time",
+    async (_, rm) => {
+      using dir = tempDir("rm-deep-chain", {});
+      const { top, seam } = makeDeepChain(String(dir), 2000);
+      expect(statSync(seam).isDirectory()).toBe(true);
 
-    const maxFDBefore = getMaxFD();
-    const start = performance.now();
-    await rm(top);
-    const elapsedMs = performance.now() - start;
+      const maxFDBefore = getMaxFD();
+      const cpuBefore = process.cpuUsage();
+      await rm(top);
+      const cpu = process.cpuUsage(cpuBefore);
 
-    expect(existsSync(top)).toBe(false);
-    // Every level's directory handle must have been released again; the fs
-    // thread pool may have opened a handful of fds of its own.
-    expect(getMaxFD() - maxFDBefore).toBeLessThan(5);
-    expect(elapsedMs).toBeLessThan(5000);
-  });
+      expect(existsSync(top)).toBe(false);
+      // Every level's directory handle must have been released again; the fs
+      // thread pool may have opened a handful of fds of its own.
+      expect(getMaxFD() - maxFDBefore).toBeLessThan(5);
+      expect((cpu.user + cpu.system) / 1000).toBeLessThan(5000);
+    },
+    30_000,
+  );
 
   // Node's test-fs-rm.js pins what a recursive rm reports when a directory in
   // the tree is not writable: the EACCES from removing its child, except that
   // on macOS node reports the ENOTEMPTY of removing the unwritable directory
-  // itself. Every level now goes through the same walk, so a directory 40
-  // levels down gets the same answer as one directly under the root (the
-  // fallback that used to handle everything below 16 levels said EACCES on
-  // macOS too), and bailing out releases the directories the walk had open.
+  // itself. Every level goes through the same walk, so a directory 40 levels
+  // down gets the same answer as one directly under the root, and bailing out
+  // releases every directory the walk had open.
   it.skipIf(isWindows || process.getuid?.() === 0)(
     "recursive rm reports an unwritable directory 40 levels down the same way as one at the top",
     () => {

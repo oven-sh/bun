@@ -9645,9 +9645,7 @@ pub(crate) unsafe extern "C" fn Bun__mkdirp(
 // Implemented on top of
 // `bun_sys` primitives (`openat` + `unlinkat`) and *errno* values, mapping the
 // errno back to the error-set name strings the callers'
-// `map_anyerror_to_errno*` tables expect. The structure: one open directory
-// per level of the path being walked, treat_as_dir flip-flop,
-// close-then-deleteDir, retry-on-DirNotEmpty.
+// `map_anyerror_to_errno*` tables expect.
 
 #[inline]
 fn dt_err(errno: E) -> crate::Error {
@@ -9775,11 +9773,8 @@ pub(crate) fn zig_delete_tree(
             None => return Ok(()),
         };
 
-    // One frame (an open fd plus an 8 KB readdir buffer) per level of the
-    // path currently being walked. The Vec grows with the tree, so every
-    // directory is opened once and the walk is linear in the number of
-    // entries; capping the depth here and re-walking deeper subtrees from
-    // their top made deep chains O(depth^2).
+    // One open fd plus an 8 KB readdir buffer per level of the path being
+    // walked; a depth cap here would make deep trees O(depth^2) (#37939).
     let mut stack: Vec<DeleteTreeStackItem> = Vec::with_capacity(16);
     let close_all = |stack: &mut Vec<DeleteTreeStackItem>| {
         for item in stack.drain(..) {
@@ -9805,9 +9800,8 @@ pub(crate) fn zig_delete_tree(
                 Ok(None) => break,
                 Err(err) => return Err(dt_err(err.get_errno())),
             };
-            // `entry.name` points into the iterator's buffer, which lives inside
-            // the stack frame: the next `next()` call overwrites it and a `push`
-            // below may reallocate the stack and move it. Copy it once here.
+            // `entry.name` points into the top frame's readdir buffer, which the
+            // next `next()` overwrites and the `push` below may move.
             let entry_name: Vec<u8> = entry.name.slice().to_vec();
             let mut treat_as_dir = entry.kind == sys::FileKind::Directory;
             'handle_entry: loop {

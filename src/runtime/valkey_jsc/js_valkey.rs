@@ -1224,6 +1224,8 @@ impl JSValkeyClient {
         debug_assert!(self.client.get().status == valkey::Status::Connected);
         // we should always have a strong reference to the object here
         debug_assert!(self.this_value.get().is_strong());
+        // Now counting idle time, not connect time.
+        self.reset_connection_timeout();
 
         let self_ptr = self.as_ctx_ptr();
         let _defer = scopeguard::guard(self_ptr, |p| {
@@ -1927,6 +1929,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
         let _guard = this.ref_scope();
         let result = this.client_mut().on_data(data);
+        if this.client.get().status == valkey::Status::Connected {
+            this.reset_connection_timeout();
+        }
         this.update_poll_ref();
         result
     }

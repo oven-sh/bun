@@ -698,6 +698,59 @@ describe("Valkey: Recovering After fail()", () => {
     }
   });
 
+  test("an idle connection is closed after idleTimeout, and connect() reconnects", async () => {
+    const closed = Promise.withResolvers<Error>();
+    const fake = helloServer();
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { idleTimeout: 50 });
+    try {
+      client.onclose = err => closed.resolve(err);
+      await client.connect();
+      expect(client.connected).toBe(true);
+      // Nothing is sent, so only the idle timer can end this; connectionTimeout
+      // is still at its 10s default, well past the test's own timeout.
+      expect(await closed.promise).toBeInstanceOf(Error);
+      expect(client.connected).toBe(false);
+      await client.connect();
+      expect(await client.ping()).toBe("PONG");
+      expect(fake.connections).toBe(2);
+    } finally {
+      client.close();
+      await fake.close();
+    }
+  });
+
+  test("data from the server restarts the idle timer", async () => {
+    let pushes = 0;
+    const server = net.createServer(socket => {
+      socket.on("data", chunk => {
+        if (!chunk.toString("latin1").includes("HELLO")) return;
+        socket.write("+OK\r\n");
+        // Unsolicited pushes 25ms apart, each well inside the 100ms idle window;
+        // together they outlast it twice over.
+        const timer = setInterval(() => {
+          socket.write(">2\r\n$7\r\nmessage\r\n$2\r\nhi\r\n");
+          if (++pushes === 8) clearInterval(timer);
+        }, 25);
+        socket.on("close", () => clearInterval(timer));
+      });
+      socket.on("error", () => {});
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as net.AddressInfo).port;
+    const closed = Promise.withResolvers<void>();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { idleTimeout: 100, autoReconnect: false });
+    try {
+      client.onclose = () => closed.resolve();
+      await client.connect();
+      await closed.promise;
+      expect(pushes).toBe(8);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
   test("a connect() issued from onclose after a refused connection rejects instead of hanging", async () => {
     // Nothing listens on the port a just-closed listener used.
     const fake = helloServer();

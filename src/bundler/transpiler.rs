@@ -86,29 +86,23 @@ impl PluginRunner {
     /// Cheap pre-filter that rules
     /// out `./` / `../` / absolute paths before hitting the resolve hook.
     pub fn could_be_plugin(specifier: &[u8]) -> bool {
-        // Judge "/a/b.ts?v=1.2" by ".ts", not ".2": the loader path splits
-        // the query off at the first '?'.
-        if let Some(query_start) = bun_core::strings::index_of_char_usize(specifier, b'?') {
-            if Self::starts_with_letter_after_last_dot(&specifier[..query_start as usize]) {
+        // The loader ignores everything from the first '?' (`normalizeSpecifier`),
+        // so judge "/a/b.ts?v=1.2" by ".ts", not ".2".
+        let path = match bun_core::strings::index_of_char_usize(specifier, b'?') {
+            Some(query_start) => &specifier[..query_start as usize],
+            None => specifier,
+        };
+        if let Some(last_dot) = bun_core::strings::last_index_of_char(path, b'.') {
+            let ext = &path[last_dot + 1..];
+            // A letter or non-ascii byte; rules out "../", "..", and "./".
+            if !ext.is_empty()
+                && (ext[0].is_ascii_lowercase() || ext[0].is_ascii_uppercase() || ext[0] > 127)
+            {
                 return true;
             }
         }
-        // Fallback for paths containing a literal '?'.
-        if Self::starts_with_letter_after_last_dot(specifier) {
-            return true;
-        }
         !bun_paths::is_absolute(specifier)
             && bun_core::strings::index_of_char_usize(specifier, b':').is_some()
-    }
-
-    fn starts_with_letter_after_last_dot(specifier: &[u8]) -> bool {
-        let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') else {
-            return false;
-        };
-        let ext = &specifier[last_dot + 1..];
-        // A letter or non-ascii byte; rules out "../", "..", and "./".
-        !ext.is_empty()
-            && (ext[0].is_ascii_lowercase() || ext[0].is_ascii_uppercase() || ext[0] > 127)
     }
 }
 

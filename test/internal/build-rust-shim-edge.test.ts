@@ -18,12 +18,16 @@
  * at a scratch repo and at a cargo stand-in that writes the PE where cargo
  * would. Driving it takes ninja itself, node (the build's own wrapper runtime,
  * see the build test) and a non-windows host: the stand-in is a shell script,
- * and the rule's shell dialect follows the host. The `ninja`
- * on PATH may also be samurai (Alpine), which logs every edge's post-command
- * mtime and so never had the extra rebuild; there the build test only checks
- * that the restat rule still converges and still notices the sibling's
- * overwrite, and the driver's messages are not parsed beyond what the two
- * implementations share. The emission test at the end runs everywhere.
+ * and the rule's shell dialect follows the host.
+ *
+ * The build test fails without the restat only under ninja 1.11+, the driver
+ * on the debian, ubuntu and macOS lanes and on developer machines. Alpine's
+ * `ninja` is samurai, which logs every edge's post-command mtime and so never
+ * had the extra rebuild, but it is a driver bun's build runs under, so the
+ * test runs there too and checks that the restat rule still converges and
+ * still notices the sibling's overwrite under it. Accordingly, nothing is read
+ * from the driver beyond what both implementations print. The emission test
+ * at the end runs everywhere.
  */
 import { which } from "bun";
 import { describe, expect, test } from "bun:test";
@@ -36,7 +40,8 @@ import { Ninja } from "../../scripts/build/ninja.ts";
 import { emitRust, registerRustRules, rustTarget } from "../../scripts/build/rust.ts";
 import { quote } from "../../scripts/build/shell.ts";
 
-// Test-only CI lanes may run without a build toolchain; the build test skips there.
+// The build test skips where either is missing (test-only lanes without a
+// build toolchain); it also skips on Windows hosts, see the header.
 const ninjaExe = which("ninja");
 const node = nodeExe();
 
@@ -200,18 +205,19 @@ function shimDriver(buildDir: string, shimStamp: string) {
     build: () => run(),
     /**
      * What the next build would do, per a dry run with `-d explain`. Both
-     * implementations print a `[N/M] <description>` line per edge they would
-     * run and one `explain` line per reason on stderr (ninja: "ninja explain:
-     * recorded mtime of .../bun_shim_impl.stamp older than most recent input
-     * .../bun_shim_impl.exe"), so a failing assertion shows the reason; a
-     * clean graph yields neither (ninja's "no work to do" / samurai's
-     * "nothing to do" notes are the only other output).
+     * implementations print each edge they would run as its description
+     * behind a NINJA_STATUS-dependent prefix (the rust_shim rule's is "cargo
+     * bun_shim_impl → <exe>"), and one `explain` line per reason on stderr
+     * (ninja: "ninja explain: recorded mtime of .../bun_shim_impl.stamp older
+     * than most recent input .../bun_shim_impl.exe"), so a failing assertion
+     * shows the reason. A clean graph yields neither; ninja's "no work to do"
+     * and samurai's "nothing to do" notes are the only other output.
      */
     nextBuild: () => {
       const { stdout, stderr, exitCode } = run("-n", "-d", "explain");
       expect({ stderr, exitCode }).toMatchObject({ exitCode: 0 });
       return {
-        runsEdge: /^\[\d+\/\d+\] /m.test(stdout),
+        runsEdge: stdout.includes("cargo bun_shim_impl"),
         explain: stderr.split("\n").filter(line => line.includes("explain")),
       };
     },

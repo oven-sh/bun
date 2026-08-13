@@ -1825,6 +1825,7 @@ impl RunCommand {
     // Canonical definition lives in `bun_install::RunCommand` (lower tier so
     // the package manager can use it without depending on `bun_runtime`).
     #[cfg(not(windows))]
+    #[allow(dead_code)] // OHOS uses the runtime bun_node_dir_bytes() instead.
     pub(crate) const BUN_NODE_DIR: &'static str = bun_install::RunCommand::BUN_NODE_DIR;
 
     /// Returns the path to the
@@ -1832,8 +1833,28 @@ impl RunCommand {
     pub(crate) fn bun_node_file_utf8() -> crate::Result<&'static ZStr> {
         #[cfg(not(windows))]
         {
-            const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
-            Ok(ZStr::from_static(BUN_NODE_DIR_Z.as_bytes()))
+            #[cfg(target_env = "ohos")]
+            {
+                // OHOS: shim dir lives under $TMPDIR (see
+                // RunCommand::bun_node_dir_bytes). Resolve once, leak the
+                // buffer (process-lifetime, one allocation).
+                use std::sync::OnceLock;
+                static NODE_FILE: OnceLock<&'static ZStr> = OnceLock::new();
+                Ok(NODE_FILE.get_or_init(|| {
+                    let dir = bun_install::RunCommand::bun_node_dir_bytes();
+                    let mut buf = Vec::with_capacity(dir.len() + 6);
+                    buf.extend_from_slice(dir);
+                    buf.extend_from_slice(b"/node\0");
+                    let buf = buf.leak();
+                    // SAFETY: buf is NUL-terminated and never freed.
+                    unsafe { ZStr::from_raw(buf.as_ptr(), dir.len() + 5) }
+                }))
+            }
+            #[cfg(not(target_env = "ohos"))]
+            {
+                const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
+                Ok(ZStr::from_static(BUN_NODE_DIR_Z.as_bytes()))
+            }
         }
         #[cfg(windows)]
         {

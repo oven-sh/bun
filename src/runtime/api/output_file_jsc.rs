@@ -99,9 +99,6 @@ impl OutputFileJsc for OutputFile {
                     path: Box::<[u8]>::from(path_to_use),
                 });
 
-                // Ownership transfers to the JS `BuildArtifact` wrapper
-                // (`finalize` reclaims it). Typed `Box`-taking entry point:
-                // the leak/from_raw pair lives once in the `#[js_class]` shim.
                 BuildArtifact::to_js_boxed(build_output, global_object)
             }
             OutputFileValue::Buffer { bytes } => {
@@ -123,7 +120,6 @@ impl OutputFileJsc for OutputFile {
                     path,
                 });
 
-                // See `Saved` arm.
                 BuildArtifact::to_js_boxed(build_output, global_object)
             }
             OutputFileValue::Noop => {

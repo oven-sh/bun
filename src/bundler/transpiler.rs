@@ -2826,24 +2826,14 @@ impl<'a> Transpiler<'a> {
         let Some(file_path_ref) = resolve_result.path_const() else {
             return Ok(None);
         };
-        // `resolver::Result.path_pair` carries `bun_resolver::fs::Path<'_>`;
-        // downstream `linker.link` and `OutputFile.src_path` expect
-        // `bun_paths::fs::Path<'_>` / `bun_paths::fs::Path<'static>`. Re-init via
-        // `text` (the only field both shapes share semantically).
-        let file_path_text: &'static [u8] = crate::linker::dupe(file_path_ref.text);
-
         // Step 1. Parse & scan
-        // Key the loader on the ORIGINAL resolve
-        // result's extension *before* the `client_entry_point` path override.
-        // Compute it here, then apply the override.
+        // The loader is keyed on the resolved extension, not on the
+        // `client_entry_point` override below.
         let loader = self.options.loader(file_path_ref.name().ext);
 
-        // `client_entry_point_` is always `None` from the only in-tree caller;
-        // its source path uses the `bun_paths::fs::Path<'static>` shape, so just override
-        // the text when present.
-        let file_path_text = match client_entry_point_.as_deref() {
-            Some(cep) => crate::linker::dupe(cep.source.path.text),
-            None => file_path_text,
+        let file_path_text: &'static [u8] = match client_entry_point_.as_deref() {
+            Some(cep) => cep.source.path.text,
+            None => file_path_ref.text,
         };
 
         let mut file_path = Fs::Path::init(file_path_text);
@@ -3005,9 +2995,7 @@ impl<'a> Transpiler<'a> {
         Ok(Some(output_file))
     }
 
-    /// Mirrors the entry-point naming in `computeChunks`: `--entry-naming`
-    /// (default `[dir]/[name].[ext]`) applied to the path relative to `--root`,
-    /// producing a posix path relative to `--outdir`.
+    /// `--entry-naming` relative to `--root`, as `computeChunks` names entry points.
     fn transform_only_dest_path(
         &self,
         file_path_text: &[u8],
@@ -3157,11 +3145,8 @@ impl<'a> Transpiler<'a> {
         })
     }
 
-    /// Cold path: `bun build` of a non-JS asset copied verbatim (`.html`,
-    /// `.wasm`, `.node`, sqlite, bunsh, generic `file`). Split out so it
-    /// isn't interleaved (post-LTO) with the hot JS/TS transpile path. Read
-    /// with `bun_sys` rather than the resolver's file cache, which strips BOMs.
-    /// Returns `None` after logging when the file cannot be read.
+    /// Cold path like `build_css_output`. Reads through `bun_sys` because the
+    /// resolver's file cache strips BOMs, which a copied file has to keep.
     #[cold]
     #[inline(never)]
     fn read_copied_file(

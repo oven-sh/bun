@@ -1,4 +1,4 @@
-import { cc, CString, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
+import { cc, CString, JSCallback, ptr, viewSource, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
   chmodSync,
@@ -1094,6 +1094,51 @@ describe.concurrent("pointer-typed arguments (function, ptr, cstring, buffer)", 
   // engine's conversion, the one dlopen()/CFunction symbols use, so the fixture runs one input
   // matrix through a cc() wrapper and through a CFunction over the very same C function and the
   // two tables must agree. Runs in a subprocess because the unfixed path is a segfault.
+  //
+  // The wrapper shape itself: pointer-typed arguments are converted into locals, tagged with
+  // their type for the engine, and each conversion is followed by a bail-out, since it can run JS
+  // (a `ptr` getter) and throw. Other arguments are still converted inline in the call, and a
+  // napi handle scope is only opened once every conversion has succeeded, so bailing out never
+  // leaves one open.
+  it("converts pointer-typed arguments before the call and bails out if one threw", () => {
+    const [source] = viewSource({
+      f: { args: ["napi_env", "function", "f64", "cstring", "buffer", "ptr"], returns: "i32" },
+    });
+    expect(source.slice(source.indexOf("/* --- The Function To Call */"))).toMatchInlineSnapshot(`
+      "/* --- The Function To Call */
+      int32_t f(napi_env arg0, void* arg1, double arg2, void* arg3, void* arg4, void* arg5);
+
+      /* ---- Your Wrapper Function ---- */
+      ZIG_REPR_TYPE JSFunctionCall(void* JS_GLOBAL_OBJECT, void* callFrame) {
+        LOAD_ARGUMENTS_FROM_CALL_FRAME;
+        napi_env arg0 = (napi_env)&Bun__thisFFIModuleNapiEnv;
+        argsPtr++;
+        EncodedJSValue arg1 = { .asInt64 = *argsPtr++ };
+        EncodedJSValue arg2 = { .asInt64 = *argsPtr++ };
+        EncodedJSValue arg3 = { .asInt64 = *argsPtr++ };
+        EncodedJSValue arg4 = { .asInt64 = *argsPtr++ };
+        EncodedJSValue arg5;
+        arg5.asInt64 = *argsPtr;
+        bool threw = false;
+        void* ptr1 = JSVALUE_TO_PTR(JS_GLOBAL_OBJECT, ABI_TYPE_FUNCTION, &threw, arg1);
+        if (threw) return ValueEmpty.asZigRepr;
+        void* ptr3 = JSVALUE_TO_PTR(JS_GLOBAL_OBJECT, ABI_TYPE_CSTRING, &threw, arg3);
+        if (threw) return ValueEmpty.asZigRepr;
+        void* ptr4 = JSVALUE_TO_BUFFER(JS_GLOBAL_OBJECT, &threw, arg4);
+        if (threw) return ValueEmpty.asZigRepr;
+        void* ptr5 = JSVALUE_TO_PTR(JS_GLOBAL_OBJECT, ABI_TYPE_PTR, &threw, arg5);
+        if (threw) return ValueEmpty.asZigRepr;
+        void* handleScope = NapiHandleScope__open(&Bun__thisFFIModuleNapiEnv, false);
+          int32_t return_value = f(    ((napi_env)&Bun__thisFFIModuleNapiEnv),     ptr1,     JSVALUE_TO_DOUBLE(arg2),     ptr3,     ptr4,     ptr5);
+
+            NapiHandleScope__close(&Bun__thisFFIModuleNapiEnv, handleScope);
+      return INT32_TO_JSVALUE((int32_t)return_value).asZigRepr;
+      }
+
+      "
+    `);
+  });
+
   it("accepts what dlopen accepts and throws a TypeError for the rest", async () => {
     using dir = tempDir("bun-ffi-cc-pointer-args", {
       "pointers.c": /* c */ `
@@ -1205,13 +1250,21 @@ describe.concurrent("pointer-typed arguments (function, ptr, cstring, buffer)", 
             table[name] = {};
             for (const label in inputs[name]) table[name][label] = outcome(symbols[name], inputs[name][label]);
           }
+
+          // Every read of .ptr is one conversion of this argument.
+          let ptrReads = 0;
+          const counted = { get ptr() { ptrReads++; return address; } };
+          const { two_pointers } = symbols;
           table.two_pointers = {
-            both_valid: outcome(x => symbols.two_pointers(x, view), address),
-            second_invalid: outcome(x => symbols.two_pointers(x, {}), address),
-            throwing_ptr_getter: outcome(
-              x => symbols.two_pointers(x, { get ptr() { throw new Error("from the ptr getter"); } }),
-              address,
+            both_valid: outcome(() => two_pointers(address, view)),
+            getter_as_first: outcome(() => two_pointers(counted, view)),
+            getter_reads_so_far: ptrReads,
+            second_invalid: outcome(() => two_pointers(address, {})),
+            throwing_getter_as_second: outcome(() =>
+              two_pointers(address, { get ptr() { throw new Error("from the ptr getter"); } }),
             ),
+            first_invalid_with_getter_as_second: outcome(() => two_pointers({}, counted)),
+            getter_reads_at_end: ptrReads,
             native_calls: compiled.get_native_calls(),
           };
           return table;
@@ -1281,11 +1334,17 @@ describe.concurrent("pointer-typed arguments (function, ptr, cstring, buffer)", 
       },
       two_pointers: {
         both_valid: 1,
+        getter_as_first: 1,
+        // Each argument is converted exactly once per call.
+        getter_reads_so_far: 1,
         second_invalid: cannotConvert("ptr"),
-        throwing_ptr_getter: "Error: from the ptr getter",
-        // Only both_valid reached C: a failed conversion stops the call before it happens. The
-        // engine table runs second, so it sees its own call on top of the cc() one.
-        native_calls: 1,
+        throwing_getter_as_second: "Error: from the ptr getter",
+        // Conversion stops at the first argument that fails: the getter behind it never runs.
+        first_invalid_with_getter_as_second: cannotConvert("ptr"),
+        getter_reads_at_end: 1,
+        // Only the two valid calls reached C. The engine table runs second, so its count includes
+        // the cc() table's calls.
+        native_calls: 2,
       },
     };
 
@@ -1303,7 +1362,7 @@ describe.concurrent("pointer-typed arguments (function, ptr, cstring, buffer)", 
         },
         engine: {
           ...expected,
-          two_pointers: { ...expected.two_pointers, native_calls: 2 },
+          two_pointers: { ...expected.two_pointers, native_calls: 4 },
         },
       },
       exitCode: 0,
@@ -1342,6 +1401,7 @@ describe.concurrent("pointer-typed arguments (function, ptr, cstring, buffer)", 
         }
         results.calls_after_rejection = symbols.get_native_calls();
         results.view = symbols.with_env(undefined, new Uint8Array(4));
+        results.object_with_ptr = symbols.with_env(undefined, { ptr: 8 });
         results.null = symbols.with_env(undefined, null);
         results.calls_at_end = symbols.get_native_calls();
         console.log(JSON.stringify(results));
@@ -1363,8 +1423,9 @@ describe.concurrent("pointer-typed arguments (function, ptr, cstring, buffer)", 
         rejected: "TypeError: bun:ffi cannot convert argument to 'ptr'",
         calls_after_rejection: 0,
         view: 3,
+        object_with_ptr: 3,
         null: 1,
-        calls_at_end: 2,
+        calls_at_end: 3,
       },
       exitCode: 0,
     });

@@ -1479,19 +1479,7 @@ mod _async_tasks {
                 &parent.args,
             );
 
-            'brk: {
-                match result {
-                    Err(ref err) => {
-                        if err.errno == E::EEXIST as _ && !args.flags.error_on_exist {
-                            break 'brk;
-                        }
-                        parent.finish_concurrently(result);
-                    }
-                    Ok(_) => {
-                        parent.on_copy(self.src(), self.dest());
-                    }
-                }
-            }
+            parent.record_copy_result(self.src(), self.dest(), result);
 
             // `self: Box<Self>` drops here (frees the owned `path_buf`).
             drop(self);
@@ -1532,25 +1520,23 @@ mod _async_tasks {
                 .cp_on_copy(src.as_ref(), dest.as_ref());
         }
 
-        /// Delivers the result of a `cp` whose source is a single file. Like
-        /// `CpSingleTask` in the directory walk, `on_copy` is only recorded for
-        /// a copy that happened: not for a failed one, and not for a
-        /// destination left alone because it already existed.
-        fn finish_single_file(
+        /// Accounts for one file's `copy_single_file_sync` result, whether the
+        /// file is the whole `cp` or one entry of the directory walk. Only a
+        /// copy that happened is reported through `on_copy`; an `EEXIST` the
+        /// flags tolerate is neither a copy nor an error. Success needs no
+        /// record: `on_subtask_done` resolves with `Ok` unless an error was
+        /// recorded.
+        fn record_copy_result(
             &self,
             src: &OSPathSliceZ,
             dest: &OSPathSliceZ,
             result: Maybe<ret::CopyFile>,
         ) {
-            let result = match result {
-                Ok(()) => {
-                    self.on_copy(src, dest);
-                    Ok(())
-                }
-                Err(e) if e.get_errno() == E::EEXIST && !self.args.flags.error_on_exist => Ok(()),
-                Err(e) => Err(e),
-            };
-            self.finish_concurrently(result);
+            match result {
+                Ok(()) => self.on_copy(src, dest),
+                Err(e) if e.get_errno() == E::EEXIST && !self.args.flags.error_on_exist => {}
+                Err(e) => self.finish_concurrently(Err(e)),
+            }
         }
 
         /// `fs.cp` / `fs.promises.cp` (JS thread): a promise, an async-stack
@@ -1873,7 +1859,7 @@ mod _async_tasks {
                         Some(attributes),
                         &this.args,
                     );
-                    this.finish_single_file(src, dest, r);
+                    this.record_copy_result(src, dest, r);
                     return;
                 }
             }
@@ -1905,7 +1891,7 @@ mod _async_tasks {
                         Some(&stat_),
                         &this.args,
                     );
-                    this.finish_single_file(src, dest, r);
+                    this.record_copy_result(src, dest, r);
                     return;
                 }
             }

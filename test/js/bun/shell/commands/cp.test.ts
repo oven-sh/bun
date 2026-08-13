@@ -2,7 +2,7 @@ import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, tempDir, tempDirWithFiles } from "harness";
-import { chmodSync, readFileSync } from "node:fs";
+import { chmodSync, lstatSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
@@ -231,6 +231,41 @@ describe.concurrent("bunshell cp -v only reports copies that happened", () => {
     } finally {
       chmodSync(ro, 0o644);
     }
+  });
+
+  test("-R: lists the directories and files that were copied, not the file that failed", async () => {
+    using dir = tempDir("shell-cp-v-recursive", {
+      "src": { "ok.txt": "ok\n", "sub": { "bad.txt": "bad\n" } },
+      "dest": { "src": { "sub": { "bad.txt": {} } } },
+    });
+    const cwd = String(dir);
+    const src = (...parts: string[]) => join(cwd, "src", ...parts);
+    const dest = (...parts: string[]) => join(cwd, "dest", "src", ...parts);
+
+    const result = await cp(cwd, "cp -R -v src dest");
+    // Files inside the tree are copied concurrently, so their lines come out in any order.
+    expect({ ...result, stdout: sortedShellOutput(result.stdout) }).toEqual({
+      ...failed,
+      stdout: sortedShellOutput([
+        `${src()} -> ${dest()}`,
+        `${src("ok.txt")} -> ${dest("ok.txt")}`,
+        `${src("sub")} -> ${dest("sub")}`,
+      ]),
+    });
+    expect(readFileSync(dest("ok.txt"), "utf8")).toBe("ok\n");
+  });
+
+  test("symlink -> existing file is listed only if the destination is now the link", async () => {
+    using dir = tempDir("shell-cp-v-symlink", { "target.txt": "target\n", "existing.txt": "keep\n" });
+    const cwd = String(dir);
+    symlinkSync("target.txt", join(cwd, "lnk"));
+
+    const { stdout } = await cp(cwd, "cp -v lnk existing.txt");
+    // A link source is recreated with symlink(2), which on most platforms cannot
+    // replace an existing destination (cp tolerates that EEXIST and leaves the
+    // destination alone). Whatever happened to the destination, the line has to agree with it.
+    const replaced = lstatSync(join(cwd, "existing.txt")).isSymbolicLink();
+    expect(stdout).toBe(replaced ? `${join(cwd, "lnk")} -> ${join(cwd, "existing.txt")}\n` : "");
   });
 });
 

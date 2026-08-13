@@ -755,12 +755,13 @@ impl Channel {
         }
 
         let mut opts = Options {
-            // Android note: c-ares can't auto-discover servers (no /etc/resolv.conf,
-            // no JNI), so it falls back to 127.0.0.1 and queries time out. We do
-            // NOT set ARES_FLAG_NO_DFLT_SVR here — that makes init fail with
-            // ENOSERVER, which breaks dns.setServers() (it needs an initialized
-            // channel to call ares_set_servers_ports). Letting the 127.0.0.1
-            // default stand means setServers() works as the documented workaround.
+            // Android note: outside Termux (see ARES_OPT_RESOLVCONF below) c-ares
+            // can't auto-discover servers (no /etc/resolv.conf, no JNI), so it
+            // falls back to 127.0.0.1 and queries time out. We do NOT set
+            // ARES_FLAG_NO_DFLT_SVR here — that makes init fail with ENOSERVER,
+            // which breaks dns.setServers() (it needs an initialized channel to
+            // call ares_set_servers_ports). Letting the 127.0.0.1 default stand
+            // means setServers() works as the documented workaround.
             flags: ARES_FLAG_NOCHECKRESP,
             sock_state_cb: Some(on_sock_state::<C>),
             // R-2: `*mut` spelling is signature-only (c-ares stores a `void*`); the
@@ -772,8 +773,36 @@ impl Channel {
             ..Default::default()
         };
 
-        let optmask: c_int =
+        #[allow(unused_mut)]
+        let mut optmask: c_int =
             ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
+
+        // Termux ships `$PREFIX/etc/resolv.conf` (and points its own c-ares at
+        // it); use it when present so resolve*() has real nameservers there.
+        // c-ares copies the path during ares_init_options.
+        #[cfg(target_os = "android")]
+        let mut resolvconf_buf = [0u8; 512];
+        #[cfg(target_os = "android")]
+        {
+            // SAFETY: getenv returns null or a NUL-terminated string owned by environ.
+            let prefix = unsafe { libc::getenv(c"PREFIX".as_ptr()) };
+            if !prefix.is_null() {
+                // SAFETY: non-null NUL-terminated per getenv contract.
+                let prefix = unsafe { core::ffi::CStr::from_ptr(prefix) }.to_bytes();
+                const SUFFIX: &[u8] = b"/etc/resolv.conf";
+                if !prefix.is_empty() && prefix.len() + SUFFIX.len() < resolvconf_buf.len() {
+                    resolvconf_buf[..prefix.len()].copy_from_slice(prefix);
+                    resolvconf_buf[prefix.len()..prefix.len() + SUFFIX.len()]
+                        .copy_from_slice(SUFFIX);
+                    let path = resolvconf_buf.as_ptr().cast::<c_char>();
+                    // SAFETY: `path` is NUL-terminated (buffer zero-initialized, length checked).
+                    if unsafe { libc::access(path, libc::R_OK) } == 0 {
+                        opts.resolvconf_path = path.cast_mut();
+                        optmask |= ARES_OPT_RESOLVCONF;
+                    }
+                }
+            }
+        }
 
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
         let rc = unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) };
@@ -1931,6 +1960,8 @@ pub(crate) const ARES_OPT_FLAGS: c_int = 1 << 0;
 pub(crate) const ARES_OPT_TRIES: c_int = 1 << 2;
 pub(crate) const ARES_OPT_SOCK_STATE_CB: c_int = 1 << 9;
 pub(crate) const ARES_OPT_TIMEOUTMS: c_int = 1 << 13;
+#[cfg(target_os = "android")]
+pub(crate) const ARES_OPT_RESOLVCONF: c_int = 1 << 17;
 pub(crate) const ARES_NI_NAMEREQD: c_int = 1 << 2;
 pub(crate) const ARES_NI_LOOKUPHOST: c_int = 1 << 8;
 pub(crate) const ARES_NI_LOOKUPSERVICE: c_int = 1 << 9;

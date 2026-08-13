@@ -1,8 +1,9 @@
 // The binding generator to rule them all.
 // Converts binding definition files (.bind.ts) into C++ and native binding code.
 //
-// Generated bindings are available as `bun.generated.<basename>.*` on the native side,
-// or `Generated::<basename>::*` in C++ from including `Generated<basename>.h`.
+// Generated bindings are available as `Generated::<basename>::*` in C++ from including
+// `Generated<basename>.h`; the Rust side binds the emitted `bindgen_*` symbols by hand in
+// `src/jsc/bindings/GeneratedBindings.rs` (`bun_jsc::r#gen::<basename>`).
 import assert from "node:assert";
 import * as path from "node:path";
 import {
@@ -738,8 +739,6 @@ function emitCppStructHeader(w: CodeWriter, type: TypeImpl) {
 
 function emitCppEnumHeader(w: CodeWriter, type: TypeImpl) {
   assert(type.kind === "stringEnum");
-
-  assert(type.kind === "stringEnum"); // TODO
   assert(type.data.length > 0);
   const signPrefix = "u";
   const intBits = alignForward(type.data.length, 8);
@@ -755,7 +754,6 @@ function emitCppEnumHeader(w: CodeWriter, type: TypeImpl) {
 // This function assumes in the WebCore namespace
 function emitConvertEnumFunction(w: CodeWriter, type: TypeImpl) {
   assert(type.kind === "stringEnum");
-  assert(type.kind === "stringEnum"); // TODO
   assert(type.data.length > 0);
 
   const name = "Generated::" + type.cppName();
@@ -1114,7 +1112,7 @@ for (const type of typeHashToReachableType.values()) {
   }
 }
 
-for (const [filename, { functions, typedefs }] of files) {
+for (const [filename, { functions }] of files) {
   const namespaceVar = fileMap.get(filename)!;
   assert(namespaceVar, `namespaceVar not found for ${filename}, ${inspect(fileMap)}`);
 

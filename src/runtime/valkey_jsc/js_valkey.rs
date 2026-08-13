@@ -1242,6 +1242,10 @@ impl JSValkeyClient {
                 Err(err) if global_object.has_pending_termination_exception() => return Err(err),
                 Err(err) => {
                     let error = global_object.take_exception(err);
+                    let client = self.client_mut();
+                    client.flags.connection_promise_returns_client = false;
+                    client.flags.is_manually_closed = true;
+                    let _close = scopeguard::guard(BackRef::new(self), |p| p.client_mut().close());
                     if let Some(promise) = Js::connection_promise_get_cached(this_value) {
                         Js::connection_promise_set_cached(
                             this_value,
@@ -1251,10 +1255,6 @@ impl JSValkeyClient {
                         JSPromise::opaque_mut(promise.as_promise().unwrap())
                             .reject(&global_object, Ok(error))?;
                     }
-                    let client = self.client_mut();
-                    client.flags.connection_promise_returns_client = false;
-                    client.flags.is_manually_closed = true;
-                    let _close = scopeguard::guard(BackRef::new(self), |p| p.client_mut().close());
                     return self.client_mut().fail_with_js_value(&global_object, error);
                 }
             };

@@ -23,7 +23,7 @@ use bun_io::{self as Async, KeepAlive};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult,
-    SystemError, host_fn,
+    JsResultExt as _, SystemError, host_fn,
 };
 use bun_paths::{MAX_PATH_BYTES, PathBuffer};
 #[cfg(windows)]
@@ -1947,11 +1947,12 @@ impl Outcome {
 
     fn settle(self, promise: &mut JSPromiseStrong, global: &JSGlobalObject) {
         let _guard = VirtualMachine::get().enter_event_loop_scope();
-        let _ = match self {
+        match self {
             Outcome::Value(v) => promise.resolve(global, v),
             Outcome::Error(e) => promise.reject(global, Ok(e)),
             Outcome::Stopped => return,
-        };
+        }
+        .report_unhandled(global);
     }
 }
 

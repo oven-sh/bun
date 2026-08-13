@@ -2061,8 +2061,6 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
     }
 
-    /// Only VM termination
-    /// escapes; promise resolution cannot raise an ordinary JS exception here.
     pub(crate) fn flush_promise(&mut self) -> JsResult<()> {
         // Settle any `write()` → `Pending` promise first so a parked JS writer
         // wakes on every drain/teardown path that reaches here.

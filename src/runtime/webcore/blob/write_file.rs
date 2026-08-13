@@ -590,7 +590,7 @@ mod windows_impl {
 
     bun_io::intrusive_uv_fs!(WriteFileWindows, io_request);
 
-    #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+    #[derive(thiserror::Error, Debug)]
     pub enum WriteFileWindowsError {
         #[error("WriteFileWindowsDeinitialized")]
         WriteFileWindowsDeinitialized,
@@ -611,12 +611,6 @@ mod windows_impl {
     fn report(err: jsc::JsError) {
         let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
         let _ = bun_jsc::task::report_error_or_terminate(global, err);
-    }
-
-    impl PartialEq<crate::Error> for WriteFileWindowsError {
-        fn eq(&self, other: &crate::Error) -> bool {
-            <&'static str>::from(self) == other.name()
-        }
     }
 
     impl WriteFileWindows {

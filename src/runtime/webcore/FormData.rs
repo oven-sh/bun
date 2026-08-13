@@ -29,8 +29,7 @@ pub trait AsyncFormDataExt {
 }
 
 impl AsyncFormDataExt for AsyncFormData {
-    // Only a VM-termination error can escape
-    // (JS exceptions are routed into the promise rejection above).
+    /// Parse errors are routed into the promise rejection; only settlement's own exception escapes.
     fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()> {
         if let Encoding::Multipart(b) = &self.encoding {
             if b.is_empty() {

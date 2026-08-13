@@ -184,7 +184,8 @@ export const function_replacements = [
   "$isPromisePending",
   "$bindgenFn",
 ];
-const function_regexp = new RegExp(`__intrinsic__(${function_replacements.join("|").replaceAll("$", "")})`);
+// Anchored: builtin-parser.ts ends the chunk right after the macro being called; any earlier macro name is a plain reference.
+const function_regexp = new RegExp(`__intrinsic__(${function_replacements.join("|").replaceAll("$", "")})$`);
 
 /** Applies source code replacements as defined in `replacements` */
 export function applyReplacements(src: string, length: number) {
@@ -197,8 +198,14 @@ export function applyReplacements(src: string, length: number) {
       replacement.toRaw ?? replacement.to!.replaceAll("$", "__intrinsic__").replaceAll("%", "$"),
     );
   }
-  let match;
-  if ((match = slice.match(function_regexp)) && rest.startsWith("(")) {
+  const match = slice.match(function_regexp);
+  if (match && rest.startsWith("<")) {
+    throw new Error(
+      `$${match[1]} does not accept type arguments; only '$${match[1]}(' is expanded at bundle time. ` +
+        `Cast the result instead: '$${match[1]}(...) as T'. Found: '$${match[1]}${rest.slice(0, 80)}'`,
+    );
+  }
+  if (match && rest.startsWith("(")) {
     const name = match[1];
     if (name === "debug") {
       const innerSlice = sliceSourceCode(rest, true);

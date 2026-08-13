@@ -13,6 +13,7 @@ on:
     branches: [main]
     paths:
       - "src/**/*.rs"
+      - "src/codegen/**"
       - "src/jsc/bindings/**"
       - "scripts/build/**"
       - "scripts/glob-sources.ts"
@@ -25,6 +26,7 @@ on:
   pull_request:
     paths:
       - "src/**/*.rs"
+      - "src/codegen/**"
       - "src/jsc/bindings/**"
       - "scripts/build/**"
       - "scripts/glob-sources.ts"

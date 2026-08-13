@@ -9,7 +9,8 @@ function createStopRegex(allow_comma: boolean) {
     "((?:[(,=;:{]|return|\\=\\>)\\s*)\\/[^\\/\\*]|\\/\\*|\\/\\/|['\"}`\\)" +
       (allow_comma ? "," : "") +
       "]|(?<!\\$)\\brequire\\(|(" +
-      function_replacements.map(x => escapeRegex(x) + "\\(").join("|") +
+      // `$macro(` is expanded by applyReplacements; `$macro<` (type arguments) is rejected there.
+      function_replacements.map(x => escapeRegex(x) + "[(<]").join("|") +
       ")",
   );
 }

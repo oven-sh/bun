@@ -9157,7 +9157,12 @@ impl NodeFS {
             // No trailing separator on the parent: with one, mkdir(2) on the BSD
             // kernels follows a symlink at that name (Linux says EEXIST either
             // way), so a dangling link there would get its target created.
-            let parent = paths::resolve_path::dirname::<paths::platform::Auto>(dest.as_bytes());
+            // `dirname` leaves one behind when `dest` has a run of them
+            // (`a//x` -> `a/`); a lone root separator stays.
+            let mut parent = paths::resolve_path::dirname::<paths::platform::Auto>(dest.as_bytes());
+            while parent.len() > 1 && parent[parent.len() - 1] == paths::SEP {
+                parent = &parent[..parent.len() - 1];
+            }
             let mkdir_result = self.mkdir_recursive(&args::Mkdir {
                 path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(parent, false)),
                 recursive: true,

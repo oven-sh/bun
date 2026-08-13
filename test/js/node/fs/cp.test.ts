@@ -151,22 +151,26 @@ for (const [name, copy] of impls) {
     // used to be taken for "dest already exists" and reported as success with
     // nothing copied. node reports ENOENT. Over 128 KB macOS copies with
     // copyfile() instead of open()+write(), which creates the parent separately.
+    // With a doubled separator the parent is derived as "dangling/", and a
+    // trailing separator makes mkdir follow the link on macOS and FreeBSD.
     for (const [size, content] of [
       ["small", "a"],
       ["over 128 KB", Buffer.alloc(256 * 1024, "x").toString()],
     ] as const) {
-      test(`${size} file into a dangling symlink parent fails with ENOENT`, async () => {
-        await using basename = tempDir("cp", {
-          "from/a.txt": content,
+      for (const dest of ["dangling/a.txt", "dangling//a.txt"]) {
+        test(`${size} file into a dangling symlink parent (${dest}) fails with ENOENT`, async () => {
+          await using basename = tempDir("cp", {
+            "from/a.txt": content,
+          });
+          fs.symlinkSync("missing", basename + "/dangling");
+
+          const e = await copyShouldThrow(basename + "/from/a.txt", basename + "/" + dest);
+          expect(e.code).toBe("ENOENT");
+
+          // Neither the link's target nor anything else was created.
+          expect(fs.readdirSync(String(basename)).sort()).toEqual(["dangling", "from"]);
         });
-        fs.symlinkSync("missing", basename + "/dangling");
-
-        const e = await copyShouldThrow(basename + "/from/a.txt", basename + "/dangling/a.txt");
-        expect(e.code).toBe("ENOENT");
-
-        // Neither the link's target nor anything else was created.
-        expect(fs.readdirSync(String(basename)).sort()).toEqual(["dangling", "from"]);
-      });
+      }
     }
 
     test("symlinks - single file", async () => {

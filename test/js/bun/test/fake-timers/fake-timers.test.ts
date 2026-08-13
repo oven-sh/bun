@@ -1,4 +1,7 @@
+import { RedisClient, SQL } from "bun";
 import { heapStats } from "bun:jsc";
+import { bunEnv, bunExe } from "harness";
+import { spawnSync as childProcessSpawnSync } from "node:child_process";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 afterEach(() => vi.useRealTimers());
@@ -272,6 +275,163 @@ describe("AbortSignal.timeout", () => {
     vi.advanceTimersByTime(1);
     expect({ aborted: signal.aborted, reasons }).toEqual({ aborted: true, reasons: ["TimeoutError"] });
   });
+});
+// Only the timers a test schedules itself are faked. Timeouts the runtime arms
+// for its own purposes keep running on the real clock: getTimerCount() does not
+// count them, they fire while fake timers are active, and useRealTimers(), which
+// drops every fake timer, does not disarm them.
+describe("runtime timeouts are not fake timers", () => {
+  // Outlives the 50ms timeout by a wide margin but still exits on its own, so a
+  // timeout that never fires shows up as a normal exit instead of a hang.
+  const sleepArgs = ["-e", "await Bun.sleep(3000)"];
+  const sleepingChild = () => ({
+    cmd: [bunExe(), ...sleepArgs],
+    env: bunEnv,
+    stdout: "ignore" as const,
+    stderr: "ignore" as const,
+    timeout: 50,
+    killSignal: "SIGKILL" as const,
+  });
+
+  test("Bun.spawn({ timeout }) kills the child while fake timers are active", async () => {
+    vi.useFakeTimers();
+    await using proc = Bun.spawn(sleepingChild());
+    expect(vi.getTimerCount()).toBe(0);
+    await proc.exited;
+    expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: null, signalCode: "SIGKILL" });
+  });
+
+  test("Bun.spawn({ timeout }) armed under fake timers survives useRealTimers()", async () => {
+    vi.useFakeTimers();
+    await using proc = Bun.spawn(sleepingChild());
+    vi.useRealTimers();
+    await proc.exited;
+    expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: null, signalCode: "SIGKILL" });
+  });
+
+  test("Bun.spawnSync({ timeout }) times out while fake timers are active", () => {
+    vi.useFakeTimers();
+    const result = Bun.spawnSync(sleepingChild());
+    expect({ exitedDueToTimeout: result.exitedDueToTimeout, signalCode: result.signalCode }).toEqual({
+      exitedDueToTimeout: true,
+      signalCode: "SIGKILL",
+    });
+  });
+
+  // node:child_process's sync functions hand their timeout to Bun.spawnSync.
+  test("child_process.spawnSync({ timeout }) times out while fake timers are active", () => {
+    vi.useFakeTimers();
+    const result = childProcessSpawnSync(bunExe(), sleepArgs, {
+      env: bunEnv,
+      stdio: "ignore",
+      timeout: 50,
+      killSignal: "SIGKILL",
+    });
+    expect({ signal: result.signal, code: result.error?.code }).toEqual({ signal: "SIGKILL", code: "ETIMEDOUT" });
+  });
+
+  // Accepts connections and never answers, so only the client's own connection
+  // timeout can end a connection attempt.
+  function silentServer() {
+    const accepted = Promise.withResolvers<void>();
+    const listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open() {
+          accepted.resolve();
+        },
+        data() {},
+        close() {},
+        error() {},
+      },
+    });
+    return {
+      port: listener.port,
+      accepted: accepted.promise,
+      [Symbol.dispose]() {
+        listener.stop(true);
+      },
+    };
+  }
+
+  test.each([
+    ["postgres", "ERR_POSTGRES_CONNECTION_TIMEOUT"],
+    ["mysql", "ERR_MYSQL_CONNECTION_TIMEOUT"],
+  ])("%s connectionTimeout armed under fake timers survives useRealTimers()", async (protocol, code) => {
+    using server = silentServer();
+    vi.useFakeTimers();
+    const db = new SQL({ url: `${protocol}://user:pass@127.0.0.1:${server.port}/db`, connectionTimeout: 0.1, max: 1 });
+    try {
+      const connecting = db.connect().then(
+        () => "connected",
+        error => error.code,
+      );
+      await server.accepted;
+      const fakeTimers = vi.getTimerCount();
+      vi.useRealTimers();
+      expect(fakeTimers).toBe(0);
+      expect(await connecting).toBe(code);
+    } finally {
+      await db.close({ timeout: 0 });
+    }
+  });
+
+  test("RedisClient connectionTimeout armed under fake timers survives useRealTimers()", async () => {
+    using server = silentServer();
+    vi.useFakeTimers();
+    const client = new RedisClient(`redis://127.0.0.1:${server.port}`, {
+      connectionTimeout: 100,
+      autoReconnect: false,
+    });
+    try {
+      const command = client.get("key").then(
+        () => "replied",
+        error => error.code,
+      );
+      await server.accepted;
+      const fakeTimers = vi.getTimerCount();
+      vi.useRealTimers();
+      expect(fakeTimers).toBe(0);
+      expect(await command).toBe("ERR_REDIS_CONNECTION_TIMEOUT");
+    } finally {
+      client.close();
+    }
+  });
+});
+// Bun.cron() is mockable, so a job created under fake timers lives in the fake
+// heap, and useRealTimers() / clearAllTimers() drop it with the rest. Like a
+// dropped setInterval it has to end up stopped, rather than holding the process
+// open for a timer that can never fire.
+describe("Bun.cron() job dropped from the fake heap", () => {
+  test.each(["jest.useRealTimers()", "jest.clearAllTimers(); jest.useRealTimers()"])(
+    "does not keep the process alive after %s",
+    async drop => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { jest } = Bun.jest();
+           jest.useFakeTimers();
+           Bun.cron("* * * * *", () => {});
+           ${drop};
+           console.log("exiting");`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        // A child that hangs (the bug) is killed rather than left behind.
+        timeout: 10_000,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: "exiting\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+  );
 });
 describe("isFakeTimers", () => {
   test("returns true when fake timers are active", () => {

@@ -3196,6 +3196,135 @@ it("releases interim 1xx response bytes as they are parsed while waiting for the
   }
 }, 60_000);
 
+it("does not reuse a keep-alive connection when bytes follow a response that ended at its header block", async () => {
+  // Bodyless counterpart of the Content-Length overshoot test below. Each of these
+  // responses is complete once its header block is in (the followed 3xx through the
+  // redirect path, which pools the socket itself), so trailing bytes must cost the
+  // connection while the same responses without them must still be pooled.
+  const injected = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\ninjected";
+  const responses: Record<string, { head: string; junk: string }> = {
+    "/204": { head: "HTTP/1.1 204 No Content\r\nConnection: keep-alive\r\n\r\n", junk: injected },
+    "/304": { head: 'HTTP/1.1 304 Not Modified\r\nETag: "x"\r\nConnection: keep-alive\r\n\r\n', junk: injected },
+    "/empty": { head: "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n", junk: injected },
+    // Answered with HEAD: Content-Length describes the GET body, nothing may follow.
+    // The junk variant sends that body anyway.
+    "/head": { head: "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\n", junk: "hello" },
+    "/303": {
+      head: "HTTP/1.1 303 See Other\r\nLocation: /legit\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n",
+      junk: injected,
+    },
+  };
+  const legit =
+    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 6\r\nConnection: keep-alive\r\n\r\nlegit!";
+
+  let connections = 0;
+  const sockets: net.Socket[] = [];
+  const server = net.createServer(socket => {
+    connections++;
+    sockets.push(socket);
+    socket.on("error", () => {});
+    let buffered = "";
+    socket.on("data", data => {
+      buffered += data.toString("latin1");
+      while (true) {
+        const headerEnd = buffered.indexOf("\r\n\r\n");
+        if (headerEnd === -1) return;
+        const head = buffered.slice(0, headerEnd);
+        // Consume the request body (the redirect case is a POST) before answering, so
+        // body bytes are never mistaken for the next request.
+        let requestEnd = headerEnd + 4;
+        if (/^transfer-encoding:.*\bchunked\b/im.test(head)) {
+          const terminator = buffered.indexOf("0\r\n\r\n", requestEnd);
+          if (terminator === -1) return;
+          requestEnd = terminator + 5;
+        } else {
+          requestEnd += Number(/^content-length:\s*(\d+)/im.exec(head)?.[1] ?? 0);
+          if (buffered.length < requestEnd) return;
+        }
+        buffered = buffered.slice(requestEnd);
+
+        const target = head.split("\r\n")[0].split(" ")[1];
+        const [path, query] = target.split("?");
+        const response = responses[path];
+        if (response) {
+          socket.write(response.head + (query === "junk" ? response.junk : ""));
+        } else {
+          socket.write(legit);
+        }
+      }
+    });
+  });
+  // 127.0.0.1 explicitly: counting connections requires the server to listen on the
+  // address fetch() connects to.
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+  const origin = `http://127.0.0.1:${port}`;
+
+  const cases: { path: string; init?: () => RequestInit }[] = [
+    { path: "/204" },
+    { path: "/304" },
+    { path: "/empty" },
+    { path: "/head", init: () => ({ method: "HEAD" }) },
+    // The redirect path only pools the socket once the upload is known to be
+    // complete, which today is the case for streamed bodies, so a streamed POST is
+    // what exercises that path's pooling decision.
+    {
+      path: "/303",
+      init: () => ({
+        method: "POST",
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("payload"));
+            controller.close();
+          },
+        }),
+      }),
+    },
+  ];
+
+  try {
+    // Warm the pool with one clean connection so every case below starts out
+    // reusing a pooled socket.
+    expect(await (await fetch(`${origin}/legit`)).text()).toBe("legit!");
+    expect(connections).toBe(1);
+
+    const results: { request: string; status: number; body: string; newConnections: number }[] = [];
+    for (const { path, init } of cases) {
+      for (const junk of [true, false]) {
+        const before = connections;
+        const response = await fetch(`${origin}${path}${junk ? "?junk" : ""}`, init?.());
+        const body = await response.text();
+        // newConnections counts what this response plus the follow-up request opened.
+        const followUp = await fetch(`${origin}/legit`);
+        expect(await followUp.text()).toBe("legit!");
+        results.push({
+          request: `${path}${junk ? " + trailing bytes" : ""}`,
+          status: response.status,
+          body,
+          newConnections: connections - before,
+        });
+      }
+    }
+
+    expect(results).toEqual([
+      { request: "/204 + trailing bytes", status: 204, body: "", newConnections: 1 },
+      { request: "/204", status: 204, body: "", newConnections: 0 },
+      { request: "/304 + trailing bytes", status: 304, body: "", newConnections: 1 },
+      { request: "/304", status: 304, body: "", newConnections: 0 },
+      { request: "/empty + trailing bytes", status: 200, body: "", newConnections: 1 },
+      { request: "/empty", status: 200, body: "", newConnections: 0 },
+      { request: "/head + trailing bytes", status: 200, body: "", newConnections: 1 },
+      { request: "/head", status: 200, body: "", newConnections: 0 },
+      // The redirect is still followed; only the hop to /legit needs the new connection.
+      { request: "/303 + trailing bytes", status: 200, body: "legit!", newConnections: 1 },
+      { request: "/303", status: 200, body: "legit!", newConnections: 0 },
+    ]);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    server.close();
+  }
+});
+
 it("does not reuse a keep-alive connection whose response carried more bytes than its Content-Length", async () => {
   // Surplus bytes past the declared Content-Length mean the connection's framing can
   // no longer be trusted: anything still buffered on (or later delivered to) that

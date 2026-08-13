@@ -62,9 +62,16 @@ function main() {
         // normalize (r is always an integer here, so `+ 0` only flips -0 to +0).
         return r + 0;
     }
-    // Both hardware truncations agree exactly when |d| < 2^63; the fuzzer only
-    // generates such doubles (the arch-specific saturation edges live in
-    // testFFI's doubleToInt64 corpus).
+    // i64 / u64 take a Number as ToInt64 / ToUint64: truncate, then the callers
+    // below keep the low 64 bits; NaN and the infinities become 0. Identical on
+    // every CPU, so the generators feed it every double edge, 2^63 and up
+    // included.
+    function numberToInt64(d) {
+        return Number.isFinite(d) ? BigInt(Math.trunc(d)) : 0n;
+    }
+    // ptr uses the CPU's truncating conversion instead; the ptr generator stays
+    // inside (-2^63, 2^63), where every CPU agrees with plain truncation (the
+    // arch-specific edges live in testFFI's doubleToInt64 checks).
     function doubleToInt64(d) {
         return BigInt(Math.trunc(d));
     }
@@ -82,14 +89,14 @@ function main() {
                 return BigInt.asIntN(64, v);
             if (Number.isInteger(v) && Math.abs(v) <= 2147483647)
                 return BigInt(v); // int32 -> sign-extend
-            return BigInt.asIntN(64, doubleToInt64(v));
+            return BigInt.asIntN(64, numberToInt64(v));
         },
         "u64": v => {
             if (typeof v === "bigint")
                 return BigInt.asUintN(64, v);
             if (Number.isInteger(v) && Math.abs(v) <= 2147483647)
                 return BigInt.asUintN(64, BigInt(v)); // int32 -> sign-extend then reinterpret
-            return BigInt.asUintN(64, doubleToInt64(v));
+            return BigInt.asUintN(64, numberToInt64(v));
         },
         "i64_fast": v => {
             const r = reference["i64"](v);
@@ -122,6 +129,9 @@ function main() {
     const int32Edges = [0, 1, -1, 2147483647, -2147483648, 2147483646, -2147483647, 65535, 65536, -65536, 255, 256, 127, 128, -128, -129, 32767, 32768, -32768];
     const doubleEdges = [0, -0, 0.5, -0.5, 1.5, -1.5, 2.5, 0.999999, -0.999999, 2 ** 31, -(2 ** 31), 2 ** 32 + 5, -(2 ** 32) - 5, 2 ** 52, 2 ** 53, 2 ** 53 - 1, -(2 ** 53), 2 ** 62, -(2 ** 62), 1e15 + 0.75, -1e15 - 0.75, NaN, Infinity, -Infinity, Number.MAX_VALUE, Number.MIN_VALUE, Number.EPSILON];
     const bigIntEdges = [0n, 1n, -1n, twoTo63 - 1n, -twoTo63, twoTo63, twoTo64 - 1n, twoTo64, twoTo64 + 12345n, -twoTo64, 2n ** 100n + 7n, -(2n ** 90n), 9007199254740993n, 4611686018427387904n];
+    // The doubles a 64-bit integer parameter has to wrap or zero: negatives (two's complement),
+    // [2^63, 2^64) (in range for u64, wraps for i64), 2^64 and beyond, non-finite.
+    const int64DoubleEdges = doubleEdges.concat([-7.5, -4294967297, 2 ** 63, -(2 ** 63), 2 ** 63 + 2 ** 62, 2 ** 64 - 2048, 2 ** 64, 2 ** 64 + 4096, -(2 ** 64), -(2 ** 64) - 4096, 1e300]);
     const oddballs = [true, false, undefined, null];
     function genFor(type) {
         switch (type) {
@@ -137,11 +147,7 @@ function main() {
             case 0: return pick(int32Edges);
             case 1: return pick(bigIntEdges);
             case 2: return BigInt.asIntN(64, BigInt(randomIntBits()) * BigInt(randomIntBits()) * 4294967311n);
-            default: {
-                // doubles strictly inside (-2^63, 2^63) so both hardware truncations agree
-                const d = pick(doubleEdges.filter(x => Number.isFinite(x) && Math.abs(x) < 9007199254740992 * 512));
-                return d;
-            }
+            default: return pick(int64DoubleEdges);
             }
         }
         case "f64":

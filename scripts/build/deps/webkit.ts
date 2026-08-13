@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "caad865eb1a6e5ca4427f5ea1f066140b11953e7";
+export const WEBKIT_VERSION = "autobuild-preview-pr-421-0855ba4b";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

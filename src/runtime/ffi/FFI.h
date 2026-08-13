@@ -142,6 +142,7 @@ static bool JSVALUE_IS_CELL(EncodedJSValue val) __attribute__((__always_inline__
 static bool JSVALUE_IS_INT32(EncodedJSValue val) __attribute__((__always_inline__)); 
 static bool JSVALUE_IS_NUMBER(EncodedJSValue val) __attribute__((__always_inline__));
 
+static uint64_t DOUBLE_JSVALUE_TO_INT64_BITS(EncodedJSValue value) __attribute__((__always_inline__));
 static uint64_t JSVALUE_TO_UINT64(EncodedJSValue value) __attribute__((__always_inline__));
 static int64_t  JSVALUE_TO_INT64(EncodedJSValue value) __attribute__((__always_inline__));
 uint64_t JSVALUE_TO_UINT64_SLOW(EncodedJSValue value);
@@ -311,13 +312,37 @@ static bool JSVALUE_TO_BOOL(EncodedJSValue val) {
 }
 
 
+// ToInt64 / ToUint64 of a double-encoded number (truncate, keep the low 64 bits of the two's
+// complement; NaN and the infinities become 0), ported from JSC's toIntImpl<int64_t> in
+// runtime/MathCommon.h, which the engine applies to the i64/u64 arguments of dlopen()'d symbols.
+// One bit pattern serves i64 and u64, and it agrees with the sign-extending int32 branches below.
+// A C cast is undefined for the negative and >= 2^64 values this has to handle: TinyCC's
+// __fixunsdfdi (libtcc1.c) ignores the sign bit, and arm64's fcvtzu clamps negatives to 0.
+static uint64_t DOUBLE_JSVALUE_TO_INT64_BITS(EncodedJSValue value) {
+  uint64_t bits = (uint64_t)(value.asInt64 - DoubleEncodeOffset);
+  int32_t exp = (int32_t)((bits >> 52) & 0x7ff) - 0x3ff;
+  // exp < 0: |value| < 1 (also zero and the denormals). exp > 63 + 52: no mantissa bit reaches
+  // the low 64 bits; NaN and the infinities (exp == 1024) land here as well.
+  if (exp < 0 || exp > 63 + 52) {
+    return 0;
+  }
+  uint64_t result = exp > 52 ? bits << (exp - 52) : bits >> (52 - exp);
+  if (exp < 64) {
+    // Drop the sign and exponent bits that were shifted along, reinsert the implicit leading 1.
+    uint64_t implicit_one = (uint64_t)1 << exp;
+    result &= implicit_one - 1;
+    result += implicit_one;
+  }
+  return (bits >> 63) ? (uint64_t)0 - result : result;
+}
+
 static uint64_t JSVALUE_TO_UINT64(EncodedJSValue value) {
   if (JSVALUE_IS_INT32(value)) {
     return (uint64_t)JSVALUE_TO_INT32(value);
   }
 
   if (JSVALUE_IS_NUMBER(value)) {
-    return (uint64_t)JSVALUE_TO_DOUBLE(value);
+    return DOUBLE_JSVALUE_TO_INT64_BITS(value);
   }
 
   if (JSCELL_IS_TYPED_ARRAY(value)) {
@@ -332,7 +357,7 @@ static int64_t JSVALUE_TO_INT64(EncodedJSValue value) {
   }
 
   if (JSVALUE_IS_NUMBER(value)) {
-    return (int64_t)JSVALUE_TO_DOUBLE(value);
+    return (int64_t)DOUBLE_JSVALUE_TO_INT64_BITS(value);
   }
 
   return JSVALUE_TO_INT64_SLOW(value);

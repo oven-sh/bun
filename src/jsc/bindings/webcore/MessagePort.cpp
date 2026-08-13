@@ -296,7 +296,8 @@ TransferredMessagePort MessagePort::disentangle()
     // After transfer this object is inert (the receiving side gets a fresh
     // MessagePort for the same pipe endpoint) and is no longer a destruction
     // observer, so nothing else would ever release a jsRef() taken on it.
-    // The caller (disentanglePorts) holds a RefPtr, so the deref() is safe.
+    // (Clearing the listeners above already did this if any 'message' listener
+    // was attached; this covers a ref()'d port that had none.)
     releaseJsRef();
 
     // A transferred port is inert; clear the listener keepalive too so hasRef()
@@ -386,6 +387,10 @@ void MessagePort::contextDestroyed()
 {
     ASSERT(scriptExecutionContext());
 
+    // A context torn down without a stop phase (a collected ShadowRealm global, a retired
+    // test-isolation global) gets here directly, and a port whose wrapper is already gone
+    // may be alive only through the self-ref that close() -> releaseJsRef() drops.
+    Ref protectedThis { *this };
     close();
     ActiveDOMObject::contextDestroyed();
 }
@@ -587,7 +592,10 @@ void MessagePort::releaseJsRef()
     // still attached here: contextDestroyed() reaches this via close() before detaching.
     if (auto* context = scriptExecutionContext())
         context->unrefEventLoop();
-    // Drops the self-ref, so `this` must not be touched afterwards.
+    // Every caller (and the EventTarget code under the listener hook) keeps using the port
+    // after this, so the self-ref being dropped must not be its last reference: callers
+    // hold one themselves (JS wrapper, protectedThis, disentanglePorts' RefPtr, ...).
+    ASSERT(!hasOneRef());
     deref();
 }
 

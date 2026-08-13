@@ -1106,16 +1106,27 @@ test("removeAllListeners() releases an explicit ref() like off() does", async ()
   expect(results).toEqual({ byType: false, all: false, unrelatedType: true });
 });
 
-// node: assigning a non-function to onmessage removes the handler, and the port is
+// node: assigning a non-object to onmessage removes the handler, and the port is
 // unref()'d only if that removed its last 'message' listener. Clearing a handler that
 // was never set, or while on() listeners remain, leaves the ref state alone.
-test("onmessage = null releases the port only when it removed the last 'message' listener", async () => {
+//
+// A non-callable object is not a removal: the event handler attribute installs it (the
+// getter returns it, and it occupies the 'message' listener slot), so the ref state simply
+// follows the listener list: ref'd while it is installed, released when it is cleared.
+// node agrees on installing one over nothing; it differs on the two rarer transitions
+// (it only counts functions, so replacing a function with an object unrefs there and
+// clearing an object does not), where bun keeps hasRef() in step with the listener list.
+test("onmessage = <non-function> releases the port only when it removed the last 'message' listener", async () => {
   const f = () => {};
   const g = () => {};
   const results = {
     handlerCleared: await hasRefAfter(p => {
       p.onmessage = f;
       p.onmessage = null;
+    }),
+    handlerClearedByString: await hasRefAfter(p => {
+      p.onmessage = f;
+      p.onmessage = "not a handler" as any;
     }),
     refdHandlerCleared: await hasRefAfter(p => {
       p.ref();
@@ -1135,13 +1146,28 @@ test("onmessage = null releases the port only when it removed the last 'message'
       p.on("message", f);
       p.onmessage = null;
     }),
+    objectHandlerInstalled: await hasRefAfter(p => {
+      p.onmessage = {} as any;
+    }),
+    functionReplacedByObject: await hasRefAfter(p => {
+      p.onmessage = f;
+      p.onmessage = {} as any;
+    }),
+    objectHandlerCleared: await hasRefAfter(p => {
+      p.onmessage = {} as any;
+      p.onmessage = null;
+    }),
   };
   expect(results).toEqual({
     handlerCleared: false,
+    handlerClearedByString: false,
     refdHandlerCleared: false,
     nothingToClear: true,
     onListenerRemains: true,
     onListenerOnly: true,
+    objectHandlerInstalled: true,
+    functionReplacedByObject: true,
+    objectHandlerCleared: false,
   });
 });
 
@@ -1191,6 +1217,40 @@ test("a ref()'d parentPort whose last 'message' listener was removed lets the wo
   const hasRef = once(w, "message");
   const exited = once(w, "exit");
   expect({ hasRef: (await hasRef)[0], exitCode: (await exited)[0] }).toEqual({ hasRef: false, exitCode: 0 });
+});
+
+// The worker's process.stdin is fed by a port that is ref()'d once reading starts. Data
+// that is still buffered when EOF arrives has to keep the thread alive until it is
+// consumed (node's kWaitingStreams), so the stream may only drop its port listener (which
+// releases that ref) after it has been drained, not when the EOF message comes in.
+test("stdin data buffered behind a paused consumer is still delivered after EOF arrives", async () => {
+  const w = new Worker(
+    `const { parentPort } = require("worker_threads");
+     const seen = [];
+     process.stdin.on("data", chunk => {
+       seen.push(chunk.toString());
+       if (seen.length !== 1) return;
+       process.stdin.pause();
+       // Resume once EOF has been received, via unref'd timers only: the buffered data is
+       // then the one thing entitled to keep this thread alive. A thread that exits at EOF
+       // never gets here again and reports nothing.
+       const poll = () => {
+         if (process.stdin._readableState.ended) process.stdin.resume();
+         else setTimeout(poll, 1).unref();
+       };
+       setTimeout(poll, 1).unref();
+     });
+     process.stdin.on("end", () => parentPort.postMessage(seen));`,
+    { eval: true, stdin: true },
+  );
+  const reports: string[][] = [];
+  w.on("message", report => reports.push(report));
+  const exited = once(w, "exit");
+  w.stdin!.write("aaaaaaaaaa");
+  w.stdin!.write("bbbbbbbbbb");
+  w.stdin!.end();
+  const [exitCode] = await exited;
+  expect({ reports, exitCode }).toEqual({ reports: [["aaaaaaaaaa", "bbbbbbbbbb"]], exitCode: 0 });
 });
 
 // markAsUncloneable blocks *cloning*, not transfer: a marked port in the transfer

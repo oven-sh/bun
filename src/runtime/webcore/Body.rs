@@ -20,7 +20,7 @@ use crate::webcore::form_data::AsyncFormDataExt as _;
 use bun_core::{String as BunString, ZigString};
 use bun_core::{WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
 use bun_jsc::ZigStringJsc as _;
-use bun_jsc::{JsCell, StringJsc as _};
+use bun_jsc::{JsCell, JsClass as _, StringJsc as _};
 
 /// Deref the `Value::WTFStringImpl` / `AnyBlob::WTFStringImpl` payload.
 /// Centralises the per-site `(**s)` raw deref at the dozen `match` arms below
@@ -1181,9 +1181,7 @@ impl Value {
                         result?;
                     }
                     Action::None | Action::GetBlob => {
-                        let blob_ptr = Blob::new(new.use_());
-                        // SAFETY: `Blob::new` returns a freshly heap-allocated *mut Blob.
-                        let blob = unsafe { &mut *blob_ptr };
+                        let blob = new.use_();
                         if let Some(fetch_headers) = headers {
                             // `headers` is a live C++ FetchHeaders handle;
                             // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
@@ -1194,12 +1192,12 @@ impl Value {
                             {
                                 let content_slice = content_type.to_slice();
                                 let mime_type = MimeType::init(content_slice.slice(), true, None);
-                                set_blob_content_type(blob, mime_type);
+                                set_blob_content_type(&blob, mime_type);
                                 // content_slice dropped (replaces defer content_slice.deinit())
                             }
                         }
                         if !blob.content_type_was_set.get() && blob.store.get().is_some() {
-                            set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
+                            set_blob_content_type(&blob, bun_http_types::MimeType::TEXT);
                         }
                         promise.resolve(global, blob.to_js(global))?;
                     }
@@ -2205,9 +2203,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
 
         let value = self.get_body_value();
-        let blob_ptr = Blob::new(value.use_());
-        // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.
-        let blob = unsafe { &mut *blob_ptr };
+        let blob = value.use_();
         if blob.content_type().is_empty() {
             if let Some(fetch_headers) = BodyMixin::get_fetch_headers(self) {
                 // `fetch_headers` is a live C++ FetchHeaders handle;
@@ -2216,12 +2212,12 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
                     let content_slice = content_type.to_slice();
                     let mime_type = MimeType::init(content_slice.slice(), true, None);
-                    set_blob_content_type(blob, mime_type);
+                    set_blob_content_type(&blob, mime_type);
                     // content_slice dropped (replaces defer content_slice.deinit())
                 }
             }
             if !blob.content_type_was_set.get() && blob.store.get().is_some() {
-                set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
+                set_blob_content_type(&blob, bun_http_types::MimeType::TEXT);
             }
         }
         Ok(JSPromise::resolved_promise_value(

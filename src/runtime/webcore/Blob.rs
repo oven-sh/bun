@@ -128,8 +128,6 @@ pub use bun_jsc::webcore_types::{Blob, BlobContentType, ClosingState, MAX_SIZE, 
 ///    keeps its window's end across structuredClone/postMessage
 const SERIALIZATION_VERSION: u8 = 4;
 
-pub use bun_jsc::generated::JSBlob as js;
-
 // ──────────────────────────────────────────────────────────────────────────
 
 // is_s3: defined once above (near is_bun_file); duplicate removed to fix E0034.
@@ -388,9 +386,6 @@ pub trait BlobExt {
     ) -> JsResult<Blob>
     where
         Self: Sized;
-    fn calculate_estimated_byte_size(&self);
-    fn estimated_size(&self) -> usize;
-    fn to_js(&self, global_object: &JSGlobalObject) -> JSValue;
     fn find_or_create_file_from_path(
         path_or_fd: &mut PathOrFileDescriptor,
         global_this: &JSGlobalObject,
@@ -1961,12 +1956,7 @@ impl BlobExt for Blob {
         blob.content_type_was_set
             .set(self.content_type_was_set.get() || content_type_was_allocated);
 
-        let ptr = Blob::new(blob);
-        // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`. Explicit
-        // `&mut *` forces the inherent `Blob::to_js(&mut self)` (which calls
-        // `calculate_estimated_byte_size` and routes S3 blobs to
-        // `S3File.toJSUnchecked`) over the by-value `JsClass::to_js`.
-        unsafe { BlobExt::to_js(&*ptr, global_this) }
+        blob.to_js(global_this)
     }
 
     /// https://w3c.github.io/FileAPI/#slice-method-algo
@@ -1976,10 +1966,7 @@ impl BlobExt for Blob {
         let args = &mut arguments_[..];
 
         if self.size.get() == 0 {
-            let ptr = Blob::new(Blob::init_empty(global_this));
-            // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`; force
-            // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js`.
-            return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
+            return Ok(Blob::init_empty(global_this).to_js(global_this));
         }
 
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.
@@ -2395,7 +2382,6 @@ impl BlobExt for Blob {
             }
         }
 
-        blob.calculate_estimated_byte_size();
         Ok(Blob::new(blob))
     }
 
@@ -3537,54 +3523,6 @@ impl BlobExt for Blob {
 
     // is_detached: defined once above; duplicate removed to fix E0034.
 
-    fn calculate_estimated_byte_size(&self) {
-        // in-memory size. not the size on disk.
-        let mut size: usize = core::mem::size_of::<Blob>();
-
-        if let Some(store) = self.store.get() {
-            size += core::mem::size_of::<Store>();
-            match &store.data {
-                store::Data::Bytes(bytes) => {
-                    size += bytes.stored_name.len();
-                    size += if self.size.get() != MAX_SIZE {
-                        self.size.get() as usize
-                    } else {
-                        bytes.len() as usize
-                    };
-                }
-                store::Data::File(file) => size += file.pathlike.estimated_size(),
-                store::Data::S3(s3) => size += s3.estimated_size(),
-            }
-        }
-
-        let ct = self.content_type.get();
-        self.reported_estimated_size.set(
-            size + (ct.as_slice().len() * (ct.is_owned() as usize))
-                + self.name.get().byte_slice().len(),
-        );
-    }
-
-    fn estimated_size(&self) -> usize {
-        self.reported_estimated_size.get()
-    }
-
-    fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
-        // if cfg!(debug_assertions) { debug_assert!(self.is_heap_allocated()); }
-        self.calculate_estimated_byte_size();
-
-        // R-2: `&self` receiver, but the FFI shims take `*mut Blob` (the
-        // heap-allocated `m_ctx` pointer). `self` *is* that allocation (caller
-        // contract), so the const→mut cast is the original `Blob::new` provenance.
-        let this = std::ptr::from_ref::<Blob>(self).cast_mut();
-        if self.is_s3() {
-            // SAFETY: `self` is a heap-allocated *mut Blob (see `Blob::new`); the
-            // C++ side wraps it in a JSS3File without taking a second ref.
-            return crate::webcore::s3_file::to_js_unchecked(global_object, this);
-        }
-
-        js::to_js_unchecked(global_object, this)
-    }
-
     /// `Bun.file(pathOrFd)` core: wrap a path-or-fd in a `Store::File` and
     /// return a Blob viewing it. Runtime `check_s3` matches the call shape used
     /// by `server_body.rs` / `fetch.rs` (collapsed from a const generic since
@@ -4075,16 +4013,15 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
     // Bun.file() keeps its window's end. MAX_SIZE means unknown.
     let mut file_size: Option<u64> = None;
 
-    let blob: *mut Blob = match store_tag {
-        store::SerializeTag::Bytes => 'bytes: {
+    // `blob` stays a by-value local until the final `to_js`, so an early `?` on
+    // a truncated record drops it (and releases its store) like any other
+    // local.
+    let blob: Blob = match store_tag {
+        store::SerializeTag::Bytes => {
             let bytes_len = reader.read_int_le::<u32>()?;
             let bytes = read_slice(reader, bytes_len as usize)?;
 
             let blob = Blob::init(bytes, global_this);
-            // `blob` now owns `bytes` (via its Store when non-empty). If any
-            // of the remaining reads fail before we heap-promote it, Drop on
-            // `blob` releases the store so the payload bytes don't leak.
-            let guard = scopeguard::guard(blob, |mut b| b.deinit());
 
             'versions: {
                 if version == 1 {
@@ -4094,8 +4031,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 let name_len = reader.read_int_le::<u32>()?;
                 let name = read_slice(reader, name_len as usize)?;
 
-                // ScopeGuard derefs to its inner Blob.
-                if let Some(store) = (*guard).store() {
+                if let Some(store) = blob.store() {
                     if let store::Data::Bytes(bytes_store) = &mut store.data_mut() {
                         // Transfer ownership of the local `name: Vec<u8>` into
                         // `stored_name` (a `Box<[u8]>`); freed by `Bytes::Drop`.
@@ -4109,10 +4045,9 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 }
             }
 
-            let blob = scopeguard::ScopeGuard::into_inner(guard);
-            break 'bytes Blob::new(blob);
+            blob
         }
-        store::SerializeTag::File => 'file: {
+        store::SerializeTag::File => {
             use crate::node::types::PathOrFileDescriptorSerializeTag;
             if version >= 4 {
                 file_size = Some(reader.read_int_le::<u64>()?);
@@ -4132,11 +4067,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                         return Err(crate::Error::InvalidValue);
                     }
                     let mut path_or_fd = PathOrFileDescriptor::Fd(fd);
-                    break 'file Blob::new(Blob::find_or_create_file_from_path(
-                        &mut path_or_fd,
-                        global_this,
-                        true,
-                    ));
+                    Blob::find_or_create_file_from_path(&mut path_or_fd, global_this, true)
                 }
                 PathOrFileDescriptorSerializeTag::Path => {
                     let path_len = reader.read_int_le::<u32>()?;
@@ -4154,25 +4085,12 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     let mut dest = PathOrFileDescriptor::Path(node::PathLike::String(
                         bun_ptr::cow_slice::CowSlice::init_owned(path.into_boxed_slice()),
                     ));
-                    break 'file Blob::new(Blob::find_or_create_file_from_path(
-                        &mut dest,
-                        global_this,
-                        true,
-                    ));
+                    Blob::find_or_create_file_from_path(&mut dest, global_this, true)
                 }
             }
         }
-        store::SerializeTag::Empty => Blob::new(Blob::init_empty(global_this)),
+        store::SerializeTag::Empty => Blob::init_empty(global_this),
     };
-    // `blob` is heap-allocated past this point; on any remaining error
-    // (truncated trailer fields) tear down both the heap object and its
-    // store. `content_type` is handled by its own Drop above since it
-    // hasn't been attached to `blob` yet.
-    // SAFETY: blob is a freshly-allocated heap pointer from Blob::new.
-    let blob_guard = scopeguard::guard(blob, |b| unsafe { (*b).deinit() });
-    // SAFETY: `blob_guard` holds the sole pointer to the fresh heap allocation.
-    // Shared access only — Blob state is Cell/JsCell-based.
-    let blob = unsafe { &**blob_guard };
 
     'versions: {
         if version == 1 {
@@ -4197,11 +4115,6 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
             break 'versions;
         }
     }
-
-    debug_assert!(
-        blob.is_heap_allocated(),
-        "expected blob to be heap-allocated"
-    );
 
     // `offset` comes from untrusted bytes. Clamp it so a crafted payload cannot
     // make shared_view() slice past the end of the backing store (OOB heap read).
@@ -4229,10 +4142,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         blob.content_type_was_set.set(content_type_was_set);
     }
 
-    let blob_ptr = scopeguard::ScopeGuard::into_inner(blob_guard);
-    // SAFETY: blob_ptr is valid; toJS is infallible. Explicit `&mut *` forces
-    // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js(self)`.
-    Ok(unsafe { BlobExt::to_js(&*blob_ptr, global_this) })
+    Ok(blob.to_js(global_this))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4737,13 +4647,10 @@ pub(crate) fn write_file_with_source_destination(
         // If this is bytes <> bytes, we can just duplicate it
         // this is an edgecase
         // it will happen if someone did Bun.write(new Blob([123]), new Blob([456]))
-        let cloned = Blob::new(source_blob.dupe());
-        // SAFETY: ptr was just produced by heap::alloc in Blob::new; the
-        // inherent `to_js(&mut self)` (not the by-value `JsClass` one) hands
-        // ownership to the C++ wrapper.
-        return Ok(JSPromise::resolved_promise_value(ctx, unsafe {
-            BlobExt::to_js(&*cloned, ctx)
-        }));
+        return Ok(JSPromise::resolved_promise_value(
+            ctx,
+            source_blob.dupe().to_js(ctx),
+        ));
     } else if destination_type == store::DataTag::Bytes
         && (source_type == store::DataTag::File || source_type == store::DataTag::S3)
     {
@@ -5646,11 +5553,8 @@ pub(crate) fn jsdom_file_construct(
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// estimatedSize / constructBunFile / findOrCreateFileFromPath
+// constructBunFile / findOrCreateFileFromPath
 // ──────────────────────────────────────────────────────────────────────────
-
-// `calculate_estimated_byte_size` / `estimated_size`: canonical impls live
-// later in this file (near `dupe`/`to_js`). Duplicates removed here.
 
 pub(crate) fn construct_bun_file(
     global_object: &JSGlobalObject,
@@ -5712,10 +5616,7 @@ pub(crate) fn construct_bun_file(
         }
     }
 
-    let ptr = Blob::new(blob);
-    // SAFETY: ptr was just produced by heap::alloc in Blob::new. Explicit
-    // `&mut *` forces inherent `Blob::to_js(&mut self)` over `JsClass::to_js(self)`.
-    Ok(unsafe { BlobExt::to_js(&*ptr, global_object) })
+    Ok(blob.to_js(global_object))
 }
 
 // `find_or_create_file_from_path`: canonical impl lives later in this file
@@ -6445,13 +6346,9 @@ impl Any {
                 self.to_uint8_array_transfer(global_this)
             }
             streams::BufferActionTag::Blob => {
-                let result = Blob::new(self.to_blob(global_this));
-                // SAFETY: `Blob::new` returns a fresh heap allocation we own;
-                // `BlobExt::to_js` (the `&mut self` overload) consumes the
-                // pointer into a JS wrapper which takes ownership.
-                unsafe { (*result).global_this.set(global_this) };
-                // SAFETY: same fresh `result` allocation; ownership transfers to the JS wrapper.
-                Ok(BlobExt::to_js(unsafe { &*result }, global_this))
+                let blob = self.to_blob(global_this);
+                blob.global_this.set(global_this);
+                Ok(blob.to_js(global_this))
             }
             streams::BufferActionTag::ArrayBuffer => {
                 if matches!(self, Any::Blob(_)) {

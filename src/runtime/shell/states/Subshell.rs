@@ -18,8 +18,7 @@ pub struct Subshell {
     pub(crate) io: IO,
     pub(crate) state: SubshellState,
     pub(crate) exit_code: ExitCode,
-    /// NUL-terminated expanded path for the redirect target (when
-    /// `node.redirect` is `Atom`). Populated by the `Expansion` child.
+    /// NUL-terminated expanded redirect target path (set by the Expansion child).
     pub(crate) redirection_file: Vec<u8>,
 }
 
@@ -105,8 +104,7 @@ impl Subshell {
                 Yield::Next(this)
             }
             SubshellState::ExpandingRedirect { idx } => {
-                // Only `Redirect::Atom` needs expansion; `JsBuf` carries its
-                // value by index, and fd-dup (`2>&1`) has `redirect == None`.
+                // Only `Redirect::Atom` needs expansion.
                 let me = interp.as_subshell(this);
                 let node = me.node.get();
                 if idx == 0 {
@@ -128,8 +126,7 @@ impl Subshell {
         }
     }
 
-    /// Applies any pending redirects to `self.io`, then spawns the inner
-    /// `Script` with the (possibly modified) IO.
+    /// Applies pending redirects to `self.io`, then spawns the inner `Script`.
     fn transition_to_exec(interp: &Interpreter, this: NodeId) -> Yield {
         log!("Subshell {} transitionToExec", this);
 
@@ -155,9 +152,8 @@ impl Subshell {
         Script::start(interp, script)
     }
 
-    /// Open the redirect target and rewire `self.io` accordingly. Mirrors
-    /// `Builtin::init_redirections` in `Builtin.rs`. Returns `Some(yield)`
-    /// when an error is queued; otherwise `None` (IO was modified in place).
+    /// Open the redirect target and rewire `self.io`; mirrors
+    /// `Builtin::init_redirections`. `Some(yield)` when an error was queued.
     fn apply_redirections(interp: &Interpreter, this: NodeId) -> Option<Yield> {
         use crate::shell::interpreter::{is_pollable_from_mode, shell_openat};
 
@@ -183,11 +179,9 @@ impl Subshell {
             if redirect_flags.duplicate_out() {
                 let me = interp.as_subshell_mut(this);
                 if redirect_flags.stdout() {
-                    // `2>&1`: route stderr to stdout's target.
+                    // `2>&1`: route stderr to stdout's target. `OutKind::Pipe`
+                    // resolves positionally, so also alias the capture buffer.
                     me.io.stderr = me.io.stdout.clone();
-                    // `OutKind::Pipe` carries no target identity (downstream
-                    // resolves it positionally to the env's stderr buffer),
-                    // so alias the env's stderr capture buffer to stdout's.
                     if matches!(me.io.stderr, OutKind::Pipe) {
                         let stdout_buf = me.base.shell_mut().buffered_stdout();
                         me.base.shell_mut()._buffered_stderr = Bufio::Borrowed(stdout_buf);
@@ -216,8 +210,7 @@ impl Subshell {
                     ));
                 }
 
-                // `redirection_file` was NUL-terminated by Expansion; build a
-                // `&ZStr` over it. Clone the path bytes so the open call below
+                // Clone the NUL-terminated path bytes so the open call below
                 // doesn't overlap a borrow into the Subshell node.
                 let path_buf: Vec<u8> = {
                     let raw = &interp.as_subshell(this).redirection_file;
@@ -322,9 +315,8 @@ impl Subshell {
                     return None;
                 }
 
-                // Honor the `pollable` computed by `open_for_writing_impl` on
-                // POSIX so a FIFO/socket target (whose fd is now O_NONBLOCK)
-                // takes the pollable path; Windows keeps the async writer.
+                // Honor the `pollable` computed by `open_for_writing_impl`
+                // on POSIX; Windows keeps the async writer.
                 let redirect_writer = IOWriter::init(
                     redirfd,
                     io_writer::Flags {
@@ -352,9 +344,7 @@ impl Subshell {
                 None
             }
             RedirKind::JsBuf => {
-                // JS buffer redirections (`> ${Bun.file(...)}` etc.) require
-                // the `spawn_args.stdio` path used by Cmd; they are not yet
-                // supported for subshells.
+                // JS object targets need Cmd's `spawn_args.stdio` path.
                 Some(Self::write_failing_error(
                     interp,
                     this,
@@ -364,9 +354,7 @@ impl Subshell {
         }
     }
 
-    /// Sets `exit_code = 1`, enqueues the formatted error on
-    /// `self.io.stderr`'s writer, and transitions to `WaitWriteErr` so
-    /// `on_io_writer_chunk` forwards the exit to the parent.
+    /// Sets `exit_code = 1` and writes the error to `self.io.stderr`.
     fn write_failing_error(
         interp: &Interpreter,
         this: NodeId,
@@ -430,8 +418,7 @@ impl Subshell {
     ) -> Yield {
         let child_kind = interp.node(child).kind();
 
-        // Expansion child: collect the expanded redirect path, then re-enter
-        // `next()` to transition to exec.
+        // Expansion child: collect the expanded redirect path.
         if matches!(child_kind, StateKind::Expansion) {
             if exit_code != 0 {
                 // Expansion failed — surface the error.

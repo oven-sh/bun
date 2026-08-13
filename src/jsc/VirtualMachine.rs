@@ -899,16 +899,11 @@ impl VirtualMachine {
     }
 
     /// A worker stopping by its own script's decision (`process.exit()`, an
-    /// uncaught error), on the JS thread with that script still on the stack:
-    /// [`forbid_script`](Self::forbid_script) minus dropping the module
-    /// registry, which waits for teardown. Closing the gate alone is not
-    /// enough: Bun's own microtask checkpoint (`GlobalObject::drainMicrotasks`)
-    /// consults it, but the checkpoint inside this very request is JSC's
-    /// (firing the termination trap from this thread releases and retakes the
-    /// API lock, and the release drains), and JSC's checkpoints consult only
-    /// its execution-forbidden flag. With both set, every checkpoint from here
-    /// to teardown discards what was queued before the exit instead of running
-    /// it, as Node does.
+    /// uncaught error): what [`forbid_script`](Self::forbid_script) sets at
+    /// teardown, without the registry teardown that waits for the stack to
+    /// unwind. JSC's own microtask checkpoints consult only its flag, and the
+    /// caller's `notify_need_termination` runs one (it releases the API lock to
+    /// fire the trap), so the flag has to be set first.
     pub fn stop_script(&self) {
         self.handle.stop();
         self.jsc_vm().set_execution_forbidden(true);

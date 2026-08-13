@@ -3300,14 +3300,10 @@ uint8_t GlobalObject::drainMicrotasks()
     }
     scope.assertNoExceptionExceptTermination();
 
-    // A VM whose stop has been requested (its own process.exit() or uncaught error, its parent's
-    // terminate(), teardown) runs nothing it queued before that, as Node runs nothing after
-    // Stop(env): discard both queues, as prepareForDestruction() does. This checkpoint is reached
-    // with no termination pending when the dispatcher whose callback requested the stop has
-    // already caught and cleared the termination that unwound the callback (event listeners), or
-    // when the request came from another thread; JSC's drain below consults only
-    // executionForbidden, and the nextTick queue is ours. Nothing was terminated by this drain, so
-    // to the callers it is an ordinary drain that found nothing to run.
+    // Stop requested (own exit, parent's terminate(), teardown): nothing queued before it runs, as
+    // in Node. Reached with no termination pending when an event dispatcher caught the termination
+    // that unwound the callback which requested the stop, or when the request came from another
+    // thread; JSC's drain below consults only executionForbidden and the nextTick queue is ours.
     if (vm.executionForbidden() || !WebCore::clientData(vm)->scriptAllowed()) [[unlikely]] {
         if (auto* nextTickQueue = this->m_nextTickQueue.get())
             nextTickQueue->discard(vm);

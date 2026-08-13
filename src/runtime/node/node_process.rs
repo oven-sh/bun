@@ -68,8 +68,7 @@ pub(crate) extern "C" fn get_exec_argv(global: &JSGlobalObject) -> JSValue {
 pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
     let vm = global_object.bun_vm().as_mut();
     if let Some(worker) = vm.worker_ref() {
-        // Unlike the main-thread branch this returns, so a second call can
-        // follow the first; only the call that stops the worker picks the code.
+        // This branch returns, so a later call can follow; the stop request's code wins.
         if worker.exit() {
             vm.exit_handler.exit_code = code;
         }

@@ -57,6 +57,8 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/JSBuffer.cpp",
   "src/jsc/bindings/napi.cpp",
   "src/jsc/bindings/webcore/SerializedScriptValue.cpp",
+
+  // No longer heavy; kept standalone so webcore bundle composition stays put.
   "src/jsc/bindings/webcore/HTTPParsers.cpp",
 
   // Duplicates static MIME-parsing helpers from JSMIMEParams.cpp verbatim;
@@ -138,6 +140,8 @@ const noUnify: readonly string[] = [
   // Fifth highway TU (JSON structural indexer) — same foreach_target.h
   // include-guard reason.
   "src/jsc/bindings/highway_json.cpp",
+  // Sixth highway TU (XML structural indexer) — same reason.
+  "src/jsc/bindings/highway_xml.cpp",
   // Declares its own minimal CGRect/kCFStringEncodingUTF8/kCFNumberDoubleType
   // so it doesn't pull a CoreGraphics load command; bundled with files that
   // include the real CF headers those names become ambiguous.

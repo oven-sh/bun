@@ -516,24 +516,6 @@ pub mod length {
     }
 }
 
-pub mod trim {
-    pub(crate) fn utf16_len(buf: &[u16]) -> usize {
-        let len = buf.len();
-
-        if len == 0 {
-            return 0;
-        }
-        if (buf[len - 1] >= 0xD800) && (buf[len - 1] <= 0xDBFF) {
-            return len - 1;
-        }
-        len
-    }
-
-    pub fn utf16(buf: &[u16]) -> &[u16] {
-        &buf[0..utf16_len(buf)]
-    }
-}
-
 pub mod base64 {
     use super::SIMDUTFResult;
     use core::ffi::c_int;

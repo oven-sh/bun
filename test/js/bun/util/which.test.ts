@@ -1,7 +1,7 @@
 import { $, which } from "bun";
 import { dlopen, ptr } from "bun:ffi";
 import { expect, test } from "bun:test";
-import { isArm64, isIntelMacOS, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { isArm64, isIntelMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { chmodSync, existsSync, mkdirSync, realpathSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -205,11 +205,11 @@ if (isWindows) {
 
 test("Bun.which does not look in the current directory for bins", async () => {
   const cwd = process.cwd();
-  const dir = tempDirWithFiles("which", {
+  await using dir = tempDir("which", {
     "some_program_name": "#!/usr/bin/env sh\necho FAIL\nexit 0\n",
     "some_program_name.cmd": "@echo FAIL\n@exit 0\n",
   });
-  process.chdir(dir);
+  process.chdir(String(dir));
   try {
     if (!isWindows) {
       await $`chmod +x ./some_program_name`;
@@ -224,13 +224,13 @@ test("Bun.which does not look in the current directory for bins", async () => {
 
 test("Bun.which does look in the current directory when given a path with a slash", async () => {
   const cwd = process.cwd();
-  const dir = tempDirWithFiles("which", {
+  await using dir = tempDir("which", {
     "some_program_name": "#!/usr/bin/env sh\necho posix\nexit 0\n",
     "some_program_name.cmd": "@echo win32\n@exit 0\n",
     "folder/other_app": "#!/usr/bin/env sh\necho posix\nexit 0\n",
     "folder/other_app.cmd": "@echo win32\n@exit 0\n",
   });
-  process.chdir(dir);
+  process.chdir(String(dir));
   try {
     if (!isWindows) {
       await $`chmod +x ./some_program_name`;
@@ -252,12 +252,12 @@ test("Bun.which does look in the current directory when given a path with a slas
 
 test("Bun.which can find executables in a non-ascii directory", async () => {
   const cwd = process.cwd();
-  const dir = tempDirWithFiles("which-non-ascii-开始学习", {
+  await using dir = tempDir("which-non-ascii-开始学习", {
     "some_program_name": "#!/usr/bin/env sh\necho posix\nexit 0\n",
     "some_program_name.cmd": "@echo win32\n@exit 0\n",
   });
 
-  process.chdir(dir);
+  process.chdir(String(dir));
   try {
     if (!isWindows) {
       await $`chmod +x ./some_program_name`;

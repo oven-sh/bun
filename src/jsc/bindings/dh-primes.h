@@ -59,8 +59,6 @@
 #include <openssl/err.h>
 #include <openssl/mem.h>
 
-extern "C" int bn_set_words(BIGNUM* bn, const BN_ULONG* words, size_t num);
-
 // Backporting primes that may not be supported in earlier boringssl versions.
 // Intentionally keeping the existing C-style formatting.
 

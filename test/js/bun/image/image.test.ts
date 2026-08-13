@@ -1,3 +1,4 @@
+import { S3Client } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
 import { isMacOS, isWindows, tempDir } from "harness";
 import zlib from "node:zlib";
@@ -175,6 +176,62 @@ describe("Bun.Image", () => {
     const res = new Response(new Bun.Image(Bun.file(p)).resize(2, 2).webp());
     expect(res.headers.get("content-type")).toBe("image/webp");
     expect((await res.bytes()).subarray(8, 12)).toEqual(Buffer.from("WEBP"));
+  });
+
+  // Store-backed Blob sources are read at terminal time through the Blob's
+  // own store dispatch. The Bun.file() test above covers the file store; this
+  // covers the S3 download callback (bytes and error arm) and the synchronous
+  // in-memory delivery.
+  test("S3 and zero-length in-memory Blob sources are read through the same chain", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (req.method === "GET" && pathname.endsWith("/src.png")) {
+          return new Response(cornersPng, { headers: { "Content-Type": "image/png" } });
+        }
+        return new Response("", { status: 404 });
+      },
+    });
+    const client = new S3Client({
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      region: "us-east-1",
+      bucket: "images",
+      endpoint: server.url.href,
+    });
+
+    // The S3 client sends every request through an ambient HTTP_PROXY, even
+    // one to the loopback endpoint above (#32045). Blank the variables for the
+    // duration of the test; an assignment (not a delete) is what the native
+    // env loader observes, and an empty value means "no proxy".
+    const proxyKeys = ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"] as const;
+    const savedProxyEnv = Object.fromEntries(proxyKeys.map(k => [k, process.env[k]]));
+    for (const k of proxyKeys) process.env[k] = "";
+    try {
+      const fromS3 = new Bun.Image(client.file("src.png"));
+      expect(await fromS3.metadata()).toEqual({ width: 4, height: 3, format: "png" });
+      // Second terminal reuses the downloaded bytes.
+      expect((await fromS3.png().bytes())[0]).toBe(0x89);
+      expect(await client.file("src.png").image().metadata()).toEqual({ width: 4, height: 3, format: "png" });
+
+      // Download failure rejects the terminal with the S3 error.
+      expect(
+        await new Bun.Image(client.file("missing.png")).metadata().then(
+          () => null,
+          (e: any) => e.code,
+        ),
+      ).toBe("NoSuchKey");
+    } finally {
+      for (const k of proxyKeys) process.env[k] = savedProxyEnv[k] ?? "";
+    }
+
+    // A zero-length slice of an in-memory Blob still has a store but nothing
+    // to copy at construction, so it is delivered synchronously at terminal
+    // time; the empty buffer then fails to decode.
+    const empty = new Blob([cornersPng]).slice(0, 0);
+    await expect(new Bun.Image(empty).metadata()).rejects.toThrow(/unrecognised format/);
+    await expect(empty.image().png().bytes()).rejects.toThrow(/unrecognised format/);
   });
 
   test("metadata() reads PNG dimensions", async () => {

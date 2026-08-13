@@ -878,6 +878,7 @@ describe("WebSocket tls option does not leak SSLConfig on error paths", () => {
     // 256 KiB duped per SSLConfig -> ~128 MiB per path if every iteration leaks.
     const bigCA = Buffer.alloc(256 * 1024, "A").toString();
     const tls = { ca: bigCA, rejectUnauthorized: false };
+    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
 
     function hit() {
       // Path 1: getter on a later option throws after the SSLConfig has
@@ -906,11 +907,11 @@ describe("WebSocket tls option does not leak SSLConfig on error paths", () => {
     // Warm up so one-off allocations (ICU, resolver caches, JIT) settle.
     for (let i = 0; i < 100; i++) hit();
     Bun.gc(true);
-    const baseline = process.memoryUsage.rss();
+    const baseline = rss();
 
     for (let i = 0; i < iterations; i++) hit();
     Bun.gc(true);
-    const after = process.memoryUsage.rss();
+    const after = rss();
 
     const growthMiB = (after - baseline) / (1024 * 1024);
     console.log(JSON.stringify({ baseline, after, growthMiB }));

@@ -47,8 +47,9 @@ function openTerminal(): TerminalIO | null {
   const candidates = process.platform === "win32" ? ["CON"] : ["/dev/tty"];
 
   for (const candidate of candidates) {
+    let fd = -1;
     try {
-      const fd = openSync(candidate, "r+");
+      fd = openSync(candidate, "r+");
       const input = new tty.ReadStream(fd);
       const output = new tty.WriteStream(fd);
       input.setEncoding("utf8");
@@ -58,12 +59,15 @@ function openTerminal(): TerminalIO | null {
         cleanup: () => {
           input.destroy();
           output.destroy();
-          try {
-            closeSync(fd);
-          } catch {}
         },
       };
-    } catch {}
+    } catch {
+      if (fd !== -1) {
+        try {
+          closeSync(fd);
+        } catch {}
+      }
+    }
   }
 
   return null;
@@ -435,15 +439,23 @@ type PositionalContent = {
 };
 
 async function resolveFileCandidate(token: string): Promise<string | undefined> {
+  const looksLikePath =
+    path.isAbsolute(token) ||
+    token.startsWith("~/") ||
+    token.includes("/") ||
+    token.includes(path.sep) ||
+    path.extname(token).length > 1;
+
+  if (!looksLikePath) {
+    return undefined;
+  }
+
   const candidates = new Set<string>();
   candidates.add(token);
-
   if (token.startsWith("~/")) {
     candidates.add(path.join(os.homedir(), token.slice(2)));
   }
-
-  const resolved = path.join(process.cwd(), token);
-  candidates.add(resolved);
+  candidates.add(path.join(process.cwd(), token));
 
   for (const candidate of candidates) {
     try {
@@ -548,15 +560,19 @@ function getOldestGitSha(): string | undefined {
 async function main() {
   const rawArgv = process.argv.slice(1);
 
-  let terminal: TerminalIO | null = null;
+  let terminal: TerminalIO | null | undefined = undefined;
+  const getTerminal = (): TerminalIO | null => {
+    if (terminal === undefined) {
+      terminal = openTerminal();
+    }
+    return terminal;
+  };
   try {
     const { email: emailFlag, help, positionals } = parseCliArgs(rawArgv);
     if (help) {
       printHelp();
       return;
     }
-
-    terminal = openTerminal();
 
     const exit = (code: number): never => {
       terminal?.cleanup();
@@ -574,16 +590,17 @@ async function main() {
     const gitEmailRaw = readEmailFromGitConfig();
     const gitEmail = isValidEmail(gitEmailRaw) ? gitEmailRaw.trim() : undefined;
 
-    const canPrompt = terminal !== null;
-
     let email = emailFlag?.trim() ?? storedEmail ?? gitEmail;
 
-    if (canPrompt && !emailFlag && !storedEmail) {
-      email = await promptForEmail(terminal, email ?? gitEmail ?? undefined);
+    if (!emailFlag && !storedEmail) {
+      const promptTerminal = getTerminal();
+      if (promptTerminal !== null) {
+        email = await promptForEmail(promptTerminal, email ?? gitEmail ?? undefined);
+      }
     }
 
     if (!isValidEmail(email)) {
-      if (!canPrompt) {
+      if (getTerminal() === null) {
         logError("Unable to determine email automatically. Pass --email <address>.");
       } else {
         logError("An email address is required. Pass --email or configure git user.email.");
@@ -611,11 +628,14 @@ async function main() {
 
     let message = pieces.length > 0 ? pieces.join(pieces.length > 1 ? "\n\n" : "") : "";
 
-    if (message.trim().length === 0 && terminal) {
-      const interactiveBody = await promptForBody(terminal, positionalContent.files);
+    const bodyTerminal = message.trim().length === 0 ? getTerminal() : null;
+    if (bodyTerminal) {
+      const interactiveBody = await promptForBody(bodyTerminal, positionalContent.files);
       if (interactiveBody && interactiveBody.trim().length > 0) {
         message = interactiveBody;
       }
+    } else if (positionalContent.files.length > 0) {
+      process.stderr.write(`${dim}+ ${positionalContent.files.map(file => file.filename).join(", ")}${reset}\n`);
     }
 
     const normalizedMessage = message.trim();

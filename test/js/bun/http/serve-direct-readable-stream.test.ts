@@ -3,6 +3,7 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
+import net from "node:net";
 
 test("HTTPResponseSink displays correct message", async () => {
   let leakedCtrl: any;
@@ -664,4 +665,67 @@ test("sync pull() under AsyncLocalStorage releases the request on end()", async 
   Bun.gc(true);
   const counts = heapStats().objectTypeCounts;
   expect((counts.ReadableStream ?? 0) - baseline).toBeLessThan(10);
+});
+
+// https://github.com/oven-sh/bun/issues/36940
+// close() while the sink still holds unflushed bytes deferred the final send
+// to the auto-flusher, which ended the response through uWS (writing the
+// terminating 0\r\n\r\n chunk) and then finalize() ended the stream a second
+// time, writing another terminator. On a keep-alive connection the stray
+// terminator is parsed as the start of the next response.
+test("close() with unflushed data writes the chunked terminator exactly once", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (new URL(req.url).pathname === "/plain") {
+        return new Response("ok");
+      }
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(c) {
+            // Write enough for chunked encoding, in pieces small enough that
+            // bytes are still buffered below the high-water mark when close()
+            // runs.
+            for (let i = 0; i < 8; i++) {
+              await c.write(new Uint8Array(100).fill(0x78));
+            }
+            c.close();
+          },
+        }),
+        { headers: { "content-type": "text/plain" } },
+      );
+    },
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const sock = net.connect(server.port, "127.0.0.1");
+  let raw = "";
+  let sentSecond = false;
+  sock.setNoDelay(true);
+  sock.on("connect", () => {
+    sock.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
+  });
+  sock.on("data", d => {
+    raw += d.toString("latin1");
+    // Once the first (chunked) response has terminated, reuse the connection.
+    // The stray terminator was flushed together with the real one, so it is
+    // already in `raw` by the time the second response arrives.
+    if (!sentSecond && raw.includes("0\r\n\r\n")) {
+      sentSecond = true;
+      sock.write("GET /plain HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    }
+  });
+  sock.on("close", () => resolve(raw));
+  sock.on("error", reject);
+  const data = await promise;
+
+  // The chunked body is all "x"; the second response is framed by
+  // Content-Length. Exactly one terminating chunk must appear in the stream.
+  expect(data.split("0\r\n\r\n").length - 1).toBe(1);
+  // The bytes right after the terminator are the next response, not another
+  // terminator.
+  const afterTerminator = data.slice(data.indexOf("0\r\n\r\n") + 5);
+  expect(afterTerminator.slice(0, 12)).toBe("HTTP/1.1 200");
+  expect(afterTerminator).toEndWith("ok");
 });

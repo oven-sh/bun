@@ -1,4 +1,5 @@
 #include "NodeVMScript.h"
+#include "BunClientData.h"
 
 #include "ErrorCode.h"
 
@@ -309,6 +310,11 @@ void NodeVMScript::destroy(JSCell* cell)
 static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
 {
     if (vm.hasTerminationRequest()) {
+        // The whole VM is being stopped (worker terminate()/exit): that
+        // termination is not ours to consume. The caller rethrows what
+        // evaluate() caught like any other exception.
+        if (!Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle))
+            return false;
         vm.drainMicrotasksForGlobalObject(globalObject);
         // The termination may have fired inside an afterEvaluate microtask
         // checkpoint, leaving the termination exception pending; clear it so
@@ -636,9 +642,8 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     NodeVMContextOptions contextOptions {};
     JSValue importer;
 
-    if (auto encodedException = getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, "contextCodeGeneration", &importer)) {
-        return *encodedException;
-    }
+    getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, "contextCodeGeneration", &importer);
+    RETURN_IF_EXCEPTION(scope, {});
 
     contextOptions.notContextified = notContextified;
 

@@ -93,9 +93,7 @@ pub mod external_slice {
     };
 }
 pub mod versioned_url {
-    pub use bun_install_types::resolver_hooks::{
-        OldV2VersionedURL, VersionedURL, VersionedURLType,
-    };
+    pub use bun_install_types::resolver_hooks::{VersionedURL, VersionedURLType};
 }
 
 pub mod extract_tarball;
@@ -229,10 +227,9 @@ pub(crate) mod install {
 /// `.bunx` shim encoder consumed by
 /// `bin::Linker` (Windows only at runtime, but the encoder types are
 /// referenced unconditionally so the module must exist on all targets).
-// `#[path]` inside an inline `mod {}` resolves relative to the
-// synthetic `windows_shim/` directory, which doesn't exist on disk. Hoist the
-// file-backed module to crate level with an absolute-ish path and re-export
-// through the inline mod so `windows_shim::bin_linking_shim` keeps resolving.
+// Crate-level because `#[path]` inside an inline `mod {}` resolves against a
+// synthetic `windows_shim/` directory that doesn't exist on disk.
+#[cfg(windows)]
 #[path = "windows-shim/BinLinkingShim.rs"]
 pub mod _bin_linking_shim;
 // `bun_shim_impl` is a *freestanding Windows PE* (no CRT, raw NT syscalls)
@@ -245,12 +242,12 @@ pub mod _bin_linking_shim;
 #[path = "windows-shim/bun_shim_impl.rs"]
 pub mod _bun_shim_impl;
 pub mod windows_shim {
-    pub use crate::_bin_linking_shim as bin_linking_shim;
+    #[cfg(windows)]
+    use crate::_bin_linking_shim as bin_linking_shim;
     #[cfg(windows)]
     pub use crate::_bun_shim_impl as bun_shim_impl;
-    pub use bin_linking_shim::{
-        BinLinkingShim, EMBEDDED_EXECUTABLE_DATA, Flags, Shebang, embedded_executable_data,
-    };
+    #[cfg(windows)]
+    pub(crate) use bin_linking_shim::{BinLinkingShim, Shebang, embedded_executable_data};
 }
 
 #[path = "resolvers/folder_resolver.rs"]
@@ -302,25 +299,20 @@ pub use resolution::Tag as ResolutionTag;
 
 // Real types — previously shadowed by inline ZST stubs in this file.
 pub use _folder_resolver::FolderResolution;
+pub use isolated_install::Store;
 pub use lifecycle_script_runner::LifecycleScriptSubprocess;
 pub use network_task::NetworkTask;
-pub use package_install::PackageInstall;
+pub(crate) use package_install::PackageInstall;
+pub use package_manager_real::security_scanner::SecurityScanSubprocess;
 pub use package_manager_task::Task;
 pub use package_manifest_map::PackageManifestMap;
+pub use patch_install::PatchTask;
 pub use postinstall_optimizer::PostinstallOptimizer;
 pub use tarball_stream::TarballStream;
-// `FileCopier` was hoisted out of `PackageInstall.rs` into
-// `isolated_install/FileCopier.rs` (shared by both linkers); re-export from
-// the new home so `bun_install::FileCopier` keeps resolving.
-pub use isolated_install::FileCopier;
-pub use isolated_install::Store;
-pub use package_manager_real::security_scanner::SecurityScanSubprocess;
-pub use patch_install::PatchTask;
 
 // PackageManager + its associated types — re-exported from the file-backed
 // `package_manager_real` so `crate::PackageManager` and
 // `package_manager_real::PackageManager` are the SAME type.
-pub use package_manager_real::package_manager_directories::CacheDirAndSubpath;
 pub use package_manager_real::{
     AsyncNetworkTaskQueue, CommandLineArguments, PackageManager, PatchTaskQueue, RootPackageId,
     Subcommand,
@@ -339,7 +331,7 @@ pub use package_manager_real::package_manager_options::{Access, AuthType};
 /// CI-probe table itself is generated at build time in `bun_runtime` and is
 /// not reachable from this tier, so the shim returns the `CI` env var name
 /// when set (the same fallback `npm-registry-fetch` uses) and `None` otherwise.
-pub mod ci_info {
+pub(crate) mod ci_info {
     pub(crate) fn detect_ci_name() -> Option<&'static [u8]> {
         // The per-vendor probes live in `bun_runtime` (T6) and are wired in
         // there; install only needs *some* answer for the user-agent string.
@@ -404,6 +396,7 @@ pub struct RunCommand;
 pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+#[cfg(not(windows))]
 use bun_core::ZStr;
 
 impl RunCommand {
@@ -438,54 +431,47 @@ impl RunCommand {
         concatcp!(TMP, SUFFIX)
     };
 
+    #[cfg(not(windows))]
     fn find_shell_impl<'a>(
         buf: &'a mut bun_paths::PathBuffer,
         path: &[u8],
         cwd: &[u8],
     ) -> Option<&'a ZStr> {
-        #[cfg(windows)]
-        {
-            let _ = (buf, path, cwd);
-            return Some(bun_core::zstr!("C:\\Windows\\System32\\cmd.exe"));
+        for shell in Self::SHELLS_TO_SEARCH {
+            if let Some(found) = bun_which::which(buf, path, cwd, shell) {
+                // `which()` writes a NUL-terminated path into `buf` and
+                // returns a borrow of it; reborrow as `&ZStr`.
+                let len = found.len();
+                return Some(ZStr::from_buf(buf, len));
+            }
         }
 
-        #[cfg(not(windows))]
-        {
-            for shell in Self::SHELLS_TO_SEARCH {
-                if let Some(found) = bun_which::which(buf, path, cwd, shell) {
-                    // `which()` writes a NUL-terminated path into `buf` and
-                    // returns a borrow of it; reborrow as `&ZStr`.
-                    let len = found.len();
-                    return Some(ZStr::from_buf(buf, len));
-                }
+        const HARDCODED_POPULAR_ONES: &[&ZStr] = &[
+            bun_core::zstr!("/bin/bash"),
+            bun_core::zstr!("/usr/bin/bash"),
+            bun_core::zstr!("/usr/local/bin/bash"), // don't think this is a real one
+            bun_core::zstr!("/bin/sh"),
+            bun_core::zstr!("/usr/bin/sh"), // don't think this is a real one
+            bun_core::zstr!("/usr/bin/zsh"),
+            bun_core::zstr!("/usr/local/bin/zsh"),
+            bun_core::zstr!("/system/bin/sh"), // Android
+        ];
+        for &shell in HARDCODED_POPULAR_ONES {
+            if bun_sys::is_executable_file_path(shell) {
+                let body = shell.as_bytes();
+                buf[..body.len()].copy_from_slice(body);
+                buf[body.len()] = 0;
+                return Some(ZStr::from_buf(buf, body.len()));
             }
-
-            const HARDCODED_POPULAR_ONES: &[&ZStr] = &[
-                bun_core::zstr!("/bin/bash"),
-                bun_core::zstr!("/usr/bin/bash"),
-                bun_core::zstr!("/usr/local/bin/bash"), // don't think this is a real one
-                bun_core::zstr!("/bin/sh"),
-                bun_core::zstr!("/usr/bin/sh"), // don't think this is a real one
-                bun_core::zstr!("/usr/bin/zsh"),
-                bun_core::zstr!("/usr/local/bin/zsh"),
-                bun_core::zstr!("/system/bin/sh"), // Android
-            ];
-            for &shell in HARDCODED_POPULAR_ONES {
-                if bun_sys::is_executable_file_path(shell) {
-                    let body = shell.as_bytes();
-                    buf[..body.len()].copy_from_slice(body);
-                    buf[body.len()] = 0;
-                    return Some(ZStr::from_buf(buf, body.len()));
-                }
-            }
-
-            None
         }
+
+        None
     }
 
     /// Find the "best" shell to use. Cached to only run once.
     /// Returns a slice into a process-lifetime static buffer (includes trailing NUL).
-    pub fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static [u8]> {
+    #[cfg(not(windows))]
+    pub(crate) fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static [u8]> {
         // PORTING.md §Concurrency: `bun.once` + static buf → OnceLock. Store the
         // result bytes (including NUL) directly in the OnceLock so the borrow is
         // trivially `'static` — avoids the Mutex+data_ptr dance from the draft.
@@ -799,7 +785,7 @@ impl RunCommand {
     /// out-param. This shim performs the init + the env-var seeding that has
     /// no T6 dependency; the `*mut ()` return stands in for `*mut DirInfo`
     /// (opaque to install — every caller discards it).
-    pub fn configure_env_for_run(
+    pub(crate) fn configure_env_for_run(
         ctx: &mut bun_options_types::context::ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<bun_transpiler::Transpiler<'static>>,
         env: Option<*mut bun_dotenv::Loader>,
@@ -874,10 +860,10 @@ impl RunCommand {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) const BUN_HASH_TAG: &[u8] = b".bun-tag-";
+const BUN_HASH_TAG: &[u8] = b".bun-tag-";
 
 /// Length of `u64::MAX` formatted as lowercase hex (`ffffffffffffffff`).
-pub(crate) const MAX_HEX_HASH_LEN: usize = {
+const MAX_HEX_HASH_LEN: usize = {
     // u64::MAX in hex is always 16 nibbles.
     let mut n = u64::MAX;
     let mut len = 0usize;
@@ -889,7 +875,7 @@ pub(crate) const MAX_HEX_HASH_LEN: usize = {
 };
 const _: () = assert!(MAX_HEX_HASH_LEN == 16);
 
-pub(crate) const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + BUN_HASH_TAG.len() + 1;
+const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + BUN_HASH_TAG.len() + 1;
 pub(crate) type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 
 pub(crate) fn buntaghashbuf_make(buf: &mut BuntagHashBuf, patch_hash: u64) -> &mut [u8] {
@@ -910,7 +896,7 @@ impl<'a> StorePathFormatter<'a> {
     /// Emits raw bytes
     /// verbatim (mapping `/` and `\` to `+`). This is the byte-faithful sink; callers that
     /// need an on-disk store path (legal non-UTF-8 on Linux) must use this, not `Display`.
-    pub fn write_to<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+    pub(crate) fn write_to<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
         // if (!this.opts.replace_slashes) {
         //     try writer.writeAll(this.str);
         //     return;
@@ -939,7 +925,7 @@ impl<'a> fmt::Display for StorePathFormatter<'a> {
     }
 }
 
-pub(crate) fn fmt_store_path(str: &[u8]) -> StorePathFormatter<'_> {
+fn fmt_store_path(str: &[u8]) -> StorePathFormatter<'_> {
     StorePathFormatter { str }
 }
 
@@ -1009,14 +995,14 @@ pub use bun_install_types::{
 // Phase-A drafts use the field-style lowercase names; alias both spellings.
 pub(crate) const invalid_package_id: PackageID = INVALID_PACKAGE_ID;
 pub(crate) const invalid_dependency_id: DependencyID = INVALID_DEPENDENCY_ID;
-pub const bun_hash_tag: &[u8] = BUN_HASH_TAG;
+pub(crate) const bun_hash_tag: &[u8] = BUN_HASH_TAG;
 
 pub(crate) type PackageNameAndVersionHash = u64;
 
 pub(crate) struct Aligner;
 
 impl Aligner {
-    pub(crate) fn write<T, W: bun_io::Write>(writer: &mut W, pos: u64) -> bun_io::Result<usize> {
+    fn write<T, W: bun_io::Write>(writer: &mut W, pos: u64) -> bun_io::Result<usize> {
         let to_write = Self::skip_amount::<T>(pos as usize);
 
         let remainder: &[u8] = &ALIGNMENT_BYTES_TO_REPEAT_BUFFER
@@ -1029,7 +1015,7 @@ impl Aligner {
     /// Runtime-alignment variant of [`Aligner::write`] for call sites that
     /// compute `align_of::<T>()` at the caller (callers without a nameable
     /// `T` pass the alignment as a value).
-    pub(crate) fn write_with_align<W: bun_io::Write>(
+    fn write_with_align<W: bun_io::Write>(
         align: usize,
         writer: &mut W,
         pos: u64,
@@ -1044,12 +1030,12 @@ impl Aligner {
     }
 
     #[inline]
-    pub(crate) fn skip_amount<T>(pos: usize) -> usize {
+    fn skip_amount<T>(pos: usize) -> usize {
         Self::skip_amount_with_align(core::mem::align_of::<T>(), pos)
     }
 
     #[inline]
-    pub(crate) fn skip_amount_with_align(align: usize, pos: usize) -> usize {
+    fn skip_amount_with_align(align: usize, pos: usize) -> usize {
         pos.next_multiple_of(align) - pos
     }
 }
@@ -1071,19 +1057,19 @@ pub use bun_install_types::resolver_hooks::{Features, PreinstallState};
 
 #[derive(Default)]
 pub struct ExtractDataJson {
-    pub path: Box<[u8]>,
-    pub buf: Vec<u8>,
+    pub(crate) path: Box<[u8]>,
+    pub(crate) buf: Vec<u8>,
 }
 
 #[derive(Default)]
 pub struct ExtractData {
-    pub url: Box<[u8]>,
-    pub resolved: Box<[u8]>,
-    pub json: Option<ExtractDataJson>,
+    pub(crate) url: Box<[u8]>,
+    pub(crate) resolved: Box<[u8]>,
+    pub(crate) json: Option<ExtractDataJson>,
     /// Integrity hash computed from the raw tarball bytes.
     /// Used for HTTPS/local tarball dependencies where the hash
     /// is not available from a registry manifest.
-    pub integrity: Integrity,
+    pub(crate) integrity: Integrity,
 }
 
 /// `path` is an owned, growable buffer. An earlier draft modelled it as a
@@ -1092,9 +1078,9 @@ pub struct ExtractData {
 /// and aliases caller memory with no lifetime. Own the buffer.
 #[derive(Clone, Default)]
 pub struct DependencyInstallContext {
-    pub tree_id: lockfile::tree::Id,
-    pub path: Vec<u8>,
-    pub dependency_id: DependencyID,
+    pub(crate) tree_id: lockfile::tree::Id,
+    pub(crate) path: Vec<u8>,
+    pub(crate) dependency_id: DependencyID,
 }
 
 #[derive(Clone)]

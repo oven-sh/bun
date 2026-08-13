@@ -186,7 +186,11 @@ Signs of a false positive:
 - `objdump -d` around the reported address shows `ret` then byte soup — no
   stack frame setup, no control flow leading to it.
 
-If confirmed: allowlist the symbol. Note the reason in the group comment.
+If confirmed: allowlist the symbol as a **blanket pass** (bare name, no
+`[...]` bracket). The reported features are misdecoded data bytes whose
+values move with link layout, not gated code, so a ceiling has nothing to
+bound and just re-flakes on the next layout that decodes differently. Note
+the reason in the group comment.
 
 ## Adding an allowlist entry
 
@@ -201,10 +205,12 @@ existing `# Gate: ...` header; if no existing group matches, add one:
 symbol_name_exactly_as_the_tool_printed_it  [FEAT1, FEAT2]
 ```
 
-**Always use a feature ceiling** (`[...]`). A blanket pass (no brackets)
-defeats the "did the gate get updated when the dep grew AVX-512?" check
-(`src/main.rs:616-621`). List exactly the features the tool reported; that's
-what the gate currently checks.
+**Use a feature ceiling** (`[...]`) for gated code. A blanket pass (no
+brackets) defeats the "did the gate get updated when the dep grew AVX-512?"
+check (`src/main.rs:616-621`). List exactly the features the tool reported;
+that's what the gate currently checks. The exceptions are confirmed
+data-in-.text misdecodes (previous section) and `<no-symbol@...>` padding
+(below): there is no gate to drift past, so blanket-pass those.
 
 **x64 feature names** (iced-x86 Debug strings — must match exactly):
 `AVX`, `AVX2`, `FMA`, `FMA4`, `BMI1`, `BMI2`, `MOVBE`, `ADX`, `RDRAND`,
@@ -269,5 +275,6 @@ See `src/main.rs:94-135` and `src/aarch64.rs`:
   SETSSBSY etc.) IS flagged — dedicated opcode slots that #UD on pre-CET.
 - **PACIASP/AUTIASP/BTI** (aarch64) — HINT-space, architecturally NOP on
   pre-PAC CPUs. (`LDRAA`/`LDRAB` are _not_ HINT-space and _are_ reported.)
-- **3DNow!, SMM, Cyrix, VIA** (x64) — no toolchain targeting x86-64 emits
-  these. When their `0f xx` encodings show up, it's data.
+- **3DNow!, SMM, Cyrix, VIA, RTM/TSX** (x64) — no toolchain targeting x86-64
+  emits these without explicit intrinsics. When their encodings show up
+  (`0f 0f` 3DNow!, `C7/C6 F8` XBEGIN/XABORT), it's data.

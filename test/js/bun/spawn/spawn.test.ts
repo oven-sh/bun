@@ -1,4 +1,5 @@
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync } from "bun";
+import { dlopen } from "bun:ffi";
 import { beforeAll, describe, expect, it } from "bun:test";
 import {
   gcTick as _gcTick,
@@ -7,10 +8,12 @@ import {
   getMaxFD,
   isBroken,
   isDebug,
+  isLinux,
   isMacOS,
   isPosix,
   isWindows,
   shellExe,
+  tempDir,
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
@@ -1197,6 +1200,217 @@ it("error does not UAF", async () => {
   expect(emsg).toInclude(" ");
 });
 
+it("throws when an ArrayBufferView is used for stdout or stderr", async () => {
+  const fixture = `
+    const results = [];
+    for (const key of ["stdout", "stderr"]) {
+      for (const fn of ["spawn", "spawnSync"]) {
+        try {
+          Bun[fn]({ cmd: [process.execPath, "-e", ""], [key]: new Uint8Array(8) });
+          results.push(fn + ":" + key + ":spawned");
+        } catch (err) {
+          results.push(fn + ":" + key + ":" + err.message);
+        }
+      }
+    }
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const message = "ArrayBufferView cannot be used for stdout/stderr yet";
+  expect(JSON.parse(stdout.trim())).toEqual([
+    `spawn:stdout:${message}`,
+    `spawnSync:stdout:${message}`,
+    `spawn:stderr:${message}`,
+    `spawnSync:stderr:${message}`,
+  ]);
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows)("leaves a caller-supplied stdout fd open when stdin stream setup fails", async () => {
+  const file = join(tmp, "stdin-setup-failure.txt");
+  const fixture = `
+    const { openSync, fstatSync, writeSync, closeSync } = require("node:fs");
+    const fd = openSync(process.env.OUT_FILE, "w");
+    let armed = false;
+    const source = {
+      type: "direct",
+      get pull() {
+        if (armed) throw new Error("pull unavailable");
+        return () => {};
+      },
+    };
+    const stream = new ReadableStream(source);
+    armed = true;
+    let message = "did not throw";
+    try {
+      Bun.spawn({ cmd: [process.execPath, "-e", "0"], stdio: [stream, fd, "ignore"] });
+    } catch (err) {
+      message = err.message;
+    }
+    fstatSync(fd);
+    writeSync(fd, "still-open");
+    closeSync(fd);
+    Bun.gc(true);
+    console.log(message);
+    process.exit(0);
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, OUT_FILE: file },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("pull unavailable");
+  expect(readFileSync(file, "utf8")).toContain("still-open");
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows)("leaves a Bun.file(fd) stdout open when stdin stream setup fails", async () => {
+  // Bun.file(fd) as stdout is an fd-backed Blob; extract_blob lowers it to
+  // Stdio::Fd before spawn, so the error-path cleanup must recognise it as
+  // caller-owned via the Fd variant and leave it open.
+  const file = join(tmp, "stdin-setup-failure-blob.txt");
+  const fixture = `
+    const { openSync, fstatSync, writeSync, closeSync } = require("node:fs");
+    const fd = openSync(process.env.OUT_FILE, "w");
+    let armed = false;
+    const source = {
+      type: "direct",
+      get pull() {
+        if (armed) throw new Error("pull unavailable");
+        return () => {};
+      },
+    };
+    const stream = new ReadableStream(source);
+    armed = true;
+    let message = "did not throw";
+    try {
+      Bun.spawn({ cmd: [process.execPath, "-e", "0"], stdio: [stream, Bun.file(fd), "ignore"] });
+    } catch (err) {
+      message = err.message;
+    }
+    fstatSync(fd);
+    writeSync(fd, "still-open");
+    closeSync(fd);
+    Bun.gc(true);
+    console.log(message);
+    process.exit(0);
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, OUT_FILE: file },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("pull unavailable");
+  expect(readFileSync(file, "utf8")).toContain("still-open");
+  expect(exitCode).toBe(0);
+});
+
+// Bun.file(fd).stream() (like the shell's stdio and cwd handles) works on a
+// dup() of the descriptor. On Windows that duplicate used to be created
+// inheritable, and libuv spawns with bInheritHandles=TRUE, so every child
+// started while one was open got a copy and kept the file open after the
+// parent closed it. POSIX dup() uses F_DUPFD_CLOEXEC; the Windows side must match.
+it.if(isWindows)("handles duplicated for Bun.file(fd).stream() are not inherited by children", async () => {
+  const N = 64;
+  // Bigger than the stream's high-water mark, so each reader parks on its
+  // duplicate instead of reading to EOF and closing it.
+  using dir = tempDir("spawn-dup-inherit", { "data.bin": Buffer.alloc(1024 * 1024) });
+
+  const k32 = dlopen("kernel32.dll", {
+    GetCurrentProcess: { args: [], returns: "ptr" },
+    GetProcessHandleCount: { args: ["ptr", "ptr"], returns: "i32" },
+  });
+  const ownHandleCount = () => {
+    const out = new Uint32Array(1);
+    if (k32.symbols.GetProcessHandleCount(k32.symbols.GetCurrentProcess(), out) === 0) {
+      throw new Error("GetProcessHandleCount failed");
+    }
+    return out[0];
+  };
+
+  // The child reports how many handles it was started with.
+  const spawnHandleCounter = () =>
+    spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { dlopen } from "bun:ffi";
+        const k32 = dlopen("kernel32.dll", {
+          GetCurrentProcess: { args: [], returns: "ptr" },
+          GetProcessHandleCount: { args: ["ptr", "ptr"], returns: "i32" },
+        });
+        const out = new Uint32Array(1);
+        if (k32.symbols.GetProcessHandleCount(k32.symbols.GetCurrentProcess(), out) === 0) {
+          throw new Error("GetProcessHandleCount failed");
+        }
+        console.log(out[0]);
+        `,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  const reportedHandleCount = async (proc: ReturnType<typeof spawnHandleCounter>) => {
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return Number(stdout.trim());
+  };
+
+  const fds = Array.from({ length: N }, () => openSync(join(String(dir), "data.bin"), "r"));
+  const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+  try {
+    // Plain descriptors are already non-inheritable; this child is the baseline.
+    await using control = spawnHandleCounter();
+
+    const before = ownHandleCount();
+    for (const fd of fds) readers.push(Bun.file(fd).stream().getReader());
+    // getReader() starts the stream, which dup()s the descriptor: the
+    // duplicates exist in this process while the next child is created.
+    expect(ownHandleCount() - before).toBeGreaterThanOrEqual(N);
+    await using withDuplicates = spawnHandleCounter();
+
+    const [controlCount, withDuplicatesCount] = await Promise.all([
+      reportedHandleCount(control),
+      reportedHandleCount(withDuplicates),
+    ]);
+    // An inheritable dup() hands every one of the N duplicates to the child,
+    // so the difference used to be exactly N.
+    expect(withDuplicatesCount - controlCount).toBeLessThan(N / 2);
+  } finally {
+    await Promise.all(readers.map(reader => reader.cancel()));
+    for (const fd of fds) closeSync(fd);
+  }
+});
+
+it.if(isWindows)("throws a spawn error for a cwd longer than the maximum path length", async () => {
+  const fixture = `
+    try {
+      Bun.spawnSync({ cmd: [process.execPath, "-e", ""], cwd: Buffer.alloc(200000, 97).toString() });
+      console.log("spawned");
+    } catch (err) {
+      console.log(err instanceof Error ? "threw" : String(err));
+    }
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("threw");
+  expect(exitCode).toBe(0);
+});
+
 describe("onDisconnect", () => {
   it.todoIf(isWindows)("ipc delivers message", async () => {
     const msg = Promise.withResolvers<void>();
@@ -1402,4 +1616,26 @@ describe("uid/gid", () => {
     }
     expect(thrown?.code).toBe("EPERM");
   });
+});
+
+// The allocator opts its own mappings out of THP; it must not use
+// prctl(PR_SET_THP_DISABLE), which children inherit across execve. Gate on our
+// parent so an environment (or older bun) that disabled THP itself skips.
+function thpEnabled(status: string) {
+  return status.match(/^THP_enabled:\s*(\d)/m)?.[1];
+}
+function parentThp() {
+  if (!isLinux) return undefined;
+  try {
+    return thpEnabled(readFileSync(`/proc/${process.ppid}/status`, "utf8"));
+  } catch {
+    return undefined; // hidepid mount: cannot tell, skip
+  }
+}
+it.if(parentThp() === "1")("spawned children keep the system THP policy", async () => {
+  await using proc = spawn({ cmd: ["cat", "/proc/self/status"], stdout: "pipe", stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(thpEnabled(stdout)).toBe("1");
+  expect(thpEnabled(readFileSync("/proc/self/status", "utf8"))).toBe("1");
+  expect(exitCode).toBe(0);
 });

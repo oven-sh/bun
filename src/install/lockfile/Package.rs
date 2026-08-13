@@ -138,7 +138,7 @@ fn invalid_trusted_dependencies(
 #[derive(Clone, Copy)]
 pub struct Package<SemverIntType: VersionInt = u64> {
     pub name: String,
-    pub name_hash: PackageNameHash,
+    pub(crate) name_hash: PackageNameHash,
 
     /// How this package has been resolved
     /// When .tag is uninitialized, that means the package is not resolved yet.
@@ -160,9 +160,9 @@ pub struct Package<SemverIntType: VersionInt = u64> {
     ///
     /// By default, the underlying buffer is filled with "invalid_id" to indicate this package ID
     /// was not resolved
-    pub resolutions: PackageIDSlice,
+    pub(crate) resolutions: PackageIDSlice,
 
-    pub meta: Meta,
+    pub(crate) meta: Meta,
     pub bin: Bin,
 
     /// If any of these scripts run, they will run in order:
@@ -172,10 +172,10 @@ pub struct Package<SemverIntType: VersionInt = u64> {
     /// 4. preprepare
     /// 5. prepare
     /// 6. postprepare
-    pub scripts: Scripts,
+    pub(crate) scripts: Scripts,
 }
 
-pub type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
+pub(crate) type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
 
 // ─── ResolverContext ─────────────────────────────────────────────────────────
 //
@@ -264,7 +264,7 @@ impl ResolverContext for () {
 //
 // `count`/`resolve` keep their `StringBuilder<'_>` borrow — lifetimes are
 // permitted on object-safe trait methods, only type generics are not.
-pub(crate) trait ResolverContextDyn {
+trait ResolverContextDyn {
     fn is_void(&self) -> bool;
     fn is_git(&self) -> bool;
     fn check_bundled_dependencies(&self) -> bool;
@@ -368,7 +368,7 @@ pub(crate) enum PackageField {
 }
 
 impl PackageField {
-    pub(crate) const ALL: [PackageField; 8] = [
+    const ALL: [PackageField; 8] = [
         PackageField::Name,
         PackageField::NameHash,
         PackageField::Resolution,
@@ -448,7 +448,7 @@ impl<SemverIntType: VersionInt> Alphabetizer<SemverIntType> {
 
 impl<SemverIntType: VersionInt> Package<SemverIntType> {
     #[inline]
-    pub fn is_disabled(&self, cpu: Npm::Architecture, os: Npm::OperatingSystem) -> bool {
+    pub(crate) fn is_disabled(&self, cpu: Npm::Architecture, os: Npm::OperatingSystem) -> bool {
         self.meta.is_disabled(cpu, os)
     }
 }
@@ -461,7 +461,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 // `Package<SemverIntType>` ≠ `Package<u64>` mismatches at every Lockfile call
 // site.
 impl Package<u64> {
-    pub fn clone(&self, cloner: &mut Cloner) -> crate::Result<PackageID> {
+    pub(crate) fn clone(&self, cloner: &mut Cloner) -> crate::Result<PackageID> {
         // `cloner` already owns `&mut` to `pm`, `old`, `new`, and
         // `package_id_mapping`; route everything through its disjoint fields.
         // `old`/`new`/`mapping` are reborrowed for the whole body (disjoint
@@ -600,6 +600,7 @@ impl Package<u64> {
         let resolutions: &mut [PackageID] =
             &mut new.buffers.resolutions[prev_len as usize..end as usize];
         debug_assert_eq!(old_resolutions.len(), resolutions.len());
+        debug_assert_eq!(old_dependencies.len(), resolutions.len());
         for (i, (old_resolution, resolution)) in old_resolutions
             .iter()
             .zip(resolutions.iter_mut())
@@ -610,23 +611,29 @@ impl Package<u64> {
                 continue;
             }
 
+            let pending = PendingResolution {
+                old_resolution: *old_resolution,
+                resolve_id: new_package.resolutions.off + PackageID::try_from(i).expect("int cast"),
+            };
+
+            // Peer slots must not keep their target alive; bound in `Cloner::flush`.
+            if old_dependencies[i].behavior.is_optional_peer() {
+                cloner.optional_peers.push(pending);
+                continue;
+            }
+
             let mapped = package_id_mapping[*old_resolution as usize];
             if mapped < max_package_id {
                 *resolution = mapped;
             } else {
-                cloner.clone_queue.push(PendingResolution {
-                    old_resolution: *old_resolution,
-                    parent: new_package.meta.id,
-                    resolve_id: new_package.resolutions.off
-                        + PackageID::try_from(i).expect("int cast"),
-                });
+                cloner.clone_queue.push(pending);
             }
         }
 
         Ok(new_package.meta.id)
     }
 
-    pub fn from_npm(
+    pub(crate) fn from_npm(
         pm: &mut PackageManager,
         lockfile: &mut Lockfile,
         log: &mut bun_ast::Log,
@@ -894,23 +901,23 @@ pub struct AddedTrustedDependency {
     /// Whether this dependency should be added to lockfile trusted
     /// dependencies. It is false when the new trusted dependency is coming
     /// from the default list.
-    pub add_to_lockfile: bool,
-    pub name: Box<[u8]>,
+    pub(crate) add_to_lockfile: bool,
+    pub(crate) name: Box<[u8]>,
 }
 
 #[derive(Default)]
 pub struct DiffSummary {
-    pub add: u32,
-    pub remove: u32,
-    pub update: u32,
-    pub overrides_changed: bool,
-    pub catalogs_changed: bool,
+    pub(crate) add: u32,
+    pub(crate) remove: u32,
+    pub(crate) update: u32,
+    pub(crate) overrides_changed: bool,
+    pub(crate) catalogs_changed: bool,
 
-    pub added_trusted_dependencies:
+    pub(crate) added_trusted_dependencies:
         ArrayHashMap<TruncatedPackageNameHash, AddedTrustedDependency, ArrayIdentityContext>,
-    pub removed_trusted_dependencies: TrustedDependenciesSet,
+    pub(crate) removed_trusted_dependencies: TrustedDependenciesSet,
 
-    pub patched_dependencies_changed: bool,
+    pub(crate) patched_dependencies_changed: bool,
 }
 
 impl DiffSummary {
@@ -1345,14 +1352,13 @@ impl Diff {
             ) {
                 if let Some(updates) = update_requests {
                     if updates.is_empty()
-                        || 'brk: {
-                            for request in updates {
-                                if from_dep.name_hash == request.name_hash {
-                                    break 'brk true;
-                                }
-                            }
-                            false
-                        }
+                        || UpdateRequest::contains_name(
+                            updates,
+                            from_dep.name_hash,
+                            from_dep
+                                .name
+                                .slice(from_lockfile.buffers.string_bytes.as_slice()),
+                        )
                     {
                         // Listed as to be updated
                         summary.update += 1;
@@ -1485,8 +1491,12 @@ impl Diff {
             // preserved. Same gate as the `Dependency::eql == true` branch
             // above.
             let is_explicit_update_target = matches!(update_requests, Some(updates)
-                if updates.is_empty()
-                    || updates.iter().any(|r| r.name_hash == from_dep.name_hash));
+            if updates.is_empty()
+                || UpdateRequest::contains_name(
+                    updates,
+                    from_dep.name_hash,
+                    from_dep.name.slice(from_lockfile.buffers.string_bytes.as_slice()),
+                ));
             if !is_explicit_update_target {
                 if let Some(mapping) = id_mapping.as_deref_mut() {
                     let from_res_id = from_resolutions[i];
@@ -1540,19 +1550,6 @@ impl Diff {
 }
 
 impl Package<u64> {
-    pub fn hash(name: &[u8], version: SemverVersion) -> u64 {
-        let mut hasher = bun_wyhash::Wyhash::init(0);
-        hasher.update(name);
-        // SAFETY: Semver.Version is POD; reading its raw bytes is sound.
-        hasher.update(unsafe {
-            bun_core::ffi::slice(
-                (&raw const version).cast::<u8>(),
-                mem::size_of::<SemverVersion>(),
-            )
-        });
-        hasher.final_()
-    }
-
     pub fn parse<R: ResolverContext>(
         &mut self,
         lockfile: &mut Lockfile,
@@ -1589,7 +1586,7 @@ impl Package<u64> {
     /// `manager` must point to a live `PackageManager` for the duration of the
     /// call, and its `lockfile` / `log` fields must point to live allocations
     /// disjoint from `*manager` itself.
-    pub unsafe fn parse_from_real_manager<R: ResolverContext>(
+    pub(crate) unsafe fn parse_from_real_manager<R: ResolverContext>(
         &mut self,
         manager: *mut crate::package_manager_real::PackageManager,
         source: &bun_ast::Source,
@@ -1836,7 +1833,7 @@ impl Package<u64> {
                     }
 
                     dependency_version.value.workspace = path;
-                } else {
+                } else if features.is_main || features.is_workspace {
                     // SAFETY: tag == Workspace selects the `workspace` union member.
                     // Bind the (Copy) union field first so `slice()`'s `&self`
                     // borrow has a named place to point at.
@@ -2015,7 +2012,7 @@ impl Package<u64> {
         Ok(Some(this_dep))
     }
 
-    pub fn parse_with_json<R: ResolverContext>(
+    pub(crate) fn parse_with_json<R: ResolverContext>(
         &mut self,
         lockfile: &mut Lockfile,
         pm: &mut PackageManager,
@@ -2941,9 +2938,9 @@ pub mod serializer {
     use super::*;
 
     /// Number of columns in the on-disk package table.
-    pub(crate) const FIELD_COUNT: usize = PackageField::ALL.len();
+    const FIELD_COUNT: usize = PackageField::ALL.len();
 
-    pub fn save<SemverIntType: VersionInt, S>(
+    pub(crate) fn save<SemverIntType: VersionInt, S>(
         list: &List<SemverIntType>,
         stream: &mut S,
     ) -> crate::Result<()>

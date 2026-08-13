@@ -708,6 +708,13 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         /* The deferred-DNS path does not carry a local binding. */
         LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, NULL, c->options);
         if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
+            /* Synchronous socket()/connect() failure (ENETUNREACH,
+             * EADDRNOTAVAIL, EMFILE, ...): remember the error so exhausting
+             * the address list reports it instead of a fabricated
+             * ECONNREFUSED. LIBUS_ERR, not errno: Windows reports these via
+             * WSASetLastError and the CRT errno would be stale. */
+            int candidate_err = LIBUS_ERR;
+            if (candidate_err) c->last_candidate_error = candidate_err;
             continue;
         }
         bsd_socket_nodelay(connect_socket_fd, 1);
@@ -715,6 +722,8 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         struct us_poll_t *poll = &s->p;
         us_poll_init(poll, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
         if (us_poll_start_rc(poll, loop, LIBUS_SOCKET_WRITABLE) != 0) {
+            int candidate_err = LIBUS_ERR;
+            if (candidate_err) c->last_candidate_error = candidate_err;
             bsd_close_socket(connect_socket_fd);
             us_poll_free(poll, loop);
             continue;
@@ -774,8 +783,9 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     int opened = start_connections(c, CONCURRENT_CONNECTIONS);
     if (opened == 0) {
         /* Same as the exhausted path in us_internal_socket_after_open: a
-         * real connect failure must not be reported as a caller abort. */
-        c->error = ECONNREFUSED;
+         * real connect failure must not be reported as a caller abort, and
+         * the last candidate's real errno beats a blanket ECONNREFUSED. */
+        c->error = c->last_candidate_error ? c->last_candidate_error : ECONNREFUSED;
         us_connecting_socket_close(c);
     }
 }
@@ -801,6 +811,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
     #endif
     if (error) {
         if (c) {
+            c->last_candidate_error = error;
             for (struct us_socket_t **next = &c->connecting_head; *next; next = &(*next)->connect_next) {
                 if (*next == s) {
                     *next = s->connect_next;
@@ -815,8 +826,10 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                     /* Every resolved address failed to connect. Without this,
                      * us_connecting_socket_close defaults c->error to
                      * ECONNABORTED (caller abort) and never invalidates the
-                     * DNS cache entry for the dead host. */
-                    c->error = ECONNREFUSED;
+                     * DNS cache entry for the dead host. Report the last
+                     * candidate's real errno (libuv/node report the connect
+                     * errno; a timed-out host must not read as refused). */
+                    c->error = c->last_candidate_error ? c->last_candidate_error : ECONNREFUSED;
                     us_connecting_socket_close(c);
                 }
             }

@@ -158,6 +158,104 @@ it("should thow ECONNRESET if FIN is received before handshake", async () => {
   expect(error).toBeDefined();
   expect((error as Error).code as string).toBe("ECONNRESET");
 });
+
+// onConnectEnd is the 'end' listener that reports a peer FIN during the
+// handshake as ECONNRESET. Node attaches it once per tls.connect() and removes
+// it once the handshake completes, so the socket holds one copy until
+// 'secureConnect' has been emitted and none afterwards.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1706 (removeListener)
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1811 (prependListener)
+describe("tls.connect() attaches onConnectEnd to 'end' exactly once", () => {
+  function onConnectEndCount(socket: tls.TLSSocket) {
+    return socket.listeners("end").filter(listener => listener.name === "onConnectEnd").length;
+  }
+
+  async function withTLSServer<T>(fn: (port: number) => Promise<T>): Promise<T> {
+    const server = tls.createServer(COMMON_CERT_, socket => socket.on("error", () => {}));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      return await fn((server.address() as AddressInfo).port);
+    } finally {
+      server.close();
+    }
+  }
+
+  // The count seen by a 'secureConnect' listener (the handshake is complete but
+  // the listener has not been removed yet) and the count once the emit returned.
+  async function countsThroughHandshake(socket: tls.TLSSocket) {
+    const secureConnect = Promise.withResolvers<number>();
+    socket.on("error", secureConnect.reject);
+    socket.on("secureConnect", () => secureConnect.resolve(onConnectEndCount(socket)));
+    try {
+      const duringSecureConnect = await secureConnect.promise;
+      return { duringSecureConnect, afterHandshake: onConnectEndCount(socket) };
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  it("tls.connect({ host, port })", async () => {
+    await withTLSServer(async port => {
+      const socket = tls.connect({ host: "127.0.0.1", port, rejectUnauthorized: false });
+      expect(await countsThroughHandshake(socket)).toEqual({ duringSecureConnect: 1, afterHandshake: 0 });
+    });
+  });
+
+  it("tls.connect({ host, port, autoSelectFamily }) with a refused first address", async () => {
+    await withTLSServer(async port => {
+      // The server only listens on IPv4, so listing ::1 first makes the first
+      // attempt fail and the connection go through the retry path.
+      const lookup = (_host: string, _options: unknown, callback: Function) =>
+        callback(null, [
+          { address: "::1", family: 6 },
+          { address: "127.0.0.1", family: 4 },
+        ]);
+      const socket = tls.connect({
+        host: "localhost",
+        port,
+        rejectUnauthorized: false,
+        autoSelectFamily: true,
+        lookup,
+      });
+      const counts = await countsThroughHandshake(socket);
+      expect({ ...counts, attempted: socket.autoSelectFamilyAttemptedAddresses }).toEqual({
+        duringSecureConnect: 1,
+        afterHandshake: 0,
+        attempted: [`::1:${port}`, `127.0.0.1:${port}`],
+      });
+    });
+  });
+
+  it("tls.connect({ socket }) over a connected net.Socket", async () => {
+    await withTLSServer(async port => {
+      const tcp = net.connect(port, "127.0.0.1");
+      try {
+        await once(tcp, "connect");
+        const socket = tls.connect({ socket: tcp, rejectUnauthorized: false });
+        expect(await countsThroughHandshake(socket)).toEqual({ duringSecureConnect: 1, afterHandshake: 0 });
+      } finally {
+        tcp.destroy();
+      }
+    });
+  });
+
+  it("a handshake the peer drops keeps the one copy that reported ECONNRESET", async () => {
+    await using server = net.createServer(c => {
+      c.resume();
+      c.end();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException>();
+    const socket = tls.connect({ host: "127.0.0.1", port: (server.address() as AddressInfo).port });
+    socket.on("error", resolve);
+    const error = await promise;
+    expect({ code: error.code, onConnectEnd: onConnectEndCount(socket) }).toEqual({
+      code: "ECONNRESET",
+      onConnectEnd: 1,
+    });
+  });
+});
+
 it("initializes authorizationError to null in the TLSSocket constructor", () => {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L556
   // Node's onServerSocketSecure/onConnectSecure only assign on failure; a

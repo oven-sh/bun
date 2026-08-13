@@ -705,6 +705,9 @@ interface WebSocketHandler<T = undefined> {
 }
 
 interface TLSOptions {
+  /** Accept an intermediate certificate listed in `ca` as a trust anchor */
+  allowPartialTrustChain?: boolean;
+
   /** Certificate authority chain */
   ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile>;
 
@@ -713,6 +716,9 @@ interface TLSOptions {
 
   /** Path to DH parameters file */
   dhParamsFile?: string;
+
+  /** Key agreement group, or colon-separated list of groups (e.g. "X25519:P-256") */
+  ecdhCurve?: string;
 
   /** Private key */
   key?: string | Buffer | BunFile | Array<string | Buffer | BunFile>;
@@ -728,5 +734,11 @@ interface TLSOptions {
 
   /** Server name for SNI */
   serverName?: string;
+
+  /** Seconds a TLS 1.2 session stays resumable (0 = BoringSSL's default) */
+  sessionTimeout?: number;
+
+  /** Colon-separated signature algorithms (e.g. "rsa_pss_rsae_sha256:ecdsa_secp256r1_sha256") */
+  sigalgs?: string;
 }
 ```

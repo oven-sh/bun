@@ -4259,6 +4259,56 @@ declare module "bun" {
     clientRenegotiationLimit?: number;
 
     clientRenegotiationWindow?: number;
+
+    /**
+     * Treat the intermediate (non self-signed) certificates in `ca` as trust
+     * anchors, so a peer certificate whose chain ends at one of them verifies
+     * even though the root that issued that intermediate is not in `ca`.
+     * Without it such a chain fails with `UNABLE_TO_GET_ISSUER_CERT`.
+     *
+     * Applies to whichever certificate this side verifies: the server's
+     * certificate when connecting, or the client's certificate when a server
+     * sets `requestCert`.
+     *
+     * @default false
+     */
+    allowPartialTrustChain?: boolean | undefined;
+
+    /**
+     * Lifetime in seconds of the TLS 1.2 sessions created with these options,
+     * i.e. how long a peer can resume one of them. Must be an integer; `0`
+     * keeps BoringSSL's default of two hours. TLS 1.3 session tickets are not
+     * affected by this option.
+     *
+     * @default 0
+     */
+    sessionTimeout?: number | undefined;
+
+    /**
+     * Colon-separated list of the signature algorithms this side signs with
+     * and accepts from the peer, replacing BoringSSL's default list. Entries
+     * are TLS 1.3 scheme names such as `"rsa_pss_rsae_sha256"` or
+     * `"ecdsa_secp256r1_sha256"`, or OpenSSL `"<signature>+<digest>"` pairs
+     * such as `"RSA-PSS+SHA256"`.
+     *
+     * The handshake fails when the peer, or the key behind this side's own
+     * `cert`, supports none of the listed algorithms. A list containing an
+     * unknown name is rejected when the options are applied.
+     */
+    sigalgs?: string | undefined;
+
+    /**
+     * Named group, or colon-separated list of groups in order of preference,
+     * to use for the handshake's key agreement, such as `"P-256"` or
+     * `"X25519:P-256:P-384"`. OpenSSL aliases like `"prime256v1"` and
+     * `"secp384r1"` are accepted as well. `"auto"` (the `node:tls` default)
+     * keeps BoringSSL's default list.
+     *
+     * The handshake fails when the peer supports none of the listed groups. A
+     * list containing an unknown name is rejected when the options are
+     * applied.
+     */
+    ecdhCurve?: string | undefined;
   }
 
   interface SocketAddress {

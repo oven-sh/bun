@@ -367,36 +367,139 @@ describe("@types/bun integration test", () => {
     });
   });
 
-  // Runs on debug builds too: spawning tsc over a single file is cheap,
-  // unlike the in-process LanguageService runs above.
+  // The tests below run on debug builds too: spawning tsc over a single file
+  // is cheap, unlike the in-process LanguageService runs above.
+  async function expectSingleFileToTypeCheck(name: string, source: string) {
+    const checkDir = join(TEMP_DIR, `${name}-check`);
+    const fileName = `${name}.ts`;
+    const tsconfig = structuredClone(sourceTsconfig);
+    tsconfig.include = [fileName];
+    tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+    await mkdir(checkDir, { recursive: true });
+    await makeTree(checkDir, {
+      "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+      [fileName]: source,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+      env: bunEnv,
+      cwd: checkDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr.trim()).toBe("");
+    expect(stdout.trim()).toBe("");
+    expect(exitCode).toBe(0);
+  }
+
   describe("Bun.mmap", () => {
     test("MMapOptions accepts offset and size", async () => {
-      const checkDir = join(TEMP_DIR, "mmap-options-check");
-      const tsconfig = structuredClone(sourceTsconfig);
-      tsconfig.include = ["mmap-options.ts"];
-      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
-      await mkdir(checkDir, { recursive: true });
-      await makeTree(checkDir, {
-        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
-        "mmap-options.ts": `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
-           view satisfies Uint8Array<ArrayBuffer>;
-           Bun.mmap("./data.bin", { offset: 4096 }) satisfies Uint8Array<ArrayBuffer>;
-           Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;`,
-      });
+      await expectSingleFileToTypeCheck(
+        "mmap-options",
+        `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
+         view satisfies Uint8Array<ArrayBuffer>;
+         Bun.mmap("./data.bin", { offset: 4096 }) satisfies Uint8Array<ArrayBuffer>;
+         Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;`,
+      );
+    });
+  });
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
-        env: bunEnv,
-        cwd: checkDir,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+  describe("Bun.TLSOptions", () => {
+    test("declares allowPartialTrustChain, sessionTimeout, sigalgs and ecdhCurve on every API that takes a tls object", async () => {
+      await expectSingleFileToTypeCheck(
+        "tls-options-context-options",
+        `({ allowPartialTrustChain: true }) satisfies Bun.TLSOptions;
+         ({ allowPartialTrustChain: undefined }) satisfies Bun.TLSOptions;
+         ({ sessionTimeout: 300 }) satisfies Bun.TLSOptions;
+         ({ sessionTimeout: undefined }) satisfies Bun.TLSOptions;
+         ({ sigalgs: "rsa_pss_rsae_sha256:ecdsa_secp256r1_sha256" }) satisfies Bun.TLSOptions;
+         ({ sigalgs: undefined }) satisfies Bun.TLSOptions;
+         ({ ecdhCurve: "X25519:P-256" }) satisfies Bun.TLSOptions;
+         ({ ecdhCurve: "auto" }) satisfies Bun.TLSOptions;
+         ({ ecdhCurve: undefined }) satisfies Bun.TLSOptions;
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+         // The runtime converter is strict about each value type (a truthy
+         // non-boolean, a numeric string, ... are rejected), so the types are too.
+         // @ts-expect-error allowPartialTrustChain is a boolean
+         ({ allowPartialTrustChain: 1 }) satisfies Bun.TLSOptions;
+         // @ts-expect-error sessionTimeout is a number of seconds
+         ({ sessionTimeout: "300" }) satisfies Bun.TLSOptions;
+         // @ts-expect-error sigalgs is a colon-separated string, not an array
+         ({ sigalgs: ["rsa_pss_rsae_sha256"] }) satisfies Bun.TLSOptions;
+         // @ts-expect-error ecdhCurve is a colon-separated string, not an array
+         ({ ecdhCurve: ["P-256"] }) satisfies Bun.TLSOptions;
 
-      expect(stderr.trim()).toBe("");
-      expect(stdout.trim()).toBe("");
-      expect(exitCode).toBe(0);
+         // Written out per call rather than spread from a shared object: excess
+         // property checks, which is what catches an undeclared option, only
+         // apply to properties written inline in the literal.
+         Bun.serve({
+           fetch: () => new Response(),
+           tls: {
+             key: "key",
+             cert: "cert",
+             ca: "intermediate",
+             requestCert: true,
+             allowPartialTrustChain: true,
+             sessionTimeout: 300,
+             sigalgs: "rsa_pss_rsae_sha256",
+             ecdhCurve: "P-256",
+           },
+         });
+         Bun.serve({
+           fetch: () => new Response(),
+           tls: [
+             { key: "key", cert: "cert", sessionTimeout: 60, sigalgs: "rsa_pss_rsae_sha256" },
+             { serverName: "a.example.com", key: "key", cert: "cert", ecdhCurve: "P-384", allowPartialTrustChain: true },
+           ],
+         });
+         Bun.listen({
+           hostname: "localhost",
+           port: 0,
+           socket: { data() {} },
+           tls: {
+             key: "key",
+             cert: "cert",
+             allowPartialTrustChain: true,
+             sessionTimeout: 300,
+             sigalgs: "rsa_pss_rsae_sha256",
+             ecdhCurve: "P-256",
+           },
+         });
+         Bun.connect({
+           hostname: "localhost",
+           port: 0,
+           socket: { data() {} },
+           tls: {
+             ca: "intermediate",
+             allowPartialTrustChain: true,
+             sessionTimeout: 300,
+             sigalgs: "rsa_pss_rsae_sha256",
+             ecdhCurve: "P-256",
+           },
+         });
+         fetch("https://localhost", {
+           tls: {
+             ca: "intermediate",
+             allowPartialTrustChain: true,
+             sessionTimeout: 300,
+             sigalgs: "rsa_pss_rsae_sha256",
+             ecdhCurve: "P-256",
+           },
+         });
+         new WebSocket("wss://localhost", {
+           tls: {
+             ca: "intermediate",
+             allowPartialTrustChain: true,
+             sessionTimeout: 300,
+             sigalgs: "rsa_pss_rsae_sha256",
+             ecdhCurve: "P-256",
+           },
+         });`,
+      );
     });
   });
 

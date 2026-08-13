@@ -84,3 +84,45 @@ const s4 = Bun.serve({
     },
   },
 });
+
+Bun.serve({
+  fetch: () => new Response("hello"),
+  tls: {
+    key: Bun.file("key.pem"),
+    cert: Bun.file("cert.pem"),
+    ca: Bun.file("intermediate-ca.pem"),
+    requestCert: true,
+    allowPartialTrustChain: true,
+    sessionTimeout: 300,
+    sigalgs: "rsa_pss_rsae_sha256:ecdsa_secp256r1_sha256",
+    ecdhCurve: "X25519:P-256",
+  },
+});
+
+Bun.serve({
+  fetch: () => new Response("hello"),
+  tls: [
+    { key: "key", cert: "cert", sessionTimeout: 60, sigalgs: "rsa_pss_rsae_sha256" },
+    { serverName: "p384.example.com", key: "key", cert: "cert", ecdhCurve: "P-384", allowPartialTrustChain: true },
+  ],
+});
+
+Bun.serve({
+  fetch: () => new Response("hello"),
+  // @ts-expect-error - allowPartialTrustChain is a boolean
+  tls: {
+    key: "key",
+    cert: "cert",
+    allowPartialTrustChain: "yes",
+  },
+});
+
+Bun.serve({
+  fetch: () => new Response("hello"),
+  // @ts-expect-error - sessionTimeout is a number of seconds
+  tls: {
+    key: "key",
+    cert: "cert",
+    sessionTimeout: "300",
+  },
+});

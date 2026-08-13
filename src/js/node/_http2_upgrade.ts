@@ -247,12 +247,30 @@ function socketHandshake(
 }
 
 // ---------------------------------------------------------------------------
+// Raw socket listeners bound to tlsSocket
+// ---------------------------------------------------------------------------
+
+// error: the transport under the TLS layer failed (reset, EPIPE, destroy(err)).
+// Node's TLSSocket re-emits the wrapped socket's errors on itself, so they
+// reach the session's socket error handling and the socket handed in never
+// emits an unhandled 'error':
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
+// Stays attached for the raw socket's lifetime (it is still flushing after the
+// session is gone), hence the destroyed check.
+function onRawSocketError(this: TLSProxySocket, err: Error) {
+  if (!this.destroyed) {
+    this.destroy(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Close-cleanup handler
 // ---------------------------------------------------------------------------
 
 // onTlsClose: when the TLS socket closes (e.g. H2 session destroyed), clean up
 // the raw socket listeners to prevent memory leaks and stale callback references.
 // EventEmitter calls 'close' handlers with `this` = emitter (tlsSocket).
+// The 'error' listener is deliberately left in place (see onRawSocketError).
 function onTlsClose(this: TLSProxySocket) {
   const ctx = this._ctx;
   const raw = ctx.rawSocket;
@@ -386,6 +404,7 @@ function upgradeRawSocketToH2(
   rawSocket.on("end", events[1]);
   rawSocket.on("drain", events[2]);
   rawSocket.on("close", events[3]);
+  rawSocket.on("error", onRawSocketError.bind(tlsSocket));
 
   // When the TLS socket closes (e.g. H2 session destroyed), clean up the raw socket
   // listeners to prevent memory leaks and stale callback references.

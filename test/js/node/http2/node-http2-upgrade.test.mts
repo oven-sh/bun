@@ -277,6 +277,51 @@ describe("HTTP/2 upgrade — socket close ordering", () => {
     client.close();
     netServer.close();
   });
+
+  test("an error on rawSocket is the session's error, not an uncaught exception", async () => {
+    // Nothing but the upgrade listens on rawSocket once it has been handed
+    // over, so its error (a reset, EPIPE, a destroy(err) by its owner) has to
+    // be reported the way a TLSSocket reports its wrapped socket's errors: the
+    // session is destroyed with it and the server sees 'sessionError'.
+    let rawSocket: net.Socket | undefined;
+    const sessionReady = Promise.withResolvers<http2.Http2Session>();
+    const sessionErrored = Promise.withResolvers<{ err: Error; session: http2.Http2Session }>();
+
+    const h2Server = http2.createSecureServer(TLS, (_req, res) => {
+      res.writeHead(200);
+      res.end("done");
+    });
+    h2Server.on("error", () => {});
+    h2Server.on("session", s => sessionReady.resolve(s));
+    h2Server.on("sessionError", (err: Error, session: http2.Http2Session) => sessionErrored.resolve({ err, session }));
+
+    const netServer = net.createServer(socket => {
+      rawSocket = socket;
+      h2Server.emit("connection", socket);
+    });
+
+    const port = await new Promise<number>(resolve => {
+      netServer.listen(0, "127.0.0.1", () => resolve((netServer.address() as net.AddressInfo).port));
+    });
+
+    const client = connectClient(port);
+    await request(client, "GET", "/");
+    const h2Session = await sessionReady.promise;
+    // Not events.once(): the session emits 'error' on its way to 'close'.
+    const sessionClosed = new Promise<void>(resolve => h2Session.once("close", resolve));
+
+    rawSocket!.destroy(new Error("transport failed"));
+
+    await sessionClosed;
+    const { err, session } = await sessionErrored.promise;
+    assert.deepStrictEqual(
+      { message: err.message, sameSession: session === h2Session, destroyed: h2Session.destroyed },
+      { message: "transport failed", sameSession: true, destroyed: true },
+    );
+
+    client.close();
+    netServer.close();
+  });
 });
 
 describe("HTTP/2 upgrade — ALPN negotiation", () => {

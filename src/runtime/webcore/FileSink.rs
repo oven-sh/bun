@@ -345,11 +345,16 @@ impl FileSink {
                     sys::Tag::write,
                 ));
             });
-            FileSink::run_pending(this);
+            let settled = FileSink::run_pending(this);
 
             // `writer.close()` → `onClose` already released this above; kept for
             // paths where `onClose` isn't reached (e.g. writer already closed).
             FileSink::clear_keep_alive_ref(this);
+            // TODO(one-fold): interim fold; the subprocess exit path gains JsResult with the Process poll arm.
+            if let Err(err) = settled {
+                let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
+                bun_jsc::JsResultExt::report_unhandled(Err::<(), _>(err), global);
+            }
         }
     }
 
@@ -358,7 +363,7 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)). `WritablePending::run`
     /// may re-enter JS / drop refs / free `this` on the last `deref`; the body
     /// reborrows `(*this).field` per-statement only.
-    unsafe fn run_pending(this: *mut FileSink) {
+    unsafe fn run_pending(this: *mut FileSink) -> JsResult<()> {
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
             let _guard = FileSinkRef::new_ref(this);
@@ -375,20 +380,20 @@ impl FileSink {
             // This was held to prevent GC from collecting the wrapper while the async
             // operation was in progress.
             (*this).js_sink_ref.with_mut(|r| r.deinit());
-            // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
-            if let Err(err) = settled {
-                // Only a JS-loop sink parks a promise (a Mini-loop sink's future
-                // is a native handler), so the global is the JS VM's.
-                let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
-                bun_jsc::JsResultExt::report_unhandled(Err::<(), _>(err), global);
-            }
+            settled
         }
     }
 
     /// # Safety
     /// `this` must be the canonical live `*mut FileSink` (see
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
-    pub(crate) unsafe fn on_write(this: *mut FileSink, amount: usize, status: WriteStatus) {
+    /// `Err` is the exception settling the parked write left pending; the
+    /// native drain/teardown below still runs, the JS wake-ups do not.
+    pub(crate) unsafe fn on_write(
+        this: *mut FileSink,
+        amount: usize,
+        status: WriteStatus,
+    ) -> JsResult<()> {
         bun_core::scoped_log!(FileSink, "onWrite({}, {})", amount, status as u8);
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
@@ -422,9 +427,10 @@ impl FileSink {
 
             // if we are not done yet and has pending data we just wait so we do not runPending twice
             if status == WriteStatus::Pending && has_pending_data {
-                return;
+                return Ok(());
             }
 
+            let mut settled = Ok(());
             let was_pending = (*this).pending.get().state == streams::PendingState::Pending;
             if was_pending {
                 // `consumed` was credited when the pending operation accepted its
@@ -441,10 +447,11 @@ impl FileSink {
                         .with_mut(|p| p.result = streams::Writable::Owned(consumed));
                 }
 
-                FileSink::run_pending(this);
+                settled = FileSink::run_pending(this);
             }
 
-            if (was_pending || (status == WriteStatus::Drained && !has_pending_data))
+            if settled.is_ok()
+                && (was_pending || (status == WriteStatus::Drained && !has_pending_data))
                 && (*this).source_pending_pull.replace(false)
             {
                 let mut src = *(*this).source.get();
@@ -460,17 +467,20 @@ impl FileSink {
             }
 
             if status == WriteStatus::EndOfFile {
-                let mut src = *(*this).source.get();
-                src.close(None);
+                if settled.is_ok() {
+                    let mut src = *(*this).source.get();
+                    src.close(None);
+                }
                 FileSink::clear_keep_alive_ref(this);
             }
+            settled
         }
     }
 
     /// # Safety
     /// `this` must be the canonical live `*mut FileSink` (see
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
-    pub(crate) unsafe fn on_error(this: *mut FileSink, err: sys::Error) {
+    pub(crate) unsafe fn on_error(this: *mut FileSink, err: sys::Error) -> JsResult<()> {
         bun_core::scoped_log!(FileSink, "onError({:?})", err);
         // The streaming writer follows every `onError` with `close()` →
         // `onClose` (on both platforms), which fires `source.close()` and
@@ -485,12 +495,13 @@ impl FileSink {
                 if let Some(vm) = (*this).js_vm() {
                     if vm.is_inside_deferred_task_queue.get() {
                         (*this).run_pending_later();
-                        return;
+                        return Ok(());
                     }
                 }
 
-                FileSink::run_pending(this);
+                return FileSink::run_pending(this);
             }
+            Ok(())
         }
     }
 
@@ -1458,7 +1469,7 @@ impl FlushPendingTask {
     /// `FileSink` that holds at least the ref taken in `run_pending_later()`
     /// when this task was enqueued (i.e. the canonical heap-allocation pointer
     /// with write+dealloc provenance is recoverable via `from_field_ptr!`).
-    pub(crate) unsafe fn run_from_js_thread(flush_pending: *mut FlushPendingTask) {
+    pub(crate) unsafe fn run_from_js_thread(flush_pending: *mut FlushPendingTask) -> JsResult<()> {
         // SAFETY: caller contract — `flush_pending` points to
         // `FileSink.run_pending_later` of a live FileSink. `Cell::replace`
         // reads-then-clears in one step so only a single raw deref is needed.
@@ -1473,8 +1484,9 @@ impl FlushPendingTask {
             // SAFETY: `this` is the canonical `*mut FileSink` recovered via
             // `from_field_ptr!` from the embedded `run_pending_later` task;
             // `_guard` keeps it live for the call.
-            unsafe { FileSink::run_pending(this) };
+            return unsafe { FileSink::run_pending(this) };
         }
+        Ok(())
     }
 }
 

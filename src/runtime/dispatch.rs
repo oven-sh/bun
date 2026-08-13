@@ -851,8 +851,7 @@ mod run_impls {
         #[inline]
         unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
             // SAFETY: the heap-allocated task; sole owner.
-            unsafe { Self::run_from_js_thread(this) };
-            Ok(())
+            unsafe { Self::run_from_js_thread(this) }
         }
     }
 

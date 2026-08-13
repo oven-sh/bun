@@ -721,6 +721,14 @@ pub(crate) fn fold_loop_js_error(err: bun_core::JsError) {
     unsafe { __bun_fold_loop_js_error(err) }
 }
 
+/// The pipe writers' fold at each call into their parent.
+#[inline(always)]
+pub(crate) fn fold_parent(called: JsResult<()>) {
+    if let Err(err) = called {
+        fold_loop_js_error(err);
+    }
+}
+
 pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 
 // ════════════════════════════════════════════════════════════════════════════

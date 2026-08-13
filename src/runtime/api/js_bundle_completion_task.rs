@@ -862,7 +862,7 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
             .load(core::sync::atomic::Ordering::Acquire)
     },
     enqueue_task_concurrent: |c, task| {
-        // SAFETY: `task` is a fresh non-null `ConcurrentTaskItem` passed through
+        // SAFETY: `task` is a fresh non-null `ConcurrentTask` passed through
         // from the bundler vtable; the queue takes ownership. The VM waits for
         // this build (embedded work) before closing its handle: always queued.
         unsafe {

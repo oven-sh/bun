@@ -1509,11 +1509,11 @@ pub mod js_bundler {
 
             // Notify the *bundler thread* about the deferral. This will
             // decrement the pending item counter and increment the deferred
-            // counter. Must land on `parse_task.ctx.loop()` (the loop running
-            // BundleV2), which is distinct from `js_loop_for_plugins()` (the
-            // plugin host's JS loop) when `Bun.build` runs the bundler on its
-            // own Mini event loop.
-            // SAFETY: parse_task.ctx and bv2 are valid backrefs; `r#loop()`
+            // counter. Must land on `parse_task.ctx`'s `r#loop()` (the loop
+            // running BundleV2), which is distinct from the
+            // `enqueue_on_js_loop_for_plugins` target (the plugin host's JS loop)
+            // when `Bun.build` runs the bundler on its own Mini event loop.
+            // SAFETY: `parse_task.ctx` and `bv2` are valid backrefs; `r#loop()`
             // points at a live `AnyEventLoop` owned by the bundle thread /
             // runtime for the duration of the bundle.
             unsafe {
@@ -1560,7 +1560,7 @@ pub mod js_bundler {
     fn on_notify_defer_mini_wrap(load: *mut Load, ctx: *mut BundleV2<'static>) {
         // SAFETY: callback contract — `load` was passed as the `Context` arg to
         // `enqueue_task_concurrent_with_extra_ctx`; `ctx` is the bundle-thread
-        // `BundleV2` backref the mini loop's tick supplies as `ParentContext`.
+        // `BundleV2` backref the mini loop's tick supplies as `extra`.
         BundleV2::on_notify_defer_mini(unsafe { &mut *load }, unsafe { &mut *ctx });
     }
 

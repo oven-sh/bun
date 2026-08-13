@@ -1531,7 +1531,7 @@ impl Interpreter {
                 }
 
                 if let Some(worker_ptr) = vm.worker {
-                    // SAFETY: `vm.worker` is set in `VirtualMachine::initWorker`
+                    // SAFETY: `vm.worker` is set in `VirtualMachine::init_worker`
                     // to a live `*WebWorker` for the worker's lifetime.
                     let worker = unsafe { &*worker_ptr.cast::<bun_jsc::web_worker::WebWorker>() };
                     let argv = worker.argv();

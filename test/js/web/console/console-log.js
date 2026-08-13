@@ -270,3 +270,13 @@ console.log("Hello %%i %i", 5, 6);
 
 // doesn't go out of bounds when printing
 console.log("%%d", 1);
+
+// enumerable: false properties are hidden, matching Node (issue #8316)
+const explicitEnumerable = { a: 1, b: 2 };
+Object.defineProperty(explicitEnumerable, "b", { enumerable: false });
+console.log(explicitEnumerable);
+
+// same check, through the sorted/ordered property-walk path
+// (Bun.inspect({ sorted: true }), console.table, and the test runner's
+// toEqual/snapshot diff printer all go through this separate code path)
+console.log(Bun.inspect(explicitEnumerable, { sorted: true }));

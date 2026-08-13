@@ -212,6 +212,7 @@ pub enum PollTag {
     ParentDeathWatchdog,
     LifecycleScriptSubprocessOutputReader,
     MemoryPressure,
+    DnsNetdQuery,
 }
 
 /// Compatibility module — call sites in `bun_runtime`/`bun_install` still spell
@@ -235,6 +236,7 @@ pub mod poll_tag {
     pub const LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER: PollTag =
         PollTag::LifecycleScriptSubprocessOutputReader;
     pub const MEMORY_PRESSURE: PollTag = PollTag::MemoryPressure;
+    pub const DNS_NETD_QUERY: PollTag = PollTag::DnsNetdQuery;
 }
 
 #[derive(Copy, Clone)]

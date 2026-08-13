@@ -378,9 +378,7 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
     RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(globalObject, thenResult));
 }
 
-// Builds `(function (<params>) {<body>\n})`; *outOffset is the body's offset. The body shares the
-// wrapper's line on purpose: JSC clamps a source's first line to 1, so a wrapper line cannot be
-// compensated for when lineOffset is 0.
+// The body deliberately shares the wrapper's line: JSC clamps a source's first line to 1, so a wrapper line could not be compensated for at lineOffset 0.
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset)
 {
     // How we stringify functions is important for creating anonymous function expressions

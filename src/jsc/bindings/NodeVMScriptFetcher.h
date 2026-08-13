@@ -42,8 +42,7 @@ public:
         });
     }
 
-    // compileFunction's program and the length of the `(function (...) {` wrapper on its first line.
-    // Keyed by provider: eval() and new Function() code inherits this fetcher but has no wrapper.
+    // Keyed by provider because eval() and new Function() code inherits this fetcher without the wrapper.
     void setWrapper(JSC::SourceProvider& provider, unsigned prefixLength)
     {
         m_wrapperSourceID = provider.asID();

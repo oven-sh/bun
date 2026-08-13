@@ -2090,6 +2090,19 @@ fn parse_data_loader<'a>(
     });
 }
 
+/// The `text` and `md` loaders expose the file to JS as a string, so they decode
+/// it the way `Bun.file().text()` / `TextDecoder` do: ill-formed UTF-8 becomes
+/// U+FFFD. The printer requires `E::String` bytes to be well-formed WTF-8; fed
+/// raw file bytes it drops the bytes after a bad lead byte and passes stray
+/// continuation bytes through as Latin-1 (or verbatim into `bun build` output).
+/// Well-formed files are returned as-is; a repaired copy lives in `arena`.
+pub(crate) fn decode_utf8_file_contents<'a>(contents: &'a [u8], arena: &'a Arena) -> &'a [u8] {
+    match strings::to_well_formed_utf8_alloc(contents) {
+        None => contents,
+        Some(well_formed) => arena.alloc_slice_copy(&well_formed),
+    }
+}
+
 #[cold]
 #[inline(never)]
 fn parse_text_loader<'a>(
@@ -2099,7 +2112,7 @@ fn parse_text_loader<'a>(
     arena: &'a Arena,
 ) -> Option<ParseResult<'a>> {
     let expr = bun_ast::Expr::init(
-        bun_ast::E::EString::init(&source.contents),
+        bun_ast::E::EString::init(decode_utf8_file_contents(&source.contents, arena)),
         bun_ast::Loc::EMPTY,
     );
     let stmt = bun_ast::Stmt::alloc(
@@ -2139,7 +2152,8 @@ fn parse_md_loader<'a>(
     arena: &'a Arena,
     log: &mut bun_ast::Log,
 ) -> Option<ParseResult<'a>> {
-    let html: &'static [u8] = match bun_md::root::render_to_html(&source.contents) {
+    let markdown = decode_utf8_file_contents(&source.contents, arena);
+    let html: &'static [u8] = match bun_md::root::render_to_html(markdown) {
         // The rendered HTML is allocated via
         // `arena` (the per-parse arena), so it is freed with the
         // arena. Arena-copy the heap `Box<[u8]>` and let it drop;

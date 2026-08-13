@@ -2644,6 +2644,33 @@ pub fn to_utf16_alloc(
     Ok(Some(out))
 }
 
+/// Decode `bytes` as UTF-8 and re-encode it: each ill-formed subsequence becomes
+/// one U+FFFD, well-formed sequences are copied through byte for byte. Uses the
+/// same WebKit decoder as [`to_utf16_alloc`] / `TextDecoder`, so the replacement
+/// characters land where `Bun.file().text()` would put them. Returns `None` when
+/// `bytes` is already well-formed UTF-8 so callers can keep using the input.
+pub fn to_well_formed_utf8_alloc(bytes: &[u8]) -> Option<Vec<u8>> {
+    if is_valid_utf8(bytes) {
+        return None;
+    }
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut remaining = bytes;
+    while let Some(i) = first_non_ascii_usize(remaining) {
+        out.extend_from_slice(&remaining[..i]);
+        remaining = &remaining[i..];
+        let replacement = unicode_draft::convert_utf8_bytes_into_utf16(remaining);
+        let len = (replacement.len as usize).max(1);
+        if replacement.fail {
+            out.extend_from_slice(b"\xEF\xBF\xBD");
+        } else {
+            out.extend_from_slice(&remaining[..len]);
+        }
+        remaining = &remaining[len..];
+    }
+    out.extend_from_slice(remaining);
+    Some(out)
+}
+
 /// WTF-8 → UTF-16LE iff `bytes` contains any non-ASCII byte; pure-ASCII inputs return `None`.
 pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
     first_non_ascii(bytes)?;
@@ -2753,5 +2780,47 @@ mod tests {
         assert_eq!(out, &[0xD800][..]);
         let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xC3\xA9\xF0\x9F\x98\x80");
         assert_eq!(out, &[0x00E9, 0xD83D, 0xDE00][..]);
+    }
+
+    #[test]
+    fn to_well_formed_utf8_alloc_keeps_well_formed_input() {
+        assert_eq!(super::to_well_formed_utf8_alloc(b""), None);
+        assert_eq!(super::to_well_formed_utf8_alloc(b"plain ascii\r\n\0"), None);
+        assert_eq!(
+            super::to_well_formed_utf8_alloc(b"\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80\xEF\xBF\xBD"),
+            None
+        );
+    }
+
+    #[test]
+    fn to_well_formed_utf8_alloc_replaces_each_maximal_subpart() {
+        const R: &[u8] = b"\xEF\xBF\xBD";
+        let fixed = |input: &[u8]| super::to_well_formed_utf8_alloc(input).unwrap();
+        let cat = |parts: &[&[u8]]| parts.concat();
+
+        // A bad lead byte must not swallow the ASCII that follows it.
+        assert_eq!(fixed(b"\xE2AB"), cat(&[R, b"AB"]));
+        assert_eq!(fixed(b"\xF5A\xFFB"), cat(&[R, b"A", R, b"B"]));
+        // Lone continuation byte and invalid lead bytes: one U+FFFD per byte.
+        assert_eq!(fixed(b"\x80A"), cat(&[R, b"A"]));
+        assert_eq!(fixed(b"\xC0\xAFA"), cat(&[R, R, b"A"]));
+        assert_eq!(fixed(b"\xC1\xBFA"), cat(&[R, R, b"A"]));
+        // Surrogates, overlongs and > U+10FFFF reject at the second byte, so the
+        // lead byte and each continuation byte are replaced separately.
+        assert_eq!(fixed(b"\xED\xA0\x80A"), cat(&[R, R, R, b"A"]));
+        assert_eq!(fixed(b"\xE0\x80\x80A"), cat(&[R, R, R, b"A"]));
+        assert_eq!(fixed(b"\xF0\x80\x80\x80A"), cat(&[R, R, R, R, b"A"]));
+        assert_eq!(fixed(b"\xF4\x90\x80\x80A"), cat(&[R, R, R, R, b"A"]));
+        // A well-formed prefix of a longer sequence is one maximal subpart.
+        assert_eq!(fixed(b"\xE2\x82A"), cat(&[R, b"A"]));
+        assert_eq!(fixed(b"\xF0\x9FA"), cat(&[R, b"A"]));
+        assert_eq!(fixed(b"\xF0\x9F\x98A"), cat(&[R, b"A"]));
+        assert_eq!(fixed(b"A\xE2"), cat(&[b"A", R]));
+        assert_eq!(fixed(b"A\xE2\x82"), cat(&[b"A", R]));
+        // Well-formed sequences next to the bad one are copied through unchanged.
+        assert_eq!(
+            fixed(b"a\xC3\xA9\xFF\xF0\x9F\x98\x80z"),
+            cat(&[b"a\xC3\xA9", R, b"\xF0\x9F\x98\x80z"])
+        );
     }
 }

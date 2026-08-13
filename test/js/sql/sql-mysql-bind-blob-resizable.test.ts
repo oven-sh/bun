@@ -17,7 +17,11 @@ const fixture = path.join(import.meta.dir, "sql-mysql-bind-blob-resizable.fixtur
 // the local mariadb through its unix socket as root (no TCP user configured).
 const socketCandidates = ["/var/run/mysqld/mysqld.sock", "/run/mysqld/mysqld.sock", "/tmp/mysql.sock"];
 function mysqlEnv(): Record<string, string> | null {
-  if (process.env.MYSQL_URL) return { MYSQL_URL: process.env.MYSQL_URL };
+  if (process.env.MYSQL_URL) {
+    const env: Record<string, string> = { MYSQL_URL: process.env.MYSQL_URL };
+    if (process.env.CA_PATH) env.CA_PATH = process.env.CA_PATH;
+    return env;
+  }
   const sock = socketCandidates.find(p => existsSync(p));
   return sock ? { MYSQL_SOCKET: sock } : null;
 }

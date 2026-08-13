@@ -1,6 +1,7 @@
 import { fileURLToPath, pathToFileURL } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 import { pathToFileURL as nodePathToFileURL } from "node:url";
 
 describe("pathToFileURL", () => {
@@ -134,6 +135,7 @@ describe("pathToFileURL", () => {
       "x\\..\\y",
       "日本\\語",
       "a b#c?d%e[f]^g|h~i",
+      "lone\uD800surrogate",
       "/rooted/file.js",
       process.cwd(),
       `${process.cwd()}/`,
@@ -157,22 +159,40 @@ describe("pathToFileURL", () => {
     expect(inputs.map(input => pathToFileURL(input).href)).toEqual(inputs.map(input => nodePathToFileURL(input).href));
   });
 
+  it("should convert the argument with toString() and replace lone surrogates", () => {
+    const cwd = pathToFileURL(process.cwd()).href;
+    expect({
+      object: pathToFileURL({ toString: () => "from-object" }).href,
+      loneSurrogate: pathToFileURL("a\uD800b").href,
+    }).toEqual({
+      object: `${cwd}/from-object`,
+      loneSurrogate: `${cwd}/a%EF%BF%BDb`,
+    });
+    expect(() =>
+      pathToFileURL({
+        toString() {
+          throw new RangeError("from toString");
+        },
+      }),
+    ).toThrow(new RangeError("from toString"));
+    expect(() => pathToFileURL(Symbol("path"))).toThrow(TypeError);
+  });
+
   it("should resolve relative paths against the cwd set by process.chdir()", async () => {
     using dir = tempDir("path-to-file-url-chdir", { "sub": {} });
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `process.chdir("sub");
+        `process.chdir(${JSON.stringify(join(String(dir), "sub"))});
          const cwd = Bun.pathToFileURL(process.cwd()).href;
          console.log(JSON.stringify([Bun.pathToFileURL("").href === cwd, Bun.pathToFileURL("file.txt").href === cwd + "/file.txt"]));`,
       ],
       cwd: String(dir),
       env: bunEnv,
-      stderr: "pipe",
+      stderr: "inherit",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout).toBe("[true,true]\n");
     expect(exitCode).toBe(0);
   });

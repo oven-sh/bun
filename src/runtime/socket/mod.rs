@@ -128,15 +128,25 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
     const HAS_ON_OPEN: bool = true;
 
     #[inline]
-    fn on_open(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_open(
+        this: bun_ptr::ThisPtr<Self>,
+        s: bun_uws::NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
         NewSocket::on_open(this, s)
     }
     #[inline]
-    fn on_data(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>, data: &[u8]) -> bun_jsc::JsResult<()> {
+    fn on_data(
+        this: bun_ptr::ThisPtr<Self>,
+        s: bun_uws::NewSocketHandler<SSL>,
+        data: &[u8],
+    ) -> bun_jsc::JsResult<()> {
         NewSocket::on_data(this, s, data)
     }
     #[inline]
-    fn on_writable(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_writable(
+        this: bun_ptr::ThisPtr<Self>,
+        s: bun_uws::NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
         NewSocket::on_writable(this, s)
     }
     #[inline]
@@ -154,11 +164,17 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         )
     }
     #[inline]
-    fn on_timeout(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_timeout(
+        this: bun_ptr::ThisPtr<Self>,
+        s: bun_uws::NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
         NewSocket::on_timeout(this, s)
     }
     #[inline]
-    fn on_end(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_end(
+        this: bun_ptr::ThisPtr<Self>,
+        s: bun_uws::NewSocketHandler<SSL>,
+    ) -> bun_jsc::JsResult<()> {
         NewSocket::on_end(this, s)
     }
     #[inline]

@@ -862,7 +862,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `&mut self` across that call is aliasing UB and lets LLVM cache those
     /// fields and dead-store the re-entrant write. `ThisPtr` derefs yield a
     /// short-lived shared borrow per access; none span `callback.call`.
-    pub(crate) fn on_writable(this: bun_ptr::ThisPtr<Self>, _socket: SocketHandler<SSL>) -> JsResult<()> {
+    pub(crate) fn on_writable(
+        this: bun_ptr::ThisPtr<Self>,
+        _socket: SocketHandler<SSL>,
+    ) -> JsResult<()> {
         jsc::mark_binding!();
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
@@ -948,7 +951,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
-    pub(crate) fn on_timeout(this: bun_ptr::ThisPtr<Self>, _socket: SocketHandler<SSL>) -> JsResult<()> {
+    pub(crate) fn on_timeout(
+        this: bun_ptr::ThisPtr<Self>,
+        _socket: SocketHandler<SSL>,
+    ) -> JsResult<()> {
         jsc::mark_binding!();
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
@@ -1362,7 +1368,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`:
     /// `resolve_promise`/`callback.call` re-enter JS which can mutate this
     /// socket via `m_ptr`.
-    pub(crate) fn on_open(this: bun_ptr::ThisPtr<Self>, socket: SocketHandler<SSL>) -> JsResult<()> {
+    pub(crate) fn on_open(
+        this: bun_ptr::ThisPtr<Self>,
+        socket: SocketHandler<SSL>,
+    ) -> JsResult<()> {
         let this_ptr = this.as_ptr();
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
@@ -1561,8 +1570,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                 let drain_callback = handlers.on_writable();
                 if !drain_callback.is_empty() {
                     if let Err(err) = drain_callback.call(&global, this_value, &[this_value]) {
-                        handlers
-                            .call_error_handler(this_value, &[this_value, global.take_error(err)])?;
+                        handlers.call_error_handler(
+                            this_value,
+                            &[this_value, global.take_error(err)],
+                        )?;
                     }
                 }
             }
@@ -1607,7 +1618,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
-    pub(crate) fn on_end(this: bun_ptr::ThisPtr<Self>, _socket: SocketHandler<SSL>) -> JsResult<()> {
+    pub(crate) fn on_end(
+        this: bun_ptr::ThisPtr<Self>,
+        _socket: SocketHandler<SSL>,
+    ) -> JsResult<()> {
         jsc::mark_binding!();
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
@@ -2118,7 +2132,11 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
-    pub(crate) fn on_data(this: bun_ptr::ThisPtr<Self>, s: SocketHandler<SSL>, data: &[u8]) -> JsResult<()> {
+    pub(crate) fn on_data(
+        this: bun_ptr::ThisPtr<Self>,
+        s: SocketHandler<SSL>,
+        data: &[u8],
+    ) -> JsResult<()> {
         jsc::mark_binding!();
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
@@ -4320,7 +4338,12 @@ impl DuplexUpgradeContext {
         unsafe {
             let socket = Self::duplex_socket(this);
             if let Some(tls) = Self::tls_this_ptr(this) {
-                super::uws_handlers::fold(TLSSocket::on_handshake(tls, socket, success as i32, ssl_error));
+                super::uws_handlers::fold(TLSSocket::on_handshake(
+                    tls,
+                    socket,
+                    success as i32,
+                    ssl_error,
+                ));
             }
         }
     }
@@ -4382,7 +4405,11 @@ impl DuplexUpgradeContext {
                 // `upgrade` field, borrow ends at `;`.
                 unsafe { (*this).upgrade.teardown() };
                 let p = tls.into_this_ptr();
-                super::uws_handlers::fold(TLSSocket::handle_connect_error(p, sys::SystemErrno::ECONNREFUSED as c_int, 0));
+                super::uws_handlers::fold(TLSSocket::handle_connect_error(
+                    p,
+                    sys::SystemErrno::ECONNREFUSED as c_int,
+                    0,
+                ));
             }
         }
     }

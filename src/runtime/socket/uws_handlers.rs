@@ -205,7 +205,11 @@ where
         let Some(this) = *ConnectingSocket::opaque_mut(c).ext::<Option<ThisPtr<T>>>() else {
             return;
         };
-        fold(T::on_connect_error(this, NewSocketHandler::<SSL>::from_connecting(c), code));
+        fold(T::on_connect_error(
+            this,
+            NewSocketHandler::<SSL>::from_connecting(c),
+            code,
+        ));
     }
     fn on_handshake(
         ext: &mut Self::Ext,
@@ -233,7 +237,12 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_upgrade_client::NewHttp
         Self::handle_writable(this, s);
         Ok(())
     }
-    fn on_close(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, code: i32, reason: *mut c_void) -> JsResult<()> {
+    fn on_close(
+        this: ThisPtr<Self>,
+        s: NewSocketHandler<SSL>,
+        code: i32,
+        reason: *mut c_void,
+    ) -> JsResult<()> {
         Self::handle_close(this, s, code, reason);
         Ok(())
     }
@@ -276,7 +285,12 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
         this.handle_writable(s);
         Ok(())
     }
-    fn on_close(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, code: i32, reason: *mut c_void) -> JsResult<()> {
+    fn on_close(
+        this: ThisPtr<Self>,
+        s: NewSocketHandler<SSL>,
+        code: i32,
+        reason: *mut c_void,
+    ) -> JsResult<()> {
         let _guard = this.ref_guard();
         this.handle_close(s, code, reason);
         Ok(())
@@ -481,7 +495,12 @@ where
     fn on_handshake_no_ext(s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
         if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<ThisPtr<api::NewSocket<SSL>>>>()
         {
-            fold(api::NewSocket::on_handshake(ns, wrap::<SSL>(s), ok as i32, err));
+            fold(api::NewSocket::on_handshake(
+                ns,
+                wrap::<SSL>(s),
+                ok as i32,
+                err,
+            ));
         }
     }
 }

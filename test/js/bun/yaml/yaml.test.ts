@@ -2787,6 +2787,21 @@ config:
       test("an explicit !!merge tag merges regardless of style", () => {
         expect(YAML.parse("base: &b {a: 1}\n!!merge <<: *b\nc: 3")).toEqual({ base: { a: 1 }, a: 1, c: 3 });
         expect(YAML.parse('base: &b {a: 1}\n!!merge "<<": *b\nc: 3')).toEqual({ base: { a: 1 }, a: 1, c: 3 });
+        // flow mapping
+        expect(YAML.parse('base: &b {a: 1}\nd: {!!merge "<<": *b, c: 3}')).toEqual({
+          base: { a: 1 },
+          d: { a: 1, c: 3 },
+        });
+        // block explicit key
+        expect(YAML.parse('base: &b {a: 1}\nd:\n  ? !!merge "<<"\n  : *b\n  c: 3')).toEqual({
+          base: { a: 1 },
+          d: { a: 1, c: 3 },
+        });
+        // flow sequence pairs
+        expect(YAML.parse('base: &b {a: 1}\nd: [!!merge "<<": *b, ? !!merge "<<" : *b]')).toEqual({
+          base: { a: 1 },
+          d: [{ a: 1 }, { a: 1 }],
+        });
       });
 
       test('a "<<" property round-trips through stringify', () => {

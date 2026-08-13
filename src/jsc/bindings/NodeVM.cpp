@@ -1964,9 +1964,6 @@ bool BaseVMOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
             this->filename = "evalmachine.<anonymous>"_s;
         }
 
-        // Node validateInt32()s both offsets. Checking the value (not
-        // isInt32()/isAnyInt(), which test how JSC boxed it) is what lets
-        // -0 and integral doubles such as 1.5 + 1.5 through, as in Node.
         auto lineOffsetOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "lineOffset"_s));
         RETURN_IF_EXCEPTION(scope, false);
         if (lineOffsetOpt && !lineOffsetOpt.isUndefined()) {

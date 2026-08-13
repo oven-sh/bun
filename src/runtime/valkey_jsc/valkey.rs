@@ -37,8 +37,9 @@ pub struct ConnectionFlags {
     /// or `fail()`, so it overlaps `Disconnected` and `Connecting`; that is why
     /// it is not a `Status` variant.
     pub(crate) is_reconnecting: bool,
-    /// Sticky until `on_open`/`connect()`; the socket is closed when it is set,
-    /// so it overlaps `Disconnected`.
+    /// Sticky until `on_open`/`connect()`. `fail()` closes the socket with a
+    /// fast shutdown, so by the time it returns the close callback has run on
+    /// TCP and TLS alike and this overlaps `Disconnected`.
     pub(crate) failed: bool,
     pub(crate) enable_auto_pipelining: bool,
     pub(crate) finalized: bool,
@@ -615,6 +616,9 @@ impl ValkeyClient {
             jsvalue,
         );
 
+        // Deliberate close rather than a retry, even with auto reconnect on: an
+        // accepted HELLO resets retry_attempts, so a server that keeps failing
+        // us after the handshake would otherwise be redialed forever.
         self.flags.is_manually_closed = true;
         self.close();
         val
@@ -640,7 +644,11 @@ impl ValkeyClient {
         // and run the close path ourselves afterwards.
         let is_semi_socket = matches!(socket.socket(), uws::InternalSocket::Connected(_))
             && !socket.is_established();
-        socket.close(uws::CloseCode::Normal);
+        // Still a FIN on TCP. On TLS, `Normal` would send close_notify and hold
+        // the socket (and its close callback) until the peer answers, which a
+        // peer that stopped responding never does; everything after this
+        // expects the close callback to have run by the time close() returns.
+        socket.close(uws::CloseCode::FastShutdown);
         if is_semi_socket {
             self.status = Status::Disconnected;
             let _ = self.on_close();

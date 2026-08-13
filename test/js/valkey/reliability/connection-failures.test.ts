@@ -1,8 +1,9 @@
 import { RedisClient } from "bun";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
 import net from "net";
 import path from "path";
+import tls from "tls";
 import { DEFAULT_REDIS_OPTIONS, DEFAULT_REDIS_URL, delay, isEnabled } from "../test-utils";
 
 /**
@@ -447,9 +448,12 @@ describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
 describe("Valkey: Recovering After fail()", () => {
   // Answers the chunk carrying HELLO with `+OK` and the one carrying PING with
   // `+PONG` unless `replies` says otherwise for that connection.
-  function helloServer(replies: Partial<Record<"HELLO" | "PING", (connection: number) => string>> = {}) {
+  function helloServer(
+    replies: Partial<Record<"HELLO" | "PING", (connection: number) => string>> = {},
+    { secure = false } = {},
+  ) {
     let connections = 0;
-    const server = net.createServer(socket => {
+    const onConnection = (socket: net.Socket) => {
       connections += 1;
       const connection = connections;
       socket.on("data", chunk => {
@@ -458,7 +462,10 @@ describe("Valkey: Recovering After fail()", () => {
         if (text.includes("PING")) socket.write(replies.PING?.(connection) ?? "+PONG\r\n");
       });
       socket.on("error", () => {});
-    });
+    };
+    const server: net.Server = secure
+      ? tls.createServer({ key: tlsCert.key, cert: tlsCert.cert }, onConnection)
+      : net.createServer(onConnection);
     return {
       server,
       get connections() {
@@ -488,28 +495,41 @@ describe("Valkey: Recovering After fail()", () => {
     return promise;
   }
 
-  test("a failure while connected closes the socket, fires onclose, and connect() reconnects", async () => {
-    // 0x01 is not a RESP type byte, so the first connection fails after the
-    // handshake, on the same path as an idle timeout or any other protocol error.
-    const fake = helloServer({ PING: connection => (connection === 1 ? "\x01\r\n" : "+PONG\r\n") });
-    const port = await fake.listen();
-    const closed = Promise.withResolvers<Error>();
-    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
-    try {
-      client.onclose = err => closed.resolve(err);
-      await client.connect();
-      expect(client.connected).toBe(true);
-      await expect(client.ping()).rejects.toMatchObject({ code: "ERR_REDIS_INVALID_RESPONSE_TYPE" });
-      expect(await closed.promise).toBeInstanceOf(Error);
-      expect(client.connected).toBe(false);
-      await client.connect();
-      expect(await client.ping()).toBe("PONG");
-      expect(fake.connections).toBe(2);
-    } finally {
-      client.close();
-      fake.server.close();
-    }
-  });
+  // A failure after the handshake closes the connection for good even though
+  // auto reconnect is left on here: an accepted HELLO resets the retry counter,
+  // so retrying a server that keeps failing us after it would never end.
+  // onclose only fires on that terminal path, so it firing is the assertion.
+  test.each([
+    ["redis", false],
+    ["rediss", true],
+  ])(
+    "a failure while connected over %s:// closes the socket, fires onclose, and connect() reconnects",
+    async (scheme, secure) => {
+      // 0x01 is not a RESP type byte, so the first connection fails after the
+      // handshake, on the same path as an idle timeout or any other protocol error.
+      const fake = helloServer({ PING: connection => (connection === 1 ? "\x01\r\n" : "+PONG\r\n") }, { secure });
+      const port = await fake.listen();
+      const closed = Promise.withResolvers<Error>();
+      const client = new RedisClient(`${scheme}://127.0.0.1:${port}`, secure ? { tls: { ca: tlsCert.cert } } : {});
+      try {
+        client.onclose = err => closed.resolve(err);
+        await client.connect();
+        expect(client.connected).toBe(true);
+        await expect(client.ping()).rejects.toMatchObject({ code: "ERR_REDIS_INVALID_RESPONSE_TYPE" });
+        // Already closed when the rejection is observed. Over TLS a graceful
+        // close would still be waiting for the peer's close_notify at this point.
+        expect(client.connected).toBe(false);
+        expect(await closed.promise).toBeInstanceOf(Error);
+        expect(fake.connections).toBe(1);
+        await client.connect();
+        expect(await client.ping()).toBe("PONG");
+        expect(fake.connections).toBe(2);
+      } finally {
+        client.close();
+        fake.server.close();
+      }
+    },
+  );
 
   test("a connect() issued from onclose after a refused connection rejects instead of hanging", async () => {
     // Nothing listens on the port a just-closed listener used.

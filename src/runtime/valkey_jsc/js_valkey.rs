@@ -1188,29 +1188,22 @@ impl JSValkeyClient {
         }
     }
 
-    /// `ValkeyClient::on_close()` is otherwise only reached from a socket's
-    /// close or connect-error callback. Run it for a dial that failed before
-    /// there was a socket, so the connect() promise, `onclose`, the retry
-    /// policy and the poll ref are handled the same way. It runs from the
-    /// event loop like those callbacks do: `onclose` may call connect(), and
-    /// if that dial fails the same way it must not recurse into here.
-    /// `on_close()` releases the ref a socket would have held, so the task
-    /// takes one for it to release.
+    /// Runs `ValkeyClient::on_close()` for a dial that failed before there was
+    /// a socket, so the connect() promise, `onclose`, the retry policy and the
+    /// poll ref are handled as for a dial that failed asynchronously. Deferred
+    /// because `onclose` may call connect(), and a dial that fails the same way
+    /// from in there would otherwise re-enter `on_close()` on the same stack.
     fn close_without_socket_next_tick(&self) {
-        fn run(this: *mut JSValkeyClient) -> bun_event_loop::JsResult<()> {
-            // SAFETY: adopts the ref taken at the enqueue site, which kept
-            // `this` alive until now and is released when this scope ends.
-            let _task_ref = unsafe { ScopedRef::adopt(this) };
-            // SAFETY: live per the ref above; tasks run on the JS thread.
-            let this = unsafe { &*this };
-            this.ref_();
-            this.client_mut().status = valkey::Status::Disconnected;
-            let result = this.client_mut().on_close();
-            this.update_poll_ref();
-            result.map_err(Into::into)
-        }
+        self.enqueue_deferred_close(DeferredClose::WithoutSocket);
+    }
+
+    fn enqueue_deferred_close(&self, what: DeferredClose) {
+        // Released by the task, whether it runs or the VM tears down first.
         self.ref_();
-        let task = jsc::ManagedTask::ManagedTask::new(self.as_ctx_ptr(), run);
+        let task = jsc::Task::from_boxed(Box::new(ValkeyDeferredClose {
+            ctx: self.as_ctx_ptr(),
+            what,
+        }));
         // SAFETY: VM-owned event loop pointer; uniquely accessed on the JS thread.
         unsafe {
             (*self.vm().event_loop()).enqueue_task(task);
@@ -1402,10 +1395,10 @@ impl JSValkeyClient {
     // Callback for when Valkey client needs to reconnect
     pub(crate) fn on_valkey_reconnect(&self) {
         // SAFETY: adopts connect()'s socket keep-alive ref for the just-closed
-        // socket (or the one `close_without_socket_next_tick()` took in its
-        // place). Reached only from `ValkeyClient::on_close()`'s reconnect
-        // branch, which never calls `on_valkey_close()`, so this scope is the
-        // sole releaser. The caller holds its own scoped ref, so count > 0.
+        // socket (or the one `ValkeyDeferredClose::run` took in its place).
+        // Reached only from `ValkeyClient::on_close()`'s reconnect branch,
+        // which never calls `on_valkey_close()`, so this scope is the sole
+        // releaser. The caller holds its own scoped ref, so count > 0.
         let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
 
         // This timer was bounding the attempt that just ended; left armed it
@@ -1421,8 +1414,8 @@ impl JSValkeyClient {
         let global_object = self.global_object;
 
         // SAFETY: adopts connect()'s socket keep-alive ref (or the one
-        // `close_without_socket_next_tick()` took in its place); the caller
-        // holds its own scoped ref so count stays > 0 until this drops.
+        // `ValkeyDeferredClose::run` took in its place); the caller holds its
+        // own scoped ref so count stays > 0 until this drops.
         let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
         let _defer = scopeguard::guard(BackRef::new(self), |p| p.update_poll_ref());
 
@@ -1474,15 +1467,8 @@ impl JSValkeyClient {
             return;
         }
 
-        self.ref_();
         // socket close can potentially call JS so we need to enqueue the deinit
-        let task = jsc::Task::from_boxed(Box::new(ValkeyDeferredClose {
-            ctx: self.as_ctx_ptr(),
-        }));
-        // SAFETY: VM-owned event loop pointer; uniquely accessed on the JS thread.
-        unsafe {
-            (*self.vm().event_loop()).enqueue_task(task);
-        }
+        self.enqueue_deferred_close(DeferredClose::Socket);
     }
 
     pub fn finalize(self: Box<Self>) {
@@ -2091,27 +2077,58 @@ impl Options {
     }
 }
 
+#[derive(Clone, Copy)]
+enum DeferredClose {
+    /// Close the socket the finalized wrapper left behind.
+    Socket,
+    /// Run the close path for a dial that never produced a socket
+    /// (`close_without_socket_next_tick`).
+    WithoutSocket,
+}
+
 pub(crate) struct ValkeyDeferredClose {
-    ctx: *const JSValkeyClient,
+    ctx: *mut JSValkeyClient,
+    what: DeferredClose,
 }
 
 impl ValkeyDeferredClose {
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
     pub(crate) fn run(self: Box<Self>) {
-        let ctx = self.ctx;
-        // SAFETY: single-threaded; intrusive ref taken before enqueue guarantees liveness.
-        unsafe {
-            (*ctx).client_mut().close();
-            JSValkeyClient::deref(ctx.cast_mut());
+        // SAFETY: adopts the ref `enqueue_deferred_close` took, which kept the
+        // client alive until now; released when this scope ends.
+        let _enqueue_ref = unsafe { ScopedRef::adopt(self.ctx) };
+        // SAFETY: live per the ref above; tasks run on the JS thread.
+        let this = unsafe { &*self.ctx };
+        match self.what {
+            DeferredClose::Socket => this.client_mut().close(),
+            DeferredClose::WithoutSocket => {
+                // `on_close()` ends in `on_valkey_close`/`on_valkey_reconnect`,
+                // which release the ref the socket would have held.
+                this.ref_();
+                this.client_mut().status = valkey::Status::Disconnected;
+                let _ = this.client_mut().on_close();
+                this.update_poll_ref();
+            }
         }
     }
 }
 
 impl bun_event_loop::Taskable for ValkeyDeferredClose {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ValkeyDeferredClose;
-    /// The deferred close is script-free bookkeeping; do it.
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — boxed at the enqueue site.
-        unsafe { bun_core::heap::take(this) }.run();
+        let task = unsafe { bun_core::heap::take(this) };
+        match task.what {
+            // Script-free bookkeeping; do it.
+            DeferredClose::Socket => task.run(),
+            // The VM is going away: `on_close()` would run `onclose`, so only
+            // give back what `reconnect()` and the enqueue took.
+            DeferredClose::WithoutSocket => {
+                // SAFETY: as in `run`.
+                let _enqueue_ref = unsafe { ScopedRef::adopt(task.ctx) };
+                // SAFETY: live per the ref above.
+                unsafe { &*task.ctx }.poll_ref.with_mut(|r| r.disable());
+            }
+        }
     }
 }

@@ -1,3 +1,4 @@
+import { heapStats } from "bun:jsc";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 afterEach(() => vi.useRealTimers());
@@ -198,6 +199,78 @@ describe("clearAllTimers", () => {
   });
   test("throws error if fake timers not active", () => {
     expect(() => vi.clearAllTimers()).toThrow("Fake timers are not active");
+  });
+});
+describe("AbortSignal.timeout", () => {
+  const N = 500;
+
+  function liveAbortSignals(): number {
+    Bun.gc(true);
+    Bun.gc(true);
+    return heapStats().objectTypeCounts.AbortSignal ?? 0;
+  }
+
+  // A pending timeout signal with an abort listener is kept alive by the
+  // runtime itself (the listener has to run when the timer fires), so with no
+  // JS reference to them these wrappers live exactly as long as the runtime
+  // believes their timer is still pending. The bounds below leave room for the
+  // odd wrapper that conservative stack scanning keeps alive or lets go of.
+  function leakObservedTimeouts() {
+    for (let i = 0; i < N; i++) {
+      AbortSignal.timeout(1_000_000).addEventListener("abort", () => {});
+    }
+  }
+
+  test("pending signals stay alive while the fake heap holds their timer", () => {
+    vi.useFakeTimers();
+    const before = liveAbortSignals();
+    leakObservedTimeouts();
+    expect(vi.getTimerCount()).toBe(N);
+    expect(liveAbortSignals() - before).toBeGreaterThan(N * 0.9);
+  });
+
+  // useRealTimers() and clearAllTimers() drop the pending fake timers, so these
+  // signals can never abort anymore and nothing should keep them alive. They
+  // used to stay pinned (with their listeners) for the rest of the process.
+  test("useRealTimers() releases the signals whose timers it dropped", () => {
+    const before = liveAbortSignals();
+    vi.useFakeTimers();
+    leakObservedTimeouts();
+    vi.useRealTimers();
+    expect(liveAbortSignals() - before).toBeLessThan(N * 0.1);
+  });
+
+  test("clearAllTimers() releases the signals whose timers it cleared", () => {
+    vi.useFakeTimers();
+    const before = liveAbortSignals();
+    leakObservedTimeouts();
+    vi.clearAllTimers();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(liveAbortSignals() - before).toBeLessThan(N * 0.1);
+  });
+
+  test("a signal the program still holds is left unaborted once its fake timer is dropped", () => {
+    vi.useFakeTimers();
+    const signal = AbortSignal.timeout(1);
+    vi.useRealTimers();
+    const dependent = AbortSignal.any([signal]);
+    signal.addEventListener("abort", () => {});
+    liveAbortSignals();
+    expect({ aborted: signal.aborted, dependentAborted: dependent.aborted }).toEqual({
+      aborted: false,
+      dependentAborted: false,
+    });
+  });
+
+  test("fires through advanceTimersByTime", () => {
+    vi.useFakeTimers();
+    const signal = AbortSignal.timeout(1000);
+    const reasons: string[] = [];
+    signal.addEventListener("abort", () => reasons.push(signal.reason.name));
+    vi.advanceTimersByTime(999);
+    expect({ aborted: signal.aborted, reasons }).toEqual({ aborted: false, reasons: [] });
+    vi.advanceTimersByTime(1);
+    expect({ aborted: signal.aborted, reasons }).toEqual({ aborted: true, reasons: ["TimeoutError"] });
   });
 });
 describe("isFakeTimers", () => {

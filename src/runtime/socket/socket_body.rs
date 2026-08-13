@@ -1695,21 +1695,21 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         if SSL && authorized && !this.acts_as_tls_server() {
             if let Some(ssl_ptr) = this.socket.get().ssl() {
-                let hostname: &[u8] = if let Some(server_name) = this.server_name.get() {
-                    &server_name[..]
-                } else if let Some(super::listener::UnixOrHost::Host { host, .. }) =
-                    this.connection.get()
-                {
-                    &host[..]
-                } else {
-                    b""
+                let hostname: &[u8] = match this.server_name.get() {
+                    Some(server_name) if !server_name.is_empty() => &server_name[..],
+                    _ => match this.connection.get() {
+                        Some(super::listener::UnixOrHost::Host { host, .. })
+                            if !host.is_empty() =>
+                        {
+                            &host[..]
+                        }
+                        _ => b"localhost",
+                    },
                 };
-                if !hostname.is_empty()
-                    && !bun_boringssl::check_server_identity(
-                        boringssl_sys::SSL::opaque_mut(ssl_ptr),
-                        hostname,
-                    )
-                {
+                if !bun_boringssl::check_server_identity(
+                    boringssl_sys::SSL::opaque_mut(ssl_ptr),
+                    hostname,
+                ) {
                     authorized = false;
                     hostname_mismatch = true;
                     let mut message =

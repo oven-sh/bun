@@ -67,6 +67,7 @@ impl PackageManifestMap {
         self.by_name_hash(
             ctx,
             scope,
+            name,
             StringBuilder::string_hash(name),
             cache_behavior,
             needs_extended_manifest,
@@ -86,6 +87,7 @@ impl PackageManifestMap {
         &mut self,
         ctx: DiskCacheCtx,
         scope: &npm::registry::Scope,
+        name: &[u8],
         name_hash: PackageNameHash,
         cache_behavior: CacheBehavior,
         needs_extended_manifest: bool,
@@ -93,6 +95,7 @@ impl PackageManifestMap {
         self.by_name_hash_allow_expired(
             ctx,
             scope,
+            name,
             name_hash,
             None,
             cache_behavior,
@@ -107,11 +110,12 @@ impl PackageManifestMap {
     /// `pm.manifests` field.
     pub(crate) fn by_name_hash_in_memory(
         &mut self,
+        name: &[u8],
         name_hash: PackageNameHash,
     ) -> Option<&mut npm::PackageManifest> {
         match self.hash_map.get_mut(&name_hash)? {
-            Value::Manifest(m) => Some(m),
-            Value::Expired(_) | Value::NotFound => None,
+            Value::Manifest(m) if m.name() == name => Some(m),
+            _ => None,
         }
     }
 
@@ -127,6 +131,7 @@ impl PackageManifestMap {
         self.by_name_hash_allow_expired(
             ctx,
             scope,
+            name,
             StringBuilder::string_hash(name),
             is_expired,
             cache_behavior,
@@ -143,6 +148,7 @@ impl PackageManifestMap {
         &mut self,
         ctx: DiskCacheCtx,
         scope: &npm::registry::Scope,
+        name: &[u8],
         name_hash: PackageNameHash,
         is_expired: Option<&mut bool>,
         cache_behavior: CacheBehavior,
@@ -151,8 +157,8 @@ impl PackageManifestMap {
         if cache_behavior == CacheBehavior::LoadFromMemory {
             let entry = self.hash_map.get_mut(&name_hash)?;
             return match entry {
-                Value::Manifest(m) => Some(m),
-                Value::Expired(m) => {
+                Value::Manifest(m) if m.name() == name => Some(m),
+                Value::Expired(m) if m.name() == name => {
                     if let Some(expiry) = is_expired {
                         *expiry = true;
                         Some(m)
@@ -160,13 +166,18 @@ impl PackageManifestMap {
                         None
                     }
                 }
-                Value::NotFound => None,
+                _ => None,
             };
         }
 
         match self.hash_map.entry(name_hash) {
             Entry::Occupied(occ) => {
                 let value_ptr = occ.into_mut();
+                if let Value::Manifest(m) | Value::Expired(m) = &*value_ptr {
+                    if m.name() != name {
+                        return None;
+                    }
+                }
                 // Compute the demote decision first without holding a borrow
                 // that escapes the fn.
                 let demote = matches!(
@@ -198,7 +209,7 @@ impl PackageManifestMap {
                     // (see `manifest_disk_cache_ctx`).
                     let cache_fd = ctx.cache_directory.expect("cache_directory");
                     if let Some(manifest) = npm::package_manifest::Serializer::load_by_file_id(
-                        scope, cache_fd, name_hash,
+                        scope, cache_fd, name, name_hash,
                     )
                     .ok()
                     .flatten()

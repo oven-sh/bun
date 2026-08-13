@@ -436,6 +436,7 @@ void us_ssl_ctx_set_sni_policy(struct ssl_ctx_st *ctx, int request_cert,
 /* 1 iff the SNI-selected context for this connection demands closing on a
  * client-certificate verification error. */
 int us_socket_server_name_reject_unauthorized(us_socket_r s);
+int us_ssl_ctx_reject_unauthorized(struct ssl_ctx_st *ctx);
 /* Socket-level SNI resolver, for a server-side socket adopted into TLS with no
  * listen socket behind it. Same contract as the listener resolver: an owned
  * SSL_CTX ref or NULL; *abort_handshake 1 = drop silently, 2 = suspend. */

@@ -2,7 +2,7 @@ import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { createSocketPair, socketFaultInjection } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
-import { closeSync } from "fs";
+import { closeSync, readFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -2907,6 +2907,149 @@ Reo=
       await t.echoed.promise;
       expect(t.received.join("")).toBe("hello-from-server\nping");
     });
+
+    const NODE_TLS_FIXTURES = join(import.meta.dir, "..", "..", "node", "tls", "fixtures");
+    const AGENT1_KEY = readFileSync(join(NODE_TLS_FIXTURES, "agent1-key.pem"), "utf8");
+    const AGENT1_CRT = readFileSync(join(NODE_TLS_FIXTURES, "agent1-cert.pem"), "utf8");
+    const CA1_CRT = readFileSync(join(NODE_TLS_FIXTURES, "ca1-cert.pem"), "utf8");
+    const AGENT1_LOCALHOST_MISMATCH =
+      "Hostname/IP does not match certificate's altnames: Host: localhost. is not cert's CN: agent1";
+
+    async function connectOverUnix(prefix: string, clientTls: Record<string, unknown>) {
+      const dir = tempDir(prefix, {});
+      const sock = join(String(dir), "s.sock");
+      const received: string[] = [];
+      const handshake = Promise.withResolvers<{
+        authorizedArg: boolean;
+        authorizedGetter: boolean;
+        callbackError: string | null;
+        callbackCode: string | null;
+        getterError: string | null;
+        getterCode: string | null;
+      }>();
+      const closed = Promise.withResolvers<void>();
+      const echoed = Promise.withResolvers<void>();
+
+      const server = Bun.listen({
+        unix: sock,
+        tls: { key: AGENT1_KEY, cert: AGENT1_CRT },
+        socket: {
+          open() {},
+          handshake(socket) {
+            socket.write("hello-from-server\n");
+          },
+          data(socket, data) {
+            socket.write(data);
+          },
+          close() {},
+          error() {},
+        },
+      });
+
+      let client: Bun.Socket;
+      try {
+        client = await Bun.connect({
+          unix: sock,
+          tls: clientTls as Bun.TLSOptions,
+          socket: {
+            open() {},
+            handshake(socket, authorized, authorizationError) {
+              handshake.resolve({
+                authorizedArg: authorized,
+                authorizedGetter: socket.authorized,
+                callbackError: authorizationError?.message ?? null,
+                callbackCode: (authorizationError as any)?.code ?? null,
+                getterError: socket.getAuthorizationError()?.message ?? null,
+                getterCode: (socket.getAuthorizationError() as any)?.code ?? null,
+              });
+            },
+            data(_socket, data) {
+              received.push(data.toString());
+              if (received.join("").includes("ping")) echoed.resolve();
+            },
+            close() {
+              closed.resolve();
+            },
+            error(_socket, err) {
+              handshake.reject(err);
+              echoed.reject(err);
+            },
+            connectError(_socket, err) {
+              handshake.reject(err);
+              closed.reject(err);
+              echoed.reject(err);
+            },
+          },
+        });
+      } catch (e) {
+        server.stop(true);
+        dir[Symbol.dispose]();
+        throw e;
+      }
+
+      return {
+        server,
+        client,
+        received,
+        handshake,
+        closed,
+        echoed,
+        [Symbol.dispose]() {
+          client.end();
+          server.stop(true);
+          dir[Symbol.dispose]();
+        },
+      };
+    }
+
+    it.skipIf(isWindows)(
+      "verifies the server certificate against localhost over a unix socket when no serverName is given",
+      async () => {
+        using t = await connectOverUnix("uds-tls-identity-reject", { ca: CA1_CRT });
+        expect(await t.handshake.promise).toEqual({
+          authorizedArg: false,
+          authorizedGetter: false,
+          callbackError: AGENT1_LOCALHOST_MISMATCH,
+          callbackCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+          getterError: AGENT1_LOCALHOST_MISMATCH,
+          getterCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+        });
+        await t.closed.promise;
+        expect(t.received).toEqual([]);
+        expect((t.client.getAuthorizationError() as any)?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+
+        using ok = await connectOverUnix("uds-tls-identity-match", { ca: CA1_CRT, serverName: "agent1" });
+        expect(await ok.handshake.promise).toEqual({
+          authorizedArg: true,
+          authorizedGetter: true,
+          callbackError: null,
+          callbackCode: null,
+          getterError: null,
+          getterCode: null,
+        });
+        ok.client.write("ping");
+        await ok.echoed.promise;
+        expect(ok.received.join("")).toBe("hello-from-server\nping");
+      },
+    );
+
+    it.skipIf(isWindows)(
+      "reports authorized=false over a unix socket with rejectUnauthorized: false when the certificate does not name localhost",
+      async () => {
+        using t = await connectOverUnix("uds-tls-identity-keep", { ca: CA1_CRT, rejectUnauthorized: false });
+        expect(await t.handshake.promise).toEqual({
+          authorizedArg: false,
+          authorizedGetter: false,
+          callbackError: AGENT1_LOCALHOST_MISMATCH,
+          callbackCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+          getterError: AGENT1_LOCALHOST_MISMATCH,
+          getterCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+        });
+        t.client.write("ping");
+        await t.echoed.promise;
+        expect(t.received.join("")).toBe("hello-from-server\nping");
+      },
+    );
   });
 
   // https://github.com/oven-sh/bun/issues/33754

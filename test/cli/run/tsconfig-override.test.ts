@@ -285,3 +285,52 @@ describe("bun run --tsconfig-override", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("bun build --tsconfig-override", () => {
+  test("resolves through the override without an fd warning on stderr", async () => {
+    await using dir = tempDir("build-tsconfig-override", {
+      "index.ts": `
+        import { helper } from '@helpers/math';
+        console.log(helper());
+      `,
+      "src/math.ts": `
+        export function helper() {
+          return "bundled through the override";
+        }
+      `,
+      "tsconfig.json": `
+        {
+          "compilerOptions": {
+            "paths": {
+              "@helpers/*": ["./wrong/*"]
+            }
+          }
+        }
+      `,
+      "config/tsconfig.build.json": `
+        {
+          "compilerOptions": {
+            "baseUrl": "..",
+            "paths": {
+              "@helpers/*": ["src/*"]
+            }
+          }
+        }
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--tsconfig-override", "./config/tsconfig.build.json", "./index.ts"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("bundled through the override");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});

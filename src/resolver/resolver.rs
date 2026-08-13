@@ -235,12 +235,6 @@ impl FdExt for ::bun_sys::Fd {
             .map_err(Into::into)
     }
 }
-trait FdZero {
-    const ZERO: ::bun_sys::Fd;
-}
-impl FdZero for ::bun_sys::Fd {
-    const ZERO: ::bun_sys::Fd = ::bun_sys::Fd::INVALID;
-}
 
 use self::bun_paths as ResolvePath;
 use ::bun_ast::import_record as ast;
@@ -6545,7 +6539,7 @@ impl<'a> Resolver<'a> {
                 {
                     fd
                 } else {
-                    FD::ZERO
+                    FD::INVALID
                 };
                 let parsed_tsconfig: Option<*mut TSConfigJSON> =
                     match self.parse_tsconfig(tsconfigpath, dirname_fd) {

@@ -170,21 +170,21 @@ sync_webkit() {
     info "同步 WebKit: ${current:-(none)} → ${webkit_commit:0:12}"
     local fetch_ok=false
     local wk_remote=""
-    # 尝试从 fork (origin=springmin/WebKit) 获取
-    if git fetch --depth=1 origin "$webkit_commit" 2>/dev/null; then
+    # 所有 git 操作必须在 $wk_dir 内执行
+    if (cd "$wk_dir" && git fetch --depth=1 origin "$webkit_commit") 2>/dev/null; then
         fetch_ok=true
         wk_remote="origin"
     # 回退：尝试从 upstream (oven-sh/WebKit) 获取
     else
         warn "origin 中未找到 ${webkit_commit:0:12}，尝试 upstream..."
-        git remote add upstream https://github.com/oven-sh/WebKit.git 2>/dev/null || true
-        if git fetch --depth=1 upstream "$webkit_commit" 2>/dev/null; then
+        (cd "$wk_dir" && git remote add upstream https://github.com/oven-sh/WebKit.git 2>/dev/null || true)
+        if (cd "$wk_dir" && git fetch --depth=1 upstream "$webkit_commit") 2>/dev/null; then
             fetch_ok=true
             wk_remote="upstream"
             # 自动同步到 springmin/WebKit fork，确保下次 CI 也能命中缓存
-            if git remote get-url origin &>/dev/null; then
+            if (cd "$wk_dir" && git remote get-url origin) &>/dev/null; then
                 info "推送到 springmin/WebKit fork..."
-                git push origin "$webkit_commit":refs/heads/ohos-aarch64 2>/dev/null || \
+                (cd "$wk_dir" && git push origin "$webkit_commit":refs/heads/ohos-aarch64) 2>/dev/null || \
                     warn "推送失败（可能无权限），下次 CI 会从 upstream 拉取"
             fi
         fi
@@ -198,8 +198,8 @@ sync_webkit() {
 
     echo "  [fetch] from $wk_remote: $webkit_commit"
     # 丢弃本地修改（如之前手动覆盖的 JSType.h），确保 checkout 到目标版本
-    git stash --include-untracked 2>/dev/null || true
-    git checkout "$webkit_commit" 2>&1 | while IFS= read -r line; do
+    (cd "$wk_dir" && git stash --include-untracked) 2>/dev/null || true
+    (cd "$wk_dir" && git checkout "$webkit_commit") 2>&1 | while IFS= read -r line; do
         echo "  [checkout] $line"
     done
     ok "WebKit 同步完成 ($(echo "$webkit_commit" | head -c 12))"
@@ -243,7 +243,14 @@ run_build() {
     export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_OHOS_LINKER="/home/user/.local/bin/clang++"
     export CARGO_HOME="/home/user/.cargo"
     export RUSTUP_HOME="/home/user/.rustup"
-    export RUSTUP_TOOLCHAIN="nightly"
+    # 固定 Rust nightly 版本（从 rust-toolchain.toml 读取，避免漂移到新 nightly）
+    # 注意: rustup 会忽略 rust-toolchain.toml 当 RUSTUP_TOOLCHAIN 环境变量被设置时
+    if [ -z "${RUSTUP_TOOLCHAIN:-}" ]; then
+        local_toolchain_channel
+        local_toolchain_channel=$(grep '^channel' "$DEV_SRC/rust-toolchain.toml" | sed 's/.*= *"//;s/"//' 2>/dev/null || echo "nightly")
+        export RUSTUP_TOOLCHAIN="${local_toolchain_channel}"
+        info "RUSTUP_TOOLCHAIN 固定为: $RUSTUP_TOOLCHAIN (来自 rust-toolchain.toml)"
+    fi
 
     # ninja 编译
     cd "$CI_SRC"

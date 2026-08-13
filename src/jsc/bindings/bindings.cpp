@@ -109,6 +109,7 @@
 #include "JavaScriptCore/TemporalPlainTime.h"
 #include "JavaScriptCore/TemporalPlainYearMonth.h"
 #include "JavaScriptCore/TemporalZonedDateTime.h"
+#include "JavaScriptCore/TemporalObject.h"
 #include "JavaScriptCore/TimeZoneICUBridge.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
@@ -6190,37 +6191,9 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] EncodedJSValue Bun__Temporal__fromDateT
     return JSValue::encode(result);
 }
 
-// Classifies a JSValue as one of the Temporal object types, or 0 for
-// everything else. Discriminants are shared with `TOMLObject.rs`: 1 Instant,
-// 2 PlainDateTime, 3 PlainDate, 4 PlainTime, 5 ZonedDateTime,
-// 6 PlainYearMonth, 7 PlainMonthDay, 8 Duration.
-extern "C" [[ZIG_EXPORT(nothrow)]] uint8_t Bun__JSValue__temporalObjectType(JSC::EncodedJSValue encodedValue)
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::TemporalType Bun__JSValue__temporalType(JSC::EncodedJSValue encodedValue)
 {
-    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
-    if (!value.isCell())
-        return 0;
-    JSC::JSCell* cell = value.asCell();
-    // Every Temporal class is a plain ObjectType cell; anything else
-    // (JSFinalObject, arrays, dates, functions, …) short-circuits here.
-    if (cell->type() != JSC::ObjectType)
-        return 0;
-    if (cell->inherits<JSC::TemporalInstant>())
-        return 1;
-    if (cell->inherits<JSC::TemporalPlainDateTime>())
-        return 2;
-    if (cell->inherits<JSC::TemporalPlainDate>())
-        return 3;
-    if (cell->inherits<JSC::TemporalPlainTime>())
-        return 4;
-    if (cell->inherits<JSC::TemporalZonedDateTime>())
-        return 5;
-    if (cell->inherits<JSC::TemporalPlainYearMonth>())
-        return 6;
-    if (cell->inherits<JSC::TemporalPlainMonthDay>())
-        return 7;
-    if (cell->inherits<JSC::TemporalDuration>())
-        return 8;
-    return 0;
+    return JSC::temporalType(JSC::JSValue::decode(encodedValue));
 }
 
 static Int128 ceilToMultiple(Int128 ns, Int128 unit)
@@ -6263,11 +6236,11 @@ static std::optional<int64_t> tomlOffsetForInstant(JSC::ISO8601::ExactTime exact
     return preferredNs;
 }
 
-// Formats a Temporal object (`temporalType` 1-5 from the classifier above)
-// as a TOML date/time literal into `buf` and returns the length written, or
-// -1 if its year is outside TOML's 0000..9999. The `[u-ca=...]` and
-// `[Time/Zone]` annotations, which TOML cannot carry, are dropped.
-extern "C" [[ZIG_EXPORT(check_slow)]] int32_t Bun__Temporal__toTOMLDateTime(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, uint8_t temporalType, uint8_t* buf, size_t bufLen)
+// Formats a Temporal object as a TOML date/time literal into `buf` and
+// returns the length written, or -1 if its year is outside TOML's
+// 0000..9999. The `[u-ca=...]` and `[Time/Zone]` annotations, which TOML
+// cannot carry, are dropped.
+extern "C" [[ZIG_EXPORT(check_slow)]] int32_t Bun__Temporal__toTOMLDateTime(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, JSC::TemporalType temporalType, uint8_t* buf, size_t bufLen)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -6277,7 +6250,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] int32_t Bun__Temporal__toTOMLDateTime(JSC:
 
     WTF::String string;
     switch (temporalType) {
-    case 1: {
+    case JSC::TemporalType::Instant: {
         auto exactTime = uncheckedDowncast<JSC::TemporalInstant>(cell)->exactTime();
         std::optional<int64_t> offsetNs = tomlOffsetForInstant(exactTime, 0);
         if (!offsetNs)
@@ -6287,18 +6260,18 @@ extern "C" [[ZIG_EXPORT(check_slow)]] int32_t Bun__Temporal__toTOMLDateTime(JSC:
         string = JSC::TemporalCore::instantToString(exactTime, offsetNs, autoPrecision);
         break;
     }
-    case 2: {
+    case JSC::TemporalType::PlainDateTime: {
         auto* dateTime = uncheckedDowncast<JSC::TemporalPlainDateTime>(cell);
         string = JSC::ISO8601::temporalDateTimeToString(dateTime->plainDate(), dateTime->plainTime(), { JSC::Precision::Auto, 0 });
         break;
     }
-    case 3:
+    case JSC::TemporalType::PlainDate:
         string = JSC::ISO8601::temporalDateToString(uncheckedDowncast<JSC::TemporalPlainDate>(cell)->plainDate());
         break;
-    case 4:
+    case JSC::TemporalType::PlainTime:
         string = JSC::ISO8601::temporalTimeToString(uncheckedDowncast<JSC::TemporalPlainTime>(cell)->plainTime(), { JSC::Precision::Auto, 0 });
         break;
-    case 5: {
+    case JSC::TemporalType::ZonedDateTime: {
         auto* zoned = uncheckedDowncast<JSC::TemporalZonedDateTime>(cell);
         std::optional<int64_t> zoneOffsetNs = zoned->getOffsetNanoseconds(globalObject);
         RETURN_IF_EXCEPTION(scope, 0);

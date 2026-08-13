@@ -1587,6 +1587,10 @@ impl JSValue {
             JSC__JSValue__jsonStringifyFast(self, global, out)
         })
     }
+
+    pub fn temporal_type(self) -> TemporalType {
+        crate::cpp::Bun__JSValue__temporalType(self)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2137,6 +2141,21 @@ unsafe extern "C" {
 pub enum ProxyField {
     Target = 0,
     Handler = 1,
+}
+
+/// `JSC::TemporalType` (TemporalObject.h) — result of [`JSValue::temporal_type`].
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemporalType {
+    None = 0,
+    Instant = 1,
+    PlainDateTime = 2,
+    PlainDate = 3,
+    PlainTime = 4,
+    ZonedDateTime = 5,
+    PlainYearMonth = 6,
+    PlainMonthDay = 7,
+    Duration = 8,
 }
 
 /// `JSValue.SerializedFlags`.

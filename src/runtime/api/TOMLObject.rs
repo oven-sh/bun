@@ -1,7 +1,9 @@
 use bun_collections::HashMap;
 use bun_core::StackCheck;
 use bun_core::{OwnedString, String as BunString};
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, wtf};
+use bun_jsc::{
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, TemporalType, wtf,
+};
 use bun_parsers::toml::TOML;
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
@@ -122,7 +124,7 @@ enum Layout {
     Keyval,
     /// `key = value` whose value is a Temporal object; carries the
     /// classification so emission does not re-ask.
-    TemporalKeyval(TemporalObjectType),
+    TemporalKeyval(TemporalType),
     /// `[path.key]` section.
     Table,
     /// `[[path.key]]` section per element.
@@ -306,7 +308,7 @@ impl Stringifier {
         &mut self,
         global: &JSGlobalObject,
         value: JSValue,
-        known_temporal: Option<TemporalObjectType>,
+        known_temporal: Option<TemporalType>,
     ) -> StringifyResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
@@ -516,13 +518,13 @@ impl Stringifier {
         &mut self,
         global: &JSGlobalObject,
         value: JSValue,
-        temporal_type: TemporalObjectType,
+        temporal_type: TemporalType,
     ) -> StringifyResult<()> {
-        if !temporal_type.has_toml_form() {
+        if !has_toml_form(temporal_type) {
             return Err(global
                 .throw(format_args!(
                     "TOML.stringify cannot serialize {} (it has no TOML representation)",
-                    temporal_type.name()
+                    temporal_name(temporal_type)
                 ))
                 .into());
         }
@@ -532,7 +534,7 @@ impl Stringifier {
             jsc::cpp::Bun__Temporal__toTOMLDateTime(
                 global,
                 value,
-                temporal_type as u8,
+                temporal_type,
                 buf.as_mut_ptr(),
                 buf.len(),
             )
@@ -541,7 +543,7 @@ impl Stringifier {
             return Err(global
                 .throw(format_args!(
                     "TOML.stringify cannot serialize a {} outside years 0000-9999",
-                    temporal_type.name()
+                    temporal_name(temporal_type)
                 ))
                 .into());
         }
@@ -585,62 +587,39 @@ impl Stringifier {
     }
 }
 
-/// Mirror of the `Bun__JSValue__temporalObjectType` discriminants (0, not a
-/// Temporal object, maps to `None` in `temporal_object_type`).
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-enum TemporalObjectType {
-    Instant = 1,
-    PlainDateTime = 2,
-    PlainDate = 3,
-    PlainTime = 4,
-    ZonedDateTime = 5,
-    PlainYearMonth = 6,
-    PlainMonthDay = 7,
-    Duration = 8,
-}
-
-impl TemporalObjectType {
-    /// Whether TOML has a date/time literal for this type.
-    fn has_toml_form(self) -> bool {
-        match self {
-            TemporalObjectType::Instant
-            | TemporalObjectType::PlainDateTime
-            | TemporalObjectType::PlainDate
-            | TemporalObjectType::PlainTime
-            | TemporalObjectType::ZonedDateTime => true,
-            TemporalObjectType::PlainYearMonth
-            | TemporalObjectType::PlainMonthDay
-            | TemporalObjectType::Duration => false,
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            TemporalObjectType::Instant => "Temporal.Instant",
-            TemporalObjectType::PlainDateTime => "Temporal.PlainDateTime",
-            TemporalObjectType::PlainDate => "Temporal.PlainDate",
-            TemporalObjectType::PlainTime => "Temporal.PlainTime",
-            TemporalObjectType::ZonedDateTime => "Temporal.ZonedDateTime",
-            TemporalObjectType::PlainYearMonth => "Temporal.PlainYearMonth",
-            TemporalObjectType::PlainMonthDay => "Temporal.PlainMonthDay",
-            TemporalObjectType::Duration => "Temporal.Duration",
-        }
+fn temporal_object_type(value: JSValue) -> Option<TemporalType> {
+    match value.temporal_type() {
+        TemporalType::None => None,
+        t => Some(t),
     }
 }
 
-fn temporal_object_type(value: JSValue) -> Option<TemporalObjectType> {
-    match jsc::cpp::Bun__JSValue__temporalObjectType(value) {
-        0 => None,
-        1 => Some(TemporalObjectType::Instant),
-        2 => Some(TemporalObjectType::PlainDateTime),
-        3 => Some(TemporalObjectType::PlainDate),
-        4 => Some(TemporalObjectType::PlainTime),
-        5 => Some(TemporalObjectType::ZonedDateTime),
-        6 => Some(TemporalObjectType::PlainYearMonth),
-        7 => Some(TemporalObjectType::PlainMonthDay),
-        8 => Some(TemporalObjectType::Duration),
-        _ => unreachable!("Bun__JSValue__temporalObjectType returns 0-8"),
+/// Whether TOML has a date/time literal for this type.
+fn has_toml_form(t: TemporalType) -> bool {
+    match t {
+        TemporalType::Instant
+        | TemporalType::PlainDateTime
+        | TemporalType::PlainDate
+        | TemporalType::PlainTime
+        | TemporalType::ZonedDateTime => true,
+        TemporalType::None
+        | TemporalType::PlainYearMonth
+        | TemporalType::PlainMonthDay
+        | TemporalType::Duration => false,
+    }
+}
+
+fn temporal_name(t: TemporalType) -> &'static str {
+    match t {
+        TemporalType::Instant => "Temporal.Instant",
+        TemporalType::PlainDateTime => "Temporal.PlainDateTime",
+        TemporalType::PlainDate => "Temporal.PlainDate",
+        TemporalType::PlainTime => "Temporal.PlainTime",
+        TemporalType::ZonedDateTime => "Temporal.ZonedDateTime",
+        TemporalType::PlainYearMonth => "Temporal.PlainYearMonth",
+        TemporalType::PlainMonthDay => "Temporal.PlainMonthDay",
+        TemporalType::Duration => "Temporal.Duration",
+        TemporalType::None => unreachable!("not a Temporal object"),
     }
 }
 

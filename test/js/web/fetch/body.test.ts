@@ -1349,6 +1349,49 @@ for (const { body: bodyType, fn } of bodyTypes) {
       expect(blob.type).toBe(expected);
     });
 
+    // Repeated Content-Type headers are extracted as one combined value:
+    // the last valid one wins and carries over an earlier charset (Node v26).
+    const stackedHeaders: [values: string[], type: string][] = [
+      [["not a type", "application/json"], "application/json"],
+      [["text/html", "*/*"], "text/html"],
+      [["text/html;charset=gbk", "text/html;x=y"], "text/html;x=y;charset=gbk"],
+      [["text/html;charset=gbk", "text/plain", "text/html"], "text/html"],
+      [["multipart/form-data; boundary=B1", "multipart/form-data; boundary=B2"], "multipart/form-data;boundary=b2"],
+    ];
+    test.each(stackedHeaders)("stacked Content-Type headers %j give type %j", async (values, expected) => {
+      const headers = values.map((value): [string, string] => ["content-type", value]);
+      expect((await fn(new Uint8Array([0x78]), headers).blob()).type).toBe(expected);
+    });
+
+    test("formData() takes the boundary from the last valid Content-Type value", async () => {
+      const multipart = (boundary: string) =>
+        `--${boundary}\r\nContent-Disposition: form-data; name="f"\r\n\r\nval\r\n--${boundary}--\r\n`;
+      const headers: [string, string][] = [
+        ["content-type", "multipart/form-data; boundary=B1"],
+        ["content-type", "multipart/form-data; boundary=B2"],
+      ];
+      const form = await fn(multipart("B2"), headers).formData();
+      expect(form.get("f")).toBe("val");
+      await expect(() => fn(multipart("B1"), headers).formData()).toThrowWithCodeAsync(
+        TypeError,
+        "ERR_FORMDATA_PARSE_ERROR",
+      );
+    });
+
+    // '=' ':' and ' ' may appear in a boundary but are not HTTP token code
+    // points, so "serialize a MIME type" emits the parameter quoted.
+    test.each([
+      ["----=_Part_0_123.456", 'boundary="----=_Part_0_123.456"'],
+      ["----=_Part_0_123.456", "boundary=----=_Part_0_123.456"],
+      ["a:b", 'boundary="a:b"'],
+      ["a:b", "boundary=a:b"],
+      ["with space", 'boundary="with space"'],
+    ])("formData() keeps a non-token boundary %j declared as %s", async (boundary, param) => {
+      const body = `--${boundary}\r\nContent-Disposition: form-data; name="f"\r\n\r\n${boundary}\r\n--${boundary}--\r\n`;
+      const form = await fn(body, { "content-type": `multipart/form-data; ${param}` }).formData();
+      expect(form.get("f")).toBe(boundary);
+    });
+
     test("returns a plain Blob, never the body's File", async () => {
       const source = new File(["hello"], "source.bin", { type: "My/Type; A=B" });
       const blob = await fn(source).blob();
@@ -1550,6 +1593,64 @@ describe("blob() type over the network", () => {
     });
     await res.text();
     expect(await promise).toEqual({ type: "image/jpeg;a=b", isFile: false });
+  });
+
+  // https://github.com/oven-sh/bun/issues/32801
+  test("Bun.serve request blob() round-trips the type of a posted File", async () => {
+    const types = ["application/json;charset=utf-8", "image/png", "application/octet-stream", "text/csv"];
+    await using server = Bun.serve({
+      port: 0,
+      fetch: async req => new Response((await req.blob()).type),
+    });
+    const received = await Promise.all(
+      types.map(type =>
+        fetch(server.url, { method: "POST", body: new File(['"name"'], "file.json", { type }) }).then(r => r.text()),
+      ),
+    );
+    expect(received).toEqual(types);
+  });
+
+  test("fetch() extracts the type from repeated Content-Type response lines", async () => {
+    const multipart = `--B2\r\nContent-Disposition: form-data; name="f"\r\n\r\nval\r\n--B2--\r\n`;
+    const routes: Record<string, { headers: string[]; body: string }> = {
+      "/case": { headers: ["Content-Type: TEXT/HTML ;  Charset=UTF-8"], body: "x" },
+      "/dup-json": { headers: ["Content-Type: not a type", "Content-Type: application/json"], body: "{}" },
+      "/dup-form": {
+        headers: ["Content-Type: multipart/form-data; boundary=B1", "Content-Type: multipart/form-data; boundary=B2"],
+        body: multipart,
+      },
+    };
+    const listening = Promise.withResolvers<void>();
+    const server = net.createServer(sock => {
+      sock.on("error", () => {});
+      sock.once("data", data => {
+        const { headers, body } = routes[/^GET (\S+)/.exec(String(data))![1]];
+        sock.end(
+          `HTTP/1.1 200 OK\r\n${headers.join("\r\n")}\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`,
+        );
+      });
+    });
+    server.once("error", listening.reject);
+    server.listen(0, "127.0.0.1", () => listening.resolve());
+    await listening.promise;
+    await using _ = { [Symbol.asyncDispose]: () => new Promise<void>(r => server.close(() => r())) };
+    const base = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
+
+    const dupJson = await fetch(`${base}/dup-json`);
+    const dupForm = await fetch(`${base}/dup-form`);
+    expect({
+      case: (await (await fetch(`${base}/case`)).blob()).type,
+      dupJsonHeader: dupJson.headers.get("content-type"),
+      dupJsonBlob: (await dupJson.blob()).type,
+      dupFormBlob: (await dupForm.blob()).type,
+      dupFormField: (await (await fetch(`${base}/dup-form`)).formData()).get("f"),
+    }).toEqual({
+      case: "text/html;charset=utf-8",
+      dupJsonHeader: "not a type, application/json",
+      dupJsonBlob: "application/json",
+      dupFormBlob: "multipart/form-data;boundary=b2",
+      dupFormField: "val",
+    });
   });
 
   test("a data: URL with no mediatype keeps Bun's text/plain default", async () => {

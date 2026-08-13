@@ -465,7 +465,9 @@ impl Response {
             return Ok(None);
         };
         // content_type_slice drops at scope exit
-        let Some(encoding) = bun_core::form_data::Encoding::get(content_type_slice.slice()) else {
+        let Some(encoding) =
+            crate::webcore::form_data::encoding_from_header(content_type_slice.slice())
+        else {
             return Ok(None);
         };
         Ok(Some(bun_core::form_data::AsyncFormData::init(encoding)))

@@ -22,6 +22,13 @@ pub struct FormData {}
 // form_data::*` callers see the same nominal types.
 pub use bun_core::form_data::{AsyncFormData, Encoding, get_boundary};
 
+/// <https://fetch.spec.whatwg.org/#concept-body-package-data>: the encoding comes from
+/// "extract a MIME type" over the combined header value (last valid value wins).
+pub(crate) fn encoding_from_header(content_type: &[u8]) -> Option<Encoding> {
+    let mime = bun_http_types::mime_sniff::extract_mime_type(content_type)?;
+    Encoding::get(&mime)
+}
+
 /// JSC-touching extension on `AsyncFormData` (lives in this crate because it
 /// needs `JSGlobalObject` + `AnyPromise`).
 pub trait AsyncFormDataExt {

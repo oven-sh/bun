@@ -486,7 +486,8 @@ impl Request {
         let Some(content_type_slice) = self.get_content_type()? else {
             return Ok(None);
         };
-        let Some(encoding) = crate::webcore::form_data::Encoding::get(content_type_slice.slice())
+        let Some(encoding) =
+            crate::webcore::form_data::encoding_from_header(content_type_slice.slice())
         else {
             return Ok(None);
         };

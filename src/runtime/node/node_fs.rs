@@ -9773,8 +9773,7 @@ pub(crate) fn zig_delete_tree(
             None => return Ok(()),
         };
 
-    // One open fd plus an 8 KB readdir buffer per level of the path being
-    // walked; a depth cap here would make deep trees O(depth^2) (#37939).
+    // Grows with the depth of the tree; a cap here would make deep trees O(depth^2) (#37939).
     let mut stack: Vec<DeleteTreeStackItem> = Vec::with_capacity(16);
     let close_all = |stack: &mut Vec<DeleteTreeStackItem>| {
         for item in stack.drain(..) {
@@ -9800,8 +9799,7 @@ pub(crate) fn zig_delete_tree(
                 Ok(None) => break,
                 Err(err) => return Err(dt_err(err.get_errno())),
             };
-            // `entry.name` points into the top frame's readdir buffer, which the
-            // next `next()` overwrites and the `push` below may move.
+            // Points into the top frame's buffer, which `next()` overwrites and `push` may move.
             let entry_name: Vec<u8> = entry.name.slice().to_vec();
             let mut treat_as_dir = entry.kind == sys::FileKind::Directory;
             'handle_entry: loop {

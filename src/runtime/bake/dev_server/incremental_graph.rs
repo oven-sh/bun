@@ -109,11 +109,8 @@ pub struct File {
     pub(crate) kind: FileKind,
     /// If the file has an error, the failure can be looked up in `dev.bundling_failures`.
     pub(crate) failed: bool,
-    /// The loader of this file's last bundle attempt, `None` until there has
-    /// been one. The loader can come from the importer's `with { type }`
-    /// attribute rather than the file extension, and a rebundle of the file
-    /// (which receives it as a bare path entry point) must use the same one;
-    /// read it through [`File::rebundle_loader`].
+    /// Loader of the last bundle attempt (`None` before the first). It may come from an
+    /// importer's `with { type }` rather than the extension, so rebundles read it back.
     pub(crate) loader: Option<Loader>,
     // ── server-side ────────────────────────────────────────────────────
     pub(crate) is_rsc: bool,
@@ -134,10 +131,8 @@ impl File {
         self.kind
     }
 
-    /// The loader to bundle this file with when it is queued by path alone.
-    /// A route's HTML file is bundled as the route even if client code also
-    /// imported it with another loader (the graph has one entry per path, so
-    /// such an import may have recorded its own loader here first).
+    /// Loader to rebundle this file with. The graph has one entry per path, so a text
+    /// import of a route's HTML file may have recorded its loader first; the route wins.
     #[inline]
     pub(crate) fn rebundle_loader(&self) -> Option<Loader> {
         if self.html_route_bundle_index.is_some() {
@@ -1431,12 +1426,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(())
     }
 
-    /// `IncrementalGraph(side).insertFailure` (spec :1419).
-    ///
-    /// `loader` is the loader of the attempt that failed, when the caller
-    /// knows it (`None` keeps whatever the file has recorded), so that a file
-    /// whose very first bundle fails is still rebundled with the loader its
-    /// importer chose once it is fixed.
+    /// `IncrementalGraph(side).insertFailure` (spec :1419). `loader` is the failed
+    /// attempt's loader when known; `None` keeps the file's existing record.
     pub(crate) fn insert_failure(
         &mut self,
         key: InsertFailureKey<'_>,

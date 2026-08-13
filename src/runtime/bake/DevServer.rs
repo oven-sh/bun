@@ -4093,11 +4093,8 @@ pub(super) fn finalize_bundle(
             .get(key)
             .and_then(|file| file.html_route_bundle_index)
         else {
-            // The graph entry of a file bundled with the html loader is the
-            // route it belongs to, so a file that is not a route cannot be
-            // bundled that way. Imports asking for the html loader are
-            // rejected during resolution; a plugin answering `onLoad` with
-            // `loader: "html"` gets here and is reported the same way.
+            // Not a route (an `onLoad` plugin returned `loader: "html"` for an import;
+            // imports that ask for html themselves are rejected while resolving).
             let mut log = Log::init();
             log.add_error(
                 Some(source),
@@ -4971,8 +4968,7 @@ impl DevServer {
         }
     }
 
-    /// Note: The log is not consumed here. `loader` is the loader the failed
-    /// attempt used, if the file got far enough to have one.
+    /// Note: The log is not consumed here
     pub(crate) fn handle_parse_task_failure(
         &mut self,
         err: &crate::Error,
@@ -5094,8 +5090,7 @@ impl DevServer {
         }
     }
 
-    /// The loader `side`'s graph wants `path` bundled with when the dev server
-    /// queues it as an entry point (see `incremental_graph::File::rebundle_loader`).
+    /// `File::rebundle_loader` of `path` in `side`'s graph, for the bundler's `entry_point_loader`.
     pub(crate) fn bundled_loader(&self, path: &[u8], side: bake::Graph) -> Option<Loader> {
         let _g = self.graph_safety_lock.guard();
         match side {

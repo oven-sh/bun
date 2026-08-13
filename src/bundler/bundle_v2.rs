@@ -2599,10 +2599,8 @@ pub mod bv2_impl {
             }
         }
 
-        /// `loader` is the graph's record of the loader the file was bundled
-        /// with (`None` falls back to the file extension). The caller is the
-        /// graph itself, mid-update, so it passes the record in rather than
-        /// having [`Self::entry_point_loader`] read it back out of the dev server.
+        /// `loader` is the graph's `File::rebundle_loader()` for the file, passed in
+        /// because the caller is inside the graph (see [`Self::entry_point_loader`]).
         pub fn enqueue_file_from_dev_server_incremental_graph_invalidation(
             &mut self,
             path_slice: &[u8],
@@ -2691,13 +2689,9 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        /// Loader for a file bundled from its path alone (an entry point). The
-        /// dev server rebundles a changed file this way even when an importer
-        /// chose its loader (`import x from "./x.html" with { type: "text" }`),
-        /// so a file the dev server has bundled before keeps that loader instead
-        /// of being re-typed by its extension: with the html loader, that
-        /// `.html` file would come back as a route chunk for a file that is not
-        /// a route.
+        /// Loader for a file bundled from its path alone. The dev server rebundles
+        /// changed files this way, and their loader may have come from an importer's
+        /// `with { type }` rather than the extension, so its record wins when it has one.
         pub(crate) fn entry_point_loader(
             &self,
             path: &Fs::Path,
@@ -6485,8 +6479,7 @@ pub mod bv2_impl {
 
                 if let Some(dev_server) = self.dev_server_handle() {
                     'brk: {
-                        // The loader the import will use: `with { type: "html" }` makes
-                        // it html whatever the extension is.
+                        // `with { type: "html" }` makes the import html regardless of the extension.
                         let imported_as_html = match import_record.loader {
                             Some(loader) => loader == Loader::Html,
                             None => {
@@ -7368,8 +7361,8 @@ pub mod bv2_impl {
                 parse_task::ResultValue::Err(err) => {
                     if process_log {
                         if let Some(dev_server) = this.dev_server {
-                            // Copy out the `'static` path slice and the loader so the
-                            // `input_files` borrow ends before we coerce `this` to `*mut _`.
+                            // Copy out the `'static` path slice so the `input_files`
+                            // borrow ends before we coerce `this` to `*mut _`.
                             let abs_path: &'static [u8] = this.graph.input_files.items_source()
                                 [err.source_index.get() as usize]
                                 .path

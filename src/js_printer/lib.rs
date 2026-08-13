@@ -2657,6 +2657,20 @@ pub(crate) mod __gated_printer {
             self.print(quote);
         }
 
+        /// When bundling, a clause item whose symbol carries a namespace
+        /// alias prints as `ns.alias` at every use, so the named binding
+        /// itself must not print (the export may be type-only).
+        fn import_item_prints_in_clause(&self, ref_: Ref) -> bool {
+            if !self.options.bundling {
+                return true;
+            }
+            let ref_ = self.symbols().follow(ref_);
+            match self.symbols().get_const(ref_) {
+                Some(symbol) => symbol.namespace_alias.is_none(),
+                None => true,
+            }
+        }
+
         fn print_clause_item(&mut self, item: &js_ast::ClauseItem) {
             self.print_clause_item_as(item, ClauseItemAs::Import)
         }
@@ -5624,12 +5638,24 @@ pub(crate) mod __gated_printer {
                         return Ok(());
                     }
 
+                    // When bundling, an item whose symbol carries a namespace
+                    // alias prints as `ns.alias` at every use (a guarded
+                    // metadata import from an external module); its named
+                    // binding must leave the clause or the failing import
+                    // comes back.
+                    let mut visible_items: usize = 0;
+                    for item in slice_of(s.items).iter() {
+                        if self.import_item_prints_in_clause(item.name.ref_) {
+                            visible_items += 1;
+                        }
+                    }
+
                     // `import * as ns, { X }` is a syntax error; split the
                     // star binding into its own statement when both survive.
                     let split_star_from_items = record
                         .flags
                         .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
-                        && !slice_of(s.items).is_empty();
+                        && visible_items > 0;
                     if split_star_from_items {
                         self.print(b"import");
                         self.print_space();
@@ -5663,12 +5689,14 @@ pub(crate) mod __gated_printer {
                     let mut item_count: usize = 0;
 
                     if let Some(name) = &s.default_name {
-                        self.print(b" ");
-                        self.print_symbol(name.ref_);
-                        item_count += 1;
+                        if self.import_item_prints_in_clause(name.ref_) {
+                            self.print(b" ");
+                            self.print_symbol(name.ref_);
+                            item_count += 1;
+                        }
                     }
 
-                    if !slice_of(s.items).is_empty() {
+                    if visible_items > 0 {
                         if item_count > 0 {
                             self.print(b",");
                         }
@@ -5681,8 +5709,12 @@ pub(crate) mod __gated_printer {
                             self.print_space();
                         }
 
-                        for (i, item) in slice_of(s.items).iter().enumerate() {
-                            if i != 0 {
+                        let mut printed: usize = 0;
+                        for item in slice_of(s.items).iter() {
+                            if !self.import_item_prints_in_clause(item.name.ref_) {
+                                continue;
+                            }
+                            if printed != 0 {
                                 self.print(b",");
                                 if s.is_single_line {
                                     self.print_space();
@@ -5693,6 +5725,7 @@ pub(crate) mod __gated_printer {
                                 self.print_indent();
                             }
                             self.print_clause_item(item);
+                            printed += 1;
                         }
 
                         if !s.is_single_line {
@@ -5727,7 +5760,7 @@ pub(crate) mod __gated_printer {
                                 .flags
                                 .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
                                 && !split_star_from_items)
-                            || slice_of(s.items).is_empty()
+                            || visible_items == 0
                         {
                             self.print(b" ");
                         }

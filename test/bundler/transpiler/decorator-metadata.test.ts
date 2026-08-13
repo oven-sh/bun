@@ -748,6 +748,50 @@ describe("decorator metadata", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("three segment qualified types", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "types.ts": `export namespace Express { export namespace Multer { export interface File { x: number } } }`,
+        "real.ts": `export namespace RealNS { export namespace Deep { export class Inner { static readonly tag = "deep" } } }`,
+        "index.ts": `
+          import "./_metadata";
+          import { Express } from "./types";
+          import { RealNS } from "./real";
+          function dec(...args: any[]) {}
+          class Thing {
+            @dec a!: Express.Multer.File;
+            @dec b!: RealNS.Deep.Inner;
+          }
+          const t = (k: string) => Reflect.getMetadata("design:type", Thing.prototype, k);
+          console.log(t("a") === Object, (t("b") as any)?.tag);
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true deep\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("import sharing a name with a later segment is elided", async () => {
+      // tsc only counts the root of a qualified name as a use: the File
+      // import is unused and ./b must not be evaluated.
+      const { stdout, stderr, exitCode } = await run({
+        "types.ts": `export namespace Express { export namespace Multer { export interface File { x: number } } }`,
+        "b.ts": `console.log("b evaluated"); export class File { static readonly tag = "B" }`,
+        "index.ts": `
+          import "./_metadata";
+          import { Express } from "./types";
+          import { File } from "./b";
+          function dec(...args: any[]) {}
+          class Thing {
+            @dec f!: Express.Multer.File;
+          }
+          console.log(Reflect.getMetadata("design:type", Thing.prototype, "f") === Object);
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("split star import stays parseable under minifyWhitespace", () => {
       const transpiler = new Bun.Transpiler({
         loader: "ts",

@@ -3462,6 +3462,12 @@ impl<'a> LinkerContext<'a> {
                 | ImportTrackerStatus::External => {
                     if status == ImportTrackerStatus::External
                         && self.options.output_format.keep_es6_import_export_syntax()
+                        // A fully metadata-guarded import cannot keep its named
+                        // form: the external export may be type-only and the
+                        // named ESM import would fail to link at runtime, so it
+                        // takes the namespace property rewrite below instead.
+                        && self.graph.symbol(tracker.import_ref).import_item_status
+                            != ImportItemStatus::MetadataGuarded
                     {
                         // Imports from external modules should not be converted to CommonJS
                         // if the output format preserves the original ES6 import statements
@@ -3477,7 +3483,9 @@ impl<'a> LinkerContext<'a> {
                         .get(&tracker.import_ref)
                         .unwrap();
 
-                    if named_import.namespace_ref.is_valid() {
+                    let import_record_index = named_import.import_record_index;
+                    let namespace_ref_is_valid = named_import.namespace_ref.is_valid();
+                    if namespace_ref_is_valid {
                         if result.kind == MatchImportKind::Normal {
                             result.kind = MatchImportKind::NormalAndNamespace;
                             result.namespace_ref = named_import.namespace_ref;
@@ -3511,6 +3519,19 @@ impl<'a> LinkerContext<'a> {
                                 bstr::BStr::new(&source.path.pretty),
                             ),
                         );
+                    }
+
+                    // Reached with ESM output only for fully guarded symbols
+                    // (see the break above): the emitted `ns.alias` needs a
+                    // real `* as ns` binding on the kept external statement.
+                    if namespace_ref_is_valid
+                        && status == ImportTrackerStatus::External
+                        && self.options.output_format.keep_es6_import_export_syntax()
+                    {
+                        self.graph.ast.items_import_records_mut()[prev_source_index as usize]
+                            .as_mut_slice()[import_record_index as usize]
+                            .flags
+                            .insert(bun_ast::ImportRecordFlags::CONTAINS_IMPORT_STAR);
                     }
                 }
 
@@ -3577,7 +3598,7 @@ impl<'a> LinkerContext<'a> {
                         .slice();
 
                     // Report mismatched imports and exports
-                    if symbol.is_decorator_metadata_guarded() {
+                    if symbol.import_item_status == ImportItemStatus::MetadataGuarded {
                         // Decorator metadata already wraps this in a `typeof`
                         // guard that falls back to `Object` on `undefined`.
                         symbol.import_item_status = ImportItemStatus::Missing;
@@ -3891,7 +3912,11 @@ impl<'a> LinkerContext<'a> {
                         .alias
                         .expect("infallible: alias present")
                         .slice();
-                    if symbol.import_item_status == ImportItemStatus::Generated {
+                    if symbol.import_item_status == ImportItemStatus::MetadataGuarded {
+                        // The metadata `typeof` guard reads `undefined` as
+                        // `Object`; ambiguity is no more an error than absence.
+                        symbol.import_item_status = ImportItemStatus::Missing;
+                    } else if symbol.import_item_status == ImportItemStatus::Generated {
                         symbol.import_item_status = ImportItemStatus::Missing;
                         self.log_disjoint().add_range_warning_fmt(
                             Some(source), r,

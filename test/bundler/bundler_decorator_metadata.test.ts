@@ -1366,6 +1366,85 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("decorator_metadata/ThreeSegmentQualifiedType", {
+    files: {
+      "/entry.ts": /* ts */ `
+            ${reflectMetadata}
+
+            import { Express } from "./types";
+            import { RealNS } from "./real";
+            import { File } from "./b";
+
+            function d1(..._: any[]) {}
+
+            class Thing {
+                @d1 a!: Express.Multer.File;
+                @d1 b!: RealNS.Deep.Inner;
+            }
+
+            const t = (k: string) => Reflect.getMetadata("design:type", Thing.prototype, k);
+            // The File import only shares a name with a later segment; it is
+            // not a use, so ./b must not be evaluated.
+            console.log(t("a") === Object, (t("b") as any)?.tag);
+        `,
+      "/types.ts": /* ts */ `
+            export namespace Express { export namespace Multer { export interface File { x: number } } }
+        `,
+      "/real.ts": /* ts */ `
+            export namespace RealNS { export namespace Deep { export class Inner { static readonly tag = "deep" } } }
+        `,
+      "/b.ts": /* ts */ `
+            console.log("b evaluated");
+            export class File { static readonly tag = "B" }
+        `,
+      "/tsconfig.json": /* json */ `
+            {
+                "compilerOptions": {
+                    "experimentalDecorators": true,
+                    "emitDecoratorMetadata": true,
+                }
+            }
+        `,
+    },
+    bundling: true,
+    run: {
+      stdout: "true deep\n",
+    },
+  });
+
+  // node:https has no ServerOptions value export; the external record keeps
+  // ESM syntax, so the guarded import must print as a namespace binding.
+  itBundled("decorator_metadata/ExternalTypeOnlyImport", {
+    files: {
+      "/entry.ts": /* ts */ `
+            ${reflectMetadata}
+
+            import { ServerOptions } from "node:https";
+
+            function d1(..._: any[]) {}
+
+            class Config {
+                @d1 opts!: ServerOptions;
+            }
+
+            console.log(Reflect.getMetadata("design:type", Config.prototype, "opts") === Object);
+        `,
+      "/tsconfig.json": /* json */ `
+            {
+                "compilerOptions": {
+                    "experimentalDecorators": true,
+                    "emitDecoratorMetadata": true,
+                }
+            }
+        `,
+    },
+    bundling: true,
+    target: "bun",
+    run: {
+      stdout: "true\n",
+    },
+  });
+
   // A missing export used both in metadata and as a value must keep the
   // build error; only fully metadata-guarded imports degrade to undefined.
   itBundled("decorator_metadata/MissingExportWithValueUseStillErrors", {

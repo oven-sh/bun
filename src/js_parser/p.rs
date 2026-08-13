@@ -7305,8 +7305,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn flag_fully_guarded_metadata_imports(&mut self) {
         for (ref_, guarded_uses) in self.decorator_metadata_guarded_uses.iter() {
             let symbol = &mut self.symbols[ref_.inner_index() as usize];
-            if symbol.use_count_estimate == *guarded_uses {
-                symbol.set_is_decorator_metadata_guarded(true);
+            if symbol.use_count_estimate == *guarded_uses
+                && symbol.import_item_status == js_ast::ImportItemStatus::None
+            {
+                symbol.import_item_status = js_ast::ImportItemStatus::MetadataGuarded;
             }
         }
     }

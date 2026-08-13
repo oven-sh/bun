@@ -2946,9 +2946,10 @@ pub mod flags {
         WasShorthand,
         IsSpread,
         /// The getter/setter pair generated for an `accessor` class member.
-        /// `ts_metadata` on the getter is the member's declared type; legacy
-        /// decorator metadata for the member describes that type, as tsc does
-        /// for `accessor` declarations, not the getter's signature.
+        /// Whichever of the two carries the member's legacy decorators also
+        /// carries the member's declared type in `ts_metadata`; decorator
+        /// metadata for it describes that type, as tsc's does for `accessor`
+        /// declarations, rather than the getter's or setter's signature.
         IsLoweredAutoAccessor,
     }
     pub type PropertySet = EnumSet<Property>;

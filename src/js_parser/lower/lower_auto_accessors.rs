@@ -16,12 +16,13 @@
 //! class A { #x = 1; get x() { return this.#x; } set x(v) { this.#x = v; } }
 //! ```
 //!
-//! Legacy decorators on an accessor move to the generated getter, which is
-//! marked `IsLoweredAutoAccessor`. tsc decorates an auto-accessor the way it
-//! decorates a getter/setter pair (the decorator receives the property
-//! descriptor), which is what `lower_class` emits for a decorated method-like
-//! member; the flag makes its `emitDecoratorMetadata` output describe the
-//! member's declared type, as tsc's does.
+//! Legacy decorators on an accessor move to the generated setter (the member
+//! of the pair whose key is the bare temporary when the key is computed). tsc
+//! decorates an auto-accessor the way it decorates a getter/setter pair (the
+//! decorator receives the property descriptor), which is what `lower_class`
+//! emits for a decorated method-like member; the pair is marked
+//! `IsLoweredAutoAccessor` so that its `emitDecoratorMetadata` output
+//! describes the member's declared type, as tsc's does.
 
 use bun_collections::VecExt;
 
@@ -169,9 +170,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         pair_flags.insert(Flags::Property::IsLoweredAutoAccessor);
 
         // get x() { return this.#x; }
-        // The getter also takes over the member's legacy decorators and declared
-        // type, so `lower_class` decorates it the way tsc decorates an accessor:
-        // with the property descriptor, and with the declared type as metadata.
         let getter_value = self.backing_field_access(backing_ref, loc);
         let getter_body = self.s(
             S::Return {
@@ -192,12 +190,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             flags: pair_flags,
             key: Some(getter_key),
             value: Some(getter_fn),
-            ts_decorators: bun_alloc::AstAlloc::take(&mut accessor.ts_decorators),
-            ts_metadata: core::mem::take(&mut accessor.ts_metadata),
             ..Default::default()
         });
 
         // set x(v) { this.#x = v; }
+        // The setter takes over the member's legacy decorators and declared type.
+        // `lower_class` then decorates it the way tsc decorates an accessor (with
+        // the property descriptor, and with the declared type as metadata), and
+        // since the setter's key is the bare temporary for a computed key, the
+        // decorate call it builds from that key does not evaluate the key
+        // expression a second time.
         let value_ref = self.new_sym(js_ast::symbol::Kind::Other, b"v");
         let value_binding = self.b(B::Identifier { r#ref: value_ref }, loc);
         let setter_arg = self.arena.alloc(G::Arg {
@@ -227,6 +229,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             flags: pair_flags,
             key: Some(setter_key),
             value: Some(setter_fn),
+            ts_decorators: bun_alloc::AstAlloc::take(&mut accessor.ts_decorators),
+            ts_metadata: core::mem::take(&mut accessor.ts_metadata),
             ..Default::default()
         });
     }

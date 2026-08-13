@@ -6436,7 +6436,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let loc = descriptor_key.loc;
 
                         // A decorated `accessor` member reaches this point as its generated
-                        // getter (see lower_auto_accessors.rs), so like tsc it gets the
+                        // setter (see lower_auto_accessors.rs), so like tsc it gets the
                         // descriptor form.
                         let descriptor_kind: Expr =
                             if !prop.flags.contains(Flags::Property::IsMethod) {
@@ -6845,7 +6845,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
             }
-            PropertyKind::Get if prop.flags.contains(Flags::Property::IsLoweredAutoAccessor) => {
+            PropertyKind::Get | PropertyKind::Set
+                if prop.flags.contains(Flags::Property::IsLoweredAutoAccessor) =>
+            {
                 // typescript sets only design:type (the declared type) for an `accessor` member.
                 let v = self
                     .serialize_metadata(prop.ts_metadata.clone())
@@ -6921,7 +6923,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             PropertyKind::Spread | PropertyKind::Declare => {}
             // Already replaced by `lower_auto_accessors_in_place`; the accessor's type
-            // is emitted through its generated getter.
+            // is emitted through its generated setter.
             PropertyKind::AutoAccessor => {}
             PropertyKind::ClassStaticBlock => {} // not allowed to decorate this
         }

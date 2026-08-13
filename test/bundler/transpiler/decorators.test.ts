@@ -1276,13 +1276,17 @@ describe("accessor keyword with experimentalDecorators", () => {
     expect(
       transpile(`
         declare const dec: any;
+        declare const key: () => string;
         class A {
           @dec accessor x = 1;
           @dec static accessor s = 2;
+          @dec accessor [key()] = 3;
         }
       `),
     ).toMatchInlineSnapshot(`
-      "class A {
+      "var __bun_temp_ref_1$;
+
+      class A {
         #x = 1;
         get x() {
           return this.#x;
@@ -1297,10 +1301,20 @@ describe("accessor keyword with experimentalDecorators", () => {
         static set s(v) {
           this.#s = v;
         }
+        #_accessor_storage = 3;
+        get [__bun_temp_ref_1$ = key()]() {
+          return this.#_accessor_storage;
+        }
+        set [__bun_temp_ref_1$](v) {
+          this.#_accessor_storage = v;
+        }
       }
       __legacyDecorateClassTS([
         dec
       ], A.prototype, "x", null);
+      __legacyDecorateClassTS([
+        dec
+      ], A.prototype, __bun_temp_ref_1$, null);
       __legacyDecorateClassTS([
         dec
       ], A, "s", null);"
@@ -1476,13 +1490,13 @@ describe("accessor keyword with experimentalDecorators", () => {
           (Reflect as any).metadata = (k: string, v: any) => (_target: object, key: string) => {
             seen.push({ metadata: k, type: v.name, key });
           };
-          function record(target: object, key: string, desc: PropertyDescriptor) {
+          function record(target: object, key: string, desc?: PropertyDescriptor) {
             seen.push({
               key,
               onPrototype: target === A.prototype,
               onClass: target === A,
-              get: typeof desc.get,
-              set: typeof desc.set,
+              get: typeof desc?.get,
+              set: typeof desc?.set,
               args: arguments.length,
             });
           }
@@ -1490,15 +1504,18 @@ describe("accessor keyword with experimentalDecorators", () => {
             const { get } = desc;
             return { ...desc, get() { return get!.call(this) * 2; } };
           }
+          let keyEvaluations = 0;
+          const key = () => "k" + keyEvaluations++;
           class A {
             @record accessor x = 1;
             @double accessor n: number = 21;
+            @record accessor [key()] = 3;
             @record static accessor s = 2;
           }
-          const a = new A();
+          const a: any = new A();
           const nBefore = a.n;
           a.n = 5;
-          console.log(JSON.stringify({ seen, nBefore, nAfter: a.n, x: a.x, s: A.s }));
+          console.log(JSON.stringify({ seen, keyEvaluations, k0: a.k0, nBefore, nAfter: a.n, x: a.x, s: A.s }));
         `,
       },
       { emitDecoratorMetadata: true },
@@ -1509,9 +1526,13 @@ describe("accessor keyword with experimentalDecorators", () => {
         { metadata: "design:type", type: "Object", key: "x" },
         { key: "x", onPrototype: true, onClass: false, get: "function", set: "function", args: 3 },
         { metadata: "design:type", type: "Number", key: "n" },
+        { metadata: "design:type", type: "Object", key: "k0" },
+        { key: "k0", onPrototype: true, onClass: false, get: "function", set: "function", args: 3 },
         { metadata: "design:type", type: "Object", key: "s" },
         { key: "s", onPrototype: false, onClass: true, get: "function", set: "function", args: 3 },
       ],
+      keyEvaluations: 1,
+      k0: 3,
       nBefore: 42,
       nAfter: 10,
       x: 1,

@@ -527,12 +527,8 @@ function Server(options, requestListener): void {
   }
   http.Server.$call(this, options, requestListener);
   this[isTlsSymbol] = true;
-  // An https.Server is always TLS. When no cert/key were supplied,
-  // http.Server leaves tlsSymbol null and the server would listen as plain
-  // HTTP. Seed a minimal TLS config so Bun.serve creates an SSL app, which
-  // in turn lets post-listen addContext() register SNI contexts instead of
-  // throwing "addContext requires SSL support". Matches the defaults used
-  // by normalizeServerTls when requestCert is false.
+  // Without key/cert, http.Server leaves this null and would listen as plain HTTP;
+  // an https.Server always listens with TLS (the defaults are normalizeServerTls's).
   this[tlsSymbol] ??= { requestCert: false, rejectUnauthorized: false };
   const optionsALPNProtocols = options.ALPNProtocols;
   if (optionsALPNProtocols) {
@@ -571,14 +567,10 @@ Server.prototype.addContext = function (hostname, context) {
   const contexts = (this[kSNIContexts] ??= []);
   const bunServer = this[serverSymbol];
   if (bunServer) {
-    // Register on the running app first so a failed add (malformed PEM,
-    // key/cert mismatch) throws before we drop the previous JS-side entry.
+    // Throws on bad key material, before the previous entry below is dropped.
     httpServerAddServerName(bunServer, hostname, entry);
   }
-  // Node's addContext() lets the most recently added context for a given
-  // hostname win. uWS rejects a duplicate serverName at register time, so
-  // drop any earlier entry for the same hostname rather than passing both
-  // to Bun.serve.
+  // Last context added for a hostname wins, as in Node; Bun.serve rejects duplicate serverNames.
   for (let i = contexts.length - 1; i >= 0; i--) {
     if (contexts[i].serverName === hostname) {
       contexts.splice(i, 1);
@@ -589,39 +581,35 @@ Server.prototype.addContext = function (hostname, context) {
 
 Server.prototype.setSecureContext = function (options) {
   if (options == null) return;
-  // Seed with the same defaults normalizeServerTls produces so that a
-  // server constructed with no TLS options (tlsSymbol === null) does not
-  // end up with an un-normalized config where the native side defaults
-  // rejectUnauthorized to true and rejects every client that presents no
-  // certificate.
-  const current = this[tlsSymbol] || { requestCert: false, rejectUnauthorized: false };
   const { cert, key, ca, passphrase, servername, secureOptions, requestCert, rejectUnauthorized } = options;
-  // Assign unconditionally so a later setSecureContext() that omits an
-  // option clears the previous call's value (Node resets each omitted
-  // field) instead of silently keeping stale key material. Matches the
-  // tls.Server implementation.
   if (cert) throwOnInvalidTLSArray("options.cert", cert);
-  current.cert = cert;
   if (key) throwOnInvalidTLSArray("options.key", key);
-  current.key = key;
   if (ca) throwOnInvalidTLSArray("options.ca", ca);
-  current.ca = ca;
   if (passphrase && typeof passphrase !== "string") {
     throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
   }
-  current.passphrase = passphrase;
   if (servername && typeof servername !== "string") {
     throw $ERR_INVALID_ARG_TYPE("options.servername", "string", servername);
   }
-  current.serverName = servername;
   if (secureOptions && typeof secureOptions !== "number") {
     throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
   }
-  current.secureOptions = secureOptions;
-  if (requestCert !== undefined) current.requestCert = !!requestCert;
-  if (rejectUnauthorized !== undefined) current.rejectUnauthorized = rejectUnauthorized;
-  if (!current.requestCert) current.rejectUnauthorized = false;
-  this[tlsSymbol] = current;
+  // Validated above; nothing is applied if any option was rejected. Like
+  // tls.Server, an omitted option clears the value from an earlier call.
+  const previous = this[tlsSymbol] || { requestCert: false, rejectUnauthorized: false };
+  const nextRequestCert = requestCert === undefined ? !!previous.requestCert : !!requestCert;
+  const nextRejectUnauthorized = rejectUnauthorized === undefined ? previous.rejectUnauthorized : rejectUnauthorized;
+  this[tlsSymbol] = {
+    ...previous,
+    cert,
+    key,
+    ca,
+    passphrase,
+    serverName: servername,
+    secureOptions,
+    requestCert: nextRequestCert,
+    rejectUnauthorized: nextRequestCert ? nextRejectUnauthorized : false,
+  };
 };
 
 Server.prototype.getTicketKeys = function () {

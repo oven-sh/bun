@@ -2494,9 +2494,8 @@ where
         Ok(JSValue::js_number(closed as f64))
     }
 
-    /// `node:https` Server.addContext() post-listen path. Registers a new SNI
-    /// TLS context on the running uWS app and reinstalls routes for that
-    /// domain so it serves the same handlers as the default context.
+    /// `node:https` `Server#addContext()` after `listen()`: registers the SNI
+    /// context on the running app and installs this server's routes for it.
     pub(crate) fn add_sni_context(
         &mut self,
         global: &JSGlobalObject,
@@ -2523,11 +2522,8 @@ where
                     .throw_invalid_arguments(format_args!("hostname must not contain NUL bytes")));
             }
         };
-        // Validate that an SSL_CTX can be built from these options before
-        // touching the existing SNI entry. uWS's addServerName builds the
-        // SSL_CTX internally, so without this probe a malformed cert/key
-        // would fail after remove_server_name() had already stripped the
-        // previous entry, leaving the hostname with no SNI context.
+        // Build the SSL_CTX once up front: bad key material must fail before
+        // remove_server_name() below drops the hostname's existing context.
         {
             let mut create_err = uws::create_bun_socket_error_t::none;
             match ssl_opts.create_ssl_context(&mut create_err) {
@@ -2553,15 +2549,10 @@ where
                 }
             }
         }
-        // Node's addContext() permits repeated calls with the same hostname
-        // (last one wins). uWS's addServerName rejects a duplicate and its
-        // rollback also removes the existing entry from every listen socket,
-        // so without this a second addContext() would both throw and strip
-        // the previous SNI context. Remove first so the re-add replaces.
+        // Last addContext() for a hostname wins (Node semantics); uWS's
+        // addServerName fails on a duplicate and unregisters the existing one.
         self.app_mut().remove_server_name(&server_name);
-        // `true`: a context added for one hostname carries its own
-        // requestCert/rejectUnauthorized, the same as a per-serverName entry
-        // of the `tls` array at listen time (see `listen` in mod.rs).
+        // apply_client_cert_policy: same as the per-serverName `tls` entries in `listen`.
         if self
             .app_mut()
             .add_server_name_with_options(&server_name, &ssl_opts, true)

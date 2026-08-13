@@ -125,6 +125,110 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
     return false;
 }
 
+// vm.compileFunction compiles "(function (<params>) {\n<body>\n})" as a program
+// and lifts the function expression out of it (constructAnonymousFunction).
+static constexpr ASCIILiteral anonymousFunctionSuffix = "\n})"_s;
+
+// A token found where only the end of the source may follow (a stray "}",
+// "case" or "default" at the top level) ends the parse without a message, which
+// Parser::parseInner reports as a bare "Parser error"; Node names the token
+// ("Unexpected token '}'", asserted by test/parallel/test-vm-basic.js).
+static String parseErrorMessage(const ParserError& error, StringView source)
+{
+    if (error.message() != "Parser error"_s)
+        return error.message();
+    int start = error.token().m_startPosition.offset;
+    int end = error.token().m_endPosition.offset;
+    if (start < 0 || start >= end)
+        return error.message();
+    return makeString("Unexpected token '"_s, source.substring(start, end - start), '\'');
+}
+
+// What a function body may contain that a standalone parse of it (as a
+// program) rejects, by the messages Parser.cpp gives those rejections. Only
+// consulted once the wrapped program has already been rejected, so a message
+// missing here costs a less precise diagnostic, never the acceptance or
+// rejection of an input.
+static bool isFunctionBodyOnlyConstruct(const ParserError& error)
+{
+    if (error.type() != ParserError::SyntaxError)
+        return false;
+    const String& message = error.message();
+    return message == "Return statements are only valid inside functions."_s
+        || message == "new.target is only valid inside functions or static blocks."_s
+        || message == "new.target is not valid inside arrow functions in global code."_s;
+}
+
+// A SyntaxError at `offset` into `body`, shaped like the ones the parser
+// produces for `bodySource`: line() counts up from the source's first line
+// (which carries lineOffset, clamped the way JSC clamps it), and the token's
+// column() is the physical column, which is what decorateParseErrorStack reads.
+static ParserError syntaxErrorAtBodyOffset(const SourceCode& bodySource, StringView body, unsigned offset, const String& message)
+{
+    int line = bodySource.firstLine().oneBasedInt();
+    unsigned lineStart = 0;
+    for (unsigned i = 0; i < offset; i++) {
+        if (body[i] == '\n') {
+            line++;
+            lineStart = i + 1;
+        }
+    }
+    JSToken token;
+    token.m_startPosition = JSTextPosition(line, offset, lineStart);
+    token.m_endPosition = token.m_startPosition;
+    return ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, token, message, line);
+}
+
+static void throwParseError(JSGlobalObject* globalObject, ThrowScope& throwScope, ParserError& error, const SourceCode& source, StringView sourceString, const String& url, OrdinalNumber lineOffset)
+{
+    VM& vm = globalObject->vm();
+    JSObject* exception = error.toErrorObject(globalObject, source);
+    // Building the error materializes its stack, running a user
+    // Error.prepareStackTrace that may throw; Node throws the SyntaxError
+    // anyway. Terminations survive tryClearException.
+    (void)throwScope.tryClearException();
+    RETURN_IF_EXCEPTION(throwScope, void());
+    // Node always attaches the arrow header to compile-time SyntaxErrors
+    // (node_contextify.cc DecorateErrorStack), independent of displayErrors.
+    // A parse that ran out of stack or memory has no position to point at.
+    if (error.type() == ParserError::SyntaxError)
+        decorateParseErrorStack(globalObject, vm, exception, sourceString, url, error, lineOffset);
+    throwException(globalObject, throwScope, exception);
+}
+
+// The wrapped program was rejected, either by the parser (`wrapperMessage` at
+// `wrapperOffset` into `wrapper`) or because its function expression ended
+// before the wrapper's own closing brace, meaning a parameter or the body
+// closed it early (`wrapperOffset` is the brace that did). Throws the
+// SyntaxError Node reports for the body.
+//
+// Parsing the body on its own locates the error in the body directly and names
+// the token Node names, both when the wrapper only choked on its own "\n})"
+// suffix (an unterminated body) and when it parsed on past an escaping "}". It
+// cannot tell `return` or `new.target` from an error, though, so when one of
+// those is the first thing it trips over, the wrapper's verdict is reported
+// instead, moved onto the body: an offset in the parameter prefix lands on the
+// start of the body, one in the suffix on its end.
+static void throwCompileFunctionSyntaxError(JSGlobalObject* globalObject, ThrowScope& throwScope, const String& wrapper, unsigned bodyOffset, const String& wrapperMessage, unsigned wrapperOffset, const SourceOrigin& sourceOrigin, const CompileFunctionOptions& options, SourceTaintedOrigin sourceTaintOrigin)
+{
+    VM& vm = globalObject->vm();
+    String body = wrapper.substring(bodyOffset, wrapper.length() - bodyOffset - anonymousFunctionSuffix.length());
+    TextPosition position(options.lineOffset, options.columnOffset);
+    SourceCode bodySource(
+        JSC::StringSourceProvider::create(body, sourceOrigin, options.filename, sourceTaintOrigin, position, SourceProviderSourceType::Program),
+        position.m_line.oneBasedInt(), position.m_column.oneBasedInt());
+
+    ParserError error;
+    if (checkSyntax(vm, bodySource, error) || isFunctionBodyOnlyConstruct(error)) {
+        unsigned offset = wrapperOffset < bodyOffset ? 0 : std::min<unsigned>(wrapperOffset - bodyOffset, body.length());
+        error = syntaxErrorAtBodyOffset(bodySource, body, offset, wrapperMessage);
+    } else if (error.type() == ParserError::SyntaxError) {
+        error = ParserError(ParserError::SyntaxError, error.syntaxErrorType(), error.token(), parseErrorMessage(error, body), error.line());
+    }
+
+    throwParseError(globalObject, throwScope, error, bodySource, body, options.filename, options.lineOffset);
+}
+
 JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, CompileFunctionOptions&& options, JSC::SourceTaintedOrigin sourceTaintOrigin, JSC::JSScope* scope)
 {
     ASSERT(scope);
@@ -135,57 +239,13 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     TextPosition position(options.lineOffset, options.columnOffset);
     LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
 
-    // First try parsing the code as is without wrapping it in an anonymous function expression.
-    // This is to reject cases where the user passes in a string like "});(function() {".
-    if (!args.isEmpty() && args.at(0).isString()) {
-        ParserError error;
-        String code = args.at(0).toWTFString(globalObject);
-
-        SourceCode sourceCode(
-            JSC::StringSourceProvider::create(code, sourceOrigin, options.filename, sourceTaintOrigin, position, SourceProviderSourceType::Program),
-            position.m_line.oneBasedInt(), position.m_column.oneBasedInt());
-
-        if (!checkSyntax(vm, sourceCode, error)) {
-            ASSERT(error.isValid());
-
-            bool actuallyValid = true;
-
-            if (error.type() == ParserError::ErrorType::SyntaxError && error.syntaxErrorType() == ParserError::SyntaxErrorIrrecoverable) {
-                String message = error.message();
-                if (message == "Return statements are only valid inside functions.") {
-                    actuallyValid = false;
-                } else {
-                    const JSToken& token = error.token();
-                    int start = token.m_startPosition.offset;
-                    int end = token.m_endPosition.offset;
-                    if (start >= 0 && start < end) {
-                        StringView tokenView = sourceCode.view().substring(start, end - start);
-                        error = ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, token, makeString("Unexpected token '"_s, tokenView, '\''), error.line());
-                    }
-                }
-            }
-
-            if (actuallyValid) {
-                auto exception = error.toErrorObject(globalObject, sourceCode, -1);
-                // Building the error materializes its stack, running a user
-                // Error.prepareStackTrace that may throw; Node throws the
-                // SyntaxError anyway. Terminations survive tryClearException.
-                if (exception)
-                    (void)throwScope.tryClearException();
-                RETURN_IF_EXCEPTION(throwScope, nullptr);
-                // Node always attaches the arrow header to compile-time SyntaxErrors
-                // (node_contextify.cc DecorateErrorStack), independent of displayErrors.
-                decorateParseErrorStack(globalObject, vm, exception, code, options.filename, error, options.lineOffset);
-                throwException(globalObject, throwScope, exception);
-                return nullptr;
-            }
-        }
-    }
-
-    // wrap the arguments in an anonymous function expression
-    int startOffset = 0;
-    String code = stringifyAnonymousFunction(globalObject, args, throwScope, &startOffset);
+    // Wrap the parameters and body in an anonymous function expression.
+    // Compiling that program is what validates them; the body is only parsed
+    // on its own to report an error (throwCompileFunctionSyntaxError).
+    int bodyOffset = 0;
+    String code = stringifyAnonymousFunction(globalObject, args, throwScope, &bodyOffset);
     EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
 
     // The user's body starts on line 2 of the wrapped program (after the
     // "(function () {\n" prefix). Shift the provider's start position up one
@@ -198,7 +258,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     TextPosition wrappedPosition(OrdinalNumber::fromZeroBasedInt(lineZeroBased > 0 ? lineZeroBased - 1 : lineZeroBased), position.m_column);
 
     SourceCode sourceCode(
-        JSC::StringSourceProvider::create(code, sourceOrigin, WTF::move(options.filename), sourceTaintOrigin, wrappedPosition, SourceProviderSourceType::Program),
+        JSC::StringSourceProvider::create(code, sourceOrigin, options.filename, sourceTaintOrigin, wrappedPosition, SourceProviderSourceType::Program),
         wrappedPosition.m_line.oneBasedInt(), wrappedPosition.m_column.oneBasedInt());
 
     CodeCache* cache = vm.codeCache();
@@ -226,7 +286,16 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
         unlinkedProgramCodeBlock = cache->getUnlinkedProgramCodeBlock(vm, programExecutable, sourceCode, {}, error);
     }
 
-    if (!unlinkedProgramCodeBlock || error.isValid()) {
+    if (error.isValid()) {
+        if (error.type() != ParserError::SyntaxError) {
+            throwParseError(globalObject, throwScope, error, sourceCode, code, options.filename, options.lineOffset);
+            return nullptr;
+        }
+        throwCompileFunctionSyntaxError(globalObject, throwScope, code, bodyOffset, parseErrorMessage(error, code), std::max(error.token().m_startPosition.offset, 0), sourceOrigin, options, sourceTaintOrigin);
+        return nullptr;
+    }
+
+    if (!unlinkedProgramCodeBlock) {
         return nullptr;
     }
 
@@ -243,6 +312,20 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
 
     FunctionExecutable* functionExecutable = programCodeBlock->functionExpr(0);
     if (!functionExecutable) {
+        return nullptr;
+    }
+
+    // The program parsed, but it is only the function the caller asked for if
+    // it consists of one function expression reaching the "}" of the trailing
+    // "\n})", so that everything in between is inside it. A body such as
+    // "}); (function () {" (or a parameter doing the same) also parses, as a
+    // program whose first function ends at the injected brace. Everything
+    // before that brace was accepted as function body, so it is the token Node
+    // (which parses the body as nothing but a function body) rejects.
+    // functionEnd() is the offset of the function's closing brace in `code`.
+    unsigned wrapperClosingBrace = code.length() - anonymousFunctionSuffix.length() + 1;
+    if (programCodeBlock->numberOfFunctionExprs() != 1 || functionExecutable->functionEnd() != wrapperClosingBrace) {
+        throwCompileFunctionSyntaxError(globalObject, throwScope, code, bodyOffset, "Unexpected token '}'"_s, functionExecutable->functionEnd(), sourceOrigin, options, sourceTaintOrigin);
         return nullptr;
     }
 
@@ -380,20 +463,23 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
     RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(globalObject, thenResult));
 }
 
-// Helper function to create an anonymous function expression with parameters
+// Helper function to create an anonymous function expression with parameters.
+// The body (args' last entry) is copied in verbatim: it starts at *outOffset
+// and runs up to the anonymousFunctionSuffix that ends the program.
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset)
 {
     // How we stringify functions is important for creating anonymous function expressions
     String program;
     if (args.isEmpty()) {
         // No arguments, just an empty function body
-        program = "(function () {\n\n})"_s;
+        program = makeString("(function () {\n"_s, anonymousFunctionSuffix);
+        *outOffset = "(function () {\n"_s.length();
     } else if (args.size() == 1) {
         // Just the function body
         auto body = args.at(0).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        program = tryMakeString("(function () {\n"_s, body, "\n})"_s);
+        program = tryMakeString("(function () {\n"_s, body, anonymousFunctionSuffix);
         *outOffset = "(function () {\n"_s.length();
 
         if (!program) [[unlikely]] {
@@ -419,7 +505,7 @@ String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& a
         auto body = args.at(parameterCount).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        program = tryMakeString("(function ("_s, paramString.toString(), ") {\n"_s, body, "\n})"_s);
+        program = tryMakeString("(function ("_s, paramString.toString(), ") {\n"_s, body, anonymousFunctionSuffix);
         *outOffset = "(function ("_s.length() + paramString.length() + ") {\n"_s.length();
 
         if (!program) [[unlikely]] {

@@ -181,6 +181,79 @@ plugin_impl_baz(const OnBeforeParseArguments *args,
   plugin_impl_with_needle(args, result, "baz");
 }
 
+/*
+  Replaces the source with a JS module that default-exports the original
+  contents as a string literal, and tells Bun to parse the replacement with the
+  JS loader no matter what the file extension's loader is (the same shape as a
+  plugin compiling e.g. .mdx into JS).
+
+  The original contents are spliced into a double-quoted literal verbatim, so
+  the tests only feed it contents without quotes, backslashes or newlines.
+*/
+extern "C" BUN_PLUGIN_EXPORT void
+plugin_impl_compile_to_js(const OnBeforeParseArguments *args,
+                          OnBeforeParseResult *result) {
+  if (result->fetchSourceCode(args, result) != 0) {
+    exit(1);
+  }
+
+  static const char prefix[] = "export default \"";
+  static const char suffix[] = "\";";
+  const size_t prefix_len = sizeof(prefix) - 1;
+  const size_t suffix_len = sizeof(suffix) - 1;
+
+  size_t new_len = prefix_len + result->source_len + suffix_len;
+  char *new_source = (char *)malloc(new_len);
+  if (new_source == nullptr) {
+    exit(1);
+  }
+  memcpy(new_source, prefix, prefix_len);
+  memcpy(new_source + prefix_len, result->source_ptr, result->source_len);
+  memcpy(new_source + prefix_len + result->source_len, suffix, suffix_len);
+
+  std::atomic<size_t> *free_counter = nullptr;
+  if (args->external) {
+    free_counter = &((External *)args->external)->compilation_ctx_freed_count;
+  }
+
+  result->source_ptr = (uint8_t *)new_source;
+  result->source_len = new_len;
+  result->loader = BUN_LOADER_JS;
+  result->plugin_source_code_context =
+      compilation_ctx_new(new_source, new_len, free_counter);
+  result->free_plugin_source_code_context =
+      (void (*)(void *))compilation_ctx_free;
+}
+
+/*
+  Leaves the source untouched and only overrides the loader Bun parses it with.
+*/
+static void parse_with_loader(const OnBeforeParseArguments *args,
+                              OnBeforeParseResult *result, BunLoader loader) {
+  if (result->fetchSourceCode(args, result) != 0) {
+    exit(1);
+  }
+  result->loader = loader;
+}
+
+extern "C" BUN_PLUGIN_EXPORT void
+plugin_impl_parse_as_js(const OnBeforeParseArguments *args,
+                        OnBeforeParseResult *result) {
+  parse_with_loader(args, result, BUN_LOADER_JS);
+}
+
+extern "C" BUN_PLUGIN_EXPORT void
+plugin_impl_parse_as_json(const OnBeforeParseArguments *args,
+                          OnBeforeParseResult *result) {
+  parse_with_loader(args, result, BUN_LOADER_JSON);
+}
+
+extern "C" BUN_PLUGIN_EXPORT void
+plugin_impl_parse_as_file(const OnBeforeParseArguments *args,
+                          OnBeforeParseResult *result) {
+  parse_with_loader(args, result, BUN_LOADER_FILE);
+}
+
 extern "C" void finalizer(napi_env env, void *data, void *hint) {
   External *external = (External *)data;
   if (external != nullptr) {

@@ -2281,7 +2281,9 @@ impl<'a> PackageInstall<'a> {
             _ => 'brk: {
                 if self.patch.is_none() {
                     let exists = match resolution_tag {
-                        resolution::Tag::Npm => 'package_json_exists: {
+                        resolution::Tag::Npm
+                        | resolution::Tag::LocalTarball
+                        | resolution::Tag::RemoteTarball => 'package_json_exists: {
                             // SAFETY: `buf` and `self.cache_dir_subpath` both derive from the
                             // same thread-local `cached_package_folder_name_buf` raw pointer
                             // (the debug_assert below checks the subpath aliases this buffer),

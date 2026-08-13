@@ -2349,7 +2349,9 @@ pub(crate) fn install_isolated_packages(
                         _ => 'missing_from_cache: {
                             if matches!(patch_info, installer::PatchInfo::None) {
                                 let exists = match pkg_res_tag {
-                                    ResolutionTag::Npm => {
+                                    ResolutionTag::Npm
+                                    | ResolutionTag::LocalTarball
+                                    | ResolutionTag::RemoteTarball => {
                                         // Reshaped for borrowck — capture length
                                         // instead of `save()` so the path stays unborrowed.
                                         let cache_dir_path_save = pkg_cache_dir_subpath.len();

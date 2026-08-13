@@ -750,8 +750,27 @@ pub fn cached_tarball_folder_name(
     )
 }
 
-pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
-    sys::directory_exists_at(get_cache_directory(this), folder_path).unwrap_or(false)
+pub fn is_folder_in_cache(
+    this: &mut PackageManager,
+    folder_path: &ZStr,
+    resolution_tag: ResolutionTag,
+) -> bool {
+    let cache_dir = get_cache_directory(this);
+    match resolution_tag {
+        // npm and tarball extractions always write a package.json; an entry
+        // without one is incomplete and must be re-extracted (#10423).
+        ResolutionTag::Npm | ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+            let mut buf = PathBuffer::uninit();
+            let path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+                &mut buf.0,
+                &[folder_path.as_bytes(), b"package.json"],
+            );
+            sys::exists_at(cache_dir, path)
+        }
+        // Git/GitHub deps are allowed to have no package.json (see repository.rs
+        // and extract_tarball.rs); their completeness marker is `.bun-tag`.
+        _ => sys::directory_exists_at(cache_dir, folder_path).unwrap_or(false),
+    }
 }
 
 // ─────────────────────────── global directories ───────────────────────────────

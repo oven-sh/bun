@@ -3042,13 +3042,10 @@ function lookupAndConnectMultiple(self, lookup, host, options, dnsopts, port, lo
   });
 }
 
-// Rebuilt for every attempt dispatched (autoSelectFamily dials several) because
-// the native connect takes servername/session from this object, so a
-// setServername()/setSession() made after tls.connect() returned, even between
-// attempts, reaches the attempt that connects. self._host is the SNI default
-// lookupAndConnect stored (unset for { path }). The handshake state and the
-// onConnectEnd 'end' listener are per connect() call: Socket.prototype.connect
-// sets them up once, onClientHandshakeComplete removes the listener once.
+// Built per dispatched attempt so a setServername()/setSession() made after
+// tls.connect() returned (even between autoSelectFamily attempts) is what gets
+// dialed. The per-connect() handshake state, onConnectEnd included, is set up
+// once in Socket.prototype.connect.
 function clientTLSOptionsForAttempt(self, options, port) {
   const bunTLS = self[bunTlsSymbol];
   if (typeof bunTLS !== "function") return undefined;

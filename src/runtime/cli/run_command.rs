@@ -3078,7 +3078,8 @@ struct RemoteImageDownload {
     // prefetchRemoteImages (can't be set in the literal because
     // AsyncHTTP.init needs a pointer to response_buffer, which only
     // has a stable address once the owning struct is live).
-    // Self-referential: borrows from `url: Box<[u8]>` below.
+    // Self-referential: borrows from `url: Box<[u8]>` below (and its proxy
+    // URL, if any, from the arena-backed env loader in prefetch_remote_images).
     async_http: bun_http::AsyncHTTP<'static>,
     response_buffer: bun_core::MutableString,
     url: Box<[u8]>,
@@ -3200,6 +3201,16 @@ impl RunCommand {
 
         bun_http::http_thread::init(&Default::default());
 
+        // Lives in the process-lifetime CLI arena (the caller exits right
+        // after rendering) so the proxy URLs borrowed from it below satisfy
+        // the `AsyncHTTP<'static>` stored in each download.
+        let env: &'static DotEnv::Loader = {
+            let env = runner_arena().alloc(DotEnv::Loader::init());
+            env.load_process().unwrap_or_oom();
+            env
+        };
+        let reject_unauthorized = Some(env.get_tls_reject_unauthorized());
+
         // Heap-allocate each Download so AsyncHTTP.task has a stable
         // address (see RemoteImageDownload doc comment).
         let mut downloads: Vec<Box<RemoteImageDownload>> = Vec::new();
@@ -3238,9 +3249,11 @@ impl RunCommand {
                 ::core::slice::from_raw_parts(url.as_ptr(), url.len())
             };
             let d_ptr: *mut RemoteImageDownload = slot;
+            let url = bun_url::URL::parse(url_static);
+            let http_proxy = env.get_http_proxy_for(&url);
             let async_http = bun_http::AsyncHTTP::init(
                 bun_http::Method::GET,
-                bun_url::URL::parse(url_static),
+                url,
                 Default::default(),
                 b"",
                 b"",
@@ -3249,7 +3262,11 @@ impl RunCommand {
                     RemoteImageDownload::on_done,
                 ),
                 bun_http::FetchRedirect::Follow,
-                Default::default(),
+                bun_http::async_http::Options {
+                    http_proxy,
+                    reject_unauthorized,
+                    ..Default::default()
+                },
             );
             // SAFETY: last field — all four fields are now initialized.
             unsafe { ::core::ptr::addr_of_mut!((*slot).async_http).write(async_http) };

@@ -1,6 +1,6 @@
 import assert from "assert";
 import { expect, mock, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 test("require.extensions shape makes sense", () => {
@@ -161,6 +161,82 @@ test("wrapping an existing extension but it's secretly sync esm", () => {
   } finally {
     require.extensions[".cjs"] = original;
   }
+});
+test("default loader throws when module._compile was replaced with a non-function", async () => {
+  // Spawned because the unfixed behavior for primitives is a segfault, not an exception.
+  using dir = tempDir("extensions-bad-compile", {
+    "plain.js": `module.exports = "plain";`,
+    "plain.ts": `const value: string = "plain ts"; module.exports = value;`,
+    "run.cjs": `
+      const Module = require("module");
+      const path = require("path");
+      const file = path.join(__dirname, "plain.js");
+      const original = Module._extensions[".js"];
+      const values = [
+        ["undefined", undefined],
+        ["null", null],
+        ["number", 42],
+        ["boolean", true],
+        ["string", "not a function"],
+        ["object", {}],
+        ["symbol", Symbol("compile")],
+        ["bigint", 1n],
+      ];
+      const caught = fn => {
+        try {
+          fn();
+          return { threw: false };
+        } catch (e) {
+          return { isTypeError: e instanceof TypeError, message: e.message };
+        }
+      };
+
+      const viaRequire = values.map(([kind, value]) => {
+        Module._extensions[".js"] = function (module, filename) {
+          module._compile = value;
+          return original(module, filename);
+        };
+        return { kind, ...caught(() => require(file)), cached: file in require.cache };
+      });
+      Module._extensions[".js"] = original;
+      const afterwards = require(file);
+
+      const viaDirectCall = values.map(([kind, value]) => {
+        const m = new Module(file, module);
+        m.filename = file;
+        m._compile = value;
+        return { kind, ...caught(() => original(m, file)) };
+      });
+
+      const tsFile = path.join(__dirname, "plain.ts");
+      const tsModule = new Module(tsFile, module);
+      tsModule.filename = tsFile;
+      tsModule._compile = undefined;
+      const viaTsLoader = caught(() => Module._extensions[".ts"](tsModule, tsFile));
+
+      console.log(JSON.stringify({ viaRequire, afterwards, viaDirectCall, viaTsLoader }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.cjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const kinds = ["undefined", "null", "number", "boolean", "string", "object", "symbol", "bigint"];
+  const typeError = { isTypeError: true, message: "module._compile is not a function" };
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    viaRequire: kinds.map(kind => ({ kind, ...typeError, cached: false })),
+    afterwards: "plain",
+    viaDirectCall: kinds.map(kind => ({ kind, ...typeError })),
+    viaTsLoader: typeError,
+  });
+  expect(exitCode).toBe(0);
 });
 test("mutating extensions is banned by some files", () => {
   // vercel is not allowed to mutate require.extensions

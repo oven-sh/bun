@@ -109,7 +109,7 @@ enum HeadParse {
     NeedMore,
 }
 
-/// Owned +1 reference to a `us_ssl_ctx_t` (`SSL_CTX*`); releases the ref via
+/// Owned +1 reference to an `SslCtx` (`SSL_CTX*`); releases the ref via
 /// `SSL_CTX_free` on drop (BoringSSL decrements its internal refcount).
 /// Either dropped here, or transferred to the connected `WebSocket` via
 /// `into_raw()` after the upgrade completes.
@@ -160,7 +160,7 @@ pub struct HTTPClient<const SSL: bool> {
     /// TLS options (full SSLConfig for complete TLS customization)
     ssl_config: Option<Box<SSLConfig>>,
 
-    /// `us_ssl_ctx_t` built from `ssl_config` when it carries a custom CA.
+    /// `SslCtx` built from `ssl_config` when it carries a custom CA.
     /// Heap-allocated because ownership transfers to the connected
     /// `WebSocket` after the upgrade completes (so the `SSL_CTX` outlives
     /// this struct). RAII: dropping the wrapper releases the retained ref.
@@ -1576,7 +1576,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let overflow_ptr: *mut u8 = if overflow_len > 0 {
             let mut v: Vec<u8> = Vec::new();
             if v.try_reserve_exact(overflow_len).is_err() {
-                // OOM here terminates with `invalid_response` rather than
+                // OOM here terminates with `InvalidResponse` rather than
                 // aborting the process.
                 // SAFETY: no `&mut Self` is live across this call.
                 unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
@@ -1658,7 +1658,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
 
         // Normal (non-tunnel) mode — original code path. Transfer the
-        // custom `us_ssl_ctx_t` to the connected WebSocket (it must outlive
+        // custom `SslCtxOwned` to the connected WebSocket (it must outlive
         // the upgrade client because the socket's SSL* still references the
         // SSL_CTX inside it).
         // SAFETY: short-lived `&mut` for the field take.

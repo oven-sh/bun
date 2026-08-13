@@ -69,7 +69,15 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// while it was still queued ([`free_released_unstarted`] then frees it).
     fn try_start(&mut self) -> bool;
     fn free_released_unstarted(this: *mut Self);
-    fn complete_on_bundle_thread(&mut self);
+    /// Hands the build (result and log stored) back to its owner, which may
+    /// free `*this` as soon as it is posted. Raw pointer, not `&mut self`: no
+    /// reference to `*this`, here or in the caller, may be live when that
+    /// happens.
+    ///
+    /// # Safety
+    /// `this` is a started build the bundle thread owns; nothing on this
+    /// thread touches `*this` afterwards.
+    unsafe fn complete_on_bundle_thread(this: *mut Self);
     fn set_result(&mut self, result: BundleV2Result);
     fn set_log(&mut self, log: bun_ast::Log);
     fn set_transpiler(&mut self, this: *mut BundleV2<'_>);
@@ -225,24 +233,25 @@ impl<C: CompletionStruct> BundleThread<C> {
                     break;
                 }
                 // SAFETY: queue stores non-null *mut C pushed via enqueue(); owner keeps it alive
-                // until complete_on_bundle_thread() signals completion — unless it
+                // until complete_on_bundle_thread() hands it back — unless it
                 // released the build while it sat here (its VM went away).
                 if !unsafe { (*completion).try_start() } {
                     C::free_released_unstarted(completion);
                     continue;
                 }
-                // SAFETY: as above; started ⇒ the owner waits for us.
-                let completion = unsafe { &mut *completion };
                 // SAFETY: `generation` is only read/written on this (bundle) thread.
                 let generation = unsafe { (*instance).generation };
                 // `panic = "abort"` → a Rust panic on this thread enters the
                 // crash-handler hook and aborts the whole process.
                 // No `catch_unwind` — there is nothing to catch.
-                match Self::generate_in_new_thread(completion, generation) {
-                    Ok(()) => {}
-                    Err(err) => {
-                        completion.set_result(BundleV2Result::Err(err));
-                        completion.complete_on_bundle_thread();
+                //
+                // SAFETY: started ⇒ `*completion` is ours until it is handed
+                // back, which is the last thing either path does with it; the
+                // reborrow for `set_result` ends before that.
+                unsafe {
+                    if let Err(err) = Self::generate_in_new_thread(completion, generation) {
+                        (*completion).set_result(BundleV2Result::Err(err));
+                        C::complete_on_bundle_thread(completion);
                     }
                 }
                 has_bundled = true;
@@ -264,8 +273,12 @@ impl<C: CompletionStruct> BundleThread<C> {
     }
 
     /// This is called from `Bun.build` in JavaScript.
-    fn generate_in_new_thread(
-        completion: &mut C,
+    ///
+    /// # Safety
+    /// `completion` is a started build the bundle thread owns. On `Ok` it has
+    /// been handed back (and may be gone); on `Err` the caller hands it back.
+    unsafe fn generate_in_new_thread(
+        completion: *mut C,
         generation: bun_core::Generation,
     ) -> Result<(), crate::Error> {
         let heap = Arena::new();
@@ -277,22 +290,26 @@ impl<C: CompletionStruct> BundleThread<C> {
         ast_memory_store.push();
 
         // Allocate + configure folded — see `create_and_configure_transpiler` doc.
-        let transpiler = completion.create_and_configure_transpiler(bump)?;
+        //
+        // SAFETY: fn contract; the reborrow ends with the call (the result
+        // borrows `bump`).
+        let transpiler = unsafe { (*completion).create_and_configure_transpiler(bump) }?;
 
         transpiler.resolver.generation = generation;
 
-        // Construction + run delegated — see
-        // `init_and_run` doc. Reborrow `transpiler` through a raw ptr so
-        // `completion` can be borrowed again below.
+        // Construction + run delegated — see `init_and_run` doc. It consumes
+        // the `&'a mut`; the log read and the drop below go through this.
         let transpiler_ptr: *mut Transpiler<'_> = transpiler;
-        let run = completion.init_and_run(
-            // SAFETY: `transpiler` lives in `bump` for the duration of `heap`.
-            unsafe { &mut *transpiler_ptr },
-            bump,
-            // `WorkPool::get()` returns `&'static ThreadPool`; pass as raw so
-            // the impl can hand it to `BundleV2::init` (which stores `*mut`).
-            std::ptr::from_ref(bun_threading::work_pool::WorkPool::get()).cast_mut(),
-        );
+        // SAFETY: fn contract; `transpiler` lives in `bump` until `heap` drops.
+        let run = unsafe {
+            (*completion).init_and_run(
+                &mut *transpiler_ptr,
+                bump,
+                // `WorkPool::get()` returns `&'static ThreadPool`; pass as raw so
+                // the impl can hand it to `BundleV2::init` (which stores `*mut`).
+                std::ptr::from_ref(bun_threading::work_pool::WorkPool::get()).cast_mut(),
+            )
+        };
 
         // Straight-line teardown: log copy
         // runs on both paths; `completeOnBundleThread` only on success (the error
@@ -300,14 +317,18 @@ impl<C: CompletionStruct> BundleThread<C> {
         // `deinitWithoutFreeingArena` + wait-group drain live inside `init_and_run`
         // (it owns `this`).
         let mut out_log = bun_ast::Log::init();
-        // SAFETY: `transpiler.log` is the arena-allocated `*mut Log` set up by
-        // `configure_bundler`; valid for the lifetime of `heap`. Raw deref so the
-        // `&'a mut Transpiler` consumed by `init_and_run` above is not reborrowed.
+        // SAFETY: `transpiler.log` was installed by `create_and_configure_transpiler`
+        // and is live while the build is ours; raw because `init_and_run`
+        // consumed the `&'a mut`.
         let _ = unsafe { (*(*transpiler_ptr).log).append_to_with_recycled(&mut out_log, true) }; // logger OOM-only
-        completion.set_log(out_log);
+        // SAFETY: fn contract; the reborrow ends with the call.
+        unsafe { (*completion).set_log(out_log) };
 
         if run.is_ok() {
-            completion.complete_on_bundle_thread();
+            // SAFETY: result and log are stored and no reborrow is live;
+            // nothing below touches `*completion` (the teardown drops only this
+            // thread's memory).
+            unsafe { C::complete_on_bundle_thread(completion) };
         }
 
         ast_memory_store.pop();

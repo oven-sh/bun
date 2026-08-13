@@ -561,8 +561,8 @@ impl JSBundleCompletionTask {
 
     pub(crate) fn on_complete_anytask(ctx: *mut Self) -> bun_event_loop::JsResult<()> {
         crate::jsc_hooks::ActiveHandle::Bundle(NonNull::new(ctx).expect("completion")).unregister();
-        // For the +1 taken by `complete_on_bundle_thread` enqueue.
-        // SAFETY: `ctx` is the live heap allocation; `adopt` consumes the prior +1 on Drop.
+        // The creation ref, which `complete_on_bundle_thread` posted back to us.
+        // SAFETY: `ctx` is the live heap allocation; `adopt` consumes that ref on Drop.
         let _drop_ref = unsafe { bun_ptr::ScopedRef::<Self>::adopt(ctx) };
         // SAFETY: `ctx` is the heap::alloc allocation registered in `task`,
         // dispatched exactly once per task on the JS thread. Exclusive: the
@@ -1114,13 +1114,19 @@ impl CompletionStruct for JSBundleCompletionTask {
         Ok(())
     }
 
-    fn complete_on_bundle_thread(&mut self) {
+    unsafe fn complete_on_bundle_thread(this: *mut Self) {
         // The bundle thread's last touch of this task and of the VM's memory:
         // hand it back (always queued — the VM waits for it) and stop counting.
-        self.bundle_loop
-            .store(ptr::null_mut(), core::sync::atomic::Ordering::Release);
-        let handle = self.loop_handle.clone();
-        let this = std::ptr::from_mut::<Self>(self);
+        // The post carries the creation ref (`on_complete_anytask` releases it),
+        // so the JS thread may free `*this` once it lands: take the handle out first.
+        //
+        // SAFETY: trait contract — `this` is the started build, still ours.
+        let handle = unsafe {
+            (*this)
+                .bundle_loop
+                .store(ptr::null_mut(), core::sync::atomic::Ordering::Release);
+            (*this).loop_handle.clone()
+        };
         let ct = jsc::ConcurrentTask::create(jsc::Task::init(this));
         let jsc::vm_handle::Posted::Queued = handle.post_task(ct) else {
             unreachable!("VM handle closed with a Bun.build outstanding");

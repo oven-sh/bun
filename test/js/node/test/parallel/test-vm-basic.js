@@ -131,9 +131,14 @@ const vm = require('vm');
 
 // vm.compileFunction
 {
+  // Bun compiles the body on the same line as the wrapper so that stack
+  // frames report body line N as lineOffset + N (the engine cannot start a
+  // source at line 0), which is what toString() reflects.
   assert.strictEqual(
     vm.compileFunction('console.log("Hello, World!")').toString(),
-    'function () {\nconsole.log("Hello, World!")\n}'
+    typeof Bun === 'undefined'
+      ? 'function () {\nconsole.log("Hello, World!")\n}'
+      : 'function () {console.log("Hello, World!")\n}'
   );
 
   assert.strictEqual(
@@ -277,17 +282,18 @@ const vm = require('vm');
   // Setting value to run the last three tests
   Error.stackTraceLimit = 1;
 
-  // Bun's compileFunction stack frames differ from Node's: JSC attributes
-  // the throw to a different column (and columnOffset is not applied), the
-  // wrapper costs one line when lineOffset is 0, and the anonymous source is
-  // labeled differently.
+  // Bun's compileFunction stack frames differ from Node's in their columns:
+  // JSC attributes the throw to a different column than V8, and columns on
+  // body line 1 also count the `(function () {` wrapper the body shares its
+  // line with (so a columnOffset shorter than the wrapper has no effect).
+  // The anonymous source is labeled differently too. Lines match Node.
   assert.throws(() => {
     vm.compileFunction('throw new Error("Sample Error")')();
   }, {
     message: 'Sample Error',
     stack: typeof Bun === 'undefined'
       ? 'Error: Sample Error\n    at <anonymous>:1:7'
-      : 'Error: Sample Error\n    at <anonymous> (file:///:2:16)'
+      : 'Error: Sample Error\n    at <anonymous> (file:///:1:30)'
   });
 
   assert.throws(() => {
@@ -300,7 +306,7 @@ const vm = require('vm');
     message: 'Sample Error',
     stack: typeof Bun === 'undefined'
       ? 'Error: Sample Error\n    at <anonymous>:4:7'
-      : 'Error: Sample Error\n    at <anonymous> (file:///:4:16)'
+      : 'Error: Sample Error\n    at <anonymous> (file:///:4:30)'
   });
 
   assert.throws(() => {
@@ -313,7 +319,7 @@ const vm = require('vm');
     message: 'Sample Error',
     stack: typeof Bun === 'undefined'
       ? 'Error: Sample Error\n    at <anonymous>:1:10'
-      : 'Error: Sample Error\n    at <anonymous> (file:///:2:16)'
+      : 'Error: Sample Error\n    at <anonymous> (file:///:1:30)'
   });
 
   assert.strictEqual(
@@ -337,7 +343,7 @@ const vm = require('vm');
     // Bun's compileFunction stack frames differ from Node's (see above).
     stack: typeof Bun === 'undefined'
       ? 'ReferenceError: varInContext is not defined\n    at <anonymous>:1:1'
-      : 'ReferenceError: varInContext is not defined\n    at <anonymous> (file:///:2:20)'
+      : 'ReferenceError: varInContext is not defined\n    at <anonymous> (file:///:1:34)'
   });
 
   assert.notDeepStrictEqual(

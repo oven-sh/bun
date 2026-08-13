@@ -41,6 +41,14 @@ public:
         });
     }
 
+    // vm.compileFunction compiles `(function (<params>) {<body>` with the body
+    // starting on the same line as the wrapper so that body line N is reported
+    // as line lineOffset + N. This is the length of that wrapper text, which
+    // precedes the user's source on the provider's first line; 0 for sources
+    // that are compiled as written (vm.Script, modules).
+    unsigned wrapperPrefixLength() const { return m_wrapperPrefixLength; }
+    void setWrapperPrefixLength(unsigned length) { m_wrapperPrefixLength = length; }
+
 private:
     JSC::Strong<JSC::Unknown> m_dynamicImportCallback;
     // m_owner is the NodeVMScript / JSFunction / module wrapper that holds this
@@ -50,6 +58,7 @@ private:
     // as a GC root). Use Weak instead: when the owner is collected its
     // SourceCode chain drops the last RefPtr to this fetcher.
     JSC::Weak<JSC::JSCell> m_owner;
+    unsigned m_wrapperPrefixLength = 0;
     bool m_isUsingDefaultLoader = false;
 
     NodeVMScriptFetcher(JSC::VM& vm, JSC::JSValue dynamicImportCallback, JSC::JSValue owner)

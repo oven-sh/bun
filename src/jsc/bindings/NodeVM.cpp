@@ -183,19 +183,25 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     }
 
     // wrap the arguments in an anonymous function expression
-    int startOffset = 0;
-    String code = stringifyAnonymousFunction(globalObject, args, throwScope, &startOffset);
+    int wrapperPrefixLength = 0;
+    String code = stringifyAnonymousFunction(globalObject, args, throwScope, &wrapperPrefixLength);
     EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
 
-    // The user's body starts on line 2 of the wrapped program (after the
-    // "(function () {\n" prefix). Shift the provider's start position up one
-    // line so reported positions line up with the body the way V8's
-    // CompileFunction does: body line 1 reports as lineOffset+1. JSC clamps
-    // non-positive provider start positions to zero, so once the input is
-    // already <= 0 there is nothing to gain by going further negative; clamp
-    // there to keep the value bounded for downstream arithmetic.
-    int lineZeroBased = position.m_line.zeroBasedInt();
-    TextPosition wrappedPosition(OrdinalNumber::fromZeroBasedInt(lineZeroBased > 0 ? lineZeroBased - 1 : lineZeroBased), position.m_column);
+    // The body starts on the wrapped program's first line (see
+    // stringifyAnonymousFunction), so the program starts at lineOffset itself
+    // and body line N is reported as lineOffset + N. Columns on body line 1 are
+    // physical columns of the wrapped line, so they already include the
+    // wrapper prefix; Node reports columnOffset + column there, so apply only
+    // the part of columnOffset that exceeds the prefix (a SourceCode cannot
+    // start at a negative column).
+    int columnOffset = position.m_column.zeroBasedInt();
+    TextPosition wrappedPosition(position.m_line, OrdinalNumber::fromZeroBasedInt(columnOffset > wrapperPrefixLength ? columnOffset - wrapperPrefixLength : 0));
+
+    // Lets handleException map a frame on the first line back to the user's
+    // source when decorating a runtime error with the offending line.
+    if (auto* fetcher = sourceOrigin.fetcher(); fetcher && fetcher->fetcherType() == ScriptFetcher::Type::NodeVM)
+        static_cast<NodeVMScriptFetcher*>(fetcher)->setWrapperPrefixLength(static_cast<unsigned>(wrapperPrefixLength));
 
     SourceCode sourceCode(
         JSC::StringSourceProvider::create(code, sourceOrigin, WTF::move(options.filename), sourceTaintOrigin, wrappedPosition, SourceProviderSourceType::Program),
@@ -380,21 +386,30 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
     RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(globalObject, thenResult));
 }
 
-// Helper function to create an anonymous function expression with parameters
+// Helper function to create an anonymous function expression with parameters.
+//
+// The body follows `{` on the same line rather than on a line of its own: JSC
+// clamps a SourceCode's first line to 1, so a wrapper line cannot be
+// compensated for when lineOffset is 0 (the default) and every body line would
+// be reported one too high. This way body line N is physical line N of the
+// program. The price is that columns on body line 1 include the wrapper text;
+// *outOffset receives its length. The "\n" before `})` keeps a trailing `//`
+// comment in the body from swallowing the closing of the wrapper.
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset)
 {
     // How we stringify functions is important for creating anonymous function expressions
     String program;
     if (args.isEmpty()) {
         // No arguments, just an empty function body
-        program = "(function () {\n\n})"_s;
+        program = "(function () {\n})"_s;
+        *outOffset = "(function () {"_s.length();
     } else if (args.size() == 1) {
         // Just the function body
         auto body = args.at(0).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        program = tryMakeString("(function () {\n"_s, body, "\n})"_s);
-        *outOffset = "(function () {\n"_s.length();
+        program = tryMakeString("(function () {"_s, body, "\n})"_s);
+        *outOffset = "(function () {"_s.length();
 
         if (!program) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
@@ -419,8 +434,8 @@ String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& a
         auto body = args.at(parameterCount).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        program = tryMakeString("(function ("_s, paramString.toString(), ") {\n"_s, body, "\n})"_s);
-        *outOffset = "(function ("_s.length() + paramString.length() + ") {\n"_s.length();
+        program = tryMakeString("(function ("_s, paramString.toString(), ") {"_s, body, "\n})"_s);
+        *outOffset = "(function ("_s.length() + paramString.length() + ") {"_s.length();
 
         if (!program) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
@@ -574,14 +589,25 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
         unsigned caretColumn = 0;
         if (JSC::CodeBlock* codeBlock = stack_frame.codeBlock()) {
             if (JSC::SourceProvider* provider = codeBlock->source().provider()) {
+                // The user's source starts after compileFunction's wrapper prefix
+                // (if any), which shares the first line with it; JSC's columns on
+                // that line count the prefix too.
+                unsigned wrapperPrefixLength = 0;
+                if (auto* fetcher = provider->sourceOrigin().fetcher(); fetcher && fetcher->fetcherType() == ScriptFetcher::Type::NodeVM)
+                    wrapperPrefixLength = static_cast<NodeVMScriptFetcher*>(fetcher)->wrapperPrefixLength();
+                StringView userSource = provider->source().substring(wrapperPrefixLength);
+
                 int64_t startLineZeroBased = provider->startPosition().m_line.zeroBasedInt();
                 int64_t physicalLine = static_cast<int64_t>(line_and_column.line) - startLineZeroBased;
-                sourceLineText = nthSourceLineForArrowHeader(provider->source(), physicalLine);
+                sourceLineText = nthSourceLineForArrowHeader(userSource, physicalLine);
                 if (!sourceLineText.isNull()) {
                     caretColumn = line_and_column.column;
-                    unsigned startColumnZeroBased = static_cast<unsigned>(provider->startPosition().m_column.zeroBasedInt());
-                    if (physicalLine == 1 && caretColumn > startColumnZeroBased)
-                        caretColumn -= startColumnZeroBased;
+                    if (physicalLine == 1) {
+                        // SourceCode clamps a negative start column to 0, so that is what the frame's column includes.
+                        unsigned startColumnZeroBased = static_cast<unsigned>(std::max(0, provider->startPosition().m_column.zeroBasedInt()));
+                        unsigned firstLineShift = startColumnZeroBased + wrapperPrefixLength;
+                        caretColumn = caretColumn > firstLineShift ? caretColumn - firstLineShift : 0;
+                    }
                 }
             }
         }

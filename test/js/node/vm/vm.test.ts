@@ -269,6 +269,155 @@ describe("vm", () => {
         expect(e).toBeTruthy();
       }
     });
+
+    // Positions of runtime errors thrown by the compiled function. Node
+    // reports body line N as lineOffset + N; the body is line 1, not the
+    // line after a wrapper.
+    function thrownPosition(filename: string, fn: () => unknown) {
+      let stack: string = "";
+      try {
+        fn();
+      } catch (e: any) {
+        stack = e.stack;
+      }
+      const match = stack.match(new RegExp(`${filename.replaceAll(".", "\\.")}:(\\d+):(\\d+)`));
+      if (!match) throw new Error(`no ${filename} frame in:\n${stack}`);
+      return { line: Number(match[1]), column: Number(match[2]) };
+    }
+
+    test("runtime errors report body line N as lineOffset + N", () => {
+      const filename = "cf-lines.js";
+      const results: unknown[] = [];
+      const expected: unknown[] = [];
+      for (const lineOffset of [undefined, 0, 1, 7]) {
+        const options = lineOffset === undefined ? { filename } : { filename, lineOffset };
+        const base = lineOffset ?? 0;
+        results.push({
+          lineOffset,
+          line1: thrownPosition(filename, compileFunction('throw new Error("line 1")', [], options)).line,
+          line3: thrownPosition(filename, compileFunction('1;\n2;\nthrow new Error("line 3")', [], options)).line,
+          line1WithParams: thrownPosition(filename, () =>
+            compileFunction("throw new Error(String(a + b))", ["a", "b"], options)(1, 2),
+          ).line,
+          // Functions nested in the body are positioned relative to the same origin.
+          nestedArrowOnLine1: thrownPosition(
+            filename,
+            compileFunction('return () => { throw new Error("arrow") };', [], options)(),
+          ).line,
+          nestedFunctionOnLine2: thrownPosition(
+            filename,
+            compileFunction('return function inner() {\n  throw new Error("inner");\n};', [], options)(),
+          ).line,
+        });
+        expected.push({
+          lineOffset,
+          line1: base + 1,
+          line3: base + 3,
+          line1WithParams: base + 1,
+          nestedArrowOnLine1: base + 1,
+          nestedFunctionOnLine2: base + 2,
+        });
+      }
+      expect(results).toEqual(expected);
+    });
+
+    test("Error.prepareStackTrace call sites see the same body lines", () => {
+      const previous = Error.prepareStackTrace;
+      Error.prepareStackTrace = (_, callSites) =>
+        callSites.map(site => `${site.getFileName()}:${site.getLineNumber()}`);
+      try {
+        const fn = compileFunction("return [new Error('a').stack[0], (() => new Error('b').stack[0])()];", [], {
+          filename: "cf-callsites.js",
+        });
+        expect(fn()).toEqual(["cf-callsites.js:1", "cf-callsites.js:1"]);
+        const offsetFn = compileFunction("\nreturn new Error('c').stack[0];", [], {
+          filename: "cf-callsites.js",
+          lineOffset: 10,
+        });
+        expect(offsetFn()).toBe("cf-callsites.js:12");
+      } finally {
+        Error.prepareStackTrace = previous;
+      }
+    });
+
+    test("columnOffset shifts body line 1 only", () => {
+      const filename = "cf-columns.js";
+      const statement = 'throw new Error("column")';
+      // The column JSC assigns to this statement when it starts a line that no
+      // offset applies to.
+      const { column } = thrownPosition(filename, compileFunction("\n" + statement, [], { filename }));
+      // Body line 1 shares its line with the `(function () {` wrapper, so its
+      // columns include that text; a columnOffset at least that long is
+      // applied exactly, as in Node.
+      expect(thrownPosition(filename, compileFunction(statement, [], { filename, columnOffset: 100 }))).toEqual({
+        line: 1,
+        column: column + 100,
+      });
+      expect(
+        thrownPosition(filename, () => compileFunction(statement, ["a", "b"], { filename, columnOffset: 100 })()),
+      ).toEqual({ line: 1, column: column + 100 });
+      // Later lines are never shifted.
+      expect(thrownPosition(filename, compileFunction("\n" + statement, [], { filename, columnOffset: 100 }))).toEqual({
+        line: 2,
+        column,
+      });
+      // Without a columnOffset, line 1 still reports line 1.
+      expect(thrownPosition(filename, compileFunction(statement, [], { filename })).line).toBe(1);
+    });
+
+    test("runtime arrow header shows the body line when called from a vm script", () => {
+      // Node decorates an error escaping a vm run with `<url>:<line>`, the
+      // offending source line and a caret. For a function from compileFunction
+      // the line and source text are those of the body, not of the wrapper.
+      const header = (fn: () => unknown) => {
+        let stack: string = "";
+        try {
+          fn();
+        } catch (e: any) {
+          stack = e.stack;
+        }
+        return stack.split("\n").slice(0, 4);
+      };
+      const line1 = 'throw new Error("line 1")';
+      const line2 = '0;\n  throw new Error("line 2")';
+
+      // Reference: the same statements compiled as a script, where no wrapper exists.
+      const [, , scriptCaret] = header(() => new Script(line1, { filename: "ref.js" }).runInThisContext());
+      expect(scriptCaret).toMatch(/^ *\^$/);
+      const [, , scriptCaret2] = header(() => new Script(line2, { filename: "ref.js" }).runInThisContext());
+      expect(scriptCaret2).toMatch(/^ +\^$/);
+
+      const callFromScript = (fn: Function) => () =>
+        new Script("fn()", { filename: "outer.js" }).runInNewContext({ fn });
+
+      expect(header(callFromScript(compileFunction(line1, [], { filename: "cf-header.js" })))).toEqual([
+        "cf-header.js:1",
+        line1,
+        scriptCaret,
+        "",
+      ]);
+      expect(header(callFromScript(compileFunction(line1, ["a", "b"], { filename: "cf-header.js" })))).toEqual([
+        "cf-header.js:1",
+        line1,
+        scriptCaret,
+        "",
+      ]);
+      expect(
+        header(callFromScript(compileFunction(line1, [], { filename: "cf-header.js", columnOffset: 100 }))),
+      ).toEqual(["cf-header.js:1", line1, scriptCaret, ""]);
+      expect(header(callFromScript(compileFunction(line2, [], { filename: "cf-header.js" })))).toEqual([
+        "cf-header.js:2",
+        '  throw new Error("line 2")',
+        scriptCaret2,
+        "",
+      ]);
+      expect(header(callFromScript(compileFunction(line1, [], { filename: "cf-header.js", lineOffset: 4 })))).toEqual([
+        "cf-header.js:5",
+        line1,
+        scriptCaret,
+        "",
+      ]);
+    });
   });
 });
 

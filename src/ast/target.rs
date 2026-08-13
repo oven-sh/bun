@@ -57,8 +57,7 @@ impl Target {
         matches!(self, Target::Node)
     }
 
-    /// What `[target]` expands to in `--entry-naming` / `--chunk-naming` /
-    /// `--asset-naming` templates.
+    /// What `[target]` expands to in `--entry-naming` and friends.
     #[inline]
     pub fn naming_placeholder(self) -> &'static [u8] {
         match self {

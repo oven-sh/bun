@@ -2817,8 +2817,7 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 
-    /// Same check the bundler does in `generateChunksInParallel`: two inputs
-    /// rendering to one output path is an error, not a silent overwrite.
+    /// Mirrors the duplicate-path error in `generateChunksInParallel`.
     fn reject_duplicate_output_paths(&mut self) -> crate::Result<()> {
         use std::io::Write as _;
 
@@ -3076,9 +3075,7 @@ impl<'a> Transpiler<'a> {
         template
     }
 
-    /// Same template the bundler applies to entry points
-    /// (`computeChunks`), so `--no-bundle --outdir` names files the way
-    /// `bun build --outdir` does.
+    /// Mirrors the entry-point naming in `computeChunks`.
     fn transform_only_dest_path(
         &self,
         file_path_text: &[u8],

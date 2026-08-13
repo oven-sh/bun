@@ -550,15 +550,11 @@ pub fn CreateHardLinkW(
     rc
 }
 
-/// This module's spelling of `CopyFileW`: raw-ABI drop-in that never hands
-/// kernel32 an empty destination sitting at the start of a buffer. KERNELBASE
-/// looks at the destination name's last unit (`dest[len - 1]`), so for `L""`
-/// it reads exactly one unit *before* the string; a work-pool thread's first
-/// pooled `WPathBuffer` tends to start a mapping, so that read faulted
-/// (`fs.promises.copyFile(src, "")`). An empty destination is passed as the
-/// second unit of a NUL pair instead, the layout libuv's combined path buffer
-/// gives Node, so kernel32 still reports what it would have (a source error
-/// first, otherwise `ERROR_PATH_NOT_FOUND`).
+/// `CopyFileW` with an empty destination made safe: kernel32 reads the unit
+/// before an empty destination name (its "last" unit), so one is passed as the
+/// tail of a NUL pair, libuv's layout, rather than at the start of the
+/// caller's buffer, which may start a mapping. kernel32's own error reporting
+/// is unchanged.
 ///
 /// # Safety
 /// `source` and `dest` must point at NUL-terminated wide strings that stay
@@ -572,8 +568,7 @@ pub unsafe fn CopyFileW(source: LPCWSTR, dest: LPCWSTR, bFailIfExists: BOOL) -> 
     } else {
         dest
     };
-    // SAFETY: caller contract; the substitute is a NUL-terminated empty string
-    // with a readable unit before it.
+    // SAFETY: caller contract; the substitute is NUL-terminated too.
     unsafe { externs::CopyFileW(source, dest, bFailIfExists) }
 }
 

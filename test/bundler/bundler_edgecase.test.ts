@@ -2291,10 +2291,7 @@ describe("bundler", () => {
   itBundled("edgecase/ImportMetaMainInvertedMemberTargetNode", {
     files: importMetaMainInvertedMemberFiles,
     target: "node",
-    capture: [
-      "(__require.main != __require.module).toString().length",
-      "(__require.main != __require.module) ** 2",
-    ],
+    capture: ["(__require.main != __require.module).toString().length", "(__require.main != __require.module) ** 2"],
     run: { runtime: "node", stdout: "5 0" },
   });
   itBundled("edgecase/IdentifierInEnum#13081", {

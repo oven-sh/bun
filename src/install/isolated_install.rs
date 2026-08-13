@@ -2337,9 +2337,6 @@ pub(crate) fn install_isolated_packages(
 
                         _ => unreachable!(),
                     };
-                    let mut pkg_cache_dir_subpath: AutoRelPath =
-                        AutoRelPath::from(cache_subpath_z.as_bytes()).assume_ok();
-
                     let (cache_dir, cache_dir_path) =
                         installer.manager_mut().get_cache_directory_and_abs_path();
                     let _ = &cache_dir_path; // dropped at scope exit
@@ -2347,30 +2344,18 @@ pub(crate) fn install_isolated_packages(
                     let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
                     {
                         install::PreinstallState::Done => false,
-                        _ => 'missing_from_cache: {
-                            let exists = match pkg_res_tag {
-                                ResolutionTag::Npm => {
-                                    // Reshaped for borrowck — capture length
-                                    // instead of `save()` so the path stays unborrowed.
-                                    let cache_dir_path_save = pkg_cache_dir_subpath.len();
-                                    pkg_cache_dir_subpath.append(b"package.json").assume_ok();
-                                    let exists =
-                                        sys::exists_at(cache_dir, pkg_cache_dir_subpath.slice_z());
-                                    pkg_cache_dir_subpath.set_length(cache_dir_path_save);
-                                    exists
-                                }
-                                _ => sys::directory_exists_at(
-                                    cache_dir,
-                                    pkg_cache_dir_subpath.slice_z(),
-                                )
-                                .unwrap_or(false),
-                            };
+                        _ => {
+                            let exists = package_manager::directories::is_package_in_cache_at(
+                                cache_dir,
+                                cache_subpath_z,
+                                pkg_res_tag,
+                            );
                             if exists {
                                 installer
                                     .manager_mut()
                                     .set_preinstall_state(pkg_id, install::PreinstallState::Done);
                             }
-                            break 'missing_from_cache !exists;
+                            !exists
                         }
                     };
 

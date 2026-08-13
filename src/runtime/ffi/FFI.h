@@ -82,7 +82,8 @@ BUN_FFI_IMPORT extern struct NapiEnv Bun__thisFFIModuleNapiEnv;
 #define TagValueNull             (OtherTag)
 #define NotCellMask  (int64_t)(NumberTag | OtherTag)
 
-#define MAX_INT32 2147483648
+#define MAX_INT32 2147483647
+#define MIN_INT32 (-MAX_INT32 - 1)
 #define MAX_INT52 9007199254740991
 
 // If all bits in the mask are set, this indicates an integer number,
@@ -248,16 +249,37 @@ static EncodedJSValue DOUBLE_TO_JSVALUE(double val) {
    return res;
 }
 
+// ECMAScript ToInt32 (truncate, then wrap modulo 2^32), the conversion the
+// engine applies to every char/i8/u8/i16/u16/i32/u32 argument. ToUint32 is the
+// same bit pattern, so unsigned parameters take this value through C's
+// integer conversion. Ported from JSC's toIntImpl<int32_t> (runtime/MathCommon.h).
 static int32_t JSVALUE_TO_INT32(EncodedJSValue val) {
   if (JSVALUE_IS_INT32(val)) {
     return (int32_t)val.asInt64;
   }
-  // Decode a double-encoded integer (JIT tier-up, Math.* provenance, etc.);
-  // int64_t intermediate keeps u32 callers (uint32_t)JSVALUE_TO_INT32(...) defined.
+  // Whether an integral number is int32-tagged or double-encoded is the
+  // engine's choice (out of int32 range, fractional, JIT double speculation,
+  // Math.* provenance), so the double encoding has to be decoded here.
   val.asInt64 -= DoubleEncodeOffset;
-  // NaN check also catches undefined/null/bool, whose decoded bits are all NaNs.
-  if (val.asDouble != val.asDouble) return 0;
-  return (int32_t)(int64_t)val.asDouble;
+  uint64_t bits = (uint64_t)val.asInt64;
+  int32_t exp = (int32_t)((bits >> 52) & 0x7ff) - 0x3ff;
+  // exp < 0: |value| < 1. exp > 83: no mantissa bit reaches the low 32 bits.
+  // Zero, NaN, +-Infinity, and the decoded bits of undefined/null/booleans/cells
+  // (NaN patterns) all land here and become 0.
+  if (exp < 0 || exp > 83) {
+    return 0;
+  }
+  uint32_t result = exp > 52 ? (uint32_t)(bits << (exp - 52)) : (uint32_t)(bits >> (52 - exp));
+  if (exp < 32) {
+    // Reinsert the implicit leading 1; mask off the shifted-in sign/exponent bits.
+    uint32_t implicit_one = (uint32_t)1 << exp;
+    result &= implicit_one - 1;
+    result += implicit_one;
+  }
+  if (bits >> 63) {
+    result = -result;
+  }
+  return (int32_t)result;
 }
 
 static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {
@@ -339,7 +361,7 @@ static int64_t JSVALUE_TO_INT64(EncodedJSValue value) {
 }
 
 static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {
-  if (val < MAX_INT32) {
+  if (val <= MAX_INT32) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
 
@@ -351,7 +373,7 @@ static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {
 }
 
 static EncodedJSValue INT64_TO_JSVALUE(void* jsGlobalObject, int64_t val) {
-  if (val >= -MAX_INT32 && val <= MAX_INT32) {
+  if (val >= MIN_INT32 && val <= MAX_INT32) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
 

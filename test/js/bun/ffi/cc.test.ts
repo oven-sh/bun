@@ -1087,6 +1087,212 @@ describe("double <-> JSValue conversions", () => {
   });
 });
 
+// cc() symbols are called through the TinyCC-compiled trampoline (FFI.h), not
+// the engine's FFI that dlopen()/linkSymbols() use, so it has to apply the same
+// integer conversions itself. The C side reports every received integer as a
+// double so a return-boxing bug cannot mask or mimic an argument-decoding bug.
+describe("integer <-> JSValue conversions", () => {
+  it.concurrent("integer arguments are decoded with ToInt32 semantics, including double-encoded values", async () => {
+    using dir = tempDir("bun-ffi-int-args", {
+      "intargs.c": /* c */ `
+        double u32_arg(unsigned int x) { return x; }
+        double i32_arg(int x) { return x; }
+        double u16_arg(unsigned short x) { return x; }
+        double i16_arg(short x) { return x; }
+        double u8_arg(unsigned char x) { return x; }
+        double i8_arg(signed char x) { return x; }
+        double char_arg(char x) { return x; }
+      `,
+      "fixture.js": /* js */ `
+        import { cc } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "intargs.c"),
+          symbols: {
+            u32_arg: { args: ["u32"], returns: "f64" },
+            i32_arg: { args: ["i32"], returns: "f64" },
+            u16_arg: { args: ["u16"], returns: "f64" },
+            i16_arg: { args: ["i16"], returns: "f64" },
+            u8_arg: { args: ["u8"], returns: "f64" },
+            i8_arg: { args: ["i8"], returns: "f64" },
+            char_arg: { args: ["char"], returns: "f64" },
+          },
+        });
+
+        // Integer-valued, but the +0.5 intermediate pins a double-encoded
+        // JSValue regardless of JIT tier, as JIT-compiled arithmetic does.
+        const asDouble = x => {
+          const v = x + 0.5;
+          return v - 0.5;
+        };
+
+        const results = {
+          u32: {
+            max: symbols.u32_arg(0xffffffff),
+            two_pow_31: symbols.u32_arg(0x80000000),
+            int32_max: symbols.u32_arg(0x7fffffff),
+            minus_one: symbols.u32_arg(-1),
+            wraps_above_2_pow_32: symbols.u32_arg(2 ** 32 + 5),
+            wraps_below_int32_min: symbols.u32_arg(-(2 ** 31) - 1),
+            truncates_fraction: symbols.u32_arg(2147483648.5),
+            double_encoded: symbols.u32_arg(asDouble(7)),
+            huge: symbols.u32_arg(1e19),
+            infinity: symbols.u32_arg(Infinity),
+            nan: symbols.u32_arg(NaN),
+            undefined: symbols.u32_arg(undefined),
+          },
+          i32: {
+            two_pow_31: symbols.i32_arg(2 ** 31),
+            int32_min: symbols.i32_arg(-(2 ** 31)),
+            wraps_above_2_pow_32: symbols.i32_arg(2 ** 32 + 7),
+            truncates_fraction: symbols.i32_arg(5.7),
+            truncates_negative_fraction: symbols.i32_arg(-5.7),
+            double_encoded: symbols.i32_arg(asDouble(-938)),
+            huge_negative: symbols.i32_arg(-1e19),
+          },
+          narrow: {
+            u16_double_encoded: symbols.u16_arg(2 ** 31 + 3),
+            u16_wraps: symbols.u16_arg(70000),
+            i16_double_encoded: symbols.i16_arg(40000.5),
+            u8_double_encoded: symbols.u8_arg(2 ** 32 + 300),
+            u8_wraps: symbols.u8_arg(300),
+            i8_double_encoded: symbols.i8_arg(200.5),
+            char_double_encoded: symbols.char_arg(65.5),
+          },
+        };
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: {
+        u32: {
+          max: 4294967295,
+          two_pow_31: 2147483648,
+          int32_max: 2147483647,
+          minus_one: 4294967295,
+          wraps_above_2_pow_32: 5,
+          wraps_below_int32_min: 2147483647,
+          truncates_fraction: 2147483648,
+          double_encoded: 7,
+          huge: 2313682944, // 1e19 mod 2 ** 32
+          infinity: 0,
+          nan: 0,
+          undefined: 0,
+        },
+        i32: {
+          two_pow_31: -2147483648,
+          int32_min: -2147483648,
+          wraps_above_2_pow_32: 7,
+          truncates_fraction: 5,
+          truncates_negative_fraction: -5,
+          double_encoded: -938,
+          huge_negative: 1981284352, // -1e19 mod 2 ** 32, as int32
+        },
+        narrow: {
+          u16_double_encoded: 3,
+          u16_wraps: 4464, // 70000 - 65536
+          i16_double_encoded: -25536, // 40000 - 65536
+          u8_double_encoded: 44, // 300 - 256
+          u8_wraps: 44,
+          i8_double_encoded: -56, // 200 - 256
+          char_double_encoded: 65,
+        },
+      },
+      exitCode: 0,
+    });
+  });
+
+  // MAX_INT32 in FFI.h decides whether a u32 / i64_fast / u64_fast return is
+  // boxed as an int32 or as a double; 2 ** 31 does not fit an int32.
+  it.concurrent("u32 and 64-bit fast returns at the int32 boundary box as the right number", async () => {
+    using dir = tempDir("bun-ffi-int-returns", {
+      "intreturns.c": /* c */ `
+        unsigned int u32_identity(unsigned int x) { return x; }
+        unsigned int u32_two_pow_31(void) { return 2147483648u; }
+        unsigned int u32_int32_max(void) { return 2147483647u; }
+        unsigned int u32_max(void) { return 4294967295u; }
+        long long i64_two_pow_31(void) { return 2147483648LL; }
+        long long i64_int32_min(void) { return -2147483647LL - 1; }
+        long long i64_below_int32_min(void) { return -2147483649LL; }
+        unsigned long long u64_two_pow_31(void) { return 2147483648ull; }
+        unsigned long long u64_int32_max(void) { return 2147483647ull; }
+      `,
+      "fixture.js": /* js */ `
+        import { cc } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "intreturns.c"),
+          symbols: {
+            u32_identity: { args: ["u32"], returns: "u32" },
+            u32_two_pow_31: { args: [], returns: "u32" },
+            u32_int32_max: { args: [], returns: "u32" },
+            u32_max: { args: [], returns: "u32" },
+            i64_two_pow_31: { args: [], returns: "i64_fast" },
+            i64_int32_min: { args: [], returns: "i64_fast" },
+            i64_below_int32_min: { args: [], returns: "i64_fast" },
+            u64_two_pow_31: { args: [], returns: "u64_fast" },
+            u64_int32_max: { args: [], returns: "u64_fast" },
+          },
+        });
+
+        const show = value => [typeof value, String(value)];
+        const results = {
+          u32_identity_max: show(symbols.u32_identity(0xffffffff)),
+          u32_identity_two_pow_31: show(symbols.u32_identity(0x80000000)),
+          u32_two_pow_31: show(symbols.u32_two_pow_31()),
+          u32_int32_max: show(symbols.u32_int32_max()),
+          u32_max: show(symbols.u32_max()),
+          i64_two_pow_31: show(symbols.i64_two_pow_31()),
+          i64_int32_min: show(symbols.i64_int32_min()),
+          i64_below_int32_min: show(symbols.i64_below_int32_min()),
+          u64_two_pow_31: show(symbols.u64_two_pow_31()),
+          u64_int32_max: show(symbols.u64_int32_max()),
+        };
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: {
+        u32_identity_max: ["number", "4294967295"],
+        u32_identity_two_pow_31: ["number", "2147483648"],
+        u32_two_pow_31: ["number", "2147483648"],
+        u32_int32_max: ["number", "2147483647"],
+        u32_max: ["number", "4294967295"],
+        i64_two_pow_31: ["number", "2147483648"],
+        i64_int32_min: ["number", "-2147483648"],
+        i64_below_int32_min: ["number", "-2147483649"],
+        u64_two_pow_31: ["number", "2147483648"],
+        u64_int32_max: ["number", "2147483647"],
+      },
+      exitCode: 0,
+    });
+  });
+});
+
 describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", () => {
   const plantedHeader = "#define bool int\n#define true 100\n#define false 0\n";
   const files = {

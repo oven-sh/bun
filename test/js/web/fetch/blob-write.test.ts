@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { expectMaxObjectTypeCount, tempDirWithFiles } from "harness";
+import { expectMaxObjectTypeCount, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 test("blob.write() throws for data-backed blob", () => {
@@ -30,14 +30,14 @@ test("blob.delete() throws for data-backed blob", () => {
 });
 
 test("Bun.file(path).unlink() does not throw", async () => {
-  const dir = tempDirWithFiles("bun-unlink", { a: "Hello, world!" });
+  await using dir = tempDir("bun-unlink", { a: "Hello, world!" });
   const file = Bun.file(path.join(dir, "a"));
   expect(file.unlink()).resolves.toBeUndefined();
   expect(await Bun.file(path.join(dir, "a")).exists()).toBe(false);
 });
 
 test("Bun.file(path).delete() does not throw", async () => {
-  const dir = tempDirWithFiles("bun-unlink", { a: "Hello, world!" });
+  await using dir = tempDir("bun-unlink", { a: "Hello, world!" });
   const file = Bun.file(path.join(dir, "a"));
   expect(file.delete()).resolves.toBeUndefined();
   expect(await Bun.file(path.join(dir, "a")).exists()).toBe(false);
@@ -78,9 +78,49 @@ test("blob.stat() returns undefined for data-backed blob", async () => {
 });
 
 test("Bun.file(path).stat() returns stats", async () => {
-  const dir = tempDirWithFiles("bun-stat", { a: "Hello, world!" });
+  await using dir = tempDir("bun-stat", { a: "Hello, world!" });
   const file = Bun.file(path.join(dir, "a"));
   const stat = await file.stat();
   expect(stat).toBeDefined();
   expect(stat.size).toBe(13); // "Hello, world!" is 13 bytes
+});
+
+// Bun.file().write() accepts an options.type override: non-strings throw,
+// valid types are stored lowercased (through the mime table when known), and
+// invalid blob types are silently ignored.
+test("Bun.file(path).write() rejects a non-string options.type", async () => {
+  const dir = tempDirWithFiles("blob-write-type", { "a.txt": "hello" });
+  const file = Bun.file(path.join(dir, "a.txt"));
+  let err: any;
+  try {
+    await file.write("x", { type: 123 as any });
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toMatchObject({
+    code: "ERR_INVALID_ARG_TYPE",
+    message: "Expected options.type to be a string for 'write'.",
+  });
+});
+
+test("Bun.file(path).write() lowercases and applies a valid options.type", async () => {
+  const dir = tempDirWithFiles("blob-write-type", { "a.txt": "hello" });
+  const file = Bun.file(path.join(dir, "a.txt"));
+  await file.write("x", { type: "TEXT/PLAIN; CHARSET=UTF-8" });
+  expect(file.type).toBe("text/plain; charset=utf-8");
+});
+
+test("Bun.file(path).write() resolves a known options.type through the mime table", async () => {
+  const dir = tempDirWithFiles("blob-write-type", { "a.txt": "hello" });
+  const file = Bun.file(path.join(dir, "a.txt"));
+  await file.write("x", { type: "APPLICATION/JSON" });
+  expect(file.type).toBe("application/json");
+});
+
+test("Bun.file(path).write() silently ignores an invalid options.type", async () => {
+  const dir = tempDirWithFiles("blob-write-type", { "a.txt": "hello" });
+  const file = Bun.file(path.join(dir, "a.txt"));
+  await file.write("x", { type: "bad\r\ntype" });
+  // the .txt default is kept
+  expect(file.type).toBe("text/plain;charset=utf-8");
 });

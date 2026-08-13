@@ -22,7 +22,7 @@ pub mod kevent_watcher;
 pub mod windows_watcher;
 
 #[path = "WatcherTrace.rs"]
-pub mod watcher_trace;
+pub(crate) mod watcher_trace;
 
 #[path = "Watcher.rs"]
 pub mod watcher_impl;
@@ -35,9 +35,9 @@ pub use error::{Error, Result};
 
 pub use WatchItemKind as Kind;
 pub use watcher_impl::{
-    AnyResolveWatcher, ChangedFilePath, Event, HashType, MAX_COUNT, MAX_EVICTION_COUNT, Op,
-    PackageJSON, REQUIRES_FILE_DESCRIPTORS, WATCH_OPEN_FLAGS, WatchEvent, WatchItem,
-    WatchItemColumns, WatchItemIndex, WatchItemKind, WatchList, Watcher, WatcherContext,
+    AnyResolveWatcher, ChangedFilePath, Event, FdOwnership, HashType, MAX_COUNT,
+    MAX_EVICTION_COUNT, Op, PackageJSON, REQUIRES_FILE_DESCRIPTORS, WATCH_OPEN_FLAGS, WatchEvent,
+    WatchItem, WatchItemColumns, WatchItemIndex, WatchItemKind, WatchList, Watcher, WatcherContext,
 };
 
 // ─── upward-crate placeholders (CYCLEBREAK) ───────────────────────────────

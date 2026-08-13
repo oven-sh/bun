@@ -57,12 +57,6 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
             ptr: unsafe { NonNull::new_unchecked(raw) },
         }
     }
-
-    /// Returns the raw pointer without decrementing the ref count. Consumes `self`.
-    pub fn leak(self) -> *mut T {
-        let this = core::mem::ManuallyDrop::new(self);
-        this.ptr.as_ptr()
-    }
 }
 
 impl<T: ExternalSharedDescriptor> core::ops::Deref for ExternalShared<T> {
@@ -104,7 +98,7 @@ pub struct ExternalSharedOptional<T: ExternalSharedDescriptor> {
 }
 
 impl<T: ExternalSharedDescriptor> ExternalSharedOptional<T> {
-    pub const fn init_null() -> Self {
+    pub(crate) const fn init_null() -> Self {
         Self { ptr: None }
     }
 
@@ -120,18 +114,6 @@ impl<T: ExternalSharedDescriptor> ExternalSharedOptional<T> {
 
     pub fn get(&self) -> Option<*mut T> {
         self.ptr.map(|p| p.as_ptr())
-    }
-
-    /// Sets `self` to null, returning the non-optional pointer if present.
-    pub fn take(&mut self) -> Option<ExternalShared<T>> {
-        let ptr = self.ptr.take()?;
-        Some(ExternalShared { ptr })
-    }
-
-    /// Returns the raw pointer without decrementing the ref count. Consumes `self`.
-    pub fn leak(self) -> Option<*mut T> {
-        let this = core::mem::ManuallyDrop::new(self);
-        this.ptr.map(|p| p.as_ptr())
     }
 }
 

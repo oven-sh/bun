@@ -1,6 +1,13 @@
 //! Raw Win32 extern fn declarations + tier-0 Win32 typedefs.
 //! `bun_sys::windows` re-exports FROM here (see the layering doc). This crate is a tier-0 leaf: it depends on nothing above
 //! `libuv_sys`.
+//!
+//! `#[link(name = "...")]` on every `extern` block is wrapped in
+//! `#[cfg_attr(windows, ...)]`. This crate is depended on unconditionally (not
+//! behind `[target.'cfg(windows)']`) by several workspace members that need
+//! the POD typedefs on every target, so an unconditional `#[link]` would bake
+//! `-lntdll`/`-lkernel32`/... into the rlib and break linking any standalone
+//! test/bench binary on a non-Windows host.
 
 use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_ulong, c_ushort, c_void};
 
@@ -12,7 +19,7 @@ pub type BOOL = c_int;
 pub type BOOLEAN = u8;
 pub type WORD = c_ushort;
 pub type DWORD = c_ulong;
-pub type DWORD_PTR = usize;
+type DWORD_PTR = usize;
 pub type UINT = c_uint;
 pub type ULONG = c_ulong;
 pub type LONG = c_long;
@@ -222,7 +229,7 @@ pub struct WIN32_FILE_ATTRIBUTE_DATA {
 }
 
 /// `GET_FILEEX_INFO_LEVELS` — enum(u32) selecting `GetFileAttributesExW` payload.
-pub type GET_FILEEX_INFO_LEVELS = u32;
+pub(crate) type GET_FILEEX_INFO_LEVELS = u32;
 
 /// `FILE_INFO_BY_HANDLE_CLASS` (`winbase.h`), as a bare `u32`.
 pub type FILE_INFO_BY_HANDLE_CLASS = u32;
@@ -236,7 +243,7 @@ pub struct UNICODE_STRING {
 }
 
 /// `ACCESS_MASK` (`winnt.h`).
-pub type ACCESS_MASK = DWORD;
+type ACCESS_MASK = DWORD;
 
 /// `OBJECT_ATTRIBUTES` (`ntdef.h`) — passed to `NtCreateFile` / `NtOpenFile`.
 #[repr(C)]
@@ -539,12 +546,148 @@ impl FILE_INFORMATION_CLASS {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Stack unwinding (winnt.h) — used by the crash handler to walk the faulting
+// thread's stack from its saved CONTEXT record.
+// ──────────────────────────────────────────────────────────────────────────
+
+pub const UNW_FLAG_NHANDLER: DWORD = 0;
+
+/// `_IMAGE_RUNTIME_FUNCTION_ENTRY` (winnt.h). x64 and ARM64 share the first
+/// two DWORDs; x64 adds `UnwindInfoAddress`. Only ever used via pointer
+/// returned by `RtlLookupFunctionEntry`, so the exact tail layout is not
+/// read here.
+#[repr(C)]
+pub struct RUNTIME_FUNCTION {
+    pub BeginAddress: DWORD,
+    #[cfg(target_arch = "x86_64")]
+    pub EndAddress: DWORD,
+    pub UnwindData: DWORD,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct M128A {
+    pub Low: u64,
+    pub High: i64,
+}
+
+/// `_CONTEXT` for AMD64 (winnt.h). Full layout so `RtlVirtualUnwind` can
+/// mutate it in place during a stack walk. Only `Rip`/`Rsp` are read by bun.
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[repr(C, align(16))]
+#[derive(Clone, Copy)]
+pub struct CONTEXT {
+    pub P1Home: u64,
+    pub P2Home: u64,
+    pub P3Home: u64,
+    pub P4Home: u64,
+    pub P5Home: u64,
+    pub P6Home: u64,
+    pub ContextFlags: DWORD,
+    pub MxCsr: DWORD,
+    pub SegCs: WORD,
+    pub SegDs: WORD,
+    pub SegEs: WORD,
+    pub SegFs: WORD,
+    pub SegGs: WORD,
+    pub SegSs: WORD,
+    pub EFlags: DWORD,
+    pub Dr0: u64,
+    pub Dr1: u64,
+    pub Dr2: u64,
+    pub Dr3: u64,
+    pub Dr6: u64,
+    pub Dr7: u64,
+    pub Rax: u64,
+    pub Rcx: u64,
+    pub Rdx: u64,
+    pub Rbx: u64,
+    pub Rsp: u64,
+    pub Rbp: u64,
+    pub Rsi: u64,
+    pub Rdi: u64,
+    pub R8: u64,
+    pub R9: u64,
+    pub R10: u64,
+    pub R11: u64,
+    pub R12: u64,
+    pub R13: u64,
+    pub R14: u64,
+    pub R15: u64,
+    pub Rip: u64,
+    pub FltSave: [u8; 512],
+    pub VectorRegister: [M128A; 26],
+    pub VectorControl: u64,
+    pub DebugControl: u64,
+    pub LastBranchToRip: u64,
+    pub LastBranchFromRip: u64,
+    pub LastExceptionToRip: u64,
+    pub LastExceptionFromRip: u64,
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+const _: () = {
+    assert!(core::mem::size_of::<CONTEXT>() == 1232);
+    assert!(core::mem::offset_of!(CONTEXT, Rsp) == 0x98);
+    assert!(core::mem::offset_of!(CONTEXT, Rip) == 0xf8);
+};
+
+/// `_ARM64_NT_CONTEXT` (winnt.h). Only `Pc`/`Sp`/`Lr` are read by bun.
+#[cfg(all(windows, target_arch = "aarch64"))]
+#[repr(C, align(16))]
+#[derive(Clone, Copy)]
+pub struct CONTEXT {
+    pub ContextFlags: DWORD,
+    pub Cpsr: DWORD,
+    pub X: [u64; 29],
+    pub Fp: u64,
+    pub Lr: u64,
+    pub Sp: u64,
+    pub Pc: u64,
+    pub V: [M128A; 32],
+    pub Fpcr: DWORD,
+    pub Fpsr: DWORD,
+    pub Bcr: [DWORD; 8],
+    pub Bvr: [u64; 8],
+    pub Wcr: [DWORD; 2],
+    pub Wvr: [u64; 2],
+}
+
+#[cfg(all(windows, target_arch = "aarch64"))]
+const _: () = {
+    assert!(core::mem::size_of::<CONTEXT>() == 912);
+    assert!(core::mem::offset_of!(CONTEXT, Lr) == 0xf8);
+    assert!(core::mem::offset_of!(CONTEXT, Sp) == 0x100);
+    assert!(core::mem::offset_of!(CONTEXT, Pc) == 0x108);
+};
+
+// ──────────────────────────────────────────────────────────────────────────
 // ntdll namespace (subset).
 // ──────────────────────────────────────────────────────────────────────────
 pub mod ntdll {
     use super::*;
 
-    #[link(name = "ntdll")]
+    #[cfg(windows)]
+    #[cfg_attr(windows, link(name = "ntdll"))]
+    unsafe extern "system" {
+        pub fn RtlLookupFunctionEntry(
+            ControlPc: u64,
+            ImageBase: *mut u64,
+            HistoryTable: *mut c_void,
+        ) -> *mut RUNTIME_FUNCTION;
+        pub fn RtlVirtualUnwind(
+            HandlerType: DWORD,
+            ImageBase: u64,
+            ControlPc: u64,
+            FunctionEntry: *mut RUNTIME_FUNCTION,
+            ContextRecord: *mut CONTEXT,
+            HandlerData: *mut *mut c_void,
+            EstablisherFrame: *mut u64,
+            ContextPointers: *mut c_void,
+        ) -> *mut c_void;
+    }
+
+    #[cfg_attr(windows, link(name = "ntdll"))]
     unsafe extern "system" {
         pub fn RtlCaptureStackBackTrace(
             FramesToSkip: u32,
@@ -690,9 +833,19 @@ pub mod kernel32 {
         pub Protect: u32,
         pub Type: u32,
     }
+    pub const MEM_COMMIT: u32 = 0x1000;
     pub const MEM_FREE: u32 = 0x10000;
 
-    #[link(name = "kernel32")]
+    pub const PAGE_NOACCESS: u32 = 0x01;
+    pub const PAGE_READONLY: u32 = 0x02;
+    pub const PAGE_READWRITE: u32 = 0x04;
+    pub const PAGE_WRITECOPY: u32 = 0x08;
+    pub const PAGE_EXECUTE_READ: u32 = 0x20;
+    pub const PAGE_EXECUTE_READWRITE: u32 = 0x40;
+    pub const PAGE_EXECUTE_WRITECOPY: u32 = 0x80;
+    pub const PAGE_GUARD: u32 = 0x100;
+
+    #[cfg_attr(windows, link(name = "kernel32"))]
     unsafe extern "system" {
         /// No preconditions; reads thread-local Win32 error slot.
         pub safe fn GetLastError() -> DWORD;
@@ -775,7 +928,7 @@ pub mod kernel32 {
             Add: BOOL,
         ) -> BOOL;
     }
-    #[link(name = "kernel32")]
+    #[cfg_attr(windows, link(name = "kernel32"))]
     unsafe extern "system" {
         /// `GetConsoleScreenBufferInfo` (`wincon.h`).
         pub fn GetConsoleScreenBufferInfo(
@@ -819,6 +972,14 @@ pub mod kernel32 {
             First: u32,
             Handler: unsafe extern "system" fn(*mut c_void) -> i32,
         ) -> *mut c_void;
+        /// `SetUnhandledExceptionFilter` (`errhandlingapi.h`). Runs after all
+        /// frame-based (SEH) handlers have declined.
+        pub fn SetUnhandledExceptionFilter(
+            lpTopLevelExceptionFilter: Option<unsafe extern "system" fn(*mut c_void) -> i32>,
+        ) -> Option<unsafe extern "system" fn(*mut c_void) -> i32>;
+        /// `GetModuleHandleW` (`libloaderapi.h`). `lpModuleName == null` returns
+        /// the base address of the calling process's executable image.
+        pub fn GetModuleHandleW(lpModuleName: LPCWSTR) -> HMODULE;
         /// `RemoveVectoredExceptionHandler` (`errhandlingapi.h`).
         pub fn RemoveVectoredExceptionHandler(Handle: *mut c_void) -> u32;
     }
@@ -838,7 +999,7 @@ pub const INFINITE: DWORD = 0xFFFF_FFFF;
 pub const WAIT_FAILED: DWORD = 0xFFFF_FFFF;
 pub const STARTF_USESTDHANDLES: DWORD = 0x0000_0100;
 
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     #[link_name = "WaitForSingleObject"]
     fn WaitForSingleObject_raw(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
@@ -881,7 +1042,7 @@ impl NTSTATUS {
     /// `STATUS_FILE_DELETED` — an I/O request other than close was performed on
     /// a file after it was deleted (typically `NtCreateFile` against a name
     /// that has already been POSIX-delete-pended).
-    pub const FILE_DELETED: NTSTATUS = NTSTATUS(0xC000_0123);
+    pub(crate) const FILE_DELETED: NTSTATUS = NTSTATUS(0xC000_0123);
     pub const SHARING_VIOLATION: NTSTATUS = NTSTATUS(0xC000_0043);
     /// `STATUS_CANNOT_DELETE` — the file has `FILE_ATTRIBUTE_READONLY` (and the
     /// filesystem rejected `FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE`), or a
@@ -919,7 +1080,7 @@ pub const fn NT_ERROR(status: NTSTATUS) -> bool {
 }
 pub const STATUS_SUCCESS: NTSTATUS = NTSTATUS::SUCCESS;
 
-#[link(name = "ntdll")]
+#[cfg_attr(windows, link(name = "ntdll"))]
 unsafe extern "system" {
     /// Total over `NTSTATUS`; no preconditions.
     pub safe fn RtlNtStatusToDosError(status: NTSTATUS) -> DWORD;
@@ -953,7 +1114,7 @@ pub mod ws2_32 {
         pub ai_next: *mut addrinfo,
     }
 
-    #[link(name = "ws2_32")]
+    #[cfg_attr(windows, link(name = "ws2_32"))]
     unsafe extern "system" {
         pub fn getaddrinfo(
             node: *const c_char,
@@ -1034,115 +1195,7 @@ pub mod ws2_32 {
         pub s6_addr: [u8; 16],
     }
 
-    /// Winsock error codes — `WSAE*` (`WSABASEERR` = 10000).
-    /// Newtype so `bun_sys::windows::win_sock_error_to_zig_error` can `match` on
-    /// associated consts. Values from `winsock2.h`.
-    #[repr(transparent)]
-    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-    pub struct WinsockError(pub u16);
-    impl WinsockError {
-        #[inline]
-        pub const fn raw(self) -> u16 {
-            self.0
-        }
-        pub const WSA_INVALID_HANDLE: Self = Self(6);
-        pub const WSA_NOT_ENOUGH_MEMORY: Self = Self(8);
-        pub const WSA_INVALID_PARAMETER: Self = Self(87);
-        pub const WSA_OPERATION_ABORTED: Self = Self(995);
-        pub const WSA_IO_INCOMPLETE: Self = Self(996);
-        pub const WSA_IO_PENDING: Self = Self(997);
-        pub const WSAEINTR: Self = Self(10004);
-        pub const WSAEBADF: Self = Self(10009);
-        pub const WSAEACCES: Self = Self(10013);
-        pub const WSAEFAULT: Self = Self(10014);
-        pub const WSAEINVAL: Self = Self(10022);
-        pub const WSAEMFILE: Self = Self(10024);
-        pub const WSAEWOULDBLOCK: Self = Self(10035);
-        pub const WSAEINPROGRESS: Self = Self(10036);
-        pub const WSAEALREADY: Self = Self(10037);
-        pub const WSAENOTSOCK: Self = Self(10038);
-        pub const WSAEDESTADDRREQ: Self = Self(10039);
-        pub const WSAEMSGSIZE: Self = Self(10040);
-        pub const WSAEPROTOTYPE: Self = Self(10041);
-        pub const WSAENOPROTOOPT: Self = Self(10042);
-        pub const WSAEPROTONOSUPPORT: Self = Self(10043);
-        pub const WSAESOCKTNOSUPPORT: Self = Self(10044);
-        pub const WSAEOPNOTSUPP: Self = Self(10045);
-        pub const WSAEPFNOSUPPORT: Self = Self(10046);
-        pub const WSAEAFNOSUPPORT: Self = Self(10047);
-        pub const WSAEADDRINUSE: Self = Self(10048);
-        pub const WSAEADDRNOTAVAIL: Self = Self(10049);
-        pub const WSAENETDOWN: Self = Self(10050);
-        pub const WSAENETUNREACH: Self = Self(10051);
-        pub const WSAENETRESET: Self = Self(10052);
-        pub const WSAECONNABORTED: Self = Self(10053);
-        pub const WSAECONNRESET: Self = Self(10054);
-        pub const WSAENOBUFS: Self = Self(10055);
-        pub const WSAEISCONN: Self = Self(10056);
-        pub const WSAENOTCONN: Self = Self(10057);
-        pub const WSAESHUTDOWN: Self = Self(10058);
-        pub const WSAETOOMANYREFS: Self = Self(10059);
-        pub const WSAETIMEDOUT: Self = Self(10060);
-        pub const WSAECONNREFUSED: Self = Self(10061);
-        pub const WSAELOOP: Self = Self(10062);
-        pub const WSAENAMETOOLONG: Self = Self(10063);
-        pub const WSAEHOSTDOWN: Self = Self(10064);
-        pub const WSAEHOSTUNREACH: Self = Self(10065);
-        pub const WSAENOTEMPTY: Self = Self(10066);
-        pub const WSAEPROCLIM: Self = Self(10067);
-        pub const WSAEUSERS: Self = Self(10068);
-        pub const WSAEDQUOT: Self = Self(10069);
-        pub const WSAESTALE: Self = Self(10070);
-        pub const WSAEREMOTE: Self = Self(10071);
-        pub const WSASYSNOTREADY: Self = Self(10091);
-        pub const WSAVERNOTSUPPORTED: Self = Self(10092);
-        pub const WSANOTINITIALISED: Self = Self(10093);
-        pub const WSAEDISCON: Self = Self(10101);
-        pub const WSAENOMORE: Self = Self(10102);
-        pub const WSAECANCELLED: Self = Self(10103);
-        pub const WSAEINVALIDPROCTABLE: Self = Self(10104);
-        pub const WSAEINVALIDPROVIDER: Self = Self(10105);
-        pub const WSAEPROVIDERFAILEDINIT: Self = Self(10106);
-        pub const WSASYSCALLFAILURE: Self = Self(10107);
-        pub const WSASERVICE_NOT_FOUND: Self = Self(10108);
-        pub const WSATYPE_NOT_FOUND: Self = Self(10109);
-        pub const WSA_E_NO_MORE: Self = Self(10110);
-        pub const WSA_E_CANCELLED: Self = Self(10111);
-        pub const WSAEREFUSED: Self = Self(10112);
-        pub const WSAHOST_NOT_FOUND: Self = Self(11001);
-        pub const WSATRY_AGAIN: Self = Self(11002);
-        pub const WSANO_RECOVERY: Self = Self(11003);
-        pub const WSANO_DATA: Self = Self(11004);
-        pub const WSA_QOS_RECEIVERS: Self = Self(11005);
-        pub const WSA_QOS_SENDERS: Self = Self(11006);
-        pub const WSA_QOS_NO_SENDERS: Self = Self(11007);
-        pub const WSA_QOS_NO_RECEIVERS: Self = Self(11008);
-        pub const WSA_QOS_REQUEST_CONFIRMED: Self = Self(11009);
-        pub const WSA_QOS_ADMISSION_FAILURE: Self = Self(11010);
-        pub const WSA_QOS_POLICY_FAILURE: Self = Self(11011);
-        pub const WSA_QOS_BAD_STYLE: Self = Self(11012);
-        pub const WSA_QOS_BAD_OBJECT: Self = Self(11013);
-        pub const WSA_QOS_TRAFFIC_CTRL_ERROR: Self = Self(11014);
-        pub const WSA_QOS_GENERIC_ERROR: Self = Self(11015);
-        pub const WSA_QOS_ESERVICETYPE: Self = Self(11016);
-        pub const WSA_QOS_EFLOWSPEC: Self = Self(11017);
-        pub const WSA_QOS_EPROVSPECBUF: Self = Self(11018);
-        pub const WSA_QOS_EFILTERSTYLE: Self = Self(11019);
-        pub const WSA_QOS_EFILTERTYPE: Self = Self(11020);
-        pub const WSA_QOS_EFILTERCOUNT: Self = Self(11021);
-        pub const WSA_QOS_EOBJLENGTH: Self = Self(11022);
-        pub const WSA_QOS_EFLOWCOUNT: Self = Self(11023);
-        pub const WSA_QOS_EUNKOWNPSOBJ: Self = Self(11024);
-        pub const WSA_QOS_EPOLICYOBJ: Self = Self(11025);
-        pub const WSA_QOS_EFLOWDESC: Self = Self(11026);
-        pub const WSA_QOS_EPSFLOWSPEC: Self = Self(11027);
-        pub const WSA_QOS_EPSFILTERSPEC: Self = Self(11028);
-        pub const WSA_QOS_ESDMODEOBJ: Self = Self(11029);
-        pub const WSA_QOS_ESHAPERATEOBJ: Self = Self(11030);
-        pub const WSA_QOS_RESERVED_PETYPE: Self = Self(11031);
-    }
-
-    #[link(name = "ws2_32")]
+    #[cfg_attr(windows, link(name = "ws2_32"))]
     unsafe extern "system" {
         /// Raw `WSAGetLastError`. The `Option<SystemErrno>` wrapper lives in `errno`
         /// because `SystemErrno` is a higher-tier type. No preconditions; reads
@@ -1330,19 +1383,17 @@ impl Win32Error {
 pub type LPDWORD = *mut DWORD;
 pub type HPCON = *mut c_void;
 
-#[link(name = "shell32")]
+#[cfg_attr(windows, link(name = "shell32"))]
 unsafe extern "system" {
     pub fn CommandLineToArgvW(lpCmdLine: LPCWSTR, pNumArgs: *mut c_int) -> *mut LPWSTR;
 }
 
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn GetFileInformationByHandle(
         hFile: HANDLE,
         lpFileInformation: *mut BY_HANDLE_FILE_INFORMATION,
     ) -> BOOL;
-
-    pub fn GetBinaryTypeW(lpApplicationName: LPCWSTR, lpBinaryType: LPDWORD) -> BOOL;
 
     pub fn FindFirstFileW(lpFileName: LPCWSTR, lpFindFileData: *mut WIN32_FIND_DATAW) -> HANDLE;
 
@@ -1389,7 +1440,7 @@ pub struct SYSTEM_INFO {
     pub wProcessorLevel: WORD,
     pub wProcessorRevision: WORD,
 }
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn GetSystemInfo(lpSystemInfo: *mut SYSTEM_INFO);
 }
@@ -1398,7 +1449,7 @@ pub const TOKEN_QUERY: DWORD = 0x0008;
 /// `TOKEN_INFORMATION_CLASS::TokenIsAppContainer`
 pub const TOKEN_IS_APP_CONTAINER: c_int = 29;
 
-#[link(name = "advapi32")]
+#[cfg_attr(windows, link(name = "advapi32"))]
 unsafe extern "system" {
     pub fn SaferiIsExecutableFileType(szFullPathname: LPCWSTR, bFromShellExecute: BOOLEAN) -> BOOL;
 
@@ -1420,7 +1471,7 @@ unsafe extern "system" {
 // `GetProcAddress`/`LoadLibraryA` are kernel32 stdcall — use `extern "system"` so the
 // callconv is correct on all targets (winapi == C only on x64). `GetProcAddress`
 // takes `LPCSTR` (narrow), not wide.
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn GetProcAddress(ptr: *mut c_void, name: *const c_char) -> *mut c_void;
 
@@ -1429,7 +1480,7 @@ unsafe extern "system" {
 
 // Declared as `extern "system"` so the callconv is correct on all targets
 // (winapi == C only on x64).
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn CopyFileW(source: LPCWSTR, dest: LPCWSTR, bFailIfExists: BOOL) -> BOOL;
 
@@ -1468,11 +1519,6 @@ unsafe extern "system" {
         lpJobObjectInformation: LPVOID,
         cbJobObjectInformationLength: DWORD,
     ) -> BOOL;
-
-    pub fn CreateJobObjectW(
-        lpJobAttributes: *mut c_void, // *mut SECURITY_ATTRIBUTES
-        lpName: LPCWSTR,
-    ) -> HANDLE;
 
     pub fn OpenProcess(dwDesiredAccess: DWORD, bInheritHandle: BOOL, dwProcessId: DWORD) -> HANDLE;
 }
@@ -1545,10 +1591,10 @@ pub struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
 pub struct IO_COUNTERS {
     pub ReadOperationCount: u64,
     pub WriteOperationCount: u64,
-    pub OtherOperationCount: u64,
-    pub ReadTransferCount: u64,
-    pub WriteTransferCount: u64,
-    pub OtherTransferCount: u64,
+    pub(crate) OtherOperationCount: u64,
+    pub(crate) ReadTransferCount: u64,
+    pub(crate) WriteTransferCount: u64,
+    pub(crate) OtherTransferCount: u64,
 }
 
 #[repr(C)]
@@ -1753,7 +1799,7 @@ pub const CTRL_CLOSE_EVENT: DWORD = 2;
 pub const CTRL_LOGOFF_EVENT: DWORD = 5;
 pub const CTRL_SHUTDOWN_EVENT: DWORD = 6;
 
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn CreateDirectoryExW(
         lpTemplateDirectory: *const u16,
@@ -1789,7 +1835,7 @@ unsafe extern "C" {
     pub safe fn GetConsoleCP() -> u32;
 }
 
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     /// No preconditions; returns 0 on failure.
     pub safe fn SetConsoleCP(wCodePageID: UINT) -> BOOL;

@@ -53,6 +53,12 @@ impl<T: Unprotect> ThreadSafe<T> {
     }
 }
 
+// SAFETY: this is what the type asserts — the JS-backed views inside `T` are
+// GC-protected for as long as it is held, so they may be read from another
+// thread (under that thread's VM borrow); the protection itself is released
+// only on a JS thread (see `Drop`).
+unsafe impl<T: Unprotect> Send for ThreadSafe<T> {}
+
 impl<T: Unprotect> core::ops::Deref for ThreadSafe<T> {
     type Target = T;
     #[inline]
@@ -71,7 +77,11 @@ impl<T: Unprotect> core::ops::DerefMut for ThreadSafe<T> {
 impl<T: Unprotect> Drop for ThreadSafe<T> {
     #[inline]
     fn drop(&mut self) {
-        self.0.unprotect();
+        // The protection is engine state: released here on a JS thread, gone
+        // with the heap anywhere else (a pool thread releasing a dead VM's job).
+        if crate::virtual_machine::VirtualMachine::get_or_null().is_some() {
+            self.0.unprotect();
+        }
         // `self.0: T` drops next (field drop after `Drop::drop`).
     }
 }
@@ -182,7 +192,7 @@ impl PathLike {
         }
     }
 
-    pub fn estimated_size(&self) -> usize {
+    pub(crate) fn estimated_size(&self) -> usize {
         match self {
             Self::String(s) => s.length(),
             Self::Buffer(b) => b.slice().len(),
@@ -270,14 +280,6 @@ impl PathOrFileDescriptorSerializeTag {
 
 impl PathOrFileDescriptor {
     #[inline]
-    pub fn slice(&self) -> &[u8] {
-        match self {
-            Self::Fd(_) => b"",
-            Self::Path(p) => p.slice(),
-        }
-    }
-
-    #[inline]
     pub fn to_thread_safe(&mut self) {
         if let Self::Path(p) = self {
             p.to_thread_safe();
@@ -341,16 +343,6 @@ impl PathOrFileDescriptor {
         match self {
             Self::Fd(fd) => *fd,
             Self::Path(_) => unreachable!("PathOrFileDescriptor::fd() on Path variant"),
-        }
-    }
-
-    pub fn hash(&self) -> u64 {
-        match self {
-            Self::Path(path) => bun_wyhash::hash(path.slice()),
-            // `Fd` is `#[repr(transparent)]` over its backing integer (`i32`
-            // on posix, `u64` on Windows), so hashing `fd.0.to_ne_bytes()` is
-            // byte-identical to the previous raw `from_raw_parts` reinterpret.
-            Self::Fd(fd) => bun_wyhash::hash(&fd.0.to_ne_bytes()),
         }
     }
 }

@@ -2,6 +2,7 @@ use core::ptr::NonNull;
 
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_ptr::BackRef;
+use bun_ptr::Mut;
 use bun_uws::Loop as UwsLoop;
 
 use crate::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
@@ -46,17 +47,17 @@ fn jsc_event_loop_handle(js_event_loop: *mut ()) -> JsEventLoop {
 
 /// Useful for code that may need an event loop and could be used from either JavaScript or directly without JavaScript.
 /// Unlike jsc.EventLoopHandle, this owns the event loop when it's not a JavaScript event loop.
-pub enum AnyEventLoop<'a> {
+pub enum AnyEventLoop {
     Js {
         /// Typed handle wrapping the erased `*mut jsc::EventLoop`. The
         /// `link_interface!` invariant ("owner is live for every dispatch") is
         /// established once at construction; dispatch is safe.
         owner: JsEventLoop,
     },
-    Mini(Box<MiniEventLoop<'a>>),
+    Mini(Box<MiniEventLoop>),
 }
 
-impl<'a> Default for AnyEventLoop<'a> {
+impl Default for AnyEventLoop {
     /// Stub default for `#[derive(Default)]` containers (e.g. the
     /// `bun_install::PackageManager` stub). Real consumers always overwrite
     /// this via `init()` / `js_current()` before use.
@@ -65,7 +66,16 @@ impl<'a> Default for AnyEventLoop<'a> {
     }
 }
 
-impl<'a> AnyEventLoop<'a> {
+impl AnyEventLoop {
+    /// Owning thread: the poster other threads use to deliver JS-loop tasks
+    /// to this loop's VM; `None` for a mini loop.
+    pub fn js_poster(&self) -> Option<JsPoster> {
+        match self {
+            AnyEventLoop::Js { owner } => Some(owner.js_poster()),
+            AnyEventLoop::Mini(_) => None,
+        }
+    }
+
     pub fn iteration_number(&self) -> u64 {
         match self {
             AnyEventLoop::Js { owner } => owner.iteration_number(),
@@ -77,11 +87,11 @@ impl<'a> AnyEventLoop<'a> {
     /// Convert to an owned [`EventLoopHandle`]. Thin alias for
     /// [`EventLoopHandle::from_any`].
     #[inline]
-    pub fn as_handle(this: &mut AnyEventLoop<'static>) -> EventLoopHandle {
+    pub fn as_handle(this: &mut AnyEventLoop) -> EventLoopHandle {
         EventLoopHandle::from_any(this)
     }
 
-    pub fn init() -> AnyEventLoop<'a> {
+    pub fn init() -> AnyEventLoop {
         AnyEventLoop::Mini(Box::new(MiniEventLoop::init()))
     }
 
@@ -94,7 +104,7 @@ impl<'a> AnyEventLoop<'a> {
     /// `AnyEventLoop`. The pointer is not dereferenced here — it's stored
     /// opaquely in [`JsEventLoop`] and only dereferenced at dispatch sites.
     #[inline]
-    pub fn js(js_event_loop: *mut ()) -> AnyEventLoop<'static> {
+    pub fn js(js_event_loop: *mut ()) -> AnyEventLoop {
         AnyEventLoop::Js {
             owner: jsc_event_loop_handle(js_event_loop),
         }
@@ -103,13 +113,13 @@ impl<'a> AnyEventLoop<'a> {
     /// Construct the `Js` variant for the current thread's JS event loop.
     /// Replaces `jsc::VirtualMachine::get().event_loop()` for tier-≤4 callers
     /// (e.g. `bun_install::PackageManager`).
-    pub fn js_current() -> AnyEventLoop<'static> {
+    pub fn js_current() -> AnyEventLoop {
         AnyEventLoop::Js {
             owner: JsEventLoop::current(),
         }
     }
 
-    /// Raw-pointer variant of [`Self::tick`] for callers whose `is_done`
+    /// Raw-pointer tick loop for callers whose `is_done`
     /// callback may reborrow the struct that *contains* this `AnyEventLoop`
     /// (e.g. `bun_install::PackageManager::sleep_until`, where the closure's
     /// `is_done` does `&mut *closure.manager` and that `PackageManager` owns
@@ -166,11 +176,8 @@ impl<'a> AnyEventLoop<'a> {
 // ─── AnyEventLoop → EventLoopHandle forwarders ──────────────────────────────
 // `EventLoopHandle` (below, same file) is the canonical Js/Mini dispatcher for
 // these four methods. `AnyEventLoop` forwards through `from_any` instead of
-// duplicating each `match`. Bound to `'static` because `from_any` stores
-// `BackRef<MiniEventLoop<'static>>`; every concrete `AnyEventLoop`
-// instantiation in the tree is already `'static` (verified: install, patch,
-// build_command, ChangedFilesFilter, `js()`/`js_current()`).
-impl AnyEventLoop<'static> {
+// duplicating each `match`.
+impl AnyEventLoop {
     #[inline]
     pub fn r#loop(&mut self) -> *mut UwsLoop {
         EventLoopHandle::from_any(self).r#loop()
@@ -218,11 +225,11 @@ pub enum EventLoopHandle {
     // strictly outlive every `EventLoopHandle` derived from them — the
     // [`BackRef`] invariant. Read-only sites use safe `Deref`; the few
     // `&mut`-taking dispatch sites go through [`mini_mut`] (single deref site).
-    Mini(BackRef<MiniEventLoop<'static>>),
+    Mini(BackRef<MiniEventLoop, Mut>),
 }
 
 /// Single `unsafe` deref site for the `EventLoopHandle::Mini` arm — collapses
-/// the half-dozen identical `unsafe { mini.get_mut() }` dispatch sites below.
+/// the identical `unsafe { mini.get_mut() }` dispatch sites below.
 ///
 /// Soundness: the `MiniEventLoop` behind every `EventLoopHandle::Mini` is the
 /// per-thread `!Send` singleton (see [`EventLoopHandle::init_mini`] /
@@ -233,18 +240,10 @@ pub enum EventLoopHandle {
 /// [`BackRef::get_mut`] precondition, discharged once here instead of at each
 /// dispatch site. Private to this module so the invariant is local.
 #[inline]
-fn mini_mut<'a>(mini: &'a mut BackRef<MiniEventLoop<'static>>) -> &'a mut MiniEventLoop<'static> {
+fn mini_mut<'a>(mini: &'a mut BackRef<MiniEventLoop, Mut>) -> &'a mut MiniEventLoop {
     // SAFETY: see fn doc — per-thread `!Send` singleton, exclusive for the
     // returned borrow's duration.
     unsafe { mini.get_mut() }
-}
-
-/// Untagged pointer to either kind of concurrent task. Tag is the surrounding
-/// `EventLoopHandle` discriminant.
-#[derive(Copy, Clone)]
-pub union EventLoopTaskPtr {
-    pub js: *mut ConcurrentTask,
-    pub mini: *mut AnyTaskWithExtraContext,
 }
 
 /// Owned storage for either kind of concurrent task.
@@ -294,16 +293,21 @@ impl EventLoopHandle {
     }
 
     #[inline]
-    pub fn init_mini(mini: *mut MiniEventLoop<'static>) -> EventLoopHandle {
+    pub fn init_mini(mini: *mut MiniEventLoop) -> EventLoopHandle {
         // `mini` is the live per-thread singleton (or an `AnyEventLoop::Mini`
-        // payload) — never null at any call site. `BackRef: From<NonNull<T>>`
-        // wraps it without an `unsafe` block; the back-reference invariant
+        // payload) — never null at any call site; the back-reference invariant
         // (pointee outlives every copy of the handle) is the caller's
         // structural guarantee, same as before.
         EventLoopHandle::Mini(
-            NonNull::new(mini)
-                .expect("MiniEventLoop ptr is non-null")
-                .into(),
+            // SAFETY: `mini` is a live, write-capable `*mut MiniEventLoop`
+            // (checked non-null above the call chain).
+            unsafe {
+                BackRef::from_raw_mut(
+                    NonNull::new(mini)
+                        .expect("MiniEventLoop ptr is non-null")
+                        .as_ptr(),
+                )
+            },
         )
     }
 
@@ -361,8 +365,15 @@ impl EventLoopHandle {
                 owner: unsafe { JsEventLoop::new(JsEventLoopKind::Jsc, ptr.cast::<()>()) },
             },
             // `(tag, ptr)` came from `into_tag_ptr` on a live loop, so `ptr`
-            // is non-null. `BackRef: From<NonNull<T>>`.
-            2 => EventLoopHandle::Mini(NonNull::new(ptr.cast()).expect("non-null mini ptr").into()),
+            // is non-null.
+            // SAFETY: `ptr` is the write-capable pointer from `into_tag_ptr`.
+            2 => EventLoopHandle::Mini(unsafe {
+                BackRef::from_raw_mut(
+                    NonNull::new(ptr.cast())
+                        .expect("non-null mini ptr")
+                        .as_ptr(),
+                )
+            }),
             _ => unreachable!("invalid parent event-loop tag {}", tag),
         }
     }
@@ -378,7 +389,7 @@ impl EventLoopHandle {
         uws_loop.internal_loop_data.set_parent_raw(tag, ptr);
     }
 
-    pub fn from_any(any: &mut AnyEventLoop<'static>) -> EventLoopHandle {
+    pub fn from_any(any: &mut AnyEventLoop) -> EventLoopHandle {
         match any {
             AnyEventLoop::Js { owner } => EventLoopHandle::Js { owner: *owner },
             AnyEventLoop::Mini(mini) => EventLoopHandle::Mini(BackRef::new_mut(&mut **mini)),
@@ -422,21 +433,13 @@ impl EventLoopHandle {
         EnteredEventLoop(self)
     }
 
-    pub fn enqueue_task_concurrent(self, task: EventLoopTaskPtr) {
+    /// Owning thread: the poster other threads use to deliver JS-loop tasks to
+    /// this handle's VM; `None` for a mini loop (post to it directly — it is
+    /// owned by, and outlives the work of, its thread).
+    pub fn js_poster(&self) -> Option<JsPoster> {
         match self {
-            EventLoopHandle::Js { owner } => {
-                // SAFETY: caller guarantees `task.js` is the active union member
-                // when `self` is `Js`, and points at a live `ConcurrentTask`
-                // (non-null).
-                owner.enqueue_task_concurrent(unsafe { NonNull::new_unchecked(task.js) })
-            }
-            EventLoopHandle::Mini(mut mini) => {
-                // SAFETY: caller guarantees `task.mini` is the active union
-                // member when `self` is `Mini`, and that it points at a live
-                // `AnyTaskWithExtraContext` (always non-null).
-                let task = unsafe { NonNull::new_unchecked(task.mini) };
-                mini_mut(&mut mini).enqueue_task_concurrent(task);
-            }
+            EventLoopHandle::Js { owner } => Some(owner.js_poster()),
+            EventLoopHandle::Mini(_) => None,
         }
     }
 
@@ -477,7 +480,7 @@ impl EventLoopHandle {
         self.native_loop()
     }
 
-    pub fn env(self) -> *mut DotEnvLoader<'static> {
+    pub fn env(self) -> *mut DotEnvLoader {
         match self {
             EventLoopHandle::Js { owner } => owner.env(),
             // `env` must be set — caller invariant. `env_ptr()` takes
@@ -517,5 +520,90 @@ impl EventLoopHandle {
                 unsafe { (*env.as_ptr()).map.create_null_delimited_env_map() }
             }
         }
+    }
+}
+
+// ─────────────────────────── JsPoster ──────────────────────────────────────
+//
+// How code below `bun_jsc` (spawn's waiter thread, the bundler's JS-loop hops,
+// shell/fs work that may serve a JS VM) posts a `ConcurrentTask` to a JS VM
+// from another thread. It is an erased `bun_jsc::VmHandle` clone: `bun_jsc`
+// fills the vtable; holders just call `post`. The VM's teardown closes the
+// underlying handle, after which `post` refuses (returns the task) and the
+// caller releases it on its own thread. Valid for as long as it is held.
+
+/// Result of posting a task to a JS loop from another thread: it was queued, or
+/// the loop's VM is gone and the caller has the task back to release on this
+/// thread.
+#[must_use = "a refused task must be released by its producer"]
+pub enum Posted {
+    Queued,
+    Refused(NonNull<ConcurrentTask>),
+}
+
+pub struct JsPosterVTable {
+    pub post: unsafe fn(data: *const (), task: NonNull<ConcurrentTask>) -> Posted,
+    /// `VmHandle::embedded_work_scheduled` / `_finished` (see there).
+    pub embedded_work_scheduled: unsafe fn(data: *const ()),
+    pub embedded_work_finished: unsafe fn(data: *const ()),
+    pub clone: unsafe fn(data: *const ()) -> *const (),
+    pub drop: unsafe fn(data: *const ()),
+}
+
+pub struct JsPoster {
+    data: *const (),
+    vtable: &'static JsPosterVTable,
+}
+
+// SAFETY: `data` is an erased `Arc<VmHandle inner>`; the vtable fns are the
+// thread-safe VmHandle operations.
+unsafe impl Send for JsPoster {}
+// SAFETY: as above.
+unsafe impl Sync for JsPoster {}
+
+impl JsPoster {
+    /// # Safety
+    /// `data`/`vtable` come from one of `bun_jsc::vm_handle`'s `to_js_poster`
+    /// implementations (`VmHandle` / `LoopHandle` / the isolated poster).
+    #[inline]
+    pub unsafe fn from_raw(data: *const (), vtable: &'static JsPosterVTable) -> Self {
+        Self { data, vtable }
+    }
+
+    /// Queue `task` on the VM this poster was created for and wake it, or hand
+    /// it back if the VM has been torn down.
+    #[inline]
+    pub fn post(&self, task: NonNull<ConcurrentTask>) -> Posted {
+        // SAFETY: vtable contract.
+        unsafe { (self.vtable.post)(self.data, task) }
+    }
+
+    #[inline]
+    /// Count work whose storage the VM (indirectly) owns; it waits for the
+    /// matching `embedded_work_finished` before closing. See `VmHandle`.
+    pub fn embedded_work_scheduled(&self) {
+        // SAFETY: vtable contract.
+        unsafe { (self.vtable.embedded_work_scheduled)(self.data) }
+    }
+    pub fn embedded_work_finished(&self) {
+        // SAFETY: vtable contract.
+        unsafe { (self.vtable.embedded_work_finished)(self.data) }
+    }
+}
+
+impl Clone for JsPoster {
+    fn clone(&self) -> Self {
+        Self {
+            // SAFETY: vtable contract.
+            data: unsafe { (self.vtable.clone)(self.data) },
+            vtable: self.vtable,
+        }
+    }
+}
+
+impl Drop for JsPoster {
+    fn drop(&mut self) {
+        // SAFETY: vtable contract.
+        unsafe { (self.vtable.drop)(self.data) }
     }
 }

@@ -103,7 +103,7 @@ impl ArrayHashContext<[u8]> for StringContext {
 pub struct CaseInsensitiveAsciiStringContext;
 
 impl CaseInsensitiveAsciiStringContext {
-    pub fn hash_bytes(s: &[u8]) -> u32 {
+    pub(crate) fn hash_bytes(s: &[u8]) -> u32 {
         bun_wyhash::hash_ascii_lowercase(0, s) as u32 // @truncate
     }
 }
@@ -658,6 +658,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         }
     }
 
+    /// See [`lock_pointers`](Self::lock_pointers). No-op in release.
     #[inline]
     pub fn unlock_pointers(&self) {
         #[cfg(debug_assertions)]
@@ -1117,6 +1118,11 @@ pub struct OccupiedEntry<'a, K, V, C, A: MapAllocator = Global> {
 }
 
 impl<'a, K, V, C, A: MapAllocator> OccupiedEntry<'a, K, V, C, A> {
+    /// Position of the entry in `keys()` / `values()` (indexmap parity).
+    #[inline]
+    pub fn index(&self) -> usize {
+        self.idx
+    }
     #[inline]
     pub fn get(&self) -> &V {
         &self.map.values[self.idx]
@@ -1129,17 +1135,6 @@ impl<'a, K, V, C, A: MapAllocator> OccupiedEntry<'a, K, V, C, A> {
     pub fn into_mut(self) -> &'a mut V {
         &mut self.map.values[self.idx]
     }
-    #[inline]
-    pub fn key(&self) -> &K {
-        &self.map.keys[self.idx]
-    }
-    #[inline]
-    pub fn index(&self) -> usize {
-        self.idx
-    }
-    pub fn insert(&mut self, value: V) -> V {
-        core::mem::replace(&mut self.map.values[self.idx], value)
-    }
 }
 
 pub struct VacantEntry<'a, K, V, C, A: MapAllocator = Global> {
@@ -1149,9 +1144,10 @@ pub struct VacantEntry<'a, K, V, C, A: MapAllocator = Global> {
 }
 
 impl<'a, K, V, C, A: MapAllocator> VacantEntry<'a, K, V, C, A> {
+    /// Position [`insert`](Self::insert) will append the entry at (indexmap parity).
     #[inline]
-    pub fn key(&self) -> &K {
-        &self.key
+    pub fn index(&self) -> usize {
+        self.map.keys.len()
     }
     pub fn insert(self, value: V) -> &'a mut V {
         let i = self.map.push_entry(self.key, value, self.hash);
@@ -1469,9 +1465,9 @@ pub struct StringHashMap<V, A: Allocator + HashbrownAllocator + Clone + Default 
     inner: hashbrown::HashMap<StringHashMapKey<A>, V, bun_wyhash::BuildHasher, A>,
 }
 
-/// Public alias for the underlying `hashbrown` map so downstream signatures
+/// Alias for the underlying `hashbrown` map so in-crate signatures
 /// (and `Deref::Target`) don't repeat the four-argument spelling.
-pub type StringHashMapInner<V, A = DefaultAlloc> =
+type StringHashMapInner<V, A = DefaultAlloc> =
     hashbrown::HashMap<StringHashMapKey<A>, V, bun_wyhash::BuildHasher, A>;
 
 /// Key stored in `StringHashMap`. Either an owned heap copy (`Owned`, the
@@ -1540,7 +1536,7 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
     /// Borrowed-key constructor (previously the `Static` variant). Stores the
     /// slice by reference; never freed on drop.
     #[inline]
-    pub const fn borrowed(s: &'static [u8]) -> Self {
+    pub(crate) const fn borrowed(s: &'static [u8]) -> Self {
         // `&[u8]`'s pointer is always non-null (dangling for `len == 0`).
         // SAFETY: `as_ptr()` on a slice reference is never null.
         let ptr = unsafe { core::ptr::NonNull::new_unchecked(s.as_ptr().cast_mut()) };
@@ -1554,7 +1550,7 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
     /// Owned-key constructor (previously the `Owned` variant). Takes ownership
     /// of `b`'s allocation; freed via `A::default()` on drop.
     #[inline]
-    pub fn owned(b: Box<[u8], A>) -> Self {
+    pub(crate) fn owned(b: Box<[u8], A>) -> Self {
         let len = b.len();
         debug_assert!(
             len & SHMK_OWNED_BIT == 0,
@@ -1735,16 +1731,6 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         Self::default()
     }
 
-    pub fn with_capacity(n: usize) -> Self {
-        Self {
-            inner: hashbrown::HashMap::with_capacity_and_hasher_in(
-                n,
-                bun_wyhash::BuildHasher::default(),
-                A::default(),
-            ),
-        }
-    }
-
     #[inline]
     pub fn count(&self) -> usize {
         self.inner.len()
@@ -1765,11 +1751,6 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     pub fn ensure_total_capacity(&mut self, n: usize) -> Result<(), AllocError> {
         let need = n.saturating_sub(self.inner.len());
         self.inner.reserve(need);
-        Ok(())
-    }
-
-    pub fn ensure_unused_capacity(&mut self, additional: usize) -> Result<(), AllocError> {
-        self.inner.reserve(additional);
         Ok(())
     }
 
@@ -2086,7 +2067,7 @@ impl StringSet {
 /// acceptable).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StringHashMapUnownedKey {
-    pub hash: u64,
+    pub(crate) hash: u64,
     pub len: usize,
 }
 
@@ -2127,6 +2108,28 @@ mod index_tests {
         let gop = m.get_or_put(2654435761).unwrap();
         assert!(gop.found_existing);
         assert_eq!(*gop.value_ptr, 1);
+    }
+
+    #[test]
+    fn entry_index_matches_entry_position() {
+        let mut m: ArrayHashMap<u64, u64> = ArrayHashMap::new();
+        // Past INDEX_THRESHOLD so both the linear and the indexed lookup run.
+        for i in 0..32u64 {
+            let MapEntry::Vacant(v) = m.entry(i * 7) else {
+                panic!("fresh key must be vacant");
+            };
+            assert_eq!(v.index(), i as usize);
+            v.insert(i);
+            assert_eq!(m.keys()[i as usize], i * 7);
+        }
+        for i in 0..32u64 {
+            let MapEntry::Occupied(o) = m.entry(i * 7) else {
+                panic!("inserted key must be occupied");
+            };
+            assert_eq!(o.index(), i as usize);
+            assert_eq!(m.values()[i as usize], i);
+        }
+        assert!(matches!(m.entry(1), MapEntry::Vacant(v) if v.index() == 32));
     }
 
     #[test]

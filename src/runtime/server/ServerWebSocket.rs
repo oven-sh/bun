@@ -475,7 +475,12 @@ impl ServerWebSocket {
     }
 
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
-    pub(crate) fn on_message(&self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) -> JsResult<()> {
+    pub(crate) fn on_message(
+        &self,
+        ws: AnyWebSocket,
+        message: &[u8],
+        opcode: Opcode,
+    ) -> JsResult<()> {
         bun_output::scoped_log!(
             WebSocketServer,
             "onMessage({}): {}",
@@ -528,7 +533,8 @@ impl ServerWebSocket {
         }
 
         if let Some(err_value) = result.to_error() {
-            return self.handler()
+            return self
+                .handler()
                 .run_error_callback(on_error, global_object, err_value);
         }
 
@@ -1585,9 +1591,16 @@ impl WebSocketHandler for ServerWebSocket {
         unsafe { &*this }.on_open(ws).map_err(Into::into)
     }
     #[inline(always)]
-    unsafe fn on_message(this: *mut Self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) -> bun_uws_sys::web_socket::JsResult<()> {
+    unsafe fn on_message(
+        this: *mut Self,
+        ws: AnyWebSocket,
+        message: &[u8],
+        opcode: Opcode,
+    ) -> bun_uws_sys::web_socket::JsResult<()> {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_message(ws, message, opcode).map_err(Into::into)
+        unsafe { &*this }
+            .on_message(ws, message, opcode)
+            .map_err(Into::into)
     }
     #[inline(always)]
     unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket) -> bun_uws_sys::web_socket::JsResult<()> {
@@ -1595,19 +1608,34 @@ impl WebSocketHandler for ServerWebSocket {
         unsafe { &*this }.on_drain(ws).map_err(Into::into)
     }
     #[inline(always)]
-    unsafe fn on_ping(this: *mut Self, ws: AnyWebSocket, message: &[u8]) -> bun_uws_sys::web_socket::JsResult<()> {
+    unsafe fn on_ping(
+        this: *mut Self,
+        ws: AnyWebSocket,
+        message: &[u8],
+    ) -> bun_uws_sys::web_socket::JsResult<()> {
         // SAFETY: per trait contract.
         unsafe { &*this }.on_ping(ws, message).map_err(Into::into)
     }
     #[inline(always)]
-    unsafe fn on_pong(this: *mut Self, ws: AnyWebSocket, message: &[u8]) -> bun_uws_sys::web_socket::JsResult<()> {
+    unsafe fn on_pong(
+        this: *mut Self,
+        ws: AnyWebSocket,
+        message: &[u8],
+    ) -> bun_uws_sys::web_socket::JsResult<()> {
         // SAFETY: per trait contract.
         unsafe { &*this }.on_pong(ws, message).map_err(Into::into)
     }
     #[inline(always)]
-    unsafe fn on_close(this: *mut Self, ws: AnyWebSocket, code: i32, message: &[u8]) -> bun_uws_sys::web_socket::JsResult<()> {
+    unsafe fn on_close(
+        this: *mut Self,
+        ws: AnyWebSocket,
+        code: i32,
+        message: &[u8],
+    ) -> bun_uws_sys::web_socket::JsResult<()> {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_close(ws, code, message).map_err(Into::into)
+        unsafe { &*this }
+            .on_close(ws, code, message)
+            .map_err(Into::into)
     }
 }
 

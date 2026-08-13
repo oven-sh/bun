@@ -2076,16 +2076,9 @@ Socket.prototype.connect = function connect(...args) {
                 }
               }
             };
-            // Until the upgrade above happens nothing ties this socket to the
-            // connection, so a connect failure would leave it pending forever.
-            // Node re-emits the wrapped socket's 'error' here and destroys the
-            // TLS socket when the wrapped socket closes:
-            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
-            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L740
+            // Until then, route the connection's failure like node's wrap (internal/tls/wrap.js _init / _wrapHandle).
             const onError = error => {
-              // The connection keeps connecting after this socket is destroyed
-              // (onConnect tears it down); its failure must not surface as an
-              // 'error' after this socket's 'close'.
+              // Not once this socket was destroyed while waiting (onConnect tears the connection down).
               if (!this.destroyed) this._emitTLSError(error);
             };
             const onClose = () => {

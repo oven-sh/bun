@@ -792,6 +792,28 @@ describe("decorator metadata", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("split star import keeps the import attribute", () => {
+      const transpiler = new Bun.Transpiler({
+        loader: "ts",
+        trimUnusedImports: true,
+        target: "bun",
+        tsconfig: { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } },
+      });
+      const out = transpiler.transformSync(`
+        import { RealClass, JustInterface } from "./mod.ts" with { type: "ts" };
+        function dec(...args: any[]) {}
+        class Thing {
+          @dec a!: JustInterface;
+          @dec b!: RealClass;
+        }
+        new RealClass();
+      `);
+      // Both statements must carry the attribute or they resolve to two
+      // different module instances.
+      expect(out).toMatch(/import \* as import_mod_\w+ from "\.\/mod\.ts" with \{ type: "ts" \};/);
+      expect(out).toContain(`import { RealClass } from "./mod.ts" with { type: "ts" };`);
+    });
+
     test("split star import stays parseable under minifyWhitespace", () => {
       const transpiler = new Bun.Transpiler({
         loader: "ts",

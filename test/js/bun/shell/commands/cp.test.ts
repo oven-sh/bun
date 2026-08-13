@@ -286,6 +286,16 @@ describe.concurrent("bunshell cp -R replaces an existing destination with the co
     expect(entry(at(dir, "dest", "src", "file.txt"))).toEqual({ isLink: false, reads: "file" });
   });
 
+  test("a link copied onto itself is kept and the copy fails", async () => {
+    using dir = setup("self");
+
+    expect(await cp(dir, "cp -R link .")).toEqual({
+      exitCode: 1,
+      stderr: `cp: Invalid argument: ${at(dir, "link")}\n`,
+    });
+    expect(entry(at(dir, "link"))).toEqual({ isLink: true, reads: "new" });
+  });
+
   test("a directory at the destination is kept and the copy fails", async () => {
     using dir = setup("dir");
     mkdirSync(at(dir, "dest", "link"));

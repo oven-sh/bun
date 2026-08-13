@@ -8493,7 +8493,27 @@ impl NodeFS {
     /// so an overwriting copy removes the entry first. unlink (`uv_fs_unlink`
     /// on Windows) also removes directory links and junctions; a directory is
     /// left in place and its EISDIR/EPERM becomes the copy's error, as with `cp`.
-    fn cp_unlink_dest_for_link(dest: &ZStr) -> Maybe<()> {
+    /// When the entry is the link being copied (`cp -R link .`), removing it
+    /// would lose the link, so that is refused like the same-inode check in the
+    /// FreeBSD arm of `copy_single_file_sync`.
+    fn cp_unlink_dest_for_link(src: &ZStr, dest: &ZStr) -> Maybe<()> {
+        let dest_stat = match Syscall::lstat(dest) {
+            Ok(stat) => stat,
+            Err(err) if err.get_errno() == E::ENOENT => return Ok(()),
+            Err(err) => return Err(err),
+        };
+        // Filesystems without stable file ids report 0, which identifies nothing.
+        let is_src = dest_stat.st_ino != 0
+            && Syscall::lstat(src)
+                .is_ok_and(|s| s.st_dev == dest_stat.st_dev && s.st_ino == dest_stat.st_ino);
+        if is_src {
+            return Err(sys::Error {
+                errno: E::EINVAL as _,
+                syscall: sys::Tag::copyfile,
+                path: dest.as_bytes().into(),
+                ..Default::default()
+            });
+        }
         match Syscall::unlink(dest) {
             Err(err) if err.get_errno() != E::ENOENT => Err(err),
             _ => Ok(()),
@@ -8556,7 +8576,7 @@ impl NodeFS {
             ZStr::from_buf(&resolved_buf[..], resolved_len)
         };
         if !mode.shouldnt_overwrite() {
-            Self::cp_unlink_dest_for_link(dest)?;
+            Self::cp_unlink_dest_for_link(src, dest)?;
         }
         Syscall::symlink(target, dest)
     }
@@ -8608,7 +8628,7 @@ impl NodeFS {
                         // Without COPYFILE_EXCL, copyfile(3) ignores the EEXIST
                         // from recreating the link and reports success with the
                         // old destination still in place.
-                        Self::cp_unlink_dest_for_link(dest)?;
+                        Self::cp_unlink_dest_for_link(src, dest)?;
                     }
                     return Maybe::<ret::CopyFile>::errno_sys_p(
                         bun_sys::c::copyfile_rc(src, dest, mode_),
@@ -9127,11 +9147,12 @@ impl NodeFS {
                 };
                 let is_dir = stat_ & windows::FILE_ATTRIBUTE_DIRECTORY != 0;
                 if !mode.shouldnt_overwrite() {
+                    let mut src8 = paths::path_buffer_pool::get();
                     let mut dest8 = paths::path_buffer_pool::get();
-                    Self::cp_unlink_dest_for_link(strings::from_wpath(
-                        &mut dest8[..],
-                        dest.as_slice(),
-                    ))?;
+                    Self::cp_unlink_dest_for_link(
+                        strings::from_wpath(&mut src8[..], src.as_slice()),
+                        strings::from_wpath(&mut dest8[..], dest.as_slice()),
+                    )?;
                 }
                 // `symlink_w`/`symlink_or_junction` (not raw `CreateSymbolicLinkW`)
                 // so unprivileged creation is requested. UNC targets skip the junction

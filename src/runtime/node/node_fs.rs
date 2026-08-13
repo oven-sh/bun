@@ -2164,6 +2164,14 @@ mod _async_tasks {
         /// Heap-owned, NUL-terminated (`[path.., 0]`); freed on drop.
         pub(crate) root_path: Box<[u8]>,
 
+        /// What the root directory is actually opened with: `root_path` as
+        /// the slicer spells it for the syscalls (on Windows, rooted and
+        /// drive-relative arguments become absolute paths there, as they do
+        /// for every other readdir flavor via `readdir_inner`). `root_path`
+        /// itself stays as given, since it is what parentPath and error
+        /// messages are built from. Heap-owned, NUL-terminated like `root_path`.
+        pub(crate) root_open_path: Box<[u8]>,
+
         pub(crate) pending_err: Option<sys::Error>,
         pub(crate) pending_err_mutex: bun_threading::Mutex,
     }
@@ -2190,16 +2198,16 @@ mod _async_tasks {
         ) -> Option<bun_jsc::Completion<Self>> {
             this.done = Some(done);
             let mut buf = PathBuffer::uninit();
-            let root_path_z = {
+            let root_open_path_z = {
                 let bytes: &'static [u8] =
-                    // SAFETY: `root_path` is a NUL-terminated `Box<[u8]>` fixed for the
-                    // task's lifetime; `perform_work` mutates other fields only.
-                    unsafe { bun_ptr::detach_lifetime(&this.root_path[..]) };
+                    // SAFETY: `root_open_path` is a NUL-terminated `Box<[u8]>` fixed
+                    // for the task's lifetime; `perform_work` mutates other fields only.
+                    unsafe { bun_ptr::detach_lifetime(&this.root_open_path[..]) };
                 ZStr::from_buf(bytes, bytes.len() - 1)
             };
             // May finish synchronously (no subdirectories) or fan out; the last
             // subtask finishes the token.
-            this.perform_work(root_path_z, &mut buf, true);
+            this.perform_work(root_open_path_z, &mut buf, true);
             None
         }
 
@@ -2374,12 +2382,16 @@ mod _async_tasks {
             };
             // Subtasks read the root path outside the VM borrow, so it must be an
             // owned copy rather than the (possibly JS-backed) argument. NUL-terminated.
-            let root_path = {
-                let src = args.path.slice();
+            let nul_terminated = |src: &[u8]| -> Box<[u8]> {
                 let mut owned = Vec::with_capacity(src.len() + 1);
                 owned.extend_from_slice(src);
                 owned.push(0);
                 owned.into_boxed_slice()
+            };
+            let root_path = nul_terminated(args.path.slice());
+            let root_open_path = {
+                let mut buf = paths::path_buffer_pool::get();
+                nul_terminated(args.path.slice_z(&mut buf).as_bytes())
             };
             let tracker = AsyncTaskTracker::init(vm);
             tracker.did_schedule(global_object);
@@ -2395,6 +2407,7 @@ mod _async_tasks {
                     has_result: AtomicBool::new(false),
                     subtask_count: AtomicUsize::new(1),
                     root_path,
+                    root_open_path,
                     result_list,
                     result_list_count: AtomicUsize::new(0),
                     result_list_queue: UnboundedQueue::default(),
@@ -6551,8 +6564,8 @@ impl NodeFS {
             };
             let utf8_name = current.name.slice();
 
-            // The root subtask's basename *is* root_path; the caller passes
-            // `is_root` explicitly.
+            // The root subtask's basename is `root_open_path`, which must not
+            // leak into results; the caller passes `is_root` explicitly.
             let name_to_copy: &[u8] = if is_root {
                 utf8_name
             } else {

@@ -983,6 +983,46 @@ pub(crate) fn GetFinalPathNameByHandle(
     Ok(ret)
 }
 
+/// `GetFullPathNameW`: the resolution Win32 applies to a path before opening
+/// it (`CreateFileW` and friends run the same routine), written into `out`.
+/// For a drive-relative path (`C:foo`) that means the process cwd when `C:`
+/// is the cwd's drive, otherwise that drive's own current directory (the
+/// hidden `=C:` environment variable), otherwise the drive root; `.` and `..`
+/// are collapsed as well. Pure string processing, no filesystem access.
+/// `None` when the call fails or the result does not fit `out`.
+pub fn get_full_path_name_w<'a>(
+    path: &bun_core::WStr,
+    out: &'a mut [u16],
+) -> Option<&'a bun_core::WStr> {
+    // SAFETY: `path` is NUL-terminated by `WStr`'s invariant; `out` is valid
+    // for `out.len()` units, which is the length passed to the API.
+    let n = unsafe {
+        externs::GetFullPathNameW(
+            path.as_ptr(),
+            out.len() as DWORD,
+            out.as_mut_ptr(),
+            ptr::null_mut(),
+        )
+    } as usize;
+    // 0 is failure; a value >= the buffer length is the size the result would
+    // need (including its NUL), i.e. it did not fit. Otherwise the result was
+    // written and NUL-terminated at `out[n]`.
+    if n == 0 || n >= out.len() {
+        bun_sys::syslog!(
+            "GetFullPathNameW({}) = {}",
+            bun_core::fmt::utf16(path.as_slice()),
+            n
+        );
+        return None;
+    }
+    bun_sys::syslog!(
+        "GetFullPathNameW({}) = {}",
+        bun_core::fmt::utf16(path.as_slice()),
+        bun_core::fmt::utf16(&out[..n])
+    );
+    Some(bun_core::WStr::from_buf(out, n))
+}
+
 const GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT: DWORD = 0x00000002;
 const GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS: DWORD = 0x00000004;
 
@@ -2186,5 +2226,48 @@ mod tests {
         assert!((*letter as u8).is_ascii_uppercase());
         let prefix: Vec<u16> = "\\Device\\".encode_utf16().collect();
         assert!(device.starts_with(&prefix));
+    }
+
+    fn full_path_name(path: &str) -> Option<String> {
+        let wide: Vec<u16> = path.encode_utf16().chain(core::iter::once(0)).collect();
+        let mut out = bun_paths::w_path_buffer_pool::get();
+        let resolved = super::get_full_path_name_w(
+            bun_core::WStr::from_slice_with_nul(&wide),
+            &mut out.0[..],
+        )?;
+        Some(String::from_utf16(resolved.as_slice()).unwrap())
+    }
+
+    /// The bare designator of the cwd's drive, in either case, stands for the
+    /// cwd itself; this is what `node:fs` resolves drive-relative paths with.
+    /// The test binary's cwd is always drive-letter rooted.
+    #[test]
+    fn full_path_name_of_bare_drive_designator_is_the_cwd() {
+        let cwd = std::env::current_dir()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let drive = &cwd[..2];
+        assert_eq!(drive.as_bytes()[1], b':', "{cwd}");
+        assert_eq!(full_path_name(drive).as_deref(), Some(&*cwd));
+        assert_eq!(
+            full_path_name(&drive.to_ascii_lowercase()).as_deref(),
+            Some(&*cwd)
+        );
+        assert_eq!(
+            full_path_name(&drive.to_ascii_uppercase()).as_deref(),
+            Some(&*cwd)
+        );
+    }
+
+    #[test]
+    fn full_path_name_rejects_too_small_buffer() {
+        let wide: Vec<u16> = "C:x".encode_utf16().chain(core::iter::once(0)).collect();
+        let mut out = [0u16; 4];
+        assert!(
+            super::get_full_path_name_w(bun_core::WStr::from_slice_with_nul(&wide), &mut out)
+                .is_none()
+        );
     }
 }

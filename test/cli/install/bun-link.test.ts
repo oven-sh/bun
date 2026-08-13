@@ -1,6 +1,7 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { access, exists, mkdir, readlink, rm, writeFile } from "fs/promises";
+import { existsSync } from "fs";
+import { access, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
@@ -621,8 +622,19 @@ describe.each(["hoisted", "isolated"])("link: with a filesystem path (%s)", link
 // (here: a file: dependency of the project) may only point inside the project.
 // Same rule and same fixtures as the transitive file: tests in bun-install.test.ts.
 describe.each(["hoisted", "isolated"])("transitive path-form link: (%s)", linker => {
-  const bunfig = `[install]\ncache = false\nlinker = "${linker}"\n`;
+  // Called inside each test: the dummy registry only exists after beforeAll.
+  const bunfig = () => `[install]\ncache = false\nregistry = "http://localhost:${getPort()}/"\nlinker = "${linker}"\n`;
   const refusal = "only the root package.json, a workspace, or an override may link to a path outside the project";
+
+  // Every place either linker could have put the link (node_modules/<name>,
+  // a nested node_modules, or an isolated store entry), dangling links included.
+  function linksNamed(project: string, name: string): string[] {
+    const node_modules = join(project, "node_modules");
+    if (!existsSync(node_modules)) return [];
+    return Array.from(
+      new Bun.Glob(`**/${name}`).scanSync({ cwd: node_modules, onlyFiles: false, dot: true, followSymlinks: false }),
+    );
+  }
 
   async function install(cwd: string, ...args: string[]) {
     await using proc = spawn({
@@ -639,7 +651,7 @@ describe.each(["hoisted", "isolated"])("transitive path-form link: (%s)", linker
   it("is refused when it escapes the project (resolve)", async () => {
     using dir = tempDir("transitive-link-escape", {
       "secret/package.json": JSON.stringify({ name: "loot", version: "1.0.0" }),
-      "project/bunfig.toml": bunfig,
+      "project/bunfig.toml": bunfig(),
       "project/package.json": JSON.stringify({ name: "my-app", dependencies: { evil: "file:./evil" } }),
       "project/evil/package.json": JSON.stringify({
         name: "evil",
@@ -653,8 +665,7 @@ describe.each(["hoisted", "isolated"])("transitive path-form link: (%s)", linker
     expect(err).toContain(refusal);
     expect(err).not.toContain("Could not find package.json");
     expect(exitCode).toBe(1);
-    expect(await exists(join(project, "node_modules", "loot"))).toBe(false);
-    expect(await exists(join(project, "node_modules", "evil", "node_modules", "loot"))).toBe(false);
+    expect(linksNamed(project, "loot")).toEqual([]);
   });
 
   it("is refused when it escapes the project (existing lockfile)", async () => {
@@ -662,7 +673,7 @@ describe.each(["hoisted", "isolated"])("transitive path-form link: (%s)", linker
     // skipped and the installer is what has to refuse it.
     using dir = tempDir("transitive-link-escape-lock", {
       "secret/package.json": JSON.stringify({ name: "loot", version: "1.0.0" }),
-      "project/bunfig.toml": bunfig,
+      "project/bunfig.toml": bunfig(),
       "project/package.json": JSON.stringify({ name: "my-app", dependencies: { evil: "file:./evil" } }),
       "project/evil/package.json": JSON.stringify({
         name: "evil",
@@ -683,13 +694,12 @@ describe.each(["hoisted", "isolated"])("transitive path-form link: (%s)", linker
     const { err, exitCode } = await install(project);
     expect(err).toContain(refusal);
     expect(exitCode).toBe(1);
-    expect(await exists(join(project, "node_modules", "loot"))).toBe(false);
-    expect(await exists(join(project, "node_modules", "evil", "node_modules", "loot"))).toBe(false);
+    expect(linksNamed(project, "loot")).toEqual([]);
   });
 
   it("is installed when it stays inside the project", async () => {
     using dir = tempDir("transitive-link-inside", {
-      "bunfig.toml": bunfig,
+      "bunfig.toml": bunfig(),
       "package.json": JSON.stringify({ name: "my-app", dependencies: { lib: "file:./vendor/lib" } }),
       "vendor/lib/package.json": JSON.stringify({
         name: "lib",
@@ -730,7 +740,7 @@ describe.each(["hoisted", "isolated"])("transitive path-form link: (%s)", linker
       using dir = tempDir("transitive-link-override", {
         "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0", main: "index.js" }),
         "shared/index.js": `module.exports = "shared";`,
-        "project/bunfig.toml": bunfig,
+        "project/bunfig.toml": bunfig(),
         "project/package.json": JSON.stringify({
           name: "my-app",
           dependencies: { "pkg-a": "file:./pkg-a" },

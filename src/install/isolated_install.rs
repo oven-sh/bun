@@ -2080,17 +2080,35 @@ pub(crate) fn install_isolated_packages(
             task.installer = installer_backref;
         }
 
-        // `append_store_path` runs on worker threads via `&Installer` and
-        // can't take `&mut PackageManager` there, so ensure the
-        // global link dir once on the main thread before any name-form
-        // `link:<name>` resolution can be reached by a task. Path-form
-        // `link:./path` resolves from cwd and never reads the global dir.
+        // Both of these have to happen before the first `start_task`: a worker
+        // symlinking a dependent's node_modules reads the global link dir for
+        // name-form `link:<name>` (and cannot take `&mut PackageManager` to
+        // create it), and would create the link for a refused path-form target.
         {
-            let string_buf = installer.lockfile().buffers.string_bytes.as_slice();
-            if pkg_resolutions.iter().any(|r| {
-                r.tag == ResolutionTag::Symlink
-                    && !crate::dependency::is_link_path(r.symlink().slice(string_buf))
-            }) {
+            let mut needs_global_link_dir = false;
+            for (pkg_id, res) in pkg_resolutions.iter().enumerate() {
+                if res.tag != ResolutionTag::Symlink {
+                    continue;
+                }
+                let target = res.symlink().slice(string_buf);
+                if !crate::dependency::is_link_path(target) {
+                    needs_global_link_dir = true;
+                    continue;
+                }
+                let pkg_id = PackageID::try_from(pkg_id).expect("int cast");
+                if !lockfile_ro.link_target_allowed_for_package(pkg_id, target) {
+                    Output::err_generic(
+                        "refusing to link dependency <b>{}<r> to \"{}\": only the root package.json, a workspace, or an override may link to a path outside the project",
+                        (
+                            BStr::new(pkg_names[pkg_id as usize].slice(string_buf)),
+                            BStr::new(target),
+                        ),
+                    );
+                    Output::flush();
+                    Global::exit(1);
+                }
+            }
+            if needs_global_link_dir {
                 let _ = crate::package_manager_real::directories::global_link_dir_path(
                     installer.manager_mut(),
                 );
@@ -2176,17 +2194,6 @@ pub(crate) fn install_isolated_packages(
                     continue;
                 }
                 ResolutionTag::Symlink => {
-                    let target = pkg_res.symlink().slice(string_buf);
-                    if crate::dependency::is_link_path(target)
-                        && !lockfile_ro.link_target_allowed_for_package(pkg_id, target)
-                    {
-                        Output::err_generic(
-                            "refusing to link dependency <b>{}<r> to \"{}\": only the root package.json, a workspace, or an override may link to a path outside the project",
-                            (BStr::new(pkg_name.slice(string_buf)), BStr::new(target)),
-                        );
-                        Output::flush();
-                        Global::exit(1);
-                    }
                     // no installation required, will only need to be linked to packages that depend on it.
                     debug_assert!(entry_dependencies[entry_id.get() as usize].list.is_empty());
                     // .monotonic is okay because the task isn't running on another thread.

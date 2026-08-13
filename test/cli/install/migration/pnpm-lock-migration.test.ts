@@ -262,11 +262,9 @@ snapshots:
   });
 
   test("file: dependency of a workspace member is stored relative to the root", async () => {
-    // pnpm records a non-workspace `file:` dependency as `link:<path relative
-    // to the importer>`. bun.lock stores link targets relative to the project
-    // root, so the migration has to re-base it; otherwise the install below
-    // would look for `<root>/../utils`.
-    const tempDir = tempDirWithFiles("pnpm-migrate-importer-link", {
+    // pnpm writes `link:../utils` relative to the importer; bun.lock stores it
+    // relative to the root, otherwise the install below looks for <root>/../utils.
+    await using tmpDir = tempDir("pnpm-migrate-importer-link", {
       "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/app"] }),
       "packages/app/package.json": JSON.stringify({ name: "app", dependencies: { utils: "file:../utils" } }),
       "packages/utils/package.json": JSON.stringify({ name: "utils", version: "1.0.0", main: "index.js" }),
@@ -287,7 +285,7 @@ importers:
 
     await using migrate = Bun.spawn({
       cmd: [bunExe(), "pm", "migrate"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -300,11 +298,11 @@ importers:
     expect(migrateStderr).toContain("migrated lockfile from pnpm-lock.yaml");
     expect(migrateExit).toBe(0);
 
-    expect(fs.readFileSync(join(tempDir, "bun.lock"), "utf8")).toContain('"utils@link:./packages/utils"');
+    expect(fs.readFileSync(join(tmpDir, "bun.lock"), "utf8")).toContain('"utils@link:./packages/utils"');
 
     await using install = Bun.spawn({
       cmd: [bunExe(), "install", "--frozen-lockfile"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -319,7 +317,7 @@ importers:
 
     await using run = Bun.spawn({
       cmd: [bunExe(), "-e", `console.log(require("utils"))`],
-      cwd: join(tempDir, "packages", "app"),
+      cwd: join(tmpDir, "packages", "app"),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

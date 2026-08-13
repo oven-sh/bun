@@ -4738,6 +4738,11 @@ impl VirtualMachine {
         drop(core::mem::take(&mut self.resolved_path_dups));
 
         self.overridden_main.deinit();
+        // `Bun.main` cached the resolved entry path here as a +1 (usually an
+        // atom in this thread's table); `String` has no `Drop`, so release it
+        // here, on the owning thread.
+        self.main_resolved_path.deref();
+        self.main_resolved_path = bun_core::String::empty();
 
         // `timer`/`entry_point` live in the high-tier `RuntimeState` box, so
         // dispatch the reclaim through the hook.

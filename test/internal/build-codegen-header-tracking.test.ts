@@ -21,13 +21,13 @@ import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { basename, join, resolve } from "node:path";
 
-import type { Sources } from "../../scripts/glob-sources.ts";
 import { bunCompileFlags } from "../../scripts/build/bun.ts";
 import { emitJsModules, registerCodegenRules, type CodegenOutputs } from "../../scripts/build/codegen.ts";
 import { includeFlags, registerDirStamps } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type Toolchain } from "../../scripts/build/config.ts";
 import { computeFlags } from "../../scripts/build/flags.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
+import type { Sources } from "../../scripts/glob-sources.ts";
 
 /** A fully-populated fake toolchain; resolveConfig never spawns any of these. */
 function mockToolchain(): Toolchain {

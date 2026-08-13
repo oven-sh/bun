@@ -1396,20 +1396,14 @@ void RequireResolveFunctionPrototype::finishCreation(JSC::VM& vm)
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
-// CommonJS source reaches this file already wrapped by the transpiler
-// (js_parser, WrapMode::BunCommonjs), or by `bun build --format=cjs` behind a
-// `// @bun @bun-cjs` pragma line:
+// The transpiler (and `bun build --format=cjs`, behind `#!` / `// @bun` lines) emits
 //
 //   (function(exports, require, module, __filename, __dirname) {
 //     ...
 //   });
 //
-// Both put the closing `})` on a line of its own (or directly after `{` for an
-// empty module) and only ever follow it with `;` and `//` comment lines, such as
-// the inline source map the inspector appends. Returns the text between the
-// wrapper's braces (for transpiler output that begins with the newline after
-// `{`, so line numbers survive re-wrapping), or a null String when the source is
-// not in this shape, in which case callers leave the transpiler's wrapper alone.
+// possibly followed by `//` comments. Returns the body, or a null String if the
+// source does not look like this.
 static WTF::String commonJSModuleBodyWithoutWrapper(const WTF::String& source)
 {
     unsigned headerStart = 0;
@@ -1447,20 +1441,13 @@ static WTF::String commonJSModuleBodyWithoutWrapper(const WTF::String& source)
     return source.substring(bodyStart, bodyEnd - bodyStart);
 }
 
-// Swaps the transpiler's wrapper for the one assigned to
-// `require("node:module").wrapper`. Every path that turns a CommonJS
-// ResolvedSource into a SourceProvider must go through here, otherwise the
-// user's wrapper ends up enclosing the transpiler's function expression, which
-// is then never called.
+// Replaces the transpiler's wrapper with the one assigned to require("node:module").wrapper.
 static void applyOverriddenModuleWrapper(Zig::GlobalObject* globalObject, JSValue filename, ResolvedSource& source, bool isBuiltIn)
 {
     if (!globalObject->hasOverriddenModuleWrapper) [[likely]]
         return;
 
-    // `bun -e` / stdin code is transpiled without the wrapper and evaluated as
-    // a script by evaluateCommonJSModuleOnce (Node runs it as a script too,
-    // outside Module.wrapper), so there is nothing to swap out. Wrapping it
-    // would turn the whole program into a function expression nothing calls.
+    // -e / stdin code is transpiled without a wrapper and run as a script.
     if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename)))
         return;
 
@@ -1469,8 +1456,7 @@ static void applyOverriddenModuleWrapper(Zig::GlobalObject* globalObject, JSValu
     if (body.isNull())
         return;
 
-    // Same ownership rule as Zig::SourceProvider::create, which consumes the
-    // +1 on the replacement string below.
+    // Zig::SourceProvider::create derefs the replacement under the same condition.
     if (source.needsDeref && !isBuiltIn) {
         source.needsDeref = false;
         source.source_code.deref();

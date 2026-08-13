@@ -429,9 +429,6 @@ impl FontFormat {
     }
 
     fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // Browser support for keywords rather than strings is very limited,
-        // so every format is printed in its string form.
-        // https://developer.mozilla.org/en-US/docs/Web/CSS/@font-face/src
         let format: &[u8] = match self {
             FontFormat::Woff => b"woff",
             FontFormat::Woff2 => b"woff2",
@@ -442,6 +439,8 @@ impl FontFormat {
             FontFormat::Svg => b"svg",
             FontFormat::String(s) => s,
         };
+        // Browser support for keywords rather than strings is very limited.
+        // https://developer.mozilla.org/en-US/docs/Web/CSS/@font-face/src
         dest.serialize_string(format)
     }
 

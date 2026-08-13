@@ -56,7 +56,6 @@ const INTERIM: Record<string, number> = {
   "src/runtime/cli/run_command.rs": 7, // main entry: is itself the outermost boundary
   "src/runtime/webcore/streams.rs": 4, // HTTPResponseSink teardown (uWS response callbacks / host fns)
   "src/runtime/ipc.rs": 1,
-  "src/runtime/api/bun/h2_frame_parser.rs": 4,
   "src/runtime/api/html_rewriter.rs": 3,
   "src/runtime/webcore/ByteStream.rs": 2, // SourceContext::on_cancel
   "src/runtime/bake/DevServer.rs": 2, // dev_route_tramp (a trampoline) + the HTML-bundle route TODO

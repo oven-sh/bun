@@ -5359,30 +5359,29 @@ impl H2FrameParser {
         // depth 0. Bare guard, not enter_stream_dispatch — rst_stream reached from the
         // callback takes its own `&mut` to this stream, so ours must wait for the return.
         let _dispatch = self.enter_dispatch();
-        match callback.call(
+        // A top-level call like every other parser event (`dispatch`): a
+        // throwing `streamStart` is reported and yields no stream object.
+        let returned = self.handlers.get().vm.event_loop_ref().run_callback_with_result(
+            callback,
             &global,
             ctx_value,
             &[ctx_value, JSValue::js_number(stream_identifier as f64)],
-        ) {
-            Err(err) => global.report_active_exception_as_unhandled(err),
-            Ok(returned) => {
-                // streamStart returns the JS stream it created; storing it here saves the
-                // setStreamContext host call the JS layer used to make per stream.
-                // Skipped when the callback closed the stream: free_resources dropped its
-                // sctx root, and re-rooting would pin the dead JS stream until session death.
-                if returned.is_object()
-                    && !self
-                        .pending_engine_stream_closes
-                        .get()
-                        .contains(&stream_identifier)
-                {
-                    self.sctx.with_mut(|m| {
-                        m.insert(stream_identifier, StrongOptional::create(returned, &global));
-                    });
-                    self.enter_stream_dispatch(stream)
-                        .set_context(returned, &global);
-                }
-            }
+        );
+        // streamStart returns the JS stream it created; storing it here saves the
+        // setStreamContext host call the JS layer used to make per stream.
+        // Skipped when the callback closed the stream: free_resources dropped its
+        // sctx root, and re-rooting would pin the dead JS stream until session death.
+        if returned.is_object()
+            && !self
+                .pending_engine_stream_closes
+                .get()
+                .contains(&stream_identifier)
+        {
+            self.sctx.with_mut(|m| {
+                m.insert(stream_identifier, StrongOptional::create(returned, &global));
+            });
+            self.enter_stream_dispatch(stream)
+                .set_context(returned, &global);
         }
         Some(stream)
     }
@@ -5955,11 +5954,13 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             for (id, value) in self.custom_settings.get().iter() {
                 // Custom-setting ids are numeric property keys: route through the index-aware put.
                 let key = bun_core::String::clone_utf8(format!("{id}").as_bytes());
-                if let Err(err) =
-                    custom.put_may_be_index(&g, &key, JSValue::js_number(*value as f64))
+                // Left pending: the parser stops dispatching behind a pending
+                // exception (`read_bytes`) and `read()`/`on_native_read` return it.
+                if custom
+                    .put_may_be_index(&g, &key, JSValue::js_number(*value as f64))
+                    .is_err()
                 {
-                    g.report_active_exception_as_unhandled(err);
-                    break;
+                    return;
                 }
             }
             js.put(&g, b"customSettings".as_slice(), custom);
@@ -6014,11 +6015,13 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             for (id, value) in self.remote_custom_settings.get().iter() {
                 // Custom-setting ids are numeric property keys: route through the index-aware put.
                 let key = bun_core::String::clone_utf8(format!("{id}").as_bytes());
-                if let Err(err) =
-                    custom.put_may_be_index(&g, &key, JSValue::js_number(*value as f64))
+                // Left pending: the parser stops dispatching behind a pending
+                // exception (`read_bytes`) and `read()`/`on_native_read` return it.
+                if custom
+                    .put_may_be_index(&g, &key, JSValue::js_number(*value as f64))
+                    .is_err()
                 {
-                    g.report_active_exception_as_unhandled(err);
-                    break;
+                    return;
                 }
             }
             js.put(&g, b"customSettings".as_slice(), custom);
@@ -6237,11 +6240,9 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         });
         let tuple = match tuple {
             Ok(v) => v,
-            Err(err) => {
-                // Materialization threw (OOM); surface it and drop the block.
-                g.report_active_exception_as_unhandled(err);
-                return;
-            }
+            // Materialization threw (OOM): drop the block; the exception stays
+            // pending for `read()`/`on_native_read` (see `read_bytes`).
+            Err(_) => return,
         };
         if self.rewrite_pending_push.get() == stream_id && stream_id != 0 {
             // A PUSH_PROMISE header block: surface the promised request to JS as a pushed stream.
@@ -9646,6 +9647,9 @@ impl H2FrameParser {
         if let Some(array_buffer) = buffer.as_array_buffer(global_object) {
             let copied = array_buffer.byte_slice().to_vec();
             this.rewrite_read(&copied);
+            if global_object.has_exception() {
+                return Err(bun_jsc::JsError::Thrown);
+            }
             Ok(JSValue::UNDEFINED)
         } else {
             Err(global_object.throw(format_args!("Expected data to be a Buffer or ArrayBuffer")))
@@ -9657,6 +9661,11 @@ impl H2FrameParser {
         let _keepalive = self.keepalive();
         // Engine-driven inbound: all reads flow through the rewritten connection engine.
         self.rewrite_read(data);
+        // What a frame callback left pending stopped the parser (`read_bytes`);
+        // it belongs to the socket dispatch that delivered these bytes.
+        if self.handlers.get().global().has_exception() {
+            return Err(bun_jsc::JsError::Thrown);
+        }
         Ok(())
     }
 

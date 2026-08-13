@@ -550,25 +550,30 @@ pub fn CreateHardLinkW(
     rc
 }
 
-/// This module's spelling of `CopyFileW`: raw-ABI drop-in that fails an empty
-/// destination itself. KERNELBASE looks at the destination name's last unit
-/// (`dest[len - 1]`), so for `L""` it reads the unit *before* the buffer: a
-/// fault when the buffer starts a mapping (a work-pool thread's first pooled
-/// `WPathBuffer`, i.e. `fs.promises.copyFile(src, "")`), and
-/// `ERROR_PATH_NOT_FOUND` whenever the stray read happens to land on mapped
-/// memory. Report the latter without making the call.
+/// This module's spelling of `CopyFileW`: raw-ABI drop-in that never hands
+/// kernel32 an empty destination sitting at the start of a buffer. KERNELBASE
+/// looks at the destination name's last unit (`dest[len - 1]`), so for `L""`
+/// it reads exactly one unit *before* the string; a work-pool thread's first
+/// pooled `WPathBuffer` tends to start a mapping, so that read faulted
+/// (`fs.promises.copyFile(src, "")`). An empty destination is passed as the
+/// second unit of a NUL pair instead, the layout libuv's combined path buffer
+/// gives Node, so kernel32 still reports what it would have (a source error
+/// first, otherwise `ERROR_PATH_NOT_FOUND`).
 ///
 /// # Safety
 /// `source` and `dest` must point at NUL-terminated wide strings that stay
 /// valid for the duration of the call.
 pub unsafe fn CopyFileW(source: LPCWSTR, dest: LPCWSTR, bFailIfExists: BOOL) -> BOOL {
+    static EMPTY_DEST: [u16; 2] = [0, 0];
     // SAFETY: caller contract — `dest` is NUL-terminated, so its first unit
     // is readable.
-    if unsafe { *dest } == 0 {
-        kernel32::SetLastError(u32::from(Win32Error::PATH_NOT_FOUND.0));
-        return FALSE;
-    }
-    // SAFETY: caller contract.
+    let dest = if unsafe { *dest } == 0 {
+        EMPTY_DEST[1..].as_ptr()
+    } else {
+        dest
+    };
+    // SAFETY: caller contract; the substitute is a NUL-terminated empty string
+    // with a readable unit before it.
     unsafe { externs::CopyFileW(source, dest, bFailIfExists) }
 }
 

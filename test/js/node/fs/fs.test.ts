@@ -1007,62 +1007,79 @@ describe("copyFileSync", () => {
   }
 });
 
-// Windows: CopyFileW reads the code unit before an empty destination string. The
-// async forms convert the destination into a work-pool thread's freshly pooled
-// path buffer, which tends to start a mapping, so they crashed the process
-// instead of failing with ENOENT. Runs in a child (it used to segfault) and
-// queues a batch per form: the pool keeps spawning threads while work is
-// queued, and each thread converts into a fresh buffer of its own.
-it.concurrent("copyFile to an empty destination path fails with ENOENT in every form", async () => {
-  using dir = tempDir("fs-copyfile-empty-dest", { "src.txt": "x" });
+// Windows: CopyFileW reads the code unit before an empty destination string.
+// The async forms convert the destination into a work-pool thread's freshly
+// pooled path buffer, which tends to start a mapping, so they crashed the
+// process instead of failing with ENOENT. Runs in a child (it used to
+// segfault). Each pool thread converts into one buffer of its own, so every
+// thread is one chance to hit the crash: the child raises the pool's thread
+// cap (it defaults to the core count, 4 on the CI shards) and follows each
+// copy with a 1 MiB read so the threads stay busy and the pool keeps spawning
+// while the batch is queued. The directory source checks that the source is
+// still inspected before the destination: its error must come out unchanged.
+it.concurrent("copyFile to an empty destination path fails with the copyfile error in every form", async () => {
+  using dir = tempDir("fs-copyfile-empty-dest", { "src.txt": "x", "srcdir/.keep": "" });
   const script = `
     const fs = require("fs");
-    const N = 64;
+    fs.writeFileSync("big.bin", Buffer.alloc(1 << 20));
     const shape = e => ({ code: e.code, syscall: e.syscall, path: e.path });
     const unique = list => [...new Set(list.map(r => JSON.stringify(r)))].map(s => JSON.parse(s));
-    const promiseForm = Promise.all(
-      Array.from({ length: N }, () => fs.promises.copyFile("src.txt", "").then(() => "resolved", shape)),
-    );
-    const callbackForm = Promise.all(
-      Array.from(
-        { length: N },
-        () => new Promise(resolve => fs.copyFile("src.txt", "", e => resolve(e ? shape(e) : "resolved"))),
-      ),
-    );
-    let sync;
-    try {
-      fs.copyFileSync("src.txt", "");
-      sync = "resolved";
-    } catch (e) {
-      sync = shape(e);
+    const busy = [];
+    function queued(copy) {
+      const result = copy();
+      busy.push(fs.promises.readFile("big.bin"));
+      return result;
     }
-    let cpSync;
-    try {
-      fs.cpSync("src.txt", "");
-      cpSync = "resolved";
-    } catch (e) {
-      cpSync = { code: e.code };
+    async function forms(source, count) {
+      const promises = Promise.all(
+        Array.from({ length: count }, () => queued(() => fs.promises.copyFile(source, "").then(() => "resolved", shape))),
+      );
+      const callback = Promise.all(
+        Array.from({ length: count }, () =>
+          queued(() => new Promise(resolve => fs.copyFile(source, "", e => resolve(e ? shape(e) : "resolved")))),
+        ),
+      );
+      let sync;
+      try {
+        fs.copyFileSync(source, "");
+        sync = "resolved";
+      } catch (e) {
+        sync = shape(e);
+      }
+      return { promises: unique(await promises), callback: unique(await callback), sync };
     }
-    const cp = fs.promises.cp("src.txt", "").then(() => "resolved", e => ({ code: e.code }));
-    Promise.all([promiseForm, callbackForm, cp]).then(([promises, callback, cp]) => {
-      console.log(JSON.stringify({ promises: unique(promises), callback: unique(callback), sync, cpSync, cp }));
-    });
+    (async () => {
+      const file = await forms("src.txt", 32);
+      const directory = await forms("srcdir", 1);
+      let cpSync;
+      try {
+        fs.cpSync("src.txt", "");
+        cpSync = "resolved";
+      } catch (e) {
+        cpSync = { code: e.code };
+      }
+      const cp = await fs.promises.cp("src.txt", "").then(() => "resolved", e => ({ code: e.code }));
+      await Promise.all(busy);
+      console.log(JSON.stringify({ file, directory, cpSync, cp }));
+    })();
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
-    env: bunEnv,
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "32" },
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const enoent = { code: "ENOENT", syscall: "copyfile", path: "src.txt" };
+  // Windows reports the directory source (ERROR_ACCESS_DENIED, as node does);
+  // POSIX bun rejects a non-regular source before touching the destination.
+  const notAFile = { code: isWindows ? "EPERM" : "ENOTSUP", syscall: "copyfile", path: "srcdir" };
   expect({ stdout, stderr, exitCode }).toEqual({
     stdout:
       JSON.stringify({
-        promises: [enoent],
-        callback: [enoent],
-        sync: enoent,
+        file: { promises: [enoent], callback: [enoent], sync: enoent },
+        directory: { promises: [notAFile], callback: [notAFile], sync: notAFile },
         // A file source makes fs.cp call CopyFileW too on Windows. It reports
         // the parent mkdir on POSIX and copyfile on Windows, so only the code
         // is pinned.

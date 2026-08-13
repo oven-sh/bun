@@ -1016,6 +1016,12 @@ const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: ULONG = 0x00000010;
 
 // Copy-paste of the standard library function except without unreachable.
 pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys::Result<()> {
+    // Same rule as `nt_root_directory` in lib.rs: NT would resolve an empty
+    // name to `options.dir` itself and delete that directory.
+    if sub_path_w.is_empty() {
+        return bun_sys::Result::errno(E::NOENT, bun_sys::Tag::open);
+    }
+
     let create_options_flags: ULONG = if options.remove_dir {
         FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT
     } else {
@@ -1035,14 +1041,6 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         // The Windows API makes this mutable, but it will not mutate here.
         Buffer: sub_path_w.as_ptr().cast_mut().cast::<u16>(),
     };
-
-    // Guard len ≥ 2: in practice callers pass converted NT paths (always
-    // ≥ 2 elems), but make the contract explicit rather than rely on the
-    // bounds check panicking.
-    if sub_path_w.len() >= 2 && sub_path_w[0] == b'.' as u16 && sub_path_w[1] == 0 {
-        // Windows does not recognize this, but it does work with empty string.
-        nt_name.Length = 0;
-    }
 
     let mut attr = OBJECT_ATTRIBUTES {
         Length: size_of::<OBJECT_ATTRIBUTES>() as u32,

@@ -502,6 +502,71 @@ describe("module", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/19279
+  // A pass-through onLoad must not change how the file's own source is
+  // interpreted: foo.cts keeps its CommonJS exports, foo.mts stays ESM.
+  const passThroughPlugin = `
+    import { readFileSync } from "node:fs";
+    Bun.plugin({
+      name: "passthrough",
+      setup(b) {
+        b.onLoad({ filter: /foo\\.[cm]ts$/, namespace: "file" }, async args => ({
+          contents: readFileSync(args.path, "utf8"),
+          loader: "js",
+        }));
+      },
+    });
+  `;
+
+  it.concurrent.each(["cts", "mts"])(
+    "pass-through onLoad of a file-namespace .%s module keeps its named exports when imported as ESM",
+    async ext => {
+      using dir = tempDir(`plugin-onload-passthrough-${ext}`, {
+        "preload.ts": passThroughPlugin,
+        "foo.cts": `exports.foo = () => "foo";`,
+        "foo.mts": `export const foo = () => "foo";`,
+        "entry.ts": `
+          import * as ns from "./foo.${ext}";
+          import { foo } from "./foo.${ext}";
+          console.log(JSON.stringify({ hasFoo: Object.keys(ns).includes("foo"), foo: foo(), nsFoo: ns.foo() }));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--preload", "./preload.ts", "entry.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+        hasFoo: true,
+        foo: "foo",
+        nsFoo: "foo",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it.concurrent("pass-through onLoad of a file-namespace .cts module works with require()", async () => {
+    using dir = tempDir("plugin-onload-passthrough-cts-require", {
+      "preload.ts": passThroughPlugin,
+      "foo.cts": `exports.foo = () => "foo";`,
+      "entry.ts": `
+        const mod = require("./foo.cts");
+        console.log(JSON.stringify({ keys: Object.keys(mod), foo: mod.foo() }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./preload.ts", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({ keys: ["foo"], foo: "foo" });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("dynamic import", () => {

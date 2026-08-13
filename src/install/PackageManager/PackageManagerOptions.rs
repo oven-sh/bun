@@ -696,10 +696,7 @@ impl Options {
                     self.scope.auth = Box::default();
                     self.scope.user = Box::default();
                 }
-                let href: Box<[u8]> = cli.registry.into();
-                self.scope.url_hash =
-                    Npm::registry::Scope::hash(bun_core::without_trailing_slash(&href));
-                self.scope.url = bun_url::OwnedURL::from_href(href);
+                self.scope.set_url(cli.registry.into());
             }
 
             if let Some(cache_dir) = cli.cache_dir {

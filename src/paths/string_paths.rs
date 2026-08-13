@@ -472,18 +472,12 @@ pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
     path
 }
 
-/// Strips the trailing separators of a path argument the way Node's `fs` does
-/// on Windows before every syscall (`path.toNamespacedPath()` resolves the
-/// argument, which drops them): `dir\file.txt\` names `file.txt`. Win32 and NT
-/// themselves keep a trailing separator significant, so the raw spelling only
-/// ever matches a directory. The separator completing a root (`C:\`, `\`,
-/// `\\server\share\`) stays.
-///
-/// `\\?\`, `\\.\` and `\??\` paths are returned as they are, like every other
-/// converter in this module treats them.
-///
-/// Unlike [`without_trailing_slash_windows_path`] this floors every path
-/// shape at its root, not only drive-letter paths.
+/// Strips trailing separators the way Node's `fs` does on Windows before every
+/// syscall (`path.toNamespacedPath()` resolves the argument, dropping them), so
+/// `dir\file.txt\` names `file.txt`. Roots (`C:\`, `\`, `\\server\share\`) and
+/// `\\?\` / `\\.\` / `\??\` paths are returned unchanged. Unlike
+/// [`without_trailing_slash_windows_path`], every path shape is floored at its
+/// root, not only drive-letter paths.
 pub fn without_trailing_separators_windows_arg(path: &[u8]) -> &[u8] {
     let is_device_path = path.len() >= 4
         && resolve_path::is_sep_any(path[0])

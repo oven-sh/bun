@@ -12,7 +12,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const MIMALLOC_COMMIT = "49182d597f0c88a091f465c550b1b28384f32840"; // oven-sh/mimalloc#15: upstream dev3 sync
+const MIMALLOC_COMMIT = "be7eb3ff1384713508610b92e56966cc94fb24bd";
 
 export const mimalloc: Dependency = {
   name: "mimalloc",

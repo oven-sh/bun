@@ -372,10 +372,10 @@ fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
     // buffer (32767 units for `WPathBuffer`, i.e. longer than any path NT
     // can address). The empty result makes the consuming syscall fail
     // cleanly; JS-facing paths are rejected with `false`/ENAMETOOLONG before
-    // they get here (`PathLikeExt::{slice_w, os_path, os_path_kernel32}` in
-    // `runtime/node/types.rs`, via `fits_in_wide_path_buffer`). Prefixing
-    // wrappers (`to_kernel32_path`, `to_nt_path`, …) may then yield just
-    // their prefix, which likewise fails at the syscall.
+    // they get here (`PathLikeExt::os_path_kernel32` in `runtime/node/types.rs`,
+    // via `fits_in_wide_path_buffer`). Prefixing wrappers (`to_kernel32_path`,
+    // `to_nt_path`, …) may then yield just their prefix, which likewise fails
+    // at the syscall.
     let Some(converted) =
         crate::strings::try_convert_utf8_to_utf16_in_buffer(&mut wbuf[..cap], utf8)
     else {

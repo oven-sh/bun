@@ -452,37 +452,29 @@ fn directory_exists_at_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<bool> {
     }
 }
 
-/// Converts a `cp` operand into the buffer the copy appends entry names to. Every
-/// path built from it is handed to `mkdir_os_path` / `copy_single_file_sync`,
-/// which on Windows are kernel32 calls (`CreateDirectoryW`, `CopyFileW`,
-/// `GetFileAttributesW`) that reject paths longer than `MAX_PATH` unless they
-/// carry the `\\?\` prefix `os_path_kernel32` adds, the same form `mkdir` and
-/// `copyFile` use.
-fn cp_operand<'a>(path: &'a PathLike, buf: &'a mut OSPathBuffer) -> Maybe<&'a OSPathSliceZ> {
+/// Copies a `cp` operand, converted with `os_path_kernel32`, into the buffer
+/// the copy goes on appending entry names to; the result (NUL included) always
+/// lives in `buf`. Every path built from it is handed to `mkdir_os_path` /
+/// `copy_single_file_sync`, which on Windows are the kernel32 calls that need
+/// that conversion to accept paths longer than `MAX_PATH`.
+fn cp_operand<'a>(path: &PathLike, buf: &'a mut OSPathBuffer) -> Maybe<&'a OSPathSliceZ> {
     let name_too_long = || sys::Error {
         errno: E::ENAMETOOLONG as _,
         syscall: sys::Tag::copyfile,
         path: path.slice().into(),
         ..Default::default()
     };
-    #[cfg(windows)]
-    {
-        let mut kernel32_buf = paths::path_buffer_pool::get();
-        let converted = path
-            .os_path_kernel32(&mut *kernel32_buf)
-            .map_err(|NameTooLong| name_too_long())?;
-        let len = converted.len();
-        if len >= buf.len() {
-            return Err(name_too_long());
-        }
-        buf[..len].copy_from_slice(converted.as_slice());
-        buf[len] = 0;
-        Ok(OSPathSliceZ::from_buf(&buf[..], len))
+    let mut scratch = paths::path_buffer_pool::get();
+    let converted = path
+        .os_path_kernel32(&mut *scratch)
+        .map_err(|NameTooLong| name_too_long())?;
+    let len = converted.len();
+    if len >= buf.len() {
+        return Err(name_too_long());
     }
-    #[cfg(not(windows))]
-    {
-        path.os_path(buf).map_err(|NameTooLong| name_too_long())
-    }
+    buf[..len].copy_from_slice(&converted[..]);
+    buf[len] = 0;
+    Ok(OSPathSliceZ::from_buf(&buf[..], len))
 }
 
 /// Appends `name` as a child of the directory path in `buf[..dir_len]`,
@@ -1857,7 +1849,7 @@ mod _async_tasks {
 
             #[cfg(windows)]
             {
-                // SAFETY: src is NUL-terminated (os_path); GetFileAttributesW is the Win32 FFI
+                // SAFETY: src is NUL-terminated (cp_operand); GetFileAttributesW is the Win32 FFI
                 let attributes = unsafe { bun_sys::c::GetFileAttributesW(src.as_ptr()) };
                 if attributes == bun_sys::c::INVALID_FILE_ATTRIBUTES {
                     this.finish_concurrently(Err(sys::Error {

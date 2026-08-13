@@ -230,14 +230,10 @@ describe.concurrent("bunshell cp operands the native copy has to convert", () =>
     expect(readFileSync(copy, "utf8")).toBe("a\n");
   });
 
-  // A rooted operand (`\dir`, no drive letter) is resolved against the current
-  // drive and keeps its trailing separator, like a volume root (`D:\`) always
-  // has one. The copy must append entry names to such a path without doubling
-  // the separator: the `\\?\` paths it works with are not normalized by
-  // Windows, so `\\?\C:\out\\a.txt` does not exist. The destination case
-  // worked before the copy used those paths too; a rooted source used to fail
-  // with "Invalid argument" because it was opened without being resolved.
-  describe.if(isWindows)("rooted operands with a trailing separator", () => {
+  // A rooted operand (`\dir`, no drive letter) is the one shape the copy's
+  // conversion changes: it is resolved against the current drive, keeping its
+  // trailing separator, like a volume root (`D:\`) always has one.
+  describe.if(isWindows)("rooted operands", () => {
     const tree = { "tree/a.txt": "a\n", "tree/sub/b.txt": "b\n" };
     /** `C:\x\y` -> `\x\y\` */
     function rooted(dir: string, name: string) {
@@ -250,16 +246,37 @@ describe.concurrent("bunshell cp operands the native copy has to convert", () =>
       expect(readFileSync(join(out, "sub", "b.txt"), "utf8")).toBe("b\n");
     }
 
-    test("cp -R into a rooted destination", async () => {
+    // The copy must append entry names to such a path without doubling the
+    // separator: the `\\?\` paths it works with are not normalized by Windows,
+    // so `\\?\C:\out\\a.txt` does not exist. The destination case also worked
+    // before the copy used those paths; a rooted source used to fail with
+    // "Invalid argument" because it was opened without being resolved.
+    test("cp -R into a rooted destination with a trailing separator", async () => {
       using dir = tempDir("shell-cp-rooted-dest", { "run-cp-fixture.ts": fixture, ...tree });
       expect(await cp(String(dir), "-R", "tree", rooted(String(dir), "out"))).toEqual(copied);
       expectTreeCopiedTo(join(String(dir), "out"));
     });
 
-    test("cp -R from a rooted source", async () => {
+    test("cp -R from a rooted source with a trailing separator", async () => {
       using dir = tempDir("shell-cp-rooted-src", { "run-cp-fixture.ts": fixture, ...tree });
       expect(await cp(String(dir), "-R", rooted(String(dir), "tree"), "out")).toEqual(copied);
       expectTreeCopiedTo(join(String(dir), "out"));
+    });
+
+    // cp suppresses the EBUSY of copies that lose the race for a destination
+    // another copy of the same command already wrote ("EBUSY windows" above)
+    // by comparing the path in the error with the operand it resolved, so the
+    // operand has to be kept in the drive-qualified form the copy reports.
+    // With 50 copies racing, some of them lose on nearly every run.
+    test("copies of one file racing into a rooted directory stay quiet", async () => {
+      using dir = tempDir("shell-cp-rooted-ebusy", {
+        "run-cp-fixture.ts": fixture,
+        "hello.txt": "hi!\n",
+        "somedir": {},
+      });
+      const sources = Array(50).fill("hello.txt");
+      expect(await cp(String(dir), ...sources, rooted(String(dir), "somedir"))).toEqual(copied);
+      expect(readFileSync(join(String(dir), "somedir", "hello.txt"), "utf8")).toBe("hi!\n");
     });
   });
 });

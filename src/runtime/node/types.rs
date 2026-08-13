@@ -4,9 +4,9 @@ use core::ffi::c_int;
 use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, fmt as bun_fmt};
-use bun_core::{WStr, ZStr, ZigString};
+use bun_core::{ZStr, ZigString};
 use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _, ZigStringJsc as _};
-use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer};
+use bun_paths::{MAX_PATH_BYTES, OSPathSliceZ, PathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
 use crate::node::util::validators;
@@ -834,12 +834,11 @@ unsafe extern "C" {
 // `PathLikeExt` / `PathOrFdExt` extension traits.
 pub use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
 
-/// Returned by [`PathLikeExt::slice_w`] / [`PathLikeExt::os_path`] /
-/// [`PathLikeExt::os_path_kernel32`] when the path's UTF-16 form would not
-/// fit a `WPathBuffer` (`strings::fits_in_wide_path_buffer`). NT caps paths
-/// at `PATH_MAX_WIDE` units, so such a path cannot exist on disk — callers
-/// map this to `false`/`ENAMETOOLONG` as appropriate instead of letting the
-/// conversion overflow (oven-sh/bun#27775).
+/// Returned by [`PathLikeExt::os_path_kernel32`] when the path's UTF-16 form
+/// would not fit a `WPathBuffer` (`strings::fits_in_wide_path_buffer`). NT
+/// caps paths at `PATH_MAX_WIDE` units, so such a path cannot exist on disk —
+/// callers map this to `false`/`ENAMETOOLONG` as appropriate instead of
+/// letting the conversion overflow (oven-sh/bun#27775).
 #[derive(Debug, Clone, Copy)]
 pub struct NameTooLong;
 
@@ -859,12 +858,13 @@ pub trait PathLikeExt {
     fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr
     where
         Self: Sized;
-    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
-    where
-        Self: Sized;
-    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong>
-    where
-        Self: Sized;
+    /// The path in the form the platform's file calls take (`&ZStr` as given
+    /// on POSIX). On Windows this is the only conversion for a path that
+    /// reaches kernel32 (`CreateDirectoryW`, `CopyFileW`, `GetFileAttributesW`,
+    /// ...): normalized, rooted paths resolved against the current drive, and
+    /// drive-letter paths given the `\\?\` prefix, without which those calls
+    /// reject anything longer than `MAX_PATH`. Paths opened through `Nt*`
+    /// calls take the `bun_sys` NT-path helpers instead.
     fn os_path_kernel32<'a>(
         &'a self,
         buf: &'a mut PathBuffer,
@@ -1019,27 +1019,6 @@ impl PathLikeExt for PathLike {
     #[inline]
     fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr {
         self.slice_z_with_force_copy::<false>(buf)
-    }
-
-    #[inline]
-    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong> {
-        let sliced = self.slice();
-        if !strings::fits_in_wide_path_buffer(sliced) {
-            return Err(NameTooLong);
-        }
-        Ok(strings::paths::to_w_path(buf, sliced))
-    }
-
-    #[inline]
-    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong> {
-        #[cfg(windows)]
-        {
-            return self.slice_w(buf);
-        }
-        #[cfg(not(windows))]
-        {
-            Ok(self.slice_z_with_force_copy::<false>(buf))
-        }
     }
 
     #[inline]

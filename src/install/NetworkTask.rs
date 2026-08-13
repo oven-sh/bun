@@ -676,6 +676,8 @@ impl NetworkTask {
             },
         ));
         self.http_mut().client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
+        self.http_mut().client.flags.redirect_credentials =
+            http::RedirectCredentialsPolicy::StripOnHostnameChange;
 
         if PackageManager::verbose_install() {
             self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
@@ -909,6 +911,8 @@ impl NetworkTask {
             http_options,
         ));
         self.http_mut().client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
+        self.http_mut().client.flags.redirect_credentials =
+            http::RedirectCredentialsPolicy::StripOnHostnameChange;
         if PackageManager::verbose_install() {
             self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
         }

@@ -94,16 +94,20 @@ it("retries a manifest whose redirect target 500s once", async () => {
   });
 });
 
-// A cross-origin redirect strips Authorization from the request (per the fetch
-// spec). The install retry restarts from the original registry URL and must
-// carry the original headers, including Authorization, again.
-it("retries an authorized manifest whose cross-origin redirect target 500s once", async () => {
-  const token = "test-registry-token";
+// The registry (reached as `localhost`) redirects the manifest to a second
+// server standing in for a CDN. Whether that hop keeps the token depends only
+// on the hostname: bun install, like npm, keeps it when just the port (or
+// scheme) changes and drops it when the hostname changes. Either way the
+// install retry restarts from the original registry URL and must carry the
+// original headers, including Authorization, again.
+const token = "test-registry-token";
+it.each([
+  { cdnHost: "localhost", expectedCdnAuth: [`Bearer ${token}`, `Bearer ${token}`] },
+  { cdnHost: "127.0.0.1", expectedCdnAuth: [null, null] },
+])("retries an authorized manifest redirected to $cdnHost when it 500s once", async ({ cdnHost, expectedCdnAuth }) => {
   const registryUrls: string[] = [];
   const cdnAuth: (string | null)[] = [];
   let cdnHits = 0;
-  // A second server on its own port stands in for the CDN the registry
-  // redirects to; a different port makes the redirect cross-origin.
   await using cdn = Bun.serve({
     port: 0,
     fetch(request) {
@@ -133,7 +137,7 @@ it("retries an authorized manifest whose cross-origin redirect target 500s once"
       }
       return new Response(null, {
         status: 302,
-        headers: { Location: `http://localhost:${cdn.port}/cdn/BaR` },
+        headers: { Location: `http://${cdnHost}:${cdn.port}/cdn/BaR` },
       });
     }
     if (pathname === "/BaR-0.0.2.tgz") {
@@ -168,10 +172,9 @@ it("retries an authorized manifest whose cross-origin redirect target 500s once"
   expect(err).toContain("Saved lockfile");
   expect(out).toContain("1 package installed");
   expect(exitCode).toBe(0);
-  // Both registry hits carried the token (the handler 401s otherwise); the
-  // cross-origin CDN hops must NOT have (the spec strips it for that hop).
+  // Both registry hits carried the token (the handler 401s otherwise).
   expect(registryUrls).toEqual(["/BaR", "/BaR", "/BaR-0.0.2.tgz"]);
-  expect(cdnAuth).toEqual([null, null]);
+  expect(cdnAuth).toEqual(expectedCdnAuth);
 });
 
 // Sibling retry site (tarball downloads in runTasks): the tarball URL

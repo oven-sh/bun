@@ -7910,8 +7910,7 @@ impl H2FrameParser {
 
         // Encode trailer headers using HPACK
         while let Some(header_name) = iter.next()? {
-            // As in node, a property whose value is undefined is not a header at all: it is
-            // skipped before its name is validated or counted.
+            // Like node, skip an undefined value before the name is validated or counted.
             let js_value = iter.value;
             if header_name.length() == 0 || js_value.is_undefined() {
                 continue;
@@ -8097,8 +8096,7 @@ impl H2FrameParser {
             }
         }
         if encoded_headers.is_empty() {
-            // Nothing survived the walk (undefined values, empty arrays): end the stream the way
-            // no_trailers() does. node also sends an empty DATA frame for an empty trailer list.
+            // Every field was skipped: end the stream the way no_trailers() and node do.
             stream.wait_for_trailers = false;
             let _ = this.send_data(&mut stream, b"", true, JSValue::UNDEFINED, false, false);
             return Ok(JSValue::UNDEFINED);
@@ -8401,8 +8399,7 @@ impl H2FrameParser {
                 },
             )?;
             while let Some(header_name) = iter.next()? {
-                // As in node, a property whose value is undefined is not a header at all: it is
-                // skipped before its name is validated or counted.
+                // Like node, skip an undefined value before the name is validated or counted.
                 let js_value = iter.value;
                 if header_name.length() == 0 || js_value.is_undefined() {
                     continue;
@@ -8996,8 +8993,7 @@ impl H2FrameParser {
             )?;
 
             while let Some(header_name) = iter.next()? {
-                // As in node, a property whose value is undefined is not a header at all: it is
-                // skipped before its name is validated or counted.
+                // Like node, skip an undefined value before the name is validated or counted.
                 let js_value = iter.value;
                 if header_name.length() == 0 || js_value.is_undefined() {
                     continue;

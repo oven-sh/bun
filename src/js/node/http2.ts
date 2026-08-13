@@ -1237,8 +1237,7 @@ class Http2ServerResponse extends Stream {
     const linkHeaderValue = validateLinkHeaderValue(hints.link);
     for (const key of ObjectKeys(hints)) {
       if (key !== "link") {
-        // Like setHeader(), the compat layer rejects undefined/null values and invalid names
-        // itself; the stream-level additionalHeaders() below would skip undefined values.
+        // Validated here like setHeader(); additionalHeaders() itself would skip an undefined value.
         const name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(key));
         assertValidHeader(name, hints[key]);
         if (!checkIsHttpToken(name)) throw $ERR_INVALID_HTTP_TOKEN("Header name", name);
@@ -2605,18 +2604,15 @@ class Http2Stream extends Duplex {
     // node keeps the never-index list visible on sentTrailers (symbol keys are not iterated by
     // the wire-encoding path, so re-attaching is safe).
     if (sensitives !== undefined) headers[sensitiveHeaders] = sensitives;
-    // node ends a stream whose trailer list came out empty (sendTrailers({}), which the compat
-    // Http2ServerResponse calls unconditionally from onStreamTrailersReady) with an empty DATA
-    // frame carrying END_STREAM rather than a zero-length trailer block, so the peer sees the
-    // stream end without a 'trailers' event. The native sendTrailers() falls back to the same
-    // frame when every field it was given is skipped (undefined values, empty arrays); this
-    // branch is only the short-cut for the common case.
     // Mark before the native call so a re-entrant sendTrailers() from a header-value
     // coercion hits ERR_HTTP2_TRAILERS_ALREADY_SENT, but clear it if validation throws
     // (no frame is written then) so a corrected retry succeeds like node.
     this.#sentTrailers = headers;
     this[kSendingTrailers] = true;
     try {
+      // An empty trailer list ends the stream with an empty DATA frame, as in node (the compat
+      // layer sends {} on every response). Native sendTrailers() does the same when every field
+      // is skipped; this is only the short-cut.
       if (ObjectKeys(headers).length === 0) {
         session[bunHTTP2Native]?.noTrailers(this.#id);
       } else {
@@ -6225,9 +6221,8 @@ class ClientHttp2Session extends Http2Session {
       const sensitiveNames = buildSensitiveNames(headers, sensitives);
       // Validate header names in JS like node's buildNgHeaderString does: request() must throw
       // synchronously for an invalid name even while the session is still connecting (the native
-      // encoder only sees the headers once a queued request is actually submitted). Empty names
-      // keep going to the native validator, matching its acceptance; undefined values are skipped
-      // by the encoder without looking at the name, as in node.
+      // encoder only sees the headers once a queued request is actually submitted). Empty names and
+      // undefined values are left to the encoder, which accepts the former and skips the latter.
       {
         const headerNames = ObjectKeys(headers);
         for (let i = 0; i < headerNames.length; i++) {

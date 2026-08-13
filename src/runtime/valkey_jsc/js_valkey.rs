@@ -1201,6 +1201,8 @@ impl JSValkeyClient {
             return;
         }
 
+        // No reconnecting on a VM that is exiting: its stop phase would only
+        // have to close the new socket again.
         if self.vm().is_shutting_down() {
             bun_core::hint::cold();
             return;
@@ -1447,14 +1449,6 @@ impl JSValkeyClient {
 
     fn close_socket_next_tick(&self) {
         if self.client.get().socket.is_closed() {
-            return;
-        }
-
-        // During VM shutdown the event loop won't tick, so the deferred task below
-        // would never run; close inline (this_value is cleared, no JS re-entry).
-        if self.vm().is_shutting_down() {
-            bun_core::hint::cold();
-            self.client_mut().close();
             return;
         }
 
@@ -2098,4 +2092,9 @@ impl ValkeyDeferredClose {
 
 impl bun_event_loop::Taskable for ValkeyDeferredClose {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ValkeyDeferredClose;
+    /// The deferred close is script-free bookkeeping; do it.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — boxed at the enqueue site.
+        unsafe { bun_core::heap::take(this) }.run();
+    }
 }

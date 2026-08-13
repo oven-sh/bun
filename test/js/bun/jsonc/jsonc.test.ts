@@ -392,6 +392,17 @@ test("Bun.JSONC.parse throws on documents that only parse with error recovery", 
   }
 });
 
+test("Bun.JSONC.parse builds objects the way JSON.parse does: index keys first, __proto__ own, keys of every kind", () => {
+  const doc = `{"b":1,"0":2,"a":3,"__proto__":{"x":1},"ünï":4,"${"k".repeat(40)}":5,"1":6,"":7,"s":"","t":"x","u":"${"y".repeat(40)}","v":"ünï"}`;
+  const parsed = Bun.JSONC.parse(doc) as any;
+  const reference = JSON.parse(doc);
+  expect(parsed).toEqual(reference);
+  expect(Object.keys(parsed)).toEqual(Object.keys(reference));
+  expect(Object.getPrototypeOf(parsed)).toBe(Object.prototype);
+  expect(Object.hasOwn(parsed, "__proto__")).toBe(true);
+  expect(Bun.JSONC.parse(`[[],[1,"a",{}],[[["deep"]]]]`)).toEqual([[], [1, "a", {}], [[["deep"]]]]);
+});
+
 describe("structural index window seams", () => {
   const WINDOW = 8192;
   const BLOCK = 64;

@@ -1676,10 +1676,7 @@ static long us_internal_verify_peer_certificate(const SSL *ssl, long def) {
     err = SSL_get_verify_result(ssl);
   } else {
     const SSL_CIPHER *curr_cipher = SSL_get_current_cipher(ssl);
-    const SSL_SESSION *sess = SSL_get_session(ssl);
-    if ((curr_cipher && SSL_CIPHER_get_auth_nid(curr_cipher) == NID_auth_psk) ||
-        (sess && SSL_SESSION_get_protocol_version(sess) == TLS1_3_VERSION &&
-         SSL_session_reused(ssl))) {
+    if (curr_cipher && SSL_CIPHER_get_auth_nid(curr_cipher) == NID_auth_psk) {
       return X509_V_OK;
     }
   }
@@ -2478,6 +2475,13 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
     return 0;
   }
 
+  /* Called from inside SSL_read/SSL_do_handshake on this socket (an ALPN/SNI
+   * callback writing): wait for the handshake, same as WANT_READ below. */
+  if (s->ssl_in_use) {
+    s->ssl_write_wants_read = 1;
+    return 0;
+  }
+
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
 
   /* Earlier batched records of ours must reach the wire before anything new:
@@ -2506,7 +2510,18 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
   while (total < length) {
     int chunk = length - total;
     if (chunk > 16384) chunk = 16384;
+    /* Same deferred-close protocol as the SSL_do_handshake/SSL_read drivers. */
+    s->ssl_in_use = 1;
     last_ssl_written = SSL_write(s_ssl(s), data + total, chunk);
+    s->ssl_in_use = 0;
+    if (s->ssl_pending_detach) {
+      /* Closed from inside the call: drop this write's records and close now. */
+      loop_ssl_data->ssl_write_batching = 0;
+      loop_ssl_data->ssl_write_batch_len = 0;
+      s->ssl_pending_detach = 0;
+      us_socket_close(s, s->ssl_pending_close_code, NULL);
+      return 0;
+    }
     if (last_ssl_written <= 0) break;
     total += last_ssl_written;
     /* A batching allocation failure marks the socket fatal from inside the BIO;
@@ -2742,13 +2757,16 @@ static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
 /* Whether the SNI-selected context of this connection demands closing on a
  * client-certificate verification error (requestCert && rejectUnauthorized
  * of the per-serverName entry). */
-int us_socket_server_name_reject_unauthorized(struct us_socket_t *s) {
-  if (!s->ssl || us_ctx_sni_policy_ex_idx < 0) return 0;
-  SSL_CTX *ctx = SSL_get_SSL_CTX(s_ssl(s));
-  if (!ctx) return 0;
+int us_ssl_ctx_reject_unauthorized(SSL_CTX *ctx) {
+  if (!ctx || us_ctx_sni_policy_ex_idx < 0) return 0;
   uintptr_t packed = (uintptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_sni_policy_ex_idx);
   return (packed & US_SNI_POLICY_REQUEST_CERT) &&
          (packed & US_SNI_POLICY_REJECT_UNAUTHORIZED);
+}
+
+int us_socket_server_name_reject_unauthorized(struct us_socket_t *s) {
+  if (!s->ssl) return 0;
+  return us_ssl_ctx_reject_unauthorized(SSL_get_SSL_CTX(s_ssl(s)));
 }
 
 /* Extracts the host_name from the ClientHello's server_name extension.

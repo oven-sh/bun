@@ -6962,6 +6962,33 @@ declare module "bun" {
       gid?: number;
 
       /**
+       * Start the child process inside this control group.
+       *
+       * Pass the path of an existing cgroup directory (e.g.
+       * `"/sys/fs/cgroup/my-jobs"`), or an open file descriptor for one. The
+       * child joins it before it begins executing, so resource limits
+       * configured on the cgroup (`memory.max`, `pids.max`, …) apply from its
+       * first instruction and to everything it spawns in turn. Works with both
+       * cgroup v1 and v2 hierarchies.
+       *
+       * Bun does not create or configure the cgroup; do that with `node:fs`
+       * beforehand.
+       *
+       * Linux only; ignored on other platforms. On Linux, the spawn fails if
+       * the cgroup cannot be joined (e.g. the directory does not exist).
+       *
+       * @example
+       * ```ts
+       * import { mkdirSync, writeFileSync } from "node:fs";
+       * const dir = "/sys/fs/cgroup/build-jobs";
+       * mkdirSync(dir, { recursive: true });
+       * writeFileSync(dir + "/memory.max", String(2 * 1024 ** 3));
+       * Bun.spawn({ cmd: ["make"], cgroup: dir });
+       * ```
+       */
+      cgroup?: string | number;
+
+      /**
        * The environment variables of the process
        *
        * Defaults to `process.env` as it was when the current Bun process launched.

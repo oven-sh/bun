@@ -127,6 +127,75 @@ describe("ChildProcess.spawn()", () => {
   });
 });
 
+describe("fork() IPC", () => {
+  it("routes a NODE_-prefixed cmd from parent to the child's internalMessage", async () => {
+    const dir = tmpdirSync();
+    const child_path = path.join(dir, "internal-message-fixture.js");
+    await write(
+      child_path,
+      `process.on("message", m => console.log("message:" + JSON.stringify(m)));
+       process.on("internalMessage", m => console.log("internalMessage:" + JSON.stringify(m)));
+       process.on("disconnect", () => process.exit(0));`,
+    );
+
+    const child = fork(child_path, { stdio: ["ignore", "pipe", "inherit", "ipc"] });
+    try {
+      child.send({ cmd: "NODE_foo" });
+      // The prefix only counts at position 0, and must be longer than "NODE_".
+      child.send({ cmd: "fooNODE_" });
+      child.send({ cmd: "NODE_" });
+
+      let out = "";
+      for await (const chunk of child.stdout!) {
+        out += chunk;
+        if (out.split("\n").length > 3) break;
+      }
+
+      expect(out.split("\n").filter(Boolean)).toEqual([
+        'internalMessage:{"cmd":"NODE_foo"}',
+        'message:{"cmd":"fooNODE_"}',
+        'message:{"cmd":"NODE_"}',
+      ]);
+    } finally {
+      if (child.connected) child.disconnect();
+      child.kill();
+    }
+  });
+
+  // libuv maps an inherited stdio slot the parent has closed to /dev/null. Registering a plain
+  // inherit instead captured whichever fd was created next: the ipc socketpair's parent end, which the
+  // child then held open as its stdin, so the parent's disconnect() never reached it.
+  it.skipIf(isWindows)("inherits a closed stdin as /dev/null, so disconnect() still reaches the child", async () => {
+    const dir = tmpdirSync();
+    await write(
+      path.join(dir, "parent.js"),
+      `require("fs").closeSync(0);
+       const child = require("child_process").fork(require("path").join(__dirname, "child.js"));
+       child.on("message", m => { console.log(JSON.stringify(m)); child.disconnect(); });
+       child.on("exit", code => console.log("child exit " + code));`,
+    );
+    await write(
+      path.join(dir, "child.js"),
+      `const s = require("fs").fstatSync(0);
+       process.on("disconnect", () => process.exit(0));
+       process.send({ stdin: s.isCharacterDevice() ? "chardev" : s.isSocket() ? "socket" : "other" });`,
+    );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.split("\n").filter(Boolean), stderr }).toEqual({
+      stdout: ['{"stdin":"chardev"}', "child exit 0"],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("spawn()", () => {
   it("should spawn a process", () => {
     const child = spawn("bun", ["-v"]);
@@ -423,6 +492,62 @@ describe("spawn()", () => {
       expect(child.stdout).not.toBeNull();
       expect(child.stderr).not.toBeNull();
     });
+
+    it.skipIf(isWindows)("accepts another subprocess's stdin as a stdio target", async () => {
+      // (cat [p1] ; cat [p2]) | cat [p3]
+      let p1, p2;
+      const p3 = spawn("cat", { stdio: ["pipe", "pipe", "inherit"] });
+      try {
+        p1 = spawn("cat", { stdio: ["pipe", p3.stdin, "inherit"] });
+        p2 = spawn("cat", { stdio: ["pipe", p3.stdin, "inherit"] });
+
+        p3.stdout.setEncoding("utf8");
+
+        const firstChunk = once(p3.stdout, "data");
+        p1.stdin.end("hello\n");
+        expect((await firstChunk)[0]).toBe("hello\n");
+
+        const secondChunk = once(p3.stdout, "data");
+        p2.stdin.end("world\n");
+        expect((await secondChunk)[0]).toBe("world\n");
+
+        const thirdChunk = once(p3.stdout, "data");
+        p3.stdin.end("foobar\n");
+        expect((await thirdChunk)[0]).toBe("foobar\n");
+      } finally {
+        for (const p of [p1, p2, p3]) p?.kill();
+      }
+    });
+
+    // The test above passes only because 6-byte writes never fill the buffer.
+    const itTodoPosix = isWindows ? it.skip : it.todo;
+    itTodoPosix("a child inheriting another subprocess's stdin survives a large write", async () => {
+      const size = 4 * 1024 * 1024;
+      const dir = tmpdirSync();
+      const bigPath = path.join(dir, "big.txt");
+      await write(bigPath, Buffer.alloc(size, "x"));
+
+      let writer;
+      const p3 = spawn("cat", { stdio: ["pipe", "pipe", "inherit"] });
+      try {
+        let received = 0;
+        p3.stdout.on("data", chunk => (received += chunk.length));
+
+        writer = spawn("cat", [bigPath], { stdio: ["ignore", p3.stdin, "pipe"] });
+        let stderr = "";
+        writer.stderr.setEncoding("utf8");
+        writer.stderr.on("data", chunk => (stderr += chunk));
+
+        const [code] = await once(writer, "close");
+        p3.stdin.end();
+        await once(p3.stdout, "end");
+
+        expect({ code, stderr, received }).toEqual({ code: 0, stderr: "", received: size });
+      } finally {
+        for (const p of [writer, p3]) p?.kill();
+      }
+    });
+
     it("overlapped string shorthand behaves like pipe", async () => {
       const child = spawn(bunExe(), ["-e", "process.stdin.on('data', d => process.stdout.write('out:' + d))"], {
         env: bunEnv,

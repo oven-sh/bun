@@ -22,8 +22,7 @@ test.skipIf(!isLinux)("Bun.openInEditor survives re-entrant calls from option ge
         { get column() { reenter(); return "2"; } },
       ];
       for (const opts of variants) {
-        try { Bun.openInEditor("/nonexistent/f.txt", opts); } catch {}
-        console.log("ok");
+        try { Bun.openInEditor("/nonexistent/f.txt", opts); console.log("opened"); } catch (e) { console.log(e.message); }
       }
     `,
   });
@@ -46,7 +45,13 @@ test.skipIf(!isLinux)("Bun.openInEditor survives re-entrant calls from option ge
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  expect(stdout.trim().split("\n")).toEqual(["ok", "ok", "ok", "ok"]);
+  // Nothing is found, so every call must throw rather than spawn anything.
+  expect(stdout.trim().split("\n")).toEqual([
+    'Could not find editor "zzz_no_editor"',
+    'Could not find editor "zzz_no_editor"',
+    "Failed to auto-detect editor",
+    "Failed to auto-detect editor",
+  ]);
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
 });

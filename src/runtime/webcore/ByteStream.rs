@@ -305,16 +305,16 @@ impl ByteStream {
         }
 
         if self.buffer_action.get().is_some() {
-            self.signal_drained();
             if let streams::Result::Err(err) = &stream {
                 // Explicit post-reject cleanup; runs after `action.reject`
                 // (`?` would skip it).
                 bun_output::scoped_log!(ByteStream, "ByteStream.onData err  action.reject()");
 
                 let global = self.parent_const().global_this();
-                // R-2: move the action out of the cell *before* calling
-                // `reject` (which resolves a JS promise and may re-enter).
+                // R-2: move the action out of the cell *before* `signal_drained`
+                // and `reject`; both can re-enter and consume the slot.
                 let mut action = self.buffer_action.replace(None).unwrap();
+                self.signal_drained();
                 let res = action.reject(global, err);
 
                 self.buffer.with_mut(|b| {
@@ -330,9 +330,16 @@ impl ByteStream {
                 return res;
             }
 
+            // R-2: the drain signal can re-enter and consume `buffer_action`,
+            // so the paths below re-take it with `let`-`else`.
+            self.signal_drained();
+
             if self.has_received_last_chunk.get() {
                 // `defer { this.buffer_action = null; }` — handled by `replace(None)` below.
-                let mut action = self.buffer_action.replace(None).unwrap();
+                let Some(mut action) = self.buffer_action.replace(None) else {
+                    // Consumed re-entrantly during `signal_drained`.
+                    return Ok(());
+                };
 
                 if self.buffer.get().capacity() == 0 && matches!(stream, streams::Result::Done) {
                     bun_output::scoped_log!(
@@ -597,7 +604,7 @@ impl ByteStream {
         streams::Result::Pending(self.pending.as_ptr())
     }
 
-    fn on_cancel(&self) {
+    pub(crate) fn on_cancel(&self) {
         bun_jsc::mark_binding!();
         let view = self.value();
         if self.buffer.get().capacity() > 0 {
@@ -759,3 +766,28 @@ impl ByteStream {
         Ok(promise)
     }
 }
+
+pub mod testing_apis {
+    use super::*;
+
+    /// `bun:internal-for-testing`: swap the stream's producer for
+    /// [`streams::SourceHandle::TestingCancelOnDrain`], whose drain signal
+    /// re-enters `on_cancel` and consumes the pending buffer action.
+    pub(crate) fn byte_stream_cancel_on_drain(
+        global: &JSGlobalObject,
+        frame: &bun_jsc::CallFrame,
+    ) -> bun_jsc::JsResult<JSValue> {
+        let stream = readable_stream::ReadableStream::from_js(frame.argument(0), global)?;
+        let Some(bytes) = stream.and_then(|s| s.ptr.bytes()) else {
+            return Err(global.throw(format_args!("expected a ByteStream-backed ReadableStream")));
+        };
+        bytes
+            .parent_const()
+            .producer
+            .set(streams::SourceHandle::TestingCancelOnDrain(bytes));
+        Ok(JSValue::UNDEFINED)
+    }
+}
+// `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
+// (acronym splitter treats `AP|Is` as two words); alias so both resolve.
+pub use testing_apis as testing_ap_is;

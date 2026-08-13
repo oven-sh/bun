@@ -915,7 +915,7 @@ pub fn materialize(
 ) -> crate::Result<Expr> {
     materialize_impl(root, source, bump, false).inspect_err(|_| {
         log.add_error_fmt_opts(
-            format_args!("JSON document is too deeply nested"),
+            format_args!("Document is too deeply nested"),
             bun_ast::AddErrorOptions {
                 source: Some(source),
                 loc: root.loc,

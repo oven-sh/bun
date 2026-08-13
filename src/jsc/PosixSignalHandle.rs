@@ -147,6 +147,8 @@ pub struct PosixSignalTask;
 
 impl Taskable for PosixSignalTask {
     const TAG: bun_event_loop::TaskTag = task_tag::PosixSignalTask;
+    /// `this` packs the signal number; nothing is owned.
+    unsafe fn release_unrun(_: *mut Self) {}
 }
 
 unsafe extern "C" {

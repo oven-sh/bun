@@ -44,11 +44,7 @@ int us_internal_libuv_peer_reset_probe(LIBUS_SOCKET_DESCRIPTOR fd) {
 }
 
 static struct us_socket_t *us_internal_poll_cb_adopted_socket(struct us_poll_t *wp) {
-  struct us_socket_t *s = (struct us_socket_t *)wp;
-  if (s->flags.adopted && s->prev) {
-    s = s->prev;
-  }
-  return s;
+  return us_internal_socket_follow_adopted((struct us_socket_t *)wp);
 }
 
 static int us_internal_poll_cb_socket_is_probeable(struct us_poll_t *wp) {

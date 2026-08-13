@@ -97,7 +97,6 @@ use bstr::BStr;
 
 use bun_alloc::AllocError;
 use bun_collections::IntegerBitSet;
-use bun_core::strings;
 use bun_core::{declare_scope, scoped_log};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
@@ -116,6 +115,7 @@ use crate::webcore::s3::simple_request::{
     self as s3_simple_request, S3CommitResult, S3DownloadResult, S3PartResult, S3UploadResult,
     execute_simple_s3_request,
 };
+use crate::webcore::s3::xml_response;
 
 type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
 
@@ -658,24 +658,27 @@ impl MultiPartUpload {
             S3DownloadResult::Success(response) => {
                 // response.body is bun.MutableString — `list` is a Vec<u8>
                 let slice = response.body.list.as_slice();
-                // PERF: upload_id is duped out of the body instead of slicing into it
-                if let Some(start) = strings::index_of(slice, b"<UploadId>") {
-                    let value_start = start + b"<UploadId>".len();
-                    if let Some(end) = strings::index_of(slice, b"</UploadId>") {
-                        if end >= value_start {
-                            self_
-                                .upload_id
-                                .set(Box::<[u8]>::from(&slice[value_start..end]));
-                        }
-                    }
+                // <InitiateMultipartUploadResult><Bucket/><Key/><UploadId/></…>
+                let upload_id = xml_response::parse(slice, |root| {
+                    (root.name == b"InitiateMultipartUploadResult")
+                        .then(|| root.child_text(b"UploadId"))
+                        .flatten()
+                })
+                .flatten()
+                // It goes into query strings as is: printable, and nothing
+                // that would end or split a query value.
+                .filter(|id| {
+                    !id.is_empty()
+                        && id.len() <= Self::MAX_UPLOAD_ID_LEN
+                        && id
+                            .iter()
+                            .all(|&b| b.is_ascii_graphic() && !matches!(b, b'&' | b'#' | b'?'))
+                });
+                let valid = upload_id.is_some();
+                if let Some(upload_id) = upload_id {
+                    self_.upload_id.set(upload_id);
                 }
-                let upload_id = self_.upload_id.get();
-                if upload_id.is_empty()
-                    || upload_id.len() > Self::MAX_UPLOAD_ID_LEN
-                    || upload_id
-                        .iter()
-                        .any(|b| !b.is_ascii() || b.is_ascii_control())
-                {
+                if !valid {
                     // Unknown type of response error from AWS
                     scoped_log!(
                         S3MultiPartUpload,
@@ -692,7 +695,7 @@ impl MultiPartUpload {
                     S3MultiPartUpload,
                     "startMultiPartRequestResult {} success id: {}",
                     BStr::new(&self_.path),
-                    BStr::new(upload_id)
+                    BStr::new(self_.upload_id.get())
                 );
                 self_.state.set(State::MultipartCompleted);
                 // start draining the parts

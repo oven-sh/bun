@@ -9,7 +9,7 @@ use crate::jsc::JSGlobalObject;
 pub struct EVP {
     pub ctx: boringssl::EVP_MD_CTX,
     // FFI: BoringSSL EVP_MD singletons are static for the process lifetime.
-    pub(crate) md: *const boringssl::EVP_MD,
+    md: *const boringssl::EVP_MD,
     pub(crate) algorithm: Algorithm,
 }
 

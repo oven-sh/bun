@@ -601,10 +601,10 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
   // The drain promise must not resolve while a connection is still open, and
   // a graceful stop() must actively drain: idle keep-alive connections close
   // right away, busy ones close as soon as their in-flight work completes.
-  // The client never hangs up first (except in "partial" mode), so every
-  // observed close below is server-initiated; idleTimeout is long enough that
-  // a timeout-driven close would flake the runtime budget long before firing.
-  async function runDrainFixture(mode: "idle" | "inflight" | "inflightHead" | "force" | "partial") {
+  // The client never hangs up first, so every observed close below is
+  // server-initiated; idleTimeout is long enough that a timeout-driven close
+  // would flake the runtime budget long before firing.
+  async function runDrainFixture(mode: "idle" | "inflight" | "inflightHead" | "force") {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -637,23 +637,12 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
             c.on("connect", resolve);
             c.on("error", reject);
           });
-          if (mode === "partial") {
-            // Half a request head: enough to be accepted and parsed as an
-            // in-progress request (a zero-byte connection would sit in the
-            // TCP_DEFER_ACCEPT queue on Linux and never reach the server),
-            // never completed.
-            c.write("GET /slow HTTP/1.1\\r\\nHost: x\\r\\n");
-            // Wait until the server has accepted it (it shows up in
-            // pendingRequests only once parsed, so poll a tick batch).
-            for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
+          const method = mode === "inflightHead" ? "HEAD" : "GET";
+          c.write(method + " /" + (mode === "idle" ? "fast" : "slow") + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          if (mode === "idle") {
+            while (!buf.includes("\\r\\nok")) await new Promise(r => setImmediate(r));
           } else {
-            const method = mode === "inflightHead" ? "HEAD" : "GET";
-            c.write(method + " /" + (mode === "idle" ? "fast" : "slow") + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
-            if (mode === "idle") {
-              while (!buf.includes("\\r\\nok")) await new Promise(r => setImmediate(r));
-            } else {
-              await inflight.promise;
-            }
+            await inflight.promise;
           }
           let resolved = false;
           const stopped = server.stop(false).then(() => { resolved = true; });
@@ -674,13 +663,6 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
             // the aborted request can settle.
             server.stop(true);
             release.resolve();
-          } else if (mode === "partial") {
-            // A connection mid-request ("sending a request", Node's idle
-            // definition excludes it) is spared; the promise stays pending
-            // until the client hangs up.
-            for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
-            if (resolved) throw new Error("stop() resolved while a mid-request connection was open");
-            c.destroy();
           }
           await stopped;
           // The client socket's 'close' and the server-side filter → promise
@@ -799,9 +781,120 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
   });
 
   test("a connection mid-request survives stop() until the client closes", async () => {
-    expect(await runDrainFixture("partial")).toEqual({
+    // A connection that is receiving a request ("sending a request" - Node's
+    // idle definition excludes it) is spared by the graceful sweep, and with
+    // no dispatched request the connection count is the only term holding the
+    // drain promise open. The mid-request state is staged as a partial second
+    // request head on a keep-alive connection that already completed a full
+    // request, so the server demonstrably owns the socket. If the sweep still
+    // closed it, the partial head had not arrived when stop() ran (on a loaded
+    // host the bytes can lag the client's write by longer than any fixed tick
+    // budget, and a connection whose bytes the server never saw is closed as
+    // idle) - that round proves nothing and is retried on a fresh server.
+    //
+    // Two variants run on confirmed-spared rounds:
+    // - destroy: the promise keeps pending until the client hangs up.
+    // - complete: the client finishes the head after stop(); the request must
+    //   still dispatch and be answered (the close-when-idle mark has to
+    //   survive the dispatch's response-state reset, which only spares
+    //   connection-scoped bits), and then the mark closes the served
+    //   connection and the drain resolves.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          async function round(completeHead) {
+            const server = Bun.serve({
+              port: 0,
+              hostname: "127.0.0.1",
+              idleTimeout: 255,
+              fetch: () => new Response("ok"),
+            });
+            const c = net.connect(server.port, "127.0.0.1");
+            const state = { buf: "", closed: false };
+            c.on("data", d => (state.buf += d));
+            c.on("close", () => (state.closed = true));
+            c.on("error", () => {});
+            await new Promise((resolve, reject) => { c.on("connect", resolve); c.on("error", reject); });
+            c.write("GET /first HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+            while (!state.buf.includes("\\r\\nok")) await new Promise(r => setImmediate(r));
+            // Half of a second request's head: mid-request, nothing dispatched.
+            c.write("GET /second HTTP/1.1\\r\\nHost: x\\r\\n");
+            // Yield so the server's parser can consume the head (stop() runs
+            // its sweep synchronously, and a head still in the kernel buffer
+            // leaves the connection idle). No tick budget is guaranteed to be
+            // enough - the void-round classification below covers the misses.
+            for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
+            let resolved = false;
+            const stopped = server.stop(false).then(() => { resolved = true; });
+            // The promise must stay pending while the mid-request connection
+            // is open; the client never hangs up during this window, so only
+            // the sweep can close the socket.
+            for (let i = 0; i < 20 && !resolved && !state.closed; i++) {
+              await new Promise(r => setImmediate(r));
+            }
+            if (resolved || state.closed) {
+              // Server-initiated close: the sweep saw the connection idle
+              // because the partial head had not arrived yet. Correct for an
+              // idle connection, but not the state under test - void round.
+              // A resolution with the socket left open would be the bug.
+              const until = Date.now() + 2000;
+              while (!state.closed && Date.now() < until) await new Promise(r => setImmediate(r));
+              if (!state.closed) return { fail: "stop() resolved while a mid-request connection was open" };
+              await stopped;
+              c.destroy();
+              return null;
+            }
+            // Confirmed: the sweep spared the mid-request connection, so the
+            // partial head was parsed and the close-when-idle mark is set.
+            if (completeHead) {
+              // Finish the head: the request dispatches on the marked
+              // connection, its response reaches the client, then the mark
+              // closes the drained connection (the client never hangs up).
+              c.write("\\r\\n");
+              while (!state.closed) await new Promise(r => setImmediate(r));
+              await stopped;
+              return {
+                resolved: true,
+                closed: true,
+                secondServed: (state.buf.match(/\\r\\nok/g) || []).length === 2,
+              };
+            }
+            c.destroy();
+            await stopped;
+            const until = Date.now() + 2000;
+            while (!state.closed && Date.now() < until) await new Promise(r => setImmediate(r));
+            return { resolved: true, closed: state.closed };
+          }
+          const results = {};
+          for (let attempt = 1; attempt <= 16 && (!results.destroy || !results.complete); attempt++) {
+            const variant = results.destroy ? "complete" : "destroy";
+            const r = await round(variant === "complete");
+            if (r === null) continue;
+            if (r.fail) { console.error(r.fail); process.exit(1); }
+            results[variant] = r;
+          }
+          if (!results.destroy || !results.complete) {
+            console.error("every round raced: the partial head never arrived before stop()");
+            process.exit(1);
+          }
+          console.log(JSON.stringify(results));
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
       stderr: "",
-      out: { resolvedEarly: false, responseAfterStop: false, resolved: true, closed: true },
+      out: {
+        destroy: { resolved: true, closed: true },
+        complete: { resolved: true, closed: true, secondServed: true },
+      },
       exitCode: 0,
     });
   });
@@ -887,8 +980,9 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     // internalEnd's post-uncork close gate must key on WHICH socket the
     // parser is on, not the context-wide isParsingHttp bit: B's parked
     // response below completes in the microtask drain inside A's onData
-    // dispatch (A resolves it), and B gets no later gate of its own. With the
-    // context-wide bit, B lingered until idleTimeout and stop() hung.
+    // (A's body completion resolves it), and B gets no later gate of its
+    // own. With the context-wide bit, B lingered until idleTimeout and
+    // stop() hung.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -897,6 +991,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
           const net = require("net");
           const releaseB = Promise.withResolvers();
           const bHeld = Promise.withResolvers();
+          const aStarted = Promise.withResolvers();
           const server = Bun.serve({
             port: 0,
             hostname: "127.0.0.1",
@@ -909,8 +1004,12 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
                 return new Response("held");
               }
               if (path === "/poke") {
-                // B's completion runs in the microtask drain while A's
-                // socket is the one being parsed.
+                aStarted.resolve();
+                // Parks until the body arrives after stop(). The fin chunk is
+                // delivered inside A's parse window, so this continuation -
+                // and B's completion, which it unblocks - runs in that
+                // window's microtask drain.
+                await req.text();
                 releaseB.resolve();
                 return new Response("poked");
               }
@@ -932,20 +1031,23 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
           b.c.write("GET /hold HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
           await bHeld.promise;
           const a = await dial();
-          // Partial head: A is mid-request at the sweep, so it is spared and
-          // marked close-when-idle. Give the bytes a tick batch to arrive (a
-          // zero-byte connection would sit in the defer-accept queue and the
-          // sweep could not see it).
-          a.c.write("GET /poke HTTP/1.1\\r\\nHost: x\\r\\n");
-          for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
+          // Complete head, held body: once the handler has started, A is
+          // dispatched and demonstrably owned by the server, and it stays
+          // busy at the sweep, so it is spared and marked close-when-idle.
+          // (A partial head could not be awaited: nothing observable fires
+          // for it, and on a loaded host its bytes can lag the client's
+          // write past the sweep, leaving the connection invisible to it.)
+          a.c.write("POST /poke HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 2\\r\\n\\r\\n");
+          await aStarted.promise;
           let resolved = false;
           const stopped = server.stop(false).then(() => { resolved = true; });
           await new Promise(r => setImmediate(r));
           const resolvedEarly = resolved;
-          // Complete A's request; its dispatch resolves B inside A's parse
-          // window. Both responses must be delivered, then both connections
-          // close server-initiated and the drain promise resolves.
-          a.c.write("\\r\\n");
+          // Complete A's body; the handler resumes inside A's parse window
+          // and resolves B. Both responses must be delivered, then both
+          // connections close server-initiated and the drain promise
+          // resolves.
+          a.c.write("hi");
           while (!a.closed || !b.closed) await new Promise(r => setImmediate(r));
           await stopped;
           console.log(JSON.stringify({
@@ -1635,15 +1737,24 @@ test("request on a connection surviving graceful stop() never reaches a collecte
         if (round > MIN_ROUNDS && elapsed > MIN_MS) break;
         const tag = round;
         const kind = round % 2 ? "fetch" : "routes";
+        // Every server binds the loopback address the parks dial. A wildcard
+        // port-0 bind is not safe here: macOS's ephemeral allocator honors
+        // only exact-address conflicts, so a wildcard listener can be handed
+        // a port some other process already holds at 127.0.0.1 (a leaked
+        // verdaccio from an install test, say), and that listener - being
+        // more specific - would answer this fixture's dials. With hundreds
+        // of binds per run, this fixture reliably finds such a port.
         let server =
           kind === "fetch"
             ? Bun.serve({
                 port: 0,
+                hostname: "127.0.0.1",
                 idleTimeout: 60,
                 fetch() { return new Response("ok " + tag); },
               })
             : Bun.serve({
                 port: 0,
+                hostname: "127.0.0.1",
                 idleTimeout: 60,
                 routes: { "/r/:id": req => new Response("ok " + tag + " " + req.params.id) },
                 fetch() { return new Response("ok " + tag + " fallback"); },
@@ -1671,7 +1782,7 @@ test("request on a connection surviving graceful stop() never reaches a collecte
         churn();
         churn();
         const decoys = [];
-        for (let i = 0; i < 3; i++) decoys.push(Bun.serve({ port: 0, fetch() { return new Response("decoy"); } }));
+        for (let i = 0; i < 3; i++) decoys.push(Bun.serve({ port: 0, hostname: "127.0.0.1", fetch() { return new Response("decoy"); } }));
         churn();
         const rs = await Promise.all(
           entries.flatMap(({ parks, kind, want, token }) =>

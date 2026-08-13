@@ -847,8 +847,8 @@ impl DynamicBitSetUnmanaged {
 pub struct DynamicBitSetList {
     buf: ptr::NonNull<usize>,
     buf_len: usize,
-    pub(crate) n: usize,
-    pub(crate) bit_length: usize,
+    n: usize,
+    bit_length: usize,
 }
 
 impl DynamicBitSetList {

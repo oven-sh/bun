@@ -25,10 +25,7 @@ struct CheckPrimeJobCtx {
 
 // Opaque struct created zig land
 struct CheckPrimeJob {
-    static CheckPrimeJob* create(JSC::JSGlobalObject*, ncrypto::BignumPointer candidate, int32_t checks, JSC::JSValue callback);
     static void createAndSchedule(JSC::JSGlobalObject* globalObject, ncrypto::BignumPointer candidate, int32_t checks, JSC::JSValue callback);
-
-    void schedule();
 };
 
 struct GeneratePrimeJobCtx {
@@ -51,12 +48,9 @@ struct GeneratePrimeJobCtx {
 
 // Opaque struct created zig land
 struct GeneratePrimeJob {
-    static GeneratePrimeJob* create(JSC::JSGlobalObject*, int32_t size, bool safe, ncrypto::BignumPointer prime, ncrypto::BignumPointer add, ncrypto::BignumPointer rem, bool bigint, JSC::JSValue callback);
     static void createAndSchedule(JSC::JSGlobalObject*, int32_t size, bool safe, ncrypto::BignumPointer prime, ncrypto::BignumPointer add, ncrypto::BignumPointer rem, bool bigint, JSC::JSValue callback);
 
     static JSC::JSValue result(JSC::JSGlobalObject*, JSC::ThrowScope&, const ncrypto::BignumPointer& prime, bool bigint);
-
-    void schedule();
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsCheckPrime);

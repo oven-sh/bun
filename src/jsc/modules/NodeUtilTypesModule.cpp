@@ -11,7 +11,7 @@
 #include <JavaScriptCore/StringObject.h>
 #include <JavaScriptCore/RegExpObject.h>
 #include <JavaScriptCore/JSSetIterator.h>
-#include <JavaScriptCore/ObjectPrototype.h>
+#include <JavaScriptCore/ObjectPrototypeInlines.h>
 #include <cmath>
 #include "JSEventTarget.h"
 #include "JavaScriptCore/TopExceptionScope.h"

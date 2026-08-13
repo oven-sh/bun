@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
-import { chmodSync, existsSync, symlinkSync } from "node:fs";
+import { chmodSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 // Both ways of naming an editor (EDITOR in the environment, the `editor`
@@ -102,41 +102,37 @@ test.skipIf(!isLinux)("Bun.openInEditor survives re-entrant calls from option ge
   expect(exitCode).toBe(0);
 });
 
-// On Linux, JSC uses SIGPWR to suspend/resume threads for GC and the libpas
-// scavenger. Bun.openInEditor runs its editor spawn on a detached thread;
-// that spawn must not disturb process-wide signal handling (it used to go
-// through bun.spawnSync's signal forwarding) or the process is terminated
-// the next time GC/scavenger fires.
-test.skipIf(!isLinux)("Bun.openInEditor does not break GC signal handling", async () => {
-  const sleep = ["/usr/bin/sleep", "/bin/sleep"].find(p => existsSync(p));
-  expect(sleep).toBeDefined();
-
+// Each Bun.openInEditor call hands its argv to a detached thread. Alternating
+// between two absolute editor paths replaces the cached editor name on every
+// call while earlier threads may still be reading theirs, and the forced GC
+// afterwards suspends whatever threads are still around. Every editor must
+// actually run and the process must come out alive.
+test.concurrent.skipIf(isWindows)("alternating editors on live editor threads, then GC", async () => {
   using dir = tempDir("open-in-editor-gc", {
+    "fake-editor.sh": '#!/bin/sh\necho opened > "$1"\n',
     "run.js": `
-      const a = ${JSON.stringify(sleep)};
-      const b = process.argv[2];
-      // Alternate absolute editor paths so the cached editor name_storage is
-      // replaced each call while a detached editor thread may still be
-      // reading the previous one.
+      import { existsSync } from "node:fs";
+      const editors = process.argv.slice(2);
+      const markers = [];
       for (let i = 0; i < 8; i++) {
-        try { Bun.openInEditor("0.3", { editor: i % 2 ? b : a }); } catch {}
+        markers.push(\`opened-\${process.pid}-\${i}\`);
+        Bun.openInEditor(markers[i], { editor: editors[i % 2] });
       }
-      // Wait for the detached editor threads to complete their register /
-      // unregister cycle, then for the scavenger to fire SIGPWR.
-      await Bun.sleep(1000);
+      while (!markers.every(m => existsSync(m))) await Bun.sleep(5);
       Bun.gc(true);
       console.log("alive");
     `,
   });
-  // Second absolute path to the same binary so alternating calls take the
-  // `!eql_long(prev_name, ...)` branch in open_in_editor. Keep the basename
-  // `sleep` so BusyBox (Alpine) resolves the multi-call applet from argv[0].
-  const sleep2 = join(String(dir), "sleep");
-  symlinkSync(sleep!, sleep2);
+  const editor = join(String(dir), "fake-editor.sh");
+  chmodSync(editor, 0o755);
+  // Second absolute path to the same script, so consecutive calls take the
+  // name-replacing branch of openInEditor.
+  const editor2 = join(String(dir), "fake-editor-2.sh");
+  symlinkSync(editor, editor2);
 
   const runs = Array.from({ length: 5 }, async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "run.js", sleep2],
+      cmd: [bunExe(), "run.js", editor, editor2],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -146,7 +142,7 @@ test.skipIf(!isLinux)("Bun.openInEditor does not break GC signal handling", asyn
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("alive");
+    expect(stdout).toBe("alive\n");
     expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(0);
   });
@@ -302,3 +298,54 @@ test.concurrent.skipIf(!isLinux)("Bun.openInEditor finds the xdg-open opener on 
   expect(stdout).toBe(`opened ${editor}\n`);
   expect(exitCode).toBe(0);
 });
+
+// The editor must start with only stdio open. fs.openSync() descriptors are
+// not close-on-exec, so a spawn that does not scrub the fd table (macOS
+// posix_spawn without POSIX_SPAWN_CLOEXEC_DEFAULT) hands them to the editor.
+// The "editor" here is bun itself running probe.js, which checks whether the
+// parent's descriptor number still refers to the sentinel file.
+test.concurrent.skipIf(isWindows)(
+  "Bun.openInEditor does not pass the process's file descriptors to the editor",
+  async () => {
+    using dir = tempDir("open-in-editor-fds", {
+      "sentinel.txt": "sentinel",
+      "run.js": `
+      import { openSync, readFileSync, writeFileSync } from "node:fs";
+      const fd = openSync("sentinel.txt", "r");
+      writeFileSync(
+        "probe.js",
+        \`
+          import { fstatSync, statSync, writeFileSync } from "node:fs";
+          const sentinel = statSync("sentinel.txt");
+          let inherited = false;
+          try {
+            const got = fstatSync(\${fd});
+            inherited = got.ino === sentinel.ino && got.dev === sentinel.dev;
+          } catch {}
+          writeFileSync("result.txt", inherited ? "fd \${fd} inherited\\\\n" : "fd \${fd} not inherited\\\\n");
+        \`,
+      );
+      Bun.openInEditor(\`\${process.cwd()}/probe.js\`, { editor: process.execPath });
+      let result = "";
+      while (!result.endsWith("\\n")) {
+        try { result = readFileSync("result.txt", "utf8"); } catch {}
+        if (!result.endsWith("\\n")) await Bun.sleep(5);
+      }
+      process.stdout.write(result.replace(/\\d+/, "N"));
+    `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("fd N not inherited\n");
+    expect(exitCode).toBe(0);
+  },
+);

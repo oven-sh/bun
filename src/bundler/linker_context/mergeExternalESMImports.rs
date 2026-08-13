@@ -17,13 +17,17 @@ struct PathKey {
     loader: Option<bun_ast::Loader>,
 }
 
-/// The exports a statement binds; empty outside exact mode so a path shares one `Seen`.
+/// The statement's clause as written (exports bound and the local names used
+/// for them); empty outside exact mode so a path shares one `Seen`. Keying on
+/// the local names too means a chunk only ever prints a name one of its own
+/// files wrote, even when the merged root ref belongs to a file it does not
+/// contain, so each entry's output depends on its own files alone.
 #[derive(Default, PartialEq, Eq, Hash)]
 struct Shape {
-    star: bool,
-    default: bool,
-    /// Sorted export names (`ClauseItem.alias`).
-    aliases: Box<[&'static [u8]]>,
+    star: Option<&'static [u8]>,
+    default: Option<&'static [u8]>,
+    /// `(export name, local name)`, sorted by export name.
+    items: Box<[(&'static [u8], &'static [u8])]>,
 }
 
 #[derive(PartialEq, Eq, Hash)]
@@ -57,7 +61,9 @@ pub(crate) fn merge_external_esm_imports(c: &mut LinkerContext, chunks: &mut [Ch
     // copied into every entry chunk reaching it and may be kept in one chunk but
     // dropped in another, so merges are restricted to statements of identical
     // `Shape`: each chunk keeps exactly one per shape, and every ref of a shape
-    // prints as the binding that chunk declares.
+    // prints as the binding that chunk declares. Because the shape includes the
+    // local names, that binding is also printed under a name the chunk's own
+    // files wrote, whichever file's ref ends up as the merged root.
     let exact = !c.graph.code_splitting
         && chunks
             .iter()
@@ -71,7 +77,7 @@ pub(crate) fn merge_external_esm_imports(c: &mut LinkerContext, chunks: &mut [Ch
 
     let mut paths: HashMap<PathKey, ()> = HashMap::default();
     let mut seen: HashMap<ImportKey, Seen> = HashMap::default();
-    let mut aliases: Vec<&'static [u8]> = Vec::new();
+    let mut clause: Vec<(&'static [u8], &'static [u8])> = Vec::new();
 
     for chunk in chunks.iter_mut() {
         let js = match &mut chunk.content {
@@ -142,22 +148,30 @@ pub(crate) fn merge_external_esm_imports(c: &mut LinkerContext, chunks: &mut [Ch
                     }
 
                     let shape = if exact {
-                        aliases.clear();
-                        aliases.extend(items.iter().map(|item| item.alias.slice()));
-                        aliases.sort_unstable();
-                        let distinct = {
-                            let before = aliases.len();
-                            aliases.dedup();
-                            aliases.len() == before
+                        let symbols = &c.graph.symbols;
+                        let local_name = |ref_: Ref| -> &'static [u8] {
+                            match symbols.get_const(ref_) {
+                                Some(symbol) => symbol.original_name.slice(),
+                                None => &[],
+                            }
                         };
+                        clause.clear();
+                        clause.extend(
+                            items
+                                .iter()
+                                .map(|item| (item.alias.slice(), local_name(item.name.ref_))),
+                        );
+                        clause.sort_unstable();
                         // `import { x, x as y }` binds one export twice; `Seen` holds one ref per export.
-                        if !distinct {
+                        let bindings = clause.len();
+                        clause.dedup_by_key(|binding| binding.0);
+                        if clause.len() != bindings {
                             continue;
                         }
                         Shape {
-                            star: star_ref.is_some(),
-                            default: default_ref.is_some(),
-                            aliases: aliases.as_slice().into(),
+                            star: star_ref.map(local_name),
+                            default: default_ref.map(local_name),
+                            items: clause.as_slice().into(),
                         }
                     } else {
                         Shape::default()

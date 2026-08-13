@@ -2019,6 +2019,99 @@ it("destroys a server wrap whose socket was destroyed before the deferred upgrad
   }
 });
 
+it("completes a server wrap of a socket that is still connecting", async () => {
+  // Node wraps the handle synchronously whatever state it is in. The deferred
+  // native adoption needs an established socket, so a socket whose lookup is
+  // still in flight has to take the stream-level engine; it used to throw
+  // "upgradeTLS requires an established socket" from nextTick, uncaught.
+  const echoed = Promise.withResolvers<string>();
+  // The listener plays the TLS client over the connection it accepts; the
+  // outgoing socket below is the side wrapped as the TLS server.
+  const rawServer = net.createServer(accepted => {
+    const client = connect({ socket: accepted, rejectUnauthorized: false }, () => client.write("ping"));
+    client.on("error", echoed.reject);
+    client.once("data", chunk => {
+      echoed.resolve(chunk.toString());
+      client.end();
+    });
+  });
+  let outgoing: net.Socket | undefined;
+  let wrapped: TLSSocket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    rawServer.once("error", listening.reject);
+    rawServer.listen(0, "127.0.0.1", listening.resolve);
+    await listening.promise;
+    outgoing = net.connect({
+      port: (rawServer.address() as AddressInfo).port,
+      host: "localhost",
+      family: 4,
+      // Resolves on a later turn, so both the wrap and its deferred step run
+      // while the socket has no established handle yet.
+      lookup: (_host, _options, callback) => setImmediate(callback, null, "127.0.0.1", 4),
+    });
+    expect(outgoing.connecting).toBe(true);
+    wrapped = new TLSSocket(outgoing, { isServer: true, ...COMMON_CERT });
+    wrapped.on("error", echoed.reject);
+    wrapped.on("data", chunk => wrapped!.end(`echo:${chunk}`));
+    expect(await echoed.promise).toBe("echo:ping");
+  } finally {
+    wrapped?.destroy();
+    outgoing?.destroy();
+    rawServer.close();
+  }
+});
+
+it("fails a server wrap on the wrap's 'error' when the connection's handle is already gone", async () => {
+  // A peer reset behind an unread byte closes the native socket without
+  // ending the net.Socket (the byte is still buffered), so the connection
+  // still carries a handle, but one with nothing left to adopt. The deferred
+  // adoption's refusal belongs to the wrap (Node surfaces every failure of a
+  // wrapped socket on the TLSSocket); it used to escape nextTick as an
+  // uncaught exception.
+  const accepted = Promise.withResolvers<net.Socket>();
+  const rawServer = net.createServer(socket => {
+    socket.write("x");
+    accepted.resolve(socket);
+  });
+  let outgoing: net.Socket | undefined;
+  let wrapped: TLSSocket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    rawServer.once("error", listening.reject);
+    rawServer.listen(0, "127.0.0.1", listening.resolve);
+    await listening.promise;
+    outgoing = net.connect((rawServer.address() as AddressInfo).port, "127.0.0.1");
+    // No 'error' listener on purpose: with one, the reset would destroy the
+    // socket and the wrap would take the handle-less path instead.
+    const byteBuffered = Promise.withResolvers<void>();
+    const eofBuffered = Promise.withResolvers<void>();
+    let readableEvents = 0;
+    outgoing.on("readable", () => (++readableEvents === 1 ? byteBuffered : eofBuffered).resolve());
+    // Nothing reads the byte, so it stays buffered; the 'readable' that
+    // follows the reset is the EOF the close pushed in behind it.
+    await byteBuffered.promise;
+    (await accepted.promise).resetAndDestroy();
+    await eofBuffered.promise;
+    expect({ destroyed: outgoing.destroyed, pending: outgoing.pending }).toEqual({ destroyed: false, pending: false });
+
+    wrapped = new TLSSocket(outgoing, { isServer: true, ...COMMON_CERT });
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    wrapped.on("error", err => events.push(`error: ${err.message}`));
+    wrapped.on("close", () => {
+      events.push("close");
+      closed.resolve();
+    });
+    await closed.promise;
+    expect(events).toEqual(["error: upgradeTLS requires an established socket", "close"]);
+  } finally {
+    wrapped?.destroy();
+    outgoing?.destroy();
+    rawServer.close();
+  }
+});
+
 it("exposes the server-side peer verification result via socket.ssl.verifyError()", async () => {
   // Node's server path consults the same TLSWrap.verifyError() that clients
   // use, so the shim must be populated for server sockets too:

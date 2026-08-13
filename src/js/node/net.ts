@@ -2352,10 +2352,18 @@ Socket.prototype.pause = function pause() {
 // state carried via `data` (mirrors tls.createServer's one-handler-for-all model).
 Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, tls) {
   const socket = connection._handle;
-  if (!socket || connection.encrypted || hasUnflushedWrites(connection)) {
-    // No adoptable fd (generic Duplex / not yet connected), TLS over TLS (the
-    // fd belongs to the outer SSL layer), or pending plain writes that must
-    // flush first: run the TLS engine over the stream itself.
+  if (
+    !socket ||
+    connection.connecting ||
+    isNamedPipeSocket(socket) ||
+    connection.encrypted ||
+    hasUnflushedWrites(connection)
+  ) {
+    // No adoptable fd (generic Duplex, still connecting, or a Windows named
+    // pipe, which upgradeTLS rejects just like the client path's
+    // isNamedPipeSocket check in connect()), TLS over TLS (the fd belongs to
+    // the outer SSL layer), or pending plain writes that must flush first:
+    // run the TLS engine over the stream itself.
     const [result, events] = upgradeDuplexToTLS(connection, {
       data: this,
       tls,
@@ -2403,13 +2411,24 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     // the connection's readable buffer; hand them to the TLS engine so the
     // handshake doesn't stall.
     const pending = connection.read();
-    const result = handle.upgradeTLS({
-      data: this,
-      tls,
-      socket: serverHandlersFor(this),
-      isServer: true,
-      initialData: pending || undefined,
-    });
+    let result;
+    try {
+      result = handle.upgradeTLS({
+        data: this,
+        tls,
+        socket: serverHandlersFor(this),
+        isServer: true,
+        initialData: pending || undefined,
+      });
+    } catch (err) {
+      // The constructor already returned, so a throw here would be an uncaught
+      // exception. Reachable when the native socket closed under a connection
+      // that is not destroyed yet (peer reset with unread bytes still buffered):
+      // the handle object survives but has nothing left to adopt.
+      this._handle = null;
+      this.destroy(err);
+      return;
+    }
     if (!result) {
       this._handle = null;
       this.destroy(new Error("Invalid socket"));

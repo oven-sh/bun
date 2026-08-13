@@ -63,24 +63,12 @@ Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
 {
 }
 
-// Posix-only like Bun.fileURLToPath: on Windows a file:// host is a UNC server name.
 ExceptionOr<void> validateFileURLHost(JSC::JSGlobalObject* globalObject, const WTF::URL& urlObject)
 {
-#if !OS(WINDOWS)
-    if (urlObject.host().length() > 0 && urlObject.host() != "localhost"_s) [[unlikely]] {
-        auto& vm = JSC::getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-#if OS(DARWIN)
-        Bun::ERR::INVALID_FILE_URL_HOST(scope, globalObject, "darwin"_s);
-#else
-        Bun::ERR::INVALID_FILE_URL_HOST(scope, globalObject, "linux"_s);
-#endif
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (Bun::throwIfInvalidFileURLHost(scope, globalObject, urlObject)) [[unlikely]]
         return Exception { ExceptionCode::ExistingExceptionError };
-    }
-#else
-    UNUSED_PARAM(globalObject);
-    UNUSED_PARAM(urlObject);
-#endif
     return {};
 }
 

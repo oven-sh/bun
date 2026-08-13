@@ -378,7 +378,7 @@ impl PostgresSQLConnection {
         match self.status.get() {
             // The idle timer is only relevant when the connection is actually idle.
             // While a query is queued or in-flight we must not arm it — otherwise
-            // we'd race a healthy query and kill it when the timer fires (#30646, #25405).
+            // we'd race a healthy query and kill it when the timer fires (#30646).
             Status::Connected if self.has_query_running() => 0,
             Status::Connected => self.idle_timeout_interval_ms,
             Status::Failed => 0,
@@ -590,26 +590,30 @@ impl PostgresSQLConnection {
             return;
         }
 
-        // Only retire the connection once it's idle. If queries are queued or
-        // in-flight, reschedule the timer so we close between queries rather
-        // than killing healthy ones with ERR_POSTGRES_LIFETIME_TIMEOUT (#30646).
-        if self.status.get() == Status::Connected && !self.has_query_running() {
-            // `disconnect()` → `ref_and_close()` → `socket.close()` can run the
-            // JS `onclose` callback synchronously, which lets the pool drop the
-            // wrapper and makes it GC-eligible before `clean_up_requests` runs.
-            // Hold a ref across the teardown (mirrors `fail_with_js_value`).
-            self.ref_();
-            self.disconnect();
-            // SAFETY: `self` is a live Box-allocated connection; releases the ref above.
-            unsafe { Self::deref(self.as_ctx_ptr()) };
+        // Don't kill a healthy in-flight query (#30646): mark the connection
+        // instead and retire it at the next queue-drain boundary (the
+        // ReadyForQuery arm, before advance() dispatches more work).
+        if self.status.get() == Status::Connected && self.has_query_running() {
+            self.update_flags(|f| f.insert(ConnectionFlags::LIFETIME_EXCEEDED));
             return;
         }
 
-        self.max_lifetime_timer.with_mut(|t| {
-            t.next =
-                bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, 1000);
-            self.vm_mut().timer().insert(t);
-        });
+        self.fail_lifetime_timeout();
+    }
+
+    fn fail_lifetime_timeout(&self) {
+        use bun_core::fmt::{ConnTimeoutKind, fmt_conn_timeout};
+        self.fail_fmt(
+            b"ERR_POSTGRES_LIFETIME_TIMEOUT",
+            format_args!(
+                "{}",
+                fmt_conn_timeout(
+                    ConnTimeoutKind::MaxLifetime,
+                    self.max_lifetime_interval_ms,
+                    ""
+                )
+            ),
+        );
     }
 
     fn start(&self) {
@@ -2491,6 +2495,20 @@ impl PostgresSQLConnection {
                         );
                     }
                 }
+
+                // maxLifetime expired while a query was in flight; the query has
+                // now completed, so retire the connection before advance()
+                // dispatches more work. The on_data loop stops at Status::Failed.
+                if self
+                    .flags
+                    .get()
+                    .contains(ConnectionFlags::LIFETIME_EXCEEDED)
+                {
+                    self.fail_lifetime_timeout();
+                    self.update_ref();
+                    return Ok(());
+                }
+
                 self.advance();
 
                 self.register_auto_flusher();

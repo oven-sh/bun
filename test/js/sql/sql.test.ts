@@ -850,8 +850,12 @@ if (isDockerEnabled()) {
       const [{ pid: pidBefore }] = await sql`select pg_backend_pid() as pid`;
       expect(onconnect).toHaveBeenCalledTimes(1);
 
-      // maxLifetime fires while the connection is idle and closes it gracefully.
-      await onClosePromise.promise;
+      // maxLifetime fires while the connection is idle and retires it with the
+      // documented error code.
+      const err = await onClosePromise.promise;
+      expect(err).toBeInstanceOf(SQL.SQLError);
+      expect(err).toBeInstanceOf(SQL.PostgresError);
+      expect(err.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
       expect(onclose).toHaveBeenCalledTimes(1);
 
       // The pool transparently reconnects — new backend pid.
@@ -890,13 +894,17 @@ if (isDockerEnabled()) {
       // Before the fix this would reject with ERR_POSTGRES_LIFETIME_TIMEOUT.
       const [{ pid: pidBefore }] = await sql`select pg_backend_pid() as pid`;
       const result = await sql`select pg_sleep(3), 42 as x`;
+      // The query completed — the lifetime timer did not kill it mid-flight.
+      // (Retirement happens at the completion boundary, so onclose may already
+      // have fired by the time this continuation runs.)
       expect(result[0].x).toBe(42);
-      // The lifetime timer must not have killed the query mid-flight.
-      expect(onclose).not.toHaveBeenCalled();
 
-      // Once the query returns, the connection is idle and the deferred lifetime
-      // timer closes it. The pool should then reconnect on a fresh backend.
-      await onClosePromise.promise;
+      // Once the query returns, the deferred lifetime retirement closes the
+      // connection with the documented error code, and the pool reconnects.
+      const err = await onClosePromise.promise;
+      expect(err).toBeInstanceOf(SQL.SQLError);
+      expect(err).toBeInstanceOf(SQL.PostgresError);
+      expect(err.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
       expect(onclose).toHaveBeenCalledTimes(1);
 
       const [{ pid: pidAfter }] = await sql`select pg_backend_pid() as pid`;

@@ -331,8 +331,12 @@ if (isDockerEnabled()) {
           // Get the server-side connection id before maxLifetime fires.
           const [{ id: connBefore }] = await sql`select CONNECTION_ID() as id`;
 
-          // maxLifetime fires while the connection is idle → closed gracefully.
-          await onClosePromise.promise;
+          // maxLifetime fires while the connection is idle and retires it with
+          // the documented error code.
+          const err = await onClosePromise.promise;
+          expect(err).toBeInstanceOf(SQL.SQLError);
+          expect(err).toBeInstanceOf(SQL.MySQLError);
+          expect((err as SQL.MySQLError).code).toBe(`ERR_MYSQL_LIFETIME_TIMEOUT`);
           expect(onclose).toHaveBeenCalledTimes(1);
           expect(onconnect).toHaveBeenCalledTimes(1);
 
@@ -364,7 +368,12 @@ if (isDockerEnabled()) {
           // The lifetime timer must not have killed the query mid-flight.
           expect(onclose).not.toHaveBeenCalled();
 
-          await onClosePromise.promise;
+          // Once idle, the rescheduled timer retires the connection with the
+          // documented error code, and the pool reconnects.
+          const err = await onClosePromise.promise;
+          expect(err).toBeInstanceOf(SQL.SQLError);
+          expect(err).toBeInstanceOf(SQL.MySQLError);
+          expect((err as SQL.MySQLError).code).toBe(`ERR_MYSQL_LIFETIME_TIMEOUT`);
           expect(onclose).toHaveBeenCalledTimes(1);
 
           const [{ id: connAfter }] = await sql`select CONNECTION_ID() as id`;

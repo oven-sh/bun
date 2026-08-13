@@ -677,8 +677,11 @@ extern "C" void JSBundlerPlugin__setConfig(Bun::JSBundlerPlugin* plugin, void* c
     plugin->plugin.config = config;
 }
 
-extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObject, bool rejected)
+extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObject)
 {
+    if (pluginObject->plugin.deferredPromises.isEmpty())
+        return;
+
     auto* globalObject = pluginObject->globalObject();
     MarkedArgumentBuffer arguments;
     pluginObject->plugin.deferredPromises.drainTo(pluginObject, arguments);
@@ -688,11 +691,7 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     for (auto promiseValue : arguments) {
         JSPromise* promise = uncheckedDowncast<JSPromise>(promiseValue);
-        if (rejected) {
-            promise->reject(vm, JSC::jsUndefined());
-        } else {
-            promise->resolve(globalObject, vm, JSC::jsUndefined());
-        }
+        promise->resolve(globalObject, vm, JSC::jsUndefined());
         RETURN_IF_EXCEPTION(scope, );
     }
     RETURN_IF_EXCEPTION(scope, );

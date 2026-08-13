@@ -30,7 +30,6 @@ pub use bv2_impl::{
     OnDependenciesAnalyze, singleton,
 };
 
-pub use crate::DeferredBatchTask::DeferredBatchTask;
 use crate::Graph::Graph;
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::barrel_imports::RequestedExports;
@@ -118,8 +117,6 @@ pub struct BundleV2<'a> {
 
     pub(crate) finalizers: Vec<ExternalFreeFunction>,
 
-    pub(crate) drain_defer_task: DeferredBatchTask,
-
     /// Set true by DevServer. Currently every usage of the transpiler (Bun.build
     /// and `bun build` CLI) runs at the top of an event loop. When this is true,
     /// a callback is executed after all work is complete (`finishFromBakeDevServer`).
@@ -206,7 +203,8 @@ impl<'a> BundleV2<'a> {
     }
 
     /// Mutable projection of the `plugins` backref for FFI calls that take
-    /// `*mut` (`drain_deferred`). The pointee is disjoint from `self` storage.
+    /// `*mut` (`match_on_load` / `match_on_resolve`). The pointee is disjoint
+    /// from `self` storage.
     #[inline]
     pub(crate) fn plugins_mut(&mut self) -> Option<&mut JSBundlerPlugin> {
         // SAFETY: BACKREF — see `plugins_ref`. `&mut self` ensures no other
@@ -737,8 +735,6 @@ pub mod bv2_impl {
                     context: *mut core::ffi::c_void,
                     kind: u8,
                 );
-                #[link_name = "JSBundlerPlugin__drainDeferred"]
-                safe fn JSBundlerPlugin__drainDeferred(this: &mut Plugin, rejected: bool);
                 #[link_name = "JSBundlerPlugin__hasOnBeforeParsePlugins"]
                 safe fn JSBundlerPlugin__hasOnBeforeParsePlugins(this: &Plugin) -> i32;
                 // `ctx`/`args`/`result` are opaque cookies the C++ side round-trips
@@ -760,15 +756,6 @@ pub mod bv2_impl {
                 ) -> i32;
             }
             impl Plugin {
-                /// `Plugin.drainDeferred` — resolve every onLoad
-                /// `.defer()` promise. The
-                /// only bundler caller (`DeferredBatchTask::run_on_js_thread`)
-                /// ignores failures, so the void FFI call is the observable
-                /// behaviour at this tier.
-                pub(crate) fn drain_deferred(&mut self, rejected: bool) {
-                    JSBundlerPlugin__drainDeferred(self, rejected)
-                }
-
                 #[inline]
                 pub(crate) fn has_on_before_parse_plugins(&self) -> bool {
                     JSBundlerPlugin__hasOnBeforeParsePlugins(self) != 0
@@ -1199,15 +1186,17 @@ pub mod bv2_impl {
                 pub parse_task: bun_ptr::BackRef<ParseTask, bun_ptr::Mut>,
                 /// Faster path: skip the extra threadpool dispatch when the file is not found.
                 pub was_file: bool,
-                /// Defer may only be called once.
+                /// Defer may only be called once (JS thread).
                 pub called_defer: bool,
-                /// `.defer()`ed and not yet drained: its scan-counter unit sits in
-                /// `Graph::deferred_pending` (bundle thread only).
+                /// Its scan-counter unit currently sits in `Graph::deferred_pending`
+                /// (bundle thread only).
                 pub(crate) deferred: bool,
-                /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue
-                /// (used by `onDefer` to notify the bundler thread when it runs
-                /// under a `MiniEventLoop`).
+                /// Mini-loop queue node for the onLoad answer (`on_load_async`).
                 pub task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
+                /// Mini-loop queue node for the `.defer()` notification
+                /// (`on_defer_async`), which may still be queued when the answer is posted.
+                pub(crate) defer_task:
+                    bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
                 /// Links in `Graph::outstanding_loads`; bundle thread only.
                 pub(crate) outstanding: crate::Graph::OutstandingLink<Load>,
             }
@@ -1229,6 +1218,7 @@ pub mod bv2_impl {
                     called_defer: false,
                     deferred: false,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
+                    defer_task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                     outstanding: Default::default(),
                 }
                 }
@@ -1321,7 +1311,6 @@ pub mod bv2_impl {
     use bun_sourcemap as SourceMap;
 
     use crate::AstBuilder::AstBuilder;
-    use crate::DeferredBatchTask::DeferredBatchTask;
     use crate::Graph::Graph;
     use crate::LinkerContext;
     use crate::PathToSourceIndexMap::PathToSourceIndexMap;
@@ -1420,13 +1409,11 @@ pub mod bv2_impl {
 
         /// CYCLEBREAK GENUINE: `JSBundleCompletionTask` — the
         /// concrete struct lives in `bun_runtime` (its fields name `Config`/
-        /// `Plugin`/`HTMLBundle::Route`). The bundler reads exactly two things
-        /// from it (whether the result is an error, and the concurrent-task
+        /// `Plugin`/`HTMLBundle::Route`). The bundler needs exactly two things
+        /// from it (whether its VM is shutting down, and the concurrent-task
         /// enqueue), so the high tier hands the bundler an erased owner +
         /// `&'static` vtable pair (same shape as [`DevServerHandle`]).
         pub struct CompletionDispatch {
-            /// Whether the completion result is an error.
-            pub result_is_err: unsafe fn(core::ptr::NonNull<super::JSBundleCompletionTask>) -> bool,
             /// Whether the VM that owns the plugins is shutting down: stop
             /// waiting for their answers and fail the build (any thread).
             pub is_cancelled: unsafe fn(core::ptr::NonNull<super::JSBundleCompletionTask>) -> bool,
@@ -1447,18 +1434,13 @@ pub mod bv2_impl {
         // cross-thread call and it goes through `jsc::EventLoop`'s lock-free queue.
         unsafe impl Send for CompletionHandle {}
         // Intentionally not `Sync`: the opaque owner (`JSBundleCompletionTask`)
-        // is modeled as `!Sync`, and this wrapper exposes `result_is_err(&self)`
+        // is modeled as `!Sync`, and this wrapper exposes `is_cancelled(&self)`
         // in addition to the lock-free enqueue path, so blanket `&CompletionHandle`
         // sharing across threads is not justified. The handle only needs to *move*
         // to the bundle thread (`Send`), not be shared. If a cross-thread `&` ever
         // becomes necessary, split out an enqueue-only wrapper and make only that
         // type `Sync`.
         impl CompletionHandle {
-            #[inline]
-            pub(crate) fn result_is_err(&self) -> bool {
-                // SAFETY: vtable contract.
-                unsafe { (self.vtable.result_is_err)(self.owner) }
-            }
             #[inline]
             pub(crate) fn is_cancelled(&self) -> bool {
                 // SAFETY: vtable contract.
@@ -1525,15 +1507,19 @@ pub mod bv2_impl {
         /// Folds the JS-loop lookup + enqueue so the bundler never dereferences
         /// `JSBundleCompletionTask` (its layout lives in `bun_runtime`); the
         /// `completion` handle carries the `&'static` vtable.
+        ///
+        /// Returns `false` when the plugins' VM is already gone: the
+        /// `ConcurrentTask` has been freed, and whatever it pointed at is
+        /// still the caller's.
         pub(crate) fn enqueue_on_js_loop_for_plugins(
             &mut self,
             task: NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
-        ) {
+        ) -> bool {
             debug_assert!(self.plugins.is_some());
             if let Some(completion) = self.completion {
                 // From Bun.build — the completion posts it to its VM (`loop_handle.post_task` via the vtable).
                 completion.enqueue_task_concurrent(task);
-                return;
+                return true;
             }
             // From bake where the loop running the bundle is also the loop running
             // the plugins.
@@ -1542,11 +1528,15 @@ pub mod bv2_impl {
                 .js_poster
                 .as_ref()
                 .expect("No JavaScript event loop for transpiler plugins to run on");
-            if let bun_event_loop::Posted::Refused(task) = poster.post(task) {
-                // The JS VM running the plugins was torn down mid-bundle; the
-                // plugin hop will never run. Free the task if it is heap-owned.
-                // SAFETY: refused ⇒ still ours.
-                unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(task) };
+            match poster.post(task) {
+                bun_event_loop::Posted::Queued => true,
+                bun_event_loop::Posted::Refused(task) => {
+                    // SAFETY: refused ⇒ still ours.
+                    unsafe {
+                        bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(task)
+                    };
+                    false
+                }
             }
         }
 
@@ -2120,14 +2110,6 @@ pub mod bv2_impl {
             while let Some(load) = self.graph.outstanding_loads.pop() {
                 // SAFETY: as above.
                 let load = unsafe { &mut *load };
-                if load.deferred {
-                    // Its unit is parked in `deferred_pending`, not `pending_items`.
-                    load.deferred = false;
-                    self.graph.deferred_pending -= 1;
-                    drop(core::mem::take(&mut load.path));
-                    drop(core::mem::take(&mut load.namespace));
-                    continue;
-                }
                 load.value = jsc_api::JSBundler::LoadValue::Err(cancelled_msg(&load.path));
                 Self::on_load(load, self);
             }
@@ -2857,7 +2839,6 @@ pub mod bv2_impl {
                 unique_key: 0,
                 dynamic_import_entry_points: ArrayHashMap::new(),
                 finalizers: Vec::new(),
-                drain_defer_task: DeferredBatchTask::default(),
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
                 requested_exports: Vec::new(),
@@ -4316,16 +4297,23 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        pub fn on_load_async(&mut self, load: &mut jsc_api::JSBundler::Load) {
-            // Dispatch to the loop that *owns* `BundleV2`.
-            // For `Bun.build` this is a Mini loop running on the bundler thread, so
-            // `on_load` must land there — not on the JS plugin loop — or it will
-            // mutate `graph` / allocate from `graph.heap` off-thread.
+        /// Plugin host's thread: run a callback on the loop that owns this pass
+        /// (for `Bun.build`, the bundle thread's Mini loop; `graph` is only touched there).
+        ///
+        /// # Safety
+        /// `task_offset` locates an `AnyTaskWithExtraContext` field of `*request` that is
+        /// not queued anywhere else, and `*request` outlives the hop.
+        unsafe fn post_to_own_loop<C>(
+            &mut self,
+            request: *mut C,
+            on_js_loop: fn(*mut C) -> bun_event_loop::JsResult<()>,
+            on_mini_loop: fn(*mut C, *mut BundleV2<'static>),
+            task_offset: usize,
+        ) {
             match self.any_loop_mut() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
                     let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                        std::ptr::from_mut(load),
-                        on_load_from_js_loop_raw,
+                        request, on_js_loop,
                     );
                     let poster = self
                         .js_poster
@@ -4340,50 +4328,57 @@ pub mod bv2_impl {
                     }
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
-                    // SAFETY: `load` is a valid &mut for the duration of the enqueue;
-                    // the mini loop dispatches `on_load_mini` on the bundler thread.
+                    // SAFETY: fn contract; the tick passes this `BundleV2` as the extra ctx.
                     unsafe {
-                        mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Load, BundleV2<'static>>(
-                            std::ptr::from_mut(load),
-                            on_load_mini,
-                            core::mem::offset_of!(jsc_api::JSBundler::Load, task),
+                        mini.enqueue_task_concurrent_with_extra_ctx::<C, BundleV2<'static>>(
+                            request,
+                            on_mini_loop,
+                            task_offset,
                         );
                     }
                 }
             }
         }
 
+        /// The onLoad answer is in `load.value`; run `on_load` on the owning loop.
+        pub fn on_load_async(&mut self, load: &mut jsc_api::JSBundler::Load) {
+            // SAFETY: the plugin glue answers a load once, so `task` is queued once;
+            // `load` is arena-owned by this pass.
+            unsafe {
+                self.post_to_own_loop(
+                    std::ptr::from_mut(load),
+                    on_load_from_js_loop_raw,
+                    on_load_mini,
+                    core::mem::offset_of!(jsc_api::JSBundler::Load, task),
+                );
+            }
+        }
+
+        /// The onLoad callback called `.defer()`; run `on_notify_defer` on the owning
+        /// loop. Shares the answer's queue, so the two arrive in the order they were issued.
+        pub fn on_defer_async(&mut self, load: &mut jsc_api::JSBundler::Load) {
+            // SAFETY: `called_defer` allows one `.defer()`, so `defer_task` is queued once;
+            // `load` is arena-owned by this pass.
+            unsafe {
+                self.post_to_own_loop(
+                    std::ptr::from_mut(load),
+                    on_notify_defer_from_js_loop_raw,
+                    on_notify_defer_mini,
+                    core::mem::offset_of!(jsc_api::JSBundler::Load, defer_task),
+                );
+            }
+        }
+
+        /// The onResolve answer is in `resolve.value`; run `on_resolve` on the owning loop.
         pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
-            // See `on_load_async` — must dispatch on the bundler's own loop.
-            match self.any_loop_mut() {
-                bun_event_loop::AnyEventLoop::Js { .. } => {
-                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                        std::ptr::from_mut(resolve),
-                        on_resolve_from_js_loop_raw,
-                    );
-                    let poster = self
-                        .js_poster
-                        .as_ref()
-                        .expect("JS-owned bundle has a poster");
-                    if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                        // Owning JS VM torn down mid-bundle: the hop never runs.
-                        // SAFETY: refused ⇒ we own the task.
-                        unsafe {
-                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct)
-                        };
-                    }
-                }
-                bun_event_loop::AnyEventLoop::Mini(mini) => {
-                    // SAFETY: `resolve` is a valid &mut for the duration of the enqueue;
-                    // the mini loop dispatches `on_resolve_mini` on the bundler thread.
-                    unsafe {
-                        mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Resolve, BundleV2<'static>>(
-                            std::ptr::from_mut(resolve),
-                            on_resolve_mini,
-                            core::mem::offset_of!(jsc_api::JSBundler::Resolve, task),
-                        );
-                    }
-                }
+            // SAFETY: as `on_load_async`.
+            unsafe {
+                self.post_to_own_loop(
+                    std::ptr::from_mut(resolve),
+                    on_resolve_from_js_loop_raw,
+                    on_resolve_mini,
+                    core::mem::offset_of!(jsc_api::JSBundler::Resolve, task),
+                );
             }
         }
     }
@@ -4414,10 +4409,31 @@ pub mod bv2_impl {
         Ok(())
     }
 
+    fn on_notify_defer_mini(load: *mut jsc_api::JSBundler::Load, this: *mut BundleV2<'static>) {
+        // SAFETY: see `on_load_mini`.
+        BundleV2::on_notify_defer(unsafe { &mut *load }, unsafe { &mut *this });
+    }
+
+    fn on_notify_defer_from_js_loop_raw(
+        load: *mut jsc_api::JSBundler::Load,
+    ) -> bun_event_loop::JsResult<()> {
+        // SAFETY: `load` is a valid pointer set up by `from_callback`.
+        let load = unsafe { &mut *load };
+        // SAFETY: `bv2` is a live backref set in `Load::init`.
+        let bv2 = unsafe { &mut *load.bv2 };
+        BundleV2::on_notify_defer(load, bv2);
+        Ok(())
+    }
+
     impl<'a> BundleV2<'a> {
         pub(crate) fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
             this.graph.outstanding_loads.unlink(load);
-            load.deferred = false;
+            if load.deferred {
+                // Answered before the drain: the paths below expect the unit in `pending_items`.
+                load.deferred = false;
+                this.graph.deferred_pending -= 1;
+                this.increment_scan_counter();
+            }
             // `Load` is arena-allocated (no Drop); free its owned heap fields on every exit path.
             struct LoadDeinitGuard(*mut jsc_api::JSBundler::Load);
             impl Drop for LoadDeinitGuard {
@@ -6938,15 +6954,18 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        pub fn on_notify_defer(&mut self) {
-            self.thread_lock.assert_locked();
-            self.graph.deferred_pending += 1;
-            self.decrement_scan_counter();
-        }
-
-        pub fn on_notify_defer_mini(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
+        /// Owning loop: `load`'s onLoad callback called `.defer()`, so its scan-counter
+        /// unit moves to `deferred_pending` until `drain_deferred_tasks` (or `on_load`).
+        pub(crate) fn on_notify_defer(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
+            this.thread_lock.assert_locked();
+            // `.defer()` called after answering: `on_load` already disposed of the unit.
+            if !load.outstanding.is_linked() {
+                return;
+            }
+            debug_assert!(!load.deferred, "Load::called_defer allows one .defer()");
             load.deferred = true;
-            this.on_notify_defer();
+            this.graph.deferred_pending += 1;
+            this.decrement_scan_counter();
         }
 
         pub(crate) fn on_parse_task_complete(

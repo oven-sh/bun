@@ -5,6 +5,7 @@ use bun_ast::server_component_boundary;
 use bun_collections::MultiArrayList;
 use enum_map::EnumMap;
 
+use crate::DeferredBatchTask::DeferredBatchTask;
 use crate::IndexStringMap::IndexStringMap;
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::options;
@@ -53,7 +54,8 @@ pub struct Graph<'a> {
     /// is "moved" into this counter (pending_items -= 1; deferred_pending += 1)
     ///
     /// When `pending_items` hits zero and there are deferred pending tasks, those
-    /// tasks will be run, and the count is "moved" back to `pending_items`
+    /// tasks will be run, and the count is "moved" back to `pending_items`;
+    /// a load answered before then moves its own back (`BundleV2::on_load`).
     pub(crate) deferred_pending: u32,
 
     /// onResolve / onLoad requests a plugin currently holds (dispatched to its
@@ -243,8 +245,7 @@ impl<'a> Graph<'a> {
                 }
             }
 
-            transpiler.drain_defer_task.init();
-            transpiler.drain_defer_task.schedule();
+            DeferredBatchTask::schedule(transpiler);
 
             return true;
         }
@@ -272,6 +273,12 @@ impl<T> Default for OutstandingLink<T> {
             next: core::ptr::null_mut(),
             linked: false,
         }
+    }
+}
+impl<T> OutstandingLink<T> {
+    /// Dispatched to the plugin and not answered yet.
+    pub(crate) fn is_linked(&self) -> bool {
+        self.linked
     }
 }
 pub trait OutstandingNode: Sized {

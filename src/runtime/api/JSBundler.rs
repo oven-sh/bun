@@ -12,7 +12,6 @@ use bun_collections::{StringMap, StringSet};
 use bun_core::MutableString;
 use bun_core::Output;
 use bun_core::{String as BunString, ZigString};
-use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::schema::api; // bun.schema.api
@@ -1409,7 +1408,7 @@ pub mod js_bundler {
     ///
     /// Centralises the `*mut BundleV2 → &mut` deref so the C++-called thunks
     /// (`JSBundlerPlugin__onResolveAsync`, `on_defer`, `…__onLoadAsync`,
-    /// `…__addError`, `on_notify_defer_raw`) stay safe at the call site. `bv2`
+    /// `…__addError`) stay safe at the call site. `bv2`
     /// is the back-reference set in `Resolve::init`/`Load::init`; the
     /// `BundleV2` heap allocation outlives every plugin callback (owner-
     /// creates-child, single-JS-thread). The `BundleV2` storage is heap-
@@ -1503,61 +1502,11 @@ pub mod js_bundler {
                 bstr::BStr::new(&self.path)
             );
 
-            // Notify the *bundler thread* about the deferral. This will
-            // decrement the pending item counter and increment the deferred
-            // counter. Must land on `parse_task.ctx.loop()` (the loop running
-            // BundleV2), which is distinct from `js_loop_for_plugins()` (the
-            // plugin host's JS loop) when `Bun.build` runs the bundler on its
-            // own Mini event loop.
-            // SAFETY: parse_task.ctx and bv2 are valid backrefs; `r#loop()`
-            // points at a live `AnyEventLoop` owned by the bundle thread /
-            // runtime for the duration of the bundle.
-            unsafe {
-                let ctx = (*self.parse_task).ctx.expect("ParseTask.ctx unset");
-                // SAFETY: write provenance from `ParseTask::init`; bundle outlives plugin.
-                let any_loop = ctx
-                    .assume_mut()
-                    .r#loop()
-                    .expect("BundleV2.linker.loop must be set before plugins run");
-                match &mut *any_loop.as_ptr() {
-                    bun_event_loop::AnyEventLoop::Js { .. } => {
-                        let ct =
-                            ConcurrentTask::from_callback(ctx.as_mut_ptr(), on_notify_defer_raw);
-                        let poster = (*ctx.as_mut_ptr())
-                            .js_poster
-                            .as_ref()
-                            .expect("JS-owned bundle has a poster");
-                        if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                            // Owning JS VM torn down mid-bundle: the notify never runs.
-                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
-                        }
-                    }
-                    bun_event_loop::AnyEventLoop::Mini(mini) => {
-                        // `mini.enqueueTaskConcurrentWithExtraCtx(
-                        //    Load, BundleV2, this, BundleV2.onNotifyDeferMini, .task)`
-                        mini.enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
-                            std::ptr::from_mut::<Load>(self),
-                            on_notify_defer_mini_wrap,
-                            core::mem::offset_of!(Load, task),
-                        );
-                    }
-                }
-
-                Ok(bv2_plugin(self.bv2).append_defer_promise())
-            }
+            // Read before posting: the owning loop may write to the `Load` once it has it.
+            let bv2 = self.bv2;
+            bv2_mut(bv2).on_defer_async(self);
+            Ok(bv2_plugin(bv2).append_defer_promise())
         }
-    }
-
-    fn on_notify_defer_raw(ctx: *mut BundleV2<'static>) -> bun_event_loop::JsResult<()> {
-        bv2_mut(ctx).on_notify_defer();
-        Ok(())
-    }
-
-    fn on_notify_defer_mini_wrap(load: *mut Load, ctx: *mut BundleV2<'static>) {
-        // SAFETY: callback contract — `load` was passed as the `Context` arg to
-        // `enqueue_task_concurrent_with_extra_ctx`; `ctx` is the bundle-thread
-        // `BundleV2` backref the mini loop's tick supplies as `ParentContext`.
-        BundleV2::on_notify_defer_mini(unsafe { &mut *load }, unsafe { &mut *ctx });
     }
 
     /// # Safety
@@ -1652,6 +1601,7 @@ pub mod js_bundler {
         // sound and discharges the deref obligation at the type level.
         safe fn JSBundlerPlugin__globalObject(plugin: &Plugin) -> &JSGlobalObject;
         safe fn JSBundlerPlugin__appendDeferPromise(plugin: &mut Plugin) -> JSValue;
+        safe fn JSBundlerPlugin__drainDeferred(plugin: &Plugin);
         safe fn JSBundlerPlugin__setConfig(plugin: &mut Plugin, config: *mut c_void);
         safe fn JSBundlerPlugin__runSetupFunction(
             plugin: &Plugin,
@@ -1688,6 +1638,10 @@ pub mod js_bundler {
         fn tombstone(&self);
         fn global_object(&self) -> &JSGlobalObject;
         fn append_defer_promise(&mut self) -> JSValue;
+        /// Resolve every `.defer()` promise handed out so far: the scan has
+        /// drained (`DeferredBatchTask`), or the build is complete and these
+        /// were never awaited. JS thread.
+        fn drain_deferred(&self);
         fn add_plugin(
             &mut self,
             object: JSValue,
@@ -1761,6 +1715,16 @@ pub mod js_bundler {
 
         fn append_defer_promise(&mut self) -> JSValue {
             JSBundlerPlugin__appendDeferPromise(self)
+        }
+
+        fn drain_deferred(&self) {
+            jsc::mark_binding();
+            // The C++ side leaves a THROW_SCOPE to be checked here; resolving with
+            // `undefined` can only leave a termination pending, which the caller's
+            // next check picks up.
+            let _ = bun_jsc::call_check_slow(self.global_object(), || {
+                JSBundlerPlugin__drainDeferred(self)
+            });
         }
 
         fn add_plugin(

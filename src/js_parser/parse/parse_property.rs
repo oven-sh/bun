@@ -463,11 +463,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                     }
                                     PropertyModifierKeyword::PAccessor => {
-                                        // "accessor" keyword for auto-accessor fields. The keyword
-                                        // comes from the TC39 decorators proposal, but TypeScript
-                                        // (4.9+) accepts it in every decorator mode, including
-                                        // `experimentalDecorators`, so it is not gated on
-                                        // `features.standard_decorators`.
+                                        // "accessor" keyword for auto-accessor fields (valid in
+                                        // both decorator modes, like in TypeScript)
                                         if opts.is_class
                                             && !p.lexer.has_newline_before
                                             && PropertyModifierKeyword::find(raw)

@@ -6435,9 +6435,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let descriptor_key = prop.key.expect("infallible: prop has key");
                         let loc = descriptor_key.loc;
 
-                        // A decorated `accessor` member reaches this point as its generated
-                        // setter (see lower_auto_accessors.rs), so like tsc it gets the
-                        // descriptor form.
                         let descriptor_kind: Expr =
                             if !prop.flags.contains(Flags::Property::IsMethod) {
                                 self.new_expr(E::Undefined {}, loc)
@@ -6922,9 +6919,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             PropertyKind::Spread | PropertyKind::Declare => {}
-            // Already replaced by `lower_auto_accessors_in_place`; the accessor's type
-            // is emitted through its generated setter.
-            PropertyKind::AutoAccessor => {}
+            PropertyKind::AutoAccessor => {} // lowered to a getter/setter pair before this runs
             PropertyKind::ClassStaticBlock => {} // not allowed to decorate this
         }
     }

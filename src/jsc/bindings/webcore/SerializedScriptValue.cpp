@@ -4353,6 +4353,29 @@ void markAsUntransferable(VM& vm, JSObject& object)
     markObjectWithPrivateName(vm, object, builtinNames(vm).isUntransferablePrivateName());
 }
 
+// The transfer list is validated before serializing, but CloneSerializer::serialize runs user
+// code (getters, Proxy traps) that can close or transfer a listed port, detach a listed buffer,
+// or markAsUntransferable() an entry. Those conditions are checked again, for the whole list,
+// before anything is detached: a rejected transfer must leave every entry intact, whereas
+// leaving a closed port for MessagePort::disentanglePorts to reject would report the failure
+// after transferArrayBuffers() had already emptied the caller's buffers.
+static std::optional<Exception> transferListChangedDuringSerialization(VM& vm, const Vector<JSC::Strong<JSC::JSObject>>& transferList, const Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers, const Vector<RefPtr<MessagePort>>& messagePorts)
+{
+    for (auto& transferable : transferList) {
+        if (transferable->getDirect(vm, builtinNames(vm).isUntransferablePrivateName()))
+            return Exception { DataCloneError, "Cannot transfer object marked as untransferable"_s };
+    }
+    for (auto& arrayBuffer : arrayBuffers) {
+        if (arrayBuffer->isDetached())
+            return Exception { DataCloneError, "ArrayBuffer in transfer list was detached during serialization"_s };
+    }
+    for (auto& port : messagePorts) {
+        if (port->isDetached() || port->isClosing())
+            return Exception { DataCloneError, "MessagePort in transfer list is already detached"_s };
+    }
+    return std::nullopt;
+}
+
 static ExceptionOr<std::unique_ptr<ArrayBufferContentsArray>> transferArrayBuffers(VM& vm, const Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers)
 {
     if (arrayBuffers.isEmpty())
@@ -4711,6 +4734,8 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 
     Vector<RefPtr<JSC::ArrayBuffer>> arrayBuffers;
     HashSet<JSC::JSObject*> uniqueTransferables;
+    // Anything user code can change while serializing is checked a second time in
+    // transferListChangedDuringSerialization() below.
     for (auto& transferable : transferList) {
         // markAsUntransferable marker: a DontEnum JSC private name (see markAsUncloneable).
         if (transferable->getDirect(vm, builtinNames(vm).isUntransferablePrivateName()))
@@ -4783,6 +4808,11 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     if (scope.exception() || code != SerializationReturnCode::SuccessfullyCompleted) [[unlikely]] {
         releaseSerializedBlockListRefs();
         RELEASE_AND_RETURN(scope, exceptionForSerializationFailure(code));
+    }
+
+    if (auto exception = transferListChangedDuringSerialization(vm, transferList, arrayBuffers, messagePorts)) [[unlikely]] {
+        releaseSerializedBlockListRefs();
+        RELEASE_AND_RETURN(scope, WTF::move(*exception));
     }
 
     auto arrayBufferContentsArray = transferArrayBuffers(vm, arrayBuffers);

@@ -123,7 +123,7 @@ it.skipIf(isWindows)("fs.chmodSync applies mode bits above 0o777", () => {
   expect(statSync(dirPath).mode & 0o7777).toBe(0o1755);
 });
 
-describe("fs.access success values match node", () => {
+describe("fs.access and fs.symlink success values match node", () => {
   it("accessSync returns undefined", () => {
     using dir = tempDir("fs-access-success", { "file.txt": "" });
     const file = join(String(dir), "file.txt");
@@ -160,6 +160,30 @@ describe("fs.access success values match node", () => {
     const args = await promise;
     expect(args).toHaveLength(1);
     expect(args[0]).toMatchObject({ code: "ENOENT", syscall: "access" });
+  });
+
+  // symlink was the other wrapper that handed the native promise's resolution
+  // value straight to the callback.
+  it("symlink callback is called with exactly (null) in both overloads", async () => {
+    using dir = tempDir("fs-symlink-success", { "file.txt": "" });
+    const file = join(String(dir), "file.txt");
+
+    const threeArgs = Promise.withResolvers<unknown[]>();
+    fs.symlink(file, join(String(dir), "link-3"), (...args) => threeArgs.resolve(args));
+    expect(await threeArgs.promise).toStrictEqual([null]);
+
+    const fourArgs = Promise.withResolvers<unknown[]>();
+    fs.symlink(file, join(String(dir), "link-4"), "file", (...args) => fourArgs.resolve(args));
+    expect(await fourArgs.promise).toStrictEqual([null]);
+  });
+
+  it("symlink callback receives the error on failure", async () => {
+    using dir = tempDir("fs-symlink-failure", { "file.txt": "", "taken": "" });
+    const { promise, resolve } = Promise.withResolvers<unknown[]>();
+    fs.symlink(join(String(dir), "file.txt"), join(String(dir), "taken"), (...args) => resolve(args));
+    const args = await promise;
+    expect(args).toHaveLength(1);
+    expect(args[0]).toMatchObject({ code: "EEXIST", syscall: "symlink" });
   });
 });
 

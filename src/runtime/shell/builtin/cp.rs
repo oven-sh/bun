@@ -716,7 +716,7 @@ impl ShellCpTask {
             _copying_many = true;
         }
 
-        if !src_is_dir && Self::is_same_file(src, tgt) {
+        if Self::is_same_file(src, tgt) {
             // As cp(1) prints it: the operand as given, plus the appended basename.
             let mut shown_tgt = self.tgt.clone();
             if let Some(basename) = appended_basename {

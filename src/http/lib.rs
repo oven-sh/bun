@@ -106,22 +106,16 @@ pub enum Protocol {
     Http3,
 }
 
-/// How far a followed redirect may move the request before its credential
-/// headers (`Authorization`, `Proxy-Authorization`, `Cookie`) are dropped. A
-/// caller-supplied `Host` header is dropped on any origin change regardless of
-/// this setting.
+/// Which redirects the request's credential headers (`Authorization`,
+/// `Proxy-Authorization`, `Cookie`) survive.
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum RedirectCredentialsPolicy {
-    /// WHATWG fetch (https://fetch.spec.whatwg.org/#concept-http-redirect-fetch):
-    /// dropped as soon as the origin (scheme, hostname or port) changes.
+    /// fetch(): https://fetch.spec.whatwg.org/#concept-http-redirect-fetch
     #[default]
     SameOrigin,
-    /// npm's registry client (make-fetch-happen): kept while the hostname is
-    /// unchanged, so a registry may redirect to itself on another port or
-    /// from http to https. Unlike npm, a redirect from https down to http
-    /// still drops them. `bun install` uses this for manifest and tarball
-    /// requests.
+    /// npm's rule (make-fetch-happen), used by `bun install`: a port or scheme
+    /// change alone keeps them, except an https -> http downgrade.
     SameHostname,
 }
 
@@ -1094,10 +1088,10 @@ bun_core::comptime_string_map! {
 
 #[derive(Copy, Clone)]
 enum StrippedOnRedirect {
-    /// Dropped according to `Flags::redirect_credentials`.
+    /// Per `Flags::redirect_credentials`.
     Credential,
-    /// A user-supplied Host header names the previous origin; keeping it would
-    /// also suppress the default Host header derived from the new URL.
+    /// Names the previous origin and would suppress the default Host header
+    /// derived from the new URL.
     Host,
 }
 
@@ -1112,14 +1106,11 @@ bun_core::comptime_string_map! {
     };
 }
 
-/// How far a redirect moved the request away from the URL it was just sent
-/// to. Decides which request headers the next hop keeps.
 #[derive(Copy, Clone)]
 struct RedirectHop {
     same_origin: bool,
     same_hostname: bool,
-    /// https -> http. Credentials never follow this hop: they would be
-    /// replayed in cleartext.
+    /// https -> http; credentials never follow this hop (cleartext replay).
     downgrades_to_http: bool,
 }
 
@@ -5269,9 +5260,7 @@ impl<'a> HTTPClient<'a> {
                 // locationURL's origin, then for each headerName of CORS
                 // non-wildcard request-header name, delete headerName from
                 // request's header list.
-                //
-                // The credential headers follow `Flags::redirect_credentials`
-                // instead (`bun install` uses `RedirectCredentialsPolicy::SameHostname`).
+                // The credential headers follow `Flags::redirect_credentials`.
                 if !hop.same_origin && self.header_entries.len() > 0 {
                     let strip_credentials = hop.strips_credentials(self.flags.redirect_credentials);
                     let mut i = 0;

@@ -594,4 +594,94 @@ export default function IndexPage() {
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
   });
+
+  // The <script> that hydrates a prerendered route. Routes without client components don't get one.
+  const clientEntryScript = /<script type="module" src="\/_bun\/[^"]+\.js"/;
+
+  const clientComponentFiles = {
+    "src/index.tsx": `export default { app: { framework: "react" } };`,
+    "components/Client.tsx": `"use client";
+
+export function Client() {
+  return <b>client</b>;
+}
+
+export const value = 1;`,
+    "package.json": JSON.stringify({ "name": "test-app", "version": "1.0.0" }),
+  };
+
+  async function buildApp(dir: string) {
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).not.toContain("error");
+    expect(exitCode).toBe(0);
+    return (route: string) => Bun.file(path.join(dir, "dist", route, "index.html")).text();
+  }
+
+  test("import() of a client component from the server", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-dynamic-import-client", {
+      ...clientComponentFiles,
+      // The server side of a "use client" module is a generated module with one client
+      // reference per export, so the namespace has to contain every export of Client.tsx.
+      "pages/index.tsx": `export default async function IndexPage() {
+  const mod = await import("../components/Client");
+  return (
+    <div>
+      <span>{Object.keys(mod).sort().join(",")}</span>
+      <mod.Client />
+    </div>
+  );
+}`,
+      // The same module imported statically by another route, so its code is shared by
+      // both routes and the import() above has to resolve to the module's own chunk.
+      "pages/static-import.tsx": `import { Client } from "../components/Client";
+
+export default function StaticImportPage() {
+  return <div><Client /></div>;
+}`,
+    });
+
+    const html = await buildApp(dir);
+
+    const index = await html("");
+    expect(index).toContain("<span>Client,value</span><b>client</b>");
+    expect(index).toMatch(clientEntryScript);
+
+    const staticImport = await html("static-import");
+    expect(staticImport).toContain("<div><b>client</b></div>");
+    expect(staticImport).toMatch(clientEntryScript);
+  }, 30_000);
+
+  test("a route that only reaches a client component through import() is not fully static", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-dynamic-import-static-route", {
+      ...clientComponentFiles,
+      "components/render-client.tsx": `import { Client } from "./Client";
+
+export function renderClient() {
+  return <Client />;
+}`,
+      "components/plain.ts": `export const text = "no client components here";`,
+      "pages/index.tsx": `export default async function IndexPage() {
+  const { renderClient } = await import("../components/render-client");
+  return <div>{renderClient()}</div>;
+}`,
+      "pages/plain.tsx": `export default async function PlainPage() {
+  const { text } = await import("../components/plain");
+  return <div>{text}</div>;
+}`,
+    });
+
+    const html = await buildApp(dir);
+
+    const index = await html("");
+    expect(index).toContain("<div><b>client</b></div>");
+    expect(index).toMatch(clientEntryScript);
+
+    // import() of a module without client components keeps the route fully static.
+    const plain = await html("plain");
+    expect(plain).toContain("<div>no client components here</div>");
+    expect(plain).not.toMatch(clientEntryScript);
+  }, 30_000);
 });

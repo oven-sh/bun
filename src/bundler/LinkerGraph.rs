@@ -682,6 +682,12 @@ impl<'a> LinkerGraph<'a> {
             for &id in dynamic_import_entry_points {
                 debug_assert!(self.code_splitting); // this should never be a thing without code splitting
 
+                // This list was collected from the import records before the rewrite
+                // below, so an `import()` of a "use client" file names the original
+                // file here. The record ends up pointing at the reference proxy, so
+                // that is the file that has to become the entry point.
+                let id = scb.get_reference_source_index(id).unwrap_or(id);
+
                 if entry_point_kinds[id as usize] != entry_point::Kind::None {
                     // You could dynamic import a file that is already an entry point
                     continue;
@@ -708,28 +714,26 @@ impl<'a> LinkerGraph<'a> {
             if scb.list.len() > 0 {
                 self.is_scb_bitset = BitSet::init_empty(self.files.len()).expect("unreachable");
 
-                // Index all SCBs into the bitset. This is needed so chunking
-                // can track the chunks that SCBs belong to.
+                // Index the original file of every SCB into the bitset. Chunking uses
+                // it to record which chunk each boundary's code lands in, which is
+                // what the SCB unique keys resolve to. The reference proxies are left
+                // out: no SCB key refers to them, and a proxy that is `import()`ed is
+                // a dynamic import entry point whose `entry_point_chunk_index` has to
+                // keep pointing at its own chunk.
                 debug_assert_eq!(
                     scb.list.items_use_directive().len(),
                     scb.list.items_source_index().len()
                 );
-                debug_assert_eq!(
-                    scb.list.items_use_directive().len(),
-                    scb.list.items_reference_source_index().len()
-                );
-                for ((use_, original_id), ref_id) in scb
+                for (use_, original_id) in scb
                     .list
                     .items_use_directive()
                     .iter()
                     .zip(scb.list.items_source_index().iter())
-                    .zip(scb.list.items_reference_source_index().iter())
                 {
                     match use_ {
                         UseDirective::None => {}
                         UseDirective::Client => {
                             self.is_scb_bitset.set(*original_id as usize);
-                            self.is_scb_bitset.set(*ref_id as usize);
                         }
                         UseDirective::Server => {
                             bun_core::todo_panic!("um");

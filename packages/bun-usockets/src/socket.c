@@ -562,7 +562,14 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
          * before the handshake has been reported stay with the handshake
          * dispatch, which carries the real reason. */
         if (fatal_write_error && s->ssl_fatal_error && us_internal_ssl_handshake_callback_has_fired(s)) {
+#ifdef _WIN32
+            /* The Windows errno table only names libuv-synthetic codes;
+             * UCRT's EPROTO is unnameable there and failWrite would reshape
+             * it as ECONNRESET. Node reports UV_EPROTO on every platform. */
+            *fatal_write_error = -UV_EPROTO;
+#else
             *fatal_write_error = EPROTO;
+#endif
         }
         return written;
     }

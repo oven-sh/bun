@@ -18,8 +18,12 @@ const x = __using(__bun_temp_ref_1$, a, 1);
 } catch (__bun_temp_ref_2$) {
 var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
 } finally {
-var __bun_temp_ref_5$ = __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
-__bun_temp_ref_5$ && await __bun_temp_ref_5$;
+for (var __bun_temp_ref_5$ = __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);__bun_temp_ref_5$; __bun_temp_ref_5$ = __bun_temp_ref_5$())
+try {
+await __bun_temp_ref_5$.result;
+} catch (__bun_temp_ref_6$) {
+__bun_temp_ref_5$.fail(__bun_temp_ref_6$);
+}
 }"
 `;
 
@@ -60,8 +64,12 @@ c(a);
 } catch (__bun_temp_ref_3$) {
 var __bun_temp_ref_4$ = __bun_temp_ref_3$, __bun_temp_ref_5$ = 1;
 } finally {
-var __bun_temp_ref_6$ = __callDispose(__bun_temp_ref_2$, __bun_temp_ref_4$, __bun_temp_ref_5$);
-__bun_temp_ref_6$ && await __bun_temp_ref_6$;
+for (var __bun_temp_ref_6$ = __callDispose(__bun_temp_ref_2$, __bun_temp_ref_4$, __bun_temp_ref_5$);__bun_temp_ref_6$; __bun_temp_ref_6$ = __bun_temp_ref_6$())
+try {
+await __bun_temp_ref_6$.result;
+} catch (__bun_temp_ref_7$) {
+__bun_temp_ref_6$.fail(__bun_temp_ref_7$);
+}
 }
 }"
 `;
@@ -75,8 +83,12 @@ c(a);
 } catch (__bun_temp_ref_3$) {
 var __bun_temp_ref_4$ = __bun_temp_ref_3$, __bun_temp_ref_5$ = 1;
 } finally {
-var __bun_temp_ref_6$ = __callDispose(__bun_temp_ref_2$, __bun_temp_ref_4$, __bun_temp_ref_5$);
-__bun_temp_ref_6$ && await __bun_temp_ref_6$;
+for (var __bun_temp_ref_6$ = __callDispose(__bun_temp_ref_2$, __bun_temp_ref_4$, __bun_temp_ref_5$);__bun_temp_ref_6$; __bun_temp_ref_6$ = __bun_temp_ref_6$())
+try {
+await __bun_temp_ref_6$.result;
+} catch (__bun_temp_ref_7$) {
+__bun_temp_ref_6$.fail(__bun_temp_ref_7$);
+}
 }
 }"
 `;
@@ -121,8 +133,12 @@ a(c);
 } catch (__bun_temp_ref_3$) {
 var __bun_temp_ref_4$ = __bun_temp_ref_3$, __bun_temp_ref_5$ = 1;
 } finally {
-var __bun_temp_ref_6$ = __callDispose(__bun_temp_ref_2$, __bun_temp_ref_4$, __bun_temp_ref_5$);
-__bun_temp_ref_6$ && await __bun_temp_ref_6$;
+for (var __bun_temp_ref_6$ = __callDispose(__bun_temp_ref_2$, __bun_temp_ref_4$, __bun_temp_ref_5$);__bun_temp_ref_6$; __bun_temp_ref_6$ = __bun_temp_ref_6$())
+try {
+await __bun_temp_ref_6$.result;
+} catch (__bun_temp_ref_7$) {
+__bun_temp_ref_6$.fail(__bun_temp_ref_7$);
+}
 }
 }"
 `;
@@ -137,8 +153,12 @@ a(c);
 } catch (__bun_temp_ref_3$) {
 var __bun_temp_ref_4$ = __bun_temp_ref_3$, __bun_temp_ref_5$ = 1;
 } finally {
-var __bun_temp_ref_6$ = __callDispose(__bun_temp_ref_2$, __bun_temp_ref_4$, __bun_temp_ref_5$);
-__bun_temp_ref_6$ && await __bun_temp_ref_6$;
+for (var __bun_temp_ref_6$ = __callDispose(__bun_temp_ref_2$, __bun_temp_ref_4$, __bun_temp_ref_5$);__bun_temp_ref_6$; __bun_temp_ref_6$ = __bun_temp_ref_6$())
+try {
+await __bun_temp_ref_6$.result;
+} catch (__bun_temp_ref_7$) {
+__bun_temp_ref_6$.fail(__bun_temp_ref_7$);
+}
 }
 }"
 `;
@@ -168,8 +188,12 @@ try {
 } catch (__bun_temp_ref_6$) {
   var __bun_temp_ref_7$ = __bun_temp_ref_6$, __bun_temp_ref_8$ = 1;
 } finally {
-  var __bun_temp_ref_9$ = __callDispose(__bun_temp_ref_5$, __bun_temp_ref_7$, __bun_temp_ref_8$);
-  __bun_temp_ref_9$ && await __bun_temp_ref_9$;
+  for (var __bun_temp_ref_9$ = __callDispose(__bun_temp_ref_5$, __bun_temp_ref_7$, __bun_temp_ref_8$);__bun_temp_ref_9$; __bun_temp_ref_9$ = __bun_temp_ref_9$())
+    try {
+      await __bun_temp_ref_9$.result;
+    } catch (__bun_temp_ref_a$) {
+      __bun_temp_ref_9$.fail(__bun_temp_ref_a$);
+    }
 }
 
 export {

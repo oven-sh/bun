@@ -151,6 +151,15 @@ devTest("using runtime import", {
         console.log("b");
       }
 
+      // __callDispose stepping through an await using block
+      (async () => {
+        {
+          await using c = { [Symbol.asyncDispose]: async () => console.log("d") };
+          console.log("c");
+        }
+        console.log("e");
+      })();
+
       // __legacyDecorateClassTS
       function undefinedDecorator(target) {
         console.log("decorator");
@@ -187,6 +196,8 @@ devTest("using runtime import", {
     await c.expectMessage(
       "b",
       "a",
+      "c",
+      "d",
       "decorator",
       ...(dev.nodeEnv === "development"
         ? [
@@ -199,6 +210,9 @@ devTest("using runtime import", {
             false,
           ]
         : []),
+      // Logged once the await on the disposal result resolves, after the rest
+      // of the module body ran.
+      "e",
     );
   },
 });

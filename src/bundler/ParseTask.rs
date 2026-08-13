@@ -418,14 +418,40 @@ export var __require = /* @__PURE__ */ (x =>
 // here so the runtime module exports a consistent shape across targets.
 // Bun's WebKit also has Symbol.asyncDispose, Symbol.dispose, and
 // SuppressedError, so no polyfills are needed.
+//
+// Keep these in sync with `__using` / `__callDispose` in `src/runtime.bun.js`
+// (the copies behind `bun:wrap`, which additionally stay awaitable for files
+// transpiled by older versions of Bun) and with the statements
+// `LowerUsingDeclarationsContext::finalize` in `js_parser/p.rs` generates
+// around them.
+//
+// `__using` mirrors the spec's CreateDisposableResource: an `await using` of
+// a value that only has `Symbol.dispose` gets a wrapper whose return value is
+// ignored and whose throw turns into a rejection, like the spec's synthesized
+// async dispose method.
+//
+// `__callDispose` mirrors DisposeResources, with one difference: it cannot
+// await. Each time the spec would perform an Await it returns `next`, with
+// `next.result` set to the value the spec would await, and the generated code
+// awaits that value itself, then calls `next.fail(reason)` if it rejected and
+// `next()` to keep going. The awaits therefore run in the user's own async
+// function and take exactly as many microtask ticks as native `await using`
+// does; routing them through a promise chain inside the helper would add a
+// tick per resource. When nothing is left to await, `next()` returns
+// undefined, or throws the (possibly Suppressed) error. For plain `using` the
+// whole thing runs synchronously and the return value is ignored.
 const RUNTIME_USING_BUN: &str = "\
 export var __using = (stack, value, async) => {
   if (value != null) {
     if (typeof value !== 'object' && typeof value !== 'function') throw TypeError('Object expected to be assigned to \"using\" declaration')
-    let dispose
+    let dispose, inner
     if (async) dispose = value[Symbol.asyncDispose]
-    if (dispose === void 0) dispose = value[Symbol.dispose]
+    if (dispose == null) {
+      dispose = value[Symbol.dispose]
+      if (async) inner = dispose
+    }
     if (typeof dispose !== 'function') throw TypeError('Object not disposable')
+    if (inner) dispose = function () { try { inner.call(this) } catch (e) { return Promise.reject(e) } }
     stack.push([async, dispose, value])
   } else if (async) {
     stack.push([async])
@@ -434,18 +460,38 @@ export var __using = (stack, value, async) => {
 }
 
 export var __callDispose = (stack, error, hasError) => {
-  let fail = e => error = hasError ? new SuppressedError(e, error, 'An error was suppressed during disposal') : (hasError = true, e)
-    , next = (it) => {
-      while (it = stack.pop()) {
+  let needsAwait, hasAwaited,
+    next = () => {
+      for (var it; it = stack.pop();) {
+        if (!it[0] && needsAwait && !hasAwaited) {
+          needsAwait = false
+          stack.push(it)
+          next.result = void 0
+          return next
+        }
         try {
           var result = it[1] && it[1].call(it[2])
-          if (it[0]) return Promise.resolve(result).then(next, (e) => (fail(e), next()))
         } catch (e) {
-          fail(e)
+          next.fail(e)
+          continue
         }
+        if (it[0]) {
+          if (it[1]) {
+            hasAwaited = true
+            next.result = result
+            return next
+          }
+          needsAwait = true
+        }
+      }
+      if (needsAwait && !hasAwaited) {
+        needsAwait = false
+        next.result = void 0
+        return next
       }
       if (hasError) throw error
     }
+  next.fail = e => error = hasError ? new SuppressedError(e, error, 'An error was suppressed during disposal') : (hasError = true, e)
   return next()
 }
 ";
@@ -459,10 +505,14 @@ var __asyncDispose =  Symbol.asyncDispose || /* @__PURE__ */ Symbol.for('Symbol.
 export var __using = (stack, value, async) => {
   if (value != null) {
     if (typeof value !== 'object' && typeof value !== 'function') throw TypeError('Object expected to be assigned to \"using\" declaration')
-    var dispose
+    var dispose, inner
     if (async) dispose = value[__asyncDispose]
-    if (dispose === void 0) dispose = value[__dispose]
+    if (dispose == null) {
+      dispose = value[__dispose]
+      if (async) inner = dispose
+    }
     if (typeof dispose !== 'function') throw TypeError('Object not disposable')
+    if (inner) dispose = function () { try { inner.call(this) } catch (e) { return Promise.reject(e) } }
     stack.push([async, dispose, value])
   } else if (async) {
     stack.push([async])
@@ -473,18 +523,38 @@ export var __using = (stack, value, async) => {
 export var __callDispose = (stack, error, hasError) => {
   var E = typeof SuppressedError === 'function' ? SuppressedError :
     function (e, s, m, _) { return _ = Error(m), _.name = 'SuppressedError', _.error = e, _.suppressed = s, _ },
-    fail = e => error = hasError ? new E(e, error, 'An error was suppressed during disposal') : (hasError = true, e),
-    next = (it) => {
-      while (it = stack.pop()) {
+    needsAwait, hasAwaited,
+    next = () => {
+      for (var it; it = stack.pop();) {
+        if (!it[0] && needsAwait && !hasAwaited) {
+          needsAwait = false
+          stack.push(it)
+          next.result = void 0
+          return next
+        }
         try {
           var result = it[1] && it[1].call(it[2])
-          if (it[0]) return Promise.resolve(result).then(next, (e) => (fail(e), next()))
         } catch (e) {
-          fail(e)
+          next.fail(e)
+          continue
         }
+        if (it[0]) {
+          if (it[1]) {
+            hasAwaited = true
+            next.result = result
+            return next
+          }
+          needsAwait = true
+        }
+      }
+      if (needsAwait && !hasAwaited) {
+        needsAwait = false
+        next.result = void 0
+        return next
       }
       if (hasError) throw error
     }
+  next.fail = e => error = hasError ? new E(e, error, 'An error was suppressed during disposal') : (hasError = true, e)
   return next()
 }
 ";

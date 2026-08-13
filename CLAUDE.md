@@ -198,7 +198,7 @@ Several situational sections live in `.claude/docs/landing-prs.md` — read the 
 6. **Use absolute paths** - Always use absolute paths in file operations
 7. **Avoid shell commands** - Don't use `find` or `grep` in tests; use Bun's Glob and built-in tools
 8. **Memory management** - Prefer RAII (`Drop`) over manual cleanup. Arena edge case: values allocated in an arena (`Arena<T>`/`bumpalo`) do **not** run `Drop` on arena reset — types owning a heap allocation or refcount must be freed/deref'd explicitly first, mirroring the original Zig `deinit()` order.
-9. **Cross-platform** - Run `bun run rust:check-all` to compile across all targets (linux/macos/windows × x64/aarch64) when making platform-specific changes. `#[cfg(...)]`-gated code is not type-checked unless the matching target is built.
+9. **Cross-platform** - Run `bun run rust:check-all` to compile across all targets (linux/macos/windows × x64/aarch64) when making platform-specific changes. `#[cfg(...)]`-gated code is not type-checked unless the matching target is built. Same for clippy: CI lints the Linux host plus the targets in `scripts/rust-clippy-cross-budgets.json` (per-file budgets of the remaining hits), so also run `bun run rust:clippy-cross` when touching `cfg(windows)` / `cfg(target_os = ...)` code.
 10. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<SCOPE>=1` to enable a specific `bun_core::output` scoped logger
 11. **Be humble & honest** - NEVER overstate what you got done or what actually works in commits, PRs or in messages to the user.
 12. **Branch names must start with `claude/`** - This is a requirement for the CI to work.

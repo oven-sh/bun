@@ -385,7 +385,11 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
             // SAFETY: `control_pc` is a code address from the fault context;
             // `image_base` is valid for write; history table may be null.
             let rf = unsafe {
-                ntdll::RtlLookupFunctionEntry(control_pc, &mut image_base, core::ptr::null_mut())
+                ntdll::RtlLookupFunctionEntry(
+                    control_pc,
+                    &raw mut image_base,
+                    core::ptr::null_mut(),
+                )
             };
             if rf.is_null() {
                 // Leaf function with no `.pdata` entry: manually pop the
@@ -424,9 +428,9 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
                         image_base,
                         control_pc,
                         rf,
-                        &mut ctx,
-                        &mut handler_data,
-                        &mut establisher_frame,
+                        &raw mut ctx,
+                        &raw mut handler_data,
+                        &raw mut establisher_frame,
                         core::ptr::null_mut(),
                     );
                 }

@@ -2213,47 +2213,50 @@ describe("LinkWorkspacePackages", () => {
     expect(lockfile.packages.find(p => p.id === barDependency?.package_id).resolution.tag).toEqual("workspace");
   });
 
-  test.concurrent("linkWorkspacePackages = false does not fall back to the workspace for an unknown dist-tag", async () => {
-    using ctx = await setupTest();
-    const { packageDir, env } = ctx;
-    const bunfigPath = await setupWorkspace(packageDir);
-    await Promise.all([
-      write(
-        bunfigPath,
-        Bun.TOML.stringify({
-          install: {
-            linkWorkspacePackages: false,
-            registry: verdaccio.registryUrl(),
-          },
-        }),
-      ),
-      write(
-        join(packageDir, "packages", "bar", "package.json"),
-        JSON.stringify({
-          name: "bar",
-          version: "1.0.0",
-          dependencies: {
-            // `no-deps` is on the registry but has no such tag. With linking
-            // enabled this would resolve to the workspace (see the
-            // "kjwoehcojrgjoj" case in "dependency on workspace without version").
-            "no-deps": "kjwoehcojrgjoj",
-          },
-        }),
-      ),
-    ]);
+  test.concurrent(
+    "linkWorkspacePackages = false does not fall back to the workspace for an unknown dist-tag",
+    async () => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      const bunfigPath = await setupWorkspace(packageDir);
+      await Promise.all([
+        write(
+          bunfigPath,
+          Bun.TOML.stringify({
+            install: {
+              linkWorkspacePackages: false,
+              registry: verdaccio.registryUrl(),
+            },
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "bar", "package.json"),
+          JSON.stringify({
+            name: "bar",
+            version: "1.0.0",
+            dependencies: {
+              // `no-deps` is on the registry but has no such tag. With linking
+              // enabled this would resolve to the workspace (see the
+              // "kjwoehcojrgjoj" case in "dependency on workspace without version").
+              "no-deps": "kjwoehcojrgjoj",
+            },
+          }),
+        ),
+      ]);
 
-    const { stderr, exited } = spawn({
-      cmd: [bunExe(), `-c=${bunfigPath}`, "install"],
-      cwd: packageDir,
-      stdout: "ignore",
-      stderr: "pipe",
-      env,
-    });
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), `-c=${bunfigPath}`, "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "pipe",
+        env,
+      });
 
-    const err = await stderr.text();
-    expect(err).toContain('Package "no-deps" with tag "kjwoehcojrgjoj" not found');
-    expect(await exited).toBe(1);
-  });
+      const err = await stderr.text();
+      expect(err).toContain('Package "no-deps" with tag "kjwoehcojrgjoj" not found');
+      expect(await exited).toBe(1);
+    },
+  );
 });
 
 test("matching workspace devDependency and npm peerDependency", async () => {

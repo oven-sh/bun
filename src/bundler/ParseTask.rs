@@ -2594,6 +2594,16 @@ pub mod parse_worker {
             opts.lower_import_meta_main_for_node_js = true;
         }
 
+        // `import.meta` is a SyntaxError in anything that is not loaded as an ES module:
+        // cjs output always (for bun it gets the `@bun-cjs` wrapper, see postProcessJSChunk),
+        // iife output unless it targets bun, which loads the `// @bun` file as a module.
+        opts.inline_import_meta_paths = opts.framework.is_some()
+            || match output_format {
+                options::Format::Cjs => true,
+                options::Format::Iife => !target.is_bun(),
+                options::Format::Esm | options::Format::InternalBakeDev => false,
+            };
+
         opts.tree_shaking = if task.source_index.is_runtime() {
             true
         } else {

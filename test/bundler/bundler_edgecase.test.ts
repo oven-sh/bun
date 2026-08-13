@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isBroken, isWindows, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
 
 // A public path composes with the referenced file's path relative to the output
@@ -2085,6 +2086,83 @@ describe("bundler", () => {
       stdout: `side-effect-ran`,
     },
   });
+  // cjs and iife output is loaded as a script, where `import.meta` is a SyntaxError, so the
+  // file-location properties of `import.meta` are resolved at bundle time, per source file,
+  // like `__dirname` is. The output runs under node as a `.cjs` file because that is what
+  // rejects a leftover `import.meta`: node re-parses a `.js` file as an ES module on that
+  // error, and bun's runtime accepts `import.meta` in CommonJS too.
+  const importMetaPathsFiles = {
+    "/entry.js": /* js */ `
+      import { dep } from "./lib/dep.js";
+      console.log(
+        JSON.stringify([
+          import.meta.dir,
+          import.meta.dirname,
+          import.meta.file,
+          import.meta.path,
+          import.meta.url,
+          typeof import.meta.url,
+          dep,
+        ]),
+      );
+    `,
+    "/lib/dep.js": /* js */ `
+      export const dep = [import.meta.dir, import.meta.file, import.meta.url];
+    `,
+  };
+  const importMetaPathsStdout = (root: string) =>
+    JSON.stringify([
+      root,
+      root,
+      "entry.js",
+      join(root, "entry.js"),
+      pathToFileURL(join(root, "entry.js")).href,
+      "string",
+      [join(root, "lib"), "dep.js", pathToFileURL(join(root, "lib", "dep.js")).href],
+    ]);
+  itBundled("edgecase/ImportMetaPathsInlinedIIFE", ({ root }) => ({
+    files: importMetaPathsFiles,
+    format: "iife",
+    target: "browser",
+    outfile: "out.cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.cjs").not.toContain("import.meta");
+    },
+    run: { runtime: "node", stdout: importMetaPathsStdout(root) },
+  }));
+  itBundled("edgecase/ImportMetaPathsInlinedIIFETargetNode", ({ root }) => ({
+    files: importMetaPathsFiles,
+    format: "iife",
+    target: "node",
+    outfile: "out.cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.cjs").not.toContain("import.meta");
+    },
+    run: { runtime: "node", stdout: importMetaPathsStdout(root) },
+  }));
+  itBundled("edgecase/ImportMetaPathsInlinedCJS", ({ root }) => ({
+    files: importMetaPathsFiles,
+    format: "cjs",
+    target: "node",
+    outfile: "out.cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.cjs").not.toContain("import.meta");
+    },
+    run: { runtime: "node", stdout: importMetaPathsStdout(root) },
+  }));
+  // Bun loads its own iife output (it starts with `// @bun`) as an ES module, so there
+  // `import.meta` stays as written and refers to the bundle, exactly as in esm output.
+  itBundled("edgecase/ImportMetaKeptIIFETargetBun", ({ root }) => ({
+    files: {
+      "/entry.js": /* js */ `console.log(import.meta.url);`,
+    },
+    format: "iife",
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("import.meta.url");
+    },
+    run: { stdout: pathToFileURL(join(root, "out.js")).href },
+  }));
   itBundled("edgecase/ImportMetaMain", {
     files: {
       "/entry.ts": /* js */ `

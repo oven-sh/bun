@@ -1,4 +1,4 @@
-// https://github.com/oven-sh/bun/issues/29087
+// https://github.com/oven-sh/bun/issues/6566 (reported as #29087)
 //
 // `bun create <template> -- <args>` must strip a single leading `--` before
 // forwarding to the create script, and must not leak the wrapper's own `--bun`.
@@ -56,12 +56,12 @@ function createTarball(name: string, version: string, binName: string, script: s
   return Bun.gzipSync(Buffer.concat(entries, tarSize));
 }
 
-describe.concurrent("issue #29087", () => {
+describe.concurrent("issue #6566", () => {
   const pkgName = "create-bun-issue29087-argv-printer";
   const binName = "create-bun-issue29087-argv-printer";
-  // Intentionally uses process.argv.slice(2): the script should only see args
-  // the user passed after `bun create <name>`, not the separator.
-  const script = `#!/usr/bin/env node\nconsole.log("ARGV:" + JSON.stringify(process.argv.slice(2)));\n`;
+  // ARGV proves which args reach the script; BUN proves whether the wrapper
+  // ran it under Bun (a pre-separator `--bun` is hoisted onto the bunx call).
+  const script = `#!/usr/bin/env node\nconsole.log("ARGV:" + JSON.stringify(process.argv.slice(2)));\nconsole.log("BUN:" + !!process.versions.bun);\n`;
 
   let server: Server;
   let registryUrl: string;
@@ -111,7 +111,9 @@ describe.concurrent("issue #29087", () => {
   });
 
   /** Run `bun create <args>` against the local registry and return the argv the create script received. */
-  async function runCreate(...createArgs: string[]): Promise<{ argv: string[]; stdout: string; stderr: string }> {
+  async function runCreate(
+    ...createArgs: string[]
+  ): Promise<{ argv: string[]; underBun: boolean; stdout: string; stderr: string }> {
     using dir = tempDir(`bun-create-29087`, {
       "bunfig.toml": `[install]\ncache = false\nregistry = "${registryUrl}/"\n`,
     });
@@ -121,8 +123,13 @@ describe.concurrent("issue #29087", () => {
       cwd: String(dir),
       env: {
         ...bunEnv,
-        // Make sure bunx hits our registry, not the real one.
+        // Make sure bunx hits our registry, not the real one, and give each
+        // invocation its own tmp/cache so concurrent cases don't share the
+        // `<tmpdir>/bunx-<uid>-<pkg>` install dir.
         BUN_INSTALL_CACHE_DIR: String(dir) + "/.cache",
+        TMPDIR: String(dir) + "/.tmp",
+        TEMP: String(dir) + "/.tmp",
+        TMP: String(dir) + "/.tmp",
         npm_config_registry: `${registryUrl}/`,
       },
       stdout: "pipe",
@@ -137,7 +144,7 @@ describe.concurrent("issue #29087", () => {
       throw new Error(`Could not find ARGV line in stdout (exit ${exitCode}).\nstdout:\n${stdout}\nstderr:\n${stderr}`);
     }
     expect(exitCode).toBe(0);
-    return { argv: JSON.parse(match[1]!), stdout, stderr };
+    return { argv: JSON.parse(match[1]!), underBun: /BUN:true/.test(stdout), stdout, stderr };
   }
 
   test("strips a single leading `--` separator before forwarding to the create script", async () => {
@@ -156,13 +163,19 @@ describe.concurrent("issue #29087", () => {
     expect(argv).toEqual(["--", "-t", "v3"]);
   });
 
-  test("does not leak `--bun` (consumed by wrapper) into forwarded argv", async () => {
-    const { argv } = await runCreate("bun-issue29087-argv-printer", "--bun", "--", "-t", "v3");
+  test("hoists a pre-separator `--bun` onto the bunx call and drops it from forwarded argv", async () => {
+    const { argv, underBun } = await runCreate("bun-issue29087-argv-printer", "--bun", "--", "-t", "v3");
     expect(argv).toEqual(["-t", "v3"]);
+    // The script has a `node` shebang, so running under Bun proves `--bun`
+    // reached bunx_args rather than merely being stripped from argv.
+    expect(underBun).toBe(true);
   });
 
-  test("preserves `--bun` after separator as a literal arg for the create script", async () => {
+  test("preserves a post-separator `--bun` as a forwarded literal without enabling wrapper mode", async () => {
     const { argv } = await runCreate("bun-issue29087-argv-printer", "--", "--bun", "-t", "v3");
+    // `--bun` surviving in argv proves the wrapper forwarded it instead of
+    // consuming it; asserting the script ran under node would depend on node
+    // being on PATH, so we don't.
     expect(argv).toEqual(["--bun", "-t", "v3"]);
   });
 });

@@ -11,6 +11,10 @@ import { expect, jest, mock, spyOn, test, vi } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
+// Imported (not just required) so its ESM registry entry exists — the
+// repeat-jest.mock test below needs the second walk to run over the patched
+// namespace.
+import * as doubleFixture from "./auto-mock-fixture-double";
 
 test("mock.module async", async () => {
   mock.module("i-am-async-and-mocked", async () => {
@@ -404,6 +408,13 @@ test("auto-mock walks the prototype chain: subclass statics, inherited methods, 
   expect(instance.baseMethod()).toBeUndefined();
   expect(mocked.Child.mock.instances[0]).toBe(instance);
 
+  // A plain `export function Foo() {}` whose `prototype` was never read
+  // before the mock (still lazily unreified) mocks with a prototype too,
+  // so `new` and `instanceof` work on it.
+  const legacy = new mocked.LegacyCtor();
+  expect(legacy).toBeInstanceOf(mocked.LegacyCtor);
+  expect(mocked.LegacyCtor.prototype.constructor).toBe(mocked.LegacyCtor);
+
   // An exported instance keeps its API — the methods live on the class
   // prototype, which only a chain walk can see.
   expect(typeof mocked.client.connect).toBe("function");
@@ -428,6 +439,41 @@ test("auto-mock reads getters on __esModule interop objects (esbuild/tsc-built C
   // The `default` getter returns the same function as `helper`, so the mock
   // preserves the aliasing.
   expect(mocked.default).toBe(mocked.helper);
+
+  // jest.mock + require must keep the full exports object: the real
+  // require() of an esbuild module returns the exports object (with
+  // __esModule and default on it), never just the default, so the mocked
+  // require() must match and not unwrap `{ __esModule, default }`.
+  jest.mock("./auto-mock-fixture-esbuild.cjs");
+  const required = require("./auto-mock-fixture-esbuild.cjs");
+  expect(required.__esModule).toBe(true);
+  expect(required.helper.mock).toBeDefined();
+  expect(required.VERSION).toBe("1.2.3");
+  expect(required.default).toBe(required.helper);
+
+  // requireMock returns the registered mock with the same shape, so the
+  // result doesn't depend on which consumer ran first.
+  const viaRequireMock = jest.requireMock("./auto-mock-fixture-esbuild.cjs") as any;
+  expect(viaRequireMock).toBe(required);
+});
+
+test("a repeat jest.mock() of the same ESM module still produces working mocks", () => {
+  // The second walk runs over the round-one mocks (the registry namespace was
+  // patched), so the walker must not copy the mock prototype's methods onto
+  // the new mocks as stubs that shadow the real mock API.
+  jest.mock("./auto-mock-fixture-double");
+  jest.mock("./auto-mock-fixture-double");
+
+  const mocked = require("./auto-mock-fixture-double");
+  expect(Object.prototype.hasOwnProperty.call(mocked.plainFunction, "mockReturnValue")).toBe(false);
+  expect(Object.prototype.hasOwnProperty.call(mocked.plainFunction, "mockClear")).toBe(false);
+
+  // Configuring the round-two mock must take effect.
+  mocked.plainFunction.mockReturnValue(9);
+  expect(mocked.plainFunction()).toBe(9);
+
+  // Live bindings follow the round-two mock as well.
+  expect((doubleFixture as any).plainFunction()).toBe(9);
 });
 
 test("auto-mock of a CJS module synthesizes a default export for import consumers", async () => {
@@ -458,6 +504,18 @@ test("auto-mock of a primitive CJS module keeps the raw value", async () => {
   // And the default import sees the value.
   const ns = await import("./auto-mock-fixture-primitive.cjs");
   expect(ns.default).toBe(42);
+});
+
+test("factory mocks shaped { __esModule, default } unwrap to the default for require()", () => {
+  // Fresh require of the mock already unwrapped this shape (the
+  // commonJSModule branch of handleVirtualModuleResult).
+  mock.module("automock-esm-interop-fresh", () => ({ __esModule: true, default: { fresh: 1 }, named: "x" }));
+  expect(require("automock-esm-interop-fresh")).toEqual({ fresh: 1 });
+
+  // Re-mocking an already-required specifier patches the cached CJS entry
+  // with the same unwrap, so the shape doesn't depend on load order.
+  mock.module("automock-esm-interop-fresh", () => ({ __esModule: true, default: { fresh: 2 }, named: "y" }));
+  expect(require("automock-esm-interop-fresh")).toEqual({ fresh: 2 });
 });
 
 test("jest.mock auto-mocks a plugin-provided module", () => {
@@ -565,21 +623,14 @@ test("jest.requireMock handles survive jest.restoreAllMocks", () => {
 });
 
 test("jest.requireMock with a relative specifier doesn't break later ESM imports", async () => {
-  // requireMock resolves its specifier against the caller's source origin but
-  // caches in a side-map, never allocating virtualModules. If it set
-  // `mustDoExpensiveRelativeLookup` (which jest.mock does), a later ESM import
-  // from a file that never called jest.mock would trip the module loader's
-  // `!mustDoExpensiveRelativeLookup` assert under the debug/ASAN build.
-  // Run in a fresh process so the global starts with virtualModules == null.
-  // Use a `file:` specifier — that branch sets the flag unconditionally once
-  // the URL is valid (the relative branch only sets it when resolution
-  // fails), so it reliably reproduces the flag-set-but-map-null state.
+  // Regression guard for the module loader's `!mustDoExpensiveRelativeLookup`
+  // invariant: requireMock never installs into virtualModules, so it must not
+  // leave the flag set. Fresh process so virtualModules starts null.
   using dir = tempDir("requiremock-esm", {
     "real.ts": `export const value = 42;`,
     "fixture.test.ts": `
       import { test, expect, jest } from "bun:test";
       test("requireMock then import", async () => {
-        // file: specifier → resolver sets the flag pre-fix.
         jest.requireMock("file:./real.ts");
         // A real ESM import afterwards must not hit the assert.
         const mod = await import("./real.ts");
@@ -604,13 +655,9 @@ test("jest.requireMock with a relative specifier doesn't break later ESM imports
 });
 
 test("a failing jest.mock() with a relative specifier doesn't break later ESM imports", async () => {
-  // The auto-mock path sets `mustDoExpensiveRelativeLookup` for `./` and
-  // `file:` specifiers on the assumption the mock install (which allocates
-  // virtualModules) will follow. When the internal require() throws (typo'd
-  // path), the install never happens — the flag must be reset or the module
-  // loader's `!mustDoExpensiveRelativeLookup` assert fires on the next ESM
-  // import under the debug/ASAN build. Fresh process so virtualModules
-  // starts null.
+  // Regression guard: a jest.mock() whose internal require() throws (typo'd
+  // path) must not leave the module loader's `!mustDoExpensiveRelativeLookup`
+  // assert primed. Fresh process so virtualModules starts null.
   using dir = tempDir("failing-mock-esm", {
     "real.ts": `export const value = 42;`,
     "fixture.test.ts": `

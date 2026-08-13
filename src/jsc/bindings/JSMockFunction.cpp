@@ -1754,7 +1754,12 @@ static void forEachMockableProperty(JSC::JSGlobalObject* globalObject, JSC::JSOb
 
     WTF::HashSet<RefPtr<WTF::UniquedStringImpl>> seen;
     JSC::JSObject* level = root;
-    while (level && level != objectPrototype && level != functionPrototype) {
+    // JSMockFunctionPrototype is a chain stop too: when the value being
+    // walked is already a mock (a repeat jest.mock() of the same module),
+    // copying its reified methods (mockReturnValue, mockClear, ...) onto the
+    // new mock would shadow the real ones with stubs.
+    while (level && level != objectPrototype && level != functionPrototype
+        && level->classInfo() != JSMockFunctionPrototype::info()) {
         JSValue esModuleValue = level->get(globalObject, vm.propertyNames->__esModule);
         RETURN_IF_EXCEPTION(scope, void());
         bool ownerIsESModule = esModuleValue.toBoolean(globalObject);
@@ -1860,19 +1865,30 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
         visited.set(object, JSC::Strong<JSC::JSObject> { vm, mockFn });
 
         // Pre-register prototype → mockProto in `visited` so a static alias
-        // of the prototype resolves to the same mock object.
+        // of the prototype resolves to the same mock object. Read through a
+        // PropertySlot (not getDirect): a plain `export function Foo() {}`
+        // reifies its `prototype` lazily, and getDirect would miss it until
+        // some other code happened to look it up.
         JSObject* mockProto = nullptr;
         JSObject* originalProtoObj = nullptr;
-        if (auto originalProto = object->getDirect(vm, vm.propertyNames->prototype); originalProto && originalProto.isObject()) {
-            JSObject* proto = originalProto.getObject();
-            // Don't mock Function.prototype or similar shared prototypes —
-            // only mock real class prototypes (distinct per class).
-            if (proto != lexicalGlobalObject->functionPrototype()
-                && proto != lexicalGlobalObject->objectPrototype()) {
-                mockProto = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype());
+        {
+            JSC::PropertySlot protoSlot(object, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+            bool hasProto = object->methodTable()->getOwnPropertySlot(object, lexicalGlobalObject, vm.propertyNames->prototype, protoSlot);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (hasProto && !protoSlot.isAccessor() && !protoSlot.isCustom()) {
+                JSValue originalProto = protoSlot.getValue(lexicalGlobalObject, vm.propertyNames->prototype);
                 RETURN_IF_EXCEPTION(scope, {});
-                originalProtoObj = proto;
-                visited.set(originalProtoObj, JSC::Strong<JSC::JSObject> { vm, mockProto });
+                JSObject* proto = originalProto.isObject() ? originalProto.getObject() : nullptr;
+                // Don't mock Function.prototype or similar shared prototypes —
+                // only mock real class prototypes (distinct per class).
+                if (proto
+                    && proto != lexicalGlobalObject->functionPrototype()
+                    && proto != lexicalGlobalObject->objectPrototype()) {
+                    mockProto = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype());
+                    RETURN_IF_EXCEPTION(scope, {});
+                    originalProtoObj = proto;
+                    visited.set(originalProtoObj, JSC::Strong<JSC::JSObject> { vm, mockProto });
+                }
             }
         }
 

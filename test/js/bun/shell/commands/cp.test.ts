@@ -1,7 +1,9 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, DirectoryTree, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -171,6 +173,67 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
   });
+});
+
+// The builtin's `cp -R` copies the files of a directory as concurrent work-pool
+// tasks sharing one parent task. A file copy that fails records its error on
+// the parent, which has to stay alive until the sibling copies still running
+// have let go of it (before oven-sh/bun#30162 it was freed as soon as the error
+// was recorded, a heap-use-after-free that ASAN builds abort on). fs.cp walks
+// directories in JS on Linux and Windows, so this builtin is what reaches that
+// code. The builtin is the default only on Windows; on POSIX it is enabled by
+// an env var, so the copies run in a child bun.
+test("cp -R survives a file copy failing while its siblings are still being copied", async () => {
+  const files: DirectoryTree = {
+    "src/000-bad.txt": "x",
+    // dst exists, so `cp -R src dst` copies into dst/src. A directory already
+    // sitting where 000-bad.txt goes makes that one file's copy fail.
+    "dst/src/000-bad.txt": {},
+  };
+  // Enough siblings that some are still in flight when 000-bad.txt fails.
+  for (let i = 0; i < 32; i++) files[`src/f${i}.txt`] = "x";
+  using dir = tempDir("shell-cp-failed-sibling", files);
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const outcomes = new Set();
+      for (let i = 0; i < 20; i++) {
+        const { exitCode, stderr } = await Bun.$\`cp -R src dst\`.nothrow().quiet();
+        outcomes.add(JSON.stringify({ exitCode, stderr: stderr.toString() }));
+      }
+      console.log(JSON.stringify([...outcomes].map(outcome => JSON.parse(outcome))));
+      `,
+    ],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1",
+      // An ASAN abort (the pre-fix behaviour) spends several seconds in
+      // llvm-symbolizer, which would turn the failure into a timeout; the
+      // report header in stderr is what identifies it.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // Every run failed on that one file. The message is the builtin's; the
+  // system cp, which the shell falls back to without the env var, words it
+  // differently.
+  expect(JSON.parse(stdout)).toEqual([
+    {
+      exitCode: 1,
+      stderr: `cp: ${isWindows ? "Operation not permitted" : "Is a directory"}: ${join(String(dir), "dst", "src", "000-bad.txt")}\n`,
+    },
+  ]);
+  expect(exitCode).toBe(0);
+  // The failure does not stop the siblings from being copied, which is what
+  // leaves them touching the parent after the error.
+  expect(readdirSync(join(String(dir), "dst", "src"))).toHaveLength(33);
 });
 
 function expectSortedOutput(expected: string) {

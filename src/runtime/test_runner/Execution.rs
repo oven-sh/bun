@@ -1023,21 +1023,6 @@ fn step_sequence_one(
             (*on_stack_data_cell).set(prev_on_stack_data);
         });
 
-        // Expose this sequence to hooks registered synchronously inside the
-        // callback (including microtasks drained by `run_test_callback`);
-        // popped when the JS call returns, even if its promise is pending.
-        // SAFETY: buntest_ptr is the same ownership root `run_test_callback`
-        // uses, touched before handing control to JS.
-        unsafe { (*buntest_ptr.as_ptr()).push_current_callback(callback_data.clone()); }
-        struct PopGuard(core::ptr::NonNull<BunTest>);
-        impl Drop for PopGuard {
-            fn drop(&mut self) {
-                // SAFETY: same buntest_ptr we pushed on; single-threaded.
-                unsafe { (*self.0.as_ptr()).pop_current_callback(); }
-            }
-        }
-        let _pop_guard = PopGuard(buntest_ptr);
-
         if BunTest::run_test_callback(
             buntest_strong,
             global_this,

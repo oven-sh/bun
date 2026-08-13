@@ -654,11 +654,6 @@ pub struct BunTest {
     /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
     pub(crate) cloned_hook_entries: Vec<*mut ExecutionEntry>,
     pub(crate) wants_wakeup: bool,
-    /// Sequence contexts whose JS callback is executing synchronously
-    /// (pushed/popped around `run_test_callback` by `step_sequence_one`).
-    /// Lets `get_current_state_data` attribute hooks like `onTestFinished()`
-    /// to the right sequence in multi-sequence concurrent groups.
-    pub(crate) current_callback_stack: Vec<RefDataValue>,
 
     pub(crate) phase: Phase,
     pub(crate) collection: Collection,
@@ -692,7 +687,6 @@ impl BunTest {
             first_last,
             extra_execution_entries: Vec::new(),
             cloned_hook_entries: Vec::new(),
-            current_callback_stack: Vec::new(),
             // `EventLoopTimer` has no `Default`; `init_paused` sets
             // `next = EPOCH, state = PENDING`.
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
@@ -706,10 +700,14 @@ impl BunTest {
                 active_scope: self.collection.active_scope,
             },
             Phase::Execution => 'blk: {
-                if let Some(top) = self.current_callback_stack.last() {
-                    if matches!(top, RefDataValue::Execution { .. }) {
-                        break 'blk top.clone();
-                    }
+                // A callback is synchronously on the stack (including the
+                // microtask drain inside `run_test_callback`): its entry names
+                // the sequence even in a multi-sequence concurrent group.
+                if let Some(entry_data) = self.execution.on_stack_entry_data.get() {
+                    break 'blk RefDataValue::Execution {
+                        group_index: self.execution.group_index,
+                        entry_data: Some(entry_data),
+                    };
                 }
 
                 let Some(active_group) = self.execution.active_group_ref() else {
@@ -744,17 +742,6 @@ impl BunTest {
                 }
             }
             Phase::Done => RefDataValue::Done,
-        }
-    }
-
-    /// Must be paired with `pop_current_callback`.
-    pub fn push_current_callback(&mut self, data: RefDataValue) {
-        self.current_callback_stack.push(data);
-    }
-
-    pub fn pop_current_callback(&mut self) {
-        if self.current_callback_stack.pop().is_none() {
-            debug_assert!(false);
         }
     }
 
@@ -1416,7 +1403,6 @@ impl Drop for BunTest {
             // SAFETY: heap-boxed by `Order::generate_order_test`; same layout as `ManuallyDrop`.
             let _ = unsafe { Box::from_raw(entry.cast::<core::mem::ManuallyDrop<ExecutionEntry>>()) };
         }
-        debug_assert!(self.current_callback_stack.is_empty()); // pushes must be balanced by pops
         // execution, collection, result_queue: dropped automatically
     }
 }

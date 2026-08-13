@@ -412,13 +412,17 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
-  test("routes: ignoreTrailingSlash and ignoreDuplicateSlashes apply to the H3 router", async () => {
+  // Each flag is exercised on its own, with the other flag's input asserted to
+  // still fall through, so a swapped argument anywhere in the H3 plumbing fails.
+  test.each([
+    ["ignoreTrailingSlash", "/api/users/", "/api//users"],
+    ["ignoreDuplicateSlashes", "/api//users", "/api/users/"],
+  ])("routes: %s applies to the H3 router", async (option, normalized, untouched) => {
     const script = `
       const tls = ${JSON.stringify(tls)};
       const server = Bun.serve({
         port: 0, tls, http3: true,
-        ignoreTrailingSlash: true,
-        ignoreDuplicateSlashes: true,
+        ${option}: true,
         routes: { "/api/users": () => new Response("matched") },
         fetch: () => new Response("fallback"),
       });
@@ -428,8 +432,8 @@ describe("Bun.serve HTTP/3", () => {
     `;
     await withCustomServer(script, async port => {
       expect(await fetchH3(port, "/api/users").then(r => r.text())).toBe("matched");
-      expect(await fetchH3(port, "/api/users/").then(r => r.text())).toBe("matched");
-      expect(await fetchH3(port, "/api//users//").then(r => r.text())).toBe("matched");
+      expect(await fetchH3(port, normalized).then(r => r.text())).toBe("matched");
+      expect(await fetchH3(port, untouched).then(r => r.text())).toBe("fallback");
     });
   });
 

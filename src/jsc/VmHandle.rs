@@ -367,11 +367,11 @@ impl VmHandle {
         }
     }
 
-    /// The VM is going away: `Open → Stopping` (idempotent; never reopens).
-    /// Any thread — a parent's `terminate()` calls it at request time, as
-    /// Node's `Environment::ExitEnv` sets `is_stopping` from the requesting
-    /// thread; this thread's own exit path calls it via
-    /// `VirtualMachine::forbid_script`.
+    /// The VM is going away: `Open → Stopping` (idempotent; never reopens or
+    /// un-closes). Any thread — a parent's `terminate()` calls it at request
+    /// time, as Node's `Environment::ExitEnv` sets `is_stopping` from the
+    /// requesting thread; this thread's own exit paths call it via
+    /// `VirtualMachine::stop_script` / `forbid_script`.
     pub fn stop(&self) {
         let _ = self.0.hot.state.compare_exchange(
             State::Open as u8,

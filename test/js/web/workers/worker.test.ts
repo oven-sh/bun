@@ -546,6 +546,23 @@ describe("web worker", () => {
       expect(ev.code).toBe(0);
     });
 
+    // process.exit() stops the worker at the call (Node's Stop): the 'exit'
+    // handlers it runs first are the last script; the reactions queued before
+    // it never run, so neither does the process.exit(42) in one of them. What
+    // ran is recorded in shared memory, read once the worker is gone.
+    test("process.exit() does not run the microtasks queued before it", async () => {
+      const log = new Int32Array(new SharedArrayBuffer(4 * 8));
+      const src = `const log = require("node:worker_threads").workerData;
+        const put = tag => Atomics.store(log, Atomics.add(log, 0, 1) + 1, tag);
+        process.on("exit", () => put(1));
+        Promise.resolve().then(() => { put(2); process.exit(42); });
+        queueMicrotask(() => put(3));
+        process.exit(0);`;
+      const w = new Worker(URL.createObjectURL(new Blob([src])), { workerData: log });
+      const [ev] = await once(w, "close");
+      expect({ code: ev.code, ran: Array.from(log.slice(1, 1 + log[0])) }).toEqual({ code: 0, ran: [1] });
+    });
+
     // fs completions racing terminate(): whatever completes on the worker
     // after the request must release, not build script values under it.
     test("terminate() while fs.readFile completions keep arriving", async () => {

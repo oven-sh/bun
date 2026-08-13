@@ -2732,3 +2732,116 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
     expect(code).toBe(7);
   });
 });
+
+// A worker that stops by its own script's decision (process.exit(), an uncaught
+// error) is stopped at that request, as Node's Stop(env) stops it: the promise
+// reactions and queueMicrotask callbacks queued before the request never run
+// ('exit' handlers do: process.exit() runs them before requesting the stop),
+// and the request's code is the exit code whatever else happens to run. Each
+// worker records what ran in shared memory its parent reads after 'exit', so
+// nothing here depends on the dying thread delivering anything; the parent is
+// a subprocess so that the worker's uncaught error is its parent's 'error'
+// event and not this test's. The fixtures print the same results under Node.
+describe("a worker's own exit discards what it queued before it", () => {
+  const TAG = { exitHandler: 1, then: 2, microtask: 3 } as const;
+  type Entry = "eval" | ".cjs" | ".mjs";
+  const workerSource = (entry: Entry, body: string) => `
+    ${
+      entry === ".mjs"
+        ? `import { workerData, parentPort } from "node:worker_threads";`
+        : `const { workerData, parentPort } = require("node:worker_threads");`
+    }
+    const log = workerData.log;
+    const put = tag => { const i = Atomics.add(log, 0, 1) + 1; if (i < log.length) Atomics.store(log, i, tag); };
+    const queueLeaks = () => {
+      Promise.resolve().then(() => put(${TAG.then}));
+      queueMicrotask(() => put(${TAG.microtask}));
+    };
+    process.on("exit", () => put(${TAG.exitHandler}));
+    ${body}
+  `;
+  // "go" is delivered once the worker's top level has run; a worker that exits
+  // from its top level is gone before that and the message is dropped.
+  const parentSource = (entry: Entry, body: string) => `
+    import { Worker } from "node:worker_threads";
+    const log = new Int32Array(new SharedArrayBuffer(4 * 16));
+    const w = ${
+      entry === "eval"
+        ? `new Worker(${JSON.stringify(workerSource(entry, body))}, { eval: true, workerData: { log } })`
+        : `new Worker(new URL("./worker${entry}", import.meta.url), { workerData: { log } })`
+    };
+    const errors = [];
+    w.on("error", e => errors.push(e.message));
+    w.on("exit", code => {
+      const n = Math.min(Atomics.load(log, 0), log.length - 1);
+      console.log(JSON.stringify({ code, tags: Array.from(log.slice(1, 1 + n)), errors }));
+    });
+    w.postMessage("go");
+  `;
+
+  async function run(body: string, entry: Entry = "eval") {
+    using dir = tempDir("worker-own-exit", {
+      "parent.mjs": parentSource(entry, body),
+      ...(entry === "eval" ? {} : { [`worker${entry}`]: workerSource(entry, body) }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  test.concurrent.each(["eval", ".cjs", ".mjs"] as const)(
+    "process.exit() at the top level of a %s entry",
+    async entry => {
+      expect(await run(`queueLeaks(); process.exit(0);`, entry)).toEqual({
+        code: 0,
+        tags: [TAG.exitHandler],
+        errors: [],
+      });
+    },
+  );
+
+  test.concurrent("process.exit() inside an event callback", async () => {
+    expect(await run(`parentPort.on("message", () => { queueLeaks(); process.exit(0); });`)).toEqual({
+      code: 0,
+      tags: [TAG.exitHandler],
+      errors: [],
+    });
+  });
+
+  test.concurrent("process.exit() inside a promise reaction drops the reactions queued behind it", async () => {
+    expect(await run(`Promise.resolve().then(() => { queueLeaks(); process.exit(5); });`)).toEqual({
+      code: 5,
+      tags: [TAG.exitHandler],
+      errors: [],
+    });
+  });
+
+  test.concurrent("an uncaught error inside a callback", async () => {
+    expect(await run(`setImmediate(() => { queueLeaks(); throw new Error("boom"); });`)).toEqual({
+      code: 1,
+      tags: [TAG.exitHandler],
+      errors: ["boom"],
+    });
+  });
+
+  test.concurrent("the first process.exit() decides the exit code", async () => {
+    // process.exit(3) runs the 'exit' handlers before requesting the stop, so
+    // the handler's process.exit(7) is the request that stops the worker and 7
+    // is the exit code, as in Node (where the thread stops right there); the
+    // outer process.exit(3) finishing afterwards changes nothing. The handlers
+    // run once.
+    expect(await run(`process.on("exit", () => process.exit(7)); process.exit(3);`)).toEqual({
+      code: 7,
+      tags: [TAG.exitHandler],
+      errors: [],
+    });
+  });
+});

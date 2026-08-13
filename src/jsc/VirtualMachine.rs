@@ -898,6 +898,24 @@ impl VirtualMachine {
         self.handle.stop();
     }
 
+    /// A worker stopping by its own script's decision (`process.exit()`, an
+    /// uncaught error), on the JS thread with that script still on the stack:
+    /// [`forbid_script`](Self::forbid_script) minus dropping the module
+    /// registry, which waits for teardown. Closing the gate alone is not
+    /// enough, because JSC's microtask checkpoints consult only its own
+    /// execution-forbidden flag, and the termination trap the caller arms next
+    /// does not cover them either: the checkpoint inside the request itself
+    /// runs before the trap exists (firing it from this thread releases and
+    /// retakes the API lock, and the release is a checkpoint), and the
+    /// dispatcher's checkpoint after the callback runs once it has caught and
+    /// cleared the termination that unwound the callback. With the flag set,
+    /// both (and teardown's) discard what was queued before the exit instead
+    /// of running it, as Node does.
+    pub fn stop_script(&self) {
+        self.handle.stop();
+        self.jsc_vm().set_execution_forbidden(true);
+    }
+
     /// Which embedded loop is current (`event_loop` points at the regular loop
     /// except while a macro runs). Off-thread completions carry this so they
     /// land on the loop that was current when their work started.

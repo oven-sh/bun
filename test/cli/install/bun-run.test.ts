@@ -1170,4 +1170,60 @@ describe.concurrent("bun run", () => {
       expect(exitCode).toBe(1);
     }
   });
+
+  // The system shell is looked up on PATH (bash, sh, zsh), so a PATH holding only
+  // an `sh` whose shebang interpreter does not exist makes the shell itself fail
+  // to spawn (execve fails with ENOENT). Windows always uses cmd.exe, so there is
+  // nothing to break there.
+  describe.skipIf(isWindows)("--shell=system when the shell fails to spawn", () => {
+    async function runWithBrokenSystemShell(...flags: string[]) {
+      using dir = tempDir("bun-run-broken-system-shell", {
+        "package.json": JSON.stringify({
+          name: "broken-system-shell",
+          scripts: {
+            prehi: "echo pre",
+            hi: "echo hi",
+            posthi: "echo post",
+          },
+        }),
+        "fakebin/sh": "#!/nonexistent/interpreter\n",
+      });
+      chmodSync(join(String(dir), "fakebin", "sh"), 0o755);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", ...flags, "--shell=system", "hi"],
+        cwd: String(dir),
+        env: { ...bunEnv, PATH: join(String(dir), "fakebin") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr: stderr.replaceAll(String(dir), "<dir>"), exitCode };
+    }
+
+    // prehi fails first; hi and posthi must not be attempted afterwards.
+    it("reports the failure and exits 1", async () => {
+      const { stdout, stderr, exitCode } = await runWithBrokenSystemShell();
+      expect(stderr).toMatchInlineSnapshot(`
+        "$ echo pre
+        error: Failed to run script prehi due to error:
+        ENOENT: <dir>/fakebin/sh: No such file or directory (posix_spawn())
+        "
+      `);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    });
+
+    it("--silent still reports the failure and exits 1", async () => {
+      const { stdout, stderr, exitCode } = await runWithBrokenSystemShell("--silent");
+      expect(stderr).toMatchInlineSnapshot(`
+        "error: Failed to run script prehi due to error:
+        ENOENT: <dir>/fakebin/sh: No such file or directory (posix_spawn())
+        "
+      `);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    });
+  });
 });

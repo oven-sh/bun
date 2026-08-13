@@ -411,27 +411,25 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             },
             ..Default::default()
         }) {
+            // Not gated on `silent`, unlike the exit-code/signal reports below
+            // (same for `SpawnStatus::Err`): this is bun failing to run the
+            // script, not the script failing, and `--shell=bun` reports that
+            // unconditionally too.
             Err(err) => {
-                if !silent {
-                    pretty_errorln!(
-                        "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
-                        bstr::BStr::new(name),
-                        bstr::BStr::new(err.name()),
-                    );
-                }
-                Output::flush();
-                return Ok(());
+                pretty_errorln!(
+                    "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
+                    bstr::BStr::new(name),
+                    bstr::BStr::new(err.name()),
+                );
+                Global::exit(1);
             }
             Ok(Err(err)) => {
-                if !silent {
-                    pretty_errorln!(
-                        "<r><red>error<r>: Failed to run script <b>{}<r> due to error:\n{}",
-                        bstr::BStr::new(name),
-                        err,
-                    );
-                }
-                Output::flush();
-                return Ok(());
+                pretty_errorln!(
+                    "<r><red>error<r>: Failed to run script <b>{}<r> due to error:\n{}",
+                    bstr::BStr::new(name),
+                    err,
+                );
+                Global::exit(1);
             }
             Ok(Ok(result)) => result,
         };
@@ -505,16 +503,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
 
             SpawnStatus::Err(ref err) => {
-                if !silent {
-                    pretty_errorln!(
-                        "<r><red>error<r>: Failed to run script <b>{}<r> due to error:\n{}",
-                        bstr::BStr::new(name),
-                        err,
-                    );
-                }
-
-                Output::flush();
-                return Ok(());
+                pretty_errorln!(
+                    "<r><red>error<r>: Failed to run script <b>{}<r> due to error:\n{}",
+                    bstr::BStr::new(name),
+                    err,
+                );
+                Global::exit(1);
             }
 
             _ => {}

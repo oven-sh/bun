@@ -1556,6 +1556,17 @@ impl Poll {
                 }
             }
         };
+        // The owner is done with this poll once `Close` is applied (`on_done` runs
+        // right after), and EV_DELETE matches the knote by (ident, filter) alone,
+        // so a cancel carries no udata: if the kernel reports it back (the oneshot
+        // knote already fired → ENOENT, fd already closed → EBADF), the receipt
+        // lands on the `PollableTag::Empty` early return in `on_update_kqueue`
+        // instead of being dispatched to a stale owner.
+        let udata = if action == ApplyAction::Cancel {
+            0
+        } else {
+            udata
+        };
         // SAFETY: all-zero is a valid KEvent (POD).
         *kqueue_event = bun_core::ffi::zeroed();
         // `ident` is `u64` on Darwin's `kevent64_s`, `usize` on FreeBSD `kevent`.
@@ -1637,21 +1648,13 @@ impl Poll {
             return;
         }
         let poll = pollable.poll();
-        // FreeBSD reports a changelist entry it could not apply with
-        // `flags == EV_ERROR` and the errno in `data`. ENOENT/EBADF is the
-        // `Cancel` for a oneshot knote that already fired (or an fd that was
-        // already closed): kernel state already matches, nothing to deliver.
-        #[cfg(target_os = "freebsd")]
-        if (event.flags & libc::EV_ERROR) != 0
-            && (event.data == libc::ENOENT as _ || event.data == libc::EBADF as _)
-        {
-            log!("cancel({}) already gone = {}", event.ident, event.data);
-            return;
-        }
         // CYCLEBREAK: owner (ReadFile/WriteFile) is T6; dispatch via link-time
         // `extern "Rust"` defined in `bun_runtime::dispatch`. The
         // container_of(io_poll) recovery happens there.
-        if event.flags == libc::EV_ERROR {
+        // A changelist entry the kernel could not apply comes back with EV_ERROR
+        // set (xnu ORs it into the action bits, FreeBSD replaces them) and the
+        // errno in `data`.
+        if (event.flags & libc::EV_ERROR) != 0 {
             log!("error({}) = {}", event.ident, event.data);
             // SAFETY: poll is the `io_poll` field of a live owner; link-time
             // extern body matches on `tag`.

@@ -2406,33 +2406,15 @@ pub mod ffi {
     /// Safe `uname(2)` wrapper: zero-init a `utsname`, call `libc::uname`, return
     /// it by value. On the (theoretical) error path the struct stays all-zero,
     /// so every `c_char[]` field reads as an empty NUL-terminated string.
+    /// Goes through the `libc` crate rather than binding the symbol by name:
+    /// on FreeBSD the exported `uname` is a compat entry with 32-byte fields and
+    /// the real call is `__xuname(256, buf)`, which the crate already handles.
     #[cfg(unix)]
     #[inline]
     pub fn uname() -> libc::utsname {
-        // `&mut libc::utsname` is ABI-identical to libc's `struct utsname *`
-        // (thin non-null pointer to a `#[repr(C)]` struct); the type encodes
-        // the only pointer-validity precondition, so `safe fn` discharges the
-        // link-time proof and the call needs no `unsafe` block.
-        #[cfg(not(target_os = "freebsd"))]
-        unsafe extern "C" {
-            #[link_name = "uname"]
-            safe fn libc_uname(buf: &mut libc::utsname) -> core::ffi::c_int;
-        }
-        // FreeBSD's exported `uname` symbol is a compat entry that fills
-        // 32-byte fields; `struct utsname` has 256-byte fields and the
-        // header's `uname()` is an inline over `__xuname(SYS_NMLN, buf)`.
-        #[cfg(target_os = "freebsd")]
-        fn libc_uname(buf: &mut libc::utsname) -> core::ffi::c_int {
-            unsafe extern "C" {
-                safe fn __xuname(
-                    nmln: core::ffi::c_int,
-                    buf: &mut libc::utsname,
-                ) -> core::ffi::c_int;
-            }
-            __xuname(256, buf)
-        }
         let mut u: libc::utsname = zeroed();
-        let _ = libc_uname(&mut u);
+        // SAFETY: `u` is a valid, writable utsname for the duration of the call.
+        let _ = unsafe { libc::uname(&mut u) };
         u
     }
 

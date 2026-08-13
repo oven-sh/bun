@@ -1386,9 +1386,7 @@ export const linkerFlags: Flag[] = [
       "-Wl,--build-id=sha1",
     ],
     when: c => c.freebsd,
-    // Unlike Linux, FreeBSD sizes the *main-thread* stack from -z stack-size
-    // (PT_GNU_STACK); Bun__StackCheck__initialize accounts for that.
-    desc: "FreeBSD linker tuning (same as Linux ELF)",
+    desc: "FreeBSD linker tuning (same as Linux ELF; note -z stack-size sizes the MAIN thread's stack here, which Bun__StackCheck__initialize accounts for)",
   },
   {
     // rust-lang/llvm-project doesn't enable `LLVM_ENABLE_ZLIB` (or `_ZSTD`) for

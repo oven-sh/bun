@@ -21,6 +21,7 @@ static_assert(WTF::maxECMAScriptTime == 8.64e15, "bun_jsc::wtf::MAX_ECMASCRIPT_T
 #include <link.h>
 #include <pthread_np.h>
 #include <sys/resource.h>
+#include <unistd.h>
 #endif
 
 #if !OS(WINDOWS)
@@ -334,10 +335,13 @@ static size_t freebsdMainThreadStackReservation()
         return 1; },
         &query);
 
+    // The kernel truncates both to a page boundary.
+    size_t pageMask = ~(static_cast<size_t>(getpagesize()) - 1);
     struct rlimit limit;
-    size_t size = getrlimit(RLIMIT_STACK, &limit) == 0 && limit.rlim_cur != RLIM_INFINITY ? limit.rlim_cur : 0;
-    if (query.gnuStackSize && (!size || query.gnuStackSize < size))
-        size = query.gnuStackSize;
+    size_t size = getrlimit(RLIMIT_STACK, &limit) == 0 && limit.rlim_cur != RLIM_INFINITY ? (limit.rlim_cur & pageMask) : 0;
+    size_t gnuStackSize = query.gnuStackSize & pageMask;
+    if (gnuStackSize && (!size || gnuStackSize < size))
+        size = gnuStackSize;
     return size;
 }
 #endif
@@ -347,11 +351,13 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__StackCheck__initialize()
     WTF::StackBounds bounds = WTF::StackBounds::currentThreadStackBounds();
     void* end = bounds.end();
 #if OS(FREEBSD)
-    if (pthread_main_np()) {
+    if (pthread_main_np() == 1) {
         size_t reservation = freebsdMainThreadStackReservation();
-        char* reservedEnd = static_cast<char*>(bounds.origin()) - reservation;
-        if (reservation && reservedEnd > static_cast<char*>(end))
-            end = reservedEnd;
+        if (reservation && reservation < reinterpret_cast<uintptr_t>(bounds.origin())) {
+            char* reservedEnd = static_cast<char*>(bounds.origin()) - reservation;
+            if (reservedEnd > static_cast<char*>(end))
+                end = reservedEnd;
+        }
     }
 #endif
     stackEndForCurrentThread = end;

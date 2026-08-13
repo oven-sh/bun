@@ -1,4 +1,5 @@
 use core::ptr::NonNull;
+use std::sync::Arc;
 
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_ptr::BackRef;
@@ -528,7 +529,7 @@ impl EventLoopHandle {
 // How code below `bun_jsc` (spawn's waiter thread, the bundler's JS-loop hops,
 // shell/fs work that may serve a JS VM) posts a `ConcurrentTask` to a JS VM
 // from another thread. It is an erased `bun_jsc::VmHandle` clone: `bun_jsc`
-// fills the vtable; holders just call `post`. The VM's teardown closes the
+// implements `JsPost`; holders just call `post`. The VM's teardown closes the
 // underlying handle, after which `post` refuses (returns the task) and the
 // caller releases it on its own thread. Valid for as long as it is held.
 
@@ -541,69 +542,39 @@ pub enum Posted {
     Refused(NonNull<ConcurrentTask>),
 }
 
-pub struct JsPosterVTable {
-    pub post: unsafe fn(data: *const (), task: NonNull<ConcurrentTask>) -> Posted,
+/// What a [`JsPoster`] erases: implemented by `bun_jsc::vm_handle` for a VM's
+/// own loops and for a spawnSync isolated loop. Called from any thread.
+pub trait JsPost: Send + Sync {
+    fn post(&self, task: NonNull<ConcurrentTask>) -> Posted;
     /// `VmHandle::embedded_work_scheduled` / `_finished` (see there).
-    pub embedded_work_scheduled: unsafe fn(data: *const ()),
-    pub embedded_work_finished: unsafe fn(data: *const ()),
-    pub clone: unsafe fn(data: *const ()) -> *const (),
-    pub drop: unsafe fn(data: *const ()),
+    fn embedded_work_scheduled(&self);
+    fn embedded_work_finished(&self);
 }
 
-pub struct JsPoster {
-    data: *const (),
-    vtable: &'static JsPosterVTable,
-}
-
-// SAFETY: `data` is an erased `Arc<VmHandle inner>`; the vtable fns are the
-// thread-safe VmHandle operations.
-unsafe impl Send for JsPoster {}
-// SAFETY: as above.
-unsafe impl Sync for JsPoster {}
+#[derive(Clone)]
+pub struct JsPoster(Arc<dyn JsPost>);
 
 impl JsPoster {
-    /// # Safety
-    /// `data`/`vtable` come from one of `bun_jsc::vm_handle`'s `to_js_poster`
-    /// implementations (`VmHandle` / `LoopHandle` / the isolated poster).
     #[inline]
-    pub unsafe fn from_raw(data: *const (), vtable: &'static JsPosterVTable) -> Self {
-        Self { data, vtable }
+    pub fn new<T: JsPost + 'static>(inner: Arc<T>) -> Self {
+        Self(inner)
     }
 
     /// Queue `task` on the VM this poster was created for and wake it, or hand
     /// it back if the VM has been torn down.
     #[inline]
     pub fn post(&self, task: NonNull<ConcurrentTask>) -> Posted {
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.post)(self.data, task) }
+        self.0.post(task)
     }
 
-    #[inline]
     /// Count work whose storage the VM (indirectly) owns; it waits for the
     /// matching `embedded_work_finished` before closing. See `VmHandle`.
+    #[inline]
     pub fn embedded_work_scheduled(&self) {
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.embedded_work_scheduled)(self.data) }
+        self.0.embedded_work_scheduled()
     }
+    #[inline]
     pub fn embedded_work_finished(&self) {
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.embedded_work_finished)(self.data) }
-    }
-}
-
-impl Clone for JsPoster {
-    fn clone(&self) -> Self {
-        Self {
-            // SAFETY: vtable contract.
-            data: unsafe { (self.vtable.clone)(self.data) },
-            vtable: self.vtable,
-        }
-    }
-}
-
-impl Drop for JsPoster {
-    fn drop(&mut self) {
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.drop)(self.data) }
+        self.0.embedded_work_finished()
     }
 }

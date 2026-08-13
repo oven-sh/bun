@@ -892,8 +892,7 @@ impl BlobExt for Blob {
     }
 
     fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob {
-        // Lowercase-safe, so `blob().type` (ASCII-lowercased per the File API)
-        // followed by `fetch(url, { body: blob })` sends the right boundary.
+        // Must be lowercase: `Blob.type` reads back ASCII-lowercased, and the boundary travels in it.
         const BOUNDARY_PREFIX: &[u8; 17] = b"----formdata-bun-";
         let mut boundary_buf = [0u8; BOUNDARY_PREFIX.len() + 32];
         let boundary: &[u8] = {
@@ -2070,8 +2069,7 @@ impl BlobExt for Blob {
 
     fn get_name_string(&self) -> Option<BunString> {
         if self.name.get().tag() != bun_core::Tag::Dead {
-            // A `blob()` result's explicitly-empty name suppresses the store's
-            // file name; a File with an explicit empty name stays `""`.
+            // An explicitly empty name on a plain Blob (`blob()` results) hides the store's file name.
             if self.name.get().is_empty() && !self.is_jsdom_file.get() {
                 return None;
             }
@@ -4298,12 +4296,7 @@ pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
     BunString::empty()
 }
 
-/// Set a blob's `type` with the Blob constructor's validation and
-/// ASCII-lowercasing, without the interned MIME table canonicalization. Used
-/// by `readableStreamToBlob` so the body-derived type is stored exactly.
-///
-/// # Safety
-/// `[ptr, ptr+len)` must be a valid readable byte range (or `ptr` null / `len` 0).
+/// Blob-constructor `type` rules minus the interned-MIME canonicalization; `[ptr, ptr+len)` must be readable.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Blob__setType(this: &Blob, ptr: *const u8, len: usize) {
     // SAFETY: caller guarantees [ptr, ptr+len) is valid (BunStreamConsumers.cpp

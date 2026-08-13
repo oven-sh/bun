@@ -1295,8 +1295,7 @@ JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableSt
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
     if (stream->m_disturbed)
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createAlreadyUsedError(globalObject)));
-    // The fast path returns the native source's own blob, with its own type;
-    // the caller's contentType wins, so take the assembling path instead.
+    // The fast path's blob carries the native source's own type, which a caller-supplied contentType must override.
     if (!contentType.isString()) {
         JSValue fastPath = tryUseReadableStreamBufferedFastPath(globalObject, stream, builtinNames(vm).blobPublicName());
         RETURN_IF_EXCEPTION(scope, {});
@@ -1521,9 +1520,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamToBlobFulfilled, (J
     RETURN_IF_EXCEPTION(scope, {});
     Bun::WebStreams::releaseInternalChunkArray(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
-    // The type is stamped after construction: the Blob constructor runs its
-    // input through the interned MIME table, which would rewrite e.g.
-    // "application/json" to "application/json;charset=utf-8".
+    // Set after construction: `new Blob(parts, { type })` canonicalizes through the interned MIME table.
     JSValue contentType = callFrame->argument(1);
     if (contentType.isString()) {
         if (auto* jsBlob = dynamicDowncast<WebCore::JSBlob>(blob)) {

@@ -37,28 +37,19 @@ pub(super) fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
     unsafe { &**s }
 }
 
-/// Turn a body's blob into the **plain** `Blob` that `blob()` must return:
-/// per the Fetch spec the result's `type` is the header-derived
-/// [`normalize_blob_type`] result (or "") and never a `File`, so the source
-/// body's `File` identity is cleared. The byte store stays shared (zero-copy).
+/// The plain `Blob` that `blob()` returns: never a `File`, typed only by `content_type`, store shared.
 fn into_consumed_blob(blob: Blob, content_type: Option<blob::BlobContentType>) -> Blob {
     blob.is_jsdom_file.set(false);
     blob.last_modified.set(0.0);
-    // A shared `Bytes` store can still carry the source `File`'s
-    // `stored_name`; an explicitly empty per-blob `name` suppresses that
-    // fallback (see `Blob::get_name_string`).
+    // An explicitly empty name hides the shared store's file name (see `Blob::get_name_string`).
     blob.name.set(BunString::empty());
-    // The result's type is exactly the computed one, or "".
     blob.content_type.set(content_type.unwrap_or_default());
     blob.content_type_was_set
         .set(!blob.content_type_slice().is_empty());
     blob
 }
 
-/// Fetch's "extract a MIME type" + mimesniff's "serialize a MIME type" over a
-/// `Content-Type` header value, then the Blob constructor's `type`
-/// normalization (dropped if any byte is outside U+0020..=U+007E, else
-/// ASCII-lowercased). `None` surfaces as an empty `type`.
+/// "Extract a MIME type" over the header value, then the Blob constructor's `type` normalization.
 fn normalize_blob_type(combined_content_type: &[u8]) -> Option<blob::BlobContentType> {
     let mut ty = bun_http_types::mime_sniff::extract_mime_type(combined_content_type)?;
     if !blob::is_valid_blob_type(&ty) {
@@ -241,9 +232,7 @@ pub struct PendingValue {
     pub producer: streams::SourceHandle,
     pub(crate) size_hint: blob::SizeType,
 
-    /// [`Value::source_content_type`] of the body this stream was created
-    /// from, captured in `to_readable_stream`. `None` for streams that did
-    /// not originate from a local body (user streams, network bodies).
+    /// [`Value::source_content_type`] of the local body `to_readable_stream` converted, else `None`.
     pub(crate) source_content_type: Option<blob::BlobContentType>,
 
     pub(crate) deinit: bool,
@@ -451,9 +440,7 @@ pub enum Action {
     GetJSON,
     GetArrayBuffer,
     GetBytes,
-    /// Carries the already-normalized Blob `type` ([`normalize_blob_type`])
-    /// computed when `.blob()` was called, so the eventual resolution sites
-    /// (JS readable stream or native buffering) don't need the header list.
+    /// The [`normalize_blob_type`] result computed when `.blob()` was called.
     GetBlob(Option<blob::BlobContentType>),
     GetFormData(Option<Box<bun_core::form_data::AsyncFormData>>),
 }
@@ -701,9 +688,7 @@ impl Value {
         }
     }
 
-    /// The `Content-Type` that Fetch's "extract a body" derives from a local
-    /// body: the string default for string bodies, else the blob's own type.
-    /// `None` for streams, network bodies, and untyped blobs.
+    /// What Fetch's "extract a body" derives from a local body; `None` for streams and untyped blobs.
     pub fn source_content_type(&self) -> Option<blob::BlobContentType> {
         if self.was_string() {
             return Some(blob::BlobContentType::Static(b"text/plain;charset=utf-8"));
@@ -757,8 +742,7 @@ impl Value {
                 AnyBlob::InternalBlob(b) => Value::InternalBlob(b),
                 AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(s),
             };
-            // Only a string body captures a type and recovers as plain bytes
-            // (`was_string` did not survive the stream round trip); restore it.
+            // Only a string body recovers as untyped bytes; its `was_string` did not survive the stream.
             if source_content_type.is_some() {
                 if let Value::InternalBlob(internal_blob) = self {
                     internal_blob.was_string = true;
@@ -1218,9 +1202,6 @@ impl Value {
                         result?;
                     }
                     action @ (Action::None | Action::GetBlob(_)) => {
-                        // `Action::None` never reaches here (nothing calls
-                        // `set_promise` with it); `GetBlob` carries the
-                        // normalized type computed when `.blob()` was called.
                         let content_type = match action {
                             Action::GetBlob(content_type) => content_type.take(),
                             _ => None,
@@ -1453,8 +1434,7 @@ impl Value {
                 locked.deinit = true;
                 locked.readable.deinit();
                 locked.readable = Default::default();
-                // `Response::destroy` resets then raw-deallocs without ever
-                // running this value's drop glue; free the owned payloads.
+                // `Response::destroy` deallocs raw after this; no drop glue ever runs for these.
                 locked.source_content_type = None;
                 locked.action = Action::None;
             }
@@ -1638,8 +1618,7 @@ impl Value {
             let was_string = internal_blob.was_string;
             let owned = internal_blob.to_owned_slice();
             let blob = Blob::init(owned, global_this);
-            // `was_string` has no home on the shared-store `Blob` both bodies
-            // get below; keep the type it implies (MimeType::TEXT).
+            // The shared `Blob` has no `was_string`; carry the type it implied.
             if was_string {
                 blob.content_type
                     .set(blob::BlobContentType::Static(b"text/plain;charset=utf-8"));
@@ -2198,9 +2177,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         self.get_blob_with_this_value(global_object, callframe.this())
     }
 
-    /// Fetch's "get the MIME type" for `blob()`: the explicit `Content-Type`
-    /// header, else what "extract a body" derived from the original body
-    /// ([`Value::source_content_type`], kept across a `.body` stream access).
+    /// Fetch's "get the MIME type": the `Content-Type` header, else the body's own derived type.
     fn get_blob_content_type(&self) -> JsResult<Option<blob::BlobContentType>> {
         if let Some(content_type) = self.get_content_type()? {
             return Ok(normalize_blob_type(content_type.slice()));
@@ -2226,8 +2203,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             return Ok(rejected);
         }
 
-        // Computed before the body is consumed: `use_()` below moves the blob
-        // the body-derived content type may come from.
+        // Before `use_()` below moves the blob this may be derived from.
         let content_type = self.get_blob_content_type()?;
 
         if matches!(value, Value::Locked(_)) {

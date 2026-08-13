@@ -1,18 +1,4 @@
-//! WHATWG MIME type parsing and serialization.
-//!
-//! Implements "parse a MIME type" / "serialize a MIME type" from the MIME
-//! Sniffing standard (<https://mimesniff.spec.whatwg.org/#parsing-a-mime-type>)
-//! and "extract a MIME type" from the Fetch standard
-//! (<https://fetch.spec.whatwg.org/#concept-header-extract-mime-type>),
-//! including the "get, decode, and split" step over a comma-combined header
-//! value. Body consumers (`Response.prototype.blob()` and friends) use this:
-//! the returned Blob's `type` is the serialized extraction result, not the raw
-//! header bytes.
-//!
-//! Everything operates on bytes. Non-ASCII UTF-8 bytes (all >= 0x80) are never
-//! HTTP token code points and are always HTTP quoted-string token code points,
-//! exactly like the non-ASCII code points they encode, so byte-wise iteration
-//! is equivalent to the spec's code-point iteration.
+//! WHATWG "parse/serialize a MIME type" (mimesniff) and Fetch's "extract a MIME type", on bytes.
 
 use bun_core::strings;
 
@@ -52,8 +38,6 @@ fn is_http_token(b: u8) -> bool {
 }
 
 /// <https://mimesniff.spec.whatwg.org/#http-quoted-string-token-code-point>
-/// HTAB, U+0020..=U+007E, or U+0080..=U+00FF. Note `"` and `\` are allowed;
-/// the serializer re-escapes them.
 #[inline]
 fn is_http_quoted_string_token(b: u8) -> bool {
     matches!(b, b'\t' | 0x20..=0x7E | 0x80..=0xFF)
@@ -130,10 +114,6 @@ impl MimeRecord {
 }
 
 /// <https://fetch.spec.whatwg.org/#collect-an-http-quoted-string>
-///
-/// `input[*pos]` must be `"`. Advances `*pos` past the quoted string. With
-/// `extract_value` the unescaped contents are returned; without it, the raw
-/// source span including the quotes.
 fn collect_http_quoted_string(input: &[u8], pos: &mut usize, extract_value: bool) -> Vec<u8> {
     let start = *pos;
     let mut value = Vec::new();
@@ -169,9 +149,6 @@ fn collect_http_quoted_string(input: &[u8], pos: &mut usize, extract_value: bool
 }
 
 /// <https://fetch.spec.whatwg.org/#header-value-get-decode-and-split>
-///
-/// Splits a comma-combined header value into its individual values, leaving
-/// commas inside quoted strings alone and trimming HTTP tab-or-space from each.
 fn get_decode_split(input: &[u8]) -> Vec<&[u8]> {
     let mut values = Vec::new();
     let mut pos = 0usize;
@@ -204,8 +181,7 @@ fn parse_mime_type(input: &[u8]) -> Option<MimeRecord> {
     // Step 1: remove leading and trailing HTTP whitespace.
     let input = trim(input, is_http_whitespace);
 
-    // Steps 3-6: `type` is everything before the first `/`, which must exist
-    // (step 5), be non-empty, and solely contain HTTP token code points.
+    // Steps 3-6.
     let slash = strings::index_of_char_usize(input, b'/')?;
     let type_ = &input[..slash];
     if type_.is_empty() || !type_.iter().copied().all(is_http_token) {
@@ -213,8 +189,7 @@ fn parse_mime_type(input: &[u8]) -> Option<MimeRecord> {
     }
     let mut pos = slash + 1;
 
-    // Steps 7-9: `subtype` runs to the first `;`, with trailing HTTP
-    // whitespace removed.
+    // Steps 7-9.
     let subtype_end =
         strings::index_of_char_usize(&input[pos..], b';').map_or(input.len(), |i| pos + i);
     let subtype = trim_end(&input[pos..subtype_end], is_http_whitespace);
@@ -290,12 +265,7 @@ fn parse_mime_type(input: &[u8]) -> Option<MimeRecord> {
     Some(record)
 }
 
-/// Fetch's "extract a MIME type" applied to the comma-combined `Content-Type`
-/// header value, serialized per "serialize a MIME type".
-///
-/// `None` means extraction failed (no valid MIME type among the values), which
-/// callers surface as an empty `type`.
-/// <https://fetch.spec.whatwg.org/#concept-header-extract-mime-type>
+/// <https://fetch.spec.whatwg.org/#concept-header-extract-mime-type>, serialized; `None` = failure.
 pub fn extract_mime_type(combined_value: &[u8]) -> Option<Vec<u8>> {
     let mut charset: Option<Vec<u8>> = None;
     let mut essence: Option<Vec<u8>> = None;

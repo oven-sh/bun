@@ -1529,4 +1529,32 @@ describe("tls.connect({ socket }) over a net.Socket whose connect has not comple
 
     expect(log).toEqual(["tls close hadError=false"]);
   });
+
+  it("a socket reconnected after the failure is no longer tied to the closed TLSSocket", async () => {
+    await using refused = await refusedPort();
+    // resume() so whatever the client sends is discarded and the accepted
+    // socket can reach 'end' -> autoDestroy, letting the disposal close() finish.
+    await using plain = net.createServer(socket => {
+      socket.resume();
+      socket.end("plain");
+    });
+    await once(plain.listen(0, "127.0.0.1"), "listening");
+    const log: string[] = [];
+    const raw = net.connect(refused.port, "127.0.0.1");
+    raw.on("error", () => {});
+    const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+    observe("tls", client, log);
+    await closed(raw);
+
+    // The wrap's 'connect' listener used to stay armed and upgrade whatever
+    // the socket connected to next, so the plain reply below reached the
+    // TLSSocket as ERR_SSL_WRONG_VERSION_NUMBER.
+    raw.connect((plain.address() as AddressInfo).port, "127.0.0.1");
+    const received: Buffer[] = [];
+    raw.on("data", chunk => received.push(chunk));
+    await closed(raw);
+
+    expect(Buffer.concat(received).toString()).toBe("plain");
+    expect(log).toEqual(["tls error ECONNREFUSED", "tls close hadError=false"]);
+  });
 });

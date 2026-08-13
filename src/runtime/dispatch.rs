@@ -301,14 +301,15 @@ pub(crate) fn run_task(
             .run();
         }
         task_tag::AsyncCpTask => {
-            // SAFETY: posted by `on_subtask_done` with the count at zero (exclusive).
-            unsafe { (*task.ptr.cast::<crate::node::fs::AsyncCpTask>()).run_from_js_thread()? };
+            // SAFETY: boxed by `schedule_new`; posted once by `on_subtask_done` with
+            // the count at zero; the arm consumes it.
+            unsafe { bun_core::heap::take(cast_ptr!(crate::node::fs::AsyncCpTask)) }
+                .run_from_js_thread()?;
         }
         task_tag::ShellAsyncCpTask => {
             // SAFETY: as above.
-            unsafe {
-                (*task.ptr.cast::<crate::node::fs::ShellAsyncCpTask>()).run_from_js_thread()?
-            };
+            unsafe { bun_core::heap::take(cast_ptr!(crate::node::fs::ShellAsyncCpTask)) }
+                .run_from_js_thread()?;
         }
         task_tag::StatWatcherHop => {
             // SAFETY: posted by `StatWatcher::post_to_js_thread` with a ref held.
@@ -429,7 +430,10 @@ pub(crate) fn run_task(
         for_each_fs_uv_op!(__fs_pat) => {
             macro_rules! __fs_run {
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
-                    $(task_tag::$tag => cast!(fs_async::$ty).run_from_js_thread()?,)*
+                    // SAFETY: §Dispatch — tag identifies the pointee: the box
+                    // `UVFSRequest::create` leaked, enqueued once; the arm consumes it.
+                    $(task_tag::$tag => unsafe { bun_core::heap::take(cast_ptr!(fs_async::$ty)) }
+                        .run_from_js_thread()?,)*
                     // SAFETY: outer arm guard proves one of the table tags matched.
                     _ => unsafe { core::hint::unreachable_unchecked() },
                 }};

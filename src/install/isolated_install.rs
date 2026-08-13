@@ -2171,10 +2171,8 @@ pub(crate) fn install_isolated_packages(
                     entry_steps[entry_id.get() as usize]
                         .store(installer::Step::Done as u32, Ordering::Relaxed);
 
-                    // The lockfile only stores the name, so the `bun link` registration may be
-                    // gone by now. Dependents symlink to it blindly, making this the only place
-                    // a missing target can fail the install (same `openat` as hoisted's
-                    // `install_from_link`).
+                    // Dependents link to it unchecked, so fail here if the `bun link`
+                    // registration is gone (same openat as hoisted's `install_from_link`).
                     let mut link_target: AbsPath = AbsPath::init_top_level_dir();
                     installer.append_store_path(&mut link_target, entry_id);
                     match sys::openat(

@@ -376,8 +376,9 @@ export default function Client() {
 
   test("namespace import, export * as and require() of a client component", async () => {
     // The server sees a "use client" module through a generated client
-    // reference proxy. Named and default imports bind to its exports directly;
-    // these three forms all need the proxy's module namespace object.
+    // reference proxy, and "bun:bake/server" is generated the same way. Named
+    // and default imports bind to their exports directly; these forms all need
+    // the generated module's namespace object.
     const dir = await tempDirWithBakeDeps("bake-production-client-namespace", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,
       "components/Client.tsx": `"use client";
@@ -407,6 +408,11 @@ export default function ReexportPage() {
   const C = require("../components/Client");
   return <i>{Object.keys(C).sort().join(",")}</i>;
 }`,
+      "pages/manifest.tsx": `import * as bake from "bun:bake/server";
+
+export default function ManifestPage() {
+  return <i>{Object.keys(bake).sort().join(",")}</i>;
+}`,
       "package.json": JSON.stringify({
         "name": "test-app",
         "version": "1.0.0",
@@ -432,6 +438,9 @@ export default function ReexportPage() {
 
     const requireHtml = await Bun.file(path.join(dir, "dist", "require", "index.html")).text();
     expect(requireHtml).toContain("<i>Client,value</i>");
+
+    const manifestHtml = await Bun.file(path.join(dir, "dist", "manifest", "index.html")).text();
+    expect(manifestHtml).toContain("<i>serverManifest,ssrManifest</i>");
   });
 
   test("importing useState server-side", async () => {

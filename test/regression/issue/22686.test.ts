@@ -136,6 +136,44 @@ describe.concurrent("extensionless import with case-differing sibling (#22686)",
       expect(exitCode).toBe(0);
     });
 
+    test("exports wildcard: pkg/foo with dist/foo.ts + dist/Foo.tsx resolves to foo.ts", async () => {
+      using dir = tempDir("22686-j", {
+        "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { "./*": "./dist/*" } }),
+        "node_modules/pkg/dist/foo.ts": `export const which = "lower-ts";`,
+        "node_modules/pkg/dist/Foo.tsx": `export const which = "upper-tsx";`,
+        "entry.ts": `
+          import { which } from "pkg/foo";
+          console.log(which);
+          console.log(Bun.resolveSync("pkg/foo", import.meta.dir));
+        `,
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), "entry.ts");
+      expect(stderr).toBe("");
+      const lines = stdout.trim().split("\n");
+      expect(lines[0]).toBe("lower-ts");
+      expect(lines[1]).toBe(join(String(dir), "node_modules", "pkg", "dist", "foo.ts"));
+      expect(exitCode).toBe(0);
+    });
+
+    test("exports wildcard js->ts rewrite: pkg/mod with dist/Mod.ts + dist/mod.tsx resolves to mod.tsx", async () => {
+      using dir = tempDir("22686-k", {
+        "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { "./*": "./dist/*.js" } }),
+        "node_modules/pkg/dist/Mod.ts": `export const which = "upper-ts";`,
+        "node_modules/pkg/dist/mod.tsx": `export const which = "lower-tsx";`,
+        "entry.ts": `
+          import { which } from "pkg/mod";
+          console.log(which);
+          console.log(Bun.resolveSync("pkg/mod", import.meta.dir));
+        `,
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), "entry.ts");
+      expect(stderr).toBe("");
+      const lines = stdout.trim().split("\n");
+      expect(lines[0]).toBe("lower-tsx");
+      expect(lines[1]).toBe(join(String(dir), "node_modules", "pkg", "dist", "mod.tsx"));
+      expect(exitCode).toBe(0);
+    });
+
     test("bun build: todos.ts + Todos.tsx bundle correctly", async () => {
       using dir = tempDir("22686-g", {
         "todos.ts": `export const todos = ["lower-ts"];`,

@@ -1039,24 +1039,24 @@ impl Framework {
                     ]
                 };
 
-                let ignore_dirs: &'static [&'static [u8]] = if let Some(exts_js) =
+                let ignore_dirs: &'static [&'static [u8]] = if let Some(dirs_js) =
                     fsr_opts.get(global, "ignoreDirs")?
                 {
-                    'exts: {
-                        if exts_js.is_array() {
-                            let mut it_2 = array.array_iterator(global)?;
+                    'dirs: {
+                        if dirs_js.is_array() {
+                            let mut it_2 = dirs_js.array_iterator(global)?;
                             let mut dirs = bun_alloc::ArenaVec::<&'static [u8]>::with_capacity_in(
-                                len as usize,
+                                dirs_js.get_length(global)? as usize,
                                 arena,
                             );
                             while let Some(array_item) = it_2.next()? {
                                 dirs.push(refs.track(array_item.to_slice(global)?));
                             }
-                            break 'exts arena_erase(dirs.into_bump_slice());
+                            break 'dirs arena_erase(dirs.into_bump_slice());
                         }
 
                         return Err(global.throw_invalid_arguments(format_args!(
-                            "'ignoreDirs' must be an array of strings or \"*\" for all extensions"
+                            "'ignoreDirs' must be an array of strings"
                         )));
                     }
                 } else {

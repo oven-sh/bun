@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
-import { bunEnv, bunExe, tls as cert1, isDebug } from "harness";
+import { bunEnv, bunExe, tls as cert1, isDebug, isWindows } from "harness";
 import https from "https";
 import net, { AddressInfo } from "net";
 import { createTest } from "node-harness";
@@ -1039,10 +1039,14 @@ it("completes a write that fails inside the TLS layer after the handshake instea
 
   const { writeError } = await serverSocketDone.promise;
   if (writeError) {
+    // On Windows a fatal write errno reaches net.ts as a value
+    // getSystemErrorName() cannot name, and failWrite() shapes those as
+    // ECONNRESET (the same shaping every fatal plain-TCP send gets there).
+    const code = isWindows ? "ECONNRESET" : "EPROTO";
     expect({ code: writeError.code, syscall: writeError.syscall, serverEvents }).toEqual({
-      code: "EPROTO",
+      code,
       syscall: "write",
-      serverEvents: ["error:EPROTO", "close:true"],
+      serverEvents: [`error:${code}`, "close:true"],
     });
   } else {
     expect(await clientReply).toBe("pong");

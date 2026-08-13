@@ -434,13 +434,9 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
 
 pub struct EditorContext {
     pub(crate) editor: Option<Editor>,
-    /// Editor name or absolute path that `detect_editor` tries first: bunfig's
-    /// `[debug] editor`, or the `editor` option of `Bun.openInEditor` (whose
-    /// storage `open_in_editor` manages). Empty means environment only.
+    /// Name or absolute path tried first by `detect_editor`; empty means environment only.
     pub name: &'static [u8],
-    /// Resolved binary, stored in `Fs.FileSystem.instance.dirname_store`
-    /// (process-lifetime) because the thread `Editor::open` spawns reads it
-    /// after this context may have been replaced.
+    /// Always a `dirname_store` copy: the thread spawned by `Editor::open` outlives this context.
     pub path: &'static [u8],
 }
 
@@ -464,8 +460,7 @@ impl EditorContext {
     pub(crate) fn auto_detect_editor(&mut self, env: &mut dot_env::Loader) {
         if self.editor.is_none() {
             if self.name.is_empty() {
-                // `[debug] editor` from bunfig.toml. The CLI context is
-                // process-lifetime, so the slice satisfies `name: &'static`.
+                // bunfig `[debug] editor`; the CLI context is process-lifetime.
                 if let Some(ctx) = bun_options_types::context::try_get() {
                     self.name = &ctx.debug.editor;
                 }
@@ -482,8 +477,7 @@ impl EditorContext {
             .expect("unreachable");
     }
 
-    /// Every tier only accepts a binary that exists, so an editor that is
-    /// configured but not installed falls through to the next tier.
+    /// Each tier only accepts a binary that exists; otherwise the next tier is tried.
     pub(crate) fn detect_editor(&mut self, env: &mut dot_env::Loader) {
         let mut buf = PathBuffer::uninit();
         // Note: borrowck — `by_path_for_editor`/`by_fallback` tie `out`'s lifetime

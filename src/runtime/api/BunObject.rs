@@ -981,8 +981,7 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
         let mut editor_choice: Option<Editor> = None;
 
         if let Some(sliced) = &editor_name {
-            // Reuse the cached editor only if this same name resolved to one;
-            // `name` may also hold a bunfig editor that auto-detection did not find.
+            // `name` may be a bunfig editor that auto-detection failed to find.
             if edit.found().is_none() || !strings::eql_long(edit.name, sliced.slice(), true) {
                 let prev = core::mem::take(edit);
                 // Own the bytes in `name_storage` and

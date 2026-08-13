@@ -547,6 +547,16 @@ JSC_DEFINE_HOST_FUNCTION(functionCallerSourceOrigin,
     return JSValue::encode(jsString(vm, sourceOrigin.string()));
 }
 
+// Same as the jsc shell's noDFG: the function never enters an optimizing tier
+// (DFG or FTL), unlike noFTL below, which only keeps it out of the FTL.
+JSC_DECLARE_HOST_FUNCTION(functionNoDFG);
+JSC_DEFINE_HOST_FUNCTION(functionNoDFG,
+    (JSGlobalObject * globalObject,
+        CallFrame* callFrame))
+{
+    return JSValue::encode(setNeverOptimize(globalObject, callFrame));
+}
+
 JSC_DECLARE_HOST_FUNCTION(functionNoFTL);
 JSC_DEFINE_HOST_FUNCTION(functionNoFTL,
     (JSGlobalObject*, CallFrame* callFrame))
@@ -994,6 +1004,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
     noInline                            functionNeverInlineFunction                 Function    0
     isRope                              functionIsRope                              Function    0
     memoryUsage                         functionCreateMemoryFootprint               Function    0
+    noDFG                               functionNoDFG                               Function    0
     noFTL                               functionNoFTL                               Function    0
     noOSRExitFuzzing                    functionNoOSRExitFuzzing                    Function    0
     numberOfDFGCompiles                 functionNumberOfDFGCompiles                 Function    0
@@ -1017,7 +1028,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
-    INIT_NATIVE_MODULE(BunJSC, 36);
+    INIT_NATIVE_MODULE(BunJSC, 37);
 
     putNativeFn(Identifier::fromString(vm, "callerSourceOrigin"_s), functionCallerSourceOrigin);
     putNativeFn(Identifier::fromString(vm, "jscDescribe"_s), functionDescribe);
@@ -1034,6 +1045,7 @@ DEFINE_NATIVE_MODULE(BunJSC)
     putNativeFn(Identifier::fromString(vm, "noInline"_s), functionNeverInlineFunction);
     putNativeFn(Identifier::fromString(vm, "isRope"_s), functionIsRope);
     putNativeFn(Identifier::fromString(vm, "memoryUsage"_s), functionCreateMemoryFootprint);
+    putNativeFn(Identifier::fromString(vm, "noDFG"_s), functionNoDFG);
     putNativeFn(Identifier::fromString(vm, "noFTL"_s), functionNoFTL);
     putNativeFn(Identifier::fromString(vm, "noOSRExitFuzzing"_s), functionNoOSRExitFuzzing);
     putNativeFn(Identifier::fromString(vm, "numberOfDFGCompiles"_s), functionNumberOfDFGCompiles);

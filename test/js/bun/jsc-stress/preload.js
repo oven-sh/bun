@@ -1,7 +1,7 @@
 // JSC test harness polyfills for Bun
 // These globals are used by JSC stress tests but are not available in Bun.
 
-// noInline: hints JSC to not inline the function. No-op in Bun.
+// noInline: marks the function as never inlined, same as the jsc shell.
 globalThis.noInline = require("bun:jsc").noInline;
 
 // Debug builds (incl. `bun bd`) run JIT code far slower; reduce loop counts
@@ -31,4 +31,4 @@ globalThis.gc = () => Bun.gc(true);
 globalThis.fullGC = jsc.fullGC;
 globalThis.edenGC = jsc.edenGC;
 globalThis.numberOfDFGCompiles = jsc.numberOfDFGCompiles;
-globalThis.noDFG = jsc.noFTL;
+globalThis.noDFG = jsc.noDFG;

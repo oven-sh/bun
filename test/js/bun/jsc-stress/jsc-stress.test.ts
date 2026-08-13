@@ -315,3 +315,35 @@ describe.concurrent("JSC JIT Stress Tests", () => {
     }
   });
 });
+
+// The ffi fixtures compare a hot function against a twin they pin with noDFG,
+// which in the jsc shell keeps the twin in the interpreter/baseline so that it
+// serves as the oracle for the DFG and FTL. The preload has to give noDFG that
+// same meaning: a twin that still tiers up (as it did while noDFG aliased
+// noFTL) would compare DFG code against DFG code.
+test(
+  "preload.js noDFG keeps the pinned twin out of the DFG",
+  async () => {
+    const script = `
+      function ref(i) { return i + 1; }
+      function hot(i) { return i + 1; }
+      noDFG(ref);
+      noInline(ref);
+      noInline(hot);
+      for (let i = 0; i < 1_000_000 && numberOfDFGCompiles(hot) === 0; i++) {
+        ref(i);
+        hot(i);
+      }
+      print(JSON.stringify({ ref: numberOfDFGCompiles(ref), hotTieredUp: numberOfDFGCompiles(hot) > 0 }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", preloadPath, "-e", script],
+      env: fixtureEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: '{"ref":0,"hotTieredUp":true}\n', stderr: "", exitCode: 0 });
+  },
+  fixtureTimeout,
+);

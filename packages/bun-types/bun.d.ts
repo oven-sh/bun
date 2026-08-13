@@ -6658,7 +6658,15 @@ declare module "bun" {
     | "text"
     | "md"
     | "css"
-    | "html";
+    | "html"
+    | "sqlite"
+    /**
+     * Like `sqlite`, but the database file is copied into the output directory
+     * (or embedded in the compiled executable) and the bundle references that
+     * copy, as `with { type: "sqlite", embed: "true" }` does. Requires
+     * `target: "bun"`.
+     */
+    | "sqlite_embedded";
 
   interface PluginConstraints {
     /**

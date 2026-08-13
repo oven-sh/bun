@@ -62,9 +62,7 @@ unsafe extern "C" {
 
 const MAX_HISTORY_SIZE: usize = 1000;
 const HISTORY_FILENAME: &[u8] = b".bun_repl_history";
-/// The history file holds one entry per line, so the newlines inside a
-/// multi-line entry are stored as this byte instead (as node's repl history
-/// does). Nothing else puts a CR in an entry: the line editor reads it as Enter.
+/// Replaces an entry's inner newlines in the one-entry-per-line file (entries never contain CR).
 const HISTORY_STORED_NEWLINE: &[u8] = b"\r";
 
 // ANSI escape codes

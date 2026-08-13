@@ -124,8 +124,14 @@ function injectFakeEmitter(Class) {
     return event.error;
   }
 
-  function customEventHandler(event) {
-    return event.detail;
+  // node hands a node-style listener emit()'s argument when the event came from
+  // emit(), and otherwise the Event itself: its native 'close' is
+  // dispatchEvent(new MessagePortCloseEvent()). emit() below stashes its argument
+  // on the event it synthesizes; every other event (bun's native 'close' Event,
+  // anything passed to dispatchEvent()) is delivered as-is.
+  const kEmitArg = Symbol("emitArg");
+  function eventOrEmitArgHandler(event: Event) {
+    return kEmitArg in event ? event[kEmitArg] : event;
   }
 
   function wrapped(run, listener) {
@@ -146,7 +152,7 @@ function injectFakeEmitter(Class) {
       }
 
       default: {
-        return wrapped(customEventHandler, listener);
+        return wrapped(eventOrEmitArgHandler, listener);
       }
     }
   }
@@ -210,11 +216,14 @@ function injectFakeEmitter(Class) {
       case "message":
         this.dispatchEvent(new (EventClass(event))(event, ...args));
         break;
-      default:
+      default: {
         // Non-standard events surface as CustomEvent (detail = first arg) to
         // addEventListener and as the raw argument to .on(), matching node.
-        this.dispatchEvent(new CustomEvent(event, { detail: args[0] }));
+        const customEvent = new CustomEvent(event, { detail: args[0] });
+        customEvent[kEmitArg] = args[0];
+        this.dispatchEvent(customEvent);
         break;
+      }
     }
     return this;
   }

@@ -5370,6 +5370,8 @@ describe("update", () => {
       args: string[];
       after: string;
       realName?: string;
+      /** `[install] exact = true` in bunfig.toml */
+      exact?: boolean;
     }[] = [
       // --latest with a package name used to request `latest` of `aliased-dep` itself (404)
       {
@@ -5418,6 +5420,15 @@ describe("update", () => {
         args: ["aliased-dep@npm:no-deps", "--latest"],
         after: "npm:no-deps@~2.0.0",
       },
+      // `exact` replaces the range but not the alias target
+      {
+        before: "npm:no-deps@~1.0.0",
+        installed: "1.0.1",
+        args: ["aliased-dep", "--latest"],
+        after: "npm:no-deps@2.0.0",
+        exact: true,
+      },
+      { before: "npm:no-deps@~1.0.0", installed: "1.0.1", args: ["--latest"], after: "npm:no-deps@2.0.0", exact: true },
       // without a version after the alias target, the `npm:<name>@` prefix used to be dropped
       // (`"aliased-dep": "^2.0.0"`, which the next install resolves as a different package)
       { before: "npm:no-deps", installed: "2.0.0", args: ["aliased-dep"], after: "npm:no-deps@^2.0.0" },
@@ -5440,7 +5451,7 @@ describe("update", () => {
     ];
     test.each(aliasUpdateCases)(
       `"aliased-dep": "$before" + bun update $args -> "$after"`,
-      async ({ before, installed, args, after, realName = "no-deps" }) => {
+      async ({ before, installed, args, after, realName = "no-deps", exact = false }) => {
         await write(
           packageJson,
           JSON.stringify({
@@ -5450,6 +5461,11 @@ describe("update", () => {
             },
           }),
         );
+        if (exact) {
+          // the bunfig written by the registry helper only has an `[install]` table
+          const bunfig = join(packageDir, "bunfig.toml");
+          await write(bunfig, (await file(bunfig).text()) + "exact = true\n");
+        }
 
         await runBunInstall(env, packageDir);
         expect(await file(join(packageDir, "node_modules", "aliased-dep", "package.json")).json()).toMatchObject({

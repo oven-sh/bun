@@ -7722,10 +7722,8 @@ impl H2FrameParser {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Ends our side of a `waitForTrailers` stream with an empty END_STREAM DATA frame. Used when
-    /// there are no trailers, and by `send_trailers` when the block encodes to zero fields (only
-    /// empty-array values). node's `Http2Stream::SubmitTrailers` sends this frame in both cases,
-    /// so the peer gets no 'trailers' event rather than one with an empty header list.
+    /// Ends our side of the stream with an empty END_STREAM DATA frame, which is what node's
+    /// `Http2Stream::SubmitTrailers` sends for any trailer block that encodes to no fields.
     fn send_no_trailers(&self, stream: &mut Stream) {
         stream.wait_for_trailers = false;
         let _ = self.send_data(stream, b"", true, JSValue::UNDEFINED, false, false);

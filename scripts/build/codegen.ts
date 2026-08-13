@@ -16,21 +16,19 @@
  *
  * ## Undeclared outputs
  *
- * Several scripts emit MORE files than they report:
- *   - bindgen.ts emits Generated<Name>.h per namespace (only .cpp declared)
- *   - bindgenv2 emits Generated<Type>.h per type (list-outputs skips .h)
- *   - generate-node-errors.ts emits ErrorCode.d.ts (not declared)
- *   - bundle-modules.ts emits eval/ subdir, BunBuiltinNames+extras.h, etc.
+ * Every generated file that is compiled or #included must be a declared
+ * output of its step. Compiles only order-depend on codegen (bun.ts); the
+ * depfile is what rebuilds them when a generated header changes, and a
+ * depfile entry does that within the same run only if it names a declared
+ * output, which ninja re-stats after the step ran. A file no edge declares
+ * is stat'd once at startup, so a compile that includes it picks up a rerun
+ * of the step one build late. That is why emitBindgen/emitBindgenV2 declare
+ * the per-file Generated*.h headers and not just the .cpp that gets compiled.
  *
- * It WORKS because:
- *   1. The declared .cpp outputs guarantee the step runs before compile
- *   2. Compilation emits .d depfiles that track the .h files for NEXT build
- *   3. PCH order-depends on ALL codegen outputs; every cxx() waits on PCH
- *      → all codegen completes before any compile, undeclared .h exist
- *
- * Fixing properly (declaring all outputs) would require patching the
- * src/codegen/ scripts to report everything — changing contract with
- * existing tooling.
+ * Files nothing compiles may stay undeclared (.d.ts twins, bundle-modules'
+ * eval/ dir, JSSink.lut.txt consumed within its own step). The remaining
+ * #included exception is BunBuiltinNames+extras.h from bundle-functions.ts,
+ * reached through the PCH.
  */
 
 import { spawnSync } from "node:child_process";
@@ -795,7 +793,8 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   }
 }
 
-function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
+/** Exported (with emitBindgen) for test/internal/build-codegen-declared-outputs.test.ts. */
+export function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bindgenv2", "script.ts");
 
   // The script's output set depends on which NamedTypes the .bindv2.ts files
@@ -827,7 +826,8 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
   assert(allOutputs.length > 0, "bindgenv2 list-outputs returned no files");
 
   const cppOutputs = allOutputs.filter(p => p.endsWith(".cpp"));
-  const other = allOutputs.filter(p => !p.endsWith(".cpp"));
+  const headerOutputs = allOutputs.filter(p => p.endsWith(".h"));
+  const other = allOutputs.filter(p => !p.endsWith(".cpp") && !p.endsWith(".h"));
   assert(other.length === 0, `bindgenv2 emitted unexpected output type: ${other.join(", ")}`);
 
   n.build({
@@ -850,18 +850,24 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   o.all.push(...allOutputs);
   o.bindgenV2Cpp.push(...cppOutputs);
+  o.cppHeaders.push(...headerOutputs);
 }
 
-function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
+export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
 
   const cppOut = resolve(cfg.codegenDir, "GeneratedBindings.cpp");
+  // Plus one header per .bind.ts (node_os.bind.ts → GeneratedNodeOs.h), which
+  // hand-written .cpp files include; see "Undeclared outputs" above.
+  const headers = sources.bindgen.map(src =>
+    resolve(cfg.codegenDir, `Generated${pascalCase(basename(src, ".bind.ts"))}.h`),
+  );
 
-  // bindgen.ts scans src/ for .bind.ts files itself — this list is only for
-  // ninja dependency tracking. New .bind.ts files need a reconfigure to be
-  // picked up (next glob gets them).
+  // bindgen.ts scans src/ for .bind.ts files itself; this list only tells
+  // ninja the inputs and which headers come out. New .bind.ts files need a
+  // reconfigure to be picked up (next glob gets them).
   n.build({
-    outputs: [cppOut],
+    outputs: [cppOut, ...headers],
     rule: "codegen",
     inputs: [script, ...sources.bindgen],
     orderOnlyInputs: [dirStamp],
@@ -872,8 +878,14 @@ function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     },
   });
 
-  o.all.push(cppOut);
+  o.all.push(cppOut, ...headers);
   o.cppSources.push(cppOut);
+  o.cppHeaders.push(...headers);
+}
+
+/** Same transform as `pascal()` in src/codegen/bindgen-lib-internal.ts: `node_os` → `NodeOs`. */
+function pascalCase(s: string): string {
+  return s[0]!.toUpperCase() + s.slice(1).replace(/[_-](\w)?/g, (_, c?: string) => c?.toUpperCase() ?? "");
 }
 
 function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {

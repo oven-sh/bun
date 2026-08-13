@@ -36,7 +36,7 @@ How Bun transforms JSX constructs into vanilla JavaScript internally. The follow
 | `{ "jsx": "react" }`        | `React.createElement(Box, { width: 5 }, "Hello");`                                                                                                                                                                                                                                                                                                              |
 | `{ "jsx": "react-jsx" }`    | `import { jsx } from "react/jsx-runtime";`<br/>`jsx(Box, { width: 5, children: "Hello" });`                                                                                                                                                                                                                                                                     |
 | `{ "jsx": "react-jsxdev" }` | `import { jsxDEV } from "react/jsx-dev-runtime";`<br/>`jsxDEV(Box, { width: 5, children: "Hello" }, undefined, false, undefined, this);`<br/><br/>The `jsxDEV` variable name is a React convention. The `DEV` suffix marks code intended for development. The development version of React is slower and includes additional validity checks & debugging tools. |
-| `{ "jsx": "preserve" }`     | Not supported. Bun ignores this value and transpiles the JSX with the default (automatic) runtime instead of leaving it as-is.                                                                                                                                                                                                                                  |
+| `{ "jsx": "preserve" }`     | Not supported. Bun ignores this value and behaves as if `jsx` were not set: the JSX is still transpiled, using the automatic runtime.                                                                                                                                                                                                                           |
 
 ### [`jsxFactory`](https://www.typescriptlang.org/tsconfig#jsxFactory)
 
@@ -60,9 +60,11 @@ The function name used to represent [JSX fragments](https://react.dev/reference/
 
 ### [`jsxImportSource`](https://www.typescriptlang.org/tsconfig#jsxImportSource)
 
-<Note>Only applicable when `jsx` is `react-jsx` or `react-jsxdev`.</Note>
+<Note>
+  Only applicable when the automatic runtime is used, that is when `jsx` is `react-jsx`, `react-jsxdev`, or not set.
+</Note>
 
-The module the component factory function (such as `createElement`, `jsx`, or `jsxDEV`) is imported from. Default value is `"react"`. You typically need this when using a component library like Preact. Bun appends `/jsx-runtime` (or `/jsx-dev-runtime`) to this value automatically.
+The module the component factory function (such as `createElement`, `jsx`, or `jsxDEV`) is imported from. Default value is `"react"`. You typically need this when using a component library like Preact. The `jsx` and `jsxDEV` functions are imported from the `/jsx-runtime` and `/jsx-dev-runtime` subpaths of this module, which Bun appends automatically.
 
 | Compiler options                                                                | Transpiled output                                                                                                                         |
 | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |

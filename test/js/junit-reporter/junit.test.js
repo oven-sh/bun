@@ -447,7 +447,11 @@ describe("junit reporter", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Checked before reading the report so a child that died early shows its
+    // stderr here rather than as a missing junit.xml below.
+    expect(stderr).toContain(" 1 pass");
+    expect(stderr).toContain(" 1 fail");
 
     const xmlContent = await file(junitPath).text();
     // XML 1.0 Char excludes U+FFFE and U+FFFF outright, so neither the literal

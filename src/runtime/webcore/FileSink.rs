@@ -272,6 +272,56 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     }
 }
 
+/// `constructStdioWriteStream` just created a `process.stdout`/`process.stderr`
+/// sink. Under `bun test --isolate` each test file's fresh global re-creates
+/// these lazily over a new dup of the stdio fd (registered with the event
+/// loop), and nothing ends the outgoing file's sink at the global swap — the
+/// dups and their poll registrations accumulate per file, and a stale epoll
+/// entry whose fd number gets reused over the same pipe makes a later
+/// registration fail with EEXIST. Track the sink so
+/// `stop_active_handles_for_test_isolation` ends it at the swap.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__trackProcessStdioSinkForTestIsolation(
+    global: &JSGlobalObject,
+    jsvalue: JSValue,
+) {
+    if !global.bun_vm().test_isolation_enabled {
+        return;
+    }
+    let Some(this_ptr) = JSSink::from_js(jsvalue) else {
+        return;
+    };
+    // SAFETY: `from_js` returned a live `*mut JSSink<FileSink>`; the wrapper is
+    // `repr(transparent)` over `sink: FileSink`, so this recovers the canonical
+    // `*mut FileSink`.
+    let this: *mut FileSink = unsafe { &raw mut (*this_ptr).sink };
+    // The registry's +1, released by `stop_tracked_stdio_sink`.
+    // SAFETY: `this` is live — the JS wrapper holds its own +1.
+    unsafe { (*this).ref_() };
+    crate::jsc_hooks::ActiveHandle::ProcessStdioSink(core::ptr::NonNull::new(this).expect("sink"))
+        .register();
+}
+
+impl FileSink {
+    /// Ends a sink tracked by `ActiveHandle::ProcessStdioSink` (the
+    /// `--isolate` global swap or VM teardown), flushing buffered output,
+    /// closing the dup'd fd with its poll registration, and releasing the
+    /// registration's +1.
+    ///
+    /// # Safety
+    /// `this` must be the canonical live `*mut FileSink` whose registration
+    /// ref is still held; it must not be used after the call, which may free
+    /// it.
+    pub(crate) unsafe fn stop_tracked_stdio_sink(this: *mut FileSink) {
+        // SAFETY: caller contract — the registry's +1 keeps `this` live until
+        // the trailing `deref`, which is its last use.
+        unsafe {
+            let _ = (*this).end(None);
+            FileSink::deref(this);
+        }
+    }
+}
+
 impl FileSink {
     /// `bun.spawn`'s subprocess exited while this `FileSink` was its stdin.
     ///

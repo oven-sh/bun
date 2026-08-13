@@ -430,7 +430,7 @@ exports[`dependency on workspace without version in package.json: version: kjwoe
       "literal": "kjwoehcojrgjoj",
       "dist_tag": {
         "name": "no-deps",
-        "tag": "no-deps"
+        "tag": "kjwoehcojrgjoj"
       },
       "package_id": 2,
       "behavior": {
@@ -1758,7 +1758,7 @@ exports[`dependency on workspace without version in package.json: version: lates
       "literal": "latest",
       "dist_tag": {
         "name": "no-deps",
-        "tag": "no-deps"
+        "tag": "latest"
       },
       "package_id": 3,
       "behavior": {
@@ -1914,7 +1914,7 @@ exports[`dependency on workspace without version in package.json: version:  1`] 
       "literal": "",
       "dist_tag": {
         "name": "no-deps",
-        "tag": "no-deps"
+        "tag": "latest"
       },
       "package_id": 3,
       "behavior": {
@@ -2070,7 +2070,7 @@ exports[`dependency on same name as workspace and dist-tag: with version 1`] = `
       "literal": "latest",
       "dist_tag": {
         "name": "no-deps",
-        "tag": "no-deps"
+        "tag": "latest"
       },
       "package_id": 3,
       "behavior": {

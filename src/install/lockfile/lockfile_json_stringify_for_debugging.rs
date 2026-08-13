@@ -69,7 +69,7 @@ where
             w.write(info.name.slice(sb))?;
 
             w.object_field(b"tag")?;
-            w.write(info.name.slice(sb))?;
+            w.write(info.tag.slice(sb))?;
 
             let _ = w.end_object();
         }

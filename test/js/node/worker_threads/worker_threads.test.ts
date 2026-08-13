@@ -1246,10 +1246,16 @@ describe("a port transferred away fires 'close' on the sender's object", () => {
       "port1 close (listener added after the transfer)",
     ]);
 
-    // The channel is intact: the received port is entangled with port2.
+    // The channel is intact and belongs to the received port: the transferred-away object
+    // shares the pipe side with it (and, like a closed port, still has a context), so it
+    // must not be able to take the receiver's messages. (Node returns undefined here too,
+    // once the port's 'close' has fired.)
+    port2.postMessage("to the received port");
+    expect(receiveMessageOnPort(port1)).toBeUndefined();
     const received = await new Promise<MessagePort>(resolve => carrier.port2.once("message", resolve));
-    received.postMessage("via the received port");
-    expect(await new Promise(resolve => port2.once("message", resolve))).toBe("via the received port");
+    expect(await new Promise(resolve => received.once("message", resolve))).toBe("to the received port");
+    received.postMessage("from the received port");
+    expect(await new Promise(resolve => port2.once("message", resolve))).toBe("from the received port");
 
     // Closing the channel now closes port2 and the received port; the object that was
     // transferred away does not fire a second time.

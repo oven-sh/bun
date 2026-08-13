@@ -365,6 +365,7 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
 JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject, bool& hadMessage)
 {
     hadMessage = false;
+    // Also what stops a transferred-away object, which keeps its context, from taking from the pipe side its receiver now owns.
     if (!isEntangled())
         return jsUndefined();
 

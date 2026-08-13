@@ -75,7 +75,7 @@ describe.skipIf(isWindows).concurrent("issue/28861", () => {
 
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toContain("OK");
+    expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
   });
 });

@@ -175,18 +175,18 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
   });
 });
 
-// The target operand is classified with stat(), as cp(1) does, so a symlink to
-// a directory is a directory target and `cp file linkdir` lands in the directory
-// the link points at. The builtin used to lstat() it on POSIX and copy onto the
-// link itself. The builtin is only the default on Windows; on POSIX it is
-// switched on by an env var that is read once per process, so each cp runs in a
-// child bun.
-describe.concurrent("bunshell cp into a directory reached through a symlink", () => {
+// The target operand is classified with stat(), as cp(1) does: a symlink to a
+// directory is a directory target and `cp file linkdir` lands in the directory
+// the link points at, while a link that cannot be followed is a target that does
+// not exist (or a stat error). The builtin used to classify the link itself.
+// The builtin is only the default on Windows; on POSIX it is switched on by an
+// env var that is read once per process, so each cp runs in a child bun.
+describe.concurrent("bunshell cp with a symlink as the target", () => {
   const builtinEnv = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
 
   /** A working directory holding `realdir/`, `linkdir -> realdir` and `files`. */
   function setup(name: string, files: DirectoryTree) {
-    const dir = tempDir(`shell-cp-linkdir-${name}`, { realdir: {}, ...files });
+    const dir = tempDir(`shell-cp-link-target-${name}`, { realdir: {}, ...files });
     symlinkSync("realdir", join(String(dir), "linkdir"), "dir");
     return dir;
   }
@@ -278,7 +278,9 @@ describe.concurrent("bunshell cp into a directory reached through a symlink", ()
   });
 
   // A dangling link is a target that does not exist, even on Windows, where a
-  // directory-type link carries the directory attribute itself.
+  // directory-type link carries the directory attribute itself. The three
+  // tests below each pin one synopsis; the Windows build used to take the link
+  // for a directory and create `missing` with the copies in it.
   test("file+ -> dangling link is rejected", async () => {
     using dir = setup("dangling", { "a.txt": "A\n", "b.txt": "B\n" });
     const cwd = String(dir);
@@ -291,6 +293,76 @@ describe.concurrent("bunshell cp into a directory reached through a symlink", ()
     });
     expect(existsSync(join(cwd, "missing"))).toBe(false);
     expect(readlinkSync(join(cwd, "dangling"))).toBe("missing");
+  });
+
+  // Used to exit 0 on every platform without copying anything: the link counted
+  // as an existing target, and the native copy swallowed the EEXIST it got
+  // creating `dangling/`.
+  test("-R file+ -> dangling link is rejected", async () => {
+    using dir = setup("dangling-recursive", { "a.txt": "A\n", "b.txt": "B\n" });
+    const cwd = String(dir);
+    symlinkSync("missing", join(cwd, "dangling"), "dir");
+
+    expect(await cp(cwd, "cp -R a.txt b.txt dangling")).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: "cp: directory dangling does not exist\n".repeat(2),
+    });
+    expect(existsSync(join(cwd, "missing"))).toBe(false);
+    expect(readlinkSync(join(cwd, "dangling"))).toBe("missing");
+  });
+
+  // With one source the target is the file to write, and the copy addresses the
+  // link itself: on POSIX the open() writes through it like BSD cp (unchanged by
+  // the classification), on Windows CopyFileW refuses a directory-type link.
+  test("file -> dangling link", async () => {
+    using dir = setup("dangling-file", { "a.txt": "A\n" });
+    const cwd = String(dir);
+    symlinkSync("missing", join(cwd, "dangling"), "dir");
+
+    if (isWindows) {
+      expect(await cp(cwd, "cp a.txt dangling")).toEqual({
+        exitCode: 1,
+        stdout: "",
+        stderr: `cp: Operation not permitted: ${join(cwd, "dangling")}\n`,
+      });
+      expect(existsSync(join(cwd, "missing"))).toBe(false);
+    } else {
+      expect(await cp(cwd, "cp a.txt dangling")).toEqual(copied);
+      expect(readFileSync(join(cwd, "missing"), "utf8")).toBe("A\n");
+    }
+    expect(readlinkSync(join(cwd, "dangling"))).toBe("missing");
+  });
+
+  // Following the target can fail with something other than ENOENT; that is
+  // reported as is (cp(1): "target 'loop': Too many levels of symbolic links").
+  test("file+ -> link to itself is rejected with the stat error", async () => {
+    using dir = setup("loop", { "a.txt": "A\n", "b.txt": "B\n" });
+    const cwd = String(dir);
+    symlinkSync("loop", join(cwd, "loop"));
+
+    expect(await cp(cwd, "cp a.txt b.txt loop")).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: `cp: Too many levels of symbolic links: ${join(cwd, "loop")}\n`.repeat(2),
+    });
+    expect(readdirSync(cwd).sort()).toEqual(["a.txt", "b.txt", "linkdir", "loop", "realdir"]);
+  });
+
+  // Windows distinguishes file and directory links; a file-type link to a
+  // directory cannot be followed (stat fails with EPERM), so it is neither a
+  // directory to copy into nor a file to copy onto.
+  test.skipIf(!isWindows)("file+ -> file-type link to a directory is rejected with the stat error", async () => {
+    using dir = setup("file-type-link", { "a.txt": "A\n", "b.txt": "B\n" });
+    const cwd = String(dir);
+    symlinkSync("realdir", join(cwd, "filelink"), "file");
+
+    expect(await cp(cwd, "cp a.txt b.txt filelink")).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: `cp: Operation not permitted: ${join(cwd, "filelink")}\n`.repeat(2),
+    });
+    expect(readdirSync(join(cwd, "realdir"))).toEqual([]);
   });
 });
 

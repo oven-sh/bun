@@ -317,9 +317,7 @@ pub mod Jest {
         unsafe { RUNNER.read() }
     }
 
-    /// Whether a `mock.module()` installed right now outlives `mock.restore()`: mocks from
-    /// preload scripts and from a file's collection phase (its top level and describe bodies)
-    /// are the file's setup, mocks installed by tests and hooks are what restore reverts.
+    /// `mock.restore()` keeps module mocks installed by preload or a file's collection phase (its setup), not by tests/hooks.
     #[unsafe(no_mangle)]
     extern "C" fn Bun__Jest__moduleMockIsPersistent(global_object: &JSGlobalObject) -> bool {
         if global_object.bun_vm().is_in_preload {

@@ -607,3 +607,5 @@ exports[`snapshot numbering 4`] = `"snap"`;
 exports[`snapshot numbering 6`] = `"hello"`;
 
 exports[`snapshot numbering: hinted 1`] = `"hello"`;
+
+exports[`snapshots don't grow file on error 1`] = `"exports[\`snap 1\`] = \`hello\`goodbye\`;"`;

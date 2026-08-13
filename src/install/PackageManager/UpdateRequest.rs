@@ -1,4 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
+use core::fmt;
 use std::io::Write as _;
 
 use bun_ast::{Loc, Log};
@@ -72,6 +73,21 @@ fn anchor_cli_bytes(b: Box<[u8]>) -> &'static [u8] {
 }
 
 impl UpdateRequest {
+    pub(crate) fn resolved_npm_specifier<'a>(
+        &self,
+        resolved_name: &'a [u8],
+        resolved_version: bun_semver::Version,
+        string_buf: &'a [u8],
+        exact: bool,
+    ) -> ResolvedNpmSpecifier<'a> {
+        ResolvedNpmSpecifier {
+            alias_target: self.resolve_npm_alias.then_some(resolved_name),
+            version: resolved_version,
+            string_buf,
+            exact,
+        }
+    }
+
     /// Is `name` one of the `bun update <name>` targets? `false` for a bare `bun update`.
     #[inline]
     pub fn contains_name(
@@ -317,6 +333,25 @@ impl UpdateRequest {
         }
 
         Ok(update_requests.as_mut_slice())
+    }
+}
+
+pub(crate) struct ResolvedNpmSpecifier<'a> {
+    alias_target: Option<&'a [u8]>,
+    version: bun_semver::Version,
+    string_buf: &'a [u8],
+    exact: bool,
+}
+
+impl fmt::Display for ResolvedNpmSpecifier<'_> {
+    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(alias_target) = self.alias_target {
+            write!(writer, "npm:{}@", bstr::BStr::new(alias_target))?;
+        }
+        if !self.exact {
+            write!(writer, "^")?;
+        }
+        write!(writer, "{}", self.version.fmt(self.string_buf))
     }
 }
 

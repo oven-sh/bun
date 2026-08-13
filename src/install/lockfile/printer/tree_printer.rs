@@ -352,7 +352,7 @@ where
         bstr::BStr::new(package_name),
     )?;
 
-    if let Some(npm) = dependency.version.try_npm().filter(|npm| npm.is_alias) {
+    if let Some(npm) = dependency.npm_alias() {
         bun_core::write_pretty!(
             writer,
             ENABLE_ANSI_COLORS,

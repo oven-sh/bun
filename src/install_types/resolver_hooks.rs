@@ -542,6 +542,11 @@ impl Clone for Dependency {
 }
 
 impl Dependency {
+    #[inline]
+    pub fn npm_alias(&self) -> Option<&NpmInfo> {
+        self.version.try_npm().filter(|npm| npm.is_alias)
+    }
+
     /// Sorting order for dependencies is:
     /// 1. [`workspaces`, `devDependencies`, `optionalDependencies`, `dependencies`, `peerDependencies`]
     /// 2. name ASC

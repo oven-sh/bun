@@ -1544,39 +1544,23 @@ pub(crate) fn edit(
                                 && request.version.tag == dependency::Tag::Npm
                                 && !request.version.npm().version.is_exact())
                         {
-                            let new_version: Vec<u8> = {
-                                // `tag == Npm` matched at the top of this arm.
-                                let version_fmt = resolutions[request.package_id as usize]
-                                    .npm()
-                                    .version
-                                    .fmt(request.version_buf());
-                                let mut v = Vec::new();
-                                if options.exact_versions {
-                                    write!(&mut v, "{}", version_fmt)
-                                        .expect("infallible: in-memory write");
-                                } else {
-                                    write!(&mut v, "^{}", version_fmt)
-                                        .expect("infallible: in-memory write");
-                                }
-                                v
-                            };
-
-                            if request.resolve_npm_alias {
-                                let alias_name = manager.lockfile.packages.items_name()
-                                    [request.package_id as usize]
-                                    .slice(manager.lockfile.buffers.string_bytes.as_slice());
-                                let mut v = Vec::new();
-                                write!(
-                                    &mut v,
-                                    "npm:{}@{}",
-                                    bstr::BStr::new(alias_name),
-                                    bstr::BStr::new(&new_version)
+                            let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
+                            let resolved_name = manager.lockfile.packages.items_name()
+                                [request.package_id as usize]
+                                .slice(string_buf);
+                            let mut specifier = Vec::new();
+                            write!(
+                                &mut specifier,
+                                "{}",
+                                request.resolved_npm_specifier(
+                                    resolved_name,
+                                    resolutions[request.package_id as usize].npm().version,
+                                    request.version_buf(),
+                                    options.exact_versions,
                                 )
-                                .unwrap();
-                                break 'npm arena_str(arena, &v);
-                            }
-
-                            break 'npm arena_str(arena, &new_version);
+                            )
+                            .expect("infallible: in-memory write");
+                            break 'npm arena_str(arena, &specifier);
                         }
 
                         arena_dup(arena, request.version.literal.slice(request.version_buf()))

@@ -739,23 +739,13 @@ impl Lockfile {
 
                                 let npm_ver = res.npm().version;
                                 let string_buf = string_builder.string_bytes.as_slice();
-                                let len = if update.resolve_npm_alias {
-                                    bun_core::fmt::count(format_args!(
-                                        "npm:{}@{}{}",
-                                        bstr::BStr::new(
-                                            package_names[old_resolution as usize]
-                                                .slice(string_buf)
-                                        ),
-                                        if exact_versions { "" } else { "^" },
-                                        npm_ver.fmt(string_buf),
-                                    ))
-                                } else {
-                                    bun_core::fmt::count(format_args!(
-                                        "{}{}",
-                                        if exact_versions { "" } else { "^" },
-                                        npm_ver.fmt(string_buf),
-                                    ))
-                                };
+                                let specifier = update.resolved_npm_specifier(
+                                    package_names[old_resolution as usize].slice(string_buf),
+                                    npm_ver,
+                                    string_buf,
+                                    exact_versions,
+                                );
+                                let len = bun_core::fmt::count(format_args!("{specifier}"));
 
                                 if len >= SemverString::MAX_INLINE_LEN {
                                     string_builder.cap += len;
@@ -808,27 +798,17 @@ impl Lockfile {
                                 let npm_ver = res.npm().version;
                                 let string_buf = string_builder.string_bytes.as_slice();
                                 let mut buf = Vec::new();
-                                if update.resolve_npm_alias {
-                                    write!(
-                                        &mut buf,
-                                        "npm:{}@{}{}",
-                                        bstr::BStr::new(
-                                            package_names[old_resolution as usize]
-                                                .slice(string_buf)
-                                        ),
-                                        if exact_versions { "" } else { "^" },
-                                        npm_ver.fmt(string_buf),
+                                write!(
+                                    &mut buf,
+                                    "{}",
+                                    update.resolved_npm_specifier(
+                                        package_names[old_resolution as usize].slice(string_buf),
+                                        npm_ver,
+                                        string_buf,
+                                        exact_versions,
                                     )
-                                    .expect("infallible: in-memory write");
-                                } else {
-                                    write!(
-                                        &mut buf,
-                                        "{}{}",
-                                        if exact_versions { "" } else { "^" },
-                                        npm_ver.fmt(string_buf),
-                                    )
-                                    .expect("infallible: in-memory write");
-                                }
+                                )
+                                .expect("infallible: in-memory write");
 
                                 let external_version =
                                     string_builder.append::<ExternalString>(&buf);

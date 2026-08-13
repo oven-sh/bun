@@ -523,6 +523,61 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 });
 
+// A worker accepts through a different path per scheduling policy (a faux
+// handle fed by the primary under SCHED_RR, the primary's shared fd under
+// SCHED_NONE); both must still tell a unix-path server's connections apart from
+// a TCP server's: node's resetAndDestroy() throws ERR_INVALID_HANDLE_TYPE for
+// the former (a Pipe handle) and resets the latter.
+test.skipIf(isWindows).each(["SCHED_RR", "SCHED_NONE"])(
+  "%s: resetAndDestroy() on a worker's accepted sockets rejects unix-path connections and resets TCP ones",
+  async policy => {
+    using dir = tempDir("cluster-reset-handle-type", {
+      "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+const path = require("node:path");
+cluster.schedulingPolicy = cluster[process.env.POLICY];
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  cluster.on("listening", (_worker, address) => {
+    const client = address.addressType === -1 ? net.connect(address.address) : net.connect(address.port, address.address);
+    client.on("error", () => {});
+  });
+  worker.on("message", result => {
+    console.log(JSON.stringify(result));
+    worker.kill();
+    process.exit(0);
+  });
+} else {
+  const result = {};
+  function report(kind) {
+    return socket => {
+      try {
+        socket.resetAndDestroy();
+        result[kind] = { threw: null, destroyed: socket.destroyed };
+      } catch (err) {
+        result[kind] = { threw: err.code, destroyed: socket.destroyed };
+        socket.destroy();
+      }
+      if ("unix" in result && "tcp" in result) process.send(result);
+    };
+  }
+  net.createServer(report("unix")).listen(path.join(__dirname, "worker.sock"));
+  net.createServer(report("tcp")).listen(0, "127.0.0.1");
+}
+`,
+    });
+    const { stdout, stderr, exitCode } = await bunRun(joinP(String(dir), "main.ts"), { POLICY: policy });
+    expect({ exitCode, result: exitCode === 0 ? JSON.parse(stdout) : stderr }).toEqual({
+      exitCode: 0,
+      result: {
+        unix: { threw: "ERR_INVALID_HANDLE_TYPE", destroyed: false },
+        tcp: { threw: null, destroyed: true },
+      },
+    });
+  },
+);
+
 test.skipIf(!isLinux)("SCHED_NONE: an abstract-namespace listen is reachable by clients", async () => {
   using dir = tempDir("cluster-shared-abstract", {
     "main.ts": `

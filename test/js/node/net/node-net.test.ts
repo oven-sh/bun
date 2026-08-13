@@ -2078,3 +2078,128 @@ describe("net.Server.listen({ fd })", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// Node can only reset a TCP handle. A socket whose handle is anything else (a
+// unix socket / named pipe is a Pipe handle there) throws
+// ERR_INVALID_HANDLE_TYPE synchronously, before the connecting/connected
+// distinction is even looked at. Verified against node v26.3.0.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L801-L815
+describe("net.Socket.resetAndDestroy() handle type", () => {
+  function tryReset(socket: Socket) {
+    let threw: string | null = null;
+    try {
+      socket.resetAndDestroy();
+    } catch (e: any) {
+      threw = `${e.name} ${e.code}: ${e.message}`;
+    }
+    return { threw, destroyed: socket.destroyed };
+  }
+  const rejected = { threw: "TypeError ERR_INVALID_HANDLE_TYPE: This handle type cannot be sent", destroyed: false };
+  const reset = { threw: null, destroyed: true };
+  // A TCP socket that has not connected yet is reset once it does.
+  const resetDeferred = { threw: null, destroyed: false };
+
+  async function serve(kind: "pipe" | "tcp") {
+    const accepted = Promise.withResolvers<Socket>();
+    const connections: Socket[] = [];
+    const server = createServer(c => {
+      c.on("error", () => {});
+      connections.push(c);
+      accepted.resolve(c);
+    });
+    if (kind === "pipe") {
+      server.listen(
+        isWindows
+          ? `\\\\.\\pipe\\bun-reset-handle-type-${process.pid}-${randomUUID()}`
+          : join(socket_domain, `reset-${randomUUID().slice(0, 8)}.sock`),
+      );
+    } else {
+      server.listen(0, "127.0.0.1");
+    }
+    await once(server, "listening");
+    const address = server.address();
+    return {
+      target: typeof address === "string" ? { path: address } : { port: address!.port, host: "127.0.0.1" },
+      accepted: accepted.promise,
+      stop() {
+        for (const c of connections) c.destroy();
+        server.close();
+      },
+    };
+  }
+
+  it("a unix socket / named pipe connection throws while connecting, once connected, and on the accepting side", async () => {
+    const pipe = await serve("pipe");
+    try {
+      const client = connect(pipe.target);
+      client.on("error", () => {});
+      const whileConnecting = tryReset(client);
+      await once(client, "connect");
+      const acceptedSocket = await pipe.accepted;
+      const connected = tryReset(client);
+      const serverSide = tryReset(acceptedSocket);
+      expect({ whileConnecting, connected, serverSide }).toEqual({
+        whileConnecting: rejected,
+        connected: rejected,
+        serverSide: rejected,
+      });
+
+      // The rejected calls left the connection intact.
+      client.destroy();
+      const [hadError] = await once(client, "close");
+      expect(hadError).toBe(false);
+    } finally {
+      pipe.stop();
+    }
+  });
+
+  it("a TCP connection is still reset while connecting, once connected, and on the accepting side", async () => {
+    const tcp = await serve("tcp");
+    const tcpForEarlyReset = await serve("tcp");
+    try {
+      const early = connect(tcpForEarlyReset.target);
+      early.on("error", () => {});
+      const whileConnecting = tryReset(early);
+      await once(early, "close");
+
+      const client = connect(tcp.target);
+      client.on("error", () => {});
+      await once(client, "connect");
+      const acceptedSocket = await tcp.accepted;
+      const connected = tryReset(client);
+      const serverSide = tryReset(acceptedSocket);
+      expect({ whileConnecting, earlyDestroyed: early.destroyed, connected, serverSide }).toEqual({
+        whileConnecting: resetDeferred,
+        earlyDestroyed: true,
+        connected: reset,
+        serverSide: reset,
+      });
+    } finally {
+      tcp.stop();
+      tcpForEarlyReset.stop();
+    }
+  });
+
+  it("is decided per connect(): a socket reused for TCP after a unix socket / named pipe can be reset", async () => {
+    const pipe = await serve("pipe");
+    const tcp = await serve("tcp");
+    try {
+      const socket = new Socket();
+      socket.on("error", () => {});
+
+      socket.connect(pipe.target);
+      await once(socket, "connect");
+      const overPipe = tryReset(socket);
+      socket.destroy();
+      await once(socket, "close");
+
+      socket.connect(tcp.target);
+      await once(socket, "connect");
+      const overTcp = tryReset(socket);
+      expect({ overPipe, overTcp }).toEqual({ overPipe: rejected, overTcp: reset });
+    } finally {
+      pipe.stop();
+      tcp.stop();
+    }
+  });
+});

@@ -145,6 +145,11 @@ const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
 const kupgraded = Symbol("kupgraded");
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
+// Node gives a unix-socket / named-pipe connection a Pipe handle and a TCP
+// connection a TCP handle; resetAndDestroy() only accepts the latter. Bun's
+// native handle is the same class for both, so the distinction is recorded
+// where the connection is made (connect() and the server accept paths).
+const kIsPipe = Symbol("kIsPipe");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
 const kclosed = Symbol("closed");
@@ -1141,6 +1146,10 @@ function onconnection(err, clientHandle) {
     highWaterMark: self.highWaterMark,
   }) as NetSocket | TLSSocket;
   _socket.isServer = true;
+  // The listener knows the path it was bound to, except in a cluster worker
+  // accepting on the primary's shared fd, which recorded it on the server
+  // instead (the same two sources Server.prototype.address() reads).
+  _socket[kIsPipe] = !!(handle.unix || self[kClusterUnixPath]);
   // Use the server's normalized fields so the per-socket flag agrees with the
   // native listener: node's tlsConnectionListener passes `this.requestCert`
   // (`=== true`-normalized), not the raw option.
@@ -1584,6 +1593,7 @@ function Socket(options?) {
   this._pendingEncoding = undefined; // for compatibility
   this._hadError = false;
   this.isServer = false;
+  this[kIsPipe] = false;
   this._handle = options?.handle || null;
   this[ksocket] = undefined;
   this.server = undefined;
@@ -2108,6 +2118,7 @@ Socket.prototype.connect = function connect(...args) {
   const { path } = options;
   const pipe = !!path;
   $debug("pipe", pipe, path);
+  this[kIsPipe] = pipe;
 
   if (!this._handle) {
     this._handle = newDetachedSocket(typeof this[bunTlsSymbol] === "function");
@@ -2569,6 +2580,13 @@ function fdSyncWritev(data, callback) {
 
 Socket.prototype.resetAndDestroy = function resetAndDestroy() {
   if (this._handle) {
+    // Node: `if (!(this._handle instanceof TCP)) throw new ERR_INVALID_HANDLE_TYPE()`.
+    // A TLSSocket's handle is a TLS wrap there, and a pipe connection's handle
+    // is a Pipe; neither can be reset, connecting or not.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L801-L815
+    if (typeof this[bunTlsSymbol] === "function" || this[kIsPipe]) {
+      throw $ERR_INVALID_HANDLE_TYPE();
+    }
     if (this.connecting) {
       this.once("connect", () => this._reset());
     } else {
@@ -4197,6 +4215,8 @@ function onClusterConnection(err, clientHandle) {
     socket[kSetKeepAliveInitialDelay] = self.keepAliveInitialDelay;
   }
   socket.connect({ fd: clientHandle.fd, fdIsRawSocket: true, pauseOnConnect: self.pauseOnConnect });
+  // kClusterFauxListen records the listen path on the handle (see address()).
+  socket[kIsPipe] = !!this.unix;
   const blockList = self.blockList;
   if (blockList) {
     const remote = socket.remoteAddress;

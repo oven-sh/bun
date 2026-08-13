@@ -1426,3 +1426,91 @@ describe("throwing 'secureConnect' listener", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// Node's resetAndDestroy() only resets a TCP handle. A TLSSocket's handle is
+// the TLS wrap, whatever transport sits underneath it, so it throws
+// ERR_INVALID_HANDLE_TYPE synchronously (before and after the handshake, on
+// both ends); only the plain net.Socket underneath a tls.connect({ socket })
+// wrapper is still a TCP socket. Verified against node v26.3.0.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L801-L815
+describe("TLSSocket.resetAndDestroy()", () => {
+  function tryReset(socket: net.Socket) {
+    let threw: string | null = null;
+    try {
+      socket.resetAndDestroy();
+    } catch (e: any) {
+      threw = `${e.name} ${e.code}: ${e.message}`;
+    }
+    return { threw, destroyed: socket.destroyed };
+  }
+  const rejected = { threw: "TypeError ERR_INVALID_HANDLE_TYPE: This handle type cannot be sent", destroyed: false };
+
+  it("throws for a tls.connect() socket before and after the handshake, and for the server's socket", async () => {
+    const accepted = Promise.withResolvers<TLSSocket>();
+    const server = tls.createServer(COMMON_CERT_, socket => {
+      socket.on("error", () => {});
+      accepted.resolve(socket);
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = tls.connect({
+      port: (server.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+    });
+    client.on("error", () => {});
+    try {
+      // Asserted on its own: a reset that is accepted here tears the connection
+      // down as soon as it connects, and 'secureConnect' below never arrives.
+      expect(tryReset(client)).toEqual(rejected);
+      await once(client, "secureConnect");
+      const serverSocket = await accepted.promise;
+      const afterHandshake = tryReset(client);
+      const serverSide = tryReset(serverSocket);
+      expect({ afterHandshake, serverSide }).toEqual({ afterHandshake: rejected, serverSide: rejected });
+
+      // The rejected calls left the connection intact.
+      client.destroy();
+      const [hadError] = await once(client, "close");
+      expect(hadError).toBe(false);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("throws for a tls.connect({ socket }) wrapper over a net.Socket or a Duplex; the wrapped net.Socket is still resettable", async () => {
+    const server = net.createServer(socket => socket.on("error", () => {}));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    raw.on("error", () => {});
+    await once(raw, "connect");
+    const overNetSocket = tls.connect({ socket: raw, rejectUnauthorized: false });
+    overNetSocket.on("error", () => {});
+    const transport = new Duplex({
+      read() {},
+      write(_chunk, _encoding, callback) {
+        callback();
+      },
+    });
+    const overDuplex = tls.connect({ socket: transport, rejectUnauthorized: false });
+    overDuplex.on("error", () => {});
+    try {
+      expect({
+        overNetSocket: tryReset(overNetSocket),
+        overDuplex: tryReset(overDuplex),
+        wrappedNetSocket: tryReset(raw),
+      }).toEqual({
+        overNetSocket: rejected,
+        overDuplex: rejected,
+        wrappedNetSocket: { threw: null, destroyed: true },
+      });
+      await once(raw, "close");
+    } finally {
+      overNetSocket.destroy();
+      overDuplex.destroy();
+      server.close();
+    }
+  });
+});

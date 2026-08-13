@@ -825,10 +825,18 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
 
     auto* loader = globalObject->moduleLoader();
     bool entryExistedBefore = false;
+    // fetchCommonJSModule() already parsed the file into the registry, so the
+    // record to evaluate is normally known now. Keep it rather than re-reading
+    // the registry after the load: the module's top level (or a dependency's)
+    // may `delete require.cache[...]` while it runs, and like a static import
+    // this load still returns the instance it evaluated. The eviction only
+    // affects the next load.
+    JSC::AbstractModuleRecord* record = nullptr;
     if (auto* entry = loader->registryEntry(key)) {
         entryExistedBefore = true;
-        if (isModuleEvaluated(entry->record())) {
-            auto* ns = entry->record()->getModuleNamespace(globalObject, false);
+        record = entry->record();
+        if (isModuleEvaluated(record)) {
+            auto* ns = record->getModuleNamespace(globalObject, false);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(ns);
         }
@@ -836,6 +844,13 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
 
     JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
+
+    // Builtin ES modules and module mocks arrive without a parsed entry; the
+    // load itself creates it.
+    if (!record) {
+        if (auto* entry = loader->registryEntry(key))
+            record = entry->record();
+    }
 
     switch (promise->status()) {
     case JSPromise::Status::Fulfilled:
@@ -859,12 +874,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         // it OR any dependency has top-level await, in which case bindings can
         // still be in TDZ and we must throw the "async module" error instead
         // of returning a half-initialized namespace.
-        if (auto* entry = loader->registryEntry(key)) {
-            if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record())) {
-                auto status = cyclic->status();
-                if ((status == JSC::CyclicModuleRecord::Status::Evaluating || status == JSC::CyclicModuleRecord::Status::Evaluated) && !cyclic->hasTLA() && !cyclic->evaluationError())
-                    break;
-            }
+        if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record)) {
+            auto status = cyclic->status();
+            if ((status == JSC::CyclicModuleRecord::Status::Evaluating || status == JSC::CyclicModuleRecord::Status::Evaluated) && !cyclic->hasTLA() && !cyclic->evaluationError())
+                break;
         }
         // Only drop the entry we created. If the entry already existed (an
         // outer import() is mid-load, or the module is EvaluatingAsync from a
@@ -878,9 +891,8 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     }
     }
 
-    auto* entry = loader->registryEntry(key);
-    if (!entry || !entry->record()) [[unlikely]]
-        return throwVMTypeError(globalObject, scope, makeString("require() failed to evaluate module \""_s, keyString, "\". This is an internal consistentency error."_s));
+    if (!record) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, makeString("require() failed to evaluate module \""_s, keyString, "\". This is an internal consistency error."_s));
 
     // The loadModule promise resolved, so the entire graph linked + evaluated
     // synchronously. We deliberately do NOT gate on CyclicModuleRecord::status()
@@ -891,7 +903,6 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     // the namespace in that state matches the old loader's behaviour and Node's
     // require(esm) cycle semantics. evaluationError() still surfaces a real
     // throw from the module body.
-    auto* record = entry->record();
     if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record)) {
         if (JSValue err = cyclic->evaluationError()) {
             scope.throwException(globalObject, err);

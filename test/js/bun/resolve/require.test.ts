@@ -1,4 +1,4 @@
-import { bunRun, tempDirWithFiles } from "harness";
+import { bunRun, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 const fixture = (...segs: string[]): string => path.join(import.meta.dirname, "fixtures", "require", ...segs);
@@ -81,5 +81,117 @@ describe("require(specifier)", () => {
       });
       expect(main.filename).toContain(main.path);
     });
+  });
+});
+
+// The ESM registry entry is removed while the module's own top level is still
+// running. require() must still return the namespace of the instance it just
+// evaluated; the eviction applies to the next require(), which evaluates the
+// file again.
+describe.concurrent("require(esm) of a module evicted from require.cache during its own evaluation", () => {
+  const selfEvicting = /* js */ `
+    globalThis.evaluations = (globalThis.evaluations ?? 0) + 1;
+    delete require.cache[import.meta.path];
+    export const x = 1;
+    export const evaluation = globalThis.evaluations;
+  `;
+
+  it("returns the namespace when the module deletes itself from require.cache", async () => {
+    using dir = tempDir("require-esm-self-evict", {
+      "self-evict.mjs": selfEvicting,
+      "entry.cjs": /* js */ `
+        const first = require("./self-evict.mjs");
+        const cachedAfterFirst = require.resolve("./self-evict.mjs") in require.cache;
+        const second = require("./self-evict.mjs");
+        console.log(JSON.stringify({
+          first: { x: first.x, evaluation: first.evaluation },
+          cachedAfterFirst,
+          second: { x: second.x, evaluation: second.evaluation },
+          sameNamespace: first === second,
+        }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await bunRun(path.join(dir, "entry.cjs"));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      first: { x: 1, evaluation: 1 },
+      cachedAfterFirst: false,
+      second: { x: 1, evaluation: 2 },
+      sameNamespace: false,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("returns the namespace when a dependency clears require.cache", async () => {
+    using dir = tempDir("require-esm-dep-clears-cache", {
+      "clear-cache.mjs": /* js */ `
+        for (const key of Object.keys(require.cache)) delete require.cache[key];
+        export const cleared = true;
+      `,
+      "leaf.mjs": /* js */ `
+        export const leaf = "leaf";
+      `,
+      "root.mjs": /* js */ `
+        import { cleared } from "./clear-cache.mjs";
+        export * from "./leaf.mjs";
+        export { cleared };
+        globalThis.evaluations = (globalThis.evaluations ?? 0) + 1;
+        export const evaluation = globalThis.evaluations;
+      `,
+      "entry.cjs": /* js */ `
+        const first = require("./root.mjs");
+        const cachedAfterFirst = require.resolve("./root.mjs") in require.cache;
+        const second = require("./root.mjs");
+        console.log(JSON.stringify({
+          first: { cleared: first.cleared, leaf: first.leaf, evaluation: first.evaluation },
+          cachedAfterFirst,
+          second: { cleared: second.cleared, leaf: second.leaf, evaluation: second.evaluation },
+          sameNamespace: first === second,
+        }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await bunRun(path.join(dir, "entry.cjs"));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      first: { cleared: true, leaf: "leaf", evaluation: 1 },
+      cachedAfterFirst: false,
+      second: { cleared: true, leaf: "leaf", evaluation: 2 },
+      sameNamespace: false,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // A user-wrapped require.extensions loader reaches the ESM namespace through
+  // Module._extensions (requireESMFromHijackedExtension) rather than require().
+  it("sets module.exports when loaded through a wrapped require.extensions loader", async () => {
+    using dir = tempDir("require-esm-self-evict-extensions", {
+      "self-evict.mjs": selfEvicting,
+      "entry.cjs": /* js */ `
+        const builtinLoader = require.extensions[".mjs"];
+        let wrapperCalls = 0;
+        require.extensions[".mjs"] = function (module, filename) {
+          wrapperCalls++;
+          builtinLoader(module, filename);
+        };
+        const first = require("./self-evict.mjs");
+        const cachedAfterFirst = require.resolve("./self-evict.mjs") in require.cache;
+        const second = require("./self-evict.mjs");
+        console.log(JSON.stringify({
+          wrapperCalls,
+          first: { x: first.x, evaluation: first.evaluation },
+          cachedAfterFirst,
+          second: { x: second.x, evaluation: second.evaluation },
+        }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await bunRun(path.join(dir, "entry.cjs"));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      wrapperCalls: 2,
+      first: { x: 1, evaluation: 1 },
+      cachedAfterFirst: false,
+      second: { x: 1, evaluation: 2 },
+    });
+    expect(exitCode).toBe(0);
   });
 });

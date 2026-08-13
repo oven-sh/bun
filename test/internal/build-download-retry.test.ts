@@ -357,6 +357,22 @@ test("proxyEnvironment() rewrites the settings into the form the Agent's parser 
   expect(proxyEnvironment({})).toEqual({});
 });
 
+test("a proxy setting the Agent rejects fails the download once, before any attempt", async () => {
+  using dir = tempDir("build-download-retry", {});
+  await using server = await fakeServer([]);
+  process.env.http_proxy = "http://proxy with spaces:3128";
+  const dest = join(String(dir), "dep.tar.gz");
+
+  const { result: err, lines } = await withLogCaptured(() =>
+    rejection(downloadWithRetry(server.url, dest, "dep", noBackoff)),
+  );
+
+  expect((err as NodeJS.ErrnoException).code).toBe("ERR_PROXY_INVALID_CONFIG");
+  expect(lines).toEqual([]);
+  expect(server.traffic).toEqual({ connections: 0, requests: 0 });
+  expect(existsSync(dest)).toBe(false);
+});
+
 test("giving up reports the attempt count and the failure that ended it", async () => {
   using dir = tempDir("build-download-retry", {});
   await using server = await fakeServer([], "drop");

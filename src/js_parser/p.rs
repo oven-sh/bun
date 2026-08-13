@@ -237,7 +237,19 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) module_ref: Ref,
     pub(crate) filename_ref: Ref,
     pub(crate) dirname_ref: Ref,
+    /// Identifier standing in for `import.meta` when the output is not an ES
+    /// module. Runtime CommonJS modules bind it as the `$Bun_import_meta`
+    /// parameter of the module wrapper (see `to_ast`, the printer substitutes
+    /// it); bundles with `options.lower_import_meta` declare it as a per-file
+    /// `var import_meta = {}` and the visit pass rewrites every remaining
+    /// `import.meta` to it (see `value_for_import_meta`).
     pub(crate) import_meta_ref: Ref,
+    /// `lower_import_meta` only: the `import.meta` expressions rewritten to
+    /// `import_meta_ref` whose value is therefore the empty object. A property
+    /// access that gets inlined removes its entry again
+    /// (`ignore_usage_of_import_meta`); whatever is left is warned about once
+    /// the visit pass is done.
+    pub(crate) empty_import_meta_locs: List<'a, bun_ast::Loc>,
     pub(crate) hmr_api_ref: Ref,
 
     /// If bake is enabled and this is a server-side file, we want to use
@@ -5254,6 +5266,56 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// `options.lower_import_meta`: the replacement for an `import.meta`
+    /// expression, a reference to this file's `var import_meta = {}`. The
+    /// declaration itself is added after the visit pass, and only if a
+    /// reference survives `maybe_rewrite_import_meta_property`.
+    pub(crate) fn value_for_import_meta(&mut self, loc: bun_ast::Loc) -> Expr {
+        debug_assert!(self.options.lower_import_meta);
+        if self.import_meta_ref.is_empty() {
+            self.import_meta_ref =
+                self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"import_meta");
+        }
+        let ref_ = self.import_meta_ref;
+        self.record_usage(ref_);
+        // Like unresolvable dynamic imports, an `import.meta` inside of a `try`
+        // is taken as the code already handling its absence. Dependencies are
+        // not warned about either: the author of the build cannot change them,
+        // and the warning is per output format, not per site.
+        if !self.is_control_flow_dead
+            && self.fn_or_arrow_data_visit.try_body_count == 0
+            && !self.source.path.is_node_module()
+        {
+            self.empty_import_meta_locs.push(loc);
+        }
+        self.new_expr(E::Identifier::init(ref_), loc)
+    }
+
+    /// Whether an identifier is the `import_meta` stand-in produced by
+    /// [`Self::value_for_import_meta`].
+    #[inline]
+    pub(crate) fn is_import_meta_stand_in(&self, ref_: Ref) -> bool {
+        !self.import_meta_ref.is_empty() && ref_.eql(self.import_meta_ref)
+    }
+
+    /// A property access on `target` (the result of
+    /// [`Self::value_for_import_meta`]) was inlined, so the stand-in object is
+    /// not referenced from this expression after all.
+    pub(crate) fn ignore_usage_of_import_meta(&mut self, target: &Expr) {
+        debug_assert!(
+            matches!(target.data, js_ast::ExprData::EIdentifier(id) if self.is_import_meta_stand_in(id.ref_))
+        );
+        self.ignore_usage(self.import_meta_ref);
+        // Searched from the end: the entry was pushed when `target` was
+        // visited, which normally happened right before this call. The
+        // remaining entries keep their source order for the warnings.
+        let locs = self.empty_import_meta_locs.as_mut_slice();
+        if let Some(i) = locs.iter().rposition(|loc| *loc == target.loc) {
+            locs[i..].rotate_left(1);
+            self.empty_import_meta_locs.pop();
+        }
+    }
+
     pub(crate) fn keep_expr_symbol_name(&mut self, _value: Expr, _name: &[u8]) -> Expr {
         _value
     }
@@ -8657,6 +8719,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             filename_ref: Ref::NONE,
             dirname_ref: Ref::NONE,
             import_meta_ref: Ref::NONE,
+            empty_import_meta_locs: BumpVec::new_in(arena),
             hmr_api_ref: Ref::NONE,
             response_ref: Ref::NONE,
             bun_app_namespace_ref: Ref::NONE,

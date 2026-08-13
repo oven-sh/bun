@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // tsconfig "jsx": "react-jsx" selects the production automatic runtime (jsx/jsxs),
 // "react-jsxdev" selects the development runtime (jsxDEV), matching TypeScript/esbuild.
@@ -80,7 +81,11 @@ const buildModes = [
   ["bun build --no-bundle", ["--no-bundle"]],
 ] as const;
 
-/** Runs `bun build` and returns the module specifiers the output imports, sorted. */
+/** The module specifiers some transpiled or bundled output imports, sorted. */
+function importsOf(code: string): string[] {
+  return [...code.matchAll(/ from "([^"]+)"/g)].map(m => m[1]).sort();
+}
+
 async function buildImports(
   cwd: string,
   args: readonly string[],
@@ -95,7 +100,7 @@ async function buildImports(
     stderr: "pipe",
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  return { imports: [...stdout.matchAll(/ from "([^"]+)"/g)].map(m => m[1]).sort(), exitCode };
+  return { imports: importsOf(stdout), exitCode };
 }
 
 // A tsconfig.json that does not choose between "react-jsx" and "react-jsxdev" must leave the
@@ -142,46 +147,59 @@ describe("bun build: NODE_ENV=production with a tsconfig.json that does not choo
 
 // A key after a {...spread} makes the automatic runtime fall back to `createElement`, imported from
 // the jsxImportSource package itself rather than from its /jsx-runtime entry. Both imports have to
-// follow jsxImportSource, including when the setting arrives through a tsconfig merge: an
-// "extends" chain, or (at build time) a tsconfig.json in the entry point's own directory.
+// follow jsxImportSource. Merging a tsconfig into the JSX settings used to carry only the runtime
+// import, and every entry point merges: Bun.build() and Bun.Transpiler always, the CLI as soon as a
+// bunfig.toml or --jsx-* flag is present, "extends" chains, and (at build time) a tsconfig.json in
+// the entry point's own directory. The plain CLI case only worked because the root tsconfig.json was
+// copied over the JSX settings wholesale, which is what broke NODE_ENV above; now it merges too.
 describe("tsconfig jsxImportSource selects the createElement fallback import too", () => {
-  const files = {
-    ...shimFiles,
-    "k.jsx": `const p = {};\nglobalThis.a = <div {...p} key="k" />;\nglobalThis.b = <span />;\n`,
-  };
-  const shimImports = { imports: ["shim", "shim/jsx-dev-runtime"], exitCode: 0 };
+  const keyAfterSpread = `const p = {};\nglobalThis.a = <div {...p} key="k" />;\nglobalThis.b = <span />;\n`;
+  const tsconfig = JSON.stringify({ compilerOptions: { jsxImportSource: "shim" } });
+  const shimImports = ["shim", "shim/jsx-dev-runtime"];
 
-  const rootLayouts = [
-    ["tsconfig.json", { "tsconfig.json": JSON.stringify({ compilerOptions: { jsxImportSource: "shim" } }) }],
+  // [name, entry point, files]. `bun run` only applies the project root's tsconfig.json, so the
+  // layout whose tsconfig.json lives next to the entry point is exercised by the build paths only.
+  const layouts = [
+    ["tsconfig.json", "k.jsx", { "k.jsx": keyAfterSpread, "tsconfig.json": tsconfig }],
     [
       "tsconfig.json extending a base config",
+      "k.jsx",
       {
+        "k.jsx": keyAfterSpread,
         "tsconfig.json": JSON.stringify({ extends: "./base.json", compilerOptions: { jsxImportSource: "shim" } }),
         "base.json": JSON.stringify({ compilerOptions: {} }),
       },
     ],
+    [
+      "tsconfig.json next to a bunfig.toml",
+      "k.jsx",
+      { "k.jsx": keyAfterSpread, "tsconfig.json": tsconfig, "bunfig.toml": "# any bunfig.toml, jsx keys or not\n" },
+    ],
+    [
+      "tsconfig.json in the entry point's directory",
+      "sub/k.jsx",
+      { "sub/k.jsx": keyAfterSpread, "sub/tsconfig.json": tsconfig },
+    ],
   ] as const;
+  const rootLayouts = layouts.filter(([, entry]) => entry === "k.jsx");
 
   for (const [mode, modeArgs] of buildModes) {
-    test.concurrent.each(rootLayouts)(`${mode}, %s`, async (_, layout) => {
-      using dir = tempDir("jsx-import-source", { ...files, ...layout });
-      expect(await buildImports(String(dir), [...modeArgs, "k.jsx"])).toEqual(shimImports);
-    });
-
-    test.concurrent(`${mode}, tsconfig.json in the entry point's directory`, async () => {
-      using dir = tempDir("jsx-import-source-nested", {
-        "sub/k.jsx": files["k.jsx"],
-        "sub/tsconfig.json": JSON.stringify({ compilerOptions: { jsxImportSource: "shim" } }),
-      });
-      expect(await buildImports(String(dir), [...modeArgs, "sub/k.jsx"])).toEqual(shimImports);
+    test.concurrent.each(layouts)(`${mode}, %s`, async (_, entry, files) => {
+      using dir = tempDir("jsx-import-source", files);
+      expect(await buildImports(String(dir), [...modeArgs, entry])).toEqual({ imports: shimImports, exitCode: 0 });
     });
   }
 
-  // `bun run` only applies the project root's tsconfig.json, so the nested layout is build-only.
-  test.concurrent.each(rootLayouts)("bun run, %s", async (_, layout) => {
-    using dir = tempDir("jsx-import-source-run", { ...files, ...layout });
+  test.concurrent.each(layouts)("Bun.build(), %s", async (_, entry, files) => {
+    using dir = tempDir("jsx-import-source-api", files);
+    const result = await Bun.build({ entrypoints: [join(String(dir), entry)], external: ["*"] });
+    expect(importsOf(await result.outputs[0].text())).toEqual(shimImports);
+  });
+
+  test.concurrent.each(rootLayouts)("bun run, %s", async (_, entry, files) => {
+    using dir = tempDir("jsx-import-source-run", { ...shimFiles, ...files });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "k.jsx"],
+      cmd: [bunExe(), "run", entry],
       env: noNodeEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -189,5 +207,17 @@ describe("tsconfig jsxImportSource selects the createElement fallback import too
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "shim createElement\ndev jsxDEV", exitCode: 0 });
+  });
+
+  test("Bun.Transpiler({ tsconfig })", async () => {
+    const transpiler = new Bun.Transpiler({
+      loader: "jsx",
+      autoImportJSX: true,
+      // Otherwise the key-after-spread warning is thrown.
+      logLevel: "error",
+      tsconfig: { compilerOptions: { jsxImportSource: "shim" } },
+    });
+    expect(importsOf(transpiler.transformSync(keyAfterSpread))).toEqual(shimImports);
+    expect(importsOf(await transpiler.transform(keyAfterSpread))).toEqual(shimImports);
   });
 });

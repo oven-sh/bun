@@ -1217,16 +1217,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // class body references (which resolves to an enclosing class).
             // Every such name exists in the symbol table by now — private
             // names are declared at parse time — so treating all of them as
-            // taken over-approximates both sets. Generated names are inserted
-            // too, keeping repeated lowerings distinct.
-            let mut taken_private_names: HashMap<&'a [u8], ()> = HashMap::default();
-            for sym in p.symbols.iter() {
-                if sym.kind.is_private() {
-                    // SAFETY: original_name is arena-owned, valid for 'a.
-                    let name: &'a [u8] = sym.original_name.slice();
-                    taken_private_names.insert(name, ());
+            // taken over-approximates both sets. The set is built once per
+            // parse and extended with each generated name (`p.taken_private_names`),
+            // keeping repeated lowerings distinct without rescanning.
+            let mut taken_private_names = match p.taken_private_names.take() {
+                Some(set) => set,
+                None => {
+                    let mut set: HashMap<&'a [u8], ()> = HashMap::default();
+                    for sym in p.symbols.iter() {
+                        if sym.kind.is_private() {
+                            // SAFETY: original_name is arena-owned, valid for 'a.
+                            let name: &'a [u8] = sym.original_name.slice();
+                            set.insert(name, ());
+                        }
+                    }
+                    set
                 }
-            }
+            };
 
             let mut new_properties = BumpVec::<Property>::new_in(bump);
             let mut computed_key_decls = BumpVec::<G::Decl>::new_in(bump);
@@ -1362,6 +1369,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             class.properties = bun_ast::StoreSlice::new_mut(new_properties.into_bump_slice_mut());
+            p.taken_private_names = Some(taken_private_names);
 
             if !computed_key_decls.is_empty() {
                 let decls = DeclList::from_bump_vec(computed_key_decls);

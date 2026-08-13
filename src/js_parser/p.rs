@@ -604,6 +604,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Name from assignment context for anonymous decorated class expressions.
     /// Set before visitExpr, consumed by lowerStandardDecoratorsImpl.
     pub(crate) decorator_class_name: Option<&'a [u8]>,
+
+    /// Every private name in use, built lazily by `lower_auto_accessors_in_place`
+    /// on its first call (all parse-time private declarations exist in `symbols`
+    /// by then) and extended with each generated backing name, so later classes
+    /// reuse it instead of rescanning the symbol table.
+    pub(crate) taken_private_names: Option<bun_collections::HashMap<&'a [u8], ()>>,
 }
 
 // `binding::ToExprWrapper` type-erases `*P` (which is generic over
@@ -8847,6 +8853,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             will_wrap_module_in_try_catch_for_using: false,
             nearest_stmt_list: None,
             decorator_class_name: None,
+            taken_private_names: None,
 
             jsx_transform,
 

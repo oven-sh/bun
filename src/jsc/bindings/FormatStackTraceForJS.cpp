@@ -669,23 +669,18 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
         return {};
     }
 
-    // Appending a trace to itself would make appendVector copy out of the buffer
-    // it just reallocated (the span overload does not rebase the source
-    // pointer), and the clear() below would then wipe the trace.
+    // appendVector() is not self-append safe, and the clear() below would then drop the trace.
     if (source == destination) {
         return JSC::JSValue::encode(jsUndefined());
     }
 
-    // Once .stack is materialized the frames are discarded and never read again;
-    // installing new ones only trips ASSERT(!m_errorInfoMaterialized) in
-    // computeErrorInfo when GC finalizes the error.
+    // A materialized error never reads its frames again (see errorConstructorFuncCaptureStackTrace).
     if (destination->hasMaterializedErrorInfo()) {
         return JSC::JSValue::encode(jsUndefined());
     }
 
     if (!destination->stackTrace()) {
-        // ErrorInstance::captureStackTrace() unwraps stackTraceLimit(), which is
-        // empty once Error.stackTraceLimit has been set to a non-number or deleted.
+        // captureStackTrace() unwraps stackTraceLimit(), which is empty when Error.stackTraceLimit is not a number.
         if (globalObject->stackTraceLimit()) {
             destination->captureStackTrace(vm, globalObject, 1);
         } else {

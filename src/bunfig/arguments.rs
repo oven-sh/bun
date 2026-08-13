@@ -154,8 +154,7 @@ enum PackageJson {
     Workspaces(Vec<Box<[u8]>>),
 }
 
-/// Reads `dir/package.json` and classifies it; an unreadable or unparsable
-/// file counts as `Plain` (a project root whose shape we cannot see).
+/// Classifies `dir/package.json`; an unreadable file counts as `Plain`.
 fn read_package_json(dir: &[u8]) -> PackageJson {
     let mut name_buf = PathBuffer::uninit();
     let json_path: &ZStr = resolve_path::join_abs_string_buf_z::<platform::Auto>(
@@ -192,11 +191,9 @@ fn read_package_json(dir: &[u8]) -> PackageJson {
     PackageJson::Workspaces(patterns)
 }
 
-/// Last directory the ancestor bunfig.toml walk may check, as a prefix length
-/// of `cwd`, mirroring how `--filter` finds the project root (filter_arg.rs):
-/// the nearest directory with a package.json, or the workspace root whose
-/// `workspaces` globs claim that directory. `None` when no package.json
-/// exists anywhere up the tree (walk unbounded, like package.json resolution).
+/// Prefix length of `cwd` naming the last directory the walk may check: the
+/// project root as `--filter` finds it (filter_arg.rs). `None` when no
+/// package.json exists up the tree.
 fn walk_root_bound(cwd: &[u8]) -> Option<usize> {
     bun_ast::expr::data::Store::create();
     bun_ast::stmt::data::Store::create();
@@ -214,8 +211,7 @@ fn walk_root_bound(cwd: &[u8]) -> Option<usize> {
         dir = bun_paths::dirname(dir)?;
     };
 
-    // The nearest ancestor declaring workspaces decides: if its globs claim
-    // `nearest`, that root bounds the walk; otherwise `nearest` stands alone.
+    // The nearest ancestor declaring workspaces bounds the walk iff its globs claim `nearest`.
     let mut anc = nearest;
     while let Some(parent) = bun_paths::dirname(anc) {
         anc = parent;
@@ -250,9 +246,8 @@ pub fn load_config(
     load_config_impl(cmd, user_config_path_, false, ctx)
 }
 
-/// `load_config`, but auto-discovering bunfig.toml even for commands outside
-/// `ALWAYS_LOADS_CONFIG`. Used by the exec-time `bun run` / repl call sites,
-/// which load config only after CLI flags are applied.
+/// `load_config` with auto-discovery forced on, for the exec-time `bun run`
+/// and repl call sites that load config after CLI flags are applied.
 pub fn load_config_auto(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Error> {
     load_config_impl(cmd, None, true, ctx)
 }
@@ -345,9 +340,8 @@ fn load_config_impl(
             {
                 dir = &dir[..dir.len() - 1];
             }
-            // Lifecycle scripts run with cwd inside node_modules, and
-            // compiled executables read config from their run directory:
-            // both keep the cwd-only lookup.
+            // node_modules cwds (lifecycle scripts) and compiled
+            // executables keep the cwd-only lookup.
             let bound: Option<usize> =
                 if StandaloneModuleGraph::get().is_some() || in_node_modules(dir) {
                     Some(dir.len())

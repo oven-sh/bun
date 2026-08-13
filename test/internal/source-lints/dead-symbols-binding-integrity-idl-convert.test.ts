@@ -154,8 +154,14 @@ test("dead WebCore/JSC binding helpers do not reappear", () => {
     // Initialized and visited, never read; the alias duplicated ZigGlobalObject's.
     ["src/jsc/bindings/BakeAdditionsToGlobalObject.h", /m_bakeGetAsyncLocalStorage|LazyPropertyOfGlobalObject/],
     // Enumerators nothing names.
-    ["src/jsc/bindings/webcore/TaskSource.h", /DOMManipulation|FileReading|Networking|PerformanceTimeline|\bTimer\b|InternalAsyncTask/],
-    ["src/jsc/bindings/webcore/EventListener.h", /(Image|ObjC|CPP|Condition|GObject|Native|SVGTRefTarget|PDFDocument)EventListenerType/],
+    [
+      "src/jsc/bindings/webcore/TaskSource.h",
+      /DOMManipulation|FileReading|Networking|PerformanceTimeline|\bTimer\b|InternalAsyncTask/,
+    ],
+    [
+      "src/jsc/bindings/webcore/EventListener.h",
+      /(Image|ObjC|CPP|Condition|GObject|Native|SVGTRefTarget|PDFDocument)EventListenerType/,
+    ],
     // Preprocessor branches that can never be taken.
     ["src/jsc/bindings/webcrypto/CryptoAlgorithmRSA_PSSOpenSSL.cpp", /^#if 1\b/m],
     ["src/jsc/bindings/webcore/JSEventTargetCustom.cpp", /OFFSCREEN_CANVAS/],
@@ -194,7 +200,10 @@ test("dead Rust FFI wrappers and css items do not reappear", () => {
     // App::run / App::listen (the server listens through listen_with_config)
     // and the imports/constructor/alias only they used. The live NewApp alias
     // is the one in src/uws_sys/lib.rs.
-    ["src/uws_sys/App.rs", /\buws_app_run\b|\bfn uws_app_listen\(|pub fn run\(|pub type NewApp\b|impl uws_app_listen_config_t/],
+    [
+      "src/uws_sys/App.rs",
+      /\buws_app_run\b|\bfn uws_app_listen\(|pub fn run\(|pub type NewApp\b|impl uws_app_listen_config_t/,
+    ],
     // DeclarationContext::Keyframes was never constructed or matched.
     ["src/css/context.rs", /^\s*Keyframes,$/m],
     // Empty marker module whose `use` in color.rs no longer exists.

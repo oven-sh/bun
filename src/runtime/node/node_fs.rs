@@ -2444,8 +2444,6 @@ mod _async_tasks {
                                     } else {
                                         &self.root_path[..self.root_path.len() - 1]
                                     };
-                                    // Like `NodeFS::readdir` does for the sync walk: Node reports
-                                    // every readdir failure as `scandir`, whichever syscall tripped.
                                     self.pending_err = Some(
                                         err.with_path_and_syscall(err_path, sys::Tag::scandir),
                                     );

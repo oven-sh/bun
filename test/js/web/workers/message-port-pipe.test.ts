@@ -283,9 +283,13 @@ describe("MessagePort pipe", () => {
   // Sanitizer-gated: the race being exercised is a memory-safety bug that
   // only surfaces deterministically under ASAN/UBSan.
   //
-  // Booting the workers takes far longer than the churn, so every thread waits
-  // until all of them are parked on parentPort and starts on a "go" message;
-  // churning while the workers are still booting would overlap nothing.
+  // Booting a worker takes far longer than the churn, and once a worker's entry
+  // script returns the worker runs a full GC before it can receive a message,
+  // so starting the workers with postMessage would stagger them by more than
+  // the few milliseconds the churn takes on a release build. Instead every
+  // worker reports in and blocks in Atomics.wait() inside its entry script,
+  // and the main thread releases all of them at once right before churning
+  // itself, so all five threads create and close channels in the same window.
   test.concurrent.skipIf(!isDebug && !isASAN)(
     "concurrent MessageChannel creation across workers is race-free",
     async () => {
@@ -296,29 +300,33 @@ describe("MessagePort pipe", () => {
           `
             const { Worker } = require("worker_threads");
             const N = 1000;
+            const start = new Int32Array(new SharedArrayBuffer(4));
             const workerSrc = \`
-              const { parentPort, workerData: N } = require("worker_threads");
-              parentPort.once("message", () => {
-                let i = 0;
-                for (; i < N; i++) {
-                  const { port1, port2 } = new MessageChannel();
-                  port1.postMessage(i);
-                  port1.close();
-                  port2.close();
-                }
-                parentPort.postMessage(i);
-              });
+              const { parentPort, workerData: { N, start } } = require("worker_threads");
               parentPort.postMessage("ready");
+              Atomics.wait(start, 0, 0);
+              let i = 0;
+              for (; i < N; i++) {
+                const { port1, port2 } = new MessageChannel();
+                port1.postMessage(i);
+                port1.close();
+                port2.close();
+              }
+              parentPort.postMessage(i);
             \`;
-            const workers = Array.from({ length: 4 }, () => new Worker(workerSrc, { eval: true, workerData: N }));
+            const workers = Array.from(
+              { length: 4 },
+              () => new Worker(workerSrc, { eval: true, workerData: { N, start } }),
+            );
             const nextMessage = w =>
               new Promise((resolve, reject) => {
                 w.once("message", resolve);
                 w.once("error", reject);
               });
-            await Promise.all(workers.map(nextMessage)); // every worker is parked on parentPort
+            await Promise.all(workers.map(nextMessage)); // "ready" from every worker
             const counts = Promise.all(workers.map(nextMessage));
-            for (const w of workers) w.postMessage("go");
+            Atomics.store(start, 0, 1);
+            Atomics.notify(start, 0);
             // Churn on the main thread at the same time.
             for (let i = 0; i < N; i++) {
               const { port1, port2 } = new MessageChannel();

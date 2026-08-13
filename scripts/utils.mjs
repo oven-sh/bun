@@ -15,7 +15,15 @@ import {
   writeFileSync,
 } from "node:fs";
 import { connect } from "node:net";
-import { hostname, homedir as nodeHomedir, tmpdir as nodeTmpdir, release, userInfo } from "node:os";
+import {
+  availableParallelism,
+  cpus,
+  hostname,
+  homedir as nodeHomedir,
+  tmpdir as nodeTmpdir,
+  release,
+  userInfo,
+} from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 
@@ -1871,6 +1879,61 @@ export function getPublicIp() {
 }
 
 /**
+ * The CPU model and the number of CPUs this process may run on, e.g.
+ * "Intel(R) Xeon(R) Platinum 8488C x8" or "Apple M2 Ultra x24".
+ * @returns {string | undefined}
+ */
+export function getCpuDescription() {
+  const [cpu] = cpus();
+  const model = cpu?.model?.replace(/\s+/g, " ").trim();
+  if (!model) {
+    return;
+  }
+  return `${model} x${availableParallelism()}`;
+}
+
+/**
+ * The instance type the cloud provider actually launched for this machine,
+ * e.g. "r7i.2xlarge" on EC2 or "Standard_D8s_v5" on Azure. CI asks for one
+ * type per lane (.buildkite/ci.mjs), but under capacity pressure the
+ * machine may be a different, slower type, and nothing else in a job log
+ * records which one it was.
+ * @returns {string | undefined}
+ */
+export function getCloudInstanceType() {
+  // Set by scripts/agent.mjs on the cloud agents; absent on the darwin fleet
+  // and GitHub Actions, where there is no metadata service to ask.
+  const cloud = getEnv("BUILDKITE_AGENT_META_DATA_CLOUD", false);
+  let request;
+  if (cloud === "aws") {
+    request = ["http://169.254.169.254/latest/meta-data/instance-type"];
+  } else if (cloud === "azure") {
+    request = [
+      "-H",
+      "Metadata: true",
+      "http://169.254.169.254/metadata/instance/compute/vmSize?api-version=2021-02-01&format=text",
+    ];
+  } else {
+    return;
+  }
+
+  const { error, stdout } = spawnSync([
+    "curl",
+    "-sf",
+    "--noproxy",
+    "*",
+    "--connect-timeout",
+    "1",
+    "--max-time",
+    "3",
+    ...request,
+  ]);
+  if (!error) {
+    return stdout.trim() || undefined;
+  }
+}
+
+/**
  * @returns {string}
  */
 export function getHostname() {
@@ -3095,8 +3158,10 @@ export function printEnvironment() {
     }
     console.log("Distro:", getDistro());
     console.log("Distro Version:", getDistroVersion());
+    console.log("CPU:", getCpuDescription());
     console.log("Hostname:", getHostname());
     if (isCI) {
+      console.log("Instance Type:", getCloudInstanceType());
       console.log("Tailscale IP:", getTailscaleIp());
       console.log("Public IP:", getPublicIp());
     }

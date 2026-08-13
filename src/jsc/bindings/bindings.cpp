@@ -79,6 +79,7 @@
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/StackVisitor.h"
 #include "JavaScriptCore/VM.h"
+#include "JavaScriptCore/WaiterListManager.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
 #include "JavaScriptCore/Watchdog.h"
 #include "ZigGlobalObject.h"
@@ -5188,15 +5189,29 @@ void JSC__VM__ensureTerminationExceptionPending(JSC::VM* arg0)
 }
 
 // These may be called concurrently from another thread.
+
+// Stop `vm` for good (worker.terminate(), an exiting parent, the worker's own process.exit()).
 void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
 {
     JSC::VM& vm = *arg0;
+    // A thread blocked in Atomics.wait() (WaiterListManager::waitSyncImpl) services no trap: it
+    // sleeps on the VM's sync waiter and only returns once hasTerminationRequest() is set and that
+    // waiter is notified. JSC sets the flag when the NeedTermination trap is serviced, on the VM's
+    // own thread (WebKit 305643@main moved it out of notifyNeedTermination()), which never happens
+    // while it is blocked, so set it here first: whichever notification reaches the waiter then
+    // returns it Terminated. The trap bit set right after keeps the VM thread's entry-scope exit
+    // from clearing the flag again.
+    vm.setHasTerminationRequest();
     bool didEnter = vm.currentThreadIsHoldingAPILock();
     if (didEnter)
         vm.apiLock().unlock();
     vm.notifyNeedTermination();
     if (didEnter)
         vm.apiLock().lock();
+    // VMTraps notifies the sync waiter only when this trap is the one that starts a thread stop
+    // (and, on platforms with signal-based traps, again every millisecond until it is serviced);
+    // notify unconditionally so the wake-up does not depend on either.
+    vm.syncWaiter()->condition().notifyOne();
 }
 void JSC__VM__notifyNeedDebuggerBreak(JSC::VM* arg0)
 {

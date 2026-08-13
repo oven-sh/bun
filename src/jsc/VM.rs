@@ -113,7 +113,9 @@ impl VM {
     // These four functions fire VM traps. To understand what that means, see VMTraps.h for a giant explainer.
     // These may be called concurrently from another thread.
 
-    /// Fires NeedTermination Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
+    /// Fires the NeedTermination trap (see jsc's "VMTraps.h") and wakes the
+    /// thread if it is blocked in a synchronous `Atomics.wait()`, which
+    /// returns by throwing the TerminationException. Thread safe.
     pub(crate) fn notify_need_termination(&self) {
         JSC__VM__notifyNeedTermination(self)
     }

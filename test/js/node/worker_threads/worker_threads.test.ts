@@ -541,6 +541,70 @@ test("terminate() of a running, idle worker resolves 1 like Node", async () => {
   expect(await worker.terminate()).toBe(1);
 });
 
+// A synchronous Atomics.wait() blocks the worker thread inside JSC, where the termination trap a
+// terminate() fires is never serviced; the wait itself has to be woken. Nothing ever notifies the
+// SharedArrayBuffer these workers wait on, so terminate() is the only thing that can end the wait.
+// Piscina (and so vitest, @angular/build) parks idle workers this way, and pool.destroy() awaits
+// each worker's 'exit'.
+describe("terminate() of a worker blocked in Atomics.wait()", () => {
+  test("at the top level of the worker resolves 1 like Node", async () => {
+    const worker = new Worker(
+      /* js */ `
+        const { parentPort, workerData } = require("worker_threads");
+        const i32 = new Int32Array(workerData);
+        parentPort.postMessage("waiting");
+        while (true) Atomics.wait(i32, 0, 0);
+      `,
+      { eval: true, workerData: new SharedArrayBuffer(4) },
+    );
+    const [msg] = await once(worker, "message");
+    expect(msg).toBe("waiting");
+    expect(await worker.terminate()).toBe(1);
+  });
+
+  test("inside a message handler resolves 1 and emits 'exit'", async () => {
+    const worker = new Worker(
+      /* js */ `
+        const { parentPort, workerData } = require("worker_threads");
+        const i32 = new Int32Array(workerData);
+        parentPort.on("message", task => {
+          parentPort.postMessage(task * 2);
+          // Piscina's idle loop: block until the parent posts the next task.
+          while (true) Atomics.wait(i32, 0, 0);
+        });
+      `,
+      { eval: true, workerData: new SharedArrayBuffer(4) },
+    );
+    worker.postMessage(21);
+    const [result] = await once(worker, "message");
+    expect(result).toBe(42);
+
+    const exited = once(worker, "exit");
+    expect(await worker.terminate()).toBe(1);
+    expect(await exited).toEqual([1]);
+  });
+
+  test("in a child of the terminated worker, which is joined on the way out", async () => {
+    const worker = new Worker(
+      /* js */ `
+        const { Worker, parentPort } = require("worker_threads");
+        const child = new Worker(
+          'const { parentPort, workerData } = require("worker_threads");' +
+            'const i32 = new Int32Array(workerData);' +
+            'parentPort.postMessage("waiting");' +
+            'while (true) Atomics.wait(i32, 0, 0);',
+          { eval: true, workerData: new SharedArrayBuffer(4) },
+        );
+        child.once("message", msg => parentPort.postMessage("child " + msg));
+      `,
+      { eval: true },
+    );
+    const [msg] = await once(worker, "message");
+    expect(msg).toBe("child waiting");
+    expect(await worker.terminate()).toBe(1);
+  });
+});
+
 describe("environmentData", () => {
   test("can pass a value to a child", async () => {
     setEnvironmentData("foo", new Map([["hello", "world"]]));

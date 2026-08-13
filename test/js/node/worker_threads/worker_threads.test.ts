@@ -2020,6 +2020,122 @@ test("a top-level await rejecting while the loop is alive fails the worker then"
   expect(exitCode).toBe(0);
 });
 
+// A promise rejected by the last callback that kept the worker's loop alive (an
+// immediate, a timer, work a 'beforeExit' listener scheduled) used to be dropped
+// on the floor: no 'unhandledRejection' listener ran, the parent got no 'error',
+// and the worker exited 0 (13 with a top-level await pending), as if nothing had
+// happened. Node reports it like any other rejection.
+// (Subprocess: inside `bun test` a worker's rejection skips the worker's own
+// 'unhandledRejection' listeners.)
+describe.concurrent("a rejection from the worker's last turn is reported", () => {
+  // What the parent observed, printed once the worker is gone: every message
+  // the worker posted (its own handlers report through parentPort), every
+  // 'error', and the 'exit' code.
+  async function outcome(workerSource: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("worker_threads");
+         const w = new Worker(${JSON.stringify(workerSource)}, { eval: true });
+         const seen = { messages: [], errors: [] };
+         w.on("message", m => seen.messages.push(m));
+         w.on("error", e => seen.errors.push(e.message));
+         w.on("exit", code => console.log(JSON.stringify({ ...seen, code })));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    return JSON.parse(stdout) as { messages: string[]; errors: string[]; code: number };
+  }
+
+  test("setImmediate rejection while a top-level await is pending", async () => {
+    const { messages, errors, code } = await outcome(
+      `import { parentPort } from "worker_threads";
+       process.on("exit", c => parentPort.postMessage("exit handler: " + c));
+       setImmediate(() => Promise.reject(new Error("boom")));
+       await new Promise(() => {});`,
+    );
+    expect(errors).toEqual(["boom"]);
+    // The worker died from the rejection, not from the unsettled await: its
+    // 'exit' handlers ran and were told the code the parent then received.
+    expect(code).not.toBe(13);
+    expect(messages).toEqual([`exit handler: ${code}`]);
+  });
+
+  test("the worker's 'unhandledRejection' listener gets it (and the unsettled await still exits 13)", async () => {
+    expect(
+      await outcome(
+        `import { parentPort } from "worker_threads";
+         process.on("unhandledRejection", e => parentPort.postMessage("unhandledRejection: " + e.message));
+         setImmediate(() => Promise.reject(new Error("boom")));
+         await new Promise(() => {});`,
+      ),
+    ).toEqual({ messages: ["unhandledRejection: boom"], errors: [], code: 13 });
+  });
+
+  test("an 'unhandledRejection' listener that rethrows fails the worker with code 1", async () => {
+    expect(
+      await outcome(
+        `import { parentPort } from "worker_threads";
+         process.on("unhandledRejection", e => { parentPort.postMessage("unhandledRejection: " + e.message); throw e; });
+         process.on("exit", c => parentPort.postMessage("exit handler: " + c));
+         setImmediate(() => Promise.reject(new Error("boom")));
+         await new Promise(() => {});`,
+      ),
+    ).toEqual({ messages: ["unhandledRejection: boom", "exit handler: 1"], errors: ["boom"], code: 1 });
+  });
+
+  test("setTimeout rejection with nothing else keeping the worker alive", async () => {
+    const { messages, errors, code } = await outcome(
+      `const { parentPort } = require("worker_threads");
+       process.on("exit", c => parentPort.postMessage("exit handler: " + c));
+       setTimeout(() => Promise.reject(new Error("boom")), 1);`,
+    );
+    expect(errors).toEqual(["boom"]);
+    expect(messages).toEqual([`exit handler: ${code}`]);
+  });
+
+  test("rejection from work a 'beforeExit' listener scheduled", async () => {
+    const { messages, errors, code } = await outcome(
+      `const { parentPort } = require("worker_threads");
+       process.on("exit", c => parentPort.postMessage("exit handler: " + c));
+       let scheduled = false;
+       process.on("beforeExit", () => {
+         if (scheduled) return;
+         scheduled = true;
+         setImmediate(() => Promise.reject(new Error("late")));
+       });`,
+    );
+    expect(errors).toEqual(["late"]);
+    expect(messages).toEqual([`exit handler: ${code}`]);
+  });
+
+  test("process.exit(0) from a 'beforeExit' listener is not turned into 13 by a pending top-level await", async () => {
+    expect(
+      await outcome(
+        `process.on("beforeExit", () => process.exit(0));
+         await new Promise(() => {});`,
+      ),
+    ).toEqual({ messages: [], errors: [], code: 0 });
+  });
+
+  test("a rejection handled before the turn ends is not reported", async () => {
+    expect(
+      await outcome(
+        `const { parentPort } = require("worker_threads");
+         setImmediate(() => {
+           const p = Promise.reject(new Error("boom"));
+           queueMicrotask(() => p.catch(() => parentPort.postMessage("caught")));
+         });`,
+      ),
+    ).toEqual({ messages: ["caught"], errors: [], code: 0 });
+  });
+});
+
 // Static imports that are still being read/transpiled are loading, not a
 // top-level await: 'online' and message delivery wait for the graph to execute.
 test("a file worker's static imports load before it counts as started", async () => {

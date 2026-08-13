@@ -939,6 +939,17 @@ impl WebWorker {
             if self.has_requested_terminate() {
                 break;
             }
+            // `tick()` reports the promises its tasks left rejected;
+            // `auto_tick_active()` (immediates, timers, I/O callbacks) leaves
+            // them to the next `tick()`. If those callbacks were the last thing
+            // keeping the loop alive there is no next turn, and the rejection
+            // would go unreported (Node reports it after every macrotask). Same
+            // below for what `on_before_exit` runs, as run_command.rs does for
+            // the main thread before `on_exit`.
+            vm.global().handle_rejected_promises();
+            if self.has_requested_terminate() {
+                break;
+            }
             if let EntryOutcome::Stop = observe_entry(vm) {
                 stopped_by_entry = true;
             }
@@ -960,10 +971,16 @@ impl WebWorker {
             // Only emit 'beforeExit' on a natural drain, not on terminate().
             // TODO: is this able to allow the event loop to continue?
             vm.as_mut().on_before_exit();
+            if !self.has_requested_terminate() {
+                vm.global().handle_rejected_promises();
+            }
             // Drained with the entry still pending: an unsettled top-level await,
-            // Node's exit 13 (unless the user chose a nonzero exit code).
+            // Node's exit 13 (unless the user chose a nonzero exit code, or the
+            // worker stopped itself just now, by process.exit() or an uncaught
+            // error, whose exit handlers already ran with the code they keep).
             // SAFETY: rooted by `entry_promise`.
-            if unsafe { (*promise).status() } == jsc::js_promise::Status::Pending
+            if !self.has_requested_terminate()
+                && unsafe { (*promise).status() } == jsc::js_promise::Status::Pending
                 && vm.exit_handler.exit_code == 0
             {
                 vm.as_mut().exit_handler.exit_code = 13;

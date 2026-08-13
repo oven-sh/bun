@@ -1158,10 +1158,11 @@ mod _async_tasks {
             self.to_js_newly_created(global)
         }
     }
-    impl FsReturn for FD {
+    impl FsReturn for ret::Open {
         #[inline]
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-            Ok(crate::node::types::FdJsc::to_js(*self, global))
+            let fd = core::mem::replace(&mut self.0, FD::INVALID);
+            Ok(crate::node::types::FdJsc::to_js(fd, global))
         }
     }
     impl FsReturn for StringOrBuffer {
@@ -1262,6 +1263,10 @@ mod _async_tasks {
             // `sys::Error::path` is `Box<[u8]>` boxed at the `errno_sys_p`
             // construction site, so no clone is needed — `node_fs` may drop.
             Some(done)
+        }
+
+        fn run_refused(this: &mut Self) {
+            <Op<{ F }> as NodeFSDispatch<R, A>>::release_unrun(&this.args);
         }
 
         fn then(
@@ -4477,7 +4482,18 @@ pub mod ret {
     pub(crate) type Lstat = StatOrNotFound;
     pub(crate) type Mkdir = StringOrUndefined;
     pub(crate) type Mkdtemp = StringOrBuffer;
-    pub(crate) type Open = FD;
+    /// `open`'s descriptor, owned until [`FsReturn::fs_to_js`] hands it to
+    /// JS. A result dropped undelivered (its worker was gone before the
+    /// completion could run) closes it instead of leaking it.
+    pub struct Open(pub(crate) FD);
+
+    impl Drop for Open {
+        fn drop(&mut self) {
+            if self.0.is_valid() {
+                let _ = self.0.close_allowing_standard_io(None);
+            }
+        }
+    }
     pub(crate) type WriteFile = ();
     pub(crate) type Readv = Read;
     pub(crate) type StatFS = node::StatFS;
@@ -4691,6 +4707,13 @@ impl NodeFS {
         } else {
             Ok(())
         }
+    }
+
+    /// [`NodeFSDispatch::release_unrun`] for `close`: a close job that will
+    /// never run still owns the descriptor the caller handed over, so the
+    /// close itself must happen. There is nowhere left to report an error.
+    pub(crate) fn close_unrun(args: &args::Close) {
+        let _ = args.fd.close_allowing_standard_io(None);
     }
 
     #[cfg(windows)]
@@ -5965,7 +5988,7 @@ impl NodeFS {
         };
         match Syscall::open(path, args.flags.as_int(), args.mode) {
             Err(err) => Err(err.with_path(args.path.slice())),
-            Ok(fd) => Ok(fd),
+            Ok(fd) => Ok(ret::Open(fd)),
         }
     }
 
@@ -5980,7 +6003,7 @@ impl NodeFS {
                 ..Default::default()
             });
         }
-        Ok(FD::from_uv(rc as _))
+        Ok(ret::Open(FD::from_uv(rc as _)))
     }
 
     #[cfg(windows)]
@@ -9246,6 +9269,10 @@ pub struct Op<const F: NodeFSFunctionEnum>;
 /// bound is always satisfied at every monomorphised call site.
 pub trait NodeFSDispatch<R, A> {
     fn run(fs: &mut NodeFS, args: &A, flavor: Flavor) -> Maybe<R>;
+    /// The VM was gone before the pool could run this operation: release any
+    /// resource the arguments transferred to it. There is no VM left to
+    /// report an error to.
+    fn release_unrun(_args: &A) {}
     #[cfg(windows)]
     fn run_uv(_fs: &mut NodeFS, _args: &A, _rc: i64) -> Maybe<R> {
         unreachable!("uv_dispatch: not a UVFSRequest variant")
@@ -9261,6 +9288,7 @@ macro_rules! node_fs_ops {
         $Variant:ident => $method:ident, $Args:ty, $Ret:ty
         $(, uv = $uv_method:ident)?
         $(, uv_req = $uv_req_method:ident)?
+        $(, unrun = $unrun_method:ident)?
     );+ $(;)?) => {
         $(
             impl NodeFSDispatch<$Ret, $Args> for Op<{ NodeFSFunctionEnum::$Variant }> {
@@ -9268,6 +9296,12 @@ macro_rules! node_fs_ops {
                 fn run(fs: &mut NodeFS, args: &$Args, flavor: Flavor) -> Maybe<$Ret> {
                     fs.$method(args, flavor)
                 }
+                $(
+                    #[inline]
+                    fn release_unrun(args: &$Args) {
+                        NodeFS::$unrun_method(args)
+                    }
+                )?
                 $(
                     #[cfg(windows)]
                     #[inline]
@@ -9292,7 +9326,7 @@ node_fs_ops! {
     AppendFile => append_file, args::AppendFile, ret::AppendFile;
     Chmod => chmod, args::Chmod, ret::Chmod;
     Chown => chown, args::Chown, ret::Chown;
-    Close => close, args::Close, ret::Close, uv = uv_close;
+    Close => close, args::Close, ret::Close, uv = uv_close, unrun = close_unrun;
     CopyFile => copy_file, args::CopyFile, ret::CopyFile;
     Exists => exists, args::Exists, ret::Exists;
     Fchmod => fchmod, args::FChmod, ret::Fchmod;

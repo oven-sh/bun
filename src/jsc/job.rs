@@ -245,6 +245,12 @@ pub trait JobContext: Sized + 'static {
         done: Completion<Self>,
     ) -> Option<Completion<Self>>;
 
+    /// Pool thread, no borrow: the VM was already gone when the pool reached
+    /// this job, so [`run`](Self::run) never happens. Release any process-wide
+    /// resource the arguments transferred to the job (the descriptor an
+    /// `fs.close` was to consume); the job itself is released right after.
+    fn run_refused(_off: &mut Self::OffThread) {}
+
     /// JS thread: the completion. Both partitions are handed over to use and
     /// drop normally.
     fn then(off: Self::OffThread, js: Self::Js, cx: &JsThread<'_>) -> JsResult<()>;
@@ -385,6 +391,8 @@ impl<C: JobContext> Job<C> {
         let done = Completion(NonNull::new(this).expect("job"));
         let Some(vm) = handle.borrow() else {
             // VM already gone: nothing ran; `finish` releases.
+            // SAFETY: live job, exclusively the pool's for this callback.
+            C::run_refused(unsafe { &mut (*this).off });
             return done.finish();
         };
         // SAFETY: as above; the borrow keeps the VM (and any JsPtr target) alive.

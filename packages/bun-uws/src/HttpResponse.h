@@ -384,9 +384,11 @@ public:
          * go down with the HTTP state destructed below, like bytes trailing a
          * synchronous upgrade in the same read (a client may not send anything
          * before the 101 anyway, RFC 6455 4.1). Parking paused reads; the adopted
-         * WebSocket needs them flowing, and us_socket_adopt keeps the flag. Dropped
-         * before endUpgradeHandshake so markDone() does not arm a replay dispatch
-         * that would land on the WebSocket as a spurious drain. */
+         * WebSocket needs them flowing, and us_socket_adopt keeps the flag. The
+         * resume re-arms writable too, so the WebSocket gets one drain callback with
+         * nothing to drain right after open; dropping the bytes before
+         * endUpgradeHandshake() keeps markDone() from arming a second one for a
+         * replay that cannot happen. */
         if (!responseData->parkedRequestBytes.isEmpty()) [[unlikely]] {
             responseData->parkedRequestBytes.clear();
             Super::resume();

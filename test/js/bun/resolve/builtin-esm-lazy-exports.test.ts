@@ -292,6 +292,36 @@ test.concurrent("spyOn and mock.module on an imported builtin", async () => {
   expect(exitCode).toBe(0);
 });
 
+test.concurrent(
+  "mocking default together with a lazy export still restores the export from the real object",
+  async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "lazy.test.ts": `
+        import { expect, mock, test } from "bun:test";
+        import * as ns from "node:fs";
+        import { fs, kinds } from "./helper.mjs";
+
+        test("default is overridden before ReadStream is looked at", () => {
+          expect(kinds()).toEqual(${JSON.stringify(kinds())});
+          mock.module("node:fs", () => ({ default: { notFs: true }, ReadStream: "mocked" }));
+          expect(ns.default).toEqual({ notFs: true });
+          expect(ns.ReadStream).toBe("mocked");
+          mock.restore();
+          expect(ns.default).toBe(fs);
+          expect(ns.ReadStream).toBe(fs.ReadStream);
+          expect(kinds()).toEqual(${JSON.stringify(kinds("ReadStream"))});
+        });
+      `,
+      },
+      ["test", "lazy.test.ts"],
+    );
+    expect(stderr).toContain(" 1 pass");
+    expect(stderr).toContain(" 0 fail");
+    expect(exitCode).toBe(0);
+  },
+);
+
 test.concurrent('"bun": re-exports construct the properties that get bound, not the rest of the object', async () => {
   const result = await runEntry(
     `

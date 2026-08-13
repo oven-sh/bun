@@ -190,6 +190,13 @@ describe.concurrent("mock.restore() reverts mock.module()", () => {
     return { stdout, stderr, exitCode };
   }
 
+  async function expectFixturePasses(files: Record<string, string>, passes: number) {
+    const { stderr, exitCode } = await runFixture(files);
+    expect(stderr).toContain(` ${passes} pass`);
+    expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  }
+
   test("restores an already-loaded ESM module's exports", async () => {
     const { stderr, exitCode } = await runFixture({
       "dep.ts": depTs,
@@ -262,22 +269,58 @@ describe.concurrent("mock.restore() reverts mock.module()", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("mock installed before first load is cleared so next import loads the real module", async () => {
-    const { stderr, exitCode } = await runFixture({
-      "dep.ts": depTs,
-      "fixture.test.ts": `
-        import { test, expect, mock } from "bun:test";
-        test("t", async () => {
-          mock.module("./dep.ts", () => ({ getValue: () => "mocked" }));
-          expect((await import("./dep.ts")).getValue()).toBe("mocked");
-          mock.restore();
-          expect((await import("./dep.ts")).getValue()).toBe("original");
-        });
-      `,
-    });
-    expect(stderr).toContain("1 pass");
-    expect(stderr).not.toContain("fail)");
-    expect(exitCode).toBe(0);
+  test("a module first loaded through a mock keeps it; restore only detaches the factories", async () => {
+    await expectFixturePasses(
+      {
+        "dep.ts": depTs,
+        "other.ts": `export const name = "real other";`,
+        "fixture.test.ts": `
+          import { test, expect, mock } from "bun:test";
+          test("t", async () => {
+            mock.module("./dep.ts", () => ({ getValue: () => "mocked" }));
+            mock.module("./other.ts", () => ({ name: "mocked other" }));
+            // dep.ts is evaluated from the mock factory; other.ts is never loaded while mocked.
+            expect((await import("./dep.ts")).getValue()).toBe("mocked");
+            mock.restore();
+            expect((await import("./dep.ts")).getValue()).toBe("mocked");
+            expect((await import("./other.ts")).name).toBe("real other");
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("beforeEach mock.module + afterEach restore re-mocks a dependency the code under test already imported", async () => {
+    // The "Mock Cleanup Patterns" shape from docs/test/mocks.mdx: logger is first loaded through a mock by the
+    // module under test, so every later beforeEach has to patch that same module record in place.
+    await expectFixturePasses(
+      {
+        "logger.ts": `export const log = (message: string) => { throw new Error("real logger called: " + message); };`,
+        "service.ts": `
+          import { log } from "./logger";
+          export const run = () => log("ran");
+        `,
+        "fixture.test.ts": `
+          import { test, expect, mock, beforeEach, afterEach } from "bun:test";
+          let log: ReturnType<typeof mock>;
+          beforeEach(() => {
+            log = mock(() => {});
+            mock.module("./logger", () => ({ log }));
+          });
+          afterEach(() => mock.restore());
+          test("first", async () => {
+            (await import("./service")).run();
+            expect(log).toHaveBeenCalledTimes(1);
+          });
+          test("second gets this test's mock, not the first test's", async () => {
+            (await import("./service")).run();
+            expect(log).toHaveBeenCalledTimes(1);
+          });
+        `,
+      },
+      2,
+    );
   });
 
   test("restores spyOn and mock.module together", async () => {
@@ -330,45 +373,26 @@ describe.concurrent("mock.restore() reverts mock.module()", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("re-mock after the first mock preceded first load still restores to the real module", async () => {
-    const { stderr, exitCode } = await runFixture({
-      "dep.ts": depTs,
-      "fixture.test.ts": `
-        import { test, expect, mock } from "bun:test";
-        test("t", async () => {
-          mock.module("./dep.ts", () => ({ getValue: () => "first" }));
-          expect((await import("./dep.ts")).getValue()).toBe("first");
-          mock.module("./dep.ts", () => ({ getValue: () => "second" }));
-          expect((await import("./dep.ts")).getValue()).toBe("second");
-          mock.restore();
-          expect((await import("./dep.ts")).getValue()).toBe("original");
-        });
-      `,
-    });
-    expect(stderr).toContain("1 pass");
-    expect(stderr).not.toContain("fail)");
-    expect(exitCode).toBe(0);
-  });
-
-  test("evicts the loader that was populated after mock.module() when the other was patched in place", async () => {
-    const { stderr, exitCode } = await runFixture({
-      "dep.cjs": `module.exports = { getValue: () => "original-cjs" };`,
-      "fixture.test.ts": `
-        import { test, expect, mock } from "bun:test";
-        test("t", async () => {
-          expect(require("./dep.cjs").getValue()).toBe("original-cjs");
-          mock.module("./dep.cjs", () => ({ getValue: () => "mocked" }));
-          expect(require("./dep.cjs").getValue()).toBe("mocked");
-          expect((await import("./dep.cjs")).getValue()).toBe("mocked");
-          mock.restore();
-          expect(require("./dep.cjs").getValue()).toBe("original-cjs");
-          expect((await import("./dep.cjs")).getValue()).toBe("original-cjs");
-        });
-      `,
-    });
-    expect(stderr).toContain("1 pass");
-    expect(stderr).not.toContain("fail)");
-    expect(exitCode).toBe(0);
+  test("restores the require cache entry in place while a module born from the mock keeps it", async () => {
+    await expectFixturePasses(
+      {
+        "dep.cjs": `module.exports = { getValue: () => "original-cjs" };`,
+        "fixture.test.ts": `
+          import { test, expect, mock } from "bun:test";
+          test("t", async () => {
+            expect(require("./dep.cjs").getValue()).toBe("original-cjs");
+            mock.module("./dep.cjs", () => ({ getValue: () => "mocked" }));
+            expect(require("./dep.cjs").getValue()).toBe("mocked");
+            // First ESM load of dep.cjs happens while mocked, so that record is born from the mock.
+            expect((await import("./dep.cjs")).getValue()).toBe("mocked");
+            mock.restore();
+            expect(require("./dep.cjs").getValue()).toBe("original-cjs");
+            expect((await import("./dep.cjs")).getValue()).toBe("mocked");
+          });
+        `,
+      },
+      1,
+    );
   });
 
   test("leaves Bun.plugin virtual modules alone", async () => {
@@ -473,5 +497,149 @@ describe.concurrent("mock.restore() reverts mock.module()", () => {
     expect(stderr).toContain("2 pass");
     expect(stderr).not.toContain("fail)");
     expect(exitCode).toBe(0);
+  });
+  test("mocks installed at the file's top level survive restore; mocks installed from hooks do not", async () => {
+    await expectFixturePasses(
+      {
+        "dep.ts": depTs,
+        "hooked.ts": `export const name = "real hooked";`,
+        "fixture.test.ts": `
+          import { test, expect, mock, beforeAll, afterEach } from "bun:test";
+          import { getValue } from "./dep";
+          import { name } from "./hooked";
+          mock.module("./dep", () => ({ getValue: () => "top-level mock" }));
+          beforeAll(() => {
+            mock.module("./hooked", () => ({ name: "hook mock" }));
+          });
+          afterEach(() => mock.restore());
+          test("first", () => {
+            expect(getValue()).toBe("top-level mock");
+            expect(name).toBe("hook mock");
+          });
+          test("second", () => {
+            expect(getValue()).toBe("top-level mock");
+            expect(name).toBe("real hooked");
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("jest.mock at the top level survives afterEach(jest.restoreAllMocks)", async () => {
+    await expectFixturePasses(
+      {
+        "dep.ts": depTs,
+        "fixture.test.ts": `
+          import { test, expect, jest, afterEach } from "bun:test";
+          import { getValue } from "./dep";
+          jest.mock("./dep", () => ({ getValue: () => "jest mock" }));
+          afterEach(() => jest.restoreAllMocks());
+          test("first", () => expect(getValue()).toBe("jest mock"));
+          test("second", () => expect(getValue()).toBe("jest mock"));
+        `,
+      },
+      2,
+    );
+  });
+
+  test("mocks installed in a describe body survive restore", async () => {
+    await expectFixturePasses(
+      {
+        "dep.ts": depTs,
+        "fixture.test.ts": `
+          import { test, expect, mock, describe, afterEach } from "bun:test";
+          import { getValue } from "./dep";
+          describe("suite", () => {
+            mock.module("./dep", () => ({ getValue: () => "describe mock" }));
+            afterEach(() => mock.restore());
+            test("first", () => expect(getValue()).toBe("describe mock"));
+            test("second", () => expect(getValue()).toBe("describe mock"));
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("a test-time mock on top of a top-level mock restores to the top-level mock", async () => {
+    await expectFixturePasses(
+      {
+        "dep.ts": depTs,
+        "fixture.test.ts": `
+          import { test, expect, mock, afterEach } from "bun:test";
+          import { getValue } from "./dep";
+          mock.module("./dep", () => ({ getValue: () => "file mock" }));
+          afterEach(() => mock.restore());
+          test("override", () => {
+            mock.module("./dep", () => ({ getValue: () => "test mock" }));
+            expect(getValue()).toBe("test mock");
+          });
+          test("back to the file's mock", async () => {
+            expect(getValue()).toBe("file mock");
+            expect((await import("./dep")).getValue()).toBe("file mock");
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("a barrel and its leaf mocked in the same test restore to the real export in either order", async () => {
+    await expectFixturePasses(
+      {
+        "leaf.ts": `export const value = "real";`,
+        "barrel.ts": `export { value } from "./leaf";`,
+        "fixture.test.ts": `
+          import { test, expect, mock, afterEach } from "bun:test";
+          import * as leaf from "./leaf";
+          import * as barrel from "./barrel";
+          afterEach(() => mock.restore());
+          test("leaf first", () => {
+            mock.module("./leaf", () => ({ value: "leaf mock" }));
+            mock.module("./barrel", () => ({ value: "barrel mock" }));
+            expect([leaf.value, barrel.value]).toEqual(["barrel mock", "barrel mock"]);
+            mock.restore();
+            expect([leaf.value, barrel.value]).toEqual(["real", "real"]);
+          });
+          test("barrel first", () => {
+            mock.module("./barrel", () => ({ value: "barrel mock" }));
+            mock.module("./leaf", () => ({ value: "leaf mock" }));
+            expect([leaf.value, barrel.value]).toEqual(["leaf mock", "leaf mock"]);
+            mock.restore();
+            expect([leaf.value, barrel.value]).toEqual(["real", "real"]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("mock.module on a module that is still evaluating (import cycle) does not throw on its TDZ bindings", async () => {
+    await expectFixturePasses(
+      {
+        "a.ts": `
+          import "./b";
+          export const value = "from a";
+        `,
+        "b.ts": `
+          import { mock } from "bun:test";
+          import "./a";
+          // a.ts is linked but has not run yet, so the binding for value is still in its TDZ.
+          mock.module("./a", () => ({ value: "mocked" }));
+          export const loaded = true;
+        `,
+        "fixture.test.ts": `
+          import { test, expect, mock } from "bun:test";
+          test("t", async () => {
+            const a = await import("./a");
+            expect(a.value).toBe("from a");
+            mock.restore();
+            expect(a.value).toBe("from a");
+          });
+        `,
+      },
+      1,
+    );
   });
 });

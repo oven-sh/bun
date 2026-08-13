@@ -431,7 +431,9 @@ test("resetting all mocks", () => {
 
 ### Restore All Mocks
 
-`mock.restore()` restores every mock at once, instead of calling `mockFn.mockRestore()` on each one. It also reverts modules overridden with `mock.module()` during a test back to their original exports. Module mocks installed from a preload script are left in place so `afterEach(mock.restore)` does not tear down global test setup.
+`mock.restore()` restores every mock at once, instead of calling `mockFn.mockRestore()` on each one. It also undoes `mock.module()` calls made inside tests and lifecycle hooks: exports they replaced on already-loaded modules get their previous values back, and the mocks stop applying to modules loaded afterwards. Module mocks set up by a preload script or at the top level of a test file (including inside `describe` blocks) are the file's setup and stay in place, so `afterEach(() => mock.restore())` works alongside them. The same applies to `jest.restoreAllMocks()` and `vi.restoreAllMocks()`.
+
+A module that was loaded for the first time while a mock was active was evaluated from that mock, and `mock.restore()` cannot re-evaluate it: it keeps those exports until a later `mock.module()` replaces them again (which is what a `beforeEach` that re-installs the mock does). To load the real module in that situation, run the affected tests in a separate file.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { expect, mock, spyOn, test } from "bun:test";

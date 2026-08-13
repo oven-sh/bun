@@ -14,9 +14,8 @@ fn fd_unwrap_valid(fd: Fd) -> Option<Fd> {
     if fd == Fd::INVALID { None } else { Some(fd) }
 }
 
-/// `SystemError__toErrorInstance` skips `path`/`dest` strings tagged `Empty`,
-/// which is what `clone_utf8` returns for zero bytes; an operand that really is
-/// "" goes over as a zero-length static string so the property still lands.
+/// `String::EMPTY` means "no operand" to `SystemError__toErrorInstance`, so an
+/// operand that is itself "" is sent as a zero-length string of another tag.
 fn operand_string(operand: &[u8]) -> BunString {
     if operand.is_empty() {
         return BunString::static_(b"");
@@ -39,8 +38,7 @@ pub struct Error {
     pub fd: Fd,
     #[cfg(windows)]
     pub from_libuv: bool,
-    // `None`: the operation had no path operand. `Some("")` is a real (empty)
-    // operand and is reported like any other, as Node does.
+    /// `None` when the operation had no path operand; an operand of "" is `Some`.
     pub path: Option<Box<[u8]>>,
     pub syscall: Tag,
     pub dest: Option<Box<[u8]>>,

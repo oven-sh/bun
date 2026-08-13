@@ -2793,10 +2793,11 @@ impl JSValue {
             JSC__JSValue__jestDeepMatch(self, subset, global)
         })
     }
-    /// Returns a clone of `self` in which every property that matched an
-    /// asymmetric matcher in `matchers` has been replaced with that matcher,
-    /// so the snapshot formatter records `Any<String>` etc. rather than the
-    /// concrete value. `self` is not mutated.
+    /// The value `toMatchSnapshot(matchers)` serializes: a clone of `self` with
+    /// each asymmetric matcher that [`Self::jest_deep_match`] checked put in
+    /// place of the property it checked, so the snapshot records `Any<String>`
+    /// etc. rather than the concrete value. `self` is not mutated. Both `self`
+    /// and `matchers` must be objects and `jest_deep_match` must have passed.
     pub fn jest_substitute_asymmetric_matchers(
         self,
         matchers: JSValue,

@@ -436,9 +436,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JS
  *
  * @tparam enableAsymmetricMatchers
  * @param objValue
- * @param seenObjProperties already visited properties of `objValue`.
+ * @param seenObjProperties objects of `objValue` on the current recursion path (cycle guard).
  * @param subsetValue
- * @param seenSubsetProperties already visited properties of `subsetValue`.
+ * @param seenSubsetProperties objects of `subsetValue` on the current recursion path (cycle guard).
  * @param globalObject
  * @param Scope
  * @param gcBuffer

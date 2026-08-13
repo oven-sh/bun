@@ -3575,20 +3575,22 @@ describe("expect()", () => {
     });
 
     // https://github.com/oven-sh/bun/issues/3521
+    // toEqual accepts an asymmetric matcher on either side, so every check
+    // below reads the leaf that would have been overwritten and uses toBe.
     test("does not mutate the received object when an asymmetric matcher matches", () => {
       const obj = { foo: "foo", bar: "bar" };
       expect(obj).toMatchObject({ bar: expect.any(String) });
-      expect(obj).toEqual({ foo: "foo", bar: "bar" });
+      expect(obj.bar).toBe("bar");
       expect(obj).toMatchObject({ bar: expect.any(String) });
       expect(obj.bar).toBe("bar");
 
       const nested = { a: { b: { c: 42 } }, d: "keep" };
       expect(nested).toMatchObject({ a: { b: { c: expect.any(Number) } } });
-      expect(nested).toEqual({ a: { b: { c: 42 } }, d: "keep" });
+      expect(nested.a.b.c).toBe(42);
 
       const arr = { list: [1, "two", 3] };
       expect(arr).toMatchObject({ list: [1, expect.any(String), 3] });
-      expect(arr).toEqual({ list: [1, "two", 3] });
+      expect(arr.list[1]).toBe("two");
 
       // The expected/subset side must also be left alone when the received
       // side carries the asymmetric matcher.
@@ -3602,6 +3604,25 @@ describe("expect()", () => {
       const frozen = Object.freeze({ foo: "foo", bar: "bar" });
       expect(frozen).toMatchObject({ bar: expect.any(String) });
       expect(frozen.bar).toBe("bar");
+    });
+
+    test("checks an object reached through more than one property at every position", () => {
+      const shared = { x: 1 };
+      const dag = { a: shared, b: shared };
+      expect(dag).toMatchObject({ a: { x: expect.any(Number) }, b: { x: expect.any(Number) } });
+      expect(dag).not.toMatchObject({ a: { x: expect.any(Number) }, b: { x: expect.any(String) } });
+
+      const m = { id: expect.any(Number) };
+      expect([{ id: 1 }, { id: 2 }, { id: 3 }]).toMatchObject([m, m, m]);
+      expect([{ id: 1 }, { id: "oops" }, { id: 3 }]).not.toMatchObject([m, m, m]);
+
+      // Genuine cycles on either side still terminate.
+      const cyclic = { x: 1 };
+      cyclic.self = cyclic;
+      const cyclicMatcher = { x: expect.any(Number) };
+      cyclicMatcher.self = cyclicMatcher;
+      expect(cyclic).toMatchObject(cyclicMatcher);
+      expect(cyclic).toMatchObject({ self: { self: { x: expect.any(Number) } } });
     });
   });
 

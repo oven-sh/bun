@@ -73,6 +73,48 @@ test("registry port is not mistaken for a credential when the package is scoped"
   expect(exitCode).toBe(1);
 });
 
+test("bunfig password value is masked in config error output", async () => {
+  using dir = tempDir("redacted-bunfig-password", {
+    "bunfig.toml": `l;password = "supersecretvalue"`,
+    "package.json": "{}",
+  });
+
+  await using plain = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [plainOut, plainErr, plainExit] = await Promise.all([plain.stdout.text(), plain.stderr.text(), plain.exited]);
+
+  expect(plainOut).not.toContain("supersecretvalue");
+  expect(plainErr).not.toContain("supersecretvalue");
+  expect(plainErr).toContain(`l;password = "****************"`);
+
+  await using colored = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [coloredOut, coloredErr, coloredExit] = await Promise.all([
+    colored.stdout.text(),
+    colored.stderr.text(),
+    colored.exited,
+  ]);
+
+  expect(coloredOut).not.toContain("supersecretvalue");
+  expect(coloredErr).not.toContain("supersecretvalue");
+  expect(coloredErr).toContain("****************");
+
+  expect(plainExit).toBe(1);
+  expect(coloredExit).toBe(1);
+});
+
 describe.concurrent("redact", async () => {
   const tests = [
     {
@@ -89,6 +131,11 @@ describe.concurrent("redact", async () => {
       title: "small string",
       bunfig: `l;token = "1"`,
       expected: `"*"`,
+    },
+    {
+      title: "registry password",
+      bunfig: `l;password = "hunter2"`,
+      expected: `"*******"`,
     },
     {
       title: "random UUID",

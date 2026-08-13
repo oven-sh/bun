@@ -1268,6 +1268,17 @@ pub struct LinkerOptions {
     pub(crate) public_path: &'static [u8],
 }
 
+impl LinkerOptions {
+    /// ESM bytecode in a `--compile` build: JSC does not parse the chunk, so
+    /// its `JSModuleRecord` is built from a `ModuleInfo` the linker records
+    /// while printing (see `post_process_js_chunk`).
+    pub(crate) fn generates_module_info(&self) -> bool {
+        self.generate_bytecode_cache
+            && self.output_format == Format::Esm
+            && self.compile_mode.is_executable()
+    }
+}
+
 impl Default for LinkerOptions {
     fn default() -> Self {
         Self {
@@ -2142,6 +2153,7 @@ impl<'a> LinkerContext<'a> {
         runtime_require_ref: Option<Ref>,
         source_index: Index,
         source: &Source,
+        module_info: Option<&mut crate::analyze_transpiled_module::ModuleInfo>,
     ) -> js_printer::PrintResult {
         let parts_to_print = &[Part {
             stmts: bun_ast::StoreSlice::new_mut(out_stmts),
@@ -2221,6 +2233,7 @@ impl<'a> LinkerContext<'a> {
                 None
             },
             mangled_props: Some(mangled_props),
+            module_info,
             ..Default::default()
         };
 

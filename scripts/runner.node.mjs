@@ -2209,7 +2209,15 @@ async function spawnBunInstall(execPath, options) {
     args: ["install"],
     timeout: testTimeout,
     ...options,
-    env: { ...options.env, ...(cacheDir && { BUN_INSTALL_CACHE_DIR: cacheDir }) },
+    env: {
+      // A puppeteer postinstall reached through these installs would download
+      // Chrome into the agent's shared ~/.cache; a half-extracted download left
+      // there on a persistent agent fails every later job's install. Tests that
+      // need a browser install one into a per-run cache (getPuppeteerInstallEnv).
+      PUPPETEER_SKIP_DOWNLOAD: "1",
+      ...options.env,
+      ...(cacheDir && { BUN_INSTALL_CACHE_DIR: cacheDir }),
+    },
   });
   if (crashes) stdout += crashes;
   const relativePath = relative(cwd, options.cwd);
@@ -2695,7 +2703,8 @@ async function getExecPathFromBuildKite(target, buildId) {
 
   let zipPath;
   downloadLoop: for (let i = 0; i < 10; i++) {
-    const args = ["artifact", "download", "**", releasePath, "--step", target];
+    // build-bun also uploads libbun-*.a / libbun_rust.a / dep libs; only the zips are wanted here.
+    const args = ["artifact", "download", "*.zip", releasePath, "--step", target];
     if (buildId) {
       args.push("--build", buildId);
     }

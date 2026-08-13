@@ -1170,7 +1170,6 @@ pub(crate) fn install_isolated_packages(
 
             let pkgs = lockfile.packages.slice();
             let pkg_names = pkgs.items_name();
-            let pkg_name_hashes = pkgs.items_name_hash();
             let pkg_resolutions = pkgs.items_resolution();
             let pkg_metas = pkgs.items_meta();
 
@@ -1269,24 +1268,16 @@ pub(crate) fn install_isolated_packages(
                                 // Over-excludes the rare "trusted but actually no
                                 // scripts" case in exchange for not needing a
                                 // lockfile-format change.
-                                let (dep_name, dep_name_hash) = if dep_id != invalid_dependency_id {
-                                    (
-                                        dependencies[dep_id as usize].name.slice(string_buf),
-                                        dependencies[dep_id as usize].name_hash,
-                                    )
+                                let dep_name = if dep_id != invalid_dependency_id {
+                                    dependencies[dep_id as usize].name.slice(string_buf)
                                 } else {
-                                    (
-                                        pkg_names[pkg_id as usize].slice(string_buf),
-                                        pkg_name_hashes[pkg_id as usize],
-                                    )
+                                    pkg_names[pkg_id as usize].slice(string_buf)
                                 };
                                 if lockfile.has_trusted_dependency(
                                     dep_name,
                                     pkg_names[pkg_id as usize].slice(string_buf),
                                     pkg_res,
-                                ) || trusted_from_update
-                                    .get(&(dep_name_hash as crate::TruncatedPackageNameHash))
-                                    .is_some_and(|n| **n == *dep_name)
+                                ) || trusted_from_update.contains(&pkg_id)
                                 {
                                     break 'eligible false;
                                 }

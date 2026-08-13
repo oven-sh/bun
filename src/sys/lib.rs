@@ -1973,8 +1973,26 @@ mod posix_impl {
         if !UNAVAILABLE.load(Ordering::Relaxed) {
             match super::linux_syscall::openat2_in_root(dir, path, flags, mode) {
                 Ok(fd) => return Ok(fd),
-                Err(libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG) => {
-                    UNAVAILABLE.store(true, Ordering::Relaxed);
+                Err(e @ (libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG)) => {
+                    let probe = super::linux_syscall::openat2_in_root(
+                        dir,
+                        bun_core::zstr!("."),
+                        O::PATH | O::DIRECTORY | O::CLOEXEC,
+                        0,
+                    );
+                    match probe {
+                        Err(libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG) => {
+                            UNAVAILABLE.store(true, Ordering::Relaxed);
+                        }
+                        other => {
+                            if let Ok(fd) = other {
+                                let _ = close(fd);
+                            }
+                            return Err(
+                                Error::from_code_int(e, Tag::open).with_path(path.as_bytes())
+                            );
+                        }
+                    }
                 }
                 Err(e) => {
                     return Err(Error::from_code_int(e, Tag::open).with_path(path.as_bytes()));
@@ -3957,6 +3975,11 @@ mod windows_impl {
         // CRT-fd-backed `Fd` and ignores the directory/nofollow flags.
         super::openat_windows_a(dir, path.as_bytes(), flags, mode)
     }
+    /// `DuplicateHandle` with `bInheritHandle = FALSE`, the equivalent of the
+    /// POSIX arm's `F_DUPFD_CLOEXEC`: libuv spawns children with
+    /// `bInheritHandles = TRUE`, so an inheritable duplicate would leak into
+    /// every process spawned while it is open. Stdio handed to a child is
+    /// duplicated again (inheritable) by libuv itself, so nothing needs it.
     pub fn dup(fd: Fd) -> Maybe<Fd> {
         // DuplicateHandle on the underlying HANDLE.
         let process = w::kernel32::GetCurrentProcess();
@@ -3968,7 +3991,7 @@ mod windows_impl {
                 process,
                 &mut target,
                 0,
-                w::TRUE,
+                w::FALSE,
                 w::DUPLICATE_SAME_ACCESS,
             )
         };

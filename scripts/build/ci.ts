@@ -377,14 +377,14 @@ export function computeBunTriplet(cfg: Config): string {
 }
 
 /**
- * Post-link packaging and upload for link-only / rust-and-link mode. Runs
+ * Post-link packaging and upload for the modes that link in CI. Runs
  * AFTER ninja succeeds — at that point bun-profile (and stripped bun) exist.
  *
  * Generates features.json, packages into zips,
  * uploads. Contract with test steps: see block comment above.
  */
 export function packageAndUpload(cfg: Config, output: BunOutput): void {
-  if (!isBuildkite || (cfg.mode !== "link-only" && cfg.mode !== "rust-and-link")) return;
+  if (!isBuildkite) return;
 
   const exe = output.exe;
   if (exe === undefined) {
@@ -722,7 +722,7 @@ export function orderFileContext(): OrderFileContext {
 /** Only builds that link, on targets that use an order file, outside PRs. */
 export function orderFileEligible(cfg: Config, ctx: OrderFileContext): boolean {
   if (!usesOrderFile(cfg) || !ctx.buildkite || ctx.pullRequest) return false;
-  return cfg.mode === "full" || cfg.mode === "link-only" || cfg.mode === "rust-and-link";
+  return cfg.mode !== "cpp-only" && cfg.mode !== "rust-only";
 }
 
 /** Tracing runs the binary we just linked, so the host must be able to execute it. */

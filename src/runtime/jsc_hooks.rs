@@ -1408,18 +1408,18 @@ fn load_standalone_sourcemap(
 /// # Safety
 /// `global` is the live VM global; called on the JS thread inside an
 /// `event_loop.enter()` scope.
-pub(crate) unsafe fn handle_ipc_internal_child(global: *mut JSGlobalObject, data: JSValue) {
+pub(crate) unsafe fn handle_ipc_internal_child(
+    global: *mut JSGlobalObject,
+    data: JSValue,
+    handle: JSValue,
+) {
     // SAFETY: per fn contract.
     let global = unsafe { &*global };
     // Spec discards a JS exception here (`catch |err| switch (err) {
     // error.JSError => {} }`); the low tier already wrapped this call in
     // `event_loop.enter()/exit()` which clears any pending exception, so
     // dropping the `Err` is correct.
-    let _ = crate::node::node_cluster_binding::handle_internal_message_child(
-        global,
-        data,
-        JSValue::UNDEFINED,
-    );
+    let _ = crate::node::node_cluster_binding::handle_internal_message_child(global, data, handle);
 }
 
 /// `node_cluster_binding.child_singleton.deinit()` —
@@ -1764,8 +1764,8 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
     // `setTimeout` into the never-driven fake heap. Leave the heap itself
     // intact: `swap_global_for_test_isolation` runs `cancel_all_timeout_objects`
     // next, which walks both heaps and releases `TimeoutObject` pins and
-    // unlinks `AbortSignalTimeout` timers at a point where no user JS can touch
-    // the outgoing signals.
+    // discards `AbortSignalTimeout` timers at a point where no user JS can
+    // touch the outgoing signals.
     {
         let all = timer_all();
         // SAFETY: `state` is non-null so `timer_all()` is non-null; single
@@ -3843,6 +3843,7 @@ fn get_hardcoded_module(
             Some(js_synthetic_module(b"node:zlib/iter", specifier))
         }
         HardcodedModule::BunInternalForTesting
+        | HardcodedModule::InternalClusterRoundRobinHandle
         | HardcodedModule::NodeInternalRepl
         | HardcodedModule::NodeInternalReplAwait
         | HardcodedModule::NodeInternalReplHistory

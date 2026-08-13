@@ -227,6 +227,7 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), const char *host, unsigned short port, int flags, int *err, void *user);
 
+
 void us_udp_socket_close(struct us_udp_socket_t *s);
 
 int us_udp_socket_set_broadcast(struct us_udp_socket_t *s, int enabled);
@@ -242,7 +243,7 @@ LIBUS_SOCKET_DESCRIPTOR us_udp_socket_fd(struct us_udp_socket_t *s);
 /* Adopts an already created (and usually already bound) UDP socket descriptor
  * instead of creating a new one. The fd is made non-blocking and the standard
  * receive-path options are applied. Returns null with *err set on failure. */
-struct us_udp_socket_t *us_create_udp_socket_from_fd(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), LIBUS_SOCKET_DESCRIPTOR fd, int *err, void *user);
+struct us_udp_socket_t *us_create_udp_socket_from_fd(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), LIBUS_SOCKET_DESCRIPTOR fd, int shared, int *err, void *user);
 
 /* This one is ugly, should be ext! not user */
 void *us_udp_socket_user(struct us_udp_socket_t *s);
@@ -395,6 +396,10 @@ struct us_listen_socket_t *us_socket_group_listen_unix(us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx,
     const char *path, size_t pathlen, int options, int socket_ext_size, int *error)
     __attribute__((nonnull(1, 4, 8)));  /* ssl_ctx nullable */
+struct us_listen_socket_t *us_socket_group_listen_fd(us_socket_group_r group,
+    unsigned char kind, struct ssl_ctx_st *ssl_ctx,
+    LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error)
+    __attribute__((nonnull(1, 8)));  /* ssl_ctx nullable */
 void us_listen_socket_close(struct us_listen_socket_t *ls) nonnull_fn_decl;
 
 /* SNI: tree hangs off the listen socket. ssl_ctx is up_ref'd; user is opaque
@@ -431,6 +436,7 @@ void us_ssl_ctx_set_sni_policy(struct ssl_ctx_st *ctx, int request_cert,
 /* 1 iff the SNI-selected context for this connection demands closing on a
  * client-certificate verification error. */
 int us_socket_server_name_reject_unauthorized(us_socket_r s);
+int us_ssl_ctx_reject_unauthorized(struct ssl_ctx_st *ctx);
 /* Socket-level SNI resolver, for a server-side socket adopted into TLS with no
  * listen socket behind it. Same contract as the listener resolver: an owned
  * SSL_CTX ref or NULL; *abort_handshake 1 = drop silently, 2 = suspend. */
@@ -706,7 +712,7 @@ LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) nonnull_fn_decl;
 
 /* Bun extras */
 struct us_socket_t *us_socket_pair(us_socket_group_r group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) nonnull_fn_decl;
-struct us_socket_t *us_socket_from_fd(us_socket_group_r group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc)
+struct us_socket_t *us_socket_from_fd(us_socket_group_r group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int options, int ipc)
     __attribute__((nonnull(1)));  /* ssl_ctx nullable */
 struct us_socket_t *us_socket_open(struct us_socket_t *s, int is_client, char *ip, int ip_length);
 int us_raw_root_certs(struct us_cert_string_t **out);

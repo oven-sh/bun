@@ -1150,7 +1150,7 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
         });
 
     globalObject->m_moduleRunMainFunction.initLater(
-        [](const Zig::GlobalObject::Initializer<JSCell>& init) {
+        [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
             JSFunction* runMainFunction = JSFunction::create(
                 init.vm, init.owner, 2, "runMain"_s,
                 jsFunctionRunMain, JSC::ImplementationVisibility::Public,

@@ -517,7 +517,7 @@ public:
     /* TODO: these should use LazyProperty */                                                                \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleResolveFilenameFunction)                           \
-    V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleRunMainFunction)                                   \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_moduleRunMainFunction)                               \
     /* Last value assigned to `require("module").runMain`; empty while it is the original function. */       \
     /* Holds non-callables too (Node's is a plain data property): callability is checked at call time. */    \
     V(public, WriteBarrier<JSC::Unknown>, m_moduleRunMainOverride)                                           \

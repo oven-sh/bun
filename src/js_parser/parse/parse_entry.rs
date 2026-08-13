@@ -104,6 +104,10 @@ pub struct Options<'a> {
     /// - Wraps last expression in { value: expr } for result capture
     /// - Wraps code with await in async IIFE
     pub repl_mode: bool,
+
+    /// The lazy-export expression came from the TOML parser and may contain
+    /// `toml_datetime`-tagged strings to lower into `Temporal.*.from` calls.
+    pub lower_toml_datetimes: bool,
 }
 
 impl<'a> Default for Options<'a> {
@@ -135,6 +139,7 @@ impl<'a> Default for Options<'a> {
             lower_import_meta_main_for_node_js: false,
             framework: None,
             repl_mode: false,
+            lower_toml_datetimes: false,
         }
     }
 }
@@ -218,6 +223,7 @@ impl<'a> Options<'a> {
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
             framework: self.framework,
             repl_mode: self.repl_mode,
+            lower_toml_datetimes: self.lower_toml_datetimes,
         }
     }
 
@@ -289,6 +295,7 @@ impl<'a> Options<'a> {
             lower_import_meta_main_for_node_js: false,
             framework: None,
             repl_mode: false,
+            lower_toml_datetimes: loader == options::Loader::Toml,
         };
         opts.jsx.parse = loader.is_jsx();
         opts
@@ -562,8 +569,10 @@ impl<'a> Parser<'a> {
         // TOML date/time literals become `Temporal.*.from("...")` calls over
         // a real unbound symbol, so the chunk renamer reserves the name
         // instead of letting a user `Temporal` binding capture it.
-        let mut temporal_ref: Option<js_ast::Ref> = None;
-        lower_date_time_literals(p, &mut final_expr, &mut temporal_ref)?;
+        if p.options.lower_toml_datetimes {
+            let mut temporal_ref: Option<js_ast::Ref> = None;
+            lower_date_time_literals(p, &mut final_expr, &mut temporal_ref)?;
+        }
 
         // Optionally call a runtime API function to transform the expression
         if !runtime_api_call.is_empty() {

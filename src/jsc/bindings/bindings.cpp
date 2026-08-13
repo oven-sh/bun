@@ -6238,21 +6238,21 @@ extern "C" [[ZIG_EXPORT(check_slow)]] int32_t Bun__Temporal__toTOMLDateTime(JSC:
     WTF::String string;
     switch (temporalType) {
     case 1:
-        string = JSC::TemporalCore::instantToString(dynamicDowncast<JSC::TemporalInstant>(cell)->exactTime(), std::nullopt, autoPrecision);
+        string = JSC::TemporalCore::instantToString(uncheckedDowncast<JSC::TemporalInstant>(cell)->exactTime(), std::nullopt, autoPrecision);
         break;
     case 2: {
-        auto* dateTime = dynamicDowncast<JSC::TemporalPlainDateTime>(cell);
+        auto* dateTime = uncheckedDowncast<JSC::TemporalPlainDateTime>(cell);
         string = JSC::ISO8601::temporalDateTimeToString(dateTime->plainDate(), dateTime->plainTime(), { JSC::Precision::Auto, 0 });
         break;
     }
     case 3:
-        string = JSC::ISO8601::temporalDateToString(dynamicDowncast<JSC::TemporalPlainDate>(cell)->plainDate());
+        string = JSC::ISO8601::temporalDateToString(uncheckedDowncast<JSC::TemporalPlainDate>(cell)->plainDate());
         break;
     case 4:
-        string = JSC::ISO8601::temporalTimeToString(dynamicDowncast<JSC::TemporalPlainTime>(cell)->plainTime(), { JSC::Precision::Auto, 0 });
+        string = JSC::ISO8601::temporalTimeToString(uncheckedDowncast<JSC::TemporalPlainTime>(cell)->plainTime(), { JSC::Precision::Auto, 0 });
         break;
     case 5: {
-        auto* zoned = dynamicDowncast<JSC::TemporalZonedDateTime>(cell);
+        auto* zoned = uncheckedDowncast<JSC::TemporalZonedDateTime>(cell);
         std::optional<int64_t> offsetNs = zoned->getOffsetNanoseconds(globalObject);
         RETURN_IF_EXCEPTION(scope, -1);
         ASSERT(offsetNs);

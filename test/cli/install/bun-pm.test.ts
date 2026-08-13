@@ -1,7 +1,7 @@
 import { spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { exists, mkdir, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, readdirSorted, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunEnv as env, readdirSorted, tempDir, tls, tmpdirSync } from "harness";
 import { cpSync } from "node:fs";
 import { join } from "path";
 import {
@@ -716,6 +716,55 @@ test("bun pm whoami still works", async () => {
 
   // Exit code will be non-zero due to missing auth
   expect(exitCode).toBe(1);
+});
+
+describe.concurrent("bun pm whoami against a registry with a self-signed certificate", () => {
+  async function whoami(env: NodeJS.Dict<string>) {
+    const requests: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      tls,
+      fetch(req) {
+        requests.push(`${req.method} ${new URL(req.url).pathname}`);
+        return Response.json({ username: "self-signed-user" });
+      },
+    });
+    using dir = tempDir("pm-whoami-self-signed", {
+      "package.json": JSON.stringify({ name: "whoami-self-signed", version: "1.0.0" }),
+      "bunfig.toml": Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: { url: `https://localhost:${server.port}`, token: "self-signed-token" },
+        },
+      }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "whoami"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, requests };
+  }
+
+  test("NODE_TLS_REJECT_UNAUTHORIZED=0 turns verification off", async () => {
+    const { stdout, stderr, exitCode, requests } = await whoami({ ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" });
+
+    expect(stderr).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(stdout).toBe("self-signed-user\n");
+    expect(requests).toEqual(["GET /-/whoami"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("verification stays on when the variable is unset", async () => {
+    const { stderr, exitCode, requests } = await whoami({ ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: undefined });
+
+    expect(stderr).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(requests).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
 });
 
 test.each([

@@ -490,6 +490,7 @@ fn send_audit_request(
         None,
         http::FetchRedirect::Follow,
     );
+    req.client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
     let res = match req.send_sync(&mut response_buf) {
         Ok(r) => r,
         Err(err) => {

@@ -2134,8 +2134,6 @@ impl<'a> ESModule<'a> {
                             continue;
                         }
 
-                        // A "bun" target is what the #7142 retry exists for; "bun": null is
-                        // not a target and stays terminal on both passes.
                         if key == b"bun"
                             && matches!(
                                 result.status,

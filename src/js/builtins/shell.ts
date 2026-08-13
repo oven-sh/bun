@@ -9,10 +9,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     args: string[],
   ) => $ZigGeneratedClasses.ParsedShellScript;
 
-  // `raw` runs unescaped, so it is only taken from a template object: the engine and the tsc/babel/
-  // swc/esbuild downlevel helpers all define `raw` as an own non-enumerable read-only array, while
-  // data arrives with it missing (JSON), enumerable (structuredClone, Object.assign) or inherited
-  // (polluted prototype). Not Object.isFrozen: tsc's __makeTemplateObject does not freeze.
+  // `raw` runs unescaped; this is the shape of every template object, engine-made or downleveled (tsc's is not frozen).
   function templateRawStrings(strings: any): readonly string[] {
     if ($isArray(strings)) {
       const descriptor = $Object.$getOwnPropertyDescriptor(strings, "raw");

@@ -2,14 +2,12 @@ use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
-use bun_ast::Loc;
 use bun_collections::VecExt;
 use bun_collections::bit_set::DynamicBitSet;
 use bun_core::{self, ZigStringSlice};
 use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
 use bun_sourcemap::{
     LineOffsetTable, LineOffsetTableColumns as _, Ordinal, ParsedSourceMap, internal_source_map,
-    line_offset_table,
 };
 
 type LinesHits = Vec<u32>;
@@ -122,7 +120,7 @@ pub mod text {
     // so call the runtime rewriter for the `ENABLE_COLORS` const-generic sites.
     // PERF: runtime `pretty_fmt` allocates a small Vec per call — if hot,
     // hoist into `const` once the proc-macro lands.
-    use bun_core::output::pretty_fmt;
+    use bun_core::output::{PrettyBuf, pretty_fmt};
 
     pub fn write_format_with_values<const ENABLE_COLORS: bool>(
         filename: &[u8],
@@ -228,58 +226,41 @@ pub mod text {
         // This sets statements in executed scopes
         executable_lines_that_havent_been_executed.set_intersection(&report.executable_lines);
 
-        let mut iter = executable_lines_that_havent_been_executed.iterator::<true, true>();
-        let mut start_of_line_range: usize = 0;
-        let mut prev_line: usize = 0;
-        let mut is_first = true;
-
         // `concat!(pretty_fmt!(..), "{}")` requires a literal; split into a
         // prefix `write_all` + plain `write!` so the const-generic `ENABLE_COLORS` can
         // route through the runtime rewriter.
         let red = pretty_fmt::<ENABLE_COLORS>("<red>");
         let comma = pretty_fmt::<ENABLE_COLORS>("<r><d>,<r>");
 
-        while let Some(next_line) = iter.next() {
-            if next_line == (prev_line + 1) {
-                prev_line = next_line;
-                continue;
-            } else if is_first && start_of_line_range == 0 && prev_line == 0 {
-                start_of_line_range = next_line;
-                prev_line = next_line;
-                continue;
-            }
-
-            if is_first {
-                is_first = false;
+        fn write_run(
+            writer: &mut impl bun_io::Write,
+            red: &PrettyBuf,
+            (first_line, last_line): (usize, usize),
+        ) -> bun_io::Result<()> {
+            if first_line == last_line {
+                write!(writer, "{}{}", red, first_line + 1)
             } else {
-                writer.write_all(&comma)?;
+                write!(writer, "{}{}-{}", red, first_line + 1, last_line + 1)
             }
-
-            if start_of_line_range == prev_line {
-                writer.write_all(&red)?;
-                write!(writer, "{}", start_of_line_range + 1)?;
-            } else {
-                writer.write_all(&red)?;
-                write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
-            }
-
-            prev_line = next_line;
-            start_of_line_range = next_line;
         }
 
-        if prev_line != start_of_line_range {
-            if is_first {
-            } else {
+        let mut iter = executable_lines_that_havent_been_executed.iterator::<true, true>();
+        // Consecutive uncovered lines collapse into one `first-last` run, 1-based.
+        let mut run: Option<(usize, usize)> = None;
+        while let Some(line) = iter.next() {
+            if let Some((_, last_line)) = run.as_mut()
+                && line == *last_line + 1
+            {
+                *last_line = line;
+                continue;
+            }
+            if let Some(previous_run) = run.replace((line, line)) {
+                write_run(writer, &red, previous_run)?;
                 writer.write_all(&comma)?;
             }
-
-            if start_of_line_range == prev_line {
-                writer.write_all(&red)?;
-                write!(writer, "{}", start_of_line_range + 1)?;
-            } else {
-                writer.write_all(&red)?;
-                write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
-            }
+        }
+        if let Some(last_run) = run {
+            write_run(writer, &red, last_run)?;
         }
         Ok(())
     }
@@ -407,6 +388,14 @@ impl<'a> Generator<'a> {
     }
 }
 
+/// A textual basic block (or, after `function_start_offset`, a whole function) as JSC's
+/// control flow profiler reports it: inclusive `[start_offset, end_offset]` offsets into the
+/// source text JSC executed.
+///
+/// JSC cuts the functions nested in a block out of its range, so one block arrives as several
+/// ranges. When those cut-outs overlap (the initializer JSC synthesizes for class fields spans
+/// the whole file) the leftovers come out inverted, `[file_length, 0]` and the like, and
+/// describe nothing.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct BasicBlockRange {
@@ -416,8 +405,64 @@ pub struct BasicBlockRange {
     execution_count: usize,
 }
 
+impl BasicBlockRange {
+    fn has_executed(&self) -> bool {
+        self.has_executed || self.execution_count > 0
+    }
+
+    /// The offsets attributed to lines; empty for inverted ranges and for the `-1` JSC uses
+    /// when a range maps to nothing.
+    ///
+    /// `end_offset` itself is left out: a block runs up to the byte before the next block
+    /// starts, so its last byte is either the closing brace of the construct it ends at or the
+    /// last character of a statement whose other bytes already mark the line. Attributing it
+    /// would report every `}` line that follows a `return`/`throw`/`break` as uncovered.
+    /// (Function ranges end on their closing brace too.)
+    fn byte_offsets(&self) -> core::ops::Range<u32> {
+        match (
+            u32::try_from(self.start_offset),
+            u32::try_from(self.end_offset),
+        ) {
+            (Ok(start), Ok(end)) => start..end,
+            _ => 0..0,
+        }
+    }
+
+    /// A class without a `constructor` gets one synthesized by JSC from a fixed source string.
+    /// JSC records it in the function table of the file defining the class, but with offsets
+    /// into that string, and nothing ever marks that entry as executed. Without this filter
+    /// every such class counts as an uncalled function whose range lands on the first line of
+    /// the file.
+    fn is_synthesized_default_constructor(&self) -> bool {
+        // BuiltinExecutables::defaultConstructorSourceCode; the range runs from the
+        // `function` keyword to the closing brace.
+        const BASE: &str = "(function () { })";
+        const DERIVED: &str = "(function (...args) { super(...args); })";
+        const FUNCTION_KEYWORD: c_int = "(".len() as c_int;
+        const BASE_CLOSING_BRACE: c_int = (BASE.len() - "})".len()) as c_int;
+        const DERIVED_CLOSING_BRACE: c_int = (DERIVED.len() - "})".len()) as c_int;
+
+        !self.has_executed()
+            && self.start_offset == FUNCTION_KEYWORD
+            && (self.end_offset == BASE_CLOSING_BRACE || self.end_offset == DERIVED_CLOSING_BRACE)
+    }
+}
+
+/// One line of the source text JSC executed (the transpiled output, not the file on disk).
+#[derive(Clone, Copy)]
+struct Line {
+    start: u32,
+    /// `[code_start, code_end)` is the line with its indentation and line terminator trimmed
+    /// off. Only offsets inside it are attributed to the line: a block that begins after a
+    /// statement begins on the terminator of that statement's line, and the indentation of a
+    /// generated line maps back to the previous original line (see `OriginalLines`), so
+    /// attributing either would shift the block up by one line.
+    code_start: u32,
+    code_end: u32,
+}
+
 pub struct ByteRangeMapping {
-    pub(crate) line_offset_table: line_offset_table::List,
+    lines: Box<[Line]>,
     pub(crate) source_id: i32,
     pub source_url: ZigStringSlice,
 }
@@ -483,10 +528,6 @@ impl ByteRangeMapping {
         function_blocks: &[BasicBlockRange],
         ignore_sourcemap: bool,
     ) -> Result<Report, bun_alloc::AllocError> {
-        let line_starts = self.line_offset_table.items_byte_offset_to_start_of_line();
-
-        let mut executable_lines: Bitset;
-        let mut lines_which_have_executed: Bitset;
         // `SavedSourceMap::get` returns an `Option<Arc<ParsedSourceMap>>`, so the
         // +1 ref is released automatically when `parsed_mappings_` drops at scope
         // exit — no explicit guard is required.
@@ -496,299 +537,88 @@ impl ByteRangeMapping {
             bun_jsc::VirtualMachine::VirtualMachine::get().as_mut()
                 .source_mappings()
                 .get(source_url.slice());
-        let mut line_hits: LinesHits;
+        // Without a source map (or with `coverageIgnoreSourcemaps`) the report is about the
+        // executed text itself and its line numbers are used as they are.
+        let mut original = match parsed_mappings_.as_deref() {
+            Some(source_map) if !ignore_sourcemap => Some(OriginalLines {
+                source_map,
+                cursor: source_map.internal_cursor(),
+                line_count: source_map.input_line_count + 1,
+            }),
+            _ => None,
+        };
+        let line_count = original
+            .as_ref()
+            .map_or(self.lines.len(), |original| original.line_count);
+
+        let mut executable_lines = Bitset::init_empty(line_count)?;
+        let mut lines_which_have_executed = Bitset::init_empty(line_count)?;
+        let mut line_hits: LinesHits = vec![0u32; line_count];
+
+        let mut stmts: Vec<Block> = Vec::new();
+        stmts.reserve_exact(blocks.len());
+        let mut stmts_which_have_executed = Bitset::init_empty(blocks.len())?;
+
+        for (i, block) in blocks.iter().enumerate() {
+            let has_executed = block.has_executed();
+            let mut has_lines = false;
+
+            for byte_offset in block.byte_offsets() {
+                let Some(line) = self.line_of(byte_offset, original.as_mut()) else {
+                    continue;
+                };
+                has_lines = true;
+                executable_lines.set(line);
+                if has_executed {
+                    lines_which_have_executed.set(line);
+                    line_hits[line] += 1;
+                }
+            }
+
+            if has_lines {
+                stmts.push(Block {});
+                if has_executed {
+                    stmts_which_have_executed.set(i);
+                }
+            }
+        }
 
         let mut functions: Vec<Block> = Vec::new();
         functions.reserve_exact(function_blocks.len());
-        let mut functions_which_have_executed: Bitset = Bitset::init_empty(function_blocks.len())?;
-        let mut stmts_which_have_executed: Bitset = Bitset::init_empty(blocks.len())?;
+        let mut functions_which_have_executed = Bitset::init_empty(function_blocks.len())?;
 
-        let mut stmts: Vec<Block> = Vec::new();
-        stmts.reserve_exact(function_blocks.len());
-
-        let line_count: u32;
-
-        if ignore_sourcemap || parsed_mappings_.is_none() {
-            line_count = line_starts.len() as u32;
-            executable_lines = Bitset::init_empty(line_count as usize)?;
-            lines_which_have_executed = Bitset::init_empty(line_count as usize)?;
-            line_hits = vec![0u32; line_count as usize];
-            let line_hits_slice = line_hits.as_mut_slice();
-
-            for (i, block) in blocks.iter().enumerate() {
-                if block.end_offset < 0 || block.start_offset < 0 {
-                    continue; // does not map to anything
-                }
-
-                let min: usize =
-                    usize::try_from(block.start_offset.min(block.end_offset)).expect("int cast");
-                let max: usize =
-                    usize::try_from(block.start_offset.max(block.end_offset)).expect("int cast");
-                let mut min_line: u32 = u32::MAX;
-                let mut max_line: u32 = 0;
-
-                let has_executed = block.has_executed || block.execution_count > 0;
-
-                for byte_offset in min..max {
-                    let Some(new_line_index) = LineOffsetTable::find_index(
-                        line_starts,
-                        Loc {
-                            start: i32::try_from(byte_offset).expect("int cast"),
-                        },
-                    ) else {
-                        continue;
-                    };
-                    let line_start_byte_offset = line_starts[new_line_index];
-                    if (line_start_byte_offset as usize) >= byte_offset {
-                        continue;
-                    }
-
-                    let line: u32 = u32::try_from(new_line_index).expect("int cast");
-                    min_line = min_line.min(line);
-                    max_line = max_line.max(line);
-
-                    executable_lines.set(line as usize);
-                    if has_executed {
-                        lines_which_have_executed.set(line as usize);
-                        line_hits_slice[line as usize] += 1;
-                    }
-                }
-
-                if min_line != u32::MAX {
-                    if has_executed {
-                        stmts_which_have_executed.set(i);
-                    }
-
-                    stmts.push(Block {});
-                }
+        for (i, function) in function_blocks.iter().enumerate() {
+            if function.is_synthesized_default_constructor() {
+                continue;
             }
 
-            for (i, function) in function_blocks.iter().enumerate() {
-                if function.end_offset < 0 || function.start_offset < 0 {
-                    continue; // does not map to anything
-                }
+            let did_fn_execute = function.has_executed();
+            let mut has_lines = false;
 
-                let min: usize = usize::try_from(function.start_offset.min(function.end_offset))
-                    .expect("int cast");
-                let max: usize = usize::try_from(function.start_offset.max(function.end_offset))
-                    .expect("int cast");
-                let mut min_line: u32 = u32::MAX;
-                let mut max_line: u32 = 0;
-
-                for byte_offset in min..max {
-                    let Some(new_line_index) = LineOffsetTable::find_index(
-                        line_starts,
-                        Loc {
-                            start: i32::try_from(byte_offset).expect("int cast"),
-                        },
-                    ) else {
-                        continue;
-                    };
-                    let line_start_byte_offset = line_starts[new_line_index];
-                    if (line_start_byte_offset as usize) >= byte_offset {
-                        continue;
-                    }
-
-                    let line: u32 = u32::try_from(new_line_index).expect("int cast");
-                    min_line = min_line.min(line);
-                    max_line = max_line.max(line);
-                }
-
-                let did_fn_execute = function.execution_count > 0 || function.has_executed;
-
-                // only mark the lines as executable if the function has not executed
-                // functions that have executed have non-executable lines in them and thats fine.
-                if !did_fn_execute {
-                    let end = max_line.min(line_count);
-                    line_hits_slice[min_line as usize..end as usize].fill(0);
-                    for line in min_line..end {
-                        executable_lines.set(line as usize);
-                        lines_which_have_executed.unset(line as usize);
-                    }
-                }
-
-                functions.push(Block {});
-
-                if did_fn_execute {
-                    functions_which_have_executed.set(i);
-                }
-            }
-        } else if let Some(parsed_mapping) = parsed_mappings_.as_deref() {
-            line_count = (parsed_mapping.input_line_count as u32) + 1;
-            executable_lines = Bitset::init_empty(line_count as usize)?;
-            lines_which_have_executed = Bitset::init_empty(line_count as usize)?;
-            line_hits = vec![0u32; line_count as usize];
-            let line_hits_slice = line_hits.as_mut_slice();
-
-            let mut cur_: Option<internal_source_map::Cursor> = parsed_mapping.internal_cursor();
-
-            for (i, block) in blocks.iter().enumerate() {
-                if block.end_offset < 0 || block.start_offset < 0 {
-                    continue; // does not map to anything
-                }
-
-                let min: usize =
-                    usize::try_from(block.start_offset.min(block.end_offset)).expect("int cast");
-                let max: usize =
-                    usize::try_from(block.start_offset.max(block.end_offset)).expect("int cast");
-                let mut min_line: u32 = u32::MAX;
-                let mut max_line: u32 = 0;
-                let has_executed = block.has_executed || block.execution_count > 0;
-
-                for byte_offset in min..max {
-                    let Some(new_line_index) = LineOffsetTable::find_index(
-                        line_starts,
-                        Loc {
-                            start: i32::try_from(byte_offset).expect("int cast"),
-                        },
-                    ) else {
-                        continue;
-                    };
-                    let line_start_byte_offset = line_starts[new_line_index];
-                    if (line_start_byte_offset as usize) >= byte_offset {
-                        continue;
-                    }
-                    let column_position =
-                        byte_offset.saturating_sub(line_start_byte_offset as usize);
-
-                    let found: Option<bun_sourcemap::Mapping> = if let Some(c) = cur_.as_mut() {
-                        c.move_to(
-                            Ordinal::from_zero_based(
-                                i32::try_from(new_line_index).expect("int cast"),
-                            ),
-                            Ordinal::from_zero_based(
-                                i32::try_from(column_position).expect("int cast"),
-                            ),
-                        )
-                    } else {
-                        parsed_mapping.find_mapping(
-                            Ordinal::from_zero_based(
-                                i32::try_from(new_line_index).expect("int cast"),
-                            ),
-                            Ordinal::from_zero_based(
-                                i32::try_from(column_position).expect("int cast"),
-                            ),
-                        )
-                    };
-                    if let Some(point) = found.as_ref() {
-                        if point.original.lines.zero_based() < 0 {
-                            continue;
-                        }
-
-                        let line: u32 =
-                            u32::try_from(point.original.lines.zero_based()).expect("int cast");
-                        if line >= line_count {
-                            continue;
-                        }
-
-                        executable_lines.set(line as usize);
-                        if has_executed {
-                            lines_which_have_executed.set(line as usize);
-                            line_hits_slice[line as usize] += 1;
-                        }
-
-                        min_line = min_line.min(line);
-                        max_line = max_line.max(line);
-                    }
-                }
-
-                if min_line != u32::MAX {
-                    stmts.push(Block {});
-
-                    if has_executed {
-                        stmts_which_have_executed.set(i);
-                    }
-                }
-            }
-
-            for (i, function) in function_blocks.iter().enumerate() {
-                if function.end_offset < 0 || function.start_offset < 0 {
-                    continue; // does not map to anything
-                }
-
-                let min: usize = usize::try_from(function.start_offset.min(function.end_offset))
-                    .expect("int cast");
-                let max: usize = usize::try_from(function.start_offset.max(function.end_offset))
-                    .expect("int cast");
-                let mut min_line: u32 = u32::MAX;
-                let mut max_line: u32 = 0;
-
-                for byte_offset in min..max {
-                    let Some(new_line_index) = LineOffsetTable::find_index(
-                        line_starts,
-                        Loc {
-                            start: i32::try_from(byte_offset).expect("int cast"),
-                        },
-                    ) else {
-                        continue;
-                    };
-                    let line_start_byte_offset = line_starts[new_line_index];
-                    if (line_start_byte_offset as usize) >= byte_offset {
-                        continue;
-                    }
-
-                    let column_position =
-                        byte_offset.saturating_sub(line_start_byte_offset as usize);
-
-                    let found: Option<bun_sourcemap::Mapping> = if let Some(c) = cur_.as_mut() {
-                        c.move_to(
-                            Ordinal::from_zero_based(
-                                i32::try_from(new_line_index).expect("int cast"),
-                            ),
-                            Ordinal::from_zero_based(
-                                i32::try_from(column_position).expect("int cast"),
-                            ),
-                        )
-                    } else {
-                        parsed_mapping.find_mapping(
-                            Ordinal::from_zero_based(
-                                i32::try_from(new_line_index).expect("int cast"),
-                            ),
-                            Ordinal::from_zero_based(
-                                i32::try_from(column_position).expect("int cast"),
-                            ),
-                        )
-                    };
-                    if let Some(point) = found {
-                        if point.original.lines.zero_based() < 0 {
-                            continue;
-                        }
-
-                        let line: u32 =
-                            u32::try_from(point.original.lines.zero_based()).expect("int cast");
-                        if line >= line_count {
-                            continue;
-                        }
-                        min_line = min_line.min(line);
-                        max_line = max_line.max(line);
-                    }
-                }
-
-                // no sourcemaps? ignore it
-                if min_line == u32::MAX && max_line == 0 {
+            // A function that never ran has no basic blocks (JSC never compiled it), so its
+            // range is all we know: every line with code in it is executable and unexecuted.
+            // One that ran is already described by its blocks; its range only tells whether it
+            // exists in the reported file at all (functions the transpiler synthesized don't,
+            // and are not counted).
+            for byte_offset in function.byte_offsets() {
+                let Some(line) = self.line_of(byte_offset, original.as_mut()) else {
                     continue;
+                };
+                has_lines = true;
+                if did_fn_execute {
+                    break;
                 }
+                executable_lines.set(line);
+                lines_which_have_executed.unset(line);
+                line_hits[line] = 0;
+            }
 
-                let did_fn_execute = function.execution_count > 0 || function.has_executed;
-
-                // only mark the lines as executable if the function has not executed
-                // functions that have executed have non-executable lines in them and thats fine.
-                if !did_fn_execute {
-                    let end = max_line.min(line_count);
-                    for line in min_line..end {
-                        executable_lines.set(line as usize);
-                        lines_which_have_executed.unset(line as usize);
-                        line_hits_slice[line as usize] = 0;
-                    }
-                }
-
+            if has_lines {
                 functions.push(Block {});
                 if did_fn_execute {
                     functions_which_have_executed.set(i);
                 }
             }
-        } else {
-            unreachable!();
         }
 
         Ok(Report {
@@ -803,21 +633,100 @@ impl ByteRangeMapping {
         })
     }
 
+    /// The reported line for `byte_offset`, or `None` when the byte is not part of any line's
+    /// code (see `Line::code_start`) or has no position in the original file.
+    fn line_of(&self, byte_offset: u32, original: Option<&mut OriginalLines<'_>>) -> Option<usize> {
+        let index = self
+            .lines
+            .partition_point(|line| line.start <= byte_offset)
+            .checked_sub(1)?;
+        let line = self.lines[index];
+        if !(line.code_start..line.code_end).contains(&byte_offset) {
+            return None;
+        }
+        match original {
+            Some(original) => original.line_of(index, byte_offset - line.start),
+            None => Some(index),
+        }
+    }
+
     pub(crate) fn compute(
         source_contents: &[u8],
         source_id: i32,
         source_url: ZigStringSlice,
     ) -> ByteRangeMapping {
+        let mut line_offset_table = LineOffsetTable::generate(source_contents, 0)
+            .unwrap_or_else(|_| bun_alloc::out_of_memory());
+        let line_starts = line_offset_table.items_byte_offset_to_start_of_line();
+
+        let lines = line_starts
+            .iter()
+            .enumerate()
+            .map(|(i, &start)| {
+                let end = line_starts
+                    .get(i + 1)
+                    .map_or(source_contents.len(), |&next| next as usize);
+                let text = &source_contents[start as usize..end];
+                let code_start = start + (text.len() - text.trim_ascii_start().len()) as u32;
+                Line {
+                    start,
+                    code_start,
+                    code_end: code_start + text.trim_ascii().len() as u32,
+                }
+            })
+            .collect();
+        // `MultiArrayList`'s `Drop` only frees the slab; the per-line column tables need this.
+        line_offset_table.drop_elements();
+
         ByteRangeMapping {
-            line_offset_table: LineOffsetTable::generate(source_contents, 0)
-                .unwrap_or_else(|_| bun_alloc::out_of_memory()),
+            lines,
             source_id,
             source_url,
         }
     }
 }
 
-// line_offset_table drops automatically.
+/// Maps positions in the text JSC executed back to lines of the file the user wrote, through
+/// the source map the transpiler produced for it.
+struct OriginalLines<'a> {
+    source_map: &'a ParsedSourceMap,
+    cursor: Option<internal_source_map::Cursor>,
+    line_count: usize,
+}
+
+impl OriginalLines<'_> {
+    fn line_of(&mut self, generated_line: usize, column: u32) -> Option<usize> {
+        let generated_line = i32::try_from(generated_line).ok()?;
+        let column = Ordinal::from_zero_based(i32::try_from(column).ok()?);
+        let mapping = match &mut self.cursor {
+            Some(cursor) => cursor.move_to(Ordinal::from_zero_based(generated_line), column),
+            None => self
+                .source_map
+                .find_mapping(Ordinal::from_zero_based(generated_line), column),
+        }?;
+
+        // The printer starts every generated line with a mapping. When the line's first token
+        // has none of its own, that mapping is a copy of the previous line's last one
+        // (`cover_lines_without_mappings` in bun_sourcemap's Chunk.rs). A byte that resolves to
+        // the copy, e.g. the `)` and `;` of a `});` line, has no position of its own in the
+        // original file; charging it to the previous line would give that line the coverage of
+        // whatever construct the byte belongs to.
+        if mapping.generated.columns == Ordinal::START
+            && generated_line > 0
+            && let Some(previous) = self.source_map.find_mapping(
+                Ordinal::from_zero_based(generated_line - 1),
+                Ordinal::from_zero_based(i32::MAX),
+            )
+            && previous.original == mapping.original
+        {
+            return None;
+        }
+
+        let line = usize::try_from(mapping.original.lines.zero_based()).ok()?;
+        (line < self.line_count).then_some(line)
+    }
+}
+
 // source_url is NOT freed (caller owns it).
 
 #[unsafe(no_mangle)]

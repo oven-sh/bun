@@ -1590,7 +1590,7 @@ impl CommandLineReporter {
         // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
         // collection loop below (single-threaded CLI report path).
         let map = unsafe { &mut *map.as_ptr() };
-        // `ByteRangeMapping` owns a `MultiArrayList` and is not `Copy`, so
+        // `ByteRangeMapping` owns its line table and is not `Copy`, so
         // collect mutable borrows into the thread-local map instead — no
         // double-free risk.
         let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());

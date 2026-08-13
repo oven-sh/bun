@@ -5,6 +5,7 @@ use crate::cli::command::Context;
 use bun_ast::{E, Expr, ExprData, G};
 use bun_ast::{Loc, Log, Source};
 use bun_collections::{StringArrayHashMap, VecExt};
+use bun_core::fmt::quote;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::PackageManager;
@@ -46,6 +47,43 @@ struct PackageJson {
     contents: Box<[u8]>,
     source: Source,
     indentation: bun_ast::Indentation,
+}
+
+/// One step of a key path such as `contributors[0].name` or `keywords[]`.
+#[derive(Clone, Copy)]
+enum Segment<'a> {
+    /// `b` in `a.b` or `a[b]`. Applied to an existing array it is an index,
+    /// applied to an object it is a property name.
+    Key { name: &'a [u8], bracketed: bool },
+    /// `[]`: the slot after the last element of an array.
+    Append,
+}
+
+impl<'a> Segment<'a> {
+    /// Whether `set` creates an array (rather than an object) for this segment
+    /// to land in when nothing exists yet: `files[0]=x` and `files[]=x` create
+    /// an array, `config.0=x` creates an object with the property `"0"`.
+    fn creates_array(self) -> bool {
+        match self {
+            Segment::Key {
+                name,
+                bracketed: true,
+            } => array_index(name).is_some(),
+            Segment::Key { .. } => false,
+            Segment::Append => true,
+        }
+    }
+
+    fn name(self) -> &'a [u8] {
+        match self {
+            Segment::Key { name, .. } => name,
+            Segment::Append => b"[]",
+        }
+    }
+}
+
+fn array_index(name: &[u8]) -> Option<usize> {
+    bun_core::fmt::parse_decimal::<usize>(name)
 }
 
 impl PmPkgCommand {
@@ -106,7 +144,9 @@ impl PmPkgCommand {
   <d>$<r> <b><green>bun pm pkg<r> <cyan>set<r> <blue>config='{"port":3000,"debug":true}'<r> <cyan>--json<r>
   <d>$<r> <b><green>bun pm pkg<r> <cyan>set<r> <blue>scripts.test="bun test"<r>
   <d>$<r> <b><green>bun pm pkg<r> <cyan>set<r> <blue>bin.mycli=cli.js<r>
+  <d>$<r> <b><green>bun pm pkg<r> <cyan>set<r> <blue>'keywords[]=cli' 'files[0]=dist'<r>
   <d>$<r> <b><green>bun pm pkg<r> <cyan>delete<r> <blue>scripts.test devDependencies.webpack<r>
+  <d>$<r> <b><green>bun pm pkg<r> <cyan>delete<r> <blue>'keywords[0]'<r>
   <d>$<r> <b><green>bun pm pkg<r> <cyan>fix<r>
 
 <b>More info<r>: <magenta>https://bun.com/docs/cli/pm#pkg<r>
@@ -490,128 +530,69 @@ impl PmPkgCommand {
     }
 
     fn resolve_path(root: Expr, key: &[u8]) -> Result<Expr, Error> {
-        if !matches!(root.data, ExprData::EObject(_)) {
-            return Err(crate::Error::NotFound);
-        }
-
-        let mut parts = strings::tokenize(key, b".");
         let mut current = root;
-
-        while let Some(part) = parts.next() {
-            if let Some(first_bracket) = strings::index_of(part, b"[") {
-                let mut remaining_part = part;
-
-                if first_bracket > 0 {
-                    let prop_name = &part[..first_bracket];
-                    if !matches!(current.data, ExprData::EObject(_)) {
-                        return Err(crate::Error::NotFound);
-                    }
-                    current = current.get(prop_name).ok_or(crate::Error::NotFound)?;
-                    remaining_part = &part[first_bracket..];
-                }
-
-                while let Some(bracket_start) = strings::index_of(remaining_part, b"[") {
-                    let bracket_end = strings::index_of(&remaining_part[bracket_start..], b"]")
-                        .ok_or(crate::Error::InvalidPath)?;
-                    let actual_bracket_end = bracket_start + bracket_end;
-                    let index_str = &remaining_part[bracket_start + 1..actual_bracket_end];
-
-                    if index_str.is_empty() {
-                        return Err(crate::Error::InvalidPath);
-                    }
-
-                    if let Some(index) = bun_core::fmt::parse_decimal::<usize>(index_str) {
-                        let ExprData::EArray(arr) = &current.data else {
-                            return Err(crate::Error::NotFound);
-                        };
-
-                        if index >= arr.items.len_u32() as usize {
-                            return Err(crate::Error::NotFound);
-                        }
-
-                        current = arr.items.slice()[index];
-                    } else {
-                        if !matches!(current.data, ExprData::EObject(_)) {
-                            return Err(crate::Error::NotFound);
-                        }
-                        current = current.get(index_str).ok_or(crate::Error::NotFound)?;
-                    }
-
-                    remaining_part = &remaining_part[actual_bracket_end + 1..];
-                    if remaining_part.is_empty() {
-                        break;
-                    }
-                }
-            } else {
-                if let Some(index) = bun_core::fmt::parse_decimal::<usize>(part) {
-                    match &current.data {
-                        ExprData::EArray(arr) => {
-                            if index >= arr.items.len_u32() as usize {
-                                return Err(crate::Error::NotFound);
-                            }
-                            current = arr.items.slice()[index];
-                        }
-                        ExprData::EObject(_) => {
-                            current = current.get(part).ok_or(crate::Error::NotFound)?;
-                        }
-                        _ => return Err(crate::Error::NotFound),
-                    }
-                } else {
-                    if !matches!(current.data, ExprData::EObject(_)) {
-                        return Err(crate::Error::NotFound);
-                    }
-                    current = current.get(part).ok_or(crate::Error::NotFound)?;
-                }
-            }
+        for segment in Self::parse_key_path(key)? {
+            let Segment::Key { name, .. } = segment else {
+                return Err(crate::Error::InvalidPath);
+            };
+            current = match &current.data {
+                ExprData::EArray(array) => array_index(name)
+                    .and_then(|index| array.items.slice().get(index).copied())
+                    .ok_or(crate::Error::NotFound)?,
+                ExprData::EObject(_) => current.get(name).ok_or(crate::Error::NotFound)?,
+                _ => return Err(crate::Error::NotFound),
+            };
         }
-
         Ok(current)
     }
 
-    /// Splits `a.b[0][c]` into `["a", "b", "0", "c"]`. Segments are sub-slices
-    /// of `key`: `E::Object::put` stores keys by reference (no copy into the
-    /// AST arena), so they must outlive the `Expr` tree, which `key` (an argv
-    /// slice) does. Returning owned buffers here would leave dangling keys.
-    fn parse_key_path(key: &[u8]) -> Result<Vec<&[u8]>, Error> {
-        let mut path_parts: Vec<&[u8]> = Vec::new();
+    /// Splits `a.b[0][c][]` into `[Key("a"), Key("b"), Key("0"), Key("c"), Append]`.
+    /// Segments are sub-slices of `key`: `E::Object::put` stores keys by
+    /// reference (no copy into the AST arena), so they must outlive the `Expr`
+    /// tree, which `key` (an argv slice) does. Returning owned buffers here
+    /// would leave dangling keys.
+    fn parse_key_path(key: &[u8]) -> Result<Vec<Segment<'_>>, Error> {
+        let mut segments: Vec<Segment<'_>> = Vec::new();
 
-        let mut parts = strings::tokenize(key, b".");
+        for part in strings::tokenize(key, b".") {
+            let Some(first_bracket) = strings::index_of(part, b"[") else {
+                segments.push(Segment::Key {
+                    name: part,
+                    bracketed: false,
+                });
+                continue;
+            };
 
-        while let Some(part) = parts.next() {
-            if let Some(first_bracket) = strings::index_of(part, b"[") {
-                let mut remaining_part = part;
+            if first_bracket > 0 {
+                segments.push(Segment::Key {
+                    name: &part[..first_bracket],
+                    bracketed: false,
+                });
+            }
 
-                if first_bracket > 0 {
-                    path_parts.push(&part[..first_bracket]);
-                    remaining_part = &part[first_bracket..];
-                }
+            let mut remaining_part = &part[first_bracket..];
+            while let Some(bracket_start) = strings::index_of(remaining_part, b"[") {
+                let Some(bracket_end) = strings::index_of(&remaining_part[bracket_start..], b"]")
+                else {
+                    return Err(crate::Error::InvalidPath);
+                };
+                let actual_bracket_end = bracket_start + bracket_end;
+                let index_str = &remaining_part[bracket_start + 1..actual_bracket_end];
 
-                while let Some(bracket_start) = strings::index_of(remaining_part, b"[") {
-                    let Some(bracket_end) =
-                        strings::index_of(&remaining_part[bracket_start..], b"]")
-                    else {
-                        return Err(crate::Error::InvalidPath);
-                    };
-                    let actual_bracket_end = bracket_start + bracket_end;
-                    let index_str = &remaining_part[bracket_start + 1..actual_bracket_end];
-
-                    if index_str.is_empty() {
-                        return Err(crate::Error::InvalidPath);
+                segments.push(if index_str.is_empty() {
+                    Segment::Append
+                } else {
+                    Segment::Key {
+                        name: index_str,
+                        bracketed: true,
                     }
+                });
 
-                    path_parts.push(index_str);
-
-                    remaining_part = &remaining_part[actual_bracket_end + 1..];
-                    if remaining_part.is_empty() {
-                        break;
-                    }
-                }
-            } else {
-                path_parts.push(part);
+                remaining_part = &remaining_part[actual_bracket_end + 1..];
             }
         }
 
-        Ok(path_parts)
+        Ok(segments)
     }
 
     fn set_value(root: &mut Expr, key: &[u8], value: &[u8], parse_json: bool) -> Result<(), Error> {
@@ -619,70 +600,114 @@ impl PmPkgCommand {
             return Err(crate::Error::InvalidRoot);
         }
 
-        let path_parts = Self::parse_key_path(key)?;
-
-        if path_parts.is_empty() {
+        let path = Self::parse_key_path(key)?;
+        if path.is_empty() {
             return Err(crate::Error::EmptyKey);
         }
 
-        if path_parts.len() == 1 {
-            let expr = Self::parse_value(value, parse_json)?;
-
-            root.data
-                .e_object_mut()
-                .unwrap()
-                .put(dummy_bump(), path_parts[0], expr)?;
-
-            return Ok(());
-        }
-
-        Self::set_nested(root, &path_parts, value, parse_json)
+        let expr = Self::parse_value(value, parse_json)?;
+        Self::set_in_container(root, b"package.json", key, &path, expr)
     }
 
-    fn set_nested(
-        root: &mut Expr,
-        path: &[&[u8]],
-        value: &[u8],
-        parse_json: bool,
+    /// `container` is the object or array that `container_name` refers to;
+    /// `path` is the remaining, non-empty key path below it.
+    ///
+    /// Like `npm pkg set`, only the final segment ever replaces a value: a
+    /// scalar or an array standing in the way of an earlier segment is an
+    /// error, not something to overwrite.
+    fn set_in_container(
+        container: &mut Expr,
+        container_name: &[u8],
+        key: &[u8],
+        path: &[Segment<'_>],
+        value: Expr,
     ) -> Result<(), Error> {
-        if path.is_empty() {
+        let [segment, rest @ ..] = path else {
             return Ok(());
+        };
+
+        if let Some(array) = container.data.e_array_mut() {
+            let len = array.items.len();
+            let index = match *segment {
+                Segment::Append => len,
+                Segment::Key { name, .. } => match array_index(name) {
+                    Some(index) if index <= len => index,
+                    Some(index) => {
+                        Output::err_generic(
+                            "{s}: index {s} is out of range for {s} (length {s})\n<blue>note<r><d>:<r> {s}[] appends to the end of the array",
+                            (
+                                quote(key),
+                                index,
+                                quote(container_name),
+                                len,
+                                bstr::BStr::new(container_name),
+                            ),
+                        );
+                        Global::exit(1);
+                    }
+                    None => {
+                        Output::err_generic(
+                            "{s}: {s} is an array, so {s} must be an index or []",
+                            (quote(key), quote(container_name), quote(name)),
+                        );
+                        Global::exit(1);
+                    }
+                },
+            };
+            if index == len {
+                array.push(dummy_bump(), Expr::init(E::Null {}, Loc::EMPTY))?;
+            }
+            let Some(next) = rest.first() else {
+                array.items[index] = value;
+                return Ok(());
+            };
+            let slot_name = segment.name();
+            let mut child = Self::child_container(Some(array.items[index]), *next, key, slot_name);
+            array.items[index] = child;
+            return Self::set_in_container(&mut child, slot_name, key, rest, value);
         }
 
-        let current_key = path[0];
-        let remaining_path = &path[1..];
-
-        if remaining_path.is_empty() {
-            let expr = Self::parse_value(value, parse_json)?;
-
-            root.data
-                .e_object_mut()
-                .unwrap()
-                .put(dummy_bump(), current_key, expr)?;
-
+        let Segment::Key { name, .. } = *segment else {
+            Output::err_generic(
+                "{s}: cannot append to {s} because it is not an array",
+                (quote(key), quote(container_name)),
+            );
+            Global::exit(1);
+        };
+        let object = container
+            .data
+            .e_object_mut()
+            .expect("set_value checks the root and child_container only returns arrays or objects");
+        let Some(next) = rest.first() else {
+            object.put(dummy_bump(), name, value)?;
             return Ok(());
+        };
+        let mut child = Self::child_container(object.get(name), *next, key, name);
+        object.put(dummy_bump(), name, child)?;
+        Self::set_in_container(&mut child, name, key, rest, value)
+    }
+
+    /// The object or array `set` descends into at a slot currently holding
+    /// `existing`; an empty (missing or `null`) slot gets a new container
+    /// shaped for `next`.
+    fn child_container(
+        existing: Option<Expr>,
+        next: Segment<'_>,
+        key: &[u8],
+        slot_name: &[u8],
+    ) -> Expr {
+        match existing {
+            Some(expr) if matches!(expr.data, ExprData::EArray(_) | ExprData::EObject(_)) => expr,
+            Some(expr) if !matches!(expr.data, ExprData::ENull(_)) => {
+                Output::err_generic(
+                    "{s}: {s} already exists and is not an object or array",
+                    (quote(key), quote(slot_name)),
+                );
+                Global::exit(1);
+            }
+            _ if next.creates_array() => Expr::init(E::Array::default(), Loc::EMPTY),
+            _ => Expr::init(E::Object::default(), Loc::EMPTY),
         }
-
-        let mut nested_obj = root.get(current_key);
-        if nested_obj.is_none()
-            || !matches!(nested_obj.as_ref().unwrap().data, ExprData::EObject(_))
-        {
-            let new_obj = Expr::init(E::Object::default(), Loc::EMPTY);
-
-            root.data
-                .e_object_mut()
-                .unwrap()
-                .put(dummy_bump(), current_key, new_obj)?;
-
-            nested_obj = root.get(current_key);
-        }
-
-        if !matches!(nested_obj.as_ref().unwrap().data, ExprData::EObject(_)) {
-            return Err(crate::Error::ExpectedObject);
-        }
-
-        let mut nested = nested_obj.unwrap();
-        Self::set_nested(&mut nested, remaining_path, value, parse_json)
     }
 
     fn parse_value(value: &[u8], parse_json: bool) -> Result<Expr, Error> {
@@ -724,60 +749,43 @@ impl PmPkgCommand {
             return Ok(false);
         }
 
-        let mut path_parts: Vec<&[u8]> = Vec::new();
-        for part in strings::tokenize(key, b".") {
-            path_parts.push(part);
-        }
-
-        if path_parts.is_empty() {
-            return Ok(false);
-        }
-
-        if path_parts.len() == 1 {
-            let exists = root.get(path_parts[0]).is_some();
-            if exists {
-                return Self::remove_property(root, path_parts[0]);
-            }
-            return Ok(false);
-        }
-
-        Self::delete_nested(root, &path_parts)
+        Self::delete_in_container(root, &Self::parse_key_path(key)?)
     }
 
-    fn delete_nested(root: &mut Expr, path: &[&[u8]]) -> Result<bool, Error> {
-        if path.is_empty() {
+    /// Removes the value `path` addresses below `container` (an array element
+    /// is spliced out, an object property is dropped). Returns whether
+    /// anything was removed; a path that leads nowhere removes nothing.
+    fn delete_in_container(container: &mut Expr, path: &[Segment<'_>]) -> Result<bool, Error> {
+        let [segment, rest @ ..] = path else {
             return Ok(false);
-        }
+        };
+        let Segment::Key { name, .. } = *segment else {
+            Output::err_generic(
+                "Empty brackets are not valid syntax for deleting values.",
+                (),
+            );
+            Global::exit(1);
+        };
 
-        let current_key = path[0];
-        let remaining_path = &path[1..];
-
-        if remaining_path.is_empty() {
-            let exists = root.get(current_key).is_some();
-            if exists {
-                return Self::remove_property(root, current_key);
+        let mut child = if let Some(array) = container.data.e_array_mut() {
+            let Some(index) = array_index(name).filter(|&index| index < array.items.len()) else {
+                return Ok(false);
+            };
+            if rest.is_empty() {
+                array.items.remove(index);
+                return Ok(true);
             }
-            return Ok(false);
-        }
-
-        let nested_obj = root.get(current_key);
-        if nested_obj.is_none()
-            || !matches!(nested_obj.as_ref().unwrap().data, ExprData::EObject(_))
-        {
-            return Ok(false);
-        }
-
-        let mut nested = nested_obj.unwrap();
-        let deleted = Self::delete_nested(&mut nested, remaining_path)?;
-
-        if deleted {
-            root.data
-                .e_object_mut()
-                .unwrap()
-                .put(dummy_bump(), current_key, nested)?;
-        }
-
-        Ok(deleted)
+            array.items[index]
+        } else {
+            if rest.is_empty() {
+                return Self::remove_property(container, name);
+            }
+            let Some(child) = container.get(name) else {
+                return Ok(false);
+            };
+            child
+        };
+        Self::delete_in_container(&mut child, rest)
     }
 
     fn remove_property(obj: &mut Expr, key: &[u8]) -> Result<bool, Error> {

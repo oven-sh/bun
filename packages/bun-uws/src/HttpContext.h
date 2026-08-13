@@ -180,6 +180,11 @@ private:
         asyncSocket->uncork();
         if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) && !asyncSocket->hasFullyDrained()) {
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE | HttpResponseData<SSL>::HTTP_PARSING_STOPPED;
+            /* onData marked the connection busy for these bytes; nothing is in
+             * flight on it anymore, so a graceful stop (App::closeIdle) sweeps it
+             * like any other idle keep-alive connection instead of waiting for
+             * the peer to read. */
+            httpResponseData->isIdle = true;
             ((HttpResponse<SSL> *) s)->resetTimeout();
             return;
         }

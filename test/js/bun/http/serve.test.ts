@@ -4400,7 +4400,7 @@ describe("a malformed pipelined request does not truncate the buffered response 
   // with the body length once all of that has been handed to uWS, which is
   // before the test sends anything else on the connection. Any other path is
   // answered with a plain "ok"; `served` lists the paths dispatched so far.
-  function streamingServer(options: { tls?: typeof tls } = {}) {
+  function streamingServer(options: { tls?: typeof tls; idleTimeout?: number } = {}) {
     const queued = Promise.withResolvers<number>();
     const served: string[] = [];
     const server = serve({
@@ -4514,6 +4514,15 @@ describe("a malformed pipelined request does not truncate the buffered response 
     }
   }
 
+  // Resolves once the server has taken (and parsed) every read that was already
+  // pending when this is called: a request on a connection opened only now can
+  // only be read after its accept has been dispatched, and every read pending
+  // before that accept is dispatched no later than the accept itself.
+  async function serverHasParsedEverythingSentSoFar(server: Server) {
+    const barrier = await fetch(new URL("/barrier", server.url));
+    expect(await barrier.text()).toBe("ok");
+  }
+
   it.each(Object.entries(MALFORMED))("%s", async (_, [malformedRequest, errorResponse]) => {
     const { server, queued } = streamingServer();
     using _server = server;
@@ -4551,17 +4560,38 @@ describe("a malformed pipelined request does not truncate the buffered response 
     await new Promise<void>(r => socket.once("connect", () => r()));
     const { received, bodyLength } = await exchange(socket, queued, async () => {
       socket.write(malformedRequest);
-      // The well-formed request has to reach the server in a read of its own
-      // (arriving together with the malformed line, it would be dropped along
-      // with it by the failed parse). A request on another connection, opened
-      // only now, cannot be answered before the server has taken the read that
-      // was already pending on this connection, so once it is answered the
-      // malformed line has been parsed by itself.
-      const barrier = await fetch(new URL("/barrier", server.url));
-      expect(await barrier.text()).toBe("ok");
+      // Arriving in the same read as the malformed line, the well-formed
+      // request would simply be dropped with it by the failed parse; it has to
+      // arrive once that parse is over.
+      await serverHasParsedEverythingSentSoFar(server);
       socket.write(REQUEST);
     });
     expect({ ...received, served }).toEqual({ ...expected(bodyLength, errorResponse), served: ["/", "/barrier"] });
+  });
+
+  // With the error response queued, the connection is finished with HTTP. A
+  // graceful stop() therefore sweeps it like an idle keep-alive connection
+  // rather than waiting for a client that is not reading; idleTimeout is long
+  // enough that nothing else can close it within the test.
+  it("is swept by a graceful server.stop() while the error response drains", async () => {
+    const [malformedRequest] = MALFORMED["400 from a malformed request-line"];
+    const { server, queued } = streamingServer({ idleTimeout: 255 });
+    const socket = connect(server.port, "127.0.0.1");
+    socket.pause();
+    try {
+      await new Promise<void>(r => socket.once("connect", () => r()));
+      const closed = receiveUntilClose(socket);
+      socket.write(REQUEST);
+      await queued;
+      socket.write(malformedRequest);
+      await serverHasParsedEverythingSentSoFar(server);
+      await server.stop(false);
+      socket.resume();
+      expect((await closed).ended).toBe(true);
+    } finally {
+      server.stop(true);
+      socket.destroy();
+    }
   });
 
   // Control: with nothing buffered ahead of it, the error response is answered

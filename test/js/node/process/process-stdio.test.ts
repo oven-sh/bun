@@ -160,46 +160,19 @@ describe.concurrent("process-stdio", () => {
   });
 });
 
-// Materializing process.stdout dups fd 1 and flips it to O_NONBLOCK. The native
-// console writer must not silently drop data on the resulting EAGAIN when the
-// pipe is full. Kept outside the concurrent block so the extra spawned children
-// don't push the already-slow stdin tests past their default timeout.
-describe.skipIf(isWindows)("console.log after process.stdout is materialized on a pipe", () => {
-  test("many lines survive a slow reader", async () => {
-    const N = 1500;
-    const pad = Buffer.alloc(500, "x").toString();
-    using dir = tempDir("stdout-nonblock-loss", {
-      "child.mjs": `
-        if (process.argv[2] === "touch") void process.stdout.writableHighWaterMark;
-        const pad = ${JSON.stringify(pad)};
-        for (let i = 0; i < ${N}; i++) console.log("O" + i + " " + pad);
-      `,
-    });
-    // A separate `cat` reader starts 400ms late behind a shell fifo, so the
-    // 64 KiB pipe fills and write(2) on the now-nonblocking fd 1 returns EAGAIN
-    // mid-run. The pipeline's exit status is cat's, not bun's, so the delivered
-    // count is what proves the regression is gone.
-    await using proc = Bun.spawn({
-      cmd: [
-        "/bin/sh",
-        "-c",
-        'exec "$0" "$1" touch | { sleep 0.4; exec cat; }',
-        bunExe(),
-        path.join(String(dir), "child.mjs"),
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const stdout = await proc.stdout.text();
-    const delivered = stdout.split("\n").filter(l => /^O\d+ x+$/.test(l)).length;
-    expect(delivered).toBe(N);
-  });
+// Materializing process.stdout / process.stderr puts O_NONBLOCK on the shared
+// open file description of fd 1 / fd 2. The native console writer behind
+// console.log / console.error must then retry on EAGAIN instead of dropping the
+// unwritten tail. A single 1 MiB write is larger than any pipe buffer, so the
+// first write(2) is always short and the next one always sees EAGAIN: the
+// unfixed binary delivers exactly one pipe buffer no matter how fast the reader
+// is, which keeps these deterministic without a sleeping reader. Kept outside the
+// concurrent block above so the extra children don't push the stdin tests past
+// their timeout.
+describe.skipIf(isWindows)("console output is not truncated once the stdio fd is nonblocking", () => {
+  const ONE_MIB_LINE = (1 << 20) + 1;
 
-  test("a single 1 MiB line is not truncated", async () => {
-    // A single 1 MiB write into even a fast `| wc -c` reader exceeds the 64 KiB
-    // pipe, so write(2) on the now-nonblocking fd 1 returns a partial count and
-    // then EAGAIN before the reader drains.
+  test("console.log after touching process.stdout", async () => {
     await using proc = Bun.spawn({
       cmd: [
         "/bin/sh",
@@ -211,50 +184,68 @@ describe.skipIf(isWindows)("console.log after process.stdout is materialized on 
       stdout: "pipe",
       stderr: "inherit",
     });
-    const stdout = (await proc.stdout.text()).trim();
-    expect(Number(stdout)).toBe((1 << 20) + 1);
+    expect(Number((await proc.stdout.text()).trim())).toBe(ONE_MIB_LINE);
   });
 
-  test("parent console.log survives a bun child that touches inherited stdout", async () => {
-    // O_NONBLOCK lives on the shared open file description. A bun child with
-    // stdio:'inherit' that materializes its process.stdout flips the PARENT's
-    // fd 1 too; the parent's console writer must still deliver every line.
-    using dir = tempDir("stdout-nonblock-child-inherit", {
-      "parent.mjs": `
-        const { spawnSync } = require("node:child_process");
-        const r = spawnSync(process.execPath, ["-e", 'process.stdout.write("")'],
-                            { stdio: ["ignore", "inherit", "ignore"] });
-        if (r.error || r.status !== 0) throw new Error("child failed: " + (r.error ?? r.status));
-        const pad = Buffer.alloc(190, 120).toString();
-        for (let i = 0; i < 20000; i++) console.log("O" + i + " " + pad);
-      `,
-    });
-    await using proc = Bun.spawn({
-      cmd: ["/bin/sh", "-c", 'exec "$0" "$1" | { sleep 1; wc -l; }', bunExe(), path.join(String(dir), "parent.mjs")],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const stdout = (await proc.stdout.text()).trim();
-    expect(Number(stdout)).toBe(20000);
-  });
-
-  test("console.log survives a raw O_NONBLOCK on fd 1 (isolates the writer)", async () => {
-    // Bun.file(1).writer() goes through FileSink.setup (dup + O_NONBLOCK) but is
-    // NOT the process.stdout getter path, so ForceFileSinkToBeSynchronous never
-    // clears the flag. This isolates fd_write_all_quiet's EAGAIN handling.
+  test("console.error after touching process.stderr", async () => {
     await using proc = Bun.spawn({
       cmd: [
         "/bin/sh",
         "-c",
-        'exec "$0" -e "void Bun.file(1).writer(); console.log(Buffer.alloc(1<<20, 65).toString())" | { sleep 0.4; exec wc -c; }',
+        'exec "$0" -e "void process.stderr.isTTY; console.error(Buffer.alloc(1<<20, 66).toString())" 2>&1 >/dev/null | wc -c',
         bunExe(),
       ],
       env: bunEnv,
       stdout: "pipe",
       stderr: "inherit",
     });
-    const stdout = (await proc.stdout.text()).trim();
-    expect(Number(stdout)).toBe((1 << 20) + 1);
+    expect(Number((await proc.stdout.text()).trim())).toBe(ONE_MIB_LINE);
+  });
+
+  test("console.log in a parent after a bun child touched the inherited stdout", async () => {
+    // The flag lives on the open file description, so a child with
+    // stdio: 'inherit' that touches its process.stdout flips the parent's fd 1
+    // too, even though the parent never touched its own stream.
+    using dir = tempDir("stdout-nonblock-inherited", {
+      "parent.ts": `
+        const r = Bun.spawnSync({
+          cmd: [process.execPath, "-e", 'process.stdout.write("")'],
+          stdout: "inherit",
+        });
+        if (!r.success) throw new Error("child failed: " + r.exitCode);
+        console.log(Buffer.alloc(1 << 20, 65).toString());
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", 'exec "$0" "$1" | wc -c', bunExe(), path.join(String(dir), "parent.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    expect(Number((await proc.stdout.text()).trim())).toBe(ONE_MIB_LINE);
+  });
+
+  test("process.stdout.write to a pipe stays asynchronous", async () => {
+    // Pins the contract the console-writer fix must not disturb: like node, a
+    // write larger than the pipe returns false immediately and emits 'drain'
+    // once the reader catches up, rather than blocking the JS thread.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const ret = process.stdout.write(Buffer.alloc(1 << 20, 65));
+          process.stdout.once("drain", () => {
+            process.stderr.write(JSON.stringify({ ret, drained: true }));
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.bytes(), proc.stderr.text()]);
+    expect(stdout.byteLength).toBe(1 << 20);
+    expect(JSON.parse(stderr)).toEqual({ ret: false, drained: true });
   });
 });

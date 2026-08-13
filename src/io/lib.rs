@@ -512,9 +512,9 @@ bun_dispatch::link_interface! {
         SecurityScan,
     ] {
         fn has_on_read_chunk() -> bool;
-        fn on_read_chunk(chunk: &[u8], has_more: pipes::ReadState) -> bool;
-        fn on_reader_done();
-        fn on_reader_error(err: bun_sys::Error);
+        fn on_read_chunk(chunk: &[u8], has_more: pipes::ReadState) -> JsResult<bool>;
+        fn on_reader_done() -> JsResult<()>;
+        fn on_reader_error(err: bun_sys::Error) -> JsResult<()>;
         fn loop_ptr() -> *mut Loop;
         fn event_loop() -> EventLoopCtx;
         fn ref_();
@@ -597,17 +597,20 @@ macro_rules! __impl_buffered_reader_parent_body {
                     $rc_this: *mut Self,
                     $rc_chunk: &[u8],
                     $rc_more: $crate::ReadState,
-                ) -> bool {
-                    unsafe { $rc }
+                ) -> $crate::JsResult<bool> {
+                    $crate::IntoParentResult::into_parent_result(unsafe { $rc })
                 }
             )?
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-            unsafe fn on_reader_done($rd_this: *mut Self) {
-                unsafe { $rd }
+            unsafe fn on_reader_done($rd_this: *mut Self) -> $crate::JsResult<()> {
+                $crate::IntoParentResult::into_parent_result(unsafe { $rd })
             }
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-            unsafe fn on_reader_error($re_this: *mut Self, $re_err: $crate::__bun_sys::Error) {
-                unsafe { $re }
+            unsafe fn on_reader_error(
+                $re_this: *mut Self,
+                $re_err: $crate::__bun_sys::Error,
+            ) -> $crate::JsResult<()> {
+                $crate::IntoParentResult::into_parent_result(unsafe { $re })
             }
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
             unsafe fn loop_($l_this: *mut Self) -> *mut $crate::pipe_reader::Loop {
@@ -672,6 +675,51 @@ pub use source::Source;
 // (`Option<Source>`) typecheck.
 
 pub use pipe_reader::{BufferedReader, BufferedReaderParent, PosixFlags};
+
+/// A parent callback that entered JS returns the exception it left pending.
+pub type JsResult<T> = core::result::Result<T, bun_core::JsError>;
+
+/// Lifts a parent callback's return into the trampoline's `JsResult`: parents
+/// that cannot enter JS keep returning `bool` / `()`.
+pub trait IntoParentResult<T> {
+    fn into_parent_result(self) -> JsResult<T>;
+}
+impl IntoParentResult<bool> for bool {
+    #[inline(always)]
+    fn into_parent_result(self) -> JsResult<bool> {
+        Ok(self)
+    }
+}
+impl IntoParentResult<()> for () {
+    #[inline(always)]
+    fn into_parent_result(self) -> JsResult<()> {
+        Ok(())
+    }
+}
+impl<T, E: Into<bun_core::JsError>> IntoParentResult<T> for core::result::Result<T, E> {
+    #[inline(always)]
+    fn into_parent_result(self) -> JsResult<T> {
+        self.map_err(Into::into)
+    }
+}
+
+unsafe extern "Rust" {
+    /// `bun_jsc`: report the exception a loop-level callback left pending as
+    /// uncaught, or stand down if it is the VM's termination. This crate sits
+    /// below the JS tiers, so the readers/writers it drives reach the fold
+    /// through this one hook.
+    fn __bun_fold_loop_js_error(err: bun_core::JsError);
+}
+
+/// The fold for the pipe reader/writer trampolines: what a parent's callback
+/// left pending is reported here (JS thread), and the caller stops driving I/O
+/// for this event.
+#[cold]
+#[inline(never)]
+pub(crate) fn fold_loop_js_error(err: bun_core::JsError) {
+    // SAFETY: link-time resolved; defined `#[no_mangle]` in `bun_jsc`.
+    unsafe { __bun_fold_loop_js_error(err) }
+}
 
 pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 

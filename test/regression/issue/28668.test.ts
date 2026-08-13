@@ -28,6 +28,7 @@ describe.concurrent("bunx --cwd", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    expect(stderr).toBe("");
     expect(stdout.trim()).toEndWith("subdir");
     expect(exitCode).toBe(0);
   });
@@ -56,6 +57,7 @@ describe.concurrent("bunx --cwd", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    expect(stderr).toBe("");
     expect(stdout.trim()).toEndWith("mydir");
     expect(exitCode).toBe(0);
   });

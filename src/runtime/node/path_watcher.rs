@@ -2,8 +2,8 @@
 //!
 //! This is deliberately independent of `bun.Watcher` (the bundler/--watch/--hot
 //! watcher). `bun.Watcher` is shaped around a module graph — its WatchItem carries
-//! `options.Loader`, `*PackageJSON`, a filesystem handle, and on Windows is pinned
-//! to `top_level_dir`. None of that applies to `fs.watch()`, and routing `fs.watch()`
+//! `options.Loader`, `*PackageJSON`, a filesystem handle, and on Windows watches
+//! per-module-graph roots. None of that applies to `fs.watch()`, and routing `fs.watch()`
 //! through it required a 1k-line shim (the old version of this file) full of
 //! lock-ordering workarounds, a WorkPool directory crawler, and a bolted-on FSEvents
 //! side-channel.

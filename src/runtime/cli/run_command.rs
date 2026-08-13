@@ -229,7 +229,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     }
 
     /// Spawns the script body via the bun-shell or system shell and exits on
-    /// non-zero.
+    /// non-zero; callers treat a return as the script having succeeded, so
+    /// failing to run the script at all exits 1 as well.
+    ///
+    /// `silent` suppresses the command echo and the exit-code/signal report of
+    /// a script that ran, not the report of a script bun could not run.
     ///
     /// `passthrough` is `&[Box<[u8]>]` to match `ctx.passthrough` directly.
     pub(crate) fn run_package_script_foreground(
@@ -292,14 +296,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         for part in passthrough {
             copy_script.push(b' ');
             if cfg!(windows) && use_system_shell && bun_which::batch_arg_has_cmd_metachars(part) {
-                if !silent {
-                    pretty_errorln!(
-                        "<r><red>error<r>: Failed to run script <b>{}<r>: argument {} contains a cmd.exe special character and cannot be passed to the system shell",
-                        bstr::BStr::new(name),
-                        bun_core::fmt::quote(&part[..]),
-                    );
-                    Output::flush();
-                }
+                pretty_errorln!(
+                    "<r><red>error<r>: Failed to run script <b>{}<r>: argument {} contains a cmd.exe special character and cannot be passed to the system shell",
+                    bstr::BStr::new(name),
+                    bun_core::fmt::quote(&part[..]),
+                );
                 Global::exit(1);
             }
             if needs_escape_utf8_ascii_latin1(part) {
@@ -337,13 +338,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ) {
                 Ok(c) => c,
                 Err(err) => {
-                    if !silent {
-                        pretty_errorln!(
-                            "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
-                            bstr::BStr::new(name),
-                            bstr::BStr::new(err.name()),
-                        );
-                    }
+                    pretty_errorln!(
+                        "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
+                        bstr::BStr::new(name),
+                        bstr::BStr::new(err.name()),
+                    );
                     Global::exit(1);
                 }
             };
@@ -411,10 +410,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             },
             ..Default::default()
         }) {
-            // Not gated on `silent`, unlike the exit-code/signal reports below
-            // (same for `SpawnStatus::Err`): this is bun failing to run the
-            // script, not the script failing, and `--shell=bun` reports that
-            // unconditionally too.
             Err(err) => {
                 pretty_errorln!(
                     "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",

@@ -1773,6 +1773,96 @@ it.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple 
   });
 });
 
+// Node reports every readdir failure, recursive or not, as syscall "scandir".
+// The async recursive walk used to hand out the raw openat() error, so the
+// callback and promises forms said "open" where readdirSync said "scandir".
+describe("readdir({recursive: true}) reports failures as scandir", () => {
+  const resultKinds = {
+    paths: {},
+    withFileTypes: { withFileTypes: true },
+    buffer: { encoding: "buffer" },
+  } as const;
+
+  type ErrorShape = { code: string; syscall: string; path: string; message: string };
+  const shape = (err: any): ErrorShape | undefined =>
+    err && { code: err.code, syscall: err.syscall, path: err.path, message: err.message };
+
+  async function readdirErrors(target: string, kind: keyof typeof resultKinds) {
+    const options: any = { recursive: true, ...resultKinds[kind] };
+
+    let syncError: unknown;
+    try {
+      readdirSync(target, options);
+    } catch (err) {
+      syncError = err;
+    }
+
+    const { promise: callbackError, resolve } = Promise.withResolvers<unknown>();
+    fs.readdir(target, options, err => resolve(err));
+    const promisesError = promises.readdir(target, options).then(
+      () => undefined,
+      err => err,
+    );
+
+    return {
+      sync: shape(syncError),
+      callback: shape(await callbackError),
+      promises: shape(await promisesError),
+    };
+  }
+
+  describe.each(Object.keys(resultKinds) as (keyof typeof resultKinds)[])("%s", kind => {
+    it.concurrent("root does not exist", async () => {
+      using dir = tempDir("readdir-recursive-scandir-enoent", {});
+      const target = join(String(dir), "missing");
+      const expected: ErrorShape = {
+        code: "ENOENT",
+        syscall: "scandir",
+        path: target,
+        message: `ENOENT: no such file or directory, scandir '${target}'`,
+      };
+      expect(await readdirErrors(target, kind)).toEqual({ sync: expected, callback: expected, promises: expected });
+    });
+
+    it.concurrent("root is a file", async () => {
+      using dir = tempDir("readdir-recursive-scandir-enotdir", { "file.txt": "x" });
+      const target = join(String(dir), "file.txt");
+      const expected: ErrorShape = {
+        code: "ENOTDIR",
+        syscall: "scandir",
+        path: target,
+        message: `ENOTDIR: not a directory, scandir '${target}'`,
+      };
+      expect(await readdirErrors(target, kind)).toEqual({ sync: expected, callback: expected, promises: expected });
+    });
+
+    // Needs an unreadable directory: root bypasses mode bits and Windows has none.
+    it.skipIf(isWindows || process.getuid?.() === 0).concurrent("subdirectory is unreadable", async () => {
+      using dir = tempDir("readdir-recursive-scandir-eacces", { "keep.txt": "x", locked: {} });
+      const locked = join(String(dir), "locked");
+      fs.chmodSync(locked, 0o000);
+      try {
+        const errors = await readdirErrors(String(dir), kind);
+        // The async walk names the directory that failed, like Node does.
+        // (readdirSync names the root instead; its err.path is not asserted here.)
+        const expected: ErrorShape = {
+          code: "EACCES",
+          syscall: "scandir",
+          path: locked,
+          message: `EACCES: permission denied, scandir '${locked}'`,
+        };
+        expect({ callback: errors.callback, promises: errors.promises }).toEqual({
+          callback: expected,
+          promises: expected,
+        });
+        expect(errors.sync).toMatchObject({ code: "EACCES", syscall: "scandir" });
+      } finally {
+        fs.chmodSync(locked, 0o755);
+      }
+    });
+  });
+});
+
 describe("readSync", () => {
   it("rejects the read when the length argument detaches the destination buffer during coercion", () => {
     const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");

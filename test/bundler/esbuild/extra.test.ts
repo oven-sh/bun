@@ -1,4 +1,5 @@
 import { describe } from "bun:test";
+import { isCaseSensitiveFileSystem } from "harness";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -1781,7 +1782,9 @@ describe("bundler", () => {
     run: true,
   });
   itBundled("extra/CaseSensitiveImport2", {
-    todo: true,
+    // file1.js and File1.js can only coexist on a case-sensitive filesystem;
+    // elsewhere the later fixture overwrites the earlier one.
+    todo: !isCaseSensitiveFileSystem(),
     files: {
       "in.js": `
         import x from "./File1.js"

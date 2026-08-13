@@ -1,7 +1,27 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import {
+  chmodSync,
+  chownSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isCaseSensitiveFileSystem,
+  isLinux,
+  isMacOS,
+  isWindows,
+  joinP,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -1687,5 +1707,184 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     expect(stderr).toBe("");
     expect(stdout).toBe("index\n");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("sibling files whose names differ only in case", () => {
+  // The directory cache keys entries by lowercased name, so each of these
+  // used to return whichever of the two files readdir listed last. Only a
+  // case-sensitive filesystem can hold both files at once.
+  describe.skipIf(!isCaseSensitiveFileSystem())("on a case-sensitive filesystem", () => {
+    it.concurrent("import loads each file and Bun.resolveSync returns each path", async () => {
+      using dir = tempDir("resolve-case-esm", {
+        "mod.mjs": `export const who = "lower";`,
+        "Mod.mjs": `export const who = "UPPER";`,
+        "entry.mjs": `
+          import { who as lower } from "./mod.mjs";
+          import { who as upper } from "./Mod.mjs";
+          console.log(
+            JSON.stringify({
+              lower,
+              upper,
+              resolved: [Bun.resolveSync("./mod.mjs", import.meta.dir), Bun.resolveSync("./Mod.mjs", import.meta.dir)],
+            }),
+          );
+        `,
+      });
+      const result = await bunRun(join(String(dir), "entry.mjs"));
+      expect(result).toSpawn();
+      expect(JSON.parse(result.stdout)).toEqual({
+        lower: "lower",
+        upper: "UPPER",
+        resolved: [join(String(dir), "mod.mjs"), join(String(dir), "Mod.mjs")],
+      });
+    });
+
+    it.concurrent("require loads each file and require.resolve returns each path", async () => {
+      using dir = tempDir("resolve-case-cjs", {
+        "readme.js": `module.exports = "lower";`,
+        "README.js": `module.exports = "UPPER";`,
+        "entry.js": `
+          console.log(
+            JSON.stringify({
+              lower: require("./readme.js"),
+              upper: require("./README.js"),
+              resolved: [require.resolve("./readme.js"), require.resolve("./README.js")],
+            }),
+          );
+        `,
+      });
+      const result = await bunRun(join(String(dir), "entry.js"));
+      expect(result).toSpawn();
+      expect(JSON.parse(result.stdout)).toEqual({
+        lower: "lower",
+        upper: "UPPER",
+        resolved: [join(String(dir), "readme.js"), join(String(dir), "README.js")],
+      });
+    });
+
+    it.concurrent("an extensionless specifier picks the file spelled like the specifier", async () => {
+      using dir = tempDir("resolve-case-extensionless", {
+        "util.ts": `export const who = "lower";`,
+        "Util.ts": `export const who = "UPPER";`,
+        "entry.ts": `
+          import { who as lower } from "./util";
+          import { who as upper } from "./Util";
+          console.log(JSON.stringify({ lower, upper }));
+        `,
+      });
+      const result = await bunRun(join(String(dir), "entry.ts"));
+      expect(result).toSpawn();
+      expect(JSON.parse(result.stdout)).toEqual({ lower: "lower", upper: "UPPER" });
+    });
+
+    it.concurrent("a spelling that matches neither file does not resolve", () => {
+      using dir = tempDir("resolve-case-neither", {
+        "mod.mjs": "",
+        "Mod.mjs": "",
+      });
+      expect(Bun.resolveSync("./mod.mjs", String(dir))).toBe(join(String(dir), "mod.mjs"));
+      expect(Bun.resolveSync("./Mod.mjs", String(dir))).toBe(join(String(dir), "Mod.mjs"));
+      expect(() => Bun.resolveSync("./MOD.mjs", String(dir))).toThrow("Cannot find module './MOD.mjs'");
+      expect(() => Bun.resolveSync("./MOD", String(dir))).toThrow("Cannot find module './MOD'");
+    });
+
+    it.concurrent("directories reached through a symlink each resolve to their own real path", async () => {
+      // The real path of a directory below a symlink is cached on the parent
+      // listing's entry for it, so `lib` and `Lib` used to share one.
+      using dir = tempDir("resolve-case-dirs", {
+        "real/lib/x.mjs": `export const who = "lower";`,
+        "real/Lib/x.mjs": `export const who = "UPPER";`,
+        "entry.mjs": `
+          import { who as lower } from "./link/lib/x.mjs";
+          import { who as upper } from "./link/Lib/x.mjs";
+          console.log(
+            JSON.stringify({
+              lower,
+              upper,
+              resolved: [
+                Bun.resolveSync("./link/lib/x.mjs", import.meta.dir),
+                Bun.resolveSync("./link/Lib/x.mjs", import.meta.dir),
+              ],
+            }),
+          );
+        `,
+      });
+      symlinkSync("real", join(String(dir), "link"), "dir");
+      const result = await bunRun(join(String(dir), "entry.mjs"));
+      expect(result).toSpawn();
+      expect(JSON.parse(result.stdout)).toEqual({
+        lower: "lower",
+        upper: "UPPER",
+        resolved: [join(String(dir), "real", "lib", "x.mjs"), join(String(dir), "real", "Lib", "x.mjs")],
+      });
+    });
+
+    it.concurrent("re-reading a directory between Bun.build calls tracks added and removed variants", async () => {
+      // Later Bun.build calls in a process run at a higher resolver generation,
+      // so they re-read an already cached directory in place, carrying the
+      // entries of still-present files over. Runs in-process because that is
+      // what makes the later builds take the re-read path.
+      using dir = tempDir("resolve-case-reread", {
+        "mod.mjs": `export const who = "lower";`,
+        "Mod.mjs": `export const who = "UPPER";`,
+        "two.mjs": `
+          import { who as lower } from "./mod.mjs";
+          import { who as upper } from "./Mod.mjs";
+          console.log(lower, upper);
+        `,
+        "three.mjs": `
+          import { who as lower } from "./mod.mjs";
+          import { who as upper } from "./Mod.mjs";
+          import { who as shout } from "./MOD.mjs";
+          console.log(lower, upper, shout);
+        `,
+        "lower-shout.mjs": `
+          import { who as lower } from "./mod.mjs";
+          import { who as shout } from "./MOD.mjs";
+          console.log(lower, shout);
+        `,
+        "upper.mjs": `import { who } from "./Mod.mjs"; console.log(who);`,
+      });
+      const build = async (entry: string) => {
+        const result = await Bun.build({ entrypoints: [join(String(dir), entry)], throw: false });
+        if (!result.success) return result.logs.map(log => log.message);
+        const bundle = await result.outputs[0].text();
+        return Array.from(bundle.matchAll(/"(lower|UPPER|SHOUT)"/g), match => match[1]);
+      };
+      // The generation is bumped by the bundle thread once it has drained its
+      // queue, which can land after the previous build's promise has already
+      // resolved; a build enqueued before that still sees the old listing.
+      // Each attempt is itself a build, so a later attempt always re-reads.
+      const buildAfterChange = async (entry: string, expected: string[]) => {
+        let actual = await build(entry);
+        for (let attempt = 0; attempt < 50 && !Bun.deepEquals(actual, expected); attempt++) {
+          actual = await build(entry);
+        }
+        expect(actual).toEqual(expected);
+      };
+
+      expect(await build("two.mjs")).toEqual(["lower", "UPPER"]);
+
+      writeFileSync(join(String(dir), "MOD.mjs"), `export const who = "SHOUT";`);
+      await buildAfterChange("three.mjs", ["lower", "UPPER", "SHOUT"]);
+
+      unlinkSync(join(String(dir), "Mod.mjs"));
+      await buildAfterChange("lower-shout.mjs", ["lower", "SHOUT"]);
+      await buildAfterChange("upper.mjs", ['Could not resolve: "./Mod.mjs"']);
+    });
+  });
+
+  it.concurrent("a specifier whose case differs from the only file of that name still resolves", async () => {
+    // Deliberately more lenient than Node on a case-sensitive filesystem
+    // (see extra/CaseSensitiveImport in test/bundler/esbuild/extra.test.ts);
+    // a case-insensitive filesystem resolves it regardless.
+    using dir = tempDir("resolve-case-lone", {
+      "Mod.mjs": `export const who = "UPPER";`,
+      "entry.mjs": `import { who } from "./mod.mjs"; console.log(who);`,
+    });
+    const result = await bunRun(join(String(dir), "entry.mjs"));
+    expect(result).toSpawn();
+    expect(result.stdout).toBe("UPPER");
   });
 });

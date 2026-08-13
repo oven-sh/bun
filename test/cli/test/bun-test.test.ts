@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isCaseSensitiveFileSystem, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -1746,6 +1746,36 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(stdout).toContain("RAN solo");
     expect(stdout).not.toContain("RAN other");
     expect(stderr).toContain(" 1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(!isCaseSensitiveFileSystem())("runs test files whose names differ only in case", async () => {
+    // Discovery walks the cwd from the directory cache (it is already cached
+    // by the time the scanner runs) and lists nested directories fresh; each
+    // file found is then loaded through the same cache, which keys entries by
+    // lowercased name. Every step has to keep the two spellings apart: before,
+    // this ran 2 tests across 3 files.
+    using dir = tempDir("scanner-case-variants", {
+      "a.test.ts": `import { test } from "bun:test"; test("root lower", () => { console.log("RAN root lower"); });`,
+      "A.test.ts": `import { test } from "bun:test"; test("root upper", () => { console.log("RAN root upper"); });`,
+      "nested/b.test.ts": `import { test } from "bun:test"; test("nested lower", () => { console.log("RAN nested lower"); });`,
+      "nested/B.test.ts": `import { test } from "bun:test"; test("nested upper", () => { console.log("RAN nested upper"); });`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("RAN root lower");
+    expect(stdout).toContain("RAN root upper");
+    expect(stdout).toContain("RAN nested lower");
+    expect(stdout).toContain("RAN nested upper");
+    expect(stderr).toContain(" 4 pass");
     expect(exitCode).toBe(0);
   });
 });

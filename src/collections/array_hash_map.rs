@@ -1788,10 +1788,11 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     /// `get`/`insert`/&c. compute internally for a `[u8]` lookup. Exposed
     /// so a caller that already has the key bytes in hand (and will probe *and*
     /// then insert the same key) can hash once and feed the result to
-    /// [`get_hashed`] / [`put_static_key_hashed`] instead of re-deriving it on
-    /// each call. The resolver's `DirEntry::add_entry` does precisely this: one
-    /// case-insensitive probe against the previous-generation directory map,
-    /// one insert into the new one, same (lowercased) basename bytes.
+    /// [`get_hashed`] / [`get_mut_hashed`] / [`get_or_put_static_key_hashed`]
+    /// instead of re-deriving it on each call. The resolver's
+    /// `DirEntry::add_entry` does precisely this: one probe against the
+    /// previous-generation directory map, one insert into the new one, same
+    /// (lowercased) basename bytes.
     #[inline]
     pub fn hash_key(&self, key: &[u8]) -> u64 {
         use core::hash::BuildHasher;
@@ -1808,31 +1809,52 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
             .map(|(_, v)| v)
     }
 
-    /// [`put_static_key`] with a caller-supplied hash. `hash` MUST equal
-    /// `self.hash_key(key)` (see [`hash_key`]); the insert trusts it without
-    /// recomputing. Same zero-copy / `'static`-key contract as [`put_static_key`]:
-    /// overwrites the value if the key is already present.
+    /// [`get_hashed`] returning a mutable reference to the stored value.
     #[inline]
-    pub fn put_static_key_hashed(
-        &mut self,
-        hash: u64,
-        key: &'static [u8],
-        value: V,
-    ) -> Result<(), AllocError> {
+    pub fn get_mut_hashed(&mut self, hash: u64, key: &[u8]) -> Option<&mut V> {
         use hashbrown::hash_map::RawEntryMut;
         match self
             .inner
             .raw_entry_mut()
             .from_key_hashed_nocheck(hash, key)
         {
-            RawEntryMut::Occupied(mut e) => {
-                e.insert(value);
-            }
-            RawEntryMut::Vacant(e) => {
-                e.insert_hashed_nocheck(hash, StringHashMapKey::borrowed(key), value);
-            }
+            RawEntryMut::Occupied(e) => Some(e.into_mut()),
+            RawEntryMut::Vacant(_) => None,
         }
-        Ok(())
+    }
+
+    /// [`put_static_key`] with a caller-supplied hash, except that an existing
+    /// value is kept rather than overwritten: `value` is inserted only when
+    /// `key` is absent, and the result says which value is now stored. `hash`
+    /// MUST equal `self.hash_key(key)` (see [`hash_key`]); the single probe
+    /// trusts it without recomputing. Same zero-copy / `'static`-key contract
+    /// as [`put_static_key`].
+    #[inline]
+    pub fn get_or_put_static_key_hashed(
+        &mut self,
+        hash: u64,
+        key: &'static [u8],
+        value: V,
+    ) -> Result<StringHashMapGetOrPut<'_, V>, AllocError> {
+        use hashbrown::hash_map::RawEntryMut;
+        Ok(
+            match self
+                .inner
+                .raw_entry_mut()
+                .from_key_hashed_nocheck(hash, key)
+            {
+                RawEntryMut::Occupied(e) => StringHashMapGetOrPut {
+                    found_existing: true,
+                    value_ptr: e.into_mut(),
+                },
+                RawEntryMut::Vacant(e) => StringHashMapGetOrPut {
+                    found_existing: false,
+                    value_ptr: e
+                        .insert_hashed_nocheck(hash, StringHashMapKey::borrowed(key), value)
+                        .1,
+                },
+            },
+        )
     }
 
     /// Insert `value` under `key` **without copying the key bytes** — the

@@ -1052,7 +1052,6 @@ impl<'a> Parser<'a> {
                 if uses_dirname {
                     let value = if p.options.compile {
                         // var __dirname = import.meta.dir
-                        p.has_import_meta = true;
                         let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
                         p.new_expr(
                             E::Dot {
@@ -1090,7 +1089,6 @@ impl<'a> Parser<'a> {
                 if uses_filename {
                     let value = if p.options.compile {
                         // var __filename = import.meta.path
-                        p.has_import_meta = true;
                         let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
                         p.new_expr(
                             E::Dot {

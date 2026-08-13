@@ -7,7 +7,8 @@
 // - Write test for export {foo} from "./foo"
 // - Write test for import {foo} from "./foo"; export {foo}
 
-import { expect, mock, spyOn, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
@@ -165,4 +166,91 @@ test("mocking a builtin", async () => {
 
   const { readFile } = await import("node:fs/promises");
   expect(await readFile("hello.txt", "utf8")).toBe("hello world");
+});
+
+// `() => mock.module(...)` is a proper tail call (test files are modules, so strict mode), which
+// replaces the callback's frame with mock.module's own. When the test runner is what invoked the
+// callback, nothing below mock.module on the stack says which file made the call, so the specifier
+// has to be resolved against the file the callback was defined in. Each scenario imports the module
+// first: the mock only takes effect if the specifier resolves to the path that is already loaded.
+describe("mock.module() tail-called from a callback the runner invokes", () => {
+  async function runBunTest(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  const dep = `export const value = "real";\n`;
+  const mocked = `() => ({ value: "mocked" })`;
+
+  const shapes: [shape: string, register: string, passing: number][] = [
+    ["beforeAll", `beforeAll(() => mock.module("./dep", ${mocked}));`, 1],
+    ["beforeEach", `beforeEach(() => mock.module("./dep", ${mocked}));`, 1],
+    ["describe body", `describe("registers", () => mock.module("./dep", ${mocked}));`, 1],
+    ["test body", `test("registers", () => mock.module("./dep", ${mocked}));`, 2],
+    ["test.each body", `test.each(["./dep"])("registers %s", specifier => mock.module(specifier, ${mocked}));`, 2],
+    ["beforeAll with a relative file: URL", `beforeAll(() => mock.module("file:./dep.ts", ${mocked}));`, 1],
+  ];
+
+  test.concurrent.each(shapes)("%s", async (_shape, register, passing) => {
+    using dir = tempDir("mock-module-tail-call", {
+      "dep.ts": dep,
+      "tail.test.ts": `
+        import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
+        import { value } from "./dep";
+        ${register}
+        test("mock applied to the already-imported module", () => expect(value).toBe("mocked"));
+      `,
+    });
+
+    const { stderr, exitCode } = await runBunTest(String(dir), "tail.test.ts");
+    expect(stderr).toContain(` ${passing} pass`);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a package specifier is resolved to the loaded package", async () => {
+    using dir = tempDir("mock-module-tail-call-pkg", {
+      "node_modules/some-pkg/package.json": `{ "name": "some-pkg", "main": "index.js" }`,
+      "node_modules/some-pkg/index.js": dep,
+      "tail.test.ts": `
+        import { beforeAll, expect, mock, test } from "bun:test";
+        import { value } from "some-pkg";
+        beforeAll(() => mock.module("some-pkg", ${mocked}));
+        test("mock applied to the already-imported package", () => expect(value).toBe("mocked"));
+      `,
+    });
+
+    const { stderr, exitCode } = await runBunTest(String(dir), "tail.test.ts");
+    expect(stderr).toContain(" 1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a hook from --preload resolves against the preload file, not the test file", async () => {
+    using dir = tempDir("mock-module-tail-call-preload", {
+      "setup/preload.ts": `
+        import { beforeAll, mock } from "bun:test";
+        beforeAll(() => mock.module("./dep", ${mocked}));
+      `,
+      "setup/dep.ts": dep,
+      "dep.ts": `export const value = "sibling of the test file";\n`,
+      "app.test.ts": `
+        import { expect, test } from "bun:test";
+        import { value } from "./setup/dep";
+        import { value as sibling } from "./dep";
+        test("./dep meant the preload's neighbor", () => {
+          expect({ value, sibling }).toEqual({ value: "mocked", sibling: "sibling of the test file" });
+        });
+      `,
+    });
+
+    const { stderr, exitCode } = await runBunTest(String(dir), "--preload", "./setup/preload.ts", "app.test.ts");
+    expect(stderr).toContain(" 1 pass");
+    expect(exitCode).toBe(0);
+  });
 });

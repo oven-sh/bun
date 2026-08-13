@@ -64,7 +64,10 @@ describe.concurrent("registry path without trailing slash is preserved", () => {
   const registryPath = "/artifactory/api/npm/npm-stuff";
   const expectedPaths = [`${registryPath}/@scope%2fpkg`, `${registryPath}/react`];
 
-  async function install(configure: (dir: string, registry: string) => Promise<string[]>) {
+  async function install(
+    configure: (dir: string, registry: string) => Promise<string[]>,
+    options: { registry?: (registry: string) => string; dependencies?: Record<string, string> } = {},
+  ) {
     const paths: string[] = [];
     using server = Bun.serve({
       port: 0,
@@ -74,10 +77,16 @@ describe.concurrent("registry path without trailing slash is preserved", () => {
       },
     });
     const dir = tmpdirSync();
-    const args = await configure(dir, `http://${server.hostname}:${server.port}${registryPath}`);
+    const origin = `http://${server.hostname}:${server.port}`;
+    const registry = `${origin}${registryPath}`;
+    const args = await configure(dir, options.registry?.(registry) ?? registry);
     await Bun.write(
       join(dir, "package.json"),
-      JSON.stringify({ name: "test", version: "0.0.0", dependencies: { "react": "1.0.0", "@scope/pkg": "1.0.0" } }),
+      JSON.stringify({
+        name: "test",
+        version: "0.0.0",
+        dependencies: options.dependencies ?? { "react": "1.0.0", "@scope/pkg": "1.0.0" },
+      }),
     );
 
     await using proc = Bun.spawn({
@@ -89,7 +98,12 @@ describe.concurrent("registry path without trailing slash is preserved", () => {
       stdin: "ignore",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    return { paths: paths.sort(), stderr, exitCode };
+    return { paths: paths.sort(), stderr, exitCode, origin };
+  }
+
+  async function writeBunfig(dir: string, registry: string) {
+    await Bun.write(join(dir, "bunfig.toml"), Bun.TOML.stringify({ install: { registry } }));
+    return [];
   }
 
   test(".npmrc registry=", async () => {
@@ -103,10 +117,7 @@ describe.concurrent("registry path without trailing slash is preserved", () => {
   });
 
   test("bunfig.toml install.registry", async () => {
-    const { paths, exitCode } = await install(async (dir, registry) => {
-      await Bun.write(join(dir, "bunfig.toml"), Bun.TOML.stringify({ install: { registry } }));
-      return [];
-    });
+    const { paths, exitCode } = await install(writeBunfig);
     expect(paths).toEqual(expectedPaths);
     expect(exitCode).toBe(1);
   });
@@ -126,6 +137,31 @@ describe.concurrent("registry path without trailing slash is preserved", () => {
   test("--registry", async () => {
     const { paths, exitCode } = await install(async (_dir, registry) => ["--registry", registry]);
     expect(paths).toEqual(expectedPaths);
+    expect(exitCode).toBe(1);
+  });
+
+  // The scheme is case-insensitive, and the registry directory ends where the
+  // path does: a "/" inside the query is not a path separator.
+  test.each([
+    ["an uppercase scheme", (registry: string) => registry.replace("http://", "HTTP://")],
+    ["a query string", (registry: string) => `${registry}?path=a/b`],
+    ["a fragment", (registry: string) => `${registry}#npm`],
+    ["repeated trailing slashes", (registry: string) => `${registry}//`],
+  ])("registry URL with %s", async (_, registry) => {
+    const { paths, exitCode } = await install(writeBunfig, { registry });
+    expect(paths).toEqual(expectedPaths);
+    expect(exitCode).toBe(1);
+  });
+
+  // The manifest URL must stay under the registry path, and that check has to use
+  // the same slash-terminated base as the join: against the URL as written, the
+  // directory of ".../npm-stuff" is ".../npm/", which is exactly where ".." lands.
+  test("dependency name that resolves above the registry path is rejected", async () => {
+    const { paths, stderr, exitCode, origin } = await install(writeBunfig, { dependencies: { "..": "1.0.0" } });
+    expect(paths).toEqual([]);
+    expect(stderr).toContain(
+      `manifest URL "${origin}/artifactory/api/npm/" is not on registry "${origin}${registryPath}"`,
+    );
     expect(exitCode).toBe(1);
   });
 });

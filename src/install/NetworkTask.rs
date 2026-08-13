@@ -463,13 +463,21 @@ impl NetworkTask {
 
             // npm appends the package name as a new path segment whether or not
             // the configured registry ends in "/"; WHATWG resolution would
-            // instead replace the last segment of a slash-less base.
+            // instead replace the last segment of a slash-less base. A query or
+            // fragment on the registry URL does not survive the join either way,
+            // so the "/" goes on the path, ahead of them.
             let registry_href = scope.url.href();
             let base_storage;
-            let base: &[u8] = if strings::has_prefix_comptime(registry_href, b"https://")
-                || strings::has_prefix_comptime(registry_href, b"http://")
+            let base: &[u8] = if strings::has_prefix_case_insensitive(registry_href, b"https://")
+                || strings::has_prefix_case_insensitive(registry_href, b"http://")
             {
-                base_storage = [strings::without_trailing_slash(registry_href), b"/"].concat();
+                let path_end =
+                    strings::index_of_any(registry_href, b"?#").unwrap_or(registry_href.len());
+                base_storage = [
+                    strings::without_trailing_slash(&registry_href[..path_end]),
+                    b"/",
+                ]
+                .concat();
                 &base_storage
             } else {
                 registry_href
@@ -536,7 +544,9 @@ impl NetworkTask {
 
             {
                 let joined = URL::parse(&url_bytes);
-                let registry = scope.url.url();
+                // Same base the join used: a name like ".." must not be able to
+                // leave a slash-less registry path any more than a slash-terminated one.
+                let registry = URL::parse(base);
                 let registry_dir_end =
                     strings::last_index_of_char(registry.pathname, b'/').map_or(0, |i| i + 1);
                 let registry_dir = &registry.pathname[..registry_dir_end];

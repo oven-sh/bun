@@ -200,7 +200,11 @@ printf '%s\\n' "\${0##*/}" "$@" > "$file.tmp" && mv "$file.tmp" "$file"
         const [file, editor] = process.argv.slice(2);
         if (editor) Bun.openInEditor(file, { editor });
         else Bun.openInEditor(file);
-        while (!(await Bun.file(file).exists())) await Bun.sleep(5);
+        const deadline = Date.now() + 3000;
+        while (!(await Bun.file(file).exists())) {
+          if (Date.now() > deadline) throw new Error("nothing was spawned: " + file + " was never written");
+          await Bun.sleep(5);
+        }
         await Bun.write(Bun.stdout, await Bun.file(file).text());
       `,
     });

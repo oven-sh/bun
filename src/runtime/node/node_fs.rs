@@ -9139,11 +9139,9 @@ impl NodeFS {
     }
 
     /// Shared `dest_fd:` block from the mac/linux/freebsd branches of
-    /// `copy_single_file_sync`.
-    /// Tries `open(dest, flags, mode)`; on ENOENT creates the
-    /// parent directory and retries once. Errors about `dest` are annotated
-    /// with `dest` copied into `sync_error_buf`. An EEXIST from here always
-    /// means `dest` itself exists: the `cp` callers skip the file on it.
+    /// `copy_single_file_sync`. Tries `open(dest, flags, mode)`; on ENOENT
+    /// creates the parent directory and retries once. An EEXIST from here
+    /// always means `dest` itself exists (the `cp` callers skip the file on it).
     #[cfg_attr(windows, allow(dead_code))]
     fn cp_open_dest_with_mkdir(&mut self, dest: &ZStr, flags: i32, mode: Mode) -> Maybe<FD> {
         // PORT: extracted from the mac/linux/freebsd arms of `copy_single_file_sync`
@@ -9154,11 +9152,8 @@ impl NodeFS {
             Err(err) => err,
         };
         if err.get_errno() == E::ENOENT {
-            // No trailing separator on the parent: with one, mkdir(2) on the BSD
-            // kernels follows a symlink at that name (Linux says EEXIST either
-            // way), so a dangling link there would get its target created.
-            // `dirname` leaves one behind when `dest` has a run of them
-            // (`a//x` -> `a/`); a lone root separator stays.
+            // Given a trailing separator, mkdir(2) on the BSD kernels follows a
+            // symlink at the parent's name and creates its target.
             let mut parent = paths::resolve_path::dirname::<paths::platform::Auto>(dest.as_bytes());
             while parent.len() > 1 && parent[parent.len() - 1] == paths::SEP {
                 parent = &parent[..parent.len() - 1];
@@ -9174,9 +9169,8 @@ impl NodeFS {
                         return Ok(result);
                     }
                 }
-                // The parent's name is held by a non-directory (a dangling
-                // symlink, as open() found nothing there). This EEXIST is about
-                // the parent, not `dest`, so report the open() failure instead.
+                // A dangling symlink holds the parent's name: this EEXIST is not
+                // about `dest`, which callers would take it for.
                 Err(mkdir_err) if mkdir_err.get_errno() == E::EEXIST => {}
                 Err(mkdir_err) => return Err(mkdir_err),
             }

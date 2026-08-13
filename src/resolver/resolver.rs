@@ -3901,6 +3901,15 @@ impl<'a> Resolver<'a> {
     /// Each probe goes through [`DirInfo::get_entry`] so the map walk happens
     /// under `entries_mutex`; `dirname_fd` was captured under the caller's
     /// critical section.
+    /// `DirEntry::get` folds ASCII case, so an extension probe can hit an entry
+    /// spelled differently on disk. Such a hit only stands if the probed
+    /// spelling itself opens (case-insensitive filesystem); otherwise it would
+    /// shadow a later extension that matches exactly (#22686).
+    fn probed_name_exists(&self, dir: &[u8], file_name: &[u8]) -> bool {
+        let parts = [dir, file_name];
+        bun_sys::exists(self.fs_ref().abs_buf(&parts, bufs!(index)))
+    }
+
     fn probe_wildcard_extensions(
         &mut self,
         resolved_dir_info: DirInfoRef,
@@ -3923,6 +3932,11 @@ impl<'a> Resolver<'a> {
                 if let Some(ext_query) =
                     resolved_dir_info.get_entry(self.generation, &file_name[..])
                 {
+                    if ext_query.entry().base() != &file_name[..]
+                        && !self.probed_name_exists(resolved_dir_info.abs_path, &file_name[..])
+                    {
+                        continue;
+                    }
                     // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                     // rewrite inside `kind()` is serialized on the per-entry mutex.
                     if unsafe { ext_query.entry().kind(rfs, self.store_fd) }
@@ -3973,6 +3987,11 @@ impl<'a> Resolver<'a> {
                     if let Some(ts_query) =
                         resolved_dir_info.get_entry(self.generation, &file_name[..])
                     {
+                        if ts_query.entry().base() != &file_name[..]
+                            && !self.probed_name_exists(resolved_dir_info.abs_path, &file_name[..])
+                        {
+                            continue;
+                        }
                         // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                         // rewrite inside `kind()` is serialized on the per-entry mutex.
                         if unsafe { ts_query.entry().kind(rfs, self.store_fd) }
@@ -5418,12 +5437,10 @@ impl<'a> Resolver<'a> {
                 })
         };
         if let Some((Some(lookup), dirname_fd)) = looked_up {
-            if lookup.entry().base() != &base[..] {
-                let parts = [dir_info.abs_path, &base[..]];
-                let queried = self.fs_ref().abs_buf(&parts, bufs!(index));
-                if !bun_sys::exists(queried) {
-                    return MatchStatus::NotFound;
-                }
+            if lookup.entry().base() != &base[..]
+                && !self.probed_name_exists(dir_info.abs_path, &base[..])
+            {
+                return MatchStatus::NotFound;
             }
             // SAFETY: rfs points at the process-global RealFS; the lazy-stat
             // rewrite inside `kind()` is serialized on the per-entry mutex.
@@ -6106,9 +6123,7 @@ impl<'a> Resolver<'a> {
 
         let (ext_query, dirname_fd) = dir_entry.get().lookup(file_name);
         if let Some(query) = ext_query {
-            // `DirEntry::get` matches case-insensitively. Reject a hit whose probed
-            // spelling does not open on this filesystem, so it cannot shadow a later
-            // exact match for another extension (#22686).
+            // See `probed_name_exists`; `buffer` already holds the joined path.
             if query.entry().base() != file_name && !bun_sys::exists(&buffer[..]) {
                 return None;
             }

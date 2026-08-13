@@ -731,7 +731,10 @@ function listenInCluster(server, tls, port, host, socketPath, onListen) {
     return;
   }
   // Bun.serve() accepts "[::1]"; the primary's bind (and isIP) want it bare.
-  const address = host.length > 2 && host.charCodeAt(0) === 0x5b /* [ */ ? host.slice(1, -1) : host;
+  const address =
+    host.length > 2 && host.charCodeAt(0) === 0x5b /* [ */ && host.charCodeAt(host.length - 1) === 0x5d /* ] */
+      ? host.slice(1, -1)
+      : host;
   const addressType = isIP(address);
   if (addressType !== 0) {
     queryPrimary(listenArgs, address, port, addressType);

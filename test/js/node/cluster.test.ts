@@ -1746,6 +1746,14 @@ test.skipIf(isWindows || !isIPv6())(
 );
 
 test.skipIf(isWindows)(
+  "http worker listen(0, '[::1') is a name lookup that fails, not a bind of ::",
+  async () => {
+    expect(await runHttpHostFormFixture("[::1")).toEqual({ error: "ENOTFOUND" });
+  },
+  30_000,
+);
+
+test.skipIf(isWindows)(
   "http worker listen(0, 'localhost') resolves the name before asking the primary",
   async () => {
     const out = await runHttpHostFormFixture("localhost");

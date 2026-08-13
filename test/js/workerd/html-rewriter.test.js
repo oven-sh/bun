@@ -365,21 +365,32 @@ describe("HTMLRewriter", () => {
       }
     });
 
-    // On the JS-pump path the pump's own settlement decides how the body ends,
-    // because the sink's close() carries no error. So a direct pull() that
-    // closes the controller and then rejects fails the body, whether or not a
-    // handler suspended the rewrite in between (fetch() fails a request with
-    // this body the same way).
-    it.each(["synchronous", "suspending"])(
-      "a direct ReadableStream whose pull() rejects after close() rejects the body (%s handler)",
-      async kind => {
+    // On the JS-pump path the pump's own outcome decides how the body ends,
+    // because the controller's close() carries no error. So a direct pull()
+    // that closes the controller and then fails still fails the body: whether
+    // pull() throws synchronously (the pump reports the failure from inside
+    // transform()) or rejects later, and whether or not a handler suspended
+    // the rewrite in between. fetch() fails a request with this body the same
+    // way.
+    describe.each(["throws", "rejects"])("a direct ReadableStream whose pull() %s after close()", failure => {
+      it.each(["synchronous", "suspending"])("rejects the body (%s handler)", async kind => {
+        const fail = () => {
+          throw new Error("pull failed after close");
+        };
         const stream = new ReadableStream({
           type: "direct",
-          async pull(controller) {
-            controller.write("<p>x</p>");
-            controller.close();
-            throw new Error("pull rejected after close");
-          },
+          pull:
+            failure === "throws"
+              ? controller => {
+                  controller.write("<p>x</p>");
+                  controller.close();
+                  fail();
+                }
+              : async controller => {
+                  controller.write("<p>x</p>");
+                  controller.close();
+                  fail();
+                },
         });
         const handler =
           kind === "suspending"
@@ -390,9 +401,46 @@ describe("HTMLRewriter", () => {
               }
             : { element() {} };
         const res = new HTMLRewriter().on("p", handler).transform(new Response(stream));
-        await expect(res.text()).rejects.toThrow("pull rejected after close");
-      },
-    );
+        await expect(res.text()).rejects.toThrow("pull failed after close");
+      });
+    });
+
+    // The clean counterparts: a direct pull() that finishes the stream
+    // synchronously (or a direct source with no pull() at all) completes the
+    // pump inside transform() without a promise; the document must still be
+    // completed, exactly once.
+    it.each([
+      ["a synchronous pull() that writes and closes", "<p>hi</p>"],
+      ["no pull() at all", ""],
+    ])("control: a direct ReadableStream with %s completes the rewrite", async (_, html) => {
+      const stream = new ReadableStream(
+        html
+          ? {
+              type: "direct",
+              pull(controller) {
+                controller.write(html);
+                controller.close();
+              },
+            }
+          : { type: "direct" },
+      );
+      let endCalls = 0;
+      const res = new HTMLRewriter()
+        .on("p", {
+          element(element) {
+            element.setAttribute("seen", "1");
+          },
+        })
+        .onDocument({
+          end(end) {
+            endCalls++;
+            end.append("<!--end-->", { html: true });
+          },
+        })
+        .transform(new Response(stream));
+      expect(await res.text()).toBe(html ? '<p seen="1">hi</p><!--end-->' : "<!--end-->");
+      expect(endCalls).toBe(1);
+    });
 
     // `fail()` must settle the `WritablePending` slot so a direct `pull()`
     // parked on `await controller.flush(true)` resumes, letting the pump

@@ -715,14 +715,6 @@ pub struct RewriterPipe {
     /// Input EOF arrived while a suspension or output backpressure kept us
     /// from calling `end_rewrite()`; run it once unblocked.
     input_ended: Cell<bool>,
-    /// `true` while the JS pump's result (the `assign_to_stream` return value
-    /// or, if that is a pending promise, its `.then()` reaction attached in
-    /// [`Self::wire_input`]) is still owed. The generated `${controller}__close`
-    /// drops its error argument, so `end_from_stream` defers terminal work to
-    /// that result (which carries the real error) while this is set. Armed
-    /// before the pump is entered: a stream that is already errored or closed
-    /// settles the pump synchronously, inside `assign_to_stream`.
-    js_pump_reaction_pending: Cell<bool>,
     /// Bytes accepted from the input while suspended or output-backpressured.
     pending_input: JsCell<Vec<u8>>,
     high_water_mark: Cell<BlobSizeType>,
@@ -929,7 +921,6 @@ impl RewriterPipe {
             context,
             input_source: Cell::new(SourceHandle::None),
             input_ended: Cell::new(false),
-            js_pump_reaction_pending: Cell::new(false),
             pending_input: JsCell::new(Vec::new()),
             high_water_mark: Cell::new(16384),
             output: Cell::new(None),
@@ -1148,44 +1139,52 @@ impl RewriterPipe {
         // GC destructor), so it owns a ref until `release_pump_ref`.
         this.pump_controller_attached.set(true);
         this.ref_();
-        // A stream that is already errored (or closed) settles the pump inside
-        // `assign_to_stream`, calling `controller.close(error)` / `end()` (which
-        // reach `end_from_stream` without the error) before the pump promise
-        // settles. Arm the deferral first so the pump's result, handled below,
-        // is the terminal signal whether it settles now or later.
-        this.js_pump_reaction_pending.set(true);
+        // The pump's result ends the rewrite on this path (the controller's
+        // `close()`/`end()` do not; see the `JsSinkType` impl). A stream that
+        // is already errored or closed settles it inside `assign_to_stream`,
+        // which is what the settled branches below are for.
         let assignment_result =
             JSSink::<RewriterPipe>::assign_to_stream(global, stream.value, pipe.into());
         assignment_result.ensure_still_alive();
 
-        let err = if let Some(err) = assignment_result.to_error() {
-            Some(err)
-        } else if let Some(promise) = assignment_result.as_any_promise() {
-            match promise.status() {
-                jsc::js_promise::Status::Pending => {
-                    assignment_result.then_with_value(
-                        global,
-                        this.cell.get(),
-                        on_resolve_input_stream_shim,
-                        on_reject_input_stream_shim,
-                    );
-                    return;
-                }
-                jsc::js_promise::Status::Fulfilled => None,
-                jsc::js_promise::Status::Rejected => {
-                    promise.set_handled(global.vm());
-                    Some(promise.result(global.vm()))
+        if let Some(err) = assignment_result.to_error() {
+            this.end_from_stream(Some(StreamError::JSValue(jsc::strong::Optional::create(
+                err, global,
+            ))));
+            return;
+        }
+
+        if !assignment_result.is_empty_or_undefined_or_null() {
+            if let Some(promise) = assignment_result.as_any_promise() {
+                match promise.status() {
+                    jsc::js_promise::Status::Pending => {
+                        assignment_result.then_with_value(
+                            global,
+                            this.cell.get(),
+                            on_resolve_input_stream_shim,
+                            on_reject_input_stream_shim,
+                        );
+                        return;
+                    }
+                    jsc::js_promise::Status::Fulfilled => {
+                        this.end_from_stream(None);
+                        return;
+                    }
+                    jsc::js_promise::Status::Rejected => {
+                        promise.set_handled(global.vm());
+                        let result = promise.result(global.vm());
+                        this.end_from_stream(Some(StreamError::JSValue(
+                            jsc::strong::Optional::create(result, global),
+                        )));
+                        return;
+                    }
                 }
             }
-        } else {
-            // undefined/null: the stream drained synchronously inside
-            // assignToStream.
-            None
-        };
-        this.js_pump_reaction_pending.set(false);
-        this.end_from_stream(
-            err.map(|err| StreamError::JSValue(jsc::strong::Optional::create(err, global))),
-        );
+        }
+
+        // undefined/null: the stream drained synchronously inside
+        // assignToStream.
+        this.end_from_stream(None);
     }
 
     /// `PendingValue::on_start_streaming` — the output Response's body is
@@ -1274,7 +1273,9 @@ impl RewriterPipe {
         Writable::Owned(len)
     }
 
-    /// `SinkHandle::end` entry — input EOF or terminal upstream error.
+    /// Input EOF or terminal upstream error. Entered from `SinkHandle::end`
+    /// (native sources) and from the JS pump's result ([`Self::wire_input`],
+    /// `on_resolve_input_stream` / `on_reject_input_stream`).
     pub fn end_from_stream(&self, err: Option<StreamError>) {
         // Detach via `detach_input_source` (not a bare `.set(None)`) so a
         // `JSController`'s `m_sinkPtr` is nulled before any path can free the
@@ -1282,16 +1283,6 @@ impl RewriterPipe {
         // `__controllerDetached`/`__finalize` on freed memory. The upstream
         // already ended, so there is nothing to cancel.
         self.detach_input_source(false);
-
-        if self.js_pump_reaction_pending.get() {
-            // The pump's result (handled in `wire_input`, or by its `.then()`
-            // reaction) is the single terminal authority on the JS-pump path:
-            // `rsisAbrupt` calls `controller.close(error)` (the generated
-            // `__close` drops the argument) before rejecting the pump promise,
-            // so running `end_rewrite` here would resolve the body with
-            // truncated output and pre-empt the rejection.
-            return;
-        }
 
         js_HTMLRewriterTransform::input_stream_set_cached(
             self.cell.get(),
@@ -1677,12 +1668,16 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
         let _ = buf.write_latin1(bytes);
         RewriterPipe::write(self, &StreamResult::Temporary(RawSlice::new(&buf)))
     }
-    fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        self.end_from_stream(err.map(StreamError::Error));
+    // The pump controller's `close()`/`end()` are not terminal: `close(error)`
+    // arrives here without its error (the generated `__close` drops it), and
+    // `readStreamIntoSink` calls it before rejecting the pump promise. The
+    // pump's result ends the rewrite instead (`wire_input`,
+    // `on_resolve_input_stream` / `on_reject_input_stream`), as for
+    // `FetchRequestBodySink`; native sources end it via `SinkHandle::end`.
+    fn end(&mut self, _err: Option<SysError>) -> bun_sys::Result<()> {
         bun_sys::Result::Ok(())
     }
     fn end_from_js(&mut self, _global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
-        self.end_from_stream(None);
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
     fn flush(&mut self) -> bun_sys::Result<()> {
@@ -3140,8 +3135,6 @@ fn on_resolve_input_stream(
         return Ok(JSValue::UNDEFINED);
     };
     let this = BackRef::from(this);
-    let this = &*this;
-    this.js_pump_reaction_pending.set(false);
     this.end_from_stream(None);
     Ok(JSValue::UNDEFINED)
 }
@@ -3156,8 +3149,6 @@ fn on_reject_input_stream(
     };
     let err = args[0];
     let this = BackRef::from(this);
-    let this = &*this;
-    this.js_pump_reaction_pending.set(false);
     this.end_from_stream(Some(crate::webcore::streams::StreamError::JSValue(
         jsc::strong::Optional::create(err, global_this),
     )));

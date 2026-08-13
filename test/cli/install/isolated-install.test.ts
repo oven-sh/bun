@@ -724,6 +724,39 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
   await checkInstall();
 });
 
+test("adding, removing and re-adding a patch for an npm dependency", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const rootPackageJson = { name: "npm-patch-cycle", dependencies: { "no-deps": "1.0.0" } };
+  const patched = {
+    ...rootPackageJson,
+    patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" },
+  };
+  await write(
+    join(packageDir, "patches", "no-deps@1.0.0.patch"),
+    `diff --git a/patched.txt b/patched.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e728b8dad
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++hello world
+`,
+  );
+  const patchedFile = join(packageDir, "node_modules", "no-deps", "patched.txt");
+
+  const steps = [
+    [rootPackageJson, false],
+    [patched, true],
+    [rootPackageJson, false],
+    [patched, true],
+  ] as const;
+  for (const [step, [manifest, expectPatched]] of steps.entries()) {
+    await write(packageJson, JSON.stringify(manifest));
+    await runBunInstall(bunEnv, packageDir);
+    expect({ step, patched: existsSync(patchedFile) }).toEqual({ step, patched: expectPatched });
+  }
+});
+
 // Adding a patchedDependencies entry for a github: dependency of a workspace
 // member deadlocked `bun install` forever with the isolated linker:
 // re-resolution re-downloaded the github tarball, and the install phase then
@@ -853,6 +886,19 @@ index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f
   await write(packageJson, JSON.stringify(rootPackageJson));
   await install();
   expect(await installedIndexJs.text()).toBe('console.log("original");\n');
+
+  // Re-adding the same patch must patch again.
+  await write(
+    packageJson,
+    JSON.stringify({
+      ...rootPackageJson,
+      patchedDependencies: {
+        "gh-dep@github:testowner/testrepo#aaaaaaa": "patches/gh-dep.patch",
+      },
+    }),
+  );
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
 });
 
 // Same deadlock through the git: task-id space (clone + checkout tasks
@@ -984,6 +1030,19 @@ index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f
   await write(packageJson, JSON.stringify(rootPackageJson));
   await install();
   expect(await installedIndexJs.text()).toBe('console.log("original");\n');
+
+  // Re-adding the same patch must patch again.
+  await write(
+    packageJson,
+    JSON.stringify({
+      ...rootPackageJson,
+      patchedDependencies: {
+        [`git-dep@${repoUrl}#${sha}`]: "patches/git-dep.patch",
+      },
+    }),
+  );
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
 });
 
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {

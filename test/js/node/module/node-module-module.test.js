@@ -679,6 +679,40 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   });
 
+  // A Worker's own preloads go through the same path; the failure has to end
+  // up as that worker's error (the non-callable case took down the whole process).
+  test.each([
+    ["a function that throws", `() => { throw new TypeError("runMain override threw"); }`, "runMain override threw"],
+    ["a non-callable", `{}`, "Module.runMain is not a function"],
+  ])(
+    "Module.runMain override failure (%s) in a Worker preload is reported as the worker's error",
+    async (_, source, message) => {
+      using dir = tempDir("module-run-main-worker", {
+        "preload.cjs": `require("module").runMain = ${source};`,
+        "worker.js": `console.log("worker ran");`,
+        "main.js": `
+          const worker = new Worker("./worker.js", { preload: ["./preload.cjs"] });
+          worker.onerror = event => console.log("worker error mentions it:", event.message.includes(${JSON.stringify(message)}));
+          worker.addEventListener("close", event => console.log("worker exit code:", event.code));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "./main.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+        "worker error mentions it: true
+        worker exit code: 1"
+      `);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test("Module.runMain reads back whatever was assigned", async () => {
     await using proc = Bun.spawn({
       cmd: [

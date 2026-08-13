@@ -9181,7 +9181,7 @@ impl NodeFS {
     }
 
     /// The destination (`dest_stat`) exists and is the file `src_stat` describes.
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(not(windows))]
     fn copy_file_onto_itself(src_stat: &sys::Stat, dest_stat: &Maybe<sys::Stat>) -> bool {
         let Ok(dest_stat) = dest_stat else {
             return false;
@@ -9193,7 +9193,7 @@ impl NodeFS {
     }
 
     /// EINVAL when the destination exists (`dest_stat`) and is the file `src_stat` describes.
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(not(windows))]
     fn cp_refuse_onto_itself(
         &mut self,
         src: &ZStr,

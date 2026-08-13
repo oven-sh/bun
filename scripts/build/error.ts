@@ -39,11 +39,11 @@ export class BuildError extends Error {
 
 /**
  * One line naming an error and everything it wraps, outermost first:
- * `fetch failed: getaddrinfo EAI_AGAIN github.com`. The outer message alone
- * is often content-free: node's fetch reports every network failure as
- * "fetch failed" and puts the reason (DNS, connect timeout, reset) in
- * `cause`, and a connect that failed on every resolved address is an
- * AggregateError whose own message is empty.
+ * `while fetching https://codeload.github.com/...: ECONNRESET: socket hang up`.
+ * An error's own message is often content-free: node's socket errors say
+ * "socket hang up" and keep the reason in `code`, a connect that failed on
+ * every resolved address is an AggregateError whose own message is empty,
+ * and wrappers put the interesting part in `cause`.
  */
 export function describeError(err: unknown): string {
   if (!(err instanceof Error)) return String(err);
@@ -52,12 +52,15 @@ export function describeError(err: unknown): string {
   let e: unknown = err;
   while (e instanceof Error && !seen.has(e)) {
     seen.add(e);
+    let part = e.message || e.name;
     if (e instanceof AggregateError && e.errors.length > 0) {
       const inner = e.errors.map(describeError).join("; ");
-      parts.push(e.message ? `${e.message} (${inner})` : inner);
-    } else {
-      parts.push(e.message || e.name);
+      part = e.message ? `${e.message} (${inner})` : inner;
     }
+    // `getaddrinfo ENOTFOUND host` already names its code; "socket hang up" does not.
+    const { code } = e as NodeJS.ErrnoException;
+    if (typeof code === "string" && code !== "" && !part.includes(code)) part = `${code}: ${part}`;
+    parts.push(part);
     e = e.cause;
   }
   // A non-Error cause (`{ cause: "ECONNRESET" }`) still carries the reason.

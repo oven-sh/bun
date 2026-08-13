@@ -41,8 +41,7 @@ fn splat_byte_all(
     Ok(())
 }
 
-/// The name an output file gets in the per-file summary. The size column is
-/// padded from this same string, so the two cannot drift apart.
+/// Name printed in the per-file summary; the size column is padded from the same string.
 #[inline]
 fn summary_path(f: &options::OutputFile) -> &[u8] {
     strings::trim_prefix(&f.dest_path, b"./")

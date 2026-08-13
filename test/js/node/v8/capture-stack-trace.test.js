@@ -1261,9 +1261,9 @@ describe("errors created by native code while no JS is running", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("UnhandledPromiseRejectionWarning: Error: ENOENT: no such file or directory");
     expect(stderr).not.toContain("[object Object]");
-    expect(exitCode).toBe(0);
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
   });
 });

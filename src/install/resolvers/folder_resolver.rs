@@ -80,8 +80,46 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
     }
 }
 
+/// What a directory's `package.json` is read as. Each kind parses it with
+/// different `Features` and produces a different `Resolution`, so one
+/// directory is cached separately per kind: a `link:` and a `file:` pointing
+/// at the same directory are two packages, and whichever resolves first must
+/// not be handed out for the other.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum Kind {
+    /// A `file:` dependency or a workspace member (`Features::FOLDER` /
+    /// `Features::WORKSPACE`, dependencies installed). These share an entry
+    /// so a `file:` pointing at a workspace member, or at the root package
+    /// seeded by `PackageManager::init`, resolves to that existing package.
+    Folder,
+    /// A `link:` target (`Features::LINK`: its dependencies are not
+    /// installed, `Resolution::Symlink`).
+    Link,
+    /// An npm package already extracted into the cache (`Features::NPM`,
+    /// `Resolution::Npm`).
+    CacheFolder,
+}
+
+/// Key of the folder-resolution map.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct Key {
+    kind: Kind,
+    /// Hash of the normalized absolute `package.json` path; `Entry::abs_path`
+    /// holds the bytes it was computed from.
+    abs_hash: u64,
+}
+
+impl Key {
+    pub(crate) fn new(kind: Kind, normalized_abs_path: &[u8]) -> Key {
+        Key {
+            kind,
+            abs_hash: bun_wyhash::hash(normalized_abs_path),
+        }
+    }
+}
+
 /// Value stored in the folder-resolution map: the resolution plus the
-/// normalized absolute `package.json` path the key hash was computed from.
+/// normalized absolute `package.json` path `Key::abs_hash` was computed from.
 /// Lookups compare the path, since a different path whose hash collides must
 /// not reuse this resolution.
 pub struct Entry {
@@ -94,10 +132,6 @@ pub struct Entry {
 
 fn normalize(path: &[u8]) -> &[u8] {
     FileSystem::instance().normalize(path)
-}
-
-pub(crate) fn hash(normalized_path: &[u8]) -> u64 {
-    bun_wyhash::hash(normalized_path)
 }
 
 // ── NewResolver ───────────────────────────────────────────────────────────
@@ -377,6 +411,20 @@ pub enum GlobalOrRelative<'a> {
     CacheFolder(&'a [u8]),
 }
 
+impl GlobalOrRelative<'_> {
+    /// Must agree with the resolver `get_or_put` picks for each variant.
+    fn kind(self) -> Kind {
+        match self {
+            GlobalOrRelative::Global(_) => Kind::Link,
+            GlobalOrRelative::Relative(
+                dependency::version::Tag::Folder | dependency::version::Tag::Workspace,
+            ) => Kind::Folder,
+            GlobalOrRelative::Relative(_) => unreachable!(),
+            GlobalOrRelative::CacheFolder(_) => Kind::CacheFolder,
+        }
+    }
+}
+
 pub(crate) fn get_or_put(
     global_or_relative: GlobalOrRelative<'_>,
     version: &dependency::Version,
@@ -400,7 +448,7 @@ pub(crate) fn get_or_put(
         // `(&[u8]).as_ptr().cast_mut()` would be UB under Stacked/Tree
         // Borrows: those pointers carry read-only provenance, and the
         // optimizer may assume `abs`'s bytes are unchanged when computing
-        // `hash(abs.as_bytes())` below.
+        // the `Key` below.
         //
         // Instead: capture lengths, let the shared borrows of `joined` die,
         // then take a fresh `&mut joined[..abs_len]` (write provenance) and
@@ -421,13 +469,13 @@ pub(crate) fn get_or_put(
             &rel_buf[..rel_len],
         )
     };
-    let abs_hash = hash(abs.as_bytes());
+    let key = Key::new(global_or_relative.kind(), abs.as_bytes());
 
     // Check first, compute, then insert, because read_package_json_from_disk
     // needs &mut manager. Compare the stored path, not just its hash: a
     // different path whose hash collides must not reuse this resolution. On a
     // collision, resolve fresh without caching so the first path's entry stays.
-    let hash_collision = match manager.folders.get(&abs_hash) {
+    let hash_collision = match manager.folders.get(&key) {
         Some(existing) if *existing.abs_path == *abs.as_bytes() => return existing.resolution,
         Some(_) => true,
         None => false,
@@ -498,7 +546,7 @@ pub(crate) fn get_or_put(
             };
             if !hash_collision {
                 manager.folders.insert(
-                    abs_hash,
+                    key,
                     Entry {
                         abs_path: abs.as_bytes().into(),
                         resolution: stored,
@@ -511,7 +559,7 @@ pub(crate) fn get_or_put(
 
     if !hash_collision {
         manager.folders.insert(
-            abs_hash,
+            key,
             Entry {
                 abs_path: abs.as_bytes().into(),
                 resolution: FolderResolution::PackageId(package.meta.id),

@@ -1124,7 +1124,7 @@ describe.concurrent("pointer-typed arguments (function, ptr, cstring, buffer)", 
         if (threw) return ValueEmpty.asZigRepr;
         void* ptr3 = JSVALUE_TO_PTR(JS_GLOBAL_OBJECT, ABI_TYPE_CSTRING, &threw, arg3);
         if (threw) return ValueEmpty.asZigRepr;
-        void* ptr4 = JSVALUE_TO_BUFFER(JS_GLOBAL_OBJECT, &threw, arg4);
+        void* ptr4 = JSVALUE_TO_PTR(JS_GLOBAL_OBJECT, ABI_TYPE_BUFFER, &threw, arg4);
         if (threw) return ValueEmpty.asZigRepr;
         void* ptr5 = JSVALUE_TO_PTR(JS_GLOBAL_OBJECT, ABI_TYPE_PTR, &threw, arg5);
         if (threw) return ValueEmpty.asZigRepr;
@@ -1208,6 +1208,7 @@ describe.concurrent("pointer-typed arguments (function, ptr, cstring, buffer)", 
           },
           echo_ptr: {
             number: address,
+            small_number: 8,
             view,
             array_buffer: buffer,
             bigint: BigInt(address),
@@ -1223,6 +1224,7 @@ describe.concurrent("pointer-typed arguments (function, ptr, cstring, buffer)", 
             number: address,
             view,
             null: null,
+            undefined: undefined,
             plain_object: {},
             string: "hello",
           },
@@ -1307,6 +1309,7 @@ describe.concurrent("pointer-typed arguments (function, ptr, cstring, buffer)", 
       },
       echo_ptr: {
         number: "address",
+        small_number: 8,
         view: "address",
         array_buffer: "address",
         bigint: "address",
@@ -1322,6 +1325,7 @@ describe.concurrent("pointer-typed arguments (function, ptr, cstring, buffer)", 
         number: "address",
         view: "address",
         null: null,
+        undefined: null,
         plain_object: cannotConvert("cstring"),
         // Only the engine path transcodes JS strings (it owns an arena to free the copy after the
         // call); cc() has nowhere to free it, so it refuses the string instead of passing garbage.

@@ -143,7 +143,7 @@ static ABI_TABLE: [AbiRow; 22] = {
     /* Function  */ r(b"void*",      Some("JSVALUE_TO_PTR(JS_GLOBAL_OBJECT, ABI_TYPE_FUNCTION, &threw, "), Some(("PTR_TO_JSVALUE(", ")"))),
     /* NapiEnv   */ r(b"napi_env",   None,                                                                 None),
     /* NapiValue */ r(b"napi_value", None,                                                                 Some(("((EncodedJSValue) {.asNapiValue = ", " } )"))),
-    /* Buffer    */ r(b"void*",      Some("JSVALUE_TO_BUFFER(JS_GLOBAL_OBJECT, &threw, "),                 None),
+    /* Buffer    */ r(b"void*",      Some("JSVALUE_TO_PTR(JS_GLOBAL_OBJECT, ABI_TYPE_BUFFER, &threw, "),   None),
     /* BufferLen */ r(b"uint64_t",   None,                                                                 None),
     ]
 };

@@ -166,7 +166,6 @@ static EncodedJSValue PTR_TO_JSVALUE(void* ptr) __attribute__((__always_inline__
 // The engine's conversion (the one dlopen()'d symbols use); on a non-pointer it throws and sets *threw.
 void* JSVALUE_TO_PTR_SLOW(void* jsGlobalObject, int32_t abiType, bool* threw, int64_t val);
 static void* JSVALUE_TO_PTR(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue val) __attribute__((__always_inline__));
-static void* JSVALUE_TO_BUFFER(void* jsGlobalObject, bool* threw, EncodedJSValue val) __attribute__((__always_inline__));
 static int32_t JSVALUE_TO_INT32(EncodedJSValue val) __attribute__((__always_inline__));
 static float JSVALUE_TO_FLOAT(EncodedJSValue val) __attribute__((__always_inline__));
 static double JSVALUE_TO_DOUBLE(EncodedJSValue val) __attribute__((__always_inline__));
@@ -215,34 +214,29 @@ static uint64_t JSVALUE_TO_TYPED_ARRAY_LENGTH(EncodedJSValue val) {
 // This behavior change enables the JIT to handle it better
 // It also is better readability when console.log(myPtr)
 static void* JSVALUE_TO_PTR(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue val) {
-  if (JSVALUE_IS_INT32(val)) {
-    return (void*)(uintptr_t)JSVALUE_TO_INT32(val);
+  // TinyCC does not inline, so the tag tests are spelled out instead of calling the helpers above.
+  int64_t bits = val.asInt64;
+
+  if (!(bits & NotCellMask)) {
+    uint8_t type = *(uint8_t*)((char*)val.asPtr + JSCell__offsetOfType);
+    if (type >= JSTypeArrayBufferViewMin && type <= JSTypeArrayBufferViewMax)
+      return *(void**)((char*)val.asPtr + JSArrayBufferView__offsetOfVector);
+  } else if (abiType != ABI_TYPE_BUFFER) {
+    if ((bits & NumberTag) == NumberTag)
+      return (void*)(uintptr_t)(int32_t)bits;
+
+    if (bits & NumberTag) {
+      val.asInt64 = bits - DoubleEncodeOffset;
+      return (void*)(uintptr_t)(int64_t)val.asDouble;
+    }
+
+    // null and undefined are NULL, except as a callback, where the slow path throws like dlopen() does.
+    if ((bits & ~UndefinedTag) == TagValueNull && abiType != ABI_TYPE_FUNCTION)
+      return 0;
   }
 
-  if (JSVALUE_IS_NUMBER(val)) {
-    val.asInt64 -= DoubleEncodeOffset;
-    return (void*)(uintptr_t)val.asDouble;
-  }
-
-  if (JSCELL_IS_TYPED_ARRAY(val)) {
-    return JSVALUE_TO_TYPED_ARRAY_VECTOR(val);
-  }
-
-  // A null callback is a TypeError (decided by the slow path), like it is for dlopen().
-  if (val.asInt64 == TagValueNull && abiType != ABI_TYPE_FUNCTION)
-    return 0;
-
-  // JSCallback, ArrayBuffer, BigInt, objects with a numeric `ptr`, undefined, strings, ...
-  return JSVALUE_TO_PTR_SLOW(jsGlobalObject, abiType, threw, val.asInt64);
-}
-
-static void* JSVALUE_TO_BUFFER(void* jsGlobalObject, bool* threw, EncodedJSValue val) {
-  if (JSCELL_IS_TYPED_ARRAY(val)) {
-    return JSVALUE_TO_TYPED_ARRAY_VECTOR(val);
-  }
-
-  // Only views are accepted; the slow path throws for everything else.
-  return JSVALUE_TO_PTR_SLOW(jsGlobalObject, ABI_TYPE_BUFFER, threw, val.asInt64);
+  // Other cells (JSCallback, ArrayBuffer, BigInt, objects with a `ptr`, strings), non-views for 'buffer', junk.
+  return JSVALUE_TO_PTR_SLOW(jsGlobalObject, abiType, threw, bits);
 }
 
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {

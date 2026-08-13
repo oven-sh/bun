@@ -161,7 +161,7 @@ mod exposed_to_ffi {
         pub(super) fn INT64_TO_JSVALUE(global: *mut JSGlobalObject, i: i64) -> JSValue;
         #[link_name = "JSC__JSValue__fromUInt64NoTruncate"]
         pub(super) fn UINT64_TO_JSVALUE(global: *mut JSGlobalObject, i: u64) -> JSValue;
-        /// Slow path of `JSVALUE_TO_PTR`/`JSVALUE_TO_BUFFER` (`FFI.h`); defined in `JSCFFIBridge.cpp`.
+        /// Slow path of `JSVALUE_TO_PTR` in `FFI.h`; defined in `JSCFFIBridge.cpp`.
         #[link_name = "Bun__FFI__jsValueToPointerSlow"]
         pub(super) fn JSVALUE_TO_PTR_SLOW(
             global: *mut JSGlobalObject,

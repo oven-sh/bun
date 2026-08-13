@@ -1894,6 +1894,9 @@ Socket.prototype.connect = function connect(...args) {
       connection = socket;
     }
     if (fd != null) {
+      // The descriptor's address family is not inspected; callers that know it
+      // is a pipe (onClusterConnection) set kIsPipe after this returns.
+      this[kIsPipe] = false;
       doConnect(this._handle, {
         data: this,
         fd: fd,
@@ -4215,7 +4218,8 @@ function onClusterConnection(err, clientHandle) {
     socket[kSetKeepAliveInitialDelay] = self.keepAliveInitialDelay;
   }
   socket.connect({ fd: clientHandle.fd, fdIsRawSocket: true, pauseOnConnect: self.pauseOnConnect });
-  // kClusterFauxListen records the listen path on the handle (see address()).
+  // After connect({ fd }), which clears it. kClusterFauxListen records the
+  // listen path on the handle (see address()).
   socket[kIsPipe] = !!this.unix;
   const blockList = self.blockList;
   if (blockList) {

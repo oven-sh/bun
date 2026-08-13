@@ -791,6 +791,40 @@ impl Lockfile {
         invalid_package_id
     }
 
+    /// A path-form `link:` target may leave the project only if the root, a
+    /// workspace, or a root override declared it; never a transitive package.
+    pub fn link_target_allowed_for_dependency(&self, id: DependencyID, target: &[u8]) -> bool {
+        if !dependency::link_path_escapes_root(target) {
+            return true;
+        }
+        if self.is_workspace_dependency(id) {
+            return true;
+        }
+        let buf = self.buffers.string_bytes.as_slice();
+        let dep = &self.buffers.dependencies[id as usize];
+        self.overrides
+            .contains_name(dep.name_hash, dep.name.slice(buf), buf)
+    }
+
+    /// Installer-side check (installs from a lockfile skip resolution):
+    /// allowed if any dependency resolving to the package is.
+    pub fn link_target_allowed_for_package(&self, pkg_id: PackageID, target: &[u8]) -> bool {
+        if !dependency::link_path_escapes_root(target) {
+            return true;
+        }
+        self.buffers
+            .resolutions
+            .iter()
+            .enumerate()
+            .filter(|(_, resolved)| **resolved == pkg_id)
+            .any(|(dep_id, _)| {
+                self.link_target_allowed_for_dependency(
+                    DependencyID::try_from(dep_id).expect("int cast"),
+                    target,
+                )
+            })
+    }
+
     /// Does this tree id belong to a workspace (including workspace root)?
     /// TODO(dylan-conway) fix!
     pub(crate) fn is_workspace_tree_id(&self, id: tree::Id) -> bool {

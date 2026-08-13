@@ -1,18 +1,19 @@
 import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { access, mkdir, writeFile } from "fs/promises";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { access, exists, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
   isWindows,
   readdirSorted,
   runBunInstall,
+  tempDir,
   tmpdirSync,
   toBeValidBin,
   toHaveBins,
 } from "harness";
 import { basename, join } from "path";
-import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, package_dir } from "./dummy.registry";
+import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, getPort, package_dir } from "./dummy.registry";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
@@ -470,4 +471,300 @@ it("should link dependency without crashing", async () => {
 
   // This should fail with a non-zero exit code.
   expect(await exited4).toBe(1);
+});
+
+// https://github.com/oven-sh/bun/issues/4719
+describe.each(["hoisted", "isolated"])("link: with a filesystem path (%s)", linker => {
+  async function setLinker() {
+    await writeFile(
+      join(package_dir, "bunfig.toml"),
+      `[install]\ncache = false\nregistry = "http://localhost:${getPort()}/"\nsaveTextLockfile = true\nlinker = "${linker}"\n`,
+    );
+  }
+
+  async function checkLink(dep: string, expected: { name: string; version: string }) {
+    await setLinker();
+    const { out, err } = await runBunInstall(env, package_dir);
+    expect(err).not.toContain("not linked");
+    if (linker === "hoisted") expect(out).toContain(`+ ${expected.name}@link:`);
+
+    const target = await readlink(join(package_dir, "node_modules", ...expected.name.split("/")));
+    expect(target.replaceAll("\\", "/")).toContain(basename(dep));
+    expect(await file(join(package_dir, "node_modules", expected.name, "package.json")).json()).toEqual(expected);
+
+    const second = await runBunInstall(env, package_dir, { frozenLockfile: true });
+    expect(second.err).not.toContain("Saved lockfile");
+  }
+
+  it("resolves a ./relative path", async () => {
+    await mkdir(join(package_dir, "lib", "mypkg"), { recursive: true });
+    await writeFile(
+      join(package_dir, "lib", "mypkg", "package.json"),
+      JSON.stringify({ name: "mypkg", version: "1.0.0" }),
+    );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        dependencies: { mypkg: "link:./lib/mypkg" },
+      }),
+    );
+    await checkLink("./lib/mypkg", { name: "mypkg", version: "1.0.0" });
+  });
+
+  it("treats a bare relative path (no ./) as a path, and stores it as ./", async () => {
+    await mkdir(join(package_dir, "lib", "bare"), { recursive: true });
+    await writeFile(join(package_dir, "lib", "bare", "package.json"), JSON.stringify({ name: "bare", version: "1.0.0" }));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "root", dependencies: { bare: "link:lib/bare" } }),
+    );
+    await checkLink("lib/bare", { name: "bare", version: "1.0.0" });
+    expect(await file(join(package_dir, "bun.lock")).text()).toContain('"bare@link:./lib/bare"');
+  });
+
+  it("resolves a ../relative path", async () => {
+    await mkdir(join(link_dir, "sibling"), { recursive: true });
+    await writeFile(
+      join(link_dir, "sibling", "package.json"),
+      JSON.stringify({ name: "sibling-pkg", version: "2.0.0" }),
+    );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        dependencies: { "sibling-pkg": `link:${join("..", basename(link_dir), "sibling").replaceAll("\\", "/")}` },
+      }),
+    );
+    await checkLink("sibling", { name: "sibling-pkg", version: "2.0.0" });
+  });
+
+  it("resolves a scoped package path", async () => {
+    await mkdir(join(package_dir, "packages", "scoped"), { recursive: true });
+    await writeFile(
+      join(package_dir, "packages", "scoped", "package.json"),
+      JSON.stringify({ name: "@scope/pkg", version: "3.0.0" }),
+    );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        dependencies: { "@scope/pkg": "link:./packages/scoped" },
+      }),
+    );
+    await checkLink("./packages/scoped", { name: "@scope/pkg", version: "3.0.0" });
+  });
+
+  it("resolves an absolute path", async () => {
+    await mkdir(join(link_dir, "abspkg"), { recursive: true });
+    await writeFile(join(link_dir, "abspkg", "package.json"), JSON.stringify({ name: "abspkg", version: "4.0.0" }));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        dependencies: { abspkg: `link:${join(link_dir, "abspkg").replaceAll("\\", "/")}` },
+      }),
+    );
+    await checkLink("abspkg", { name: "abspkg", version: "4.0.0" });
+  });
+
+  it("resolves relative to a workspace member", async () => {
+    await mkdir(join(package_dir, "packages", "foo", "local"), { recursive: true });
+    await writeFile(
+      join(package_dir, "packages", "foo", "local", "package.json"),
+      JSON.stringify({ name: "localpkg", version: "5.0.0" }),
+    );
+    await writeFile(
+      join(package_dir, "packages", "foo", "package.json"),
+      JSON.stringify({ name: "foo", dependencies: { localpkg: "link:./local" } }),
+    );
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "root", workspaces: ["packages/*"] }));
+    await setLinker();
+    await runBunInstall(env, package_dir);
+
+    const linked =
+      linker === "hoisted"
+        ? join(package_dir, "node_modules", "localpkg")
+        : join(package_dir, "packages", "foo", "node_modules", "localpkg");
+    expect(await file(join(linked, "package.json")).json()).toEqual({ name: "localpkg", version: "5.0.0" });
+    expect((await readlink(linked)).replaceAll("\\", "/")).toContain("local");
+
+    const second = await runBunInstall(env, package_dir, { frozenLockfile: true });
+    expect(second.err).not.toContain("Saved lockfile");
+  });
+
+  it("errors with the path when package.json is missing", async () => {
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        dependencies: { missing: "link:./does-not-exist" },
+      }),
+    );
+    await setLinker();
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('Could not find package.json at "./does-not-exist"');
+    expect(stderr).not.toContain("is not linked");
+    expect(stderr).not.toContain("bun link my-pkg-name-from-package-json");
+    expect(exited).toBe(1);
+  });
+});
+
+// A path-form link: declared by a package that is not the root or a workspace
+// (here: a file: dependency of the project) may only point inside the project.
+// Same rule and same fixtures as the transitive file: tests in bun-install.test.ts.
+describe.each(["hoisted", "isolated"])("transitive path-form link: (%s)", linker => {
+  const bunfig = `[install]\ncache = false\nlinker = "${linker}"\n`;
+  const refusal = "only the root package.json, a workspace, or an override may link to a path outside the project";
+
+  async function install(cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  it("is refused when it escapes the project (resolve)", async () => {
+    using dir = tempDir("transitive-link-escape", {
+      "secret/package.json": JSON.stringify({ name: "loot", version: "1.0.0" }),
+      "project/bunfig.toml": bunfig,
+      "project/package.json": JSON.stringify({ name: "my-app", dependencies: { evil: "file:./evil" } }),
+      "project/evil/package.json": JSON.stringify({
+        name: "evil",
+        version: "1.0.0",
+        dependencies: { loot: "link:../../secret" },
+      }),
+    });
+    const project = join(String(dir), "project");
+
+    const { err, exitCode } = await install(project);
+    expect(err).toContain(refusal);
+    expect(err).not.toContain("Could not find package.json");
+    expect(exitCode).toBe(1);
+    expect(await exists(join(project, "node_modules", "loot"))).toBe(false);
+    expect(await exists(join(project, "node_modules", "evil", "node_modules", "loot"))).toBe(false);
+  });
+
+  it("is refused when it escapes the project (existing lockfile)", async () => {
+    // The lockfile already carries the escaping resolution, so resolution is
+    // skipped and the installer is what has to refuse it.
+    using dir = tempDir("transitive-link-escape-lock", {
+      "secret/package.json": JSON.stringify({ name: "loot", version: "1.0.0" }),
+      "project/bunfig.toml": bunfig,
+      "project/package.json": JSON.stringify({ name: "my-app", dependencies: { evil: "file:./evil" } }),
+      "project/evil/package.json": JSON.stringify({
+        name: "evil",
+        version: "1.0.0",
+        dependencies: { loot: "link:../../secret" },
+      }),
+      "project/bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "my-app", dependencies: { evil: "file:./evil" } } },
+        packages: {
+          evil: ["evil@file:evil", { dependencies: { loot: "link:../../secret" } }],
+          loot: ["loot@link:../secret", {}],
+        },
+      }),
+    });
+    const project = join(String(dir), "project");
+
+    const { err, exitCode } = await install(project);
+    expect(err).toContain(refusal);
+    expect(exitCode).toBe(1);
+    expect(await exists(join(project, "node_modules", "loot"))).toBe(false);
+    expect(await exists(join(project, "node_modules", "evil", "node_modules", "loot"))).toBe(false);
+  });
+
+  it("is installed when it stays inside the project", async () => {
+    using dir = tempDir("transitive-link-inside", {
+      "bunfig.toml": bunfig,
+      "package.json": JSON.stringify({ name: "my-app", dependencies: { lib: "file:./vendor/lib" } }),
+      "vendor/lib/package.json": JSON.stringify({
+        name: "lib",
+        version: "1.0.0",
+        main: "index.js",
+        dependencies: { nested: "link:../nested" },
+      }),
+      "vendor/lib/index.js": `module.exports = require("nested");`,
+      "vendor/nested/package.json": JSON.stringify({ name: "nested", version: "1.0.0", main: "index.js" }),
+      "vendor/nested/index.js": `module.exports = "it worked";`,
+    });
+    const project = String(dir);
+
+    for (const args of [[], ["--frozen-lockfile"]]) {
+      await rm(join(project, "node_modules"), { recursive: true, force: true });
+      const { err, exitCode } = await install(project, ...args);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      await using run = spawn({
+        cmd: [bunExe(), "-e", `console.log(require("lib"))`],
+        cwd: project,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+      expect(runErr).toBe("");
+      expect(runOut.trim()).toBe("it worked");
+      expect(runExit).toBe(0);
+    }
+    // The declaring package's importer-relative target is stored root-relative.
+    expect(await file(join(project, "bun.lock")).text()).toContain('"nested@link:./vendor/nested"');
+  });
+
+  for (const field of ["overrides", "resolutions"]) {
+    it(`may escape the project when the target comes from root "${field}"`, async () => {
+      using dir = tempDir("transitive-link-override", {
+        "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0", main: "index.js" }),
+        "shared/index.js": `module.exports = "shared";`,
+        "project/bunfig.toml": bunfig,
+        "project/package.json": JSON.stringify({
+          name: "my-app",
+          dependencies: { "pkg-a": "file:./pkg-a" },
+          [field]: { shared: "link:../shared" },
+        }),
+        "project/pkg-a/package.json": JSON.stringify({
+          name: "pkg-a",
+          version: "1.0.0",
+          main: "index.js",
+          dependencies: { shared: "1.0.0" },
+        }),
+        "project/pkg-a/index.js": `module.exports = require("shared");`,
+      });
+      const project = join(String(dir), "project");
+
+      for (const args of [[], ["--frozen-lockfile"]]) {
+        await rm(join(project, "node_modules"), { recursive: true, force: true });
+        const { err, exitCode } = await install(project, ...args);
+        expect(err).not.toContain(refusal);
+        expect(err).not.toContain("error:");
+        expect(exitCode).toBe(0);
+
+        await using run = spawn({
+          cmd: [bunExe(), "-e", `console.log(require("pkg-a"))`],
+          cwd: project,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+        expect(runErr).toBe("");
+        expect(runOut.trim()).toBe("shared");
+        expect(runExit).toBe(0);
+      }
+    });
+  }
 });

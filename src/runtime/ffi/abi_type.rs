@@ -107,25 +107,19 @@ bun_core::comptime_string_map! {
 // ToCFormatter / ToJSFormatter. Indexed by `self as usize`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// How a generated wrapper turns an argument's JSValue into the C parameter; the functions named
-/// here are defined in `FFI.h`.
+/// The `FFI.h` function a generated wrapper converts an argument with.
 enum ToC {
     /// Written out by [`ToCFormatter`] itself, or not an argument type.
     Special,
-    /// `f(arg)`: decodes the JSValue's bits and cannot fail.
+    /// `f(arg)`; cannot fail.
     Infallible(&'static str),
-    /// `f(JS_GLOBAL_OBJECT, ABI_TYPE_*, &threw, arg)`: decodes the common encodings inline and
-    /// hands everything else to the engine's converter (`JSVALUE_TO_SLOT_SLOW`), which throws for
-    /// values the type does not accept. The wrapper runs these conversions before the native call
-    /// and returns as soon as one of them threw.
+    /// `f(JS_GLOBAL_OBJECT, ABI_TYPE_*, &threw, arg)`; may throw via `JSVALUE_TO_SLOT_SLOW`.
     Fallible(&'static str),
 }
 
 struct AbiRow {
     c_type: &'static [u8],
-    /// `#define`d to the variant's discriminant, which is also the engine's tag for the type, when
-    /// a wrapper is compiled (`Function::compile`), so `FFI.h` and the generated code can name the
-    /// type they ask the engine's converter for.
+    /// `#define`d to the discriminant (also the engine's type tag) by `Function::compile`.
     tag_define: &'static str,
     to_c: ToC,
     to_js: Option<(&'static str, &'static str)>,
@@ -183,8 +177,7 @@ impl ABIType {
     /// See [`ABI_TYPE_LABEL`].
     pub(crate) const LABEL: &'static __ComptimeStringMap_ABI_TYPE_LABEL = &ABI_TYPE_LABEL;
 
-    /// The `ABI_TYPE_*` preprocessor definitions every generated wrapper is compiled with, one per
-    /// variant; see [`AbiRow::tag_define`].
+    /// One [`AbiRow::tag_define`] per variant, for `define_symbols`.
     pub(crate) fn tag_defines() -> [(&'static str, i64); ABI_TYPE_COUNT] {
         core::array::from_fn(|i| (ABI_TABLE[i].tag_define, i as i64))
     }

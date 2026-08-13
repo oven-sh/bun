@@ -153,9 +153,7 @@ fn create_jsc_ffi_function(
 mod exposed_to_ffi {
     use super::{JSGlobalObject, JSValue};
     unsafe extern "C" {
-        /// `JSCFFIBridge.cpp`: the engine's conversion (the one dlopen()'d symbols use) for an
-        /// argument of type `abi_type`; the `ToC::Fallible` conversions in `FFI.h` call it for the
-        /// values they don't decode inline.
+        /// `JSCFFIBridge.cpp`; what the `ToC::Fallible` conversions in `FFI.h` fall back to.
         #[link_name = "Bun__FFI__jsValueToSlotSlow"]
         pub(super) fn JSVALUE_TO_SLOT_SLOW(
             global: *mut JSGlobalObject,
@@ -2068,8 +2066,7 @@ impl Function {
         }
 
         CompilerRT::define(state);
-        // Only the wrapper is compiled with these; the user's own C (`CompileC::compile`) must not
-        // see them.
+        // Wrapper-only: the user's C (`CompileC::compile`) is compiled without these.
         state.define_symbols(&ABIType::tag_defines());
 
         // SAFETY: source_code was NUL-terminated above
@@ -2200,8 +2197,7 @@ impl Function {
         let mut arg_buf = [0u8; 512];
         arg_buf[0..3].copy_from_slice(b"arg");
 
-        // Conversions that can throw come first: once one of them has thrown, the native function
-        // must not be entered and no handle scope may have been opened.
+        // Converted first: a throw has to return before the native call and the handle scope.
         let mut declared_threw = false;
         for (i, arg) in self.arg_types.iter().enumerate() {
             if !arg.arg_conversion_can_throw() {

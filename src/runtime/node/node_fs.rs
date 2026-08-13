@@ -8489,8 +8489,24 @@ impl NodeFS {
         result
     }
 
+    /// A link, unlike a regular file, cannot be copied over an existing entry,
+    /// so an overwriting copy removes the entry first. unlink (`uv_fs_unlink`
+    /// on Windows) also removes directory links and junctions; a directory is
+    /// left in place and its EISDIR/EPERM becomes the copy's error, as with `cp`.
+    fn cp_unlink_dest_for_link(dest: &ZStr) -> Maybe<()> {
+        match Syscall::unlink(dest) {
+            Err(err) if err.get_errno() != E::ENOENT => Err(err),
+            _ => Ok(()),
+        }
+    }
+
     #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
-    fn cp_symlink(&mut self, src: &ZStr, dest: &ZStr) -> Maybe<ret::CopyFile> {
+    fn cp_symlink(
+        &mut self,
+        src: &ZStr,
+        dest: &ZStr,
+        mode: constants::Copyfile,
+    ) -> Maybe<ret::CopyFile> {
         let mut target_buf = PathBuffer::uninit();
         // `bun_sys::readlink` returns the byte length on every
         // platform (the `Syscall` alias = `sys_uv` on Windows would return the
@@ -8505,38 +8521,44 @@ impl NodeFS {
         target_buf[link_len] = 0;
         // SAFETY: NUL written at `target_buf[link_len]`.
         let link_target = ZStr::from_buf(&target_buf[..], link_len);
-        if paths::is_absolute(link_target.as_bytes()) {
-            return Syscall::symlink(link_target, dest);
-        }
-        let mut cwd_buf = PathBuffer::uninit();
         let mut resolved_buf = PathBuffer::uninit();
-        let src_dir = paths::resolve_path::dirname::<paths::platform::Posix>(src.as_bytes());
-        let Ok(cwd_len) = sys::getcwd(&mut cwd_buf[..]) else {
-            // If we can't resolve cwd, preserve the link target as-is rather
-            // than pointing the copied link back at the source path.
-            return Syscall::symlink(link_target, dest);
+        let target: &ZStr = 'resolve: {
+            if paths::is_absolute(link_target.as_bytes()) {
+                break 'resolve link_target;
+            }
+            let mut cwd_buf = PathBuffer::uninit();
+            let src_dir = paths::resolve_path::dirname::<paths::platform::Posix>(src.as_bytes());
+            let Ok(cwd_len) = sys::getcwd(&mut cwd_buf[..]) else {
+                // If we can't resolve cwd, preserve the link target as-is rather
+                // than pointing the copied link back at the source path.
+                break 'resolve link_target;
+            };
+            let cwd = &cwd_buf[..cwd_len];
+            let resolved_buf_len = resolved_buf.len();
+            let Some(resolved) =
+                paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Posix>(
+                    cwd,
+                    &mut resolved_buf[..resolved_buf_len - 1],
+                    &[src_dir, link_target.as_bytes()],
+                )
+            else {
+                self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
+                return Err(sys::Error {
+                    errno: E::ENAMETOOLONG as _,
+                    syscall: sys::Tag::symlink,
+                    path: self.sync_error_buf[..src.len()].into(),
+                    ..Default::default()
+                });
+            };
+            let resolved_len = resolved.len();
+            resolved_buf[resolved_len] = 0;
+            // SAFETY: NUL written at `resolved_buf[resolved_len]`.
+            ZStr::from_buf(&resolved_buf[..], resolved_len)
         };
-        let cwd = &cwd_buf[..cwd_len];
-        let resolved_buf_len = resolved_buf.len();
-        let Some(resolved) =
-            paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Posix>(
-                cwd,
-                &mut resolved_buf[..resolved_buf_len - 1],
-                &[src_dir, link_target.as_bytes()],
-            )
-        else {
-            self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
-            return Err(sys::Error {
-                errno: E::ENAMETOOLONG as _,
-                syscall: sys::Tag::symlink,
-                path: self.sync_error_buf[..src.len()].into(),
-                ..Default::default()
-            });
-        };
-        let resolved_len = resolved.len();
-        resolved_buf[resolved_len] = 0;
-        // SAFETY: NUL written at `resolved_buf[resolved_len]`.
-        Syscall::symlink(ZStr::from_buf(&resolved_buf[..], resolved_len), dest)
+        if !mode.shouldnt_overwrite() {
+            Self::cp_unlink_dest_for_link(dest)?;
+        }
+        Syscall::symlink(target, dest)
     }
 
     /// This is `copyFile`, but it copies symlinks as-is
@@ -8582,6 +8604,11 @@ impl NodeFS {
                         | bun_sys::c::COPYFILE_NOFOLLOW_SRC;
                     if mode.shouldnt_overwrite() {
                         mode_ |= bun_sys::c::COPYFILE_EXCL;
+                    } else {
+                        // Without COPYFILE_EXCL, copyfile(3) ignores the EEXIST
+                        // from recreating the link and reports success with the
+                        // old destination still in place.
+                        Self::cp_unlink_dest_for_link(dest)?;
                     }
                     return Maybe::<ret::CopyFile>::errno_sys_p(
                         bun_sys::c::copyfile_rc(src, dest, mode_),
@@ -8700,7 +8727,7 @@ impl NodeFS {
                     if err.get_errno() == E::ELOOP {
                         // ELOOP is returned when you open a symlink with NOFOLLOW.
                         // as in, it does not actually let you open it.
-                        return self.cp_symlink(src, dest);
+                        return self.cp_symlink(src, dest, mode);
                     }
                     return Err(err);
                 }
@@ -8872,7 +8899,7 @@ impl NodeFS {
                     // open(2) returns EMLINK for this case, though POSIX
                     // specifies ELOOP; accept either.
                     if matches!(err.get_errno(), E::EMLINK | E::ELOOP) {
-                        return self.cp_symlink(src, dest);
+                        return self.cp_symlink(src, dest, mode);
                     }
                     return Err(err);
                 }
@@ -9099,6 +9126,13 @@ impl NodeFS {
                     bun_core::WStr::from_buf(&wbuf[..], len)
                 };
                 let is_dir = stat_ & windows::FILE_ATTRIBUTE_DIRECTORY != 0;
+                if !mode.shouldnt_overwrite() {
+                    let mut dest8 = paths::path_buffer_pool::get();
+                    Self::cp_unlink_dest_for_link(strings::from_wpath(
+                        &mut dest8[..],
+                        dest.as_slice(),
+                    ))?;
+                }
                 // `symlink_w`/`symlink_or_junction` (not raw `CreateSymbolicLinkW`)
                 // so unprivileged creation is requested. UNC targets skip the junction
                 // fallback: libuv's `fs__create_junction` only accepts drive-letter targets.

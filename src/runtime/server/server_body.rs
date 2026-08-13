@@ -2511,10 +2511,13 @@ where
         if self.app.is_none() {
             return Ok(JSValue::UNDEFINED);
         }
-        let ssl_config =
-            SSLConfig::from_js(self.vm(), global, options)?.unwrap_or_else(SSLConfig::zero);
-        let ssl_opts = ssl_config.as_usockets();
-
+        // Same guard as `Listener::add_server_name`: the SNI tree would file an
+        // empty name on its root, where nothing can ever match it.
+        if hostname.is_empty() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("hostname pattern cannot be empty"))
+            );
+        }
         let server_name = match std::ffi::CString::new(hostname) {
             Ok(s) => s,
             Err(_) => {
@@ -2522,6 +2525,9 @@ where
                     .throw_invalid_arguments(format_args!("hostname must not contain NUL bytes")));
             }
         };
+        let ssl_config =
+            SSLConfig::from_js(self.vm(), global, options)?.unwrap_or_else(SSLConfig::zero);
+        let ssl_opts = ssl_config.as_usockets();
         // Build the SSL_CTX once up front: bad key material must fail before
         // remove_server_name() below drops the hostname's existing context.
         {

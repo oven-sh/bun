@@ -16,7 +16,6 @@ const {
   serverSymbol,
 } = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
-const { throwOnInvalidTLSArray } = require("internal/tls");
 
 const httpServerAddServerName = $newRustFunction("node_http_binding.rs", "httpServerAddServerName", 3);
 
@@ -525,11 +524,9 @@ function Server(options, requestListener): void {
     // ALPN requests are always answered with http/1.1.
     options.ALPNProtocols = ["http/1.1"];
   }
-  http.Server.$call(this, options, requestListener);
+  // Tells http.Server to build a TLS config even when no key material was given.
   this[isTlsSymbol] = true;
-  // Without key/cert, http.Server leaves this null and would listen as plain HTTP;
-  // an https.Server always listens with TLS (the defaults are normalizeServerTls's).
-  this[tlsSymbol] ??= { requestCert: false, rejectUnauthorized: false };
+  http.Server.$call(this, options, requestListener);
   const optionsALPNProtocols = options.ALPNProtocols;
   if (optionsALPNProtocols) {
     require("node:tls").convertALPNProtocols(optionsALPNProtocols, this);
@@ -538,31 +535,14 @@ function Server(options, requestListener): void {
 }
 $toClass(Server, "Server", http.Server);
 
-function tlsOptionsFromContext(context) {
-  const { key, cert, ca, passphrase, secureOptions, requestCert, rejectUnauthorized } = context || {};
-  if (cert) throwOnInvalidTLSArray("options.cert", cert);
-  if (key) throwOnInvalidTLSArray("options.key", key);
-  if (ca) throwOnInvalidTLSArray("options.ca", ca);
-  if (passphrase && typeof passphrase !== "string") {
-    throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
-  }
-  const requested = !!requestCert;
-  return {
-    key,
-    cert,
-    ca,
-    passphrase,
-    secureOptions,
-    requestCert: requested,
-    rejectUnauthorized: requested ? rejectUnauthorized !== false : false,
-  };
-}
-
 Server.prototype.addContext = function (hostname, context) {
   if (typeof hostname !== "string") {
     throw new TypeError("hostname must be a string");
   }
-  const entry = tlsOptionsFromContext(context);
+  if (hostname === "") {
+    throw $ERR_TLS_REQUIRED_SERVER_NAME('"servername" is required parameter for Server.addContext');
+  }
+  const entry = require("internal/tls").serverTlsFromOptions(context ?? kEmptyObject);
   entry.serverName = hostname;
   const contexts = (this[kSNIContexts] ??= []);
   const bunServer = this[serverSymbol];
@@ -581,35 +561,18 @@ Server.prototype.addContext = function (hostname, context) {
 
 Server.prototype.setSecureContext = function (options) {
   if (options == null) return;
-  const { cert, key, ca, passphrase, servername, secureOptions, requestCert, rejectUnauthorized } = options;
-  if (cert) throwOnInvalidTLSArray("options.cert", cert);
-  if (key) throwOnInvalidTLSArray("options.key", key);
-  if (ca) throwOnInvalidTLSArray("options.ca", ca);
-  if (passphrase && typeof passphrase !== "string") {
-    throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
+  validateObject(options, "options");
+  // Built in full from `options` (so anything omitted is cleared, as in Node)
+  // and only assigned once every option has been validated.
+  const next = require("internal/tls").serverTlsFromOptions(options);
+  const previous = this[tlsSymbol];
+  if (previous) {
+    // The client certificate policy belongs to the server, not to the
+    // certificate material: Node's setSecureContext() leaves it alone too.
+    next.requestCert = previous.requestCert;
+    next.rejectUnauthorized = previous.rejectUnauthorized;
   }
-  if (servername && typeof servername !== "string") {
-    throw $ERR_INVALID_ARG_TYPE("options.servername", "string", servername);
-  }
-  if (secureOptions && typeof secureOptions !== "number") {
-    throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
-  }
-  // Validated above; nothing is applied if any option was rejected. Like
-  // tls.Server, an omitted option clears the value from an earlier call.
-  const previous = this[tlsSymbol] || { requestCert: false, rejectUnauthorized: false };
-  const nextRequestCert = requestCert === undefined ? !!previous.requestCert : !!requestCert;
-  const nextRejectUnauthorized = rejectUnauthorized === undefined ? previous.rejectUnauthorized : rejectUnauthorized;
-  this[tlsSymbol] = {
-    ...previous,
-    cert,
-    key,
-    ca,
-    passphrase,
-    serverName: servername,
-    secureOptions,
-    requestCert: nextRequestCert,
-    rejectUnauthorized: nextRequestCert ? nextRejectUnauthorized : false,
-  };
+  this[tlsSymbol] = next;
 };
 
 Server.prototype.getTicketKeys = function () {

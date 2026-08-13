@@ -14,8 +14,7 @@ fn fd_unwrap_valid(fd: Fd) -> Option<Fd> {
     if fd == Fd::INVALID { None } else { Some(fd) }
 }
 
-/// `String::EMPTY` means "no operand" to `SystemError__toErrorInstance`, so an
-/// operand that is itself "" is sent as a zero-length string of another tag.
+/// `String::EMPTY` is "no operand" to `SystemError__toErrorInstance`; a real "" needs another tag.
 fn operand_string(operand: &[u8]) -> BunString {
     if operand.is_empty() {
         return BunString::static_(b"");

@@ -755,8 +755,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunNanoseconds, (JSGlobalObject * globalObject,
     return JSValue::encode(jsNumber(time));
 }
 
-// Mirrors node's url.pathToFileURL(): path.resolve() for the host platform,
-// then put back the trailing slash that path.resolve() strips.
+// Like node's url.pathToFileURL(): path.resolve(), then restore the trailing slash it strips.
 static WTF::String resolvePathForFileURL(JSC::JSGlobalObject* globalObject, JSC::JSString* pathJSString, const WTF::String& path)
 {
     auto& vm = JSC::getVM(globalObject);

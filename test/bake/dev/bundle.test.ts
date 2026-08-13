@@ -504,28 +504,36 @@ devTest("editing a text-imported html file that an onResolve plugin claims (#225
     await c.expectMessage("<div>second</div>");
   },
 });
-devTest("editing a file imported with a loader other than its extension's keeps that loader", {
+devTest("editing files imported with a loader other than their extension's keeps that loader (#24893)", {
   files: {
     "index.html": emptyHtmlFile({
       styles: [],
       scripts: ["index.ts"],
     }),
     "index.ts": `
+      import template from "./template.mustache" with { type: "text" };
       import data from "./data.json" with { type: "text" };
+      console.log(template);
       console.log(typeof data + ":" + data);
     `,
+    "template.mustache": "{{first}}",
     "data.json": `{"version":1}`,
   },
   async test(dev) {
     await using c = await dev.client("/");
-    await c.expectMessage('string:{"version":1}');
+    await c.expectMessage("{{first}}", 'string:{"version":1}');
 
-    // Before the fix, the rebundle parsed data.json with the json loader, so
-    // the module's value silently changed from a string into an object.
+    // Before the fix, the rebundle used the loader of the file extension:
+    // template.mustache came back as an asset URL and data.json as an object.
+    await c.expectReload(async () => {
+      await dev.write("template.mustache", "{{second}}");
+    });
+    await c.expectMessage("{{second}}", 'string:{"version":1}');
+
     await c.expectReload(async () => {
       await dev.write("data.json", `{"version":2}`);
     });
-    await c.expectMessage('string:{"version":2}');
+    await c.expectMessage("{{second}}", 'string:{"version":2}');
   },
 });
 devTest("deleting a file imported by a module loaded through an import attribute", {

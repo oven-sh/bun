@@ -220,6 +220,9 @@ impl Default for RuntimeTranspilerStore {
 
 impl Taskable for RuntimeTranspilerStore {
     const TAG: TaskTag = task_tag::RuntimeTranspilerStore;
+    /// The "drain my finished jobs" ping owns nothing (`this` is the VM's
+    /// store); the jobs themselves are released by `release_queued_jobs_for_teardown`.
+    unsafe fn release_unrun(_: *mut Self) {}
 }
 
 impl RuntimeTranspilerStore {
@@ -232,6 +235,28 @@ impl RuntimeTranspilerStore {
     // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
     // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
     // a field of `VirtualMachine`). Field-level derefs only.
+    /// VM teardown (JS thread, heap alive, script forbidden, embedded work
+    /// waited for so no job is mid-flight): jobs whose completion will not run —
+    /// queued after the last tick, or posted after `close()` began — release
+    /// their source, log and module promise here instead of running.
+    pub fn release_queued_jobs_for_teardown(&mut self) {
+        let batch = self.queue.pop_batch();
+        let mut iter = batch.iterator();
+        loop {
+            let job = iter.next();
+            if job.is_null() {
+                break;
+            }
+            // SAFETY: a live job popped from the intrusive queue; this thread
+            // owns it now (its worker-thread part finished before `close()`).
+            unsafe {
+                (*job).promise.deinit();
+                (*job).reset_for_pool();
+                self.store.put(job);
+            }
+        }
+    }
+
     pub fn run_from_js_thread(
         &mut self,
         event_loop: NonNull<EventLoop>,
@@ -321,6 +346,7 @@ impl RuntimeTranspilerStore {
                 global_this: BackRef::new(global_object),
                 non_threadsafe_referrer: OwnedString::new(referrer),
                 vm,
+                loop_handle: global_object.bun_vm().loop_handle(),
                 log: bun_ast::Log::init(),
                 loader,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
@@ -377,6 +403,10 @@ pub struct TranspilerJob {
     // raw pointers/BackRefs are used (BACKREF — VM owns the
     // store and outlives every job).
     pub(crate) vm: *mut VirtualMachine,
+    /// The pool thread runs this job under `loop_handle.borrow()`: the job's
+    /// own slot, the transpiler it copies and the store queue it pushes to are
+    /// all VM-owned, and the VM's teardown waits for the borrow to end.
+    pub(crate) loop_handle: crate::LoopHandle,
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) fetcher: Fetcher,
     pub(crate) poll_ref: KeepAlive,
@@ -486,16 +516,21 @@ impl TranspilerJob {
 
     fn dispatch_to_main_thread(&mut self) {
         let vm = self.vm;
+        let loop_handle = self.loop_handle.clone();
         // SAFETY: vm outlives the job (BACKREF — VM owns the store).
         let transpiler_store: *mut RuntimeTranspilerStore =
             unsafe { ptr::addr_of_mut!((*vm).transpiler_store) };
         let job = NonNull::from(&mut *self);
         // SAFETY: queue is concurrent-safe (UnboundedQueue uses atomics).
         unsafe { (*transpiler_store).queue.push(job) };
-        // Another thread may free `self` at any time after .push, so we cannot use it any more.
-        // SAFETY: vm outlives the job; event_loop() returns the live self-pointer.
-        unsafe { &*(*vm).event_loop() }
-            .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
+        // Another thread may free `self` at any time after .push, so we cannot use it any more
+        // (the handle was cloned out above for exactly this reason). The VM
+        // waits for embedded work before closing its handle, so this is queued.
+        let crate::vm_handle::Posted::Queued =
+            loop_handle.post_task(ConcurrentTask::create_from(transpiler_store))
+        else {
+            unreachable!("VM handle closed with embedded transpile work outstanding");
+        };
     }
 
     fn run_from_js_thread(&mut self) -> JsResult<()> {
@@ -559,6 +594,9 @@ impl TranspilerJob {
         // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by
         // `bun_runtime::init`).
         self.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
+        // The job is a slot inside this VM: counted, so teardown waits for it
+        // (see `VmHandle::embedded_work_scheduled`).
+        self.loop_handle.embedded_work_scheduled();
         WorkPool::schedule(&raw mut self.work_task);
     }
 
@@ -566,9 +604,23 @@ impl TranspilerJob {
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `work_task` field initialised in
         // `transpile`; the WorkPool calls back with exactly that field, so
-        // `from_field_ptr!` recovers the live heap `TranspilerJob` parent.
-        let this = unsafe { &mut *bun_core::from_field_ptr!(TranspilerJob, work_task, work_task) };
-        this.run();
+        // `from_field_ptr!` recovers the live `TranspilerJob` parent.
+        let this = unsafe { bun_core::from_field_ptr!(TranspilerJob, work_task, work_task) };
+        // The slot lives inside the VM and the VM waits for us (embedded work),
+        // so it is alive throughout. Transpile only while the VM is still
+        // running; either way hand the job back to the JS thread, which
+        // completes or releases it.
+        // SAFETY: as above.
+        let handle = unsafe { (*this).loop_handle.clone() };
+        if let Some(_vm) = handle.borrow_if_running() {
+            // SAFETY: live slot, exclusively ours until dispatched.
+            unsafe { (*this).run() };
+        } else {
+            // SAFETY: as above.
+            unsafe { (*this).dispatch_to_main_thread() };
+        }
+        // Last touch of the slot from this thread was the dispatch.
+        handle.embedded_work_finished();
     }
 
     fn run(&mut self) {
@@ -710,7 +762,6 @@ impl TranspilerJob {
         // as the `Transpiler<'_>` cast above.
         transpiler.linker.resolver = ptr::addr_of_mut!(transpiler.resolver).cast();
 
-        let mut fd: Option<Fd> = None;
         let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
 
@@ -719,24 +770,12 @@ impl TranspilerJob {
         // leaked in `enable_hot_module_reloading`, so the `ParentRef` invariant
         // holds for this transpile job's duration). Raw `(*vm)` field
         // projection avoids forming `&VirtualMachine` per the `vm` note.
-        let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher>> =
+        let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher, bun_ptr::Mut>> =
             unsafe { bun_ptr::ParentRef::from_nullable_mut((*vm).bun_watcher.cast()) };
         if let Some(iw) = import_watcher {
-            // The watchlist *is* mutated cross-thread (the watcher thread's
-            // `flush_evictions` closes fds and `swap_remove`s), so snapshot
-            // under the watcher mutex — see
-            // `ImportWatcher::snapshot_fd_and_package_json` doc for the EBADF
-            // race this closes.
-            (fd, package_json) = iw.snapshot_fd_and_package_json(hash);
-            // On Linux, `addFileByPathSlow` inserts watchlist entries with
-            // `fd = invalid_fd` (only kqueue needs the descriptor). Treat
-            // invalid as "no cached fd" so `readFileWithAllocator` opens the
-            // file instead of calling `seekTo` on a bogus handle. The snapshot
-            // helper already filtered `!is_valid()`; additionally reject
-            // stdio-tagged fds here.
-            if fd.is_some_and(|f| f.stdio_tag().is_some()) {
-                fd = None;
-            }
+            // Never read through the watchlist's stored fd; see
+            // `ImportWatcher::snapshot_package_json`.
+            package_json = iw.snapshot_package_json(hash);
         }
 
         // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
@@ -769,15 +808,13 @@ impl TranspilerJob {
         // only, so skipping `Drop` is sound.
         let mut fallback_source = core::mem::MaybeUninit::<bun_ast::Source>::uninit();
 
-        // Usually, we want to close the input file automatically.
-        //
-        // If we're re-using the file descriptor from the fs watcher
-        // Do not close it because that will break the kqueue-based watcher
+        // Close the input file automatically unless the watcher adopts the
+        // descriptor after the parse (`add_file` below).
         //
         // Note: stored in a `Cell` so the scopeguard closure can capture
         // `&Cell<bool>` and the post-parse writes are visible to it without
         // raw-pointer laundering (which the unused-assignment lint can't see).
-        let should_close_input_file_fd = Cell::new(fd.is_none());
+        let should_close_input_file_fd = Cell::new(true);
 
         let mut input_file_fd: Fd = Fd::INVALID;
 
@@ -798,7 +835,7 @@ impl TranspilerJob {
             path,
             loader,
             dirname_fd: Fd::INVALID,
-            file_descriptor: fd,
+            file_descriptor: None,
             // SAFETY: `input_file_fd` is a stack local declared above and
             // outlives `parse_options`; `addr_of_mut!` avoids forming an
             // intermediate `&mut` so the close-guard's later borrow stays sound.
@@ -808,6 +845,7 @@ impl TranspilerJob {
             jsx: transpiler.options.jsx.clone(),
             emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
             experimental_decorators: transpiler.options.experimental_decorators,
+            use_define_for_class_fields: transpiler.options.use_define_for_class_fields,
             virtual_source: None,
             replace_exports: Default::default(),
             dont_bundle_twice: true,
@@ -887,12 +925,11 @@ impl TranspilerJob {
                     && bun_paths::is_absolute(path.text)
                     && !strings::contains(path.text, b"node_modules")
                 {
-                    should_close_input_file_fd.set(false);
                     if let Some(iw) = import_watcher {
                         // SAFETY: BACKREF — process-lifetime watcher; no other
                         // `&ImportWatcher` is live here, and `add_file` is
                         // thread-safe via watcher mutex.
-                        let _ = unsafe { iw.assume_mut() }.add_file::<true>(
+                        let added = unsafe { iw.assume_mut() }.add_file::<true>(
                             input_file_fd,
                             path.text,
                             hash,
@@ -900,6 +937,9 @@ impl TranspilerJob {
                             Fd::INVALID,
                             package_json,
                         );
+                        if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
+                            should_close_input_file_fd.set(false);
+                        }
                     }
                 }
             }
@@ -913,12 +953,11 @@ impl TranspilerJob {
                 && bun_paths::is_absolute(path.text)
                 && !strings::contains(path.text, b"node_modules")
             {
-                should_close_input_file_fd.set(false);
                 if let Some(iw) = import_watcher {
                     // SAFETY: BACKREF — process-lifetime watcher; no other
                     // `&ImportWatcher` is live here, and `add_file` is
                     // thread-safe via watcher mutex.
-                    let _ = unsafe { iw.assume_mut() }.add_file::<true>(
+                    let added = unsafe { iw.assume_mut() }.add_file::<true>(
                         input_file_fd,
                         path.text,
                         hash,
@@ -926,6 +965,9 @@ impl TranspilerJob {
                         Fd::INVALID,
                         package_json,
                     );
+                    if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
+                        should_close_input_file_fd.set(false);
+                    }
                 }
             }
         }

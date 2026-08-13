@@ -4,7 +4,8 @@ use crate::cli::Command;
 use crate::cli::test::changed_files_filter as ChangedFilesFilter;
 use crate::cli::test::parallel_runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
-use bun_collections::{ArrayHashMap, BoundedArray, StringHashMap};
+use crate::cli::test::timings::Timings;
+use bun_collections::BoundedArray;
 use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
@@ -119,8 +120,8 @@ use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 // `crate::test_runner::*`; the façade below adapts the body's nested-path
 // usage (`bun_test::Execution::Result`, `bun_test::BasicResult`, …) without a
 // 2k-line body rewrite.
-use crate::test_runner::jest::{self, FileColumns as _, FileId, Summary, TestRunner};
-use crate::test_runner::snapshot::{InlineSnapshotToWrite, Snapshots};
+use crate::test_runner::jest::{self, FileColumns as _, Summary, TestRunner};
+use crate::test_runner::snapshot::Snapshots;
 
 #[allow(non_snake_case)]
 mod bun_test {
@@ -940,6 +941,9 @@ pub struct CommandLineReporter {
     pub(crate) todos_to_repeat_buf: Vec<u8>,
 
     pub(crate) reporters: ReportersConfig,
+
+    /// `--timings`: loaded before the run, updated per file, written back under `--update-timings`.
+    pub(crate) timings: Option<Timings>,
 }
 
 #[derive(Default)]
@@ -1516,6 +1520,7 @@ impl CommandLineReporter {
                     );
                     Output::flush();
                     this.write_junit_report_if_needed();
+                    this.write_timings_if_needed();
                     Global::exit(1);
                 }
             }
@@ -1540,6 +1545,16 @@ impl CommandLineReporter {
         );
 
         Output::print_start_end(bun::start_time(), bun::time::nano_timestamp());
+    }
+
+    /// Like the JUnit report, called before every exit path (including bail) so measured durations aren't lost.
+    pub(crate) fn write_timings_if_needed(&mut self) {
+        if self.jest.test_options.update_timings
+            && self.worker_ipc_file_idx.is_none()
+            && let Some(timings) = self.timings.as_mut()
+        {
+            timings.write(self.jest.test_options.shard.is_some());
+        }
     }
 
     /// Writes the JUnit reporter output file if a JUnit reporter is active and
@@ -2111,7 +2126,7 @@ impl TestCommand {
         // `exec()` never returns before process exit, so the heap allocation
         // outlives all observers.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
-        jsc::initialize(false);
+        jsc::initialize_with(false, ctx.test_options.isolate);
         bun_http::http_thread::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;
@@ -2136,14 +2151,6 @@ impl TestCommand {
             None
         };
 
-        let mut snapshot_file_buf: Vec<u8> = Vec::new();
-        // `Snapshots::ValuesHashMap` would be an inherent associated type alias
-        // (unstable in Rust); spell out the underlying map instead.
-        let mut snapshot_values: bun_collections::HashMap<u64, Box<[u8]>> =
-            bun_collections::HashMap::new();
-        let mut snapshot_counts: StringHashMap<usize> = StringHashMap::new();
-        let mut inline_snapshots_to_write: ArrayHashMap<FileId, Vec<InlineSnapshotToWrite>> =
-            ArrayHashMap::new();
         jsc::virtual_machine::isBunTest.store(true, core::sync::atomic::Ordering::Relaxed);
 
         // Borrowed-slice views (`&[&[u8]]`) over owned `Vec<Box<[u8]>>` config so the
@@ -2196,28 +2203,7 @@ impl TestCommand {
                     .test_options
                     .test_filter_regex()
                     .map(|p| p.cast::<jsc::RegularExpression>()),
-                snapshots: Snapshots {
-                    update_snapshots: ctx.test_options.update_snapshots,
-                    total: 0,
-                    added: 0,
-                    passed: 0,
-                    failed: 0,
-                    // SAFETY: lifetime-erase to `'static`; the backing locals are
-                    // declared in this never-returning frame (`exec()` only exits
-                    // via process exit).
-                    file_buf: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_file_buf) },
-                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
-                    values: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_values) },
-                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
-                    counts: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_counts) },
-                    _current_file: None,
-                    snapshot_dir_path: None,
-                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
-                    inline_snapshots_to_write: unsafe {
-                        bun_ptr::detach_lifetime_mut(&mut inline_snapshots_to_write)
-                    },
-                    last_error_snapshot_name: None,
-                },
+                snapshots: Snapshots::init(ctx.test_options.update_snapshots),
                 bun_test_root: bun_test::BunTestRoot::init(),
                 // `TestRunner` cannot derive `Default` because of the
                 // `&'a TestOptions` field, so spell the remaining fields out
@@ -2239,6 +2225,11 @@ impl TestCommand {
             skips_to_repeat_buf: Vec::new(),
             todos_to_repeat_buf: Vec::new(),
             reporters: ReportersConfig::default(),
+            timings: if ctx.test_options.test_worker || ctx.test_options.timings_files.is_empty() {
+                None
+            } else {
+                Some(Timings::load(&ctx.test_options.timings_files))
+            },
         });
         // `defer { if (reporter.reporters.junit) |fr| fr.deinit() }` — handled by Drop.
         reporter.repeat_count = ctx.test_options.repeat_count.max(1);
@@ -2327,7 +2318,7 @@ impl TestCommand {
             vm.transpiler.options.minify_identifiers = false;
             vm.transpiler.options.minify_whitespace = false;
             vm.transpiler.options.dead_code_elimination = false;
-            vm.global().vm().set_control_flow_profiler(true);
+            vm.global().vm().enable_control_flow_profiler();
         }
 
         // For tests, we default to UTC time zone
@@ -2582,14 +2573,17 @@ impl TestCommand {
         // printing a confusing "running 0/0 test files".
         if let Some(shard) = &ctx.test_options.shard {
             if !test_files.is_empty() {
-                test_files.sort_by(|a, b| strings::order(a.as_bytes(), b.as_bytes()));
-
                 let mut write: usize = 0;
-                let total = test_files.len();
-                for i in 0..total {
-                    if i % (shard.count as usize) == (shard.index as usize) - 1 {
-                        test_files[write] = test_files[i];
-                        write += 1;
+                if let Some(timings) = reporter.timings.as_ref().filter(|t| !t.is_empty()) {
+                    write = timings.select_shard(test_files, *shard);
+                } else {
+                    test_files.sort_by(|a, b| strings::order(a.as_bytes(), b.as_bytes()));
+                    let total = test_files.len();
+                    for i in 0..total {
+                        if i % (shard.count as usize) == (shard.index as usize) - 1 {
+                            test_files[write] = test_files[i];
+                            write += 1;
+                        }
                     }
                 }
 
@@ -3011,6 +3005,9 @@ impl TestCommand {
         Output::flush();
 
         reporter.write_junit_report_if_needed();
+        if !test_files.is_empty() || ctx.test_options.shard.is_some() {
+            reporter.write_timings_if_needed();
+        }
 
         if vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH {
             let vm_ptr: *mut VirtualMachine = vm;
@@ -3101,6 +3098,7 @@ impl TestCommand {
 
                 if files.len() > 1 {
                     for (i, file_name) in files[0..files.len() - 1].iter().enumerate() {
+                        let started = bun::time::milli_timestamp();
                         if let Err(err) = TestCommand::run(
                             reporter,
                             vm,
@@ -3112,10 +3110,13 @@ impl TestCommand {
                         ) {
                             handle_top_level_test_error_before_javascript_start(&err);
                         }
+                        if let Some(t) = reporter.timings.as_mut() {
+                            t.record_since(file_name.as_bytes(), started);
+                        }
                         reporter.jest.default_timeout_override = u32::MAX;
                         Global::mimalloc_cleanup(false);
                         if isolate {
-                            crate::jsc_hooks::close_isolation_handles(vm);
+                            crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
                             vm.swap_global_for_test_isolation();
                             reporter
                                 .jest
@@ -3125,16 +3126,21 @@ impl TestCommand {
                     }
                 }
 
+                let last = files[files.len() - 1];
+                let started = bun::time::milli_timestamp();
                 if let Err(err) = TestCommand::run(
                     reporter,
                     vm,
-                    files[files.len() - 1].as_bytes(),
+                    last.as_bytes(),
                     bun_test::FirstLast {
                         first: isolate || files.len() == 1,
                         last: true,
                     },
                 ) {
                     handle_top_level_test_error_before_javascript_start(&err);
+                }
+                if let Some(t) = reporter.timings.as_mut() {
+                    t.record_since(last.as_bytes(), started);
                 }
             }
         }
@@ -3291,6 +3297,7 @@ impl TestCommand {
                             if reporter.jest.bail == 1 { "" } else { "s" }
                         );
                         reporter.write_junit_report_if_needed();
+                        reporter.write_timings_if_needed();
 
                         vm.exit_handler.exit_code = 1;
                         vm.is_shutting_down = true;

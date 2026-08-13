@@ -2,8 +2,8 @@ use core::ffi::c_uint;
 
 use bun_boringssl_sys as boringssl;
 use bun_jsc::{
-    AnyTaskJob, AnyTaskJobCtx, ArrayBuffer, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue,
-    JsResult,
+    ArrayBuffer, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsResult,
+    JsThread,
 };
 
 use crate::node::StringOrBuffer;
@@ -15,21 +15,7 @@ pub(crate) struct PBKDF2 {
     pub salt: StringOrBuffer,
     pub iteration_count: u32,
     pub length: i32,
-    pub algorithm: Algorithm,
-}
-
-impl Default for PBKDF2 {
-    fn default() -> Self {
-        Self {
-            password: StringOrBuffer::default(),
-            salt: StringOrBuffer::default(),
-            iteration_count: 1,
-            length: 0,
-            // Callers always set `algorithm`; Sha256 is an arbitrary placeholder
-            // so `Default` compiles.
-            algorithm: Algorithm::Sha256,
-        }
-    }
+    algorithm: Algorithm,
 }
 
 impl PBKDF2 {
@@ -271,72 +257,74 @@ impl bun_jsc::Unprotect for PBKDF2 {
     }
 }
 
-pub(crate) struct Pbkdf2Ctx {
-    /// Wrapped in [`bun_jsc::ThreadSafe`] so the paired `unprotect()` runs on
-    /// drop — `Job` is only constructed on the async path
-    /// (`from_js(.., is_async=true)` already protected the buffers).
+/// `crypto.pbkdf2` off the JS thread.
+pub(crate) struct Pbkdf2Job {
+    /// `from_js(.., is_async=true)` protected the input buffers; the
+    /// [`bun_jsc::ThreadSafe`] releases that with the job.
     pub pbkdf2: bun_jsc::ThreadSafe<PBKDF2>,
     pub output: Vec<u8>,
     pub err: bool,
-    pub promise: JSPromiseStrong,
 }
 
-impl AnyTaskJobCtx for Pbkdf2Ctx {
-    fn run(&mut self, _global: *mut JSGlobalObject) {
-        let len = usize::try_from(self.pbkdf2.length).expect("int cast");
+impl JobContext for Pbkdf2Job {
+    type OffThread = Self;
+    type Js = JSPromiseStrong;
+
+    fn run(
+        this: &mut Self,
+        _vm: &bun_jsc::vm_handle::Borrow,
+        done: bun_jsc::Completion<Self>,
+    ) -> Option<bun_jsc::Completion<Self>> {
+        let len = usize::try_from(this.pbkdf2.length).expect("int cast");
         // `Vec` allocation aborts on OOM; use try_reserve to surface an error instead.
         let mut buf = Vec::new();
         if buf.try_reserve_exact(len).is_err() {
-            self.err = true;
-            return;
+            this.err = true;
+            return Some(done);
         }
         buf.resize(len, 0);
-        self.output = buf;
+        this.output = buf;
 
-        if !self.pbkdf2.run(&mut self.output) {
-            self.err = true;
+        if !this.pbkdf2.run(&mut this.output) {
+            this.err = true;
             boringssl::ERR_clear_error();
-
-            self.output = Vec::new();
+            this.output = Vec::new();
         }
+        Some(done)
     }
 
-    fn then(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
-        let promise = self.promise.swap();
-        if self.err {
+    fn then(mut this: Self, mut promise: JSPromiseStrong, cx: &JsThread<'_>) -> JsResult<()> {
+        let global_this = cx.global();
+        let promise = promise.swap();
+        if this.err {
             let err = global_this.create_error_instance(format_args!("PBKDF2 derivation failed"));
             promise.reject_with_async_stack(global_this, Ok(err))?;
             return Ok(());
         }
 
-        let output_slice = core::mem::take(&mut self.output);
-        debug_assert!(output_slice.len() == usize::try_from(self.pbkdf2.length).expect("int cast"));
+        let output_slice = core::mem::take(&mut this.output);
+        debug_assert!(output_slice.len() == usize::try_from(this.pbkdf2.length).expect("int cast"));
         // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator → mimalloc free).
         let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
-        promise.resolve(global_this, buffer_value)?;
+        promise.settle(global_this, buffer_value)?;
         Ok(())
     }
 }
 
-pub(crate) type Job = AnyTaskJob<Pbkdf2Ctx>;
-
-/// Heap-allocate, init the promise, ref the loop, and hand
-/// to the work pool. Returns the live job so the caller can read
-/// `(*job).ctx.promise.value()` before the JS-thread completion fires.
-/// Free fn (not `impl Job`) because `AnyTaskJob<_>` is a foreign type.
-pub(crate) fn create_job(global_this: &JSGlobalObject, data: PBKDF2) -> *mut Job {
-    let job = AnyTaskJob::create(
-        global_this,
-        Pbkdf2Ctx {
+/// Schedule the derivation on the work pool; returns its promise.
+pub(crate) fn create_job(global_this: &JSGlobalObject, data: PBKDF2) -> JSValue {
+    let cx = global_this.js_thread();
+    let promise = JSPromiseStrong::init(global_this);
+    let value = promise.value();
+    Job::<Pbkdf2Job>::schedule(
+        &cx,
+        Pbkdf2Job {
             // `from_js(.., is_async=true)` already protected — adopt, don't re-protect.
             pbkdf2: bun_jsc::ThreadSafe::adopt(data),
             output: Vec::new(),
             err: false,
-            promise: JSPromiseStrong::init(global_this),
         },
-    )
-    .expect("Pbkdf2Ctx::init is infallible");
-    // SAFETY: `job` is a freshly-created live pointer.
-    unsafe { AnyTaskJob::schedule(job) };
-    job
+        promise,
+    );
+    value
 }

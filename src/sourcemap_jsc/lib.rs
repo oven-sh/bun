@@ -9,7 +9,4 @@ pub mod js_source_map;
 
 // ---- public surface ---------------------------------------------------------
 
-pub use code_coverage::{
-    ByteRangeMapping, ByteRangeMappingHashMap, Fraction, Report as CoverageReport,
-};
 pub use js_source_map::JSSourceMap;

@@ -26,7 +26,7 @@ use crate::api::bun_process as spawn_process;
 #[cfg(not(windows))]
 use crate::api::bun_process::ExtraPipe;
 use crate::api::bun_process::{Process, Rusage, Status};
-use crate::jsc::ipc as IPC;
+use crate::ipc as IPC;
 use crate::node::node_cluster_binding;
 use crate::timer::{EventLoopTimer, EventLoopTimerState};
 use crate::webcore::{self, AbortSignal, FileSink};
@@ -125,7 +125,7 @@ pub struct Subprocess<'a> {
     /// `ThreadSafeRefCount` and crosses the `ProcessAutoKiller`/waiter-thread
     /// boundary by raw identity, so wrapping in `Arc` would double-count and
     /// (worse) `Arc::from_raw` on a `Box` allocation is UB.
-    pub(crate) process: bun_ptr::BackRef<Process>,
+    pub(crate) process: bun_ptr::BackRef<Process, bun_ptr::Mut>,
     pub(crate) stdin: JsCell<Writable<'a>>,
     pub(crate) stdout: JsCell<Readable>,
     pub(crate) stderr: JsCell<Readable>,
@@ -141,8 +141,7 @@ pub struct Subprocess<'a> {
     pub closed: Cell<EnumSet<StdioKind>>,
     pub this_value: JsCell<JsRef>,
 
-    /// `None` indicates all of the IPC data is uninitialized.
-    pub(crate) ipc_data: JsCell<Option<IPC::SendQueue>>,
+    pub(crate) ipc_data: Cell<Option<core::ptr::NonNull<IPC::SendQueue>>>,
     pub(crate) flags: Cell<Flags>,
 
     /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
@@ -425,8 +424,8 @@ impl Subprocess<'_> {
         // (rather than `socket != .closed`) keeps the wrapper Strong across the
         // window where the socket is already `.closed` but the task holding a
         // raw `*SendQueue` into `ipc_data` is still queued.
-        if let Some(ipc) = self.ipc_data.get() {
-            if !ipc.close_event_sent {
+        if let Some(ipc) = self.ipc() {
+            if !ipc.close_event_sent.get() {
                 return true;
             }
         }
@@ -836,7 +835,7 @@ impl Subprocess<'_> {
         };
         // `ipc()` centralises the single unsafe `JsCell` deref; `do_send` may
         // re-enter JS, but only the SendQueue is borrowed, not `*self`.
-        crate::ipc_host::do_send(this.ipc(), global, call_frame, context)
+        crate::ipc_host::do_send(this.ipc(), global, call_frame, context, this.pid() as u32)
     }
 
     pub(crate) fn disconnect_ipc(&self, next_tick: bool) {
@@ -850,18 +849,15 @@ impl Subprocess<'_> {
         _global_this: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        this.disconnect_ipc(true);
+        if let Some(ipc_data) = this.ipc() {
+            ipc_data.disconnect();
+        }
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_connected(this: &Self, _global_this: &JSGlobalObject) -> JSValue {
-        let connected = this
-            .ipc_data
-            .get()
-            .as_ref()
-            .map(|d| d.is_connected())
-            .unwrap_or(false);
+        let connected = this.ipc().map(|d| d.is_connected()).unwrap_or(false);
         JSValue::from(connected)
     }
 
@@ -942,7 +938,7 @@ impl Subprocess<'_> {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_process_exit(&self, process: *mut Process, status: &Status, rusage: &Rusage) {
         bun_output::scoped_log!(Subprocess, "onProcessExit()");
-        let this_jsvalue = self.this_value.get().try_get().unwrap_or(JSValue::ZERO);
+        let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
         // Copy the BackRef out so the `&JSGlobalObject` borrow is detached from `&self`
         // (mirrors the original `&'a` return — the global outlives `self`).
         let global_this = self.global_this;
@@ -1038,17 +1034,24 @@ impl Subprocess<'_> {
         // is moot once the direct child has exited.
         if let Readable::Pipe(pipe) = self.stdout.get() {
             if !pipe.reader.is_done() {
-                let reader = &mut Readable::pipe_reader_mut(pipe).reader;
-                reader.unpause();
-                reader.read();
+                let reader = &raw mut Readable::pipe_reader_mut(pipe).reader;
+                // SAFETY: live pipe reader; `read` is the raw re-entrancy-safe
+                // entry (its dispatch runs user JS).
+                unsafe {
+                    (*reader).unpause();
+                    bun_io::BufferedReader::read(reader);
+                }
             }
         }
 
         if let Readable::Pipe(pipe) = self.stderr.get() {
             if !pipe.reader.is_done() {
-                let reader = &mut Readable::pipe_reader_mut(pipe).reader;
-                reader.unpause();
-                reader.read();
+                let reader = &raw mut Readable::pipe_reader_mut(pipe).reader;
+                // SAFETY: as the stdout arm above.
+                unsafe {
+                    (*reader).unpause();
+                    bun_io::BufferedReader::read(reader);
+                }
             }
         }
 
@@ -1078,7 +1081,7 @@ impl Subprocess<'_> {
             let self_ptr = self.as_ctx_ptr().cast::<Subprocess<'static>>();
             if matches!(
                 *pipe.source.get(),
-                crate::webcore::streams::SourceHandle::Subprocess(p) if p.as_ptr() == self_ptr
+                crate::webcore::streams::SourceHandle::Subprocess(p) if p.as_const_ptr() == self_ptr.cast_const()
             ) {
                 // `source` is a `JsCell`; `with_mut` takes `&self`, so the
                 // shared `pipe: &FileSink` deref above is sufficient.
@@ -1255,10 +1258,11 @@ impl Subprocess<'_> {
         #[cfg(windows)]
         for item in self.stdio_pipes.replace(Vec::new()) {
             if let StdioResult::Buffer(buffer) = item {
-                // `uv_close` is async — the pipe must outlive this scope until
-                // `on_pipe_close` runs and reclaims the allocation. Hand the
-                // `Box` back to libuv as a raw pointer.
-                Box::leak(buffer).close(on_pipe_close);
+                // `uv_close` is async — the pipe must outlive this scope until the
+                // close callback reclaims the allocation; `close_and_destroy` also
+                // copes with a pipe that never got `uv_pipe_init`'d.
+                // SAFETY: Box-allocated uv::Pipe owned by this slot until now.
+                unsafe { bun_sys::windows::libuv::Pipe::close_and_destroy(Box::into_raw(buffer)) };
             }
         }
         #[cfg(not(windows))]
@@ -1348,14 +1352,17 @@ impl Subprocess<'_> {
         MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
         this.stderr_maxbuf.set(mb);
 
-        if let Some(ipc_data) = this.ipc_data.replace(None) {
+        if let Some(ipc_data) = this.ipc_data.take() {
             // In normal operation the socket is already `.closed` by the time we
             // get here (that is what allowed `computeHasPendingActivity` to drop
-            // to false and let GC collect us). `disconnectIPC` would be a no-op
-            // in that state and would leak the SendQueue's buffers; deinit it
-            // instead. `SendQueue.deinit` handles the VM-shutdown case where the
-            // socket is still open.
-            drop(ipc_data);
+            // to false and let GC collect us). Detach and release our ref; any
+            // still-queued close task holds its own ref and frees the SendQueue
+            // when it runs.
+            // SAFETY: `ipc_data` is the owned ref stored at spawn time.
+            unsafe {
+                (*ipc_data.as_ptr()).detach();
+                <IPC::SendQueue as bun_ptr::CellRefCounted>::deref(ipc_data.as_ptr());
+            }
         }
 
         this.update_flags(|f| f.insert(Flags::FINALIZED));
@@ -1428,7 +1435,7 @@ impl Subprocess<'_> {
             }
             IPC::DecodedIPCMessage::Data(data) => {
                 bun_output::scoped_log!(IPC, "Received IPC message from child");
-                let this_jsvalue = self.this_value.get().try_get().unwrap_or(JSValue::ZERO);
+                let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
                 let _keep = jsc::EnsureStillAlive(this_jsvalue);
                 if !this_jsvalue.is_empty() {
                     if let Some(cb) = js::ipc_callback_get_cached(this_jsvalue) {
@@ -1461,16 +1468,14 @@ impl Subprocess<'_> {
 
     pub(crate) fn handle_ipc_close(&self) {
         bun_output::scoped_log!(IPC, "Subprocess#handleIPCClose");
-        let this_jsvalue = self.this_value.get().try_get().unwrap_or(JSValue::ZERO);
+        let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
         let _keep = jsc::EnsureStillAlive(this_jsvalue);
         let global_this = self.global_this;
         let global_this = global_this.get();
         self.update_has_pending_activity();
 
         if !this_jsvalue.is_empty() {
-            // Avoid keeping the callback alive longer than necessary
-            js::ipc_callback_set_cached(this_jsvalue, global_this, JSValue::ZERO);
-
+            // The ipc callback is kept: a server/dgram handle still adopting at EOF is delivered afterwards, as in node.
             // Call the onDisconnectCallback if it exists and prevent it from being kept alive longer than necessary
             if let Some(callback) =
                 js::on_disconnect_callback_take_cached(this_jsvalue, global_this)
@@ -1490,12 +1495,9 @@ impl Subprocess<'_> {
         }
     }
 
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn ipc(&self) -> Option<&mut IPC::SendQueue> {
-        // SAFETY: single JS-mutator thread; the SendQueue is inline in the
-        // `JsCell` and callers do not hold the borrow across JS re-entry that
-        // touches `ipc_data` itself.
-        unsafe { self.ipc_data.get_mut() }.as_mut()
+    pub(crate) fn ipc(&self) -> Option<&IPC::SendQueue> {
+        // SAFETY: `ipc_data` is our owned ref; live until `finalize`.
+        self.ipc_data.get().map(|p| unsafe { &*p.as_ptr() })
     }
 }
 
@@ -1536,6 +1538,42 @@ pub(crate) fn source_from_blob(b: webcore::AnyBlob) -> Source {
 #[inline]
 pub(crate) fn source_from_array_buffer(ab: jsc::array_buffer::ArrayBufferStrong) -> Source {
     Source::Any(Box::new(ArrayBufferSource(ab)))
+}
+
+/// Windows: the extra stdio pipes (`stdio_pipes`) are uv handles this
+/// Subprocess owns without a reader/writer in front of them; record that so a
+/// thread teardown closes them through us (and `finalize_streams` then finds
+/// the slots empty) instead of anyone closing them twice.
+#[cfg(windows)]
+impl Subprocess<'_> {
+    pub(crate) fn record_stdio_pipe_ownership(this: *mut Self) {
+        // SAFETY: `this` is the live boxed Subprocess (stable address).
+        let me = unsafe { &*this };
+        for item in me.stdio_pipes.get().iter() {
+            if let StdioResult::Buffer(buffer) = item {
+                bun_sys::windows::libuv::open_handles::set_owner(
+                    core::ptr::from_ref::<bun_sys::windows::libuv::Pipe>(&**buffer)
+                        .cast_mut()
+                        .cast(),
+                    this.cast(),
+                    Some(Self::stop_for_vm_teardown),
+                );
+            }
+        }
+    }
+
+    /// `uv::open_handles` entry point: close every stdio pipe still held here.
+    unsafe fn stop_for_vm_teardown(this: *mut core::ffi::c_void) {
+        // SAFETY: recorded by `record_stdio_pipe_ownership` for this live
+        // Subprocess; each pipe leaves the list as its uv_close is issued.
+        let me = unsafe { &*this.cast::<Self>() };
+        for item in me.stdio_pipes.replace(Vec::new()) {
+            if let StdioResult::Buffer(buffer) = item {
+                // SAFETY: Box-allocated uv::Pipe owned by this slot until now.
+                unsafe { bun_sys::windows::libuv::Pipe::close_and_destroy(Box::into_raw(buffer)) };
+            }
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -1592,7 +1630,10 @@ pub mod testing_apis {
         {
             let _ = Readable::pipe_reader_mut(pipe).reader.stop_reading();
         }
-        Readable::pipe_reader_mut(pipe).reader.on_error(fake_err);
+        let reader = &raw mut Readable::pipe_reader_mut(pipe).reader;
+        // SAFETY: live pipe reader; `on_error` is the raw entry so the
+        // (maybe-freeing) error dispatch runs under no receiver protector.
+        unsafe { bun_io::BufferedReader::on_error(reader, fake_err) };
         Ok(JSValue::TRUE)
     }
 }

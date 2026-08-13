@@ -256,6 +256,12 @@ void readableStreamFulfillReadIntoRequest(JSGlobalObject* globalObject, JSReadab
         readIntoRequest->chunkSteps(globalObject, chunk);
 }
 
+void readableStreamClearSourceBarriers(JSReadableStream* stream)
+{
+    stream->m_asyncContext.clear();
+    stream->m_directUnderlyingSource.clear();
+}
+
 // ReadableStreamClose(stream)
 void readableStreamClose(JSGlobalObject* globalObject, JSReadableStream* stream)
 {
@@ -324,6 +330,7 @@ void readableStreamError(JSGlobalObject* globalObject, JSReadableStream* stream,
     ASSERT(stream->m_state == ReadableStreamState::Readable);
     stream->m_state = ReadableStreamState::Errored;
     stream->m_storedError.set(vm, stream, error);
+    readableStreamClearSourceBarriers(stream);
     rejectStreamClosedPromise(vm, stream, error);
     auto* reader = stream->m_reader.get();
     if (!reader)
@@ -440,6 +447,8 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
             pendingRead->fulfill(vm, doneResult);
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
+        controller->m_closed = true;
+        directStreamControllerClearSource(controller);
         sourceCancelPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
         break;
     }
@@ -462,6 +471,8 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     }
     }
     RETURN_IF_EXCEPTION(scope, nullptr);
+
+    readableStreamClearSourceBarriers(stream);
 
     auto* result = JSPromise::create(vm, globalObject->promiseStructure());
     sourceCancelPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReturnUndefined(), jsUndefined(), result, jsUndefined());
@@ -538,7 +549,7 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
         auto* controller = defaultControllerOf(stream);
         controller->releaseSteps();
         // Bun: drop the native handle's event-loop ref when its consumer releases the lock.
-        if (stream->m_nativePtr && controller->m_algorithms.kind == SourceKind::Native) {
+        if (controller->m_algorithms.kind == SourceKind::Native) {
             const auto* adapter = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
             if (auto* handle = adapter->handle()) {
                 JSValue updateRef = handle->getIfPropertyExists(globalObject, builtinNames(vm).updateRefPublicName());

@@ -72,15 +72,6 @@ public:
 
     JSC::JSPromise* internalPromise();
 
-    static std::array<JSValue, numberOfInternalFields> initialValues()
-    {
-        return { {
-            jsUndefined(),
-            jsUndefined(),
-            jsUndefined(),
-        } };
-    }
-
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
 

@@ -88,9 +88,6 @@ pub enum MessageId {
     Version = b'V',
     HotUpdate = b'u',
     Errors = b'e',
-    BrowserMessage = b'b',
-    BrowserMessageClear = b'B',
-    RequestHandlerError = b'h',
     Visualizer = b'v',
     MemoryVisualizer = b'M',
     SetUrlResponse = b'n',
@@ -343,7 +340,7 @@ impl ResponseLike for bun_uws::AnyResponse {
 pub struct HmrSocket {
     /// BACKREF: owned by `dev.active_websocket_connections`; destroyed via
     /// `remove` + `heap::take` in `on_close`.
-    pub(crate) dev: bun_ptr::BackRef<DevServer>,
+    pub(crate) dev: bun_ptr::BackRef<DevServer, bun_ptr::Mut>,
     pub(crate) underlying: Option<bun_uws::AnyWebSocket>,
     pub(crate) subscriptions: super::dev_server_body::HmrTopicBits,
     /// By telling DevServer the active route, this enables receiving detailed
@@ -394,6 +391,18 @@ pub struct HotReloadEvent {
 
 impl bun_event_loop::Taskable for HotReloadEvent {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BakeHotReloadEvent;
+    /// An inline slot of the watcher's `WatcherAtomics`. If its DevServer is
+    /// gone (`owner` nulled by `Drop for DevServer`, which then leaves the
+    /// atomics to the queued event), this was the last thing keeping the
+    /// atomics alive; otherwise the DevServer still owns them.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract; `atomics` is the heap WatcherAtomics `this` lives in.
+        unsafe {
+            if (*this).owner.is_null() {
+                bun_core::heap::destroy((*this).atomics);
+            }
+        }
+    }
 }
 
 impl HotReloadEvent {
@@ -964,11 +973,12 @@ impl WatcherAtomics {
                         task: bun_event_loop::Task::init(ev),
                         ..Default::default()
                     };
-                    // `vm` is a `BackRef` (safe Deref); `event_loop` points at a
-                    // sibling field of `VirtualMachine`. The queued node pointer
-                    // is derived from `ev` (allocation-root provenance) so it
-                    // stays valid across `Drop for DevServer`'s writes.
-                    (*(&(*(*ev).owner).vm).event_loop).enqueue_task_concurrent(
+                    // The queued node pointer is derived from `ev` (allocation-root
+                    // provenance) so it stays valid across `Drop for DevServer`'s
+                    // writes. Refused ⇒ the VM is torn down; the event is one of
+                    // DevServer's inline slots and simply never runs.
+                    let _ = (*(*ev).owner).vm_handle.post(
+                        bun_jsc::LoopKind::Regular,
                         core::ptr::NonNull::new_unchecked(&raw mut (*ev).concurrent_task),
                     );
                 }

@@ -236,15 +236,7 @@ void JSEventPrototype::finishCreation(VM& vm)
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
-const ClassInfo JSEvent::s_info = { "Event"_s, &Base::s_info, &JSEventTable
-#if 0
-    ,
-    &checkSubClassSnippetForJSEvent
-#else
-    ,
-    nullptr
-#endif
-    ,
+const ClassInfo JSEvent::s_info = { "Event"_s, &Base::s_info, &JSEventTable, nullptr,
     CREATE_METHOD_TABLE(JSEvent) };
 
 JSEvent::JSEvent(Structure* structure, JSDOMGlobalObject& globalObject, Ref<Event>&& impl)

@@ -78,8 +78,6 @@ using namespace JSC;
 
 // Functions
 
-// static JSC_DECLARE_HOST_FUNCTION(jsPerformancePrototypeFunction_now);
-
 static JSC_DECLARE_HOST_FUNCTION(jsPerformancePrototypeFunction_toJSON);
 static JSC_DECLARE_HOST_FUNCTION(jsPerformancePrototypeFunction_getEntries);
 static JSC_DECLARE_HOST_FUNCTION(jsPerformancePrototypeFunction_getEntriesByType);
@@ -98,9 +96,6 @@ static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceConstructor);
 // Attributes
 
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceConstructor);
-// static JSC_DECLARE_CUSTOM_GETTER(jsPerformance_timeOrigin);
-
-// static JSC_DECLARE_CUSTOM_GETTER(jsPerformance_navigation);
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformance_timing);
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformance_onresourcetimingbufferfull);
 static JSC_DECLARE_CUSTOM_SETTER(setJSPerformance_onresourcetimingbufferfull);
@@ -201,11 +196,8 @@ template<> void JSPerformanceDOMConstructor::initializeProperties(VM& vm, JSDOMG
 
 static const HashTableValue JSPerformancePrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceConstructor, 0 } },
-    // { "timeOrigin"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformance_timeOrigin, 0 } },
-    // { "navigation"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformance_navigation, 0 } },
     { "timing"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformance_timing, 0 } },
     { "onresourcetimingbufferfull"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformance_onresourcetimingbufferfull, setJSPerformance_onresourcetimingbufferfull } },
-    // { "now"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformancePrototypeFunction_now, 0 } },
     { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformancePrototypeFunction_toJSON, 0 } },
     { "getEntries"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformancePrototypeFunction_getEntries, 0 } },
     { "getEntriesByType"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformancePrototypeFunction_getEntriesByType, 1 } },
@@ -229,23 +221,6 @@ void JSPerformancePrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSPerformance::info(), JSPerformancePrototypeTableValues, *this);
-    // bool hasDisabledRuntimeProperties = false;
-    // if (!(globalObject())->inherits<JSDOMWindowBase>()) {
-    //     hasDisabledRuntimeProperties = true;
-    //     auto propertyName = Identifier::fromString(vm, "navigation"_s);
-    //     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-    //     DeletePropertySlot slot;
-    //     JSObject::deleteProperty(this, globalObject(), propertyName, slot);
-    // }
-    // if (!(globalObject())->inherits<JSDOMWindowBase>()) {
-    //     hasDisabledRuntimeProperties = true;
-    //     auto propertyName = Identifier::fromString(vm, "timing"_s);
-    //     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-    //     DeletePropertySlot slot;
-    //     JSObject::deleteProperty(this, globalObject(), propertyName, slot);
-    // }
-    // if (hasDisabledRuntimeProperties && structure()->isDictionary())
-    //     flattenDictionaryObject(vm);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -316,32 +291,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceConstructor, (JSGlobalObject * lexicalGlob
     return JSValue::encode(JSPerformance::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
-// static inline JSValue jsPerformance_timeOriginGetter(JSGlobalObject& lexicalGlobalObject, JSPerformance& thisObject)
-// {
-//     auto& vm = JSC::getVM(&lexicalGlobalObject);
-//     auto throwScope = DECLARE_THROW_SCOPE(vm);
-//     auto& impl = thisObject.wrapped();
-//     RELEASE_AND_RETURN(throwScope, (toJS<IDLDouble>(lexicalGlobalObject, throwScope, impl.timeOrigin())));
-// }
-
-// JSC_DEFINE_CUSTOM_GETTER(jsPerformance_timeOrigin, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-// {
-//     return IDLAttribute<JSPerformance>::get<jsPerformance_timeOriginGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
-// }
-
-// static inline JSValue jsPerformance_navigationGetter(JSGlobalObject& lexicalGlobalObject, JSPerformance& thisObject)
-// {
-//     auto& vm = JSC::getVM(&lexicalGlobalObject);
-//     auto throwScope = DECLARE_THROW_SCOPE(vm);
-//     auto& impl = thisObject.wrapped();
-//     RELEASE_AND_RETURN(throwScope, (toJS<IDLInterface<PerformanceNavigation>>(lexicalGlobalObject, *thisObject.globalObject(), throwScope, impl.navigation())));
-// }
-
-// JSC_DEFINE_CUSTOM_GETTER(jsPerformance_navigation, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-// {
-//     return IDLAttribute<JSPerformance>::get<jsPerformance_navigationGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
-// }
-
 static inline JSValue jsPerformance_timingGetter(JSGlobalObject& lexicalGlobalObject, JSPerformance& thisObject)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
@@ -382,21 +331,6 @@ JSC_DEFINE_CUSTOM_SETTER(setJSPerformance_onresourcetimingbufferfull, (JSGlobalO
     return IDLAttribute<JSPerformance>::set<setJSPerformance_onresourcetimingbufferfullSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
 
-// static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_nowBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSPerformance>::ClassParameter castedThis)
-// {
-//     auto& vm = JSC::getVM(lexicalGlobalObject);
-//     auto throwScope = DECLARE_THROW_SCOPE(vm);
-//     UNUSED_PARAM(throwScope);
-//     UNUSED_PARAM(callFrame);
-//     auto& impl = castedThis->wrapped();
-//     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.now())));
-// }
-
-// JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_now, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
-// {
-//     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_nowBody>(*lexicalGlobalObject, *callFrame, "now");
-// }
-
 static inline EncodedJSValue jsPerformancePrototypeFunction_toJSONBody(JSGlobalObject* lexicalGlobalObject, CallFrame*, JSPerformance* castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -407,16 +341,9 @@ static inline EncodedJSValue jsPerformancePrototypeFunction_toJSONBody(JSGlobalO
     auto timeOriginValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.timeOrigin());
     RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "timeOrigin"_s), timeOriginValue);
-    // if ((castedThis->globalObject())->inherits<JSDOMWindowBase>()) {
-    //     auto navigationValue = toJS<IDLInterface<PerformanceNavigation>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.navigation());
-    //     RETURN_IF_EXCEPTION(throwScope, { });
-    //     result->putDirect(vm, Identifier::fromString(vm, "navigation"_s), navigationValue);
-    // }
-    // if ((castedThis->globalObject())->inherits<JSDOMWindowBase>()) {
     auto timingValue = toJS<IDLInterface<PerformanceTiming>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.timing());
     RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "timing"_s), timingValue);
-    // }
     return JSValue::encode(result);
 }
 

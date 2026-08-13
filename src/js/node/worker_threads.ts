@@ -1,5 +1,3 @@
-// import type { Readable, Writable } from "node:stream";
-// import type { WorkerOptions } from "node:worker_threads";
 declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
@@ -81,6 +79,7 @@ const {
   8: _markAsUncloneable,
   9: _setEntryEvaluatedHook,
   10: _isNodeWorker,
+  11: _setParentPort,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -93,6 +92,7 @@ const {
   (value: unknown) => void,
   (hook: () => void) => void,
   boolean,
+  (port: MessagePort) => void,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -321,6 +321,10 @@ let resourceLimits = {};
 
 const BUN_WORKER_STDIO_KEY = "@@bunWorkerThreadsStdio";
 const BUN_WORKER_MESSAGING_KEY = "@@bunWorkerThreadsMessaging";
+// The worker's `parentPort`: port2 of a channel whose port1 is the parent
+// Worker's public port (node's kPublicPort). Rides inside workerData like the
+// stdio and control ports.
+const BUN_WORKER_PARENT_PORT_KEY = "@@bunWorkerThreadsParentPort";
 
 // Captured stdio rides a dedicated MessageChannel per stream with node's flow
 // control (lib/internal/worker/io.js): the writer posts an array of chunks
@@ -723,6 +727,10 @@ let workerData = unpackJSTransferables(_workerData);
 let threadId = _threadId;
 // node: main-thread and unspecified-worker name are both "" (trimmed).
 const threadName = isMainThread ? "" : (_threadName ?? "");
+// Set below from the transferred port for node workers; a raw `new Worker()`
+// (web) that loads this module has no parent port pair, so it keeps the
+// global-scope facade.
+let parentPort: MessagePort | null = null;
 // postMessageToThread (Node 22+): the Worker ctor always smuggles a control
 // MessagePort to the worker by wrapping workerData; unwrap it here.
 const messaging = require("internal/worker/messaging");
@@ -736,20 +744,35 @@ if (
   _isNodeWorker &&
   workerData &&
   typeof workerData === "object" &&
-  (BUN_WORKER_STDIO_KEY in workerData || BUN_WORKER_MESSAGING_KEY in workerData)
+  (BUN_WORKER_STDIO_KEY in workerData ||
+    BUN_WORKER_MESSAGING_KEY in workerData ||
+    BUN_WORKER_PARENT_PORT_KEY in workerData)
 ) {
   const stdioPorts = workerData[BUN_WORKER_STDIO_KEY];
   const controlPort = workerData[BUN_WORKER_MESSAGING_KEY];
+  const transferredParentPort = workerData[BUN_WORKER_PARENT_PORT_KEY];
   workerData = workerData.data;
   if (stdioPorts) setupWorkerStdio(stdioPorts);
   if (controlPort) messaging.setupMainThreadPort(controlPort, _setEntryEvaluatedHook);
+  // A real MessagePort entangled with the parent Worker's public port: adding a
+  // 'message' listener starts it and keeps this thread alive; close()/unref()/
+  // removing the listeners let the thread exit — node's parentPort lifecycle.
+  if (transferredParentPort) {
+    parentPort = transferredParentPort;
+    // node auto-starts parentPort, but delivery waits until the entry module has
+    // evaluated (registering it natively is how start() knows to defer). Only
+    // parentPort receives what the parent posts: `self.onmessage` on the global
+    // scope is not a channel in a node worker, as in node. The port arrives
+    // without a loop ref, so an unlistened parentPort does not by itself keep
+    // the thread alive (a 'message' listener refs it, as in node).
+    _setParentPort(parentPort);
+    parentPort.start();
+  }
 }
+if (!isMainThread && parentPort === null) parentPort = fakeParentPort();
 function receiveMessageOnPort(port: MessagePort) {
-  let res = _receiveMessageOnPort(port);
-  if (!res) return undefined;
-  return {
-    message: res,
-  };
+  // Native returns node's shape directly: `undefined` when empty, else `{ message }`.
+  return _receiveMessageOnPort(port);
 }
 
 // TODO: parent port emulation is not complete
@@ -773,7 +796,7 @@ function fakeParentPort() {
     },
   });
 
-  const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
+  const postMessage = $newCppFunction("Worker.cpp", "jsFunctionPostMessage", 1);
   Object.defineProperty(fake, "postMessage", {
     value(...args: [any, any]) {
       return postMessage.$apply(null, args);
@@ -826,7 +849,6 @@ function fakeParentPort() {
 
   return fake;
 }
-let parentPort: MessagePort | null = isMainThread ? null : fakeParentPort();
 
 // In a node:worker_threads worker, several process operations are unsupported.
 // Gate on _isNodeWorker so a raw `new globalThis.Worker` that transitively loads
@@ -931,6 +953,8 @@ class Worker extends EventEmitter {
   #exited = false;
   #stdinPort;
   #stdoutPort;
+  // node's kPublicPort: parent end of the parentPort channel.
+  #publicPort!: MessagePort;
   #stderrPort;
   #stdin;
   #stdout;
@@ -1014,7 +1038,17 @@ class Worker extends EventEmitter {
       const channel = messaging.createMessagingChannel();
       portToMain = channel.portToMain;
       const portToWorker = channel.portToWorker;
-      const workerDataWrapper: any = { [BUN_WORKER_MESSAGING_KEY]: portToWorker, data: options.workerData };
+      // Public port pair (node's kPublicPort / parentPort): worker.postMessage()
+      // and 'message'/'messageerror' travel over it, so parentPort inside the
+      // worker is a real MessagePort with node's close/ref/unref semantics.
+      const publicChannel = new MessageChannel();
+      this.#publicPort = publicChannel.port1;
+      const parentPortForWorker = publicChannel.port2;
+      const workerDataWrapper: any = {
+        [BUN_WORKER_MESSAGING_KEY]: portToWorker,
+        [BUN_WORKER_PARENT_PORT_KEY]: parentPortForWorker,
+        data: options.workerData,
+      };
       // stdout/stderr always create channels (stdin only when requested), so the
       // worker always receives a stdio control object.
       workerDataWrapper[BUN_WORKER_STDIO_KEY] = stdioForWorker;
@@ -1025,8 +1059,8 @@ class Worker extends EventEmitter {
         name: this.#name,
         workerData: workerDataWrapper,
         transferList: options.transferList
-          ? [...options.transferList, portToWorker, ...stdioTransfer]
-          : [portToWorker, ...stdioTransfer],
+          ? [...options.transferList, portToWorker, parentPortForWorker, ...stdioTransfer]
+          : [portToWorker, parentPortForWorker, ...stdioTransfer],
       };
 
       // env: SHARE_ENV becomes a native boolean flag so it passes native option
@@ -1078,11 +1112,27 @@ class Worker extends EventEmitter {
     require("internal/trace_events").emitWorkerThreadName(options.name, this.#worker.threadId);
     this.#worker.addEventListener("close", this.#onClose.bind(this), { once: true });
     this.#worker.addEventListener("error", this.#onError.bind(this));
-    this.#worker.addEventListener("message", this.#onMessage.bind(this));
-    this.#worker.addEventListener("messageerror", this.#onMessageError.bind(this));
     this.#worker.addEventListener("open", this.#onOpen.bind(this), {
       once: true,
     });
+    // Messages from parentPort.postMessage() arrive on the public port. Listening
+    // starts the port. Node's setupPortReferencing: the port counts toward the
+    // parent's liveness only while this Worker has 'message' listeners (and
+    // ref()/unref() also touch it, together with the handle).
+    this.#publicPort.addEventListener("message", this.#onMessage.bind(this));
+    this.#publicPort.addEventListener("messageerror", this.#onMessageError.bind(this));
+    this.#publicPort.unref();
+    const publicPort = this.#publicPort;
+    this.on("newListener", function (this: Worker, name) {
+      if (name === "message" && this.listenerCount("message") === 0) publicPort.ref();
+    });
+    this.on("removeListener", function (this: Worker, name) {
+      if (name === "message" && this.listenerCount("message") === 0) publicPort.unref();
+    });
+    // A worker may also use the Web Worker global `postMessage()` / `self.onmessage`
+    // pair, which travels through the Worker object itself; surface those too.
+    this.#worker.addEventListener("message", this.#onMessage.bind(this));
+    this.#worker.addEventListener("messageerror", this.#onMessageError.bind(this));
 
     if (this.#urlToRevoke) {
       if (!urlRevokeRegistry) {
@@ -1103,13 +1153,15 @@ class Worker extends EventEmitter {
   }
 
   ref() {
-    // stdio ports are not touched here (node's ref()/unref() only touch the
-    // handle and the public port); their ref state tracks in-flight I/O.
+    // node's ref()/unref() touch the handle and the public port; stdio ports'
+    // ref state tracks in-flight I/O.
     this.#worker.ref();
+    this.#publicPort.ref();
   }
 
   unref() {
     this.#worker.unref();
+    this.#publicPort.unref();
   }
 
   get stdin() {
@@ -1180,7 +1232,8 @@ class Worker extends EventEmitter {
   }
 
   postMessage(...args: [any, any]) {
-    return this.#worker.postMessage.$apply(this.#worker, args);
+    if (this.#exited) return;
+    return this.#publicPort.postMessage.$apply(this.#publicPort, args);
   }
 
   getHeapSnapshot(options: unknown) {
@@ -1289,6 +1342,15 @@ class Worker extends EventEmitter {
       this.#stdin.destroy();
     }
     this.#stdinPort?.close();
+    // node delivers everything the worker posted before it exited ahead of
+    // 'exit' (kOnExit drains the public port), then closes the port.
+    {
+      let entry;
+      while ((entry = _receiveMessageOnPort(this.#publicPort)) !== undefined) {
+        this.emit("message", entry.message);
+      }
+      this.#publicPort.close();
+    }
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
   }

@@ -1,24 +1,56 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { resolveObjectURL } from "node:buffer";
+import util from "node:util";
 
 describe("url", () => {
   it("URL throws", () => {
-    expect(() => new URL("")).toThrow('"" cannot be parsed as a URL');
-    expect(() => new URL(" ")).toThrow('" " cannot be parsed as a URL');
-    expect(() => new URL("boop", "http!/example.com")).toThrow(
-      '"boop" cannot be parsed as a URL against "http!/example.com"',
-    );
+    // Node-compatible message: exactly "Invalid URL".
+    expect(() => new URL("")).toThrow("Invalid URL");
+    expect(() => new URL(" ")).toThrow("Invalid URL");
+    expect(() => new URL("boop", "http!/example.com")).toThrow("Invalid URL");
     expect(() => new URL("boop", "http!/example.com")).toThrow(
       expect.objectContaining({
         code: "ERR_INVALID_URL",
       }),
     );
+    expect(() => new URL("boop", "https!!username:password@example.com")).toThrow("Invalid URL");
+  });
 
-    // redact
-    expect(() => new URL("boop", "https!!username:password@example.com")).toThrow(
-      '"boop" cannot be parsed as a URL against <redacted>',
-    );
+  it("ERR_INVALID_URL carries input and, when given, base", () => {
+    try {
+      new URL("//[", "http://x");
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.code).toBe("ERR_INVALID_URL");
+      expect(e.input).toBe("//[");
+      expect(e.base).toBe("http://x");
+    }
+    // base itself invalid: both still surface, base is the raw string.
+    try {
+      new URL("boop", "http!/example.com");
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.input).toBe("boop");
+      expect(e.base).toBe("http!/example.com");
+    }
+    // One-arg form: .base must be absent, not undefined-valued.
+    try {
+      new URL("::");
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.input).toBe("::");
+      expect("base" in e).toBe(false);
+    }
+    // href setter has no base argument, so no .base either.
+    const u = new URL("http://x");
+    try {
+      u.href = "::";
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.input).toBe("::");
+      expect("base" in e).toBe(false);
+    }
   });
 
   it("should have correct origin and protocol", () => {
@@ -82,22 +114,69 @@ describe("url", () => {
     expect(url.protocol).toBe("blob:");
     expect(url.origin).toBe("file://");
   });
+  it("leaves opaque (non-special-scheme) hosts unchanged", () => {
+    // Non-special schemes never run IDNA; the host is UTF-8 percent-encoded
+    // verbatim per WHATWG and node/ada. U+1E9E is an IDNA delta source for
+    // special schemes only.
+    expect(new URL("foo://\u1E9E.com/").href).toBe("foo://%E1%BA%9E.com/");
+    expect(new URL("foo://a\u180Eb/").href).toBe("foo://a%E1%A0%8Eb/");
+    // special scheme: delta applies, host is IDNA-processed.
+    expect(new URL("http://\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    // Non-canonical special-scheme authority forms reach IDNA too.
+    expect(new URL("http:/\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    expect(new URL("http:\\\\\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    expect(new URL("\t//\u1E9E.com", "http://x/").href).toBe("http://xn--zca.com/");
+    // Same scheme as the base without "//" is relative-state (path, not host):
+    // the delta source stays percent-encoded verbatim.
+    expect(new URL("http:foo\u1E9E", "http://host/").pathname).toBe("/foo%E1%BA%9E");
+    // Cross-scheme reaches the authority state and IDNA runs.
+    expect(new URL("http:\u1E9E.com", "ftp://host/").href).toBe("http://xn--zca.com/");
+    // file: only has a host with exactly two slashes; ///x and /x are path.
+    expect(new URL("file:///\u1E9E.txt").pathname).toBe("/%E1%BA%9E.txt");
+    expect(new URL("file:/\u1E9E.txt").pathname).toBe("/%E1%BA%9E.txt");
+    expect(new URL("file://\u1E9E/x").host).toBe("xn--zca");
+    // Bracketed hosts go to the IPv6 parser, never IDNA.
+    expect(() => new URL("http://[::\u180E1]/")).toThrow();
+    // tab/LF/CR are stripped from anywhere in the input before parsing, so an
+    // embedded tab in the scheme or between : and // must not defeat the delta.
+    expect(new URL("ht\ttp://\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    expect(new URL("http:\n//\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    // The port span is left verbatim: an ignored-class delta source
+    // (U+180E) in the port must still fail the WHATWG port state, not be
+    // stripped into a valid digit run. The same char in the host is fine.
+    expect(() => new URL("http://foo:8\u180E0/")).toThrow();
+    expect(new URL("http://foo\u180E:80/").href).toBe("http://foo/");
+    // setter on a non-special scheme: opaque host stays verbatim.
+    const u = new URL("foo://x/");
+    u.hostname = "\u1E9E";
+    expect(u.hostname).toBe("%E1%BA%9E");
+    // url.host setter: delta applies to the host span only, port stays
+    // verbatim so an ignored-class code point there is not stripped into a
+    // valid digit run.
+    const h1 = new URL("http://x/");
+    h1.host = "foo:8\u206A0";
+    expect(h1.port).toBe("8");
+    const h2 = new URL("http://x/");
+    h2.host = "foo\u1E9E:81";
+    expect(h2.host).toBe("xn--foo-7ka:81");
+  });
+
   it("prints", () => {
+    // URL.prototype carries [Symbol.for("nodejs.util.inspect.custom")], so
+    // Bun.inspect matches node's util.inspect output.
     expect(Bun.inspect(new URL("https://example.com"))).toBe(`URL {
-  href: "https://example.com/",
-  origin: "https://example.com",
-  protocol: "https:",
-  username: "",
-  password: "",
-  host: "example.com",
-  hostname: "example.com",
-  port: "",
-  pathname: "/",
-  hash: "",
-  search: "",
-  searchParams: ${Bun.inspect(new URLSearchParams())},
-  toJSON: [Function: toJSON],
-  toString: [Function: toString],
+  href: 'https://example.com/',
+  origin: 'https://example.com',
+  protocol: 'https:',
+  username: '',
+  password: '',
+  host: 'example.com',
+  hostname: 'example.com',
+  port: '',
+  pathname: '/',
+  search: '',
+  searchParams: URLSearchParams {},
+  hash: ''
 }`);
 
     expect(
@@ -105,21 +184,56 @@ describe("url", () => {
         new URL("https://github.com/oven-sh/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night"),
       ),
     ).toBe(`URL {
-  href: "https://github.com/oven-sh/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night",
-  origin: "https://github.com",
-  protocol: "https:",
-  username: "",
-  password: "",
-  host: "github.com",
-  hostname: "github.com",
-  port: "",
-  pathname: "/oven-sh/bun/issues/135",
-  hash: "",
-  search: "?hello%20i%20have%20spaces%20thank%20you%20good%20night",
-  searchParams: URLSearchParams {\n    \"hello i have spaces thank you good night\": \"\",\n  },
-  toJSON: [Function: toJSON],
-  toString: [Function: toString],
+  href: 'https://github.com/oven-sh/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night',
+  origin: 'https://github.com',
+  protocol: 'https:',
+  username: '',
+  password: '',
+  host: 'github.com',
+  hostname: 'github.com',
+  port: '',
+  pathname: '/oven-sh/bun/issues/135',
+  search: '?hello%20i%20have%20spaces%20thank%20you%20good%20night',
+  searchParams: URLSearchParams { 'hello i have spaces thank you good night' => '' },
+  hash: ''
 }`);
+  });
+
+  it("URLContext offsets account for the /. pathname guard", () => {
+    // URL Standard section 4.5 step 3: null host + empty first path segment
+    // serializes with a /. guard the pathname getter omits, so offsets from
+    // pathname_start on are shifted by 2 in the href.
+    expect(util.inspect(new URL("foo:/.//?x"), { showHidden: true })).toBe(`URL {
+  href: 'foo:/.//?x',
+  origin: 'null',
+  protocol: 'foo:',
+  username: '',
+  password: '',
+  host: '',
+  hostname: '',
+  port: '',
+  pathname: '//',
+  search: '?x',
+  searchParams: URLSearchParams { 'x' => '' },
+  hash: '',
+  Symbol(context): URLContext {
+    href: 'foo:/.//?x',
+    protocol_end: 4,
+    username_end: 4,
+    host_start: 4,
+    host_end: 4,
+    pathname_start: 6,
+    search_start: 8,
+    hash_start: 4294967295,
+    port: 4294967295,
+    scheme_type: 1,
+    [hasPort]: [Getter],
+    [hasSearch]: [Getter],
+    [hasHash]: [Getter]
+  }
+}`);
+    // A path whose first segment merely starts with "." gets no guard.
+    expect(util.inspect(new URL("foo:/.foo"), { showHidden: true })).toContain("pathname_start: 4,");
   });
   it("works", () => {
     const inputs = [
@@ -415,6 +529,31 @@ describe("object URL prefix check", () => {
     });
     URL.revokeObjectURL(real);
     expect(resolveObjectURL(real)).toBeUndefined();
+  });
+
+  // `is_string()` admits `StringObject`, so `to_bun_string` can hit a user
+  // `toString` that throws; that must surface as a catchable JS exception.
+  test("revokeObjectURL propagates a throwing toString on a String object", async () => {
+    const fixture = `
+      const s = new String("blob:x");
+      s.toString = () => { throw new Error("boom"); };
+      s[Symbol.toPrimitive] = () => { throw new Error("boom"); };
+      try { URL.revokeObjectURL(s); } catch (e) { console.log("caught", e.message); }
+      console.log("survived");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "caught boom\nsurvived\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 
   // bun_core::String::{has_prefix_comptime, eql_comptime} used to scan or

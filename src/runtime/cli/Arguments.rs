@@ -162,6 +162,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--watch                           Automatically restart the process on file change"
     ),
     parse_param!(
+        "--watch-kill-signal <STR>         Signal whose handlers run when --watch restarts the process (default: \"SIGTERM\")"
+    ),
+    parse_param!(
         "--hot                             Enable auto reload in the Bun runtime, test runner, or bundler"
     ),
     parse_param!(
@@ -199,7 +202,7 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--cpu-prof-interval <STR>         Specify the sampling interval in microseconds for CPU profiling (default: 1000)"
     ),
     parse_param!(
-        "--heap-prof                       Generate V8 heap snapshot on exit (.heapsnapshot)"
+        "--heap-prof                       Write a heap profile to disk on exit (.heapprofile)"
     ),
     parse_param!("--heap-prof-name <STR>            Specify the name of the heap profile file"),
     parse_param!(
@@ -207,6 +210,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     ),
     parse_param!(
         "--heap-prof-md                    Generate markdown heap profile on exit (for CLI analysis)"
+    ),
+    parse_param!(
+        "--heap-prof-interval <STR>        Specify the average sampling interval in bytes for heap profiling (default: 524288)"
     ),
     parse_param!(
         "--if-present                      Exit without an error if the entrypoint does not exist"
@@ -242,6 +248,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB"
     ),
     parse_param!(
+        "--insecure-http-parser            Use an insecure HTTP parser that accepts invalid HTTP headers"
+    ),
+    parse_param!(
         "--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first"
     ),
     parse_param!(
@@ -255,6 +264,16 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     ),
     parse_param!(
         "--throw-deprecation               Determine whether or not deprecation warnings result in errors."
+    ),
+    parse_param!("--no-warnings                     Silence all process warnings"),
+    parse_param!("--trace-warnings                  Show stack traces on process warnings"),
+    parse_param!("--trace-deprecation               Show stack traces on deprecations"),
+    parse_param!("--pending-deprecation             Emit pending deprecation warnings"),
+    parse_param!(
+        "--redirect-warnings <STR>         Write process warnings to the given file instead of printing to stderr"
+    ),
+    parse_param!(
+        "--disable-warning <STR>...        Silence specific process warnings by code or type"
     ),
     parse_param!("--title <STR>                     Set the process title"),
     parse_param!(
@@ -598,6 +617,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--isolate                        Run each test file in a fresh global object. Leaked handles from one file cannot affect another."
     ),
     parse_param!(
+        "--no-isolate                     With --parallel: let each worker keep one global and module registry across the files it runs (faster; files can see each other's leftovers)."
+    ),
+    parse_param!(
         "--parallel <NUMBER>?             Run test files in parallel using N worker processes. Implies --isolate. Defaults to CPU core count."
     ),
     parse_param!(
@@ -608,6 +630,12 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     ),
     parse_param!(
         "--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs."
+    ),
+    parse_param!(
+        "--timings <STR>...               JSON file(s) of per-file durations (ms); several are merged, e.g. one per CI shard. Balances --shard by total time and makes --parallel start the slowest files first."
+    ),
+    parse_param!(
+        "--update-timings                 After the run, write measured per-file durations to the first --timings file (only this shard's files under --shard; merged with what was read otherwise)."
     ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(
@@ -684,6 +712,38 @@ static Bun__Node__ProcessNoDeprecation: core::sync::atomic::AtomicBool =
 #[unsafe(no_mangle)]
 static Bun__Node__ProcessThrowDeprecation: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessNoWarnings: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessTraceWarnings: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessTraceDeprecation: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessPendingDeprecation: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Node parity: `--cpu-prof-name` supports a `${pid}` placeholder.
+fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
+    if !bun_core::strings::contains(name, b"${pid}") {
+        return name.into();
+    }
+    let pid = std::process::id().to_string();
+    let mut out = Vec::with_capacity(name.len() + pid.len());
+    let mut i = 0;
+    while i < name.len() {
+        if name[i..].starts_with(b"${pid}") {
+            out.extend_from_slice(pid.as_bytes());
+            i += 6;
+        } else {
+            out.push(name[i]);
+            i += 1;
+        }
+    }
+    out.into_boxed_slice()
+}
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -705,6 +765,11 @@ pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 // `crate::cli::arguments::load_config*` callers are unaffected.
 pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
 
+/// node aliases `-pe` to `--print --eval` as a whole token (node_options.cc):
+/// it can't be a short in either runtime, being ambiguous with `-p` carrying
+/// the attached value `e`. Bun's `-p` takes the code, so `-pe X` is `-p X`.
+pub const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
+
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
@@ -722,6 +787,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 CommandTag::RunCommand => 2,
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => 1,
                 _ => 0,
+            },
+            // Only the paths standing in for `node` get node's aliases.
+            short_aliases: match cmd {
+                CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
+                _ => &[],
             },
         },
     ) {
@@ -759,8 +829,15 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     // so we dupe into a plain `Box<[u8]>`.
     let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
         let mut outbuf = PathBuffer::uninit();
-        let cwd_len = bun_sys::getcwd(&mut *outbuf)?;
-        let out = resolve_path::join_abs::<platform::Loose>(&outbuf[..cwd_len], cwd_arg);
+        // An absolute --cwd needs no base; a relative one still requires a
+        // live cwd (an exe-dir base would silently chdir somewhere else).
+        let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
+            b"/"
+        } else {
+            let len = bun_sys::getcwd(&mut *outbuf)?;
+            &outbuf[..len]
+        };
+        let out = resolve_path::join_abs::<platform::Loose>(base, cwd_arg);
         // `chdir` wants a NUL-terminated path; `join_abs` returns a borrowed
         // slice into a threadlocal buffer, so dupe-Z once and reuse for both
         // the `chdir` arg and the stored `absolute_working_dir`.
@@ -773,8 +850,24 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             );
             Global::exit(1);
         }
-        Box::<[u8]>::from(out_z.as_bytes())
+        // Store the post-chdir physical path (mirrors process.chdir) so
+        // process.cwd(), path.resolve, and the resolver agree on one form.
+        let mut phys = PathBuffer::uninit();
+        match bun_core::getcwd(&mut phys) {
+            Ok(p) => Box::<[u8]>::from(p.as_bytes()),
+            Err(_) => Box::<[u8]>::from(out_z.as_bytes()),
+        }
+    } else if matches!(
+        cmd,
+        CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
+    ) {
+        // A deleted cwd must not abort the runtime (Node boots and lets
+        // `process.cwd()` throw later); fall back to the executable's dir.
+        let mut temp = PathBuffer::uninit();
+        Box::<[u8]>::from(bun_core::getcwd_or_exe_dir(&mut temp).as_bytes())
     } else {
+        // Everything else (install/test/build/...) must not silently act on
+        // whatever project happens to live above the executable.
         let mut temp = PathBuffer::uninit();
         let len = bun_sys::getcwd(&mut *temp)?;
         Box::<[u8]>::from(&temp[..len])
@@ -975,6 +1068,27 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         }
 
+        if let Some(kill_signal) = args.option(b"--watch-kill-signal") {
+            // Node reads --watch-kill-signal only in watch mode; elsewhere it is
+            // accepted and ignored. Matching is case-insensitive (node uppercases).
+            if ctx.debug.hot_reload == HotReload::Watch {
+                let upper = kill_signal.to_ascii_uppercase();
+                match bun_core::SignalCode::from_name(&upper)
+                    .filter(|s| s.platform_number().is_some())
+                {
+                    Some(sig) => ctx.debug.watch_kill_signal = sig,
+                    None => {
+                        Output::print_errorln(format_args!(
+                            "TypeError [ERR_UNKNOWN_SIGNAL]: Unknown signal: {}",
+                            bstr::BStr::new(kill_signal)
+                        ));
+                        Output::flush();
+                        Global::exit(1);
+                    }
+                }
+            }
+        }
+
         if let Some(origin) = args.option(b"--origin") {
             opts.origin = Some(origin.into());
         }
@@ -1045,6 +1159,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 }
             };
             bun_http::set_max_http_header_size(if size == 0 { 1024 * 1024 * 1024 } else { size });
+        }
+
+        if args.flag(b"--insecure-http-parser") {
+            bun_http::set_insecure_http_parser(true);
         }
 
         if let Some(user_agent) = args.option(b"--user-agent") {
@@ -1198,7 +1316,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if cpu_prof_flag || cpu_prof_md_flag {
             ctx.runtime_options.cpu_prof.enabled = true;
             if let Some(name) = args.option(b"--cpu-prof-name") {
-                ctx.runtime_options.cpu_prof.name = name.into();
+                ctx.runtime_options.cpu_prof.name = replace_pid_placeholder(name);
             }
             if let Some(dir) = args.option(b"--cpu-prof-dir") {
                 ctx.runtime_options.cpu_prof.dir = dir.into();
@@ -1212,21 +1330,32 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     strings::parse_int::<u32>(interval_str, 10).unwrap_or(1000);
             }
         } else {
-            // Warn if --cpu-prof-name or --cpu-prof-dir is used without a profiler flag
+            // Node parity: profiler-scoped options without a profiler flag are a
+            // usage error printed as "<argv0>: <flag> must be used with --cpu-prof"
+            // and exit code 9. The default interval value is a noop, like node.
+            let mut bad_flags: [Option<&str>; 3] = [None, None, None];
             if args.option(b"--cpu-prof-name").is_some() {
-                bun_core::warn!(
-                    "--cpu-prof-name requires --cpu-prof or --cpu-prof-md to be enabled"
-                );
+                bad_flags[0] = Some("--cpu-prof-name");
             }
             if args.option(b"--cpu-prof-dir").is_some() {
-                bun_core::warn!(
-                    "--cpu-prof-dir requires --cpu-prof or --cpu-prof-md to be enabled"
-                );
+                bad_flags[1] = Some("--cpu-prof-dir");
             }
-            if args.option(b"--cpu-prof-interval").is_some() {
-                bun_core::warn!(
-                    "--cpu-prof-interval requires --cpu-prof or --cpu-prof-md to be enabled",
-                );
+            if let Some(interval_str) = args.option(b"--cpu-prof-interval") {
+                if strings::parse_int::<u32>(interval_str, 10).unwrap_or(0) != 1000 {
+                    bad_flags[2] = Some("--cpu-prof-interval");
+                }
+            }
+            if bad_flags.iter().any(Option::is_some) {
+                let argv0 = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
+                for flag in bad_flags.into_iter().flatten() {
+                    bun_core::pretty_errorln!(
+                        "{}: {} must be used with --cpu-prof",
+                        BStr::new(argv0.as_bytes()),
+                        flag
+                    );
+                }
+                Output::flush();
+                Global::exit(9);
             }
         }
 
@@ -1247,6 +1376,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 ctx.runtime_options.heap_prof.dir = dir.into();
             }
         } else if heap_prof_v8 || heap_prof_md {
+            // --heap-prof-interval is accepted for node CLI parity but unused:
+            // JSC has no allocation-site sampler to configure.
             ctx.runtime_options.heap_prof.enabled = true;
             ctx.runtime_options.heap_prof.text_format = heap_prof_md;
             if let Some(name) = args.option(b"--heap-prof-name") {
@@ -1256,16 +1387,32 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 ctx.runtime_options.heap_prof.dir = dir.into();
             }
         } else {
-            // Warn if --heap-prof-name or --heap-prof-dir is used without --heap-prof or --heap-prof-md
+            // Node parity: heap-profiler-scoped options without a profiler flag
+            // exit 9, like the --cpu-prof block above. The default interval
+            // value (512 KiB) is a noop, like node.
+            let mut bad_flags: [Option<&str>; 3] = [None, None, None];
             if args.option(b"--heap-prof-name").is_some() {
-                bun_core::warn!(
-                    "--heap-prof-name requires --heap-prof or --heap-prof-md to be enabled",
-                );
+                bad_flags[0] = Some("--heap-prof-name");
             }
             if args.option(b"--heap-prof-dir").is_some() {
-                bun_core::warn!(
-                    "--heap-prof-dir requires --heap-prof or --heap-prof-md to be enabled",
-                );
+                bad_flags[1] = Some("--heap-prof-dir");
+            }
+            if let Some(interval_str) = args.option(b"--heap-prof-interval") {
+                if strings::parse_int::<u32>(interval_str, 10).unwrap_or(0) != 512 * 1024 {
+                    bad_flags[2] = Some("--heap-prof-interval");
+                }
+            }
+            if bad_flags.iter().any(Option::is_some) {
+                let argv0 = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
+                for flag in bad_flags.into_iter().flatten() {
+                    bun_core::pretty_errorln!(
+                        "{}: {} must be used with --heap-prof",
+                        BStr::new(argv0.as_bytes()),
+                        flag
+                    );
+                }
+                Output::flush();
+                Global::exit(9);
             }
         }
 
@@ -1277,6 +1424,30 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
         if args.flag(b"--throw-deprecation") {
             Bun__Node__ProcessThrowDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.flag(b"--no-warnings") {
+            Bun__Node__ProcessNoWarnings.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.flag(b"--trace-warnings") {
+            Bun__Node__ProcessTraceWarnings.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.flag(b"--trace-deprecation") {
+            Bun__Node__ProcessTraceDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.flag(b"--pending-deprecation")
+            || env_var::NODE_PENDING_DEPRECATION.get() == Some(b"1" as &[u8])
+        {
+            Bun__Node__ProcessPendingDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if let Some(path) = args.option(b"--redirect-warnings") {
+            let _ = cli::Bun__Node__RedirectWarnings.set(path.into());
+        }
+        {
+            let disabled = args.options(b"--disable-warning");
+            if !disabled.is_empty() {
+                let _ = cli::Bun__Node__DisabledWarnings
+                    .set(disabled.iter().map(|e| Box::from(*e)).collect());
+            }
         }
         if let Some(title) = args.option(b"--title") {
             // Static is `Mutex<Option<Box<[u8]>>>` so `process.title = "..."`
@@ -1425,8 +1596,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             ctx.debug.run_in_bun = true;
         }
     }
-
-    opts.resolve = Some(api::ResolveMode::Lazy);
 
     if jsx_factory.is_some()
         || jsx_fragment.is_some()
@@ -1779,13 +1948,30 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         }
         ctx.test_options.shard = Some(Shard { index, count });
     }
+    for path in args.options(b"--timings") {
+        if path.is_empty() {
+            bun_core::pretty_errorln!("<r><red>error<r>: --timings expects a file path");
+            Global::exit(1);
+        }
+        if !ctx.test_options.timings_files.iter().any(|p| &**p == *path) {
+            ctx.test_options.timings_files.push((*path).into());
+        }
+    }
+    ctx.test_options.update_timings = args.flag(b"--update-timings");
+    if ctx.test_options.update_timings && ctx.test_options.timings_files.is_empty() {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: --update-timings requires --timings, e.g. --timings=.bun-test-timings.json --update-timings"
+        );
+        Global::exit(1);
+    }
     ctx.test_options.update_snapshots = args.flag(b"--update-snapshots");
     ctx.test_options.run_todo = args.flag(b"--todo");
     ctx.test_options.only = args.flag(b"--only");
     ctx.test_options.pass_with_no_tests = args.flag(b"--pass-with-no-tests");
     ctx.test_options.concurrent = args.flag(b"--concurrent");
     ctx.test_options.randomize = args.flag(b"--randomize");
-    ctx.test_options.isolate = args.flag(b"--isolate");
+    let no_isolate = args.flag(b"--no-isolate");
+    ctx.test_options.isolate = args.flag(b"--isolate") && !no_isolate;
     ctx.test_options.test_worker = args.flag(b"--test-worker");
 
     if let Some(parallel_str) = args.option(b"--parallel") {
@@ -1810,8 +1996,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             Global::exit(1);
         }
         ctx.test_options.parallel = parsed;
-        // --parallel implies --isolate inside each worker.
-        ctx.test_options.isolate = true;
+        ctx.test_options.isolate = !no_isolate;
     }
 
     if let Some(delay_str) = args.option(b"--parallel-delay") {
@@ -1931,9 +2116,9 @@ fn parse_build_command_options(
 
     if let Some(packages) = args.option(b"--packages") {
         if packages == b"bundle" {
-            opts.packages = Some(api::Packages::Bundle);
+            opts.packages = Some(api::PackagesMode::Bundle);
         } else if packages == b"external" {
-            opts.packages = Some(api::Packages::External);
+            opts.packages = Some(api::PackagesMode::External);
         } else {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: Invalid packages setting: \"{}\"",
@@ -2418,15 +2603,15 @@ fn parse_build_command_options(
     if let Some(setting) = args.option(b"--sourcemap") {
         if setting.is_empty() {
             // In the future, Bun is going to make this default to .linked
-            opts.source_map = Some(api::SourceMap::Linked);
+            opts.source_map = Some(api::SourceMapMode::Linked);
         } else if setting == b"inline" {
-            opts.source_map = Some(api::SourceMap::Inline);
+            opts.source_map = Some(api::SourceMapMode::Inline);
         } else if setting == b"none" {
-            opts.source_map = Some(api::SourceMap::None);
+            opts.source_map = Some(api::SourceMapMode::None);
         } else if setting == b"external" {
-            opts.source_map = Some(api::SourceMap::External);
+            opts.source_map = Some(api::SourceMapMode::External);
         } else if setting == b"linked" {
-            opts.source_map = Some(api::SourceMap::Linked);
+            opts.source_map = Some(api::SourceMapMode::Linked);
         } else {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: Invalid sourcemap setting: \"{}\"",

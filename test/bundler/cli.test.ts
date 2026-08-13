@@ -471,12 +471,17 @@ test("multi-entry build writes each entry point into the output directory", asyn
 // The copy used to be written next to the source under a hashed name instead
 // of into --outdir, and the summary listed it with an empty name and 0 KB.
 describe.concurrent("--no-bundle with entry points that are copied verbatim", () => {
-  // Not valid UTF-8 (and starts with the wasm magic), so a byte-for-byte
-  // comparison proves the file was copied rather than decoded and re-encoded.
+  // `wasm` is not valid UTF-8, and the two BOM fixtures start with exactly the
+  // bytes the resolver's file cache (which the transpiled loaders read through)
+  // strips or re-encodes as UTF-8. Byte equality on the outputs pins the copy
+  // being verbatim.
   const wasm = Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0xff, 0xfe, 0x80]);
   const addon = Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01]);
   const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
   const sqlite = Buffer.from("SQLite format 3\0");
+  const utf8Bom = Buffer.from([0xef, 0xbb, 0xbf]);
+  const utf8BomData = Buffer.concat([utf8Bom, Buffer.from("data")]);
+  const utf16BomData = Buffer.from([0xff, 0xfe, 0x5a, 0x5a]);
 
   async function build(cwd: string, args: string[]) {
     await using proc = Bun.spawn({
@@ -517,19 +522,20 @@ describe.concurrent("--no-bundle with entry points that are copied verbatim", ()
     expect(listFiles(path.join(String(dir), "src"))).toEqual(["x.wasm"]);
   });
 
-  test("copies the wasm, napi, sqlite, and file loaders", async () => {
-    using dir = tempDir("no-bundle-copy-loaders", {
-      "src/x.wasm": wasm,
-      "src/y.node": addon,
-      "src/z.png": png,
-      "src/w.db": sqlite,
-    });
+  test("copies the wasm, napi, sqlite, and file loaders byte for byte, BOMs included", async () => {
+    const files: Record<string, Buffer> = {
+      "x.wasm": wasm,
+      "y.node": addon,
+      "z.png": png,
+      "w.db": sqlite,
+      "v.bin": utf8BomData,
+      "t.bin": utf16BomData,
+    };
+    const names = Object.keys(files).sort();
+    using dir = tempDir("no-bundle-copy-loaders", Object.fromEntries(names.map(name => [`src/${name}`, files[name]])));
 
     const { stdout, stderr, exitCode } = await build(String(dir), [
-      "./src/x.wasm",
-      "./src/y.node",
-      "./src/z.png",
-      "./src/w.db",
+      ...names.map(name => `./src/${name}`),
       "--loader",
       ".db:sqlite",
       "--outdir=dist",
@@ -538,17 +544,12 @@ describe.concurrent("--no-bundle with entry points that are copied verbatim", ()
     expect(exitCode).toBe(0);
 
     const dist = path.join(String(dir), "dist");
-    expect(listFiles(dist)).toEqual(["w.db", "x.wasm", "y.node", "z.png"]);
-    expect({
-      "w.db": fs.readFileSync(path.join(dist, "w.db")),
-      "x.wasm": fs.readFileSync(path.join(dist, "x.wasm")),
-      "y.node": fs.readFileSync(path.join(dist, "y.node")),
-      "z.png": fs.readFileSync(path.join(dist, "z.png")),
-    }).toEqual({ "w.db": sqlite, "x.wasm": wasm, "y.node": addon, "z.png": png });
-    for (const name of ["w.db", "x.wasm", "y.node", "z.png"]) {
+    expect(listFiles(dist)).toEqual(names);
+    expect(Object.fromEntries(names.map(name => [name, fs.readFileSync(path.join(dist, name))]))).toEqual(files);
+    for (const name of names) {
       expect(stdout).toContain(name);
     }
-    expect(listFiles(path.join(String(dir), "src"))).toEqual(["w.db", "x.wasm", "y.node", "z.png"]);
+    expect(listFiles(path.join(String(dir), "src"))).toEqual(names);
   });
 
   test("keeps directories relative to the common root, so same-named files do not collide", async () => {
@@ -609,7 +610,9 @@ describe.concurrent("--no-bundle with entry points that are copied verbatim", ()
   test("fills [name], [ext], and a content-derived [hash] in --entry-naming", async () => {
     using dir = tempDir("no-bundle-copy-hash", {
       "a.wasm": wasm,
-      "b.wasm": png,
+      // Same bytes as a behind a UTF-8 BOM: the hash has to cover the file as
+      // written, not the BOM-stripped form the file cache would hand back.
+      "b.wasm": Buffer.concat([utf8Bom, wasm]),
       "c.wasm": wasm,
     });
 
@@ -631,9 +634,9 @@ describe.concurrent("--no-bundle with entry points that are copied verbatim", ()
       expect.stringMatching(/^c-[0-9a-z]{8}\.wasm$/),
     ]);
     const hashOf = (file: string) => file.slice(2, -".wasm".length);
-    // a and c have the same bytes; b differs.
     expect(hashOf(files[2])).toBe(hashOf(files[0]));
     expect(hashOf(files[1])).not.toBe(hashOf(files[0]));
+    expect(fs.readFileSync(path.join(String(dir), "dist", files[1]))).toEqual(Buffer.concat([utf8Bom, wasm]));
     for (const file of files) {
       expect(stdout).toContain(file);
     }

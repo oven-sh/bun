@@ -21,6 +21,9 @@ use bun_libarchive::{ArchiveAppender, ExtractOptions};
 use bun_resolver::fs::FileSystem;
 #[cfg(windows)]
 use bun_sys::FdDirExt;
+
+#[cfg(windows)]
+use crate::cache_rename::RenameRetry;
 type Error = crate::Error;
 
 pub struct ExtractTarball {
@@ -522,14 +525,14 @@ impl ExtractTarball {
             // Now that we've extracted the archive, we rename.
             #[cfg(windows)]
             {
-                // AV scanners holding a handle without FILE_SHARE_DELETE on an extracted file cause a transient STATUS_ACCESS_DENIED; retry with the graceful-fs backoff (10ms increments capped at 100ms) until `BUN_INSTALL_WIN32_AV_RETRY_MS` elapses.
-                let budget = std::time::Duration::from_millis(
-                    bun_core::env_var::BUN_INSTALL_WIN32_AV_RETRY_MS
-                        .get()
-                        .unwrap(),
-                );
-                let start = std::time::Instant::now();
-                let mut backoff_ms: u64 = 0;
+                // The rename fails transiently when another process holds a
+                // handle into either directory: a concurrent `bun install`
+                // sharing the cache still has the destination open (EXIST /
+                // NOTEMPTY, or PERM since NTFS reports replacing a directory
+                // that way too), or a scanner has one of our freshly extracted
+                // files open (PERM / BUSY, see `cache_rename`). Both are
+                // retried against the same `RenameRetry` budget.
+                let mut retry = RenameRetry::start();
                 let mut path2_buf = WPathBuffer::uninit();
                 let path2 = strings::to_wpath_normalized(&mut path2_buf, folder_name);
                 if create_subdir {
@@ -575,61 +578,51 @@ impl ExtractTarball {
                         true,
                     ) {
                         bun_sys::Result::Err(err) => {
-                            if start.elapsed() < budget {
-                                match err.get_errno() {
-                                    sys::Errno::NOTEMPTY
-                                    | sys::Errno::PERM
-                                    | sys::Errno::BUSY
-                                    | sys::Errno::EXIST => {
-                                        // before we attempt to delete the destination, let's close the source dir.
-                                        let _ = sys::close(dir_to_move);
-
-                                        // We tried to move the folder over
-                                        // but it didn't work!
-                                        // so instead of just simply deleting the folder
-                                        // we rename it back into the temp dir
-                                        // and then delete that temp dir
-                                        // The goal is to make it more difficult for an application to reach this folder
-                                        let mut tempdest_buf = PathBuffer::uninit();
-                                        tempdest_buf[0..tmpname.len()]
-                                            .copy_from_slice(tmpname.as_bytes());
-                                        tempdest_buf[tmpname.len()..][0..4]
-                                            .copy_from_slice(&[b't', b'm', b'p', 0]);
-                                        let tempdest =
-                                            ZStr::from_buf(&tempdest_buf, tmpname.len() + 3);
-                                        let mut folder_name_z_buf = PathBuffer::uninit();
-                                        folder_name_z_buf[0..folder_name.len()]
-                                            .copy_from_slice(folder_name);
-                                        folder_name_z_buf[folder_name.len()] = 0;
-                                        let folder_name_z =
-                                            ZStr::from_buf(&folder_name_z_buf, folder_name.len());
-                                        match sys::renameat(
-                                            Fd::from_std_dir(cache_dir),
-                                            folder_name_z,
-                                            Fd::from_std_dir(tmpdir),
-                                            tempdest,
-                                        ) {
-                                            bun_sys::Result::Err(_) => {}
-                                            bun_sys::Result::Ok(_) => {
-                                                let _ = tmpdir.delete_tree(tempdest.as_bytes());
-                                            }
-                                        }
-                                        backoff_ms = (backoff_ms + 10).min(100);
-                                        std::thread::sleep(std::time::Duration::from_millis(
-                                            backoff_ms,
-                                        ));
-                                        continue;
-                                    }
-                                    _ => {}
-                                }
-                            }
+                            // before we attempt to delete the destination, let's close the source dir.
                             let _ = sys::close(dir_to_move);
+
+                            let retryable = RenameRetry::is_transient(&err)
+                                || matches!(
+                                    err.get_errno(),
+                                    sys::Errno::NOTEMPTY | sys::Errno::EXIST
+                                );
+                            if retryable && retry.wait() {
+                                // We tried to move the folder over
+                                // but it didn't work!
+                                // so instead of just simply deleting the folder
+                                // we rename it back into the temp dir
+                                // and then delete that temp dir
+                                // The goal is to make it more difficult for an application to reach this folder
+                                let mut tempdest_buf = PathBuffer::uninit();
+                                tempdest_buf[0..tmpname.len()].copy_from_slice(tmpname.as_bytes());
+                                tempdest_buf[tmpname.len()..][0..4]
+                                    .copy_from_slice(&[b't', b'm', b'p', 0]);
+                                let tempdest = ZStr::from_buf(&tempdest_buf, tmpname.len() + 3);
+                                let mut folder_name_z_buf = PathBuffer::uninit();
+                                folder_name_z_buf[0..folder_name.len()].copy_from_slice(folder_name);
+                                folder_name_z_buf[folder_name.len()] = 0;
+                                let folder_name_z =
+                                    ZStr::from_buf(&folder_name_z_buf, folder_name.len());
+                                match sys::renameat(
+                                    Fd::from_std_dir(cache_dir),
+                                    folder_name_z,
+                                    Fd::from_std_dir(tmpdir),
+                                    tempdest,
+                                ) {
+                                    bun_sys::Result::Err(_) => {}
+                                    bun_sys::Result::Ok(_) => {
+                                        let _ = tmpdir.delete_tree(tempdest.as_bytes());
+                                    }
+                                }
+                                continue;
+                            }
                             log.add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 format_args!(
-                                    "moving \"{}\" to cache dir failed\n{}\n  From: {}\n    To: {}",
+                                    "moving \"{}\" to cache dir failed{}\n{}\n  From: {}\n    To: {}",
                                     bun_fmt::s(name),
+                                    retry.exhausted_hint(),
                                     err,
                                     bun_fmt::s(tmpname.as_bytes()),
                                     bun_fmt::s(folder_name),

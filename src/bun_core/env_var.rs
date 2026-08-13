@@ -105,7 +105,13 @@ new!(pub BUN_INSTALL_STREAMING_MIN_SIZE: unsigned, "BUN_INSTALL_STREAMING_MIN_SI
 // thread schedules a drain; collapses the per-chunk thread-pool futex wake
 // into roughly one per `threshold` bytes.
 new!(pub BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: unsigned, "BUN_INSTALL_STREAMING_DRAIN_THRESHOLD", { default: 256 * 1024 });
-new!(pub BUN_INSTALL_WIN32_AV_RETRY_MS: unsigned, "BUN_INSTALL_WIN32_AV_RETRY_MS", { default: 5_000 });
+// How long (ms) `bun install` keeps retrying a rename into the cache on
+// Windows while a scanner holds a file in the directory open (see
+// `bun_install::cache_rename`). 5s covers the real-time scan of a
+// multi-megabyte binary with margin (SQLite's equivalent retry waits 1.4s,
+// graceful-fs 60s); it is also what a permanent failure such as an unwritable
+// cache dir now costs per package before it is reported. 0 disables retrying.
+new!(pub BUN_INSTALL_WINDOWS_RENAME_RETRY_MS: unsigned, "BUN_INSTALL_WINDOWS_RENAME_RETRY_MS", { default: 5_000 });
 new!(pub BUN_NEEDS_PROC_SELF_WORKAROUND: boolean, "BUN_NEEDS_PROC_SELF_WORKAROUND", { default: false });
 new!(pub BUN_OPTIONS: string, "BUN_OPTIONS", {});
 new!(pub BUN_POSTGRES_SOCKET_MONITOR: string, "BUN_POSTGRES_SOCKET_MONITOR", {});

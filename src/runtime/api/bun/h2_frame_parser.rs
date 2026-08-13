@@ -5361,12 +5361,17 @@ impl H2FrameParser {
         let _dispatch = self.enter_dispatch();
         // A top-level call like every other parser event (`dispatch`): a
         // throwing `streamStart` is reported and yields no stream object.
-        let returned = self.handlers.get().vm.event_loop_ref().run_callback_with_result(
-            callback,
-            &global,
-            ctx_value,
-            &[ctx_value, JSValue::js_number(stream_identifier as f64)],
-        );
+        let returned = self
+            .handlers
+            .get()
+            .vm
+            .event_loop_ref()
+            .run_callback_with_result(
+                callback,
+                &global,
+                ctx_value,
+                &[ctx_value, JSValue::js_number(stream_identifier as f64)],
+            );
         // streamStart returns the JS stream it created; storing it here saves the
         // setStreamContext host call the JS layer used to make per stream.
         // Skipped when the callback closed the stream: free_resources dropped its

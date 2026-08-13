@@ -957,7 +957,9 @@ impl SourceHandle {
                 if global.has_exception() {
                     return Err(jsc::JsError::Thrown);
                 }
-                ::bun_jsc::call_check_slow(global, || controller_abi::on_close(cpp, JSValue::UNDEFINED))
+                ::bun_jsc::call_check_slow(global, || {
+                    controller_abi::on_close(cpp, JSValue::UNDEFINED)
+                })
             }
             SourceHandle::ByteStream(p) => p.on_close(err),
             SourceHandle::FileReader(p) => p.on_close(err),
@@ -995,7 +997,11 @@ impl SourceHandle {
 
     /// [`ready`](Self::ready) counterpart of [`close_from_native`](Self::close_from_native).
     #[inline]
-    pub fn ready_from_native(&mut self, amount: Option<BlobSizeType>, offset: Option<BlobSizeType>) {
+    pub fn ready_from_native(
+        &mut self,
+        amount: Option<BlobSizeType>,
+        offset: Option<BlobSizeType>,
+    ) {
         let _ = self.ready(amount, offset);
     }
 
@@ -1546,7 +1552,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             if (total_written > 0 || (had_pending_pull && !had_flush_waiter))
                 && self.readable_slice().is_empty()
             {
-                self.source.ready_from_native(Some(total_written as BlobSizeType), None);
+                self.source
+                    .ready_from_native(Some(total_written as BlobSizeType), None);
             }
         }
 

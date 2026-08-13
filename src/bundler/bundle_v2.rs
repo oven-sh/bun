@@ -1515,6 +1515,36 @@ pub mod bv2_impl {
         unsafe { (*p).into_static() }
     }
 
+    /// Whether an unresolvable `specifier` imported from `source_dir` is a
+    /// package the importer's own package.json declares under
+    /// `peerDependenciesMeta` with `"optional": true`.
+    ///
+    /// Packages reference such peers through helpers like NestJS's
+    /// `optionalRequire(name, () => require(name))`, which catch the
+    /// `MODULE_NOT_FOUND` at runtime but hide the `require` from the parser's
+    /// try/catch detection. When this returns true the caller treats the record
+    /// as if it were inside a try/catch: the bundle succeeds and the call is
+    /// printed as a runtime throw. Static `import` statements are excluded
+    /// because they cannot be deferred to runtime.
+    fn is_missing_optional_peer(
+        resolver: &mut _resolver::Resolver<'_>,
+        source_dir: &[u8],
+        specifier: &[u8],
+        kind: ImportKind,
+    ) -> bool {
+        if !matches!(
+            kind,
+            ImportKind::Require | ImportKind::RequireResolve | ImportKind::Dynamic
+        ) || !is_package_path(specifier)
+        {
+            return false;
+        }
+        resolver
+            .read_dir_info_ignore_error(source_dir)
+            .and_then(|dir| dir.enclosing_package_json)
+            .is_some_and(|pkg| pkg.is_optional_peer_dependency(specifier))
+    }
+
     // Unified with the canonical definitions at the parent module level (this
     // avoids two distinct nominal `BundleV2`/`PendingImport`/`BakeOptions` types
     // that previously caused widespread "expected `BundleV2`, found `BundleV2`"
@@ -2368,6 +2398,15 @@ pub mod bv2_impl {
                             }
                         }
 
+                        let missing_optional_peer = err == _resolver::Error::ModuleNotFound
+                            && is_missing_optional_peer(
+                                // SAFETY: see `transpiler` note above.
+                                &mut unsafe { &mut *transpiler }.resolver,
+                                source_dir,
+                                &import_record.specifier,
+                                import_record.kind,
+                            );
+
                         let handles_import_errors;
                         // reshaped for borrowck — `log_for_resolution_failures` borrows
                         // `&mut self`; the returned log is backed by either a DevServer-owned slot or
@@ -2387,6 +2426,11 @@ pub mod bv2_impl {
                                     [import_record.importer_source_index as usize]
                                     .as_mut_slice()
                                     [import_record.import_record_index as usize];
+                            if missing_optional_peer {
+                                record
+                                    .flags
+                                    .insert(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+                            }
                             handles_import_errors = record
                                 .flags
                                 .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
@@ -6296,6 +6340,17 @@ pub mod bv2_impl {
 
                             if err == _resolver::Error::ModuleNotFound {
                                 let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
+
+                                if is_missing_optional_peer(
+                                    &mut transpiler.resolver,
+                                    source_dir,
+                                    import_record.path.text,
+                                    import_record.kind,
+                                ) {
+                                    import_record
+                                        .flags
+                                        .insert(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+                                }
 
                                 if !import_record
                                     .flags

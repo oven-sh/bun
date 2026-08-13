@@ -124,6 +124,10 @@ pub struct PackageJSON {
 
     pub(crate) exports: Option<ExportsMap>,
     pub(crate) imports: Option<ExportsMap>,
+
+    /// Package names listed in `peerDependenciesMeta` with `"optional": true`.
+    /// Read by the bundler via [`PackageJSON::is_optional_peer_dependency`].
+    pub(crate) optional_peer_dependencies: Box<[Box<[u8]>]>,
 }
 
 // hand-rolled `Default` because `#[derive(Default)]` would zero
@@ -151,6 +155,7 @@ impl Default for PackageJSON {
             browser_map: BrowserMap::default(),
             exports: None,
             imports: None,
+            optional_peer_dependencies: Box::default(),
         }
     }
 }
@@ -207,6 +212,19 @@ impl PackageJSON {
         let mut normalized = path.to_vec();
         bun_paths::slashes_to_posix_in_place(&mut normalized[..]);
         Ok(normalized)
+    }
+
+    /// Is the package named by `specifier` (a bare specifier such as `"pkg"`,
+    /// `"pkg/sub"` or `"@scope/pkg/sub"`) listed in this package.json's
+    /// `peerDependenciesMeta` with `"optional": true`?
+    pub fn is_optional_peer_dependency(&self, specifier: &[u8]) -> bool {
+        if self.optional_peer_dependencies.is_empty() {
+            return false;
+        }
+        let name = Package::parse_name(specifier).unwrap_or(specifier);
+        self.optional_peer_dependencies
+            .iter()
+            .any(|peer| strings::eql(peer, name))
     }
 }
 
@@ -512,6 +530,7 @@ impl PackageJSON {
             side_effects: SideEffects::Unspecified,
             exports: None,
             imports: None,
+            optional_peer_dependencies: Box::default(),
         };
         // shadow as `&Source`; the owned value is reconstructed at the bottom
         // (Source isn't `Clone`).
@@ -674,6 +693,27 @@ impl PackageJSON {
         if let Some(imports_prop) = json.as_property(b"imports") {
             if let Some(imports_map) = ExportsMap::parse(json_source, r_log, imports_prop.expr) {
                 package_json.imports = Some(imports_map);
+            }
+        }
+
+        if let Some(meta_prop) = json.as_property(b"peerDependenciesMeta") {
+            if let js_ast::ExprData::EObjectJSON(meta_obj) = &meta_prop.expr.data {
+                let names: Vec<Box<[u8]>> = meta_obj
+                    .get()
+                    .properties()
+                    .iter()
+                    .filter(|prop| {
+                        !prop.key.slice().is_empty()
+                            && prop.value.as_object().is_some_and(|entry| {
+                                matches!(
+                                    entry.get(b"optional"),
+                                    Some(js_ast::E::JsonValue::Boolean(true))
+                                )
+                            })
+                    })
+                    .map(|prop| Box::from(prop.key.slice()))
+                    .collect();
+                package_json.optional_peer_dependencies = names.into_boxed_slice();
             }
         }
 

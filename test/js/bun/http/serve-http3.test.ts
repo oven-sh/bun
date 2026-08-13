@@ -237,9 +237,8 @@ describe("Bun.serve HTTP/3", () => {
         fetchH3(port, path, { headers }).then(r => r.text());
 
       const evil = { host: "evil.example/x#", "x-raw-url": "1" };
-      const h3 = await viaH3("/admin/secret", evil);
-      expect(h3).not.toContain("evil.example");
-      expect(h3).toBe(await viaH1("/admin/secret", evil));
+      expect(await viaH3("/admin/secret", evil)).toBe("/admin/secret");
+      expect(await viaH1("/admin/secret", evil)).toBe("/admin/secret");
 
       const odd = { host: "EXAMPLE.com:443", "x-raw-url": "1" };
       expect(await viaH3("/p", odd)).toBe("https://example.com/p");

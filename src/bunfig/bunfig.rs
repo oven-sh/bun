@@ -306,17 +306,6 @@ impl<'a> Parser<'a> {
         self.resolve_bunfig_relative(entry)
     }
 
-    /// Resolve a relative filesystem path against the bunfig.toml directory.
-    /// Bare names are treated as relative (not package specifiers).
-    fn resolve_bunfig_path(&self, entry: Box<[u8]>) -> Box<[u8]> {
-        if entry.is_empty() {
-            return entry;
-        }
-        if <platform::Auto as resolve_path::PlatformT>::P.is_absolute(&entry) {
-            return entry;
-        }
-        self.resolve_bunfig_relative(entry)
-    }
 
     fn resolve_bunfig_relative(&self, entry: Box<[u8]>) -> Box<[u8]> {
         // join_abs_string_buf requires an absolute base.
@@ -474,8 +463,7 @@ impl<'a> Parser<'a> {
             if let Some(test) = json.get(b"test") {
                 if let Some(root) = test.get(b"root") {
                     self.expect_string(&root)?;
-                    let raw: Box<[u8]> = root.as_string(self.bump).unwrap_or(b"").into();
-                    self.ctx.debug.test_directory = self.resolve_bunfig_path(raw);
+                    self.ctx.debug.test_directory = root.as_string(self.bump).unwrap_or(b"").into();
                 }
 
                 if let Some(expr) = test.get(b"preload") {
@@ -507,9 +495,8 @@ impl<'a> Parser<'a> {
                         if let ExprData::EString(s) = &junit_expr.data {
                             if s.len() > 0 {
                                 self.ctx.test_options.reporters.junit = true;
-                                let raw = estring_to_owned(s, self.bump);
                                 self.ctx.test_options.reporter_outfile =
-                                    Some(self.resolve_bunfig_path(raw));
+                                    Some(estring_to_owned(s, self.bump));
                             }
                         }
                     }
@@ -550,8 +537,7 @@ impl<'a> Parser<'a> {
                             .get(),
                         self.bump,
                     );
-                    self.ctx.test_options.coverage.reports_directory =
-                        self.resolve_bunfig_path(raw);
+                    self.ctx.test_options.coverage.reports_directory = raw;
                 }
 
                 if let Some(expr) = test.get(b"coverageThreshold") {
@@ -928,7 +914,7 @@ impl<'a> Parser<'a> {
                             .get(),
                         self.bump,
                     );
-                    self.ctx.args.output_dir = Some(self.resolve_bunfig_path(raw));
+                    self.ctx.args.output_dir = Some(raw);
                 }
             }
 
@@ -954,7 +940,7 @@ impl<'a> Parser<'a> {
                                 .get(),
                             self.bump,
                         );
-                        names.push(self.resolve_bunfig_path(raw));
+                        names.push(raw);
                     }
                     self.ctx.args.entry_points = names;
                 }

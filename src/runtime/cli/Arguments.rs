@@ -763,7 +763,7 @@ pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
 // call them without a tier-6 dependency. Re-export here so existing
 // `crate::cli::arguments::load_config*` callers are unaffected.
-pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
+pub use bun_bunfig::arguments::{load_config, load_config_auto, load_config_path, load_config_with_cmd_args};
 
 /// node aliases `-pe` to `--print --eval` as a whole token (node_options.cc):
 /// it can't be a short in either runtime, being ambiguous with `-p` carrying
@@ -1169,14 +1169,13 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             let _ = bun_http::OVERRIDDEN_DEFAULT_USER_AGENT.set(user_agent);
         }
 
-        // Leave a bunfig "[install].prefer" intact when neither flag is set.
-        if args.flag(b"--prefer-offline") {
-            ctx.debug.offline_mode_setting =
-                Some(bun_options_types::offline_mode::OfflineMode::Offline);
+        ctx.debug.offline_mode_setting = Some(if args.flag(b"--prefer-offline") {
+            bun_options_types::offline_mode::OfflineMode::Offline
         } else if args.flag(b"--prefer-latest") {
-            ctx.debug.offline_mode_setting =
-                Some(bun_options_types::offline_mode::OfflineMode::Latest);
-        }
+            bun_options_types::offline_mode::OfflineMode::Latest
+        } else {
+            bun_options_types::offline_mode::OfflineMode::Online
+        });
 
         if args.flag(b"--no-install") {
             ctx.debug.global_cache = options::GlobalCache::disable;
@@ -1207,10 +1206,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             ctx.runtime_options.eval.script = script.into();
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
-        // "smol" in bunfig.toml (loaded above) must survive the flag's absence.
-        if args.flag(b"--smol") {
-            ctx.runtime_options.smol = true;
-        }
+        ctx.runtime_options.smol = args.flag(b"--smol");
         // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
         ctx.runtime_options.interactive = args.flag(b"--interactive")
             || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));

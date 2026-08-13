@@ -47,7 +47,7 @@ impl ReplCommand {
     ) -> Result<(), crate::Error> {
         // Load bunfig if not already loaded
         if !ctx.debug.loaded_bunfig {
-            Arguments::load_config(Command::Tag::RunCommand, None, ctx)?;
+            Arguments::load_config_auto(Command::Tag::RunCommand, ctx)?;
         }
 
         // Initialize JSC

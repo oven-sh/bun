@@ -925,7 +925,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         loader: Option<Loader>,
     ) -> crate::Result<()> {
         if !ctx.debug.loaded_bunfig {
-            arguments::load_config(CommandTag::RunCommand, None, ctx)?;
+            arguments::load_config_auto(CommandTag::RunCommand, ctx)?;
         }
 
         // The shell does not need to initialize JSC (saves 1-3ms).
@@ -1111,7 +1111,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // load_config honours DISABLE_AUTOLOAD_BUNFIG via StandaloneModuleGraph::get().
         if !ctx.debug.loaded_bunfig {
-            arguments::load_config(CommandTag::RunCommand, None, ctx)?;
+            arguments::load_config_auto(CommandTag::RunCommand, ctx)?;
         }
 
         // layering — `Options::graph` is the resolver's trait object
@@ -2274,7 +2274,7 @@ impl RunCommand {
         }
 
         if !ctx.debug.loaded_bunfig {
-            let _ = arguments::load_config(CommandTag::RunCommand, None, ctx);
+            let _ = arguments::load_config_auto(CommandTag::RunCommand, ctx);
         }
 
         // ── try fast run (file exists & not a dir → boot VM) ────────────────

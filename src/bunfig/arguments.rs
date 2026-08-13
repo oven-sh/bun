@@ -133,20 +133,134 @@ fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: crate::Error) -> ! {
     Global::crash();
 }
 
-/// Entries marking a directory as the root of its own project, ending the
-/// ancestor bunfig.toml walk in `load_config`.
-const PROJECT_BOUNDARY_MARKERS: [&[u8]; 6] = [
-    b".git",
-    b"bun.lock",
-    b"bun.lockb",
-    b"package-lock.json",
-    b"yarn.lock",
-    b"pnpm-lock.yaml",
-];
+/// True when `path` contains a `node_modules` component.
+fn in_node_modules(path: &[u8]) -> bool {
+    let mut rest = path;
+    while let Some(i) = bun_core::strings::index_of(rest, b"node_modules") {
+        let end = i + b"node_modules".len();
+        let before_ok = i == 0 || bun_paths::is_sep_any(rest[i - 1]);
+        let after_ok = end == rest.len() || bun_paths::is_sep_any(rest[end]);
+        if before_ok && after_ok {
+            return true;
+        }
+        rest = &rest[end..];
+    }
+    false
+}
+
+enum PackageJson {
+    Missing,
+    Plain,
+    Workspaces(Vec<Box<[u8]>>),
+}
+
+/// Reads `dir/package.json` and classifies it; an unreadable or unparsable
+/// file counts as `Plain` (a project root whose shape we cannot see).
+fn read_package_json(dir: &[u8]) -> PackageJson {
+    let mut name_buf = PathBuffer::uninit();
+    let json_path: &ZStr = resolve_path::join_abs_string_buf_z::<platform::Auto>(
+        dir,
+        &mut name_buf[..],
+        &[b"package.json".as_slice()],
+    );
+    let json_source = match bun_ast::to_source(json_path, Default::default()) {
+        Err(_) => return PackageJson::Missing,
+        Ok(source) => source,
+    };
+    let mut log = bun_ast::Log::default();
+    let Ok(parsed) = bun_parsers::json::ParsedJson::parse_package_json(&json_source, &mut log)
+    else {
+        return PackageJson::Plain;
+    };
+    let Some(prop) = parsed.root.as_property(b"workspaces") else {
+        return PackageJson::Plain;
+    };
+    let json_array = match prop.expr.data {
+        bun_ast::ExprData::EArrayJSON(arr) => arr,
+        bun_ast::ExprData::EObjectJSON(obj) => match (*obj).get(b"packages") {
+            Some(bun_ast::e::JsonValue::Array(arr)) => *arr,
+            _ => return PackageJson::Plain,
+        },
+        _ => return PackageJson::Plain,
+    };
+    let mut patterns: Vec<Box<[u8]>> = Vec::new();
+    for item in json_array.get().items() {
+        if let bun_ast::e::JsonValue::String(pattern) = item {
+            patterns.push(Box::<[u8]>::from(pattern.slice()));
+        }
+    }
+    PackageJson::Workspaces(patterns)
+}
+
+/// Last directory the ancestor bunfig.toml walk may check, as a prefix length
+/// of `cwd`, mirroring how `--filter` finds the project root (filter_arg.rs):
+/// the nearest directory with a package.json, or the workspace root whose
+/// `workspaces` globs claim that directory. `None` when no package.json
+/// exists anywhere up the tree (walk unbounded, like package.json resolution).
+fn walk_root_bound(cwd: &[u8]) -> Option<usize> {
+    bun_ast::expr::data::Store::create();
+    bun_ast::stmt::data::Store::create();
+    let _store_guard = bun_ast::StoreResetGuard::new();
+
+    // Nearest directory with a package.json.
+    let mut dir = cwd;
+    let nearest: &[u8] = loop {
+        match read_package_json(dir) {
+            // A workspace root is its own project.
+            PackageJson::Workspaces(_) => return Some(dir.len()),
+            PackageJson::Plain => break dir,
+            PackageJson::Missing => {}
+        }
+        dir = bun_paths::dirname(dir)?;
+    };
+
+    // The nearest ancestor declaring workspaces decides: if its globs claim
+    // `nearest`, that root bounds the walk; otherwise `nearest` stands alone.
+    let mut anc = nearest;
+    while let Some(parent) = bun_paths::dirname(anc) {
+        anc = parent;
+        if let PackageJson::Workspaces(patterns) = read_package_json(anc) {
+            let rel_start =
+                anc.len() + usize::from(!matches!(anc.last(), Some(&c) if bun_paths::is_sep_any(c)));
+            let mut rel: Vec<u8> = nearest[rel_start..].to_vec();
+            if cfg!(windows) {
+                for c in &mut rel {
+                    if *c == b'\\' {
+                        *c = b'/';
+                    }
+                }
+            }
+            let member = patterns
+                .iter()
+                .any(|p| bun_glob::r#match(p, &rel).matches());
+            return Some(if member { anc.len() } else { nearest.len() });
+        }
+        if matches!(anc.last(), Some(&c) if bun_paths::is_sep_any(c)) {
+            break;
+        }
+    }
+    Some(nearest.len())
+}
 
 pub fn load_config(
     cmd: CommandTag,
     user_config_path_: Option<&[u8]>,
+    ctx: Context<'_>,
+) -> Result<(), crate::Error> {
+    load_config_impl(cmd, user_config_path_, false, ctx)
+}
+
+/// `load_config`, but auto-discovering bunfig.toml even for commands outside
+/// `ALWAYS_LOADS_CONFIG`. Used by the exec-time `bun run` / repl call sites,
+/// which load config only after CLI flags are applied.
+pub fn load_config_auto(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Error> {
+    load_config_impl(cmd, None, true, ctx)
+}
+
+fn load_config_impl(
+    cmd: CommandTag,
+    user_config_path_: Option<&[u8]>,
+    force_auto: bool,
     ctx: Context<'_>,
 ) -> Result<(), crate::Error> {
     // If running as a standalone executable with autoloadBunfig disabled, skip config loading
@@ -180,6 +294,7 @@ pub fn load_config(
     let mut auto_loaded: bool = false;
     if config_path_.is_empty()
         && (user_config_path_.is_some()
+            || force_auto
             || ALWAYS_LOADS_CONFIG[cmd]
             || (cmd == CommandTag::AutoCommand
                 && (
@@ -230,6 +345,15 @@ pub fn load_config(
             {
                 dir = &dir[..dir.len() - 1];
             }
+            // Lifecycle scripts run with cwd inside node_modules, and
+            // compiled executables read config from their run directory:
+            // both keep the cwd-only lookup.
+            let bound: Option<usize> =
+                if StandaloneModuleGraph::get().is_some() || in_node_modules(dir) {
+                    Some(dir.len())
+                } else {
+                    walk_root_bound(dir)
+                };
             // Roots ("/", "C:\\", UNC) keep their trailing separator: the last to check.
             let mut is_root = matches!(dir.last(), Some(&c) if bun_paths::is_sep_native(c));
             let mut found_len: Option<usize> = None;
@@ -251,18 +375,7 @@ pub fn load_config(
                     found_len = Some(joined_len);
                     break;
                 }
-                let at_project_boundary = PROJECT_BOUNDARY_MARKERS.iter().any(|marker| {
-                    let parts: [&[u8]; 2] = [dir, marker];
-                    let joined = resolve_path::join_abs_string_buf::<platform::Auto>(
-                        dir,
-                        &mut *config_buf,
-                        &parts,
-                    );
-                    let joined_len = joined.len();
-                    config_buf[joined_len] = 0;
-                    bun_sys::stat(ZStr::from_buf(&config_buf[..], joined_len)).is_ok()
-                });
-                if at_project_boundary {
+                if matches!(bound, Some(b) if dir.len() <= b) {
                     break;
                 }
                 if is_root {

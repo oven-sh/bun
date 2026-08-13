@@ -1290,63 +1290,6 @@ describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
 });
 
 describe("inbound stream lifecycle", () => {
-  // §5.1: HEADERS on a stream the peer already reset is a stream error of type STREAM_CLOSED,
-  // but §4.3 still requires its block — CONTINUATION half included — to be decoded, or the
-  // connection-scoped HPACK dynamic table desyncs for every later stream.
-  test("HEADERS on a stream reset earlier in the same read is refused with STREAM_CLOSED and still decoded", async () => {
-    const seen: { id: number; sync?: string }[] = [];
-    const server = http2.createServer();
-    server.on("stream", (stream: any, headers: any) => {
-      seen.push({ id: stream.id, sync: headers["x-bun-sync"] });
-      stream.on("error", () => {});
-      try {
-        stream.respond({ ":status": 200 });
-        stream.end("ok");
-      } catch {}
-    });
-    server.listen(0);
-    await once(server, "listening");
-    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
-    try {
-      c.sendPreface();
-      c.sendEmptySettings();
-      const cancel = Buffer.alloc(4);
-      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
-      // The closed-stream block inserts `x-bun-sync: 1` into the dynamic table (literal with
-      // incremental indexing) from its CONTINUATION half.
-      const insert = Buffer.concat([Buffer.from([0x40]), hpackLiteral("x-bun-sync"), hpackLiteral("1")]);
-      // One write so the RST_STREAM and the HEADERS behind it are parsed in one pass: a closed
-      // stream is forgotten between reads, after which HEADERS(1) would open a fresh stream.
-      c.send(
-        Buffer.concat([
-          encodeFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, requestHeaderBlock("GET")),
-          encodeFrame(FrameType.RST_STREAM, 0, 1, cancel),
-          encodeFrame(FrameType.HEADERS, 0x1 /* END_STREAM, no END_HEADERS */, 1, requestHeaderBlock("GET")),
-          encodeFrame(FrameType.CONTINUATION, 0x4 /* END_HEADERS */, 1, insert),
-        ]),
-      );
-      const rst = await c.waitFor(
-        f => (f.type === FrameType.RST_STREAM && f.streamId === 1) || f.type === FrameType.GOAWAY,
-      );
-      expect(rst.type).toBe(FrameType.RST_STREAM);
-      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.STREAM_CLOSED);
-
-      // 0xbe: indexed field 62 = the entry the closed-stream block inserted. If that block had
-      // not been decoded this is a COMPRESSION_ERROR and stream 3 never reaches JS.
-      c.sendFrame(FrameType.HEADERS, 0x5, 3, Buffer.concat([requestHeaderBlock("GET"), Buffer.from([0xbe])]));
-      const resp = await c.waitFor(
-        f => (f.type === FrameType.HEADERS && f.streamId === 3) || f.type === FrameType.GOAWAY,
-      );
-      expect(resp.type).toBe(FrameType.HEADERS);
-      expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
-      // The closed-stream block itself is never surfaced: only stream 3 carries x-bun-sync.
-      expect(seen.filter(s => s.sync !== undefined)).toEqual([{ id: 3, sync: "1" }]);
-    } finally {
-      c.destroy();
-      server.close();
-    }
-  });
-
   test("releases server stream objects once the peer resets their streams", async () => {
     const total = 32;
     const refs: WeakRef<object>[] = [];

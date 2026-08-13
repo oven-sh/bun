@@ -161,11 +161,11 @@ impl JSSourceMap {
             ParseResult::Fail(fail) => {
                 if let Some(loc) = fail.loc.to_nullable() {
                     return Err(global.throw_value(global.create_syntax_error_instance(
-                        format_args!("{} at {}", BStr::new(fail.msg), loc.start),
+                        format_args!("{} at {}", fail.err.message(), loc.start),
                     )));
                 }
                 return Err(global.throw_value(
-                    global.create_syntax_error_instance(format_args!("{}", BStr::new(fail.msg))),
+                    global.create_syntax_error_instance(format_args!("{}", fail.err.message())),
                 ));
             }
         };

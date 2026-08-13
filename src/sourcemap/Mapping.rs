@@ -461,10 +461,8 @@ pub fn parse(
     if let Some(count) = estimated_mapping_count {
         if mapping.ensure_total_capacity(count).is_err() {
             return ParseResult::Fail(ParseResultFail {
-                msg: b"Out of memory",
                 err: crate::Error::Alloc(bun_alloc::AllocError),
                 loc: Loc::default(),
-                ..Default::default()
             });
         }
     }
@@ -511,10 +509,8 @@ pub fn parse(
             }
             SimdResult::OutOfMemory => {
                 return ParseResult::Fail(ParseResultFail {
-                    msg: b"Out of memory",
                     err: crate::Error::Alloc(bun_alloc::AllocError),
                     loc: Loc::default(),
-                    ..Default::default()
                 });
             }
         }
@@ -544,7 +540,6 @@ pub fn parse(
 
         if generated_column_delta.start == 0 {
             return ParseResult::Fail(ParseResultFail {
-                msg: b"Missing generated column value",
                 err: crate::Error::MissingGeneratedColumnValue,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -560,7 +555,6 @@ pub fn parse(
             .wrapping_add(generated_column_delta.value);
         if generated_column < 0 {
             return ParseResult::Fail(ParseResultFail {
-                msg: b"Invalid generated column value",
                 err: crate::Error::InvalidGeneratedColumnValue,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -594,19 +588,16 @@ pub fn parse(
         let source_index_delta = decode_vlq(remain, 0);
         if source_index_delta.start == 0 {
             return ParseResult::Fail(ParseResultFail {
-                msg: b"Invalid source index delta",
                 err: crate::Error::InvalidSourceIndexDelta,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
                 },
-                ..Default::default()
             });
         }
         source_index = source_index.wrapping_add(source_index_delta.value);
 
         if source_index < 0 || source_index >= sources_count {
             return ParseResult::Fail(ParseResultFail {
-                msg: b"Invalid source index value",
                 err: crate::Error::InvalidSourceIndexValue,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -619,12 +610,10 @@ pub fn parse(
         let original_line_delta = decode_vlq(remain, 0);
         if original_line_delta.start == 0 {
             return ParseResult::Fail(ParseResultFail {
-                msg: b"Missing original line",
                 err: crate::Error::MissingOriginalLine,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
                 },
-                ..Default::default()
             });
         }
 
@@ -634,7 +623,6 @@ pub fn parse(
             .wrapping_add(original_line_delta.value);
         if original_line < 0 {
             return ParseResult::Fail(ParseResultFail {
-                msg: b"Invalid original line value",
                 err: crate::Error::InvalidOriginalLineValue,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -648,7 +636,6 @@ pub fn parse(
         let original_column_delta = decode_vlq(remain, 0);
         if original_column_delta.start == 0 {
             return ParseResult::Fail(ParseResultFail {
-                msg: b"Missing original column value",
                 err: crate::Error::MissingOriginalColumnValue,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -662,7 +649,6 @@ pub fn parse(
             .wrapping_add(original_column_delta.value);
         if original_column < 0 {
             return ParseResult::Fail(ParseResultFail {
-                msg: b"Invalid original column value",
                 err: crate::Error::InvalidOriginalColumnValue,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -687,7 +673,6 @@ pub fn parse(
                     let name_index_delta = decode_vlq(remain, 0);
                     if name_index_delta.start == 0 {
                         return ParseResult::Fail(ParseResultFail {
-                            msg: b"Invalid name index delta",
                             err: crate::Error::InvalidNameIndexDelta,
                             loc: Loc {
                                 start: i32::try_from(bytes.len() - remain.len())
@@ -702,13 +687,11 @@ pub fn parse(
                         if !has_names {
                             if mapping.ensure_with_names().is_err() {
                                 return ParseResult::Fail(ParseResultFail {
-                                    msg: b"Out of memory",
                                     err: crate::Error::Alloc(bun_alloc::AllocError),
                                     loc: Loc {
                                         start: i32::try_from(bytes.len() - remain.len())
                                             .unwrap_or(i32::MAX),
                                     },
-                                    ..Default::default()
                                 });
                             }
                         }

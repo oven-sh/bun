@@ -4050,7 +4050,11 @@ mod windows_impl {
         let mut wt = WPathBuffer::default();
         let from_w = bun_paths::string_paths::to_nt_path(&mut wf, from.as_bytes());
         let to_w = bun_paths::string_paths::to_nt_path(&mut wt, to.as_bytes());
+        // `rename_at_w` reports the NT step that failed (`open` of the source
+        // or `NtSetInformationFile`) with no path; report the same shape as
+        // the POSIX arm, which callers such as shell `mv` print.
         super::windows::rename_at_w(from_dir, from_w, to_dir, to_w, true)
+            .map_err(|e| e.with_path_and_syscall(from.as_bytes(), Tag::rename))
     }
     pub(crate) fn renameat2(
         from_dir: Fd,

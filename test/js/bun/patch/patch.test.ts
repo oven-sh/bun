@@ -202,6 +202,20 @@ describe("apply", () => {
       ).toBe("okay!\n");
     });
 
+    test("of a missing source reports the rename syscall", async () => {
+      await using tempdir = tempDir("patch-test", {});
+
+      let err: any;
+      try {
+        apply("rename from missing.txt\nrename to renamed.txt\n", String(tempdir));
+      } catch (e) {
+        err = e;
+      }
+
+      // Windows used to report the NT step that failed (`open`) instead of the operation.
+      expect(err).toMatchObject({ code: "ENOENT", syscall: "rename" });
+    });
+
     test("to a destination dir longer than the path buffer throws instead of crashing", async () => {
       await using tempdir = tempDir("patch-test", { "from.txt": "hello!" });
 

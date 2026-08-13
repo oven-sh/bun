@@ -4870,9 +4870,25 @@ impl VirtualMachine {
         // Note: reshaped for borrowck.
         let global = self.global;
         let main_str = bun_core::String::from_bytes(self.main());
-        let promise = jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str))
-            .map(NonNull::as_ptr)
-            .ok_or(crate::CrateError::JSError)?;
+        let promise: *mut JSInternalPromise =
+            match jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str)) {
+                Some(promise) => promise.as_ptr(),
+                // The test file is the loader's entry specifier itself (no
+                // synthetic main module as in `bun run`), so failing to resolve
+                // it, e.g. a path that is not valid UTF-8 and reaches the loader
+                // with U+FFFD substituted in, throws synchronously instead of
+                // rejecting the load promise. Hand it back as a rejection so the
+                // runner reports it against this file and moves on to the next
+                // one. Marked handled first: the runner reports the rejection
+                // itself, the rejection tracker must not report it again.
+                None => {
+                    let global_ref = self.global();
+                    let rejected = JSInternalPromise::create(global_ref);
+                    rejected.set_handled();
+                    rejected.reject(global_ref, Err(jsc::JsError::Thrown))?;
+                    rejected
+                }
+            };
         self.pending_internal_promise = Some(promise);
         self.pending_internal_promise_is_protected = false;
         JSValue::from_cell(promise).ensure_still_alive();

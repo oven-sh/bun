@@ -2000,3 +2000,71 @@ describe.concurrent("test file discovery (scanner)", () => {
     );
   }
 });
+
+// Only Linux file systems accept names that are not valid UTF-8 (macOS rejects
+// them, Windows names are UTF-16). The module loader keys modules by JS string,
+// so such a file can never be loaded; it has to fail like any other file that
+// fails to load, without taking the rest of the run down with it.
+describe.concurrent.skipIf(!isLinux)("a test file whose name is not valid UTF-8", () => {
+  const latin1Path = (...parts: (string | number)[]) =>
+    Buffer.concat(parts.map(part => (typeof part === "number" ? Buffer.from([part]) : Buffer.from(part))));
+
+  function makeTree() {
+    const dir = tempDir("bun-test-latin1-name", {
+      "good/a.test.ts": `import { test } from "bun:test"; test("good", () => { console.log("RAN good"); });`,
+    });
+    const contents = `import { test } from "bun:test"; test("unloadable", () => { console.log("RAN unloadable"); });`;
+    // "zé.test.ts" and "café/b.test.ts" with é as the single Latin-1 byte 0xE9.
+    writeFileSync(latin1Path(`${dir}/z`, 0xe9, ".test.ts"), contents);
+    mkdirSync(latin1Path(`${dir}/caf`, 0xe9));
+    writeFileSync(latin1Path(`${dir}/caf`, 0xe9, "/b.test.ts"), contents);
+    return dir;
+  }
+
+  test("fails that file and the rest of the run still happens", async () => {
+    using dir = makeTree();
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--reporter=junit", "--reporter-outfile=report.xml"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("RAN good");
+    expect(stdout).not.toContain("RAN unloadable");
+    expect(stderr).toContain("Cannot find module");
+    expect(stderr).toContain("z\uFFFD.test.ts");
+    expect(stderr).toContain("caf\uFFFD/b.test.ts");
+    expect(stderr).toContain(" 1 pass");
+    expect(stderr).toContain(" 2 fail");
+    expect(stderr).toContain("Ran 3 tests across 3 files.");
+    expect(await Bun.file(join(String(dir), "report.xml")).text()).toContain('file="good/a.test.ts"');
+    expect(exitCode).toBe(1);
+  });
+
+  test("--parallel: the worker reports that file instead of crashing", async () => {
+    using dir = makeTree();
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The coordinator prints only the banner to stdout; worker output is relayed on stderr.
+    expect(stdout).toContain("PARALLEL");
+    expect(stderr).toContain("RAN good");
+    expect(stderr).not.toContain("worker crashed");
+    expect(stderr).toContain("Cannot find module");
+    expect(stderr).toContain(" 1 pass");
+    expect(stderr).toContain(" 2 fail");
+    expect(stderr).toContain("Ran 3 tests across 3 files.");
+    expect(exitCode).toBe(1);
+  });
+});

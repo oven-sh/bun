@@ -174,8 +174,7 @@ static ACTIVE_WATCHERS: bun_core::Mutex<Vec<usize>> = bun_core::Mutex::new(Vec::
 /// `Global::exit` (which is what sets `IS_EXITING`). Read by `register_active`
 /// (refuse new watchers) and the `thread_main` teardown guard (skip reclaiming
 /// the Box) so both cover both exit paths.
-static STOPPING_FOR_EXIT: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static STOPPING_FOR_EXIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// `extern "C"` thunk matching `bun_core::Global::ExitFn`, registered once so
 /// `Global::exit` stops every watcher before the heap teardown / ASAN poison.

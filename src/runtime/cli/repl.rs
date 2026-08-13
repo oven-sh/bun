@@ -944,12 +944,8 @@ impl<'a> Repl<'a> {
         }
         #[cfg(windows)]
         {
-            // With ENABLE_PROCESSED_INPUT the console turns Ctrl+C into a
-            // CTRL_C_EVENT, whose default handler exits the process, instead of
-            // the 0x03 byte that read_key maps to Key::CtrlC. libuv's raw mode
-            // (setRawMode, which node's REPL uses) leaves it off as well;
-            // processed_input_while_evaluating() turns it back on while
-            // JavaScript runs.
+            // ENABLE_PROCESSED_INPUT would turn Ctrl+C into a CTRL_C_EVENT (which
+            // exits the process) instead of the 0x03 byte behind Key::CtrlC.
             self.original_windows_mode = bun_sys::windows::update_stdio_mode_flags(
                 bun_sys::Stdio::StdIn,
                 bun_sys::windows::UpdateStdioModeFlagsOpts {
@@ -963,12 +959,9 @@ impl<'a> Repl<'a> {
         }
     }
 
-    /// Nothing reads stdin while JavaScript runs, so a Ctrl+C typed during an
-    /// evaluation would sit in the console input buffer until the next prompt.
-    /// With ENABLE_PROCESSED_INPUT back on it raises CTRL_C_EVENT instead and
-    /// ends the process, which is the only way out of a hung evaluation. The
-    /// guard restores the line editor's mode on drop. `None` when
-    /// setup_terminal() left the console alone (stdin or stdout is not a tty).
+    /// Nothing reads stdin while JavaScript runs, so Ctrl+C has to raise
+    /// CTRL_C_EVENT (ending the process) to get out of a hung evaluation.
+    /// Dropping the guard restores the line editor's mode.
     #[cfg(windows)]
     fn processed_input_while_evaluating(&self) -> Option<bun_sys::windows::StdinModeGuard> {
         self.original_windows_mode.is_some().then(|| {
@@ -1023,8 +1016,7 @@ impl<'a> Repl<'a> {
                 bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
             }
         }
-        // On Windows, processed_input_while_evaluating() already has Ctrl+C
-        // raising CTRL_C_EVENT for the whole evaluation, this wait included.
+        // Windows: covered by processed_input_while_evaluating().
     }
 
     /// Restore raw terminal mode after promise wait

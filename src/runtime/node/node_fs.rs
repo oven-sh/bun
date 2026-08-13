@@ -5749,8 +5749,7 @@ impl NodeFS {
                 let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
                 match mkdir_os_path(parent, mode) {
                     Err(err) => {
-                        // The SEP is restored inside the arms, not before the match: the
-                        // EEXIST arm still reads `parent`, which is terminated by that NUL.
+                        // Each arm restores the SEP itself; the EEXIST arm still reads `parent`.
                         match err.get_errno() {
                             E::EEXIST => {
                                 // On Windows, this may happen if trying to mkdir replacing a file

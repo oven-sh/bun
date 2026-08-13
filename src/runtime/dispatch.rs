@@ -1137,13 +1137,22 @@ unsafe fn __bun_run_wtf_timer(timer: *mut (), vm: *mut bun_jsc::virtual_machine:
 /// Reached from [`crate::timer::All::drain_timers`] (every due heap timer) and
 /// [`crate::timer::All::get_timeout`] (WTFTimer side-effect).
 ///
+/// Each arm is the owner's timer entry with its result surfaced: an owner
+/// returns the exception it left pending and never reports it; the drain loop
+/// (`All::drain_timers`) folds every timer's result in one place. Owners whose
+/// entry cannot enter JS return `()`, lifted to `Ok(())` by [`IntoTimerResult`].
+///
 /// # Safety
 /// `t` points at a live [`EventLoopTimer`] just popped from `All.timers`;
 /// `now` is the snapshot taken by `All::next`; `vm` is the erased
 /// `*mut VirtualMachine`. The handler may free the container — do not touch
 /// `t` after the per-arm call returns.
 #[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()) {
+pub(crate) unsafe fn __bun_fire_timer(
+    t: *mut EventLoopTimer,
+    now: *const ElTimespec,
+    vm: *mut (),
+) -> bun_event_loop::JsResult<()> {
     use crate::timer::{ImmediateObject, TimeoutObject, TimerObjectInternals, WTFTimer};
 
     /// Recover the embedding container from `t` (the popped timer slot).
@@ -1169,11 +1178,12 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
             let $c: *mut $Ty = owner!($Ty, $field);
             let ($now, $vm) = (now, vm);
             // SAFETY: per fn contract; container derived from a live `$Ty`.
-            unsafe { $body };
+            IntoTimerResult::into_timer_result(unsafe { $body })
         }};
     }
-    match tag {
+    let fired: JsResult<()> = match tag {
         // ── JS-exposed timers (TimerObjectInternals::fire) ───────────────
+        // `Bun__JSTimeout__call` reports the callback's exception itself.
         EventLoopTimerTag::TimeoutObject => {
             let container = owner!(TimeoutObject, event_loop_timer);
             // SAFETY: container derived from a live `TimeoutObject`; do NOT
@@ -1183,6 +1193,7 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
             // per-thread VM. `fire` may free the container; `t` is dead after.
             // `fire` takes `*mut Self` (noalias re-entrancy — see its doc).
             unsafe { TimerObjectInternals::fire(internals, &*now, vm) };
+            Ok(())
         }
         EventLoopTimerTag::ImmediateObject => {
             let container = owner!(ImmediateObject, event_loop_timer);
@@ -1190,6 +1201,7 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
             let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
             // SAFETY: see TimeoutObject arm.
             unsafe { TimerObjectInternals::fire(internals, &*now, vm) };
+            Ok(())
         }
         EventLoopTimerTag::WTFTimer => {
             timer_arm!(WTFTimer, event_loop_timer, |c, now, vm| WTFTimer::fire(
@@ -1239,6 +1251,7 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
                 if cfg!(debug_assertions) {
                     unreachable!("DnsSdConnection timer on non-macOS");
                 }
+                Ok(())
             }
         }
         // R-2: shared deref — `check_timeouts` re-enters via `ares_process_fd`.
@@ -1252,13 +1265,14 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
             {
                 let container = owner!(WindowsNamedPipe, event_loop_timer);
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_timeout() };
+                IntoTimerResult::into_timer_result(unsafe { (*container).on_timeout() })
             }
             #[cfg(not(windows))]
             {
                 if cfg!(debug_assertions) {
                     unreachable!("WindowsNamedPipe timer on non-Windows");
                 }
+                Ok(())
             }
         }
         EventLoopTimerTag::PostgresSQLConnectionTimeout => {
@@ -1266,25 +1280,25 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
             // construction; `t` is the connection's `timer` field.
             let container = unsafe { PostgresSQLConnection::from_timer_ptr(t) };
             // SAFETY: per fn contract.
-            unsafe { (*container).on_connection_timeout() };
+            IntoTimerResult::into_timer_result(unsafe { (*container).on_connection_timeout() })
         }
         EventLoopTimerTag::PostgresSQLConnectionMaxLifetime => {
             // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
             let container = unsafe { PostgresSQLConnection::from_max_lifetime_timer_ptr(t) };
             // SAFETY: per fn contract.
-            unsafe { (*container).on_max_lifetime_timeout() };
+            IntoTimerResult::into_timer_result(unsafe { (*container).on_max_lifetime_timeout() })
         }
         EventLoopTimerTag::MySQLConnectionTimeout => {
             // SAFETY: §Dispatch — `t` is the connection's `timer` field.
             let container = unsafe { MySQLConnection::from_timer_ptr(t) };
             // SAFETY: per fn contract.
-            unsafe { (*container).on_connection_timeout() };
+            IntoTimerResult::into_timer_result(unsafe { (*container).on_connection_timeout() })
         }
         EventLoopTimerTag::MySQLConnectionMaxLifetime => {
             // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
             let container = unsafe { MySQLConnection::from_max_lifetime_timer_ptr(t) };
             // SAFETY: per fn contract.
-            unsafe { (*container).on_max_lifetime_timeout() };
+            IntoTimerResult::into_timer_result(unsafe { (*container).on_max_lifetime_timeout() })
         }
         EventLoopTimerTag::ValkeyConnectionTimeout => {
             timer_arm!(Valkey, timer, |c, _now, _vm| (*c).on_connection_timeout())
@@ -1302,11 +1316,13 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
             // the store inside.
             // SAFETY: per fn contract.
             SourceMapStore::sweep_weak_refs(t, unsafe { &*now });
+            Ok(())
         }
         EventLoopTimerTag::DevServerMemoryVisualizerTick => {
             // SAFETY: per fn contract; `t` is the `memory_visualizer_timer`
             // field of a live DevServer.
             DevServer::emit_memory_visualizer_message_timer(unsafe { &mut *t }, unsafe { &*now });
+            Ok(())
         }
         EventLoopTimerTag::BunTest => {
             let container = owner!(BunTest, timer);
@@ -1334,16 +1350,36 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
                 }
             };
             BunTest::bun_test_timeout_callback(&strong, &now_core, VirtualMachine::get());
+            Ok(())
         }
         EventLoopTimerTag::CronJob => {
             let c: *mut CronJob = owner!(CronJob, event_loop_timer);
-            CronJob::on_timer_fire(c, VirtualMachine::get());
+            CronJob::on_timer_fire(c, VirtualMachine::get())
         }
         EventLoopTimerTag::QuicEndpoint => {
             let c: *mut crate::node::quic::QuicEndpoint =
                 owner!(crate::node::quic::QuicEndpoint, event_loop_timer);
-            crate::node::quic::QuicEndpoint::on_timer_fire(c);
+            IntoTimerResult::into_timer_result(crate::node::quic::QuicEndpoint::on_timer_fire(c))
         }
+    };
+    fired.map_err(Into::into)
+}
+
+/// Lifts a timer entry's return to the dispatcher's `JsResult`: entries that
+/// cannot enter JS return `()`.
+trait IntoTimerResult {
+    fn into_timer_result(self) -> JsResult<()>;
+}
+impl IntoTimerResult for () {
+    #[inline(always)]
+    fn into_timer_result(self) -> JsResult<()> {
+        Ok(())
+    }
+}
+impl IntoTimerResult for JsResult<()> {
+    #[inline(always)]
+    fn into_timer_result(self) -> JsResult<()> {
+        self
     }
 }
 

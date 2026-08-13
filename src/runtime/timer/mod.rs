@@ -938,7 +938,11 @@ impl All {
                 nsec: now.nsec,
             };
             // SAFETY: `min` is live; no guard or borrow of `All` is held here.
-            unsafe { EventLoopTimer::fire(min, &el_now, vm) };
+            let fired = unsafe { EventLoopTimer::fire(min, &el_now, vm) };
+            // SAFETY: `vm` is the erased per-thread VM per fn contract.
+            if unsafe { fold_timer(vm, fired) }.is_err() {
+                return None;
+            }
         }
     }
 
@@ -1106,7 +1110,11 @@ impl All {
             // `fire` dispatches through the FIRE_TIMER hook (§Dispatch hot
             // path) and may re-enter `(*runtime_state()).timer` — no `&mut`
             // to `All` is live here.
-            unsafe { EventLoopTimer::fire(t, &el_now, vm) };
+            let fired = unsafe { EventLoopTimer::fire(t, &el_now, vm) };
+            // SAFETY: `vm` per fn contract.
+            if unsafe { fold_timer(vm, fired) }.is_err() {
+                break;
+            }
         }
     }
 
@@ -1371,3 +1379,20 @@ impl ID {
 
 const US_PER_S: i64 = bun_core::time::US_PER_S as i64;
 const NS_PER_US: i64 = bun_core::time::NS_PER_US as i64;
+
+/// The timer drain's fold: report what a fired timer's handler left pending
+/// as uncaught, or — if it is the VM's termination — tell the drain to stop.
+///
+/// # Safety
+/// `vm` is the erased per-thread `*mut VirtualMachine`.
+#[inline]
+unsafe fn fold_timer(vm: *mut (), fired: bun_event_loop::JsResult<()>) -> Result<(), bun_jsc::Stopped> {
+    match fired {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            // SAFETY: fn contract.
+            let global = unsafe { (*vm.cast::<bun_jsc::virtual_machine::VirtualMachine>()).global() };
+            bun_jsc::task::report_error_or_terminate(global, err.into())
+        }
+    }
+}

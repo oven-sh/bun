@@ -703,8 +703,6 @@ impl PostgresSQLConnection {
         // we defer the refAndClose so the on_close will be called first before we reject the pending requests
         let on_close_opt = self.consume_on_close_callback(self.global());
         if let Some(on_close) = on_close_opt {
-            let event_loop = self.event_loop();
-            event_loop.enter();
             let mut js_error = value.to_error().unwrap_or(value);
             if js_error.is_empty() {
                 js_error = postgres_error_to_js(
@@ -715,10 +713,14 @@ impl PostgresSQLConnection {
             }
             js_error.ensure_still_alive();
             let queries = self.get_queries_array();
-            if let Err(e) = on_close.call(self.global(), JSValue::UNDEFINED, &[js_error, queries]) {
-                self.global().report_active_exception_as_unhandled(e);
-            }
-            event_loop.exit();
+            // Reported here rather than returned: the pending queries are still
+            // rejected and the socket closed below whatever `onclose` did.
+            self.event_loop().run_callback(
+                on_close,
+                self.global(),
+                JSValue::UNDEFINED,
+                &[js_error, queries],
+            );
         }
         self.ref_and_close(Some(value));
         // SAFETY: `self` is a live Box-allocated connection; this releases one ref.

@@ -1060,7 +1060,7 @@ impl JSValkeyClient {
             valkey::Status::Disconnected => {
                 self.client_mut().flags.is_reconnecting = true;
                 self.client_mut().retry_attempts = 0;
-                self.reconnect();
+                self.reconnect()?;
             }
             _ => {}
         }
@@ -1114,18 +1114,18 @@ impl JSValkeyClient {
             .arm(self, self.client.get().get_timeout_interval());
     }
 
-    pub(crate) fn on_connection_timeout(&self) {
+    pub(crate) fn on_connection_timeout(&self) -> JsResult<()> {
         debug!("onConnectionTimeout");
 
         let _guard = self.ref_scope();
         let _timer_ref = self.timer.take_fire_ref(self);
         if self.client.get().flags.failed {
-            return;
+            return Ok(());
         }
 
         if self.client.get().get_timeout_interval() == 0 {
             self.reset_connection_timeout();
-            return;
+            return Ok(());
         }
 
         let mut buf = [0u8; 128];
@@ -1142,8 +1142,7 @@ impl JSValkeyClient {
                 .expect("unreachable");
                 let len = start - cur.len();
                 let msg = &buf[..len];
-                let _ = self.client_fail(msg, protocol::RedisError::IdleTimeout);
-                // TODO: properly propagate exception upwards
+                self.client_fail(msg, protocol::RedisError::IdleTimeout)
             }
             valkey::Status::NeverConnected
             | valkey::Status::Disconnected
@@ -1159,32 +1158,31 @@ impl JSValkeyClient {
                 .expect("unreachable");
                 let len = start - cur.len();
                 let msg = &buf[..len];
-                let _ = self.client_fail(msg, protocol::RedisError::ConnectionTimeout);
-                // TODO: properly propagate exception upwards
+                self.client_fail(msg, protocol::RedisError::ConnectionTimeout)
             }
         }
     }
 
-    pub(crate) fn on_reconnect_timer(&self) {
+    pub(crate) fn on_reconnect_timer(&self) -> JsResult<()> {
         debug!("Reconnect timer fired, attempting to reconnect");
 
         let _guard = self.ref_scope();
         let _timer_ref = self.reconnect_timer.take_fire_ref(self);
 
         // Execute reconnection logic
-        self.reconnect();
+        self.reconnect()
     }
 
-    pub(crate) fn reconnect(&self) {
+    pub(crate) fn reconnect(&self) -> JsResult<()> {
         if !self.client.get().flags.is_reconnecting {
-            return;
+            return Ok(());
         }
 
         // No reconnecting on a VM that is exiting: its stop phase would only
         // have to close the new socket again.
         if self.vm().is_shutting_down() {
             bun_core::hint::cold();
-            return;
+            return Ok(());
         }
 
         // Ref to keep this alive during the reconnection
@@ -1198,7 +1196,8 @@ impl JSValkeyClient {
         });
 
         if let Err(err) = self.connect() {
-            self.fail_with_js_value(
+            self.poll_ref.with_mut(|r| r.disable());
+            return self.fail_with_js_value(
                 self.global_object
                     .err(
                         jsc::ErrorCode::SOCKET_CLOSED_BEFORE_CONNECTION,
@@ -1206,12 +1205,11 @@ impl JSValkeyClient {
                     )
                     .to_js(),
             );
-            self.poll_ref.with_mut(|r| r.disable());
-            return;
         }
 
         // Reset the socket timeout
         self.reset_connection_timeout();
+        Ok(())
     }
 
     // Callback for when Valkey client connects
@@ -1407,9 +1405,7 @@ impl JSValkeyClient {
 
         // Call onClose callback if it exists
         if let Some(on_close) = Js::onclose_get_cached(this_jsvalue) {
-            if let Err(e) = on_close.call(&global_object, this_jsvalue, &[error_value]) {
-                global_object.report_active_exception_as_unhandled(e);
-            }
+            on_close.call(&global_object, this_jsvalue, &[error_value])?;
         }
         Ok(())
     }
@@ -1420,17 +1416,16 @@ impl JSValkeyClient {
         self.client_mut().fail(message, err)
     }
 
-    pub(crate) fn fail_with_js_value(&self, value: JSValue) {
+    pub(crate) fn fail_with_js_value(&self, value: JSValue) -> JsResult<()> {
         let Some(this_value) = self.this_value.get().try_get() else {
-            return;
+            return Ok(());
         };
         let global_object = self.global_object;
         if let Some(on_close) = Js::onclose_get_cached(this_value) {
             let _exit = self.vm().enter_event_loop_scope();
-            if let Err(e) = on_close.call(&global_object, this_value, &[value]) {
-                global_object.report_active_exception_as_unhandled(e);
-            }
+            on_close.call(&global_object, this_value, &[value])?;
         }
+        Ok(())
     }
 
     fn close_socket_next_tick(&self) {

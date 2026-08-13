@@ -913,15 +913,14 @@ describe.concurrent("Script parses its source once", () => {
         `,
       ],
       env: { ...bunEnv, BUN_JSC_reportParseTimes: "1" },
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(exitCode).toBe(0);
     const begin = stderr.indexOf("@@begin");
     const end = stderr.indexOf("@@end");
-    expect(begin).toBeGreaterThanOrEqual(0);
-    expect(end).toBeGreaterThan(begin);
+    // The fixture's own error, if it threw, is in stderr too; show it rather than just the exit code.
+    if (exitCode !== 0 || begin < 0 || end < begin) throw new Error(`fixture exited with ${exitCode}:\n${stderr}`);
     return stderr
       .slice(begin, end)
       .split("\n")

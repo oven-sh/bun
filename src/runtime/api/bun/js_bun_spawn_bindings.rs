@@ -1220,7 +1220,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             spawn_options.deinit();
             let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                 // SAFETY: argv[0] is non-null and points at a NUL-terminated
-                // string we built above (lives in `arg0_backing`/`arg_backing`).
+                // string we built above (lives in `cstr_storage`).
                 ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
             } else {
                 ZStr::EMPTY
@@ -1267,7 +1267,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                     | sys::Errno::ENOTDIR) => {
                         let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                             // SAFETY: argv[0] is non-null and points at a NUL-terminated
-                            // string we built above (lives in `arg0_backing`/`arg_backing`).
+                            // string we built above (lives in `cstr_storage`).
                             ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
                         } else {
                             ZStr::EMPTY

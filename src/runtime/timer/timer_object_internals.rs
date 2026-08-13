@@ -309,7 +309,7 @@ impl TimerObjectInternals {
                 unreachable!()
             };
             // SAFETY: `vm` is the live per-thread VM. Low tier stores `*mut ()`
-            // (PORTING.md §Dispatch); `run_immediate_task_hook` casts it back
+            // (PORTING.md §Dispatch); `__bun_run_immediate_task` casts it back
             // to `*mut ImmediateObject`.
             unsafe { (*vm).enqueue_immediate_task(parent.cast()) };
             self.set_enable_keeping_event_loop_alive(vm, true);
@@ -838,7 +838,7 @@ impl TimerObjectInternals {
 
         // (c) `vm.timer.maps.get(kind).swapRemove(id)` if
         //     `has_accessed_primitive` — drops the i32→*mut EventLoopTimer
-        //     entry minted by `toPrimitive`. Swap-remove: the id map is only
+        //     entry minted by `to_primitive`. Swap-remove: the id map is only
         //     ever keyed into, never iterated in order, and `deinit` runs for
         //     every id-accessed timer a GC sweep collects, so the ordered
         //     remove's O(n) shift + index rebuild here was O(n²) across a
@@ -861,7 +861,7 @@ impl TimerObjectInternals {
             } else if kind == Kind::SetInterval {
                 // A `setTimeout` promoted to a `setInterval` by
                 // `convert_to_interval()` keeps the entry minted by
-                // `toPrimitive` in `maps.set_timeout`. Remove it from there
+                // `to_primitive` in `maps.set_timeout`. Remove it from there
                 // too, or `remove_timer_by_id` would hand out a dangling
                 // `*mut EventLoopTimer` after the parent is freed.
                 // SAFETY: as above.

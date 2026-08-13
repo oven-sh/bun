@@ -1246,7 +1246,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         // `_scope_guard` (declared after `cleanup`) drops first → scope.exit();
-        // then `cleanup` → needs_deref/markInactive/deref.
+        // then `cleanup` → needs_deref/mark_inactive/deref.
     }
 
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as
@@ -1330,7 +1330,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // uSockets will defer freeing the TCP socket until the next tick
             if !self.socket.get().is_closed() {
                 self.close_and_detach(uws::CloseCode::Normal);
-                // onClose will call markInactive again
+                // on_close will call mark_inactive again
                 return;
             }
 
@@ -3072,14 +3072,14 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[bun_jsc::host_fn(method)]
     pub fn flush(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        // `end()` → `internalFlush` → `markInactive` → `closeAndDetach(.normal)`
+        // `end()` → `internal_flush` → `mark_inactive` → `close_and_detach(Normal)`
         // detaches `this.socket` and, for TLS, defers the raw close until the
         // peer's close_notify arrives — leaving `is_active` set so the eventual
-        // `onClose` can run `handlers.markInactive()`. Without this guard a
-        // follow-up `flush()` re-enters `markInactive`, sees the detached
+        // `on_close` can run `handlers.mark_inactive()`. Without this guard a
+        // follow-up `flush()` re-enters `mark_inactive`, sees the detached
         // socket as closed, and decrements `active_connections` a second time;
-        // the deferred `onClose` then underflows it. Every other
-        // `internalFlush` caller already has this check.
+        // the deferred `on_close` then underflows it. Every other
+        // `internal_flush` caller already has this check.
         if this.socket.get().is_detached() {
             return Ok(JSValue::UNDEFINED);
         }
@@ -3665,7 +3665,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.flags.get().contains(Flags::IS_ACTIVE) {
             this.poll_ref.with_mut(|p| p.disable());
             this.update_flags(|f| f.remove(Flags::IS_ACTIVE));
-            // Do NOT markInactive raw_handlers — ownership of the
+            // Do NOT mark_inactive raw_handlers — ownership of the
             // active_connections=1 it holds is transferring to `raw`.
             this.this_value.with_mut(|r| r.downgrade());
         }
@@ -3695,7 +3695,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             local_binding: JsCell::new(None),
             protos: JsCell::new(None),
             server_name: JsCell::new(None),
-            // is_active so the chained `raw.onClose` → `markInactive` path
+            // is_active so the chained `raw.on_close` → `mark_inactive` path
             // releases `raw_handlers`. No poll_ref — `tls` keeps the loop
             // alive. active_connections=1 was already on raw_handlers from
             // `this`.
@@ -4216,7 +4216,7 @@ pub enum SocketMode {
     /// Listener-owned server. TLS (if any) configured at the listener level.
     Server,
     /// Duplex upgraded to TLS server role. Not listener-owned —
-    /// markInactive uses client lifecycle path.
+    /// mark_inactive uses client lifecycle path.
     DuplexServer,
 }
 
@@ -4272,7 +4272,7 @@ pub(crate) struct DuplexUpgradeContext {
     /// Mutually exclusive with `owned_ctx` — `runEvent` prefers `owned_ctx`.
     pub ssl_config: Option<SSLConfig>,
     /// One ref on a prebuilt `SSL_CTX` (from `opts.tls.secureContext` — the
-    /// memoised `tls.createSecureContext` path). Adopted by `startTLSWithCTX`
+    /// memoised `tls.createSecureContext` path). Adopted by `start_tls_with_ctx`
     /// on success, freed in `deinit` if Close races ahead of StartTLS.
     pub owned_ctx: Option<*mut SSL_CTX>,
     pub is_open: bool,
@@ -4398,8 +4398,8 @@ impl DuplexUpgradeContext {
             // SAFETY: fn contract; take the tls out (disjoint field).
             if let Some(tls) = unsafe { (*this).tls.take() } {
                 // Pre-open error (e.g. the duplex emitted non-Buffer data
-                // before the queued `.StartTLS` task ran). `handleConnectError`
-                // → `markInactive` releases `tls.handlers`; null `tls` so the
+                // before the queued `.StartTLS` task ran). `handle_connect_error`
+                // → `mark_inactive` releases `tls.handlers`; null `tls` so the
                 // still-queued `.StartTLS` → `onOpen` — and any further
                 // duplex events — skip the TLSSocket instead of hitting
                 // `has_handlers() == false` in `onOpen`.
@@ -4442,15 +4442,15 @@ impl DuplexUpgradeContext {
         let socket = unsafe { Self::duplex_socket(this) };
         // SAFETY: fn contract; take the tls out (disjoint field).
         if let Some(tls) = unsafe { (*this).tls.take() } {
-            // `tls.onClose` consumes the +1 we hold (its scope-exit deref
+            // `TLSSocket::on_close` consumes the +1 we hold (its scope-exit deref
             // is the ext-slot/owner pin). Null our pointer first so the
-            // `deinitInNextTick` → `deinit` path doesn't deref it a second
+            // `deinit_in_next_tick` → `deinit` path doesn't deref it a second
             // time — that's the over-deref behind the cross-file
-            // `TLSSocket.finalize` use-after-poison. It also means a throw
+            // `TLSSocket::finalize` use-after-poison. It also means a throw
             // from `duplex.end()` (called right after this returns via
-            // `UpgradedDuplex.onClose` → `callWriteOrEnd`) hits the null-check
-            // in `onError` instead of reading the Handlers that `tls.onClose`
-            // → `markInactive` just released.
+            // `UpgradedDuplex::on_close` → `call_write_or_end`) hits the null-check
+            // in `on_error` instead of reading the Handlers that `TLSSocket::on_close`
+            // → `mark_inactive` just released.
             let p = tls.into_this_ptr();
             TLSSocket::on_close(p, socket, 0, None);
         }
@@ -4516,7 +4516,7 @@ impl DuplexUpgradeContext {
                     let errno = sys::SystemErrno::ECONNREFUSED as c_int;
                     // SAFETY: `this` is live; short-lived `&mut` for `take`.
                     if let Some(tls) = unsafe { (*this).tls.take() } {
-                        // `handleConnectError` consumes our +1 — `tls.socket`
+                        // `handle_connect_error` consumes our +1 — `tls.socket`
                         // is `InternalSocket::UpgradedDuplex` (set before
                         // `start_tls()` was queued), so `needs_deref =
                         // !is_detached()` is true — and detaches. Null
@@ -4530,7 +4530,7 @@ impl DuplexUpgradeContext {
                         let p = tls.into_this_ptr();
                         TLSSocket::handle_connect_error(p, errno, 0);
                     }
-                    // `startTLS`/`startTLSWithCTX` failed before the
+                    // `start_tls`/`start_tls_with_ctx` failed before the
                     // SSLWrapper was assigned, so its close callback
                     // was never registered and nothing will schedule
                     // `.Close`. Same as the `tls == null` early-return

@@ -130,9 +130,7 @@ impl AnyEventLoop {
         if ptr.is_null() {
             AnyEventLoop::Mini(Box::new(MiniEventLoop::init()))
         } else {
-            AnyEventLoop::Js {
-                owner: JsEventLoop::current(),
-            }
+            AnyEventLoop::js(ptr)
         }
     }
 

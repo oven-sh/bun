@@ -1502,11 +1502,7 @@ impl<'a> Resolver<'a> {
         import_path: &[u8],
         kind: ast::ImportKind,
     ) -> crate::CrateResult<Result> {
-        match self.resolve_and_auto_install(source_dir, import_path, kind, GlobalCache::disable) {
-            ResultUnion::Success(result) => Ok(result),
-            ResultUnion::Pending(_) | ResultUnion::NotFound => Err(crate::Error::ModuleNotFound),
-            ResultUnion::Failure(e) => Err(e),
-        }
+        self.resolve_inner(source_dir, import_path, kind, GlobalCache::disable)
     }
 
     /// Like `resolve`, but uses the configured `global_cache` setting to
@@ -1518,6 +1514,16 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
     ) -> crate::CrateResult<Result> {
         let global_cache = self.opts.global_cache;
+        self.resolve_inner(source_dir, import_path, kind, global_cache)
+    }
+
+    fn resolve_inner(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+        global_cache: GlobalCache,
+    ) -> crate::CrateResult<Result> {
         match self.resolve_and_auto_install(source_dir, import_path, kind, global_cache) {
             ResultUnion::Success(result) => Ok(result),
             ResultUnion::Pending(_) | ResultUnion::NotFound => Err(crate::Error::ModuleNotFound),
@@ -1533,44 +1539,8 @@ impl<'a> Resolver<'a> {
         import_path: &[u8],
         kind: ast::ImportKind,
     ) -> crate::CrateResult<Result> {
-        // SAFETY: PORT — matches `resolve_with_framework` below; `import_path`
-        // is caller-interned and outlives the returned Result.
-        let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
-        if let Some(f) = self.opts.framework.as_ref() {
-            if let Some(mod_) = f.built_in_modules.get(import_path) {
-                match mod_ {
-                    bun_options_types::BuiltInModule::Code(_) => {
-                        return Ok(Result {
-                            import_kind: kind,
-                            path_pair: PathPair {
-                                primary: Fs::Path::init_with_namespace(import_path, b"node"),
-                                secondary: None,
-                            },
-                            module_type: options::ModuleType::Esm,
-                            primary_side_effects_data: SideEffects::NoSideEffectsPureData,
-                            flags: ResultFlags::default(),
-                            ..Default::default()
-                        });
-                    }
-                    bun_options_types::BuiltInModule::Import(path) => {
-                        // SAFETY: PORT — `path` borrows from the framework
-                        // config, which outlives the returned Result; copy the
-                        // reference out so the `&self.opts.framework` borrow
-                        // ends before `self.resolve_with_global_cache(&mut
-                        // self, ..)`. Matches `resolve_with_framework` below.
-                        let path: &'static [u8] =
-                            unsafe { &*std::ptr::from_ref::<[u8]>(path.as_ref()) };
-                        let top = self.fs_ref().top_level_dir;
-                        return self.resolve_with_global_cache(
-                            top,
-                            path,
-                            ast::ImportKind::EntryPointBuild,
-                        );
-                    }
-                }
-            }
-        }
-        self.resolve_with_global_cache(source_dir, import_path, kind)
+        let global_cache = self.opts.global_cache;
+        self.resolve_with_framework_inner(source_dir, import_path, kind, global_cache)
     }
 
     /// Runs a resolution but also checking if a Bun Bake framework has an
@@ -1580,6 +1550,16 @@ impl<'a> Resolver<'a> {
         source_dir: &[u8],
         import_path: &[u8],
         kind: ast::ImportKind,
+    ) -> crate::CrateResult<Result> {
+        self.resolve_with_framework_inner(source_dir, import_path, kind, GlobalCache::disable)
+    }
+
+    fn resolve_with_framework_inner(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+        global_cache: GlobalCache,
     ) -> crate::CrateResult<Result> {
         // SAFETY: `import_path` is caller-interned (source text / DirnameStore)
         // and outlives the returned Result. TODO: thread an explicit lifetime.
@@ -1603,18 +1583,23 @@ impl<'a> Resolver<'a> {
                     }
                     bun_options_types::BuiltInModule::Import(path) => {
                         // NOTE: copy out `path` so the `&self.opts.framework` borrow
-                        // ends before `self.resolve(&mut self, ...)`.
+                        // ends before `self.resolve_inner(&mut self, ...)`.
                         // SAFETY: `path` borrows `self.opts.framework`, which lives for the
                         // resolver's lifetime; the `'static` erase only releases the `&self` borrow.
                         let path: &'static [u8] =
                             unsafe { &*std::ptr::from_ref::<[u8]>(path.as_ref()) };
                         let top = self.fs_ref().top_level_dir;
-                        return self.resolve(top, path, ast::ImportKind::EntryPointBuild);
+                        return self.resolve_inner(
+                            top,
+                            path,
+                            ast::ImportKind::EntryPointBuild,
+                            global_cache,
+                        );
                     }
                 }
             }
         }
-        self.resolve(source_dir, import_path, kind)
+        self.resolve_inner(source_dir, import_path, kind, global_cache)
     }
 
     pub(crate) fn finalize_result(

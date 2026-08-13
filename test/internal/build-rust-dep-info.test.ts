@@ -13,16 +13,18 @@
  * edge's inputs after each run.
  *
  * These exercise the ninja emission only (no cargo or ninja is run), so they
- * run on every host. On Windows, emitting the edge also pre-creates the
- * git-ignored 0-byte shim placeholder in the source tree, as `bun bd` does.
+ * run on every host. Each config's `cwd` is pointed at the test's temp dir:
+ * emitting a windows-target edge pre-creates the `bun_shim_impl.exe`
+ * placeholder under `<cwd>/src/install/windows-shim/`, which must not land in
+ * the checkout.
  */
 import { describe, expect, test } from "bun:test";
 import { isMacOS, isWindows, tempDir } from "harness";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 
-import { resolveConfig, type Config, type Toolchain } from "../../scripts/build/config.ts";
+import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
-import { emitRust, registerRustRules, rustDepInfoPath, rustLibPath, rustTarget } from "../../scripts/build/rust.ts";
+import { emitRust, registerRustRules, rustTarget } from "../../scripts/build/rust.ts";
 
 /** A fully-populated fake toolchain; resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
@@ -63,9 +65,13 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
 
 const slash = (p: string) => p.replaceAll("\\", "/");
 
-/** Host-targeted debug config (what `bun bd` resolves), writing into `buildDir`. */
-function hostConfig(buildDir: string, toolchain = mockToolchain()): Config {
-  return resolveConfig({ buildDir, buildType: "Debug" }, toolchain);
+/**
+ * A config building into `<dir>/build`, with `cwd` (the repo root as far as
+ * the emitters are concerned; resolveConfig() itself always uses the real
+ * checkout) redirected into `dir`. No `os`/`arch` in `partial` means the host.
+ */
+function config(dir: string, partial: PartialConfig = {}, toolchain = mockToolchain()): Config {
+  return { ...resolveConfig({ buildDir: join(dir, "build"), buildType: "Debug", ...partial }, toolchain), cwd: dir };
 }
 
 /** Register the rust rules and emit the cargo edge for `cfg`; returns the ninja text. */
@@ -125,7 +131,9 @@ function expectedPaths(cfg: Config): { output: string; depInfo: string } {
   };
 }
 
-function expectDepInfoWired(ninja: string, cfg: Config, ruleName: "rust_build" | "rust_build_cross"): void {
+/** Emit `cfg` and check that its staticlib edge reads the dep-info through `ruleName`. */
+function expectDepInfoWired(cfg: Config, ruleName: "rust_build" | "rust_build_cross"): void {
+  const ninja = emit(cfg);
   const { output, depInfo } = expectedPaths(cfg);
   const staticlib = edge(ninja, output);
   expect(staticlib.rule).toBe(ruleName);
@@ -140,8 +148,7 @@ function expectDepInfoWired(ninja: string, cfg: Config, ruleName: "rust_build" |
 describe("cargo edge depfile", () => {
   test("rust_build reads cargo's dep-info as its depfile", () => {
     using dir = tempDir("build-rust-dep-info", {});
-    const cfg = hostConfig(String(dir));
-    expectDepInfoWired(emit(cfg), cfg, "rust_build");
+    expectDepInfoWired(config(String(dir)), "rust_build");
   });
 
   test("rust_build_cross (rustup-managed cargo, pinned channel) does too", () => {
@@ -153,42 +160,37 @@ describe("cargo edge depfile", () => {
       [`toolchain/bin/rustup${exe}`]: "",
     });
     const cargo = join(String(dir), "toolchain", "bin", `cargo${exe}`);
-    const cfg = hostConfig(join(String(dir), "build"), mockToolchain({ cargo }));
+    const cfg = config(String(dir), {}, mockToolchain({ cargo }));
     expect(cfg.rustToolchain).toBeDefined();
-    expectDepInfoWired(emit(cfg), cfg, "rust_build_cross");
+    expectDepInfoWired(cfg, "rust_build_cross");
   });
 
-  test("the dep-info path follows the staticlib's name on each target", () => {
+  test("the dep-info follows the staticlib's name on a windows target (bun_rust.lib -> bun_rust.d)", () => {
     using dir = tempDir("build-rust-dep-info", {});
-    const buildDir = String(dir);
-    const paths = (cfg: Config) => ({
-      output: slash(relative(buildDir, rustLibPath(cfg))),
-      depInfo: slash(relative(buildDir, rustDepInfoPath(cfg))),
+    // A cross config on non-windows hosts (any sysroot string satisfies
+    // resolveConfig, nothing is probed), the native config on windows.
+    const cfg = config(String(dir), {
+      os: "windows",
+      arch: "x64",
+      buildType: "Release",
+      winsysroot: join(String(dir), "winsysroot"),
     });
-
-    const host = hostConfig(buildDir);
-    expect(paths(host)).toEqual(expectedPaths(host));
-
-    // Cross config on non-windows hosts; any sysroot string satisfies
-    // resolveConfig (nothing is probed). Native on windows, where the host
-    // case above already covers it.
-    const windows = resolveConfig(
-      { buildDir, os: "windows", arch: "x64", buildType: "Release", winsysroot: join(buildDir, "winsysroot") },
-      mockToolchain(),
-    );
-    expect(paths(windows)).toEqual({
+    expect(expectedPaths(cfg)).toEqual({
       output: "rust-target/x86_64-pc-windows-msvc/release/bun_rust.lib",
       depInfo: "rust-target/x86_64-pc-windows-msvc/release/bun_rust.d",
     });
+    expectDepInfoWired(cfg, "rust_build");
+  });
 
-    // On macOS the host case is this config; as a cross config elsewhere it
-    // resolves without an SDK (see macos-cross-config.test.ts).
-    if (!isMacOS) {
-      const darwin = resolveConfig({ buildDir, os: "darwin", arch: "aarch64", buildType: "Release" }, mockToolchain());
-      expect(paths(darwin)).toEqual({
-        output: "rust-target/aarch64-apple-darwin/release/libbun_rust.a",
-        depInfo: "rust-target/aarch64-apple-darwin/release/libbun_rust.d",
-      });
-    }
+  // On macOS the host config of the first test is this one; resolving it as
+  // a cross config there would probe the installed SDK (see macos-cross-config.test.ts).
+  test.skipIf(isMacOS)("and on a darwin target (libbun_rust.a -> libbun_rust.d)", () => {
+    using dir = tempDir("build-rust-dep-info", {});
+    const cfg = config(String(dir), { os: "darwin", arch: "aarch64", buildType: "Release" });
+    expect(expectedPaths(cfg)).toEqual({
+      output: "rust-target/aarch64-apple-darwin/release/libbun_rust.a",
+      depInfo: "rust-target/aarch64-apple-darwin/release/libbun_rust.d",
+    });
+    expectDepInfoWired(cfg, "rust_build");
   });
 });

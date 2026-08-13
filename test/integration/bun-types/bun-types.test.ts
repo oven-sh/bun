@@ -400,6 +400,52 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // #38037: Mock<T> must preserve generic call signatures. Rebuilding the call
+  // signature with Parameters<T>/ReturnType<T> instantiates T's type parameters
+  // as `unknown`, breaking callback runners whose return type depends on an argument.
+  // Runs on debug builds too, unlike the LanguageService cases above.
+  describe("Mock generics", () => {
+    test("mock(), jest.fn() and spyOn() preserve generic call signatures", async () => {
+      const checkDir = join(TEMP_DIR, "mock-generics-check");
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["mock-generics.ts"];
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "mock-generics.ts": `import { jest, mock, spyOn } from "bun:test";
+           type GenericRunner = <T>(callback: () => PromiseLike<T>) => Promise<T>;
+
+           const genericMock = mock(async <T,>(callback: () => PromiseLike<T>): Promise<T> => callback());
+           genericMock satisfies GenericRunner;
+           genericMock(async () => 42) satisfies Promise<number>;
+           genericMock.mock.calls.length satisfies number;
+
+           const genericJestFn = jest.fn(async <T,>(callback: () => PromiseLike<T>): Promise<T> => callback());
+           genericJestFn satisfies GenericRunner;
+
+           const genericSpyTarget = {
+             run: async <T,>(callback: () => PromiseLike<T>): Promise<T> => callback(),
+           };
+           spyOn(genericSpyTarget, "run") satisfies GenericRunner;`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("Test Globals", () => {
     const code = `
       const test_shouldBeAFunction: Function = test;

@@ -128,9 +128,7 @@ function injectFakeEmitter(Class) {
     return event.detail;
   }
 
-  // node calls the listener with `this` = the port it was registered on. Bound
-  // here rather than taken from the wrapper's own `this`: fakeParentPort()
-  // registers on the global scope, so EventTarget would pass that instead.
+  // node-style listeners run with `this` = the object on()/once() was called on.
   function wrapped(target, run, listener) {
     return function (event) {
       return listener.$call(target, run(event));

@@ -128,14 +128,39 @@ echo ""
 
 mkdir -p "$PDIR"
 
-find test/ -type f \
-  \( -name "*.test.ts" -o -name "*.test.js" -o -name "*.test.tsx" -o -name "*.test.jsx" \
-     -o -name "*.spec.ts" -o -name "*.spec.tsx" -o -name "*.spec.js" -o -name "*.spec.cjs" \
-     -o -name "*.test.mjs" -o -name "*.test.cjs" -o -name "*.spec.mjs" \
-     -o -name "*.test.mts" -o -name "*.test.cts" -o -name "*.spec.cts" \) \
-  ! -path "*/node_modules/*" \
-  | awk 'BEGIN{srand();}{print rand()"\t"$0}' | sort -k1 -n | sed 's/^[0-9.]*\t//' \
-  > "$PDIR/test_files_all.txt"
+# ── 测试文件收集（与上游 CI runner.node.mjs 的 isTest 规则一致） ──
+# isNodeTest:   js/node/test/{parallel,sequential}/ + js/bun/test/parallel/ 下所有 JS
+# isClusterTest: js/node/cluster/test-*.ts
+# isTestStrict: *.test.* / *.spec.*（JS 扩展名）
+# 排除: node_modules / 隐藏文件与目录（同上游 isHidden）
+# 用 python 精确复刻上游 isTest（isNodeTest/isClusterTest/isTestStrict +
+# isHidden），避免 find 的 glob 与上游正则的边界差异。
+"$BUN" -e '
+const { readdirSync } = require("fs");
+const { join, basename, dirname } = require("path");
+const isJs = p => /\.(c|m)?(j|t)sx?$/.test(basename(p));
+const isNodeTest = p => {
+  const u = p.replaceAll("\\", "/");
+  return (u.includes("js/node/test/parallel/") || u.includes("js/node/test/sequential/") || u.includes("js/bun/test/parallel/")) && isJs(p);
+};
+const isClusterTest = p => {
+  const u = p.replaceAll("\\", "/");
+  return u.includes("js/node/cluster/test-") && u.endsWith(".ts");
+};
+const isTestStrict = p => isJs(p) && /\.test|spec\./.test(basename(p));
+const isHidden = p => /node_modules|node\.js/.test(dirname(p).replaceAll("\\", "/")) || /^\./.test(basename(p));
+const tests = [];
+const walk = (cwd, rel) => {
+  for (const e of readdirSync(join(cwd, rel), { withFileTypes: true })) {
+    const f = join(rel, e.name);
+    if (isHidden(f)) continue;
+    if (e.isFile()) { if (isNodeTest(f) || isClusterTest(f) || isTestStrict(f)) tests.push(f); }
+    else if (e.isDirectory()) walk(cwd, f);
+  }
+};
+walk(process.cwd(), "test");
+for (const t of tests) console.log(t);
+' > "$PDIR/test_files_all.txt"
 
 # 慢文件放末尾（交错会导致 slow 散布全程，5 个 worker 被 slow 占满，
 # fast 排队等待 → 完成速率骤降 → 3600s 超时杀剩余 1800 文件）。

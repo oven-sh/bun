@@ -1856,6 +1856,47 @@ it("process._exiting", () => {
   expect(process._exiting).toBe(false);
 });
 
+// node sets process._exiting before emitting 'exit' regardless of whether anyone
+// listens (lib/internal/process/per_thread.js). reallyExit is looked up after the
+// 'exit' dispatch, so an override observes the post-dispatch state without adding
+// an 'exit' listener itself.
+describe.concurrent("process._exiting is set by process.exit() with no 'exit' listeners", () => {
+  const probe = `const { writeSync } = require("node:fs");
+    const reallyExit = process.reallyExit;
+    process.reallyExit = function (code) {
+      writeSync(1, "listeners=" + process.listenerCount("exit") + " _exiting=" + process._exiting + "\\n");
+      return reallyExit.call(process, code);
+    };
+    process.exit(0);`;
+
+  it("main thread", async () => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", probe], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "listeners=0 _exiting=true\n", stderr: "", exitCode: 0 });
+  });
+
+  it("worker thread", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         new Worker(${JSON.stringify(probe)}, { eval: true }).on("exit", c => console.log("exit " + c));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The worker's stdio bootstrap owns one 'exit' listener (node's flushSync).
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "listeners=1 _exiting=true\nexit 0\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 it("process.memoryUsage.arrayBuffers", () => {
   const initial = process.memoryUsage().arrayBuffers;
   const array = new ArrayBuffer(1024 * 1024 * 16);

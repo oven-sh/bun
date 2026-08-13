@@ -381,13 +381,8 @@ function makePortReadable(port, incrementsPortRef) {
       port.unref();
     }
   });
-  // Lets the parent end worker.stdout/stderr when the worker exits, delivering
-  // anything still queued on the port first (node's kOnExit drains before EOF).
+  // Lets the parent end worker.stdout/stderr when the worker exits abruptly.
   stream.endFromOwner = function () {
-    let entry;
-    while (ended === false && (entry = _receiveMessageOnPort(port)) !== undefined) {
-      onMessage(entry.message);
-    }
     if (ended === false) {
       ended = true;
       stream.push(null);

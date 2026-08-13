@@ -479,8 +479,7 @@ describe("captured stdio backpressure", () => {
 
 // A synchronous worker exit leaves no loop turns for the reader's ack to release
 // the parked writev, so everything buffered behind it must be flushed from the
-// worker's process 'exit' (node's flushSync) and drained by the parent before it
-// ends worker.stdout/stderr.
+// worker's process 'exit' (node's flushSync).
 describe("stdio is flushed when the worker exits synchronously", () => {
   const N = 300;
 
@@ -542,6 +541,38 @@ describe("stdio is flushed when the worker exits synchronously", () => {
     expect(lines.length).toBe(LINES + 1);
     expect(lines).toEqual([...Array.from({ length: LINES }, (_, i) => "L" + i), ""]);
     expect(code).toBe(0);
+  });
+
+  // The stdio bootstrap's own 'exit' listener must not disturb the user's: on an
+  // uncaught exception the user's handler still sees code 1 with _exiting set, its
+  // buffered + exit-time output arrives, and the exitCode it assigns wins (as in node).
+  // Spawned so the test runner's unhandled-error hook doesn't intercept the
+  // worker's uncaught exception.
+  test("user 'exit' handler on uncaught exception: output flushed and exitCode honored", async () => {
+    const workerSrc = `process.on("exit", code => {
+        process.stdout.write("exit handler " + code + " " + process._exiting + "\\n");
+        process.exitCode = 42;
+      });
+      console.log("hello");
+      throw new Error("boom");`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true, stdout: true });
+         let out = "";
+         w.stdout.setEncoding("utf8").on("data", d => (out += d));
+         w.on("error", e => console.log("error " + e.message));
+         w.on("exit", c => console.log(JSON.stringify({ code: c, out })));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(`error boom\n${JSON.stringify({ code: 42, out: "hello\nexit handler 1 true\n" })}\n`);
+    expect(exitCode).toBe(0);
   });
 });
 

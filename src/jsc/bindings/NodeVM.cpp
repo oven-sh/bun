@@ -136,8 +136,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     EXCEPTION_ASSERT(!!throwScope.exception() == program.isNull());
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
-    // The wrapped program is the longest text parsed here, so bounding the
-    // offsets against it also covers the standalone parse of the body below.
+    // The wrapper is the longest text parsed below (the body alone is parsed first).
     options.lineOffset = clampOffsetForSource(options.lineOffset, program.length());
     options.columnOffset = clampOffsetForSource(options.columnOffset, program.length());
 

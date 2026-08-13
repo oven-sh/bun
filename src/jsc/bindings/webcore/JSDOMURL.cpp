@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSDOMURL.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
@@ -42,15 +41,20 @@
 #include "JSURLSearchParams.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
+#include "streams/WebStreamsInspectCustom.h"
 #include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
+#include <JavaScriptCore/Symbol.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include <wtf/text/StringToIntegerConversion.h>
 
 #if ENABLE(MEDIA_SOURCE)
 #include "DOMURLMediaSource.h"
@@ -65,9 +69,8 @@ using namespace JSC;
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_parse);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_canParse);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toJSON);
-static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_createObjectURL);
-static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_revokeObjectURL);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toString);
+static JSC_DECLARE_HOST_FUNCTION(jsDOMURLPrototypeFunction_inspectCustom);
 
 BUN_DECLARE_HOST_FUNCTION(Bun__createObjectURL);
 BUN_DECLARE_HOST_FUNCTION(Bun__revokeObjectURL);
@@ -162,7 +165,8 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::const
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto base = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = base.isEmpty() ? DOMURL::create(WTF::move(url)) : DOMURL::create(WTF::move(url), WTF::move(base));
+    // An empty base string must still be parsed (and fail) per the URL spec.
+    auto object = base.isNull() ? DOMURL::create(WTF::move(url)) : DOMURL::create(WTF::move(url), WTF::move(base));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
@@ -193,18 +197,6 @@ template<> void JSDOMURLDOMConstructor::initializeProperties(VM& vm, JSDOMGlobal
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     putDirect(vm, vm.propertyNames->prototype, JSDOMURL::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
     reifyStaticProperties(vm, JSDOMURL::info(), JSDOMURLConstructorTableValues, *this);
-    // if (!((&globalObject)->inherits<JSDOMWindowBase>() || (&globalObject)->inherits<JSDedicatedWorkerGlobalScope>() || (&globalObject)->inherits<JSSharedWorkerGlobalScope>())) {
-    //     auto propertyName = Identifier::fromString(vm, "createObjectURL"_s);
-    //     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-    //     DeletePropertySlot slot;
-    //     JSObject::deleteProperty(this, &globalObject, propertyName, slot);
-    // }
-    // if (!((&globalObject)->inherits<JSDOMWindowBase>() || (&globalObject)->inherits<JSDedicatedWorkerGlobalScope>() || (&globalObject)->inherits<JSSharedWorkerGlobalScope>())) {
-    //     auto propertyName = Identifier::fromString(vm, "revokeObjectURL"_s);
-    //     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-    //     DeletePropertySlot slot;
-    //     JSObject::deleteProperty(this, &globalObject, propertyName, slot);
-    // }
 }
 
 /* Hash table for prototype */
@@ -233,6 +225,7 @@ void JSDOMURLPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSDOMURL::info(), JSDOMURLPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsDOMURLPrototypeFunction_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -629,6 +622,167 @@ JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_searchParams, (JSGlobalObject * lexicalGlobalO
     return IDLAttribute<JSDOMURL>::get<jsDOMURL_searchParamsGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
 
+static inline unsigned jsDOMURLSchemeType(const String& protocol)
+{
+    if (protocol == "http:"_s)
+        return 0;
+    if (protocol == "https:"_s)
+        return 2;
+    if (protocol == "ws:"_s)
+        return 3;
+    if (protocol == "ftp:"_s)
+        return 4;
+    if (protocol == "wss:"_s)
+        return 5;
+    if (protocol == "file:"_s)
+        return 6;
+    return 1;
+}
+
+static constexpr uint32_t kURLContextOmittedComponent = 4294967295u;
+
+static JSC_DECLARE_HOST_FUNCTION(jsDOMURLContextNoop);
+JSC_DEFINE_HOST_FUNCTION(jsDOMURLContextNoop, (JSGlobalObject*, CallFrame*))
+{
+    return JSValue::encode(jsUndefined());
+}
+
+#define DEFINE_URL_CONTEXT_HAS_GETTER(name, field)                                                                           \
+    static JSC_DECLARE_HOST_FUNCTION(jsDOMURLContext##name);                                                                 \
+    JSC_DEFINE_HOST_FUNCTION(jsDOMURLContext##name, (JSGlobalObject * globalObject, CallFrame * callFrame))                  \
+    {                                                                                                                        \
+        auto& vm = JSC::getVM(globalObject);                                                                                 \
+        JSObject* thisObj = callFrame->thisValue().getObject();                                                              \
+        if (!thisObj)                                                                                                        \
+            return JSValue::encode(jsBoolean(false));                                                                        \
+        JSValue v = thisObj->getDirect(vm, Identifier::fromString(vm, field##_s));                                           \
+        return JSValue::encode(jsBoolean(v.isNumber() && v.asNumber() != static_cast<double>(kURLContextOmittedComponent))); \
+    }
+DEFINE_URL_CONTEXT_HAS_GETTER(HasPort, "port")
+DEFINE_URL_CONTEXT_HAS_GETTER(HasSearch, "search_start")
+DEFINE_URL_CONTEXT_HAS_GETTER(HasHash, "hash_start")
+#undef DEFINE_URL_CONTEXT_HAS_GETTER
+
+// Node's URLContext (lib/internal/url.js): ada's uint32 component offsets into
+// the href, reconstructed so util.inspect(url, { showHidden: true }) matches.
+static JSObject* jsDOMURLMakeURLContext(JSGlobalObject* lexicalGlobalObject, DOMURL& impl)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    constexpr uint32_t kOmittedComponent = kURLContextOmittedComponent;
+
+    const String href = impl.href().string();
+    const String protocol = impl.protocol();
+    const String username = impl.username();
+    const String password = impl.password();
+    const String hostname = impl.hostname();
+    const String portStr = impl.port();
+    const String pathname = impl.pathname();
+    const String search = impl.search();
+    const String hash = impl.hash();
+
+    unsigned protocolEnd = protocol.length();
+    bool hasSlashes = StringView(href).substring(protocolEnd).startsWith("//"_s);
+    unsigned authorityStart = protocolEnd + (hasSlashes ? 2 : 0);
+    bool hasCredentials = !username.isEmpty() || !password.isEmpty();
+    unsigned position = authorityStart + username.length();
+    unsigned usernameEnd = position;
+    if (!password.isEmpty())
+        position += 1 + password.length();
+    unsigned hostStart = position;
+    unsigned hostEnd = position + (hasCredentials ? 1 : 0) + hostname.length();
+    uint32_t portNumber = portStr.isEmpty() ? kOmittedComponent : WTF::parseInteger<uint32_t>(portStr).value_or(kOmittedComponent);
+    unsigned pathnameStart = hostEnd + (portStr.isEmpty() ? 0 : 1 + portStr.length());
+    // URL Standard section 4.5 step 3: null host + empty first path segment
+    // serializes with a /. guard that the pathname getter omits, shifting
+    // everything from the pathname on by 2.
+    if (!hasSlashes && pathname.startsWith("//"_s) && StringView(href).substring(protocolEnd).startsWith("/."_s))
+        pathnameStart += 2;
+    unsigned pathnameEnd = pathnameStart + pathname.length();
+    // .search/.hash return "" for both a null and an empty-string component,
+    // but the href serializer emits the bare "?"/"#" for empty-but-present;
+    // derive presence from the href (a raw '?'/'#' is always the delimiter
+    // there) so the offsets match ada's.
+    size_t hashAt = href.find('#');
+    uint32_t hashStart = hashAt == notFound ? kOmittedComponent : static_cast<uint32_t>(hashAt);
+    size_t queryEnd = hashAt == notFound ? href.length() : hashAt;
+    uint32_t searchStart = (queryEnd > pathnameEnd && href[pathnameEnd] == '?') ? pathnameEnd : kOmittedComponent;
+
+    // inspect() prints `URLContext { ... }` via getConstructorName, which
+    // requires `ctx instanceof ctor`, so ctor.prototype must be the object
+    // actually in ctx's prototype chain (matching node's class shape).
+    JSObject* proto = constructEmptyObject(lexicalGlobalObject);
+    JSFunction* ctor = JSFunction::create(vm, lexicalGlobalObject, 0, "URLContext"_s, jsDOMURLContextNoop, ImplementationVisibility::Public);
+    ctor->putDirect(vm, vm.propertyNames->prototype, proto, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    proto->putDirect(vm, vm.propertyNames->constructor, ctor, JSC::PropertyAttribute::DontEnum | 0);
+
+    JSObject* ctx = constructEmptyObject(lexicalGlobalObject, proto);
+    ctx->putDirect(vm, Identifier::fromString(vm, "href"_s), jsString(vm, href), 0);
+    ctx->putDirect(vm, Identifier::fromString(vm, "protocol_end"_s), jsNumber(protocolEnd), 0);
+    ctx->putDirect(vm, Identifier::fromString(vm, "username_end"_s), jsNumber(usernameEnd), 0);
+    ctx->putDirect(vm, Identifier::fromString(vm, "host_start"_s), jsNumber(hostStart), 0);
+    ctx->putDirect(vm, Identifier::fromString(vm, "host_end"_s), jsNumber(hostEnd), 0);
+    ctx->putDirect(vm, Identifier::fromString(vm, "pathname_start"_s), jsNumber(pathnameStart), 0);
+    ctx->putDirect(vm, Identifier::fromString(vm, "search_start"_s), jsNumber(searchStart), 0);
+    ctx->putDirect(vm, Identifier::fromString(vm, "hash_start"_s), jsNumber(hashStart), 0);
+    ctx->putDirect(vm, Identifier::fromString(vm, "port"_s), jsNumber(portNumber), 0);
+    ctx->putDirect(vm, Identifier::fromString(vm, "scheme_type"_s), jsNumber(jsDOMURLSchemeType(protocol)), 0);
+
+    // Node's URLContext exposes hasPort/hasSearch/hasHash as prototype
+    // getters; showHidden reveals them as `[hasPort]: [Getter]`.
+    const unsigned getterAttrs = JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Accessor;
+    auto addGetter = [&](ASCIILiteral name, JSC::NativeFunction impl) {
+        JSFunction* getter = JSFunction::create(vm, lexicalGlobalObject, 0, makeString("get "_s, name), impl, ImplementationVisibility::Public);
+        proto->putDirectAccessor(lexicalGlobalObject, Identifier::fromString(vm, name), JSC::GetterSetter::create(vm, lexicalGlobalObject, getter, nullptr), getterAttrs);
+    };
+    addGetter("hasPort"_s, jsDOMURLContextHasPort);
+    addGetter("hasSearch"_s, jsDOMURLContextHasSearch);
+    addGetter("hasHash"_s, jsDOMURLContextHasHash);
+    return ctx;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsDOMURLPrototypeFunction_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSDOMURL>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+
+    auto& impl = thisObject->wrapped();
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    data->putDirect(vm, Identifier::fromString(vm, "href"_s), jsString(vm, impl.href().string()), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "origin"_s), jsString(vm, impl.origin()), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "protocol"_s), jsString(vm, impl.protocol()), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "username"_s), jsString(vm, impl.username()), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "password"_s), jsString(vm, impl.password()), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "host"_s), jsString(vm, impl.host()), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "hostname"_s), jsString(vm, impl.hostname()), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "port"_s), jsString(vm, impl.port()), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "pathname"_s), jsString(vm, impl.pathname()), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "search"_s), jsString(vm, impl.search()), 0);
+
+    JSValue searchParams = jsDOMURL_searchParamsGetter(*lexicalGlobalObject, *thisObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    data->putDirect(vm, Identifier::fromString(vm, "searchParams"_s), searchParams, 0);
+
+    data->putDirect(vm, Identifier::fromString(vm, "hash"_s), jsString(vm, impl.hash()), 0);
+
+    JSValue optionsValue = callFrame->argument(1);
+    if (optionsValue.isObject()) {
+        JSValue showHidden = asObject(optionsValue)->get(lexicalGlobalObject, Identifier::fromString(vm, "showHidden"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (showHidden.toBoolean(lexicalGlobalObject)) {
+            auto* contextSymbol = JSC::Symbol::createWithDescription(vm, "context"_s);
+            data->putDirect(vm, Identifier::fromUid(contextSymbol->privateName()), jsDOMURLMakeURLContext(lexicalGlobalObject, impl), 0);
+        }
+    }
+
+    auto name = Bun::WebStreams::constructorNameOf(lexicalGlobalObject, thisValue, "URL"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, name, data));
+}
+
 static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_parseBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -688,73 +842,10 @@ JSC_DEFINE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toJSON, (JSGlobalObject * lex
     return IDLOperation<JSDOMURL>::call<jsDOMURLPrototypeFunction_toJSONBody>(*lexicalGlobalObject, *callFrame, "toJSON");
 }
 
-static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_createObjectURL1Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
-{
-    // auto& vm = JSC::getVM(lexicalGlobalObject);
-    // auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(lexicalGlobalObject);
-    UNUSED_PARAM(callFrame);
-    // auto* context = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext();
-    // if (!context) [[unlikely]]
-    return JSValue::encode(jsUndefined());
-    // EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    // auto blob = convert<IDLInterface<Blob>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "blob", "URL", "createObjectURL", "Blob"); });
-    // RETURN_IF_EXCEPTION(throwScope, {});
-    // RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, DOMURL::createObjectURL(*context, *blob))));
-}
-
-static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_revokeObjectURLBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
-{
-    // auto& vm = JSC::getVM(lexicalGlobalObject);
-    // auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(lexicalGlobalObject);
-    UNUSED_PARAM(callFrame);
-    // if (callFrame->argumentCount() < 1) [[unlikely]]
-    //     return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-    // auto* context = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext();
-    // if (!context) [[unlikely]]
-    return JSValue::encode(jsUndefined());
-    // EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    // auto url = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
-    // RETURN_IF_EXCEPTION(throwScope, {});
-    // RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return DOMURL::revokeObjectURL(*context, WTF::move(url)); })));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsDOMURLConstructorFunction_revokeObjectURL, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSDOMURL>::callStatic<jsDOMURLConstructorFunction_revokeObjectURLBody>(*lexicalGlobalObject, *callFrame, "revokeObjectURL");
-}
-
 void JSDOMURL::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-}
-
-static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_createObjectURLOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
-    UNUSED_PARAM(callFrame);
-    size_t argsCount = std::min<size_t>(1, callFrame->argumentCount());
-    if (argsCount == 1) {
-        JSValue distinguishingArg = callFrame->uncheckedArgument(0);
-        if (distinguishingArg.isObject()) {
-            return JSValue::encode(jsUndefined());
-        }
-        //         if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSBlob>())
-        //             RELEASE_AND_RETURN(throwScope, (jsDOMURLConstructorFunction_createObjectURL1Body(lexicalGlobalObject, callFrame)));
-        // #if ENABLE(MEDIA_SOURCE)
-        //         if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSMediaSource>())
-        //             RELEASE_AND_RETURN(throwScope, (jsDOMURLConstructorFunction_createObjectURL2Body(lexicalGlobalObject, callFrame)));
-    }
-    return argsCount < 1 ? throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject)) : throwVMTypeError(lexicalGlobalObject, throwScope);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsDOMURLConstructorFunction_createObjectURL, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSDOMURL>::callStatic<jsDOMURLConstructorFunction_createObjectURLOverloadDispatcher>(*lexicalGlobalObject, *callFrame, "createObjectURL");
 }
 
 static inline JSC::EncodedJSValue jsDOMURLPrototypeFunction_toStringBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMURL>::ClassParameter castedThis)

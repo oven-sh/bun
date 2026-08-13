@@ -24,15 +24,16 @@ describe.skipIf(isDebug)("does not leak", () => {
 
   test("hashSync", async () => {
     await run(/* js */ `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const opts = { algorithm: "argon2id", memoryCost: 8, timeCost: 1 };
         // Large warm-up so the JSC heap and allocator arenas reach steady state
         // before we start measuring (debug/ASAN builds especially need this).
         for (let i = 0; i < 60000; i++) Bun.password.hashSync("hey", opts);
         Bun.gc(true);
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 60000; i++) Bun.password.hashSync("hey", opts);
         Bun.gc(true);
-        const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+        const growthMB = (rss() - before) / 1024 / 1024;
         // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
         // retention inflate RSS even when nothing is leaking.
         const limit = ${isASAN ? 400 : 4};
@@ -42,6 +43,7 @@ describe.skipIf(isDebug)("does not leak", () => {
 
   test("hash", async () => {
     await run(/* js */ `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const opts = { algorithm: "argon2id", memoryCost: 8, timeCost: 1 };
         async function batch(n) {
           const promises = [];
@@ -50,10 +52,10 @@ describe.skipIf(isDebug)("does not leak", () => {
         }
         for (let i = 0; i < 500; i++) await batch(100);
         Bun.gc(true);
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 2000; i++) await batch(100);
         Bun.gc(true);
-        const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+        const growthMB = (rss() - before) / 1024 / 1024;
         // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
         // retention inflate RSS even when nothing is leaking.
         const limit = ${isASAN ? 400 : 20};
@@ -135,6 +137,71 @@ describe("hash", () => {
             cost: -999,
           }),
         ).toThrow();
+      });
+
+      test("cost values are range-checked before ToInt32 narrowing", () => {
+        // These used to wrap modulo 2^32 (cost: 2^32 + 4 hashed with cost 4)
+        // or truncate (cost: 4.5 hashed with cost 4) instead of throwing.
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "bcrypt",
+            cost: 2 ** 32 + 4,
+          }),
+        ).toThrow("Rounds must be an integer between 4 and 31");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "bcrypt",
+            cost: 4.5,
+          }),
+        ).toThrow("Rounds must be an integer between 4 and 31");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            timeCost: 2 ** 32 + 2,
+          }),
+        ).toThrow("Time cost must be an integer between 1 and 4294967295");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            timeCost: 1.5,
+          }),
+        ).toThrow("Time cost must be an integer between 1 and 4294967295");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            memoryCost: 2 ** 32 + 4608,
+          }),
+        ).toThrow("Memory cost must be an integer between 8 and 4294967295");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            memoryCost: 8.5,
+          }),
+        ).toThrow("Memory cost must be an integer between 8 and 4294967295");
+
+        // Non-finite values: NaN and -Infinity fail the lower-bound check,
+        // +Infinity fails the integer/upper-bound check.
+        for (const timeCost of [NaN, -Infinity]) {
+          expect(() => hash(placeholder, { algorithm: "argon2id", timeCost })).toThrow(
+            "Time cost must be greater than 0",
+          );
+        }
+        expect(() => hash(placeholder, { algorithm: "argon2id", timeCost: Infinity })).toThrow(
+          "Time cost must be an integer between 1 and 4294967295",
+        );
+        for (const memoryCost of [NaN, -Infinity]) {
+          expect(() => hash(placeholder, { algorithm: "argon2id", memoryCost })).toThrow(
+            "Memory cost must be at least 8",
+          );
+        }
+        expect(() => hash(placeholder, { algorithm: "argon2id", memoryCost: Infinity })).toThrow(
+          "Memory cost must be an integer between 8 and 4294967295",
+        );
       });
 
       test("coercion throwing doesn't crash", () => {
@@ -423,4 +490,29 @@ test("verify rejects encoded argon2 hashes with cost parameters above the suppor
   expect(hugeParallelism).not.toBe(hashed);
   expect(() => password.verifySync("correct horse", hugeParallelism)).toThrow("WeakParameters");
   await expect(password.verify("correct horse", hugeParallelism)).rejects.toThrow("WeakParameters");
+
+  // The argon2 decoder accepts a leading `+` on the cost fields (Rust's integer
+  // grammar), so the ceiling check must too rather than skipping the field.
+  const plusMemory = hashed.replace("$m=8,", "$m=+4294967294,");
+  expect(plusMemory).not.toBe(hashed);
+  expect(() => password.verifySync("correct horse", plusMemory)).toThrow("WeakParameters");
+  await expect(password.verify("correct horse", plusMemory)).rejects.toThrow("WeakParameters");
+
+  // A cost field the decoder can't parse is rejected up front as well.
+  const junkMemory = hashed.replace("$m=8,", "$m=8x,");
+  expect(() => password.verifySync("correct horse", junkMemory)).toThrow("InvalidEncoding");
+  await expect(password.verify("correct horse", junkMemory)).rejects.toThrow("InvalidEncoding");
+});
+
+test("verifySync reads the password buffer only after every argument has been coerced", () => {
+  const hashed = password.hashSync("correct horse", { algorithm: "argon2id", memoryCost: 8, timeCost: 1 });
+  const passwordBytes = new TextEncoder().encode("correct horse");
+  const hashObject = new String(hashed);
+  hashObject.toString = () => {
+    structuredClone(passwordBytes.buffer, { transfer: [passwordBytes.buffer] });
+    Bun.gc(true);
+    return hashed;
+  };
+  expect(password.verifySync(passwordBytes, hashObject as any)).toBeFalse();
+  expect(passwordBytes.byteLength).toBe(0);
 });

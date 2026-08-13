@@ -8,7 +8,6 @@ use crate::node::types::FdJsc as _;
 
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::webcore::ReadableStream;
-use crate::webcore::blob::SizeType as BlobSizeType;
 use bun_io::max_buf::MaxBuf;
 use bun_ptr::IntrusiveRc;
 use bun_ptr::cow_slice::CowSlice;
@@ -71,7 +70,7 @@ impl Readable {
         pipe.deref();
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Readable::Pipe(pipe) => mem::size_of::<PipeReader>() + pipe.memory_cost(),
             Readable::Buffer(buffer) => buffer.length(),
@@ -79,7 +78,7 @@ impl Readable {
         }
     }
 
-    pub fn has_pending_activity(&self) -> bool {
+    pub(crate) fn has_pending_activity(&self) -> bool {
         match self {
             Readable::Pipe(pipe) => pipe.has_pending_activity(),
             _ => false,
@@ -95,7 +94,7 @@ impl Readable {
         }
     }
 
-    pub fn unref(&mut self) {
+    pub(crate) fn unref(&mut self) {
         match self {
             Readable::Pipe(pipe) => {
                 Self::pipe_reader_mut(pipe).update_ref(false);
@@ -104,7 +103,7 @@ impl Readable {
         }
     }
 
-    pub fn init(
+    pub(crate) fn init(
         stdio: Stdio,
         event_loop: NonNull<EventLoop>,
         process: NonNull<Subprocess<'static>>,
@@ -176,12 +175,6 @@ impl Readable {
             Stdio::SocketFd => unreachable!("SocketFd at stdout/stderr"),
         }
     }
-
-    pub fn on_close(&mut self, _: Option<bun_sys::Error>) {
-        *self = Readable::Closed;
-    }
-
-    pub fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
 
     pub fn close(&mut self) {
         match self {
@@ -274,7 +267,7 @@ impl Readable {
         }
     }
 
-    pub fn to_buffered_value(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_buffered_value(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             Readable::Fd(fd) => Ok(fd.to_js(global)),
             Readable::Memfd(fd) => {
@@ -296,7 +289,7 @@ impl Readable {
                 };
                 let result = Self::pipe_reader_mut(&pipe).to_buffer(global);
                 Self::pipe_detach(&pipe);
-                Ok(result)
+                result
             }
             Readable::Buffer(_) => {
                 let Readable::Buffer(mut buf) = mem::replace(self, Readable::Closed) else {
@@ -309,12 +302,12 @@ impl Readable {
 
                 // Ownership of the mimalloc-backed buffer transfers to JSC
                 // (freed via `MarkedArrayBuffer_deallocator`).
-                Ok(jsc::MarkedArrayBuffer {
+                jsc::MarkedArrayBuffer {
                     buffer: jsc::ArrayBuffer::from_owned_bytes(own, jsc::JSType::Uint8Array),
                     owns_buffer: true,
                     pinned: false,
                 }
-                .to_node_buffer(global))
+                .to_node_buffer(global)
             }
             _ => Ok(JSValue::UNDEFINED),
         }

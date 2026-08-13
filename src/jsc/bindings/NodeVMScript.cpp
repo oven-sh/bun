@@ -1,4 +1,5 @@
 #include "NodeVMScript.h"
+#include "BunClientData.h"
 
 #include "ErrorCode.h"
 
@@ -108,6 +109,8 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     if (optionsArg.isString()) {
         options.filename = optionsArg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+        // `new Script(src, "name")` is a provided filename, "" included.
+        options.filenameProvided = true;
     } else if (!options.fromJS(globalObject, vm, scope, optionsArg, &importer)) {
         RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
     }
@@ -130,6 +133,29 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 
     SourceCode source = makeSource(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, TextPosition(options.lineOffset, options.columnOffset));
     RETURN_IF_EXCEPTION(scope, {});
+
+    // Node's vm.Script throws SyntaxError at construction; the REPL's
+    // recoverable-error flow (and user code) relies on that. This is a
+    // double-parse (checkSyntax discards its AST and runInThisContext reparses
+    // via JSC::evaluate); compile-once via m_cachedExecutable is the follow-up.
+    JSC::ParserError parseError;
+    if (!JSC::checkSyntax(vm, source, parseError)) {
+        auto exception = parseError.toErrorObject(globalObject, source, -1);
+        // Building the error materializes its stack, running a user
+        // Error.prepareStackTrace that may throw; Node throws the SyntaxError
+        // anyway. tryClearException leaves a termination for the check below.
+        if (exception)
+            (void)scope.tryClearException();
+        RETURN_IF_EXCEPTION(scope, {});
+        // Node always attaches the arrow header to compile-time SyntaxErrors
+        // (node_contextify.cc DecorateErrorStack), independent of displayErrors.
+        // An absent filename becomes evalmachine.<anonymous>; an explicitly
+        // provided one — including "" — is used verbatim.
+        String url = options.filenameProvided ? options.filename : "evalmachine.<anonymous>"_s;
+        decorateParseErrorStack(globalObject, vm, exception, sourceString, url, parseError, options.lineOffset);
+        throwException(globalObject, scope, exception);
+        return {};
+    }
 
     const bool produceCachedData = options.produceCachedData;
     auto filename = options.filename;
@@ -284,6 +310,11 @@ void NodeVMScript::destroy(JSCell* cell)
 static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
 {
     if (vm.hasTerminationRequest()) {
+        // The whole VM is being stopped (worker terminate()/exit): that
+        // termination is not ours to consume. The caller rethrows what
+        // evaluate() caught like any other exception.
+        if (!Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle))
+            return false;
         vm.drainMicrotasksForGlobalObject(globalObject);
         // The termination may have fired inside an afterEvaluate microtask
         // checkpoint, leaving the termination exception pending; clear it so
@@ -392,7 +423,9 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
     script->setSigintReceived(false);
 
     if (exception) [[unlikely]] {
-        if (handleException(globalObject, vm, exception, scope)) {
+        // Node only decorates the error stack with the source line when
+        // displayErrors is not false (lib/vm.js decorateErrorStack).
+        if (options.displayErrors && handleException(globalObject, vm, exception, scope)) {
             return {};
         }
         JSC::throwException(globalObject, scope, exception.get());
@@ -455,7 +488,9 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     script->setSigintReceived(false);
 
     if (exception) [[unlikely]] {
-        if (handleException(globalObject, vm, exception, scope)) {
+        // Node only decorates the error stack with the source line when
+        // displayErrors is not false (lib/vm.js decorateErrorStack).
+        if (options.displayErrors && handleException(globalObject, vm, exception, scope)) {
             return {};
         }
         JSC::throwException(globalObject, scope, exception.get());
@@ -607,9 +642,8 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     NodeVMContextOptions contextOptions {};
     JSValue importer;
 
-    if (auto encodedException = getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, "contextCodeGeneration", &importer)) {
-        return *encodedException;
-    }
+    getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, "contextCodeGeneration", &importer);
+    RETURN_IF_EXCEPTION(scope, {});
 
     contextOptions.notContextified = notContextified;
 

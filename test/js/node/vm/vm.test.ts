@@ -308,6 +308,159 @@ describe("Script", () => {
       message: "Class constructor Script cannot be invoked without 'new'",
     });
   });
+
+  test("can specify displayErrors", () => {
+    const src = 'throw new Error("boom")';
+    // displayErrors: false — no source-line/caret decoration on the stack.
+    try {
+      new Script(src, { filename: "t.vm" }).runInThisContext({ displayErrors: false });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.message).toBe("boom");
+      expect(e.stack).not.toMatch(/^t\.vm:1\n/);
+    }
+    // displayErrors: true (default) — stack is decorated with the source line.
+    try {
+      new Script(src, { filename: "t.vm" }).runInThisContext({ displayErrors: true });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.stack).toMatch(/^t\.vm:1\nthrow new Error/);
+    }
+    // Same for runInContext.
+    try {
+      new Script(src, { filename: "t.vm" }).runInContext(createContext({}), { displayErrors: false });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.stack).not.toMatch(/^t\.vm:1\n/);
+    }
+  });
+  test("throws SyntaxError at construction like Node", () => {
+    // Node's vm.Script parses eagerly; the REPL depends on this.
+    expect(() => new Script("function {")).toThrow(SyntaxError);
+    expect(() => new Script("const x = ")).toThrow(SyntaxError);
+  });
+  test("compile-time SyntaxError has arrow-decorated stack (Node DecorateErrorStack)", () => {
+    // Node prepends `<url>:<line>\n<source>\n^\n\n` to compile-time SyntaxErrors
+    // from `new vm.Script`, unconditionally (independent of displayErrors).
+    for (const opts of [undefined, { displayErrors: true }, { displayErrors: false }]) {
+      let err: any;
+      try {
+        new Script("%%", opts);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:1", "%%", "^", ""]);
+    }
+
+    // Custom filename + lineOffset: reported line is offset-adjusted, source
+    // line and caret still come from the physical position.
+    let err: any;
+    try {
+      new Script("1;\n%%", { filename: "foo.js", lineOffset: 5 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err.stack.split("\n").slice(0, 4)).toEqual(["foo.js:7", "%%", "^", ""]);
+
+    // Negative lineOffset: Node renders a signed line, still with source + caret.
+    // JSC clamps a negative provider start line to zero, so the offset is
+    // re-applied to the physical line when building the header.
+    err = undefined;
+    try {
+      new Script("1;\n%%", { lineOffset: -5 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:-3", "%%", "^", ""]);
+
+    // columnOffset on line 1 is subtracted from the caret; on later lines it
+    // is not (Node applies it only to the first physical line).
+    err = undefined;
+    try {
+      new Script("   %%", { columnOffset: 10 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:1", "   %%", "   ^", ""]);
+
+    err = undefined;
+    try {
+      new Script("1;\n   %%", { columnOffset: 10 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:2", "   %%", "   ^", ""]);
+  });
+
+  test("vm.compileFunction compile-time SyntaxError is arrow-decorated like new Script", () => {
+    // Node decorates both compile paths, but compileFunction defaults filename to
+    // "" where new Script defaults to "evalmachine.<anonymous>". An explicitly
+    // empty filename is honored by both and renders as ":<line>".
+    const header = (fn: () => unknown) => {
+      let err: any;
+      try {
+        fn();
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(SyntaxError);
+      return err.stack.split("\n").slice(0, 4);
+    };
+
+    expect(header(() => compileFunction("%%"))).toEqual([":1", "%%", "^", ""]);
+    expect(header(() => compileFunction("%%", [], {}))).toEqual([":1", "%%", "^", ""]);
+    expect(header(() => compileFunction("%%", [], { filename: "" }))).toEqual([":1", "%%", "^", ""]);
+    expect(header(() => compileFunction("%%", [], { filename: "foo.js" }))).toEqual(["foo.js:1", "%%", "^", ""]);
+    expect(header(() => compileFunction("1;\n%%", [], { filename: "f.js", lineOffset: 5 }))).toEqual([
+      "f.js:7",
+      "%%",
+      "^",
+      "",
+    ]);
+    expect(header(() => compileFunction("1;\n%%", [], { lineOffset: -5 }))).toEqual([":-3", "%%", "^", ""]);
+
+    // An explicitly empty filename is not the same as an absent one.
+    expect(header(() => new Script("%%", { filename: "" }))).toEqual([":1", "%%", "^", ""]);
+
+    // The string-options form counts as "provided" too, "" included.
+    expect(header(() => new Script("%%", "myfile.js"))).toEqual(["myfile.js:1", "%%", "^", ""]);
+    expect(header(() => new Script("%%", ""))).toEqual([":1", "%%", "^", ""]);
+  });
+
+  test("a throwing Error.prepareStackTrace does not escape the compile-time SyntaxError", () => {
+    // Building the error materializes its stack, running a user
+    // prepareStackTrace; if that throws, the SyntaxError must still be what is
+    // thrown (node does the same) and the arrow header must survive.
+    const prev = Error.prepareStackTrace;
+    Error.prepareStackTrace = () => {
+      throw new Error("boom-from-prepareStackTrace");
+    };
+    try {
+      let err: any;
+      try {
+        new Script("%%");
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.message).toBe("Unexpected token '%'");
+      expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:1", "%%", "^", ""]);
+
+      // Same eager-materialization path via vm.compileFunction.
+      let fnErr: any;
+      try {
+        compileFunction("%%");
+      } catch (e) {
+        fnErr = e;
+      }
+      expect(fnErr).toBeInstanceOf(SyntaxError);
+      expect(fnErr.message).toBe("Unexpected token '%'");
+      expect(fnErr.stack.split("\n").slice(0, 4)).toEqual([":1", "%%", "^", ""]);
+    } finally {
+      Error.prepareStackTrace = prev;
+    }
+  });
 });
 
 type TestRunInContextArg =
@@ -524,9 +677,6 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
   test.todo("can specify columnOffset", () => {
     //
   });
-  test.todo("can specify displayErrors", () => {
-    //
-  });
   test.todo("can specify timeout", () => {
     //
   });
@@ -698,15 +848,12 @@ resp.text().then((a) => {
 });
 
 test("can't use export syntax in vm.Script", () => {
-  expect(() => {
-    const script = new Script("export default {};");
-    script.runInThisContext();
-  }).toThrow({ name: "SyntaxError", message: "Unexpected keyword 'export'" });
-
-  expect(() => {
-    const script = new Script("export default {};");
-    script.createCachedData();
-  }).toThrow({ message: "createCachedData failed" });
+  // vm.Script now parses eagerly (like Node), so the SyntaxError surfaces at
+  // construction rather than at runInThisContext()/createCachedData().
+  expect(() => new Script("export default {};")).toThrow({
+    name: "SyntaxError",
+    message: "Unexpected keyword 'export'",
+  });
 });
 
 test("rejects invalid bytecode", () => {
@@ -862,6 +1009,71 @@ describe("codeGeneration options", () => {
     // Test that eval works by default
     const evalResult = runInContext("eval('5 + 5');", context);
     expect(evalResult).toBe(10);
+  });
+});
+
+describe("context options with throwing getters", () => {
+  // Without the fix, reading these options with a pending exception aborted
+  // the process, so run the matrix in a subprocess.
+  test.concurrent("the getter's exception propagates to the caller", async () => {
+    // Each entry point tests the context-option keys it actually reads:
+    // createContext takes codeGeneration, Script#runInNewContext takes
+    // contextCodeGeneration, and vm.runInNewContext goes through both.
+    // A dotted key puts the throwing getter on the nested object.
+    const codeGenerationKeys = (key: string) => [key, `${key}.strings`, `${key}.wasm`];
+    const contextKeys = (...codeGenerationKeyNames: string[]) => [
+      "name",
+      "origin",
+      ...codeGenerationKeyNames.flatMap(codeGenerationKeys),
+      "importModuleDynamically",
+      "microtaskMode",
+    ];
+    const matrix = {
+      createContext: contextKeys("codeGeneration"),
+      runInNewContext: contextKeys("codeGeneration", "contextCodeGeneration"),
+      scriptRunInNewContext: contextKeys("contextCodeGeneration"),
+    };
+    const code = `
+      const vm = require("node:vm");
+      const matrix = ${JSON.stringify(matrix)};
+      const entryPoints = {
+        createContext: opts => vm.createContext({}, opts),
+        runInNewContext: opts => vm.runInNewContext("1", {}, opts),
+        scriptRunInNewContext: opts => new vm.Script("1").runInNewContext({}, opts),
+      };
+      for (const [entry, keys] of Object.entries(matrix)) {
+        for (const key of keys) {
+          const opts = {};
+          const path = key.split(".");
+          let target = opts;
+          for (const part of path.slice(0, -1)) target = target[part] = {};
+          Object.defineProperty(target, path.at(-1), {
+            get() { throw new Error("getter:" + key); },
+            enumerable: true,
+          });
+          try {
+            entryPoints[entry](opts);
+            console.log(entry, key, "did not throw");
+          } catch (e) {
+            console.log(entry, key, e.message);
+          }
+        }
+      }
+      console.log("survived");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected =
+      Object.entries(matrix)
+        .flatMap(([entry, keys]) => keys.map(key => `${entry} ${key} getter:${key}`))
+        .join("\n") + "\nsurvived\n";
+    expect(stderr).toBe("");
+    expect(stdout).toBe(expected);
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -1235,4 +1447,40 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(stdout.trim()).toBe("ab=B ba=A");
     expect(exitCode).toBe(0);
   });
+});
+
+test("node:vm Object.defineProperty on the context global when the sandbox is an uncacheable dictionary holding an accessor for a built-in", async () => {
+  // Regression: NodeVMGlobalObject::defineOwnProperty used a single PropertySlot
+  // for both the global-object lookup and the sandbox lookup. When the first
+  // lookup fills the slot as cacheable (e.g. Array is a lazy CustomGetterSetter
+  // on a non-dictionary global) and the sandbox has transitioned to an
+  // uncacheable dictionary with an accessor for the same name, the second lookup
+  // would hit setGetterSlot, which asserts the slot is still CachingDisallowed.
+  // Debug builds aborted; this test asserts the Node-matching behaviour so
+  // release lanes still exercise the path.
+  const fixture = `
+    const vm = require("node:vm");
+    const sandbox = {};
+    for (let i = 0; i < 200; i++) { sandbox["k" + i] = i; delete sandbox["k" + i]; }
+    Object.defineProperty(sandbox, "Array", { get: () => Array, configurable: true });
+    vm.createContext(sandbox);
+    const result = vm.runInContext(
+      'Object.defineProperty(this, "Array", { value: 1, configurable: true, writable: true }); Array',
+      sandbox,
+    );
+    console.log(JSON.stringify({ result, sandboxArray: sandbox.Array }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(JSON.stringify({ result: 1, sandboxArray: 1 }));
+  expect(exitCode).toBe(0);
 });

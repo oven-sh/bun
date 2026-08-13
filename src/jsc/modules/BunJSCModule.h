@@ -38,6 +38,7 @@
 #include <wtf/text/WTFString.h>
 
 #include "BunProcess.h"
+#include "JSEnvironmentVariableMap.h"
 #include <JavaScriptCore/SourceProviderCache.h>
 #if ENABLE(REMOTE_INSPECTOR)
 #include <JavaScriptCore/RemoteInspectorServer.h>
@@ -45,6 +46,8 @@
 
 #include "JSDOMConvertBase.h"
 #include "ZigSourceProvider.h"
+#include "StrongRootBlock.h"
+#include "BunClientData.h"
 #include "mimalloc.h"
 extern "C" char* mi_stats_get_json(size_t, char*);
 extern "C" char* mi_heap_dump_json(bool include_blocks, bool hash_addresses);
@@ -271,7 +274,18 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
     };
 
     JSValue objectTypeCounts = createdSortedTypeCounts(vm.heap.objectTypeCounts());
-    JSValue protectedCounts = createdSortedTypeCounts(vm.heap.protectedObjectTypeCounts());
+
+    // bun_jsc::Strong handles live in StrongRootBlock cells instead of the
+    // HandleSet, so merge those slots into the protected counts.
+    TypeCountSet protectedTypeCounts = vm.heap.protectedObjectTypeCounts();
+    size_t strongRootCount = 0;
+    for (auto* block = WebCore::clientData(vm)->m_strongRootBlockHead; block; block = block->next()) {
+        block->forEachOccupiedCell([&](JSC::JSCell* cell) {
+            protectedTypeCounts.add(cell->classInfo()->className);
+            ++strongRootCount;
+        });
+    }
+    JSValue protectedCounts = createdSortedTypeCounts(WTF::move(protectedTypeCounts));
 
     JSObject* object = constructEmptyObject(globalObject);
     object->putDirect(vm, Identifier::fromString(vm, "objectTypeCounts"_s),
@@ -289,7 +303,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
     object->putDirect(vm, Identifier::fromString(vm, "objectCount"_s),
         jsNumber(vm.heap.objectCount()));
     object->putDirect(vm, Identifier::fromString(vm, "protectedObjectCount"_s),
-        jsNumber(vm.heap.protectedObjectCount()));
+        jsNumber(vm.heap.protectedObjectCount() + strongRootCount));
     object->putDirect(vm, Identifier::fromString(vm, "globalObjectCount"_s),
         jsNumber(vm.heap.globalObjectCount()));
     object->putDirect(vm,
@@ -589,9 +603,12 @@ JSC_DECLARE_HOST_FUNCTION(functionGetProtectedObjects);
 JSC_DEFINE_HOST_FUNCTION(functionGetProtectedObjects,
     (JSGlobalObject * globalObject, CallFrame*))
 {
+    auto& vm = globalObject->vm();
     MarkedArgumentBuffer list;
-    globalObject->vm().heap.forEachProtectedCell(
+    vm.heap.forEachProtectedCell(
         [&](JSCell* cell) { list.append(cell); });
+    for (auto* block = WebCore::clientData(vm)->m_strongRootBlockHead; block; block = block->next())
+        block->forEachOccupiedCell([&](JSCell* cell) { list.append(cell); });
     RELEASE_ASSERT(!list.hasOverflowed());
     return JSC::JSValue::encode(constructArray(
         globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), list));
@@ -651,8 +668,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject, Ca
             makeString("Invalid timezone: \""_s, timeZoneName, "\""_s));
         return {};
     }
-    WTF::timeZoneDidChange();
-    vm.dateCache.clearForTimeZoneChange();
+    Bun::resetDateCachesAfterTimeZoneChange(vm);
     WTF::Vector<char16_t, 32> buffer;
     WTF::getTimeZoneOverride(buffer);
     WTF::String timeZoneString(buffer.span());
@@ -1001,7 +1017,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
-    INIT_NATIVE_MODULE(36);
+    INIT_NATIVE_MODULE(BunJSC, 36);
 
     putNativeFn(Identifier::fromString(vm, "callerSourceOrigin"_s), functionCallerSourceOrigin);
     putNativeFn(Identifier::fromString(vm, "jscDescribe"_s), functionDescribe);

@@ -1,7 +1,8 @@
 import { $, ShellOutput } from "bun";
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDirWithFiles } from "harness";
-import { join } from "path";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { lstatSync, readFileSync } from "fs";
+import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
+import { isAbsolute, join, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
 // const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", sep) : path);
@@ -11,7 +12,7 @@ setDefaultTimeout(1000 * 60 * 5);
 
 describe("error messages", () => {
   test("'bun patch' with no package name shows a usage example", async () => {
-    const dir = tempDirWithFiles("bun-patch-noarg", {
+    await using dir = tempDir("bun-patch-noarg", {
       "package.json": JSON.stringify({ name: "t" }),
     });
     await using proc = Bun.spawn({
@@ -29,7 +30,7 @@ describe("error messages", () => {
   });
 
   test("'bun patch --commit' with no directory shows a usage example", async () => {
-    const dir = tempDirWithFiles("bun-patch-commit-noarg", {
+    await using dir = tempDir("bun-patch-commit-noarg", {
       "package.json": JSON.stringify({ name: "t" }),
     });
     await using proc = Bun.spawn({
@@ -47,7 +48,7 @@ describe("error messages", () => {
   });
 
   test("'bun patch-commit' with no directory shows a usage example", async () => {
-    const dir = tempDirWithFiles("bun-patchcommit-noarg", {
+    await using dir = tempDir("bun-patchcommit-noarg", {
       "package.json": JSON.stringify({ name: "t" }),
     });
     await using proc = Bun.spawn({
@@ -65,6 +66,115 @@ describe("error messages", () => {
   });
 });
 
+// `bun patch` identifies packages by `name@label`, where a tarball package's label is
+// the spec it was installed from. These labels used to be formatted into 1024 byte
+// stack buffers (512 bytes in the installer itself), so a long enough spec crashed
+// every command that formatted it.
+describe("packages whose label is longer than 1024 bytes", () => {
+  const registry = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  // `x/../` normalizes away, so the tarball still lives at a short path that is valid
+  // on every platform while the recorded spec stays long.
+  const longSpec = (tarball: string) => `./${Buffer.alloc(1050, "x/../").toString()}${tarball}`;
+
+  async function createProject(tarball: string, packageJson: Record<string, unknown>) {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify(packageJson),
+        [tarball]: readFileSync(join(import.meta.dir, tarball)),
+      },
+    });
+    return packageDir;
+  }
+
+  async function runBun(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  async function install(cwd: string) {
+    const { stderr, exitCode } = await runBun(cwd, "install");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  test.concurrent("bun patch <name>@<label>", async () => {
+    const spec = longSpec("bar-0.0.2.tgz");
+    const packageDir = await createProject("bar-0.0.2.tgz", { name: "foo", dependencies: { bar: spec } });
+    await install(packageDir);
+
+    const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", `bar@${spec}`);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("To patch bar, edit the following folder:\n\n  node_modules/bar\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun patch <path>` and `bun patch --commit <path>` find the package by comparing the
+  // label of every package with that name against the version in <path>/package.json.
+  // The lockfile lists the long-labeled `bar` before `bar-from-npm`, so both commands
+  // format the long label before reaching the package that matches.
+  test.concurrent("bun patch <path> when another package with the same name has a long label", async () => {
+    const packageDir = await createProject("bar-0.0.2.tgz", {
+      name: "foo",
+      dependencies: { "bar": longSpec("bar-0.0.2.tgz"), "bar-from-npm": "npm:bar@0.0.7" },
+    });
+    await install(packageDir);
+
+    const prepare = await runBun(packageDir, "patch", "node_modules/bar-from-npm");
+    expect(prepare.stderr).not.toContain("error:");
+    expect(prepare.stdout).toContain("To patch bar, edit the following folder:\n\n  node_modules/bar-from-npm\n");
+    expect(prepare.exitCode).toBe(0);
+
+    await Bun.write(join(packageDir, "node_modules", "bar-from-npm", "index.js"), "module.exports = 'patched';\n");
+
+    const commit = await runBun(packageDir, "patch", "--commit", "node_modules/bar-from-npm");
+    expect(commit.stderr).not.toContain("error:");
+    expect(commit.exitCode).toBe(0);
+    expect((await Bun.file(join(packageDir, "package.json")).json()).patchedDependencies).toEqual({
+      "bar@0.0.7": "patches/bar@0.0.7.patch",
+    });
+    expect(await Bun.file(join(packageDir, "patches", "bar@0.0.7.patch")).text()).toContain(
+      "+module.exports = 'patched';",
+    );
+  });
+
+  // Committing formats `name@label` before doing anything else. The commit itself cannot
+  // succeed for such a package (the patch file is named after the label, which no file
+  // system accepts at this length), so what is pinned here is that it fails as an error.
+  test.concurrent("bun patch --commit of a long-labeled package exits 1 without recording a patch", async () => {
+    const packageJson = { name: "foo", dependencies: { baz: longSpec("baz-0.0.3.tgz") } };
+    const packageDir = await createProject("baz-0.0.3.tgz", packageJson);
+    await install(packageDir);
+
+    const prepare = await runBun(packageDir, "patch", "node_modules/baz");
+    expect(prepare.stderr).not.toContain("error:");
+    expect(prepare.exitCode).toBe(0);
+
+    await Bun.write(join(packageDir, "node_modules", "baz", "index.js"), "console.log('patched baz');\n");
+
+    const commit = await runBun(packageDir, "patch", "--commit", "node_modules/baz");
+    expect(commit.stderr).toContain("error:");
+    expect(commit.exitCode).toBe(1);
+    expect(await Bun.file(join(packageDir, "package.json")).json()).toEqual(packageJson);
+  });
+});
+
 describe("bun patch <pkg>", async () => {
   describe("workspace interactions", async () => {
     /**
@@ -78,7 +188,7 @@ describe("bun patch <pkg>", async () => {
       ];
       for (const [arg, path] of args) {
         test(arg, async () => {
-          const tempdir = tempDirWithFiles("lol", {
+          await using tempdir = tempDir("lol", {
             "package.json": JSON.stringify({
               "name": "my-workspace",
               private: "true",
@@ -153,7 +263,7 @@ describe("bun patch <pkg>", async () => {
       ];
       for (const [arg, path] of args) {
         test(arg, async () => {
-          const tempdir = tempDirWithFiles("lol", {
+          await using tempdir = tempDir("lol", {
             "package.json": JSON.stringify({
               "name": "my-workspace",
               private: "true",
@@ -231,7 +341,7 @@ describe("bun patch <pkg>", async () => {
       ];
       for (const [arg, path] of args) {
         test(arg, async () => {
-          const tempdir = tempDirWithFiles("lol", {
+          await using tempdir = tempDir("lol", {
             "package.json": JSON.stringify({
               "name": "my-workspace",
               private: "true",
@@ -299,6 +409,80 @@ describe("bun patch <pkg>", async () => {
       }
     });
 
+    // https://github.com/oven-sh/bun/issues/12200
+    // https://github.com/oven-sh/bun/issues/12882
+    describe("inside workspace package, committing with the path bun suggested", async () => {
+      const files = {
+        "package.json": JSON.stringify({
+          name: "root",
+          private: true,
+          workspaces: ["packages/*"],
+        }),
+        packages: {
+          server: {
+            "package.json": JSON.stringify({
+              name: "server",
+              version: "1.0.0",
+              dependencies: { "is-odd": "3.0.1" },
+            }),
+          },
+        },
+      };
+
+      async function prepare(tempdir: string) {
+        const subdir = join(tempdir, "packages", "server");
+        await $`${bunExe()} i`.env(bunEnv).cwd(subdir);
+
+        const prep = await $`${bunExe()} patch is-odd`.env(bunEnv).cwd(subdir);
+        expect(prep.stderr.toString()).not.toContain("error");
+        const suggested = prep.stdout.toString().match(/bun patch --commit '([^']+)'/);
+        expect(suggested).not.toBeNull();
+        const absPath = suggested![1];
+        expect(isAbsolute(absPath.replaceAll("/", sep))).toBe(true);
+        expect(absPath).toContain("node_modules");
+
+        await Bun.write(join(tempdir, "node_modules", "is-odd", "index.js"), "module.exports = () => 'patched';\n");
+        return { subdir, absPath };
+      }
+
+      async function check(tempdir: string, commit: ShellOutput) {
+        expect(commit.stderr.toString()).not.toContain("ENOENT");
+        expect(commit.stderr.toString()).not.toContain("error");
+        expect(commit.exitCode).toBe(0);
+
+        expect((await Bun.file(join(tempdir, "package.json")).json()).patchedDependencies).toEqual({
+          "is-odd@3.0.1": "patches/is-odd@3.0.1.patch",
+        });
+        const patch = await Bun.file(join(tempdir, "patches", "is-odd@3.0.1.patch")).text();
+        expect(patch).not.toContain("new file mode 120000");
+        expect(patch).not.toContain("deleted file mode");
+        expect(patch).toContain("patched");
+      }
+
+      // On Windows the suggested path is a drive-letter absolute path like
+      // `C:\tmp\.../node_modules/is-odd`. Previously this was treated as
+      // relative and joined onto `packages/server/`, producing
+      // `packages\server\C:\...\package.json` → ENOENT.
+      test("absolute path", async () => {
+        await using tempdir = tempDir("patch-ws-abs", files);
+        const { subdir, absPath } = await prepare(String(tempdir));
+        const commit = await $`${bunExe()} patch --commit ${absPath}`.env(bunEnv).cwd(subdir).throws(false);
+        await check(String(tempdir), commit);
+      });
+
+      // With the isolated linker `packages/server/node_modules/is-odd` is a
+      // symlink into `.bun/`. `bun patch is-odd` placed the editable copy at
+      // the root `node_modules/is-odd`, so committing `node_modules/is-odd`
+      // from the subdir must diff the root copy, not the symlink.
+      test("relative node_modules/<pkg>", async () => {
+        await using tempdir = tempDir("patch-ws-rel", files);
+        const { subdir } = await prepare(String(tempdir));
+        expect(lstatSync(join(subdir, "node_modules", "is-odd")).isSymbolicLink()).toBe(true);
+        const commit = await $`${bunExe()} patch --commit node_modules/is-odd`.env(bunEnv).cwd(subdir).throws(false);
+        await check(String(tempdir), commit);
+      });
+    });
+
     describe("inside ROOT workspace package", async () => {
       const args = [
         [
@@ -317,7 +501,7 @@ describe("bun patch <pkg>", async () => {
       ];
       for (const [arg, path, version, patch_path] of args) {
         test(arg, async () => {
-          const tempdir = tempDirWithFiles("lol", {
+          await using tempdir = tempDir("lol", {
             "package.json": JSON.stringify({
               "name": "my-workspace",
               private: "true",
@@ -396,7 +580,7 @@ describe("bun patch <pkg>", async () => {
       test(
         `${pkgName}@${version}`,
         async () => {
-          const tempdir = tempDirWithFiles("popular", {
+          await using tempdir = tempDir("popular", {
             "package.json": JSON.stringify({
               "name": "bun-patch-test",
               "module": "index.ts",
@@ -466,7 +650,7 @@ describe("bun patch <pkg>", async () => {
     makeTest("@types/uuencode", "0.0.3", "@types/uuencode");
   });
   test("should patch a package when it is already patched", async () => {
-    const tempdir = tempDirWithFiles("lol", {
+    await using tempdir = tempDir("lol", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -554,7 +738,7 @@ module.exports = function isOdd(i) {
   });
 
   test("bad patch arg", async () => {
-    const tempdir = tempDirWithFiles("lol", {
+    await using tempdir = tempDir("lol", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -573,7 +757,7 @@ module.exports = function isOdd(i) {
   });
 
   test("bad patch commit arg", async () => {
-    const tempdir = tempDirWithFiles("lol", {
+    await using tempdir = tempDir("lol", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -617,7 +801,7 @@ module.exports = function isOdd(i) {
     test(name, async () => {
       $.throws(true);
 
-      const filedir = tempDirWithFiles("patch1", {
+      await using filedir = tempDir("patch1", {
         "package.json": JSON.stringify({
           "name": "bun-patch-test",
           "module": "index.ts",
@@ -661,7 +845,7 @@ Once you're done with your changes, run:
   test(
     "overwriting module with multiple levels of directories",
     async () => {
-      const filedir = tempDirWithFiles("patch1", {
+      await using filedir = tempDir("patch1", {
         "package.json": JSON.stringify({
           "name": "bun-patch-test",
           "module": "index.ts",
@@ -765,7 +949,7 @@ Once you're done with your changes, run:
     for (const patchArg of patchArgs) {
       $.throws(true);
 
-      const filedir = tempDirWithFiles("patch1", {
+      await using filedir = tempDir("patch1", {
         "package.json": JSON.stringify({
           "name": "bun-patch-test",
           "module": "index.ts",
@@ -791,7 +975,7 @@ module.exports = function isEven() {
         await $`echo ${newCode} > node_modules/is-even/index.js`.env(bunEnv).cwd(filedir);
       }
 
-      const tempdir = tempDirWithFiles("unpatched", {
+      await using tempdir = tempDir("unpatched", {
         "package.json": JSON.stringify({
           "name": "bun-patch-test",
           "module": "index.ts",
@@ -820,7 +1004,7 @@ module.exports = function isEven() {
     for (const patchArg of patchArgs) {
       $.throws(true);
 
-      const filedir = tempDirWithFiles("patch1", {
+      await using filedir = tempDir("patch1", {
         "package.json": JSON.stringify({
           "name": "bun-patch-test",
           "module": "index.ts",
@@ -848,7 +1032,7 @@ module.exports = function isOdd() {
         await $`echo ${newCode} > node_modules/is-even/node_modules/is-odd/index.js`.env(bunEnv).cwd(filedir);
       }
 
-      const tempdir = tempDirWithFiles("unpatched", {
+      await using tempdir = tempDir("unpatched", {
         "package.json": JSON.stringify({
           "name": "bun-patch-test",
           "module": "index.ts",

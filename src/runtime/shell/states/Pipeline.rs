@@ -14,13 +14,13 @@ use crate::shell::yield_::Yield;
 use crate::shell::{ExitCode, ShellErr};
 
 pub struct Pipeline {
-    pub base: Base,
+    pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Pipeline>,
-    pub io: IO,
-    pub exited_count: u32,
-    pub cmds: Option<Box<[CmdOrResult]>>,
-    pub pipes: Option<Box<[Pipe]>>,
-    pub state: PipelineState,
+    pub(crate) io: IO,
+    pub(crate) exited_count: u32,
+    pub(crate) cmds: Option<Box<[CmdOrResult]>>,
+    pub(crate) pipes: Option<Box<[Pipe]>>,
+    pub(crate) state: PipelineState,
 }
 
 pub enum CmdOrResult {
@@ -42,7 +42,7 @@ impl Default for PipelineState {
 }
 
 impl Pipeline {
-    pub fn init(
+    pub(crate) fn init(
         interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: &ast::Pipeline,
@@ -60,25 +60,25 @@ impl Pipeline {
         }))
     }
 
-    pub fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
     /// Queried by the trampoline (`Yield::run`) to manage the pipeline stack.
     #[inline]
-    pub fn is_done(interp: &Interpreter, this: NodeId) -> bool {
+    pub(crate) fn is_done(interp: &Interpreter, this: NodeId) -> bool {
         matches!(interp.as_pipeline(this).state, PipelineState::Done { .. })
     }
 
     #[inline]
-    pub fn is_starting_cmds(interp: &Interpreter, this: NodeId) -> bool {
+    pub(crate) fn is_starting_cmds(interp: &Interpreter, this: NodeId) -> bool {
         matches!(
             interp.as_pipeline(this).state,
             PipelineState::StartingCmds { .. }
         )
     }
 
-    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         match interp.as_pipeline(this).state {
             PipelineState::StartingCmds { idx } => Self::next_starting(interp, this, idx),
             PipelineState::Pending | PipelineState::WaitingWriteErr => Yield::suspended(),
@@ -268,28 +268,7 @@ impl Pipeline {
         interp.start_node(child)
     }
 
-    /// IOWriter completion callback for the error message written in
-    /// `WaitingWriteErr`: throw on write failure, otherwise finish the
-    /// pipeline with exit code 1.
-    pub fn on_io_writer_chunk(
-        interp: &Interpreter,
-        this: NodeId,
-        _written: usize,
-        err: Option<bun_sys::SystemError>,
-    ) -> Yield {
-        debug_assert!(matches!(
-            interp.as_pipeline(this).state,
-            PipelineState::WaitingWriteErr
-        ));
-        if let Some(e) = err {
-            interp.throw(ShellErr::from_system(e));
-            return Yield::failed();
-        }
-        let parent = interp.as_pipeline(this).base.parent;
-        interp.child_done(parent, this, 1)
-    }
-
-    pub fn child_done(
+    pub(crate) fn child_done(
         interp: &Interpreter,
         this: NodeId,
         child: NodeId,
@@ -361,7 +340,7 @@ impl Pipeline {
         }
     }
 
-    pub fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Pipeline {} deinit", this);
         // Deinit any still-live children (and their duped envs).
         let cmds = interp.as_pipeline_mut(this).cmds.take();

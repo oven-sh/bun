@@ -4,10 +4,10 @@ use bun_install::lockfile::LoadResult;
 use bun_install::package_manager::security_scanner;
 use bun_install::{Lockfile, PackageManager};
 
-pub struct ScanCommand;
+pub(crate) struct ScanCommand;
 
 impl ScanCommand {
-    pub fn exec_with_manager(
+    pub(crate) fn exec_with_manager(
         ctx: Command::Context,
         manager: &mut PackageManager,
         original_cwd: &[u8],

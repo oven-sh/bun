@@ -138,6 +138,8 @@ extern void us_dispatch_keylog(us_socket_r s, const unsigned char *data, int len
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
 
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
+/* Fills *out when host is a numeric address (incl. inet_aton shorthand and %zone); 0 when it is a name. */
+extern int Bun__parseIpAddress(const char* host, uint16_t port, struct sockaddr_storage* out);
 extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
 extern int Bun__addrinfo_cancel(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
 extern void Bun__addrinfo_freeRequest(struct addrinfo_request* addrinfo_req, int error);
@@ -145,6 +147,10 @@ extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_re
 
 
 /* Loop related */
+/* `eof` values for us_internal_dispatch_ready_poll: nonzero = read-side EOF hint (half-open honored);
+ * LIBUS_POLL_HANGUP = epoll EPOLLHUP, both directions down, re-reported until the fd is closed. */
+#define LIBUS_POLL_EOF 1
+#define LIBUS_POLL_HANGUP 2
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events);
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
@@ -174,6 +180,13 @@ void us_internal_loop_data_init(struct us_loop_t *loop,
 void us_internal_loop_data_free(us_loop_r loop);
 void us_internal_loop_pre(us_loop_r loop);
 void us_internal_loop_post(us_loop_r loop);
+
+/* node:quic loop driver (node_quic_shim.c): per-turn engine pass. */
+struct us_nq_driver_s;
+void us_nq_loop_flush_if_pending(struct us_loop_t *loop);
+void us_nq_loop_drain(struct us_loop_t *loop);
+void us_nq_loop_register(struct us_loop_t *loop, struct us_nq_driver_s *d, void *owner);
+void us_nq_loop_unregister(struct us_loop_t *loop, struct us_nq_driver_s *d);
 
 /* Asyncs (old) */
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop,
@@ -224,6 +237,7 @@ int us_internal_ssl_handshake_callback_has_fired(us_socket_r s);
 int us_internal_ssl_is_shut_down(us_socket_r s);
 void us_internal_ssl_shutdown(us_socket_r s);
 int us_internal_ssl_write(us_socket_r s, const char *data, int length);
+unsigned int us_internal_ssl_spill_pending(us_socket_r s);
 void *us_internal_ssl_get_native_handle(us_socket_r s);
 struct us_bun_verify_error_t us_internal_ssl_verify_error(us_socket_r s);
 void *us_internal_ssl_sni_userdata(us_socket_r s);
@@ -236,6 +250,13 @@ void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 /* TCP-level FIN, bypassing the SSL layer (used by ssl_on_end). */
 void us_internal_socket_raw_shutdown(us_socket_r s);
+
+#ifdef LIBUS_USE_KQUEUE
+/* Arm an EV_CLEAR read filter on a socket with no readable interest so the
+ * peer's FIN/RST still reaches the dispatcher (kqueue's stand-in for epoll's
+ * implicit EPOLLHUP/EPOLLERR). See the definition in epoll_kqueue.c. */
+void us_internal_kqueue_socket_arm_read_sentinel(us_socket_r s);
+#endif
 
 int us_internal_handle_dns_results(us_loop_r loop);
 
@@ -297,6 +318,8 @@ struct us_socket_t {
    * the driver's epilogue via ssl_pending_detach. */
   unsigned char ssl_in_use : 1;
   unsigned char ssl_pending_detach : 1;
+  /* Peer FIN was dispatched as on_end on a half-open socket; readable interest is never re-added and on_end never re-fires. */
+  unsigned char read_eof : 1;
   /* The close code passed to the deferred close (e.g. a reset requested from
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */
@@ -323,6 +346,21 @@ struct us_socket_t {
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");
 #endif
+
+/* us_socket_adopt relocates a socket whose ext grows and retires the old block
+ * (is_closed + adopted, prev -> replacement; freed by the outermost tick's
+ * us_internal_free_closed_sockets, so it is still readable mid-dispatch). A
+ * callback may adopt more than once before returning, retiring each block in
+ * turn, so walk the whole chain rather than one link: one link can land on a
+ * block that is itself retired. The walk ends on the live block, which never
+ * has adopted set (the copy is taken before the source is flagged). Tolerates
+ * NULL, which callbacks may return. */
+static inline struct us_socket_t *us_internal_socket_follow_adopted(struct us_socket_t *s) {
+    while (s && s->flags.adopted && s->prev) {
+        s = s->prev;
+    }
+    return s;
+}
 
 struct us_connecting_socket_t {
     alignas(LIBUS_EXT_ALIGNMENT) struct addrinfo_request *addrinfo_req;
@@ -371,6 +409,7 @@ struct us_udp_socket_t {
     uint16_t port;
     uint16_t closed : 1;
     uint16_t connected : 1;
+    uint16_t shared_fd : 1;
     struct us_udp_socket_t *next;
 };
 

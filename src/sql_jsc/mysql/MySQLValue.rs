@@ -11,6 +11,7 @@ use bun_core::{OwnedString, String as BunString};
 
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error;
+use bun_sql::mysql::protocol::prepared_statement::ExecuteParam;
 use bun_sql::shared::Data;
 
 use crate::jsc::webcore::Blob;
@@ -119,7 +120,7 @@ pub(crate) fn field_type_from_js(
     Ok(FieldType::MYSQL_TYPE_VARCHAR)
 }
 
-pub enum Value {
+pub(crate) enum Value {
     Null,
     Bool(bool),
     Short(i16),
@@ -132,9 +133,7 @@ pub enum Value {
     Double(f64),
 
     String(ZigStringSlice),
-    StringData(Data),
     Bytes(Bytes),
-    BytesData(Data),
     Date(DateTime),
     Time(Time),
 }
@@ -151,13 +150,13 @@ pub enum Value {
 /// alive — `params` is on the malloc heap and isn't scanned. `Drop`
 /// unpins.
 pub struct Bytes {
-    pub slice: ZigStringSlice,
+    pub(crate) slice: ZigStringSlice,
     /// JS ArrayBuffer/view to `unpinArrayBuffer` in `Drop`. `JSValue::ZERO`
     /// when the slice is owned (FastTypedArray dupe), borrowed from a
     /// Blob store (nothing to unpin), or empty. GC rooting of this value
     /// is the caller's responsibility via the `MarkedArgumentBuffer`
     /// passed to `from_js`.
-    pub pinned: JSValue,
+    pub(crate) pinned: JSValue,
 }
 
 impl Default for Bytes {
@@ -214,8 +213,12 @@ fn validate_bigint<T: bun_core::Integer>(
         .map_err(js_error_to_mysql)
 }
 
-impl Value {
-    pub fn to_data(&self, field_type: FieldType) -> Result<Data, any_mysql_error::Error> {
+impl ExecuteParam for Value {
+    fn is_null(&self) -> bool {
+        matches!(self, Value::Null)
+    }
+
+    fn to_data(&self, field_type: FieldType) -> Result<Data, any_mysql_error::Error> {
         let mut buffer = [0u8; 15]; // Large enough for all fixed-size types
 
         let pos: usize = match self {
@@ -258,18 +261,6 @@ impl Value {
             }
             Value::Date(d) => d.to_binary(field_type, &mut buffer) as usize,
             Value::Time(d) => d.to_binary(field_type, &mut buffer) as usize,
-            Value::StringData(data) | Value::BytesData(data) => {
-                // `bun_sql::shared::Data` is not
-                // `Clone`, so return a `Temporary` aliasing the
-                // same bytes. INVARIANT: `to_data` callers must keep `self`
-                // alive until the returned `Data` is consumed.
-                let s = data.slice();
-                return Ok(if s.is_empty() {
-                    Data::Empty
-                } else {
-                    Data::Temporary(bun_ptr::RawSlice::new(s))
-                });
-            }
             Value::String(slice) => {
                 let s = slice.slice();
                 return Ok(if s.is_empty() {
@@ -290,8 +281,10 @@ impl Value {
 
         Data::create(&buffer[0..pos]).map_err(|_| any_mysql_error::Error::OutOfMemory)
     }
+}
 
-    pub fn from_js(
+impl Value {
+    pub(crate) fn from_js(
         value: JSValue,
         global_object: &JSGlobalObject,
         field_type: FieldType,
@@ -434,21 +427,21 @@ impl Value {
 
 #[derive(Default, Clone, Copy)]
 pub struct DateTime {
-    pub year: u16,
-    pub month: u8,
-    pub day: u8,
-    pub hour: u8,
-    pub minute: u8,
-    pub second: u8,
-    pub microsecond: u32,
+    year: u16,
+    month: u8,
+    day: u8,
+    hour: u8,
+    minute: u8,
+    second: u8,
+    microsecond: u32,
 }
 
 impl DateTime {
-    pub fn from_data(data: &Data) -> Result<DateTime, crate::Error> {
+    pub(crate) fn from_data(data: &Data) -> Result<DateTime, crate::Error> {
         Ok(Self::from_binary(data.slice()))
     }
 
-    pub fn from_binary(val: &[u8]) -> DateTime {
+    pub(crate) fn from_binary(val: &[u8]) -> DateTime {
         match val.len() {
             4 => {
                 // Byte 1: [year LSB]     (8 bits of year)
@@ -518,7 +511,7 @@ impl DateTime {
     /// sentinels (`0000-00-00`), impossible calendar values (`2024-02-31`), and
     /// malformed input, so the caller surfaces `Invalid Date` — matching what
     /// the previous `Date.parse` path produced for those.
-    pub fn from_text(text: &[u8]) -> Option<DateTime> {
+    pub(crate) fn from_text(text: &[u8]) -> Option<DateTime> {
         let parsed = crate::shared::datetime_text::parse_mysql(text)?;
         if parsed.month < 1
             || parsed.month > 12
@@ -541,7 +534,7 @@ impl DateTime {
         })
     }
 
-    pub fn to_binary(&self, field_type: FieldType, buffer: &mut [u8]) -> u8 {
+    pub(crate) fn to_binary(&self, field_type: FieldType, buffer: &mut [u8]) -> u8 {
         match field_type {
             FieldType::MYSQL_TYPE_YEAR => {
                 buffer[0] = 2;
@@ -574,7 +567,7 @@ impl DateTime {
         }
     }
 
-    pub fn to_js_timestamp(&self, global_object: &JSGlobalObject) -> JsResult<f64> {
+    pub(crate) fn to_js_timestamp(&self, global_object: &JSGlobalObject) -> JsResult<f64> {
         // MySQL in permissive sql_mode can store zero / partial-zero dates like
         // "0000-00-00" or "2024-00-15" and send them over the binary protocol.
         // WTF::GregorianDateTime would silently wrap month=0 to December of the
@@ -608,7 +601,7 @@ impl DateTime {
         )
     }
 
-    pub fn from_unix_timestamp(timestamp: i64, microseconds: u32) -> DateTime {
+    pub(crate) fn from_unix_timestamp(timestamp: i64, microseconds: u32) -> DateTime {
         let mut ts = timestamp;
         let days = ts.div_euclid(86400);
         ts = ts.rem_euclid(86400);
@@ -631,13 +624,6 @@ impl DateTime {
         }
     }
 
-    pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
-        JSValue::from_date_number(
-            global_object,
-            self.to_js_timestamp(global_object).unwrap_or(f64::NAN),
-        )
-    }
-
     /// `from_unix_timestamp`/`gregorian_date` can only represent
     /// 1970-01-01T00:00:00Z through 9999-12-31T23:59:59Z (the MySQL DATETIME
     /// maximum). Anything outside that window panics on an integer cast, so
@@ -654,7 +640,7 @@ impl DateTime {
         Ok(())
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         value: JSValue,
         global_object: &JSGlobalObject,
     ) -> Result<DateTime, any_mysql_error::Error> {
@@ -683,12 +669,12 @@ impl DateTime {
 
 #[derive(Default, Clone, Copy)]
 pub struct Time {
-    pub negative: bool,
-    pub days: u32,
-    pub hours: u8,
-    pub minutes: u8,
-    pub seconds: u8,
-    pub microseconds: u32,
+    pub(crate) negative: bool,
+    pub(crate) days: u32,
+    pub(crate) hours: u8,
+    pub(crate) minutes: u8,
+    pub(crate) seconds: u8,
+    pub(crate) microseconds: u32,
 }
 
 impl Time {
@@ -705,7 +691,7 @@ impl Time {
         Ok(())
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         value: JSValue,
         global_object: &JSGlobalObject,
     ) -> Result<Time, any_mysql_error::Error> {
@@ -728,7 +714,7 @@ impl Time {
         }
     }
 
-    pub fn from_unix_timestamp(timestamp: i64, microseconds: u32) -> Time {
+    pub(crate) fn from_unix_timestamp(timestamp: i64, microseconds: u32) -> Time {
         let days = timestamp.div_euclid(86400);
         let hours = timestamp.rem_euclid(86400).div_euclid(3600);
         let minutes = timestamp.rem_euclid(3600).div_euclid(60);
@@ -743,11 +729,11 @@ impl Time {
         }
     }
 
-    pub fn from_data(data: &Data) -> Result<Time, crate::Error> {
+    pub(crate) fn from_data(data: &Data) -> Result<Time, crate::Error> {
         Ok(Self::from_binary(data.slice()))
     }
 
-    pub fn from_binary(val: &[u8]) -> Time {
+    pub(crate) fn from_binary(val: &[u8]) -> Time {
         if val.is_empty() {
             return Time::default();
         }
@@ -768,7 +754,7 @@ impl Time {
 
         time
     }
-    pub fn to_binary(&self, field_type: FieldType, buffer: &mut [u8]) -> u8 {
+    pub(crate) fn to_binary(&self, field_type: FieldType, buffer: &mut [u8]) -> u8 {
         match field_type {
             FieldType::MYSQL_TYPE_TIME | FieldType::MYSQL_TYPE_TIME2 => {
                 buffer[1] = if self.negative { 1 } else { 0 };

@@ -9,7 +9,7 @@ use crate::thread_pool;
 use crate::{Chunk, CompileResultForSourceMap, Index, options};
 
 /// This runs after we've already populated the compile results
-pub fn post_process_css_chunk(
+pub(crate) fn post_process_css_chunk(
     ctx: GenerateChunkCtx,
     worker: &mut thread_pool::Worker,
     chunk: &mut Chunk,

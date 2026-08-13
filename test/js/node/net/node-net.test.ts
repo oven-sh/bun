@@ -699,6 +699,42 @@ it("unref should exit when no more work pending", async () => {
   expect(await process.exited).toBe(0);
 });
 
+// An unref() applied while lookup is pending must survive the autoSelectFamily handle reinit.
+it("unref survives an autoSelectFamily retry", async () => {
+  // IPv4-only server + injected lookup listing ::1 first forces a refused attempt then a retry; unref() runs mid-lookup.
+  const server = createServer(() => {});
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const lookup = (host, opts, cb) =>
+            setTimeout(() => cb(null, [{ address: "::1", family: 6 }, { address: "127.0.0.1", family: 4 }]), 10);
+          const s = net.connect({ host: "localhost", port: ${server.address().port}, autoSelectFamily: true, lookup });
+          s.on("data", () => {});
+          s.on("error", e => process.stdout.write("error " + e.code + "\\n"));
+          s.on("connect", () => process.stdout.write("connected " + s.remoteAddress + "\\n"));
+          s.unref();
+          // Sentinel keeping the loop alive across the refuse + retry.
+          setTimeout(() => process.stdout.write("timer\\n"), 500);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    // After the sentinel timer only the unref'd socket remains, so the process must exit.
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim().split("\n").sort()).toEqual(["connected 127.0.0.1", "timer"]);
+    expect(exitCode).toBe(0);
+  } finally {
+    server.close();
+  }
+});
+
 it("socket should keep process alive if unref is not called", async () => {
   const process = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "node-ref-default-fixture.js")],
@@ -840,6 +876,67 @@ it("should trigger error when aborted even if connection failed, and the signal 
   expect(err.name).toBe("AbortError");
   expect(err.code).toBe("ABORT_ERR");
   expect(err.cause?.name).toBe("TimeoutError");
+});
+
+// Regression test for #30697: net.connect({ localPort, lookup }) on the
+// happy-eyeballs path must not throw a ReferenceError before the socket
+// is opened.
+describe("net.connect({ localPort }) with multiple lookup addresses #30697", () => {
+  describe.each([
+    {
+      label: "IPv4 first",
+      addresses: [
+        { address: "127.0.0.1", family: 4 },
+        { address: "::1", family: 6 },
+      ],
+    },
+    {
+      label: "IPv6 first",
+      addresses: [
+        { address: "::1", family: 6 },
+        { address: "127.0.0.1", family: 4 },
+      ],
+    },
+  ])("$label", ({ addresses }) => {
+    it("does not throw ReferenceError", async () => {
+      const { promise: listening, resolve: onListen, reject: onListenError } = Promise.withResolvers<Server>();
+      const server = createServer();
+      server.once("error", onListenError);
+      // Listen on 127.0.0.1 only; an IPv6-first attempt fails fast and
+      // happy-eyeballs falls through to the IPv4 address.
+      server.listen(0, "127.0.0.1", () => onListen(server));
+      await using _server = await listening;
+      const { port } = server.address() as { port: number };
+
+      // Non-zero localPort is required to enter the branch that used to
+      // crash, and the local bind is actually applied during connect, so it
+      // must be a free unprivileged port: grab an ephemeral one and release it.
+      const { promise: probing, resolve: onProbe, reject: onProbeError } = Promise.withResolvers<number>();
+      const probe = createServer();
+      probe.once("error", onProbeError);
+      probe.listen(0, "127.0.0.1", () => onProbe((probe.address() as { port: number }).port));
+      const localPort = await probing;
+      await new Promise(resolve => probe.close(resolve));
+
+      const { promise: connected, resolve: onConnect, reject: onError } = Promise.withResolvers<void>();
+      const client = new Socket();
+      client.on("error", onError);
+      client.on("connect", () => onConnect());
+
+      client.connect({
+        port,
+        host: "localhost",
+        localPort,
+        lookup: (_hostname, _opts, cb) => cb(null, addresses),
+      } as any);
+
+      try {
+        await connected;
+      } finally {
+        client.destroy();
+      }
+    });
+  });
 });
 
 it.if(isWindows)(
@@ -1038,6 +1135,744 @@ describe("paused socket whose peer sends RST", () => {
   });
 });
 
+describe("net.Server accepted-socket buffering", () => {
+  it("delivers bytes buffered before a 'readable' listener attaches, past peer FIN", async () => {
+    // read(0) instead of resume(): bytes that arrive before the connection
+    // handler engages the readable side accumulate in the buffer like Node.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2352
+    const received = Promise.withResolvers<Buffer>();
+    let flowingAtConnection: boolean | null | undefined;
+    const server = createServer(sock => {
+      flowingAtConnection = sock.readableFlowing;
+      sock.once("readable", () => received.resolve(sock.read()));
+      sock.once("error", received.reject);
+    });
+    let client: Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, "127.0.0.1", () => listening.resolve());
+      await listening.promise;
+      client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
+      client.on("error", received.reject);
+      await new Promise<void>((resolve, reject) => client!.end("hello", err => (err ? reject(err) : resolve())));
+      const buf = await received.promise;
+      expect({ flowingAtConnection, data: buf?.toString() }).toEqual({ flowingAtConnection: null, data: "hello" });
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  it("keeps a client socket's buffered response available for a late reader after peer FIN", async () => {
+    // An outbound client with no reader yet must keep its buffered response
+    // indefinitely, like node (a late .on('data') still delivers it).
+    const received = Promise.withResolvers<string>();
+    const server = createServer(sock => {
+      sock.end("late response");
+    });
+    let client: Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, "127.0.0.1", () => listening.resolve());
+      await listening.promise;
+      client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
+      client.on("error", received.reject);
+      while (!client._readableState?.ended && !client.destroyed) await new Promise<void>(r => setImmediate(r));
+      await new Promise<void>(r => setImmediate(r));
+      await new Promise<void>(r => setImmediate(r));
+      expect(client.destroyed).toBe(false);
+      let got = "";
+      client.on("data", chunk => (got += chunk));
+      client.on("end", () => received.resolve(got));
+      expect(await received.promise).toBe("late response");
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  it("delivers bytes to a 'data' listener attached via setImmediate from the connection handler", async () => {
+    const received = Promise.withResolvers<string>();
+    const server = createServer(sock => {
+      setImmediate(() => {
+        sock.once("data", chunk => received.resolve(chunk.toString()));
+        sock.once("error", received.reject);
+      });
+    });
+    let client: Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, "127.0.0.1", () => listening.resolve());
+      await listening.promise;
+      client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
+      client.on("error", received.reject);
+      await new Promise<void>((resolve, reject) => client!.end("hello", err => (err ? reject(err) : resolve())));
+      const data = await received.promise;
+      expect(data).toBe("hello");
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  it("keeps a server socket open while buffered data from a write-then-FIN client is unread", async () => {
+    // A client that sends its request and immediately half-closes (curl-style
+    // `shutdown(SHUT_WR)`) must not cause the server socket to be torn down
+    // before the app's async pipeline attaches a reader: the buffered payload
+    // stays deliverable and 'end' only follows once it is drained, like Node.
+    const connected = Promise.withResolvers<Socket>();
+    const server = createServer(s => connected.resolve(s));
+    let client: Socket | undefined;
+    let sock: Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, "127.0.0.1", () => listening.resolve());
+      await listening.promise;
+      client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
+      client.on("error", connected.reject);
+      await new Promise<void>((resolve, reject) => {
+        client!.once("connect", () => resolve());
+        client!.once("error", reject);
+      });
+      client.end("PAYLOAD-1234567890");
+      sock = await connected.promise;
+      const events: string[] = [];
+      sock.on("end", () => events.push("end"));
+      sock.on("close", hadError => events.push("close:" + hadError));
+      // Wait for the peer FIN to mark the readable side ended, then let any
+      // FIN-time lifecycle work settle before asserting the socket stayed open.
+      while (!sock._readableState?.ended && !sock.destroyed) await new Promise<void>(r => setImmediate(r));
+      await new Promise<void>(r => setImmediate(r));
+      await new Promise<void>(r => setImmediate(r));
+      expect({
+        destroyed: sock.destroyed,
+        readableLength: sock.readableLength,
+        events: [...events],
+      }).toEqual({ destroyed: false, readableLength: 18, events: [] });
+      const received = Promise.withResolvers<string>();
+      let got = "";
+      sock.on("data", chunk => (got += chunk));
+      sock.once("end", () => received.resolve(got));
+      sock.once("error", received.reject);
+      expect(await received.promise).toBe("PAYLOAD-1234567890");
+      expect(events).toEqual(["end"]);
+    } finally {
+      sock?.destroy();
+      client?.destroy();
+      server.close();
+    }
+  });
+});
+
+describe("net.Socket onread flow control", () => {
+  it("redelivers the rest of a chunk after the callback returns false and the socket resumes", async () => {
+    // Node never loses the bytes a pausing onread callback has not consumed
+    // (its reads are bounded by the user buffer, so they wait in the kernel
+    // until resume()): a 12-byte burst through a 4-byte buffer with a pause
+    // after the first slice must still deliver all three slices in order.
+    const server = createServer(c => c.end(Buffer.from("abcdefghijkl")));
+    const received: string[] = [];
+    const done = Promise.withResolvers<void>();
+    let socket: Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, "127.0.0.1", () => {
+        server.off("error", listening.reject);
+        listening.resolve();
+      });
+      await listening.promise;
+      socket = createConnection({
+        port: (server.address() as import("node:net").AddressInfo).port,
+        host: "127.0.0.1",
+        onread: {
+          buffer: Buffer.alloc(4),
+          callback(n: number, buf: Buffer) {
+            received.push(buf.toString("latin1", 0, n));
+            if (received.length === 1) {
+              queueMicrotask(() => socket!.resume());
+              return false;
+            }
+            if (received.join("").length === 12) done.resolve();
+            return true;
+          },
+        },
+      });
+      socket.on("error", done.reject);
+      socket.on("close", () => done.reject(new Error(`closed before all data was delivered: ${received.join("|")}`)));
+      await done.promise;
+      expect(received).toEqual(["abcd", "efgh", "ijkl"]);
+    } finally {
+      socket?.destroy();
+      server.close();
+    }
+  });
+});
+
+describe("net.Socket onread with a zero-length buffer", () => {
+  // Node installs the zero-length buffer and libuv then reports ENOBUFS for
+  // the read ("user can't handle the read"), destroying the socket: it is
+  // neither a validation error nor an infinite delivery loop.
+  it.each(["static buffer", "buffer factory"])("errors with ENOBUFS (%s)", async kind => {
+    const { promise, resolve, reject } = Promise.withResolvers<Error & { code?: string; syscall?: string }>();
+    const server = createServer(c => c.end("some data"));
+    let socket: Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, "127.0.0.1", () => {
+        server.off("error", listening.reject);
+        listening.resolve();
+      });
+      await listening.promise;
+      socket = createConnection({
+        port: (server.address() as import("node:net").AddressInfo).port,
+        host: "127.0.0.1",
+        onread: {
+          buffer: kind === "static buffer" ? Buffer.alloc(0) : () => Buffer.alloc(0),
+          callback: () => reject(new Error("onread callback must not be invoked")),
+        },
+      });
+      socket.on("error", resolve);
+      socket.on("close", () => reject(new Error("closed without emitting an error")));
+      const error = await promise;
+      expect({ message: error.message, code: error.code, syscall: error.syscall, destroyed: socket.destroyed }).toEqual(
+        { message: "read ENOBUFS", code: "ENOBUFS", syscall: "read", destroyed: true },
+      );
+    } finally {
+      socket?.destroy();
+      server.close();
+    }
+  });
+});
+
+it("onread: nothing is delivered between a false return and resume()", async () => {
+  // Node's readStop contract: after the callback returns false the callback
+  // does not fire again until resume(), even when more data arrives meanwhile.
+  const serverSockets: Socket[] = [];
+  const server = createServer(c => {
+    serverSockets.push(c);
+    c.write("aaaa");
+  });
+  const received: string[] = [];
+  const done = Promise.withResolvers<void>();
+  const firstDelivery = Promise.withResolvers<void>();
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, "127.0.0.1", () => listening.resolve());
+    await listening.promise;
+    client = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
+      onread: {
+        buffer: Buffer.alloc(64),
+        callback(n: number, buf: Buffer) {
+          received.push(buf.toString("latin1", 0, n));
+          if (received.length === 1) {
+            firstDelivery.resolve();
+            return false;
+          }
+          if (received.join("").length === 12) done.resolve();
+          return true;
+        },
+      },
+    });
+    client.on("error", done.reject);
+    await firstDelivery.promise;
+    // More data arrives while paused; flush it and give the client's loop
+    // turns to (incorrectly) deliver it before checking nothing fired.
+    await new Promise<void>(resolve => serverSockets[0].end("bbbbcccc", () => resolve()));
+    for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve));
+    expect(received).toEqual(["aaaa"]);
+    client.resume();
+    await done.promise;
+    expect(received.join("")).toBe("aaaabbbbcccc");
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+it("onread: resume() then pause() before the drain tick leaves the handle paused", async () => {
+  // Node's level-triggered _handle.reading (lib/net.js:817-835): resume()→pause()
+  // ends with the handle stopped; the drain tick must not undo the pause.
+  const serverSockets: Socket[] = [];
+  const server = createServer(c => {
+    serverSockets.push(c);
+    c.write("aaaa");
+  });
+  const received: string[] = [];
+  const firstDelivery = Promise.withResolvers<void>();
+  const done = Promise.withResolvers<void>();
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, "127.0.0.1", () => listening.resolve());
+    await listening.promise;
+    client = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
+      onread: {
+        buffer: Buffer.alloc(64),
+        callback(n: number, buf: Buffer) {
+          received.push(buf.toString("latin1", 0, n));
+          if (received.length === 1) firstDelivery.resolve();
+          if (received.join("").length === 8) done.resolve();
+          return received.length === 1 ? false : true;
+        },
+      },
+    });
+    client.on("error", done.reject);
+    await firstDelivery.promise;
+    // resume() schedules the drain tick; pause() before it fires must win.
+    client.resume();
+    client.pause();
+    await new Promise<void>(resolve => serverSockets[0].write("bbbb", () => resolve()));
+    for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve));
+    expect(received).toEqual(["aaaa"]);
+    client.resume();
+    await done.promise;
+    expect(received.join("")).toBe("aaaabbbb");
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+it("onread: a false return on the last slice of a redelivered tail stays paused until resume()", async () => {
+  // Node's readStop contract holds for every false return
+  // (stream_base_commons.js#L176-L198): draining the queued tail must not
+  // auto-resume the handle when its final slice returns false.
+  const serverSockets: Socket[] = [];
+  const server = createServer(c => {
+    serverSockets.push(c);
+    c.write("abcdefgh"); // two slices for the client's 4-byte onread buffer
+  });
+  const received: string[] = [];
+  const firstDelivery = Promise.withResolvers<void>();
+  const secondDelivery = Promise.withResolvers<void>();
+  const done = Promise.withResolvers<void>();
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, "127.0.0.1", () => listening.resolve());
+    await listening.promise;
+    client = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
+      onread: {
+        buffer: Buffer.alloc(4),
+        callback(n: number, buf: Buffer) {
+          received.push(buf.toString("latin1", 0, n));
+          if (received.length === 1) firstDelivery.resolve();
+          if (received.length === 2) secondDelivery.resolve();
+          if (received.length === 3) done.resolve();
+          return false;
+        },
+      },
+    });
+    client.on("error", done.reject);
+    await firstDelivery.promise;
+    client.resume();
+    await secondDelivery.promise;
+    expect(received).toEqual(["abcd", "efgh"]);
+    // Paused by the second false (an empty tail): later data must wait for
+    // the next resume() even though the queued tail was fully consumed.
+    await new Promise<void>(resolve => serverSockets[0].end("wxyz", () => resolve()));
+    for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve));
+    expect(received).toEqual(["abcd", "efgh"]);
+    client.resume();
+    await done.promise;
+    expect(received).toEqual(["abcd", "efgh", "wxyz"]);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+describe("net.Socket onread buffer factory", () => {
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L177-L185
+  it.each([
+    ["null", () => null],
+    ["a plain object", () => ({})],
+  ])("keeps reusing the last valid buffer when the factory returns %s", async (_label, bad) => {
+    const bufA = Buffer.alloc(16);
+    let sawFirst = false;
+    const seen: Array<[string, boolean]> = [];
+    const done = Promise.withResolvers<void>();
+    // The client acks the first delivery so the second write is a separate
+    // read: one coalesced segment would never exercise the factory again.
+    const server = createServer(c => {
+      c.on("data", () => c.end("bbbb"));
+      c.write("aaaa");
+    });
+    let client: Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, "127.0.0.1", () => {
+        server.off("error", listening.reject);
+        listening.resolve();
+      });
+      await listening.promise;
+      client = createConnection({
+        port: (server.address() as import("node:net").AddressInfo).port,
+        host: "127.0.0.1",
+        onread: {
+          buffer: () => (sawFirst ? (bad() as any) : bufA),
+          callback(n: number, buf: Buffer) {
+            const wasFirst = !sawFirst;
+            sawFirst = true;
+            seen.push([buf.toString("latin1", 0, n), buf === bufA]);
+            if (wasFirst) client!.write("ok");
+            if (seen.map(s => s[0]).join("") === "aaaabbbb") done.resolve();
+            return true;
+          },
+        },
+      });
+      client.on("error", done.reject);
+      await done.promise;
+      // Two separate reads, both delivered into the one valid buffer.
+      expect(seen).toEqual([
+        ["aaaa", true],
+        ["bbbb", true],
+      ]);
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+});
+
+it("onread: read() after a redundant pause() still redelivers the declined tail", async () => {
+  // Node's read() calls tryReadStart on the handle regardless of the stream's
+  // flowing state (lib/net.js:779-789), so an explicit pause() before it does
+  // not starve the queued tail; only resume() defers to a later pause().
+  const received: string[] = [];
+  const done = Promise.withResolvers<void>();
+  const server = createServer(c => {
+    c.on("data", () => {});
+    c.end(Buffer.from("abcdefgh"));
+  });
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", listening.reject);
+      listening.resolve();
+    });
+    await listening.promise;
+    client = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
+      onread: {
+        buffer: Buffer.alloc(4),
+        callback(n: number, buf: Buffer) {
+          received.push(buf.toString("latin1", 0, n));
+          if (received.length === 1) {
+            setImmediate(() => {
+              client!.pause();
+              client!.read();
+            });
+            return false;
+          }
+          if (received.length === 2) done.resolve();
+          return true;
+        },
+      },
+    });
+    client.on("error", done.reject);
+    await done.promise;
+    expect(received).toEqual(["abcd", "efgh"]);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+it("onread: a peer FIN does not redeliver the declined tail before resume()", async () => {
+  // The EOF path's read(0) must not restart a flow the callback paused: Node's
+  // readStop leaves both the tail and the FIN unread until resume().
+  const received: string[] = [];
+  const paused = Promise.withResolvers<void>();
+  const done = Promise.withResolvers<void>();
+  // One 8-byte write plus FIN: data and EOF land together.
+  const server = createServer(c => c.end(Buffer.from("abcdefgh")));
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", listening.reject);
+      listening.resolve();
+    });
+    await listening.promise;
+    client = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
+      onread: {
+        buffer: Buffer.alloc(4),
+        callback(n: number, buf: Buffer) {
+          received.push(buf.toString("latin1", 0, n));
+          if (received.length === 1) {
+            paused.resolve();
+            return false;
+          }
+          if (received.length === 2) done.resolve();
+          return true;
+        },
+      },
+    });
+    client.on("error", done.reject);
+    await paused.promise;
+
+    for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
+    expect({ received: [...received], destroyed: client.destroyed }).toEqual({
+      received: ["abcd"],
+      destroyed: false,
+    });
+
+    client.resume();
+    await done.promise;
+    expect(received).toEqual(["abcd", "efgh"]);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+it("onread: read() redelivers the declined tail without resume()", async () => {
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L779-L789 - Node's
+  // read() calls tryReadStart in onread mode, so it restarts the paused flow.
+  const received: string[] = [];
+  const done = Promise.withResolvers<void>();
+  const server = createServer(c => c.end(Buffer.from("abcdefgh")));
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", listening.reject);
+      listening.resolve();
+    });
+    await listening.promise;
+    client = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
+      onread: {
+        buffer: Buffer.alloc(4),
+        callback(n: number, buf: Buffer) {
+          received.push(buf.toString("latin1", 0, n));
+          if (received.length === 1) {
+            // Never resume(); only read().
+            setImmediate(() => client!.read(0));
+            return false;
+          }
+          if (received.length === 2) done.resolve();
+          return true;
+        },
+      },
+    });
+    client.on("error", done.reject);
+    await done.promise;
+    expect(received).toEqual(["abcd", "efgh"]);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+it("onread: a buffer factory that never yields a Uint8Array hands the callback `true`", async () => {
+  // Node leaves kBuffer as the literal `true` and passes it through:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L332-L342
+  const seen: unknown[] = [];
+  const done = Promise.withResolvers<void>();
+  const server = createServer(c => c.end("hello"));
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", listening.reject);
+      listening.resolve();
+    });
+    await listening.promise;
+    client = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
+      onread: {
+        buffer: () => null as any,
+        callback(_n: number, buf: unknown) {
+          seen.push(buf);
+          done.resolve();
+          return true;
+        },
+      },
+    });
+    client.on("error", done.reject);
+    await done.promise;
+    expect(seen).toEqual([true]);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+it("onread: `false` from a callback holding the `true` sentinel still pauses until resume()", async () => {
+  // Node runs the readStop-on-false logic even when the factory has not yet
+  // produced a Uint8Array and the callback is handed the literal `true`:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L177-L198
+  const seen: unknown[] = [];
+  const paused = Promise.withResolvers<void>();
+  const done = Promise.withResolvers<void>();
+  let sock: Socket | undefined;
+  const server = createServer(c => {
+    sock = c;
+    c.on("data", () => {});
+    c.write("aaaa");
+  });
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", listening.reject);
+      listening.resolve();
+    });
+    await listening.promise;
+    client = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
+      onread: {
+        buffer: () => 42 as any,
+        callback(n: number, buf: unknown) {
+          seen.push(buf);
+          if (seen.length === 1) {
+            paused.resolve();
+            return false;
+          }
+          done.resolve();
+          return true;
+        },
+      },
+    });
+    client.on("error", done.reject);
+    await paused.promise;
+    // A second write while paused must not reach the callback...
+    sock!.write("bbbb");
+    for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
+    expect(seen).toEqual([true]);
+    // ...until resume().
+    client.resume();
+    await done.promise;
+    expect(seen).toEqual([true, true]);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+// node lets a throwing onread callback escape as an uncaught exception:
+// onStreamRead calls the user callback bare, so the process dies rather than
+// the socket being failed closed.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L179
+it("onread: a callback that throws is an uncaught exception", async () => {
+  // 12 bytes through a 4-byte buffer; the callback throws on the first slice.
+  const fixture = /* js */ `
+    const net = require("net");
+    const server = net.createServer(c => c.write(Buffer.from("abcdefghijkl")));
+    server.listen(0, "127.0.0.1", () => {
+      const calls = [];
+      const client = net.connect({
+        port: server.address().port,
+        host: "127.0.0.1",
+        onread: {
+          buffer: Buffer.alloc(4),
+          callback(n, buf) {
+            calls.push(buf.toString("latin1", 0, n));
+            console.log("calls:" + calls.join(","));
+            throw new Error("onread-boom");
+          },
+        },
+      });
+      client.on("error", () => console.log("socket-error"));
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("onread-boom");
+  const lines = stdout.split("\n").filter(Boolean);
+  // The throw reaches the uncaught-exception path, not the socket 'error'
+  // handler. Node exits after the first slice; bun reports each throw and
+  // delivers the remaining slices (it does not exit mid-tick on an unhandled
+  // uncaughtException), so whichever slices appear must be the contiguous
+  // prefix of the stream with no gap and no 'socket-error'.
+  expect(lines[0]).toBe("calls:abcd");
+  expect(lines).not.toContain("socket-error");
+  expect(["calls:abcd", "calls:abcd,efgh", "calls:abcd,efgh,ijkl"]).toEqual(expect.arrayContaining(lines));
+  expect(exitCode).not.toBe(0);
+});
+
+// Node bounds each kernel read to the onread buffer's size, so a throw that is
+// swallowed by a process.on('uncaughtException') handler loses no bytes (the
+// next slice is a separate onStreamRead call). Bun slices one larger native
+// read in JS, so the catch is per-slice to preserve that.
+it("onread: a swallowed throw does not drop the rest of the current native read", async () => {
+  const fixture = /* js */ `
+    process.on("uncaughtException", e => console.log("uncaught:" + e.message));
+    const net = require("net");
+    const server = net.createServer(c => c.write(Buffer.from("abcdefghijkl")));
+    server.listen(0, "127.0.0.1", () => {
+      const calls = [];
+      let first = true;
+      const client = net.connect({
+        port: server.address().port,
+        host: "127.0.0.1",
+        onread: {
+          buffer: Buffer.alloc(4),
+          callback(n, buf) {
+            calls.push(buf.toString("latin1", 0, n));
+            if (first) { first = false; throw new Error("onread-boom"); }
+            if (calls.length === 3) {
+              console.log("calls:" + calls.join(","));
+              client.destroy(); server.close();
+            }
+            return true;
+          },
+        },
+      });
+      client.on("error", () => console.log("socket-error"));
+      setTimeout(() => { console.log("calls:" + calls.join(",")); process.exit(2); }, 2000).unref();
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // The throw was reported, then the remaining slices of the same native
+  // read were delivered with no gap and no socket 'error'.
+  expect(stdout.split("\n").filter(Boolean)).toEqual(["uncaught:onread-boom", "calls:abcd,efgh,ijkl"]);
+  expect(exitCode).toBe(0);
+});
+
 // On Windows the native layer does not report fatal send errors yet (the WSA
 // error translation is a follow-up), so the write error never surfaces there.
 it.skipIf(isWindows)("a write after the peer reset the connection fails with a write error", async () => {
@@ -1131,4 +1966,115 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
   } finally {
     target.close();
   }
+});
+
+// On Windows the connect-error path receives raw WSA codes (WSAECONNRESET,
+// WSAEADDRINUSE) from getsockopt(SO_ERROR) and the pre-connect bind(); these
+// must be mapped before the errno whitelist, or every failure degrades to
+// ECONNREFUSED. POSIX already reports these correctly.
+describe.skipIf(!isWindows)("connect() error codes on Windows", () => {
+  it("localPort in use reports EADDRINUSE", async () => {
+    const server1 = createServer(() => {});
+    const server2 = createServer(() => {});
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server1.on("error", reject);
+        server1.listen(0, "127.0.0.1", resolve);
+      });
+      await new Promise<void>((resolve, reject) => {
+        server2.on("error", reject);
+        server2.listen(0, "127.0.0.1", resolve);
+      });
+      const port = (server1.address() as import("node:net").AddressInfo).port;
+      const localPort = (server2.address() as import("node:net").AddressInfo).port;
+      const err = await new Promise<NodeJS.ErrnoException>(resolve => {
+        const c = connect({ host: "127.0.0.1", port, localAddress: "127.0.0.1", localPort });
+        c.on("error", resolve);
+        c.on("connect", () => {
+          c.destroy();
+          resolve(Object.assign(new Error("connected"), { code: "CONNECTED" }));
+        });
+      });
+      expect(err.code).toBe("EADDRINUSE");
+    } finally {
+      server1.close();
+      server2.close();
+    }
+  });
+
+  it("server resetAndDestroy() surfaces ECONNRESET on the client", async () => {
+    const server = createServer(c => {
+      c.resetAndDestroy();
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.on("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const err = await new Promise<NodeJS.ErrnoException>(resolve => {
+        const c = connect(port, "127.0.0.1");
+        c.on("error", resolve);
+        c.on("close", hadError => {
+          if (!hadError) resolve(Object.assign(new Error("clean close"), { code: "NOERR" }));
+        });
+      });
+      expect(err.code).toBe("ECONNRESET");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("connect to a path that is not a socket reports ECONNREFUSED/ENOTSOCK, missing path reports ENOENT", async () => {
+    const dir = tmpdirSync();
+    const regular = join(dir, "not-a-socket.txt");
+    fs.writeFileSync(regular, "");
+    const missing = join(dir, "does-not-exist");
+
+    const errFor = (path: string) =>
+      new Promise<NodeJS.ErrnoException>(resolve => {
+        const c = createConnection(path);
+        c.on("error", resolve);
+        c.on("connect", () => {
+          c.destroy();
+          resolve(Object.assign(new Error("connected"), { code: "CONNECTED" }));
+        });
+      });
+
+    const regularErr = await errFor(regular);
+    expect(["ENOTSOCK", "ECONNREFUSED"]).toContain(regularErr.code);
+
+    const missingErr = await errFor(missing);
+    expect(missingErr.code).toBe("ENOENT");
+  });
+});
+
+describe("net.Server.listen({ fd })", () => {
+  // node's createServerHandle only accepts TCP / pipe descriptors and reports anything else as EINVAL;
+  // the raw listen(2) failure for a datagram socket is EOPNOTSUPP.
+  it.skipIf(isWindows)("reports a datagram descriptor as EINVAL, like node", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--no-deprecation", // Socket.prototype._handle (DEP0112) is the only way to get the descriptor
+        "-e",
+        `
+        const dgram = require("dgram"), net = require("net");
+        const u = dgram.createSocket("udp4");
+        u.bind(0, "127.0.0.1", () => {
+          const s = net.createServer();
+          s.on("error", e => { console.log(e.code); u.close(); });
+          s.on("listening", () => { console.log("listening"); s.close(); u.close(); });
+          s.listen({ fd: u._handle.fd });
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "EINVAL", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 });

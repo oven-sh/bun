@@ -1773,11 +1773,12 @@ it.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple 
   });
 });
 
-// When a recursive readdirSync fails while descending, the error used to name the
+// When a recursive readdirSync failed while descending, the error used to name the
 // root argument. Node names the directory whose listing failed, joined onto the
-// root the way path.join would, and so do fs.readdir / fs.promises.readdir.
-describe("readdirSync({recursive: true}) error names the directory that failed", () => {
+// root the way path.join would; fs.readdir / fs.promises.readdir already did.
+describe("recursive readdir error names the directory that failed", () => {
   const resultKinds = [{}, { withFileTypes: true }, { encoding: "buffer" }] as const;
+  const shape = (err: any) => ({ code: err?.code, syscall: err?.syscall, path: err?.path });
 
   function readdirSyncError(root: string, options: object = {}): any {
     try {
@@ -1788,16 +1789,26 @@ describe("readdirSync({recursive: true}) error names the directory that failed",
     throw new Error(`expected readdirSync(${root}, { recursive: true }) to throw`);
   }
 
-  function expectSubdirectoryError(root: string, failed: string, code: string) {
+  function expectSyncError(root: string, failed: string, code: string) {
     for (const kind of resultKinds) {
       const err = readdirSyncError(root, kind);
-      expect({ code: err.code, syscall: err.syscall, path: err.path, message: err.message }).toEqual({
+      expect({ ...shape(err), message: err.message }).toEqual({
         code,
         syscall: "scandir",
         path: failed,
         message: expect.stringContaining(`, scandir '${failed}'`),
       });
     }
+  }
+
+  // The async walk joins the path the same way. Only its path is compared here;
+  // the syscall name it reports is normalized separately.
+  async function expectAsyncPath(root: string, failed: string, code: string) {
+    const err = await promises.readdir(root, { recursive: true }).then(
+      () => null,
+      err => err,
+    );
+    expect({ code: err?.code, path: err?.path }).toEqual({ code, path: failed });
   }
 
   // A self-referential symlink fails to open with ELOOP for any user, root included.
@@ -1807,15 +1818,11 @@ describe("readdirSync({recursive: true}) error names the directory that failed",
     const failed = join(root, "sub", "loop");
     symlinkSync("loop", failed);
 
-    expectSubdirectoryError(root, failed, "ELOOP");
+    expectSyncError(root, failed, "ELOOP");
     // Joined like path.join, not concatenated: a trailing separator on the root does not leak into the path.
-    expectSubdirectoryError(root + "/", failed, "ELOOP");
-
-    const asyncError = await promises.readdir(root, { recursive: true }).then(
-      () => null,
-      err => err,
-    );
-    expect({ code: asyncError.code, path: asyncError.path }).toEqual({ code: "ELOOP", path: failed });
+    expectSyncError(root + "/", failed, "ELOOP");
+    await expectAsyncPath(root, failed, "ELOOP");
+    await expectAsyncPath(root + "/", failed, "ELOOP");
   });
 
   // Root bypasses directory permissions and Windows has no mode bits, so this
@@ -1826,16 +1833,85 @@ describe("readdirSync({recursive: true}) error names the directory that failed",
     const failed = join(root, "sub", "locked");
     fs.chmodSync(failed, 0o000);
     try {
-      expectSubdirectoryError(root, failed, "EACCES");
-
-      const asyncError = await promises.readdir(root, { recursive: true }).then(
-        () => null,
-        err => err,
-      );
-      expect({ code: asyncError.code, path: asyncError.path }).toEqual({ code: "EACCES", path: failed });
+      expectSyncError(root, failed, "EACCES");
+      await expectAsyncPath(root, failed, "EACCES");
     } finally {
       fs.chmodSync(failed, 0o755);
     }
+  });
+
+  // Linux: /proc/<pid>/net of a child that has exited but not been reaped still
+  // opens as a directory, but listing it fails with EINVAL because the exited
+  // task has no network namespace. That is the walker's other failure arm: the
+  // subdirectory opened and reading its entries failed. Bun reaps children from
+  // the event loop, so the child stays a zombie while the caller stays synchronous;
+  // it is reaped as soon as the test yields. The probe below skips the test where
+  // the environment does not behave this way (no procfs, children reaped by a thread).
+  function spawnZombie(): number {
+    const child = Bun.spawn({ cmd: ["/bin/true"], stdio: ["ignore", "ignore", "ignore"] });
+    const deadline = Date.now() + 10_000;
+    while (!readFileSync(`/proc/${child.pid}/stat`, "latin1").includes(") Z ")) {
+      if (Date.now() > deadline) throw new Error(`pid ${child.pid} did not become a zombie`);
+      Bun.sleepSync(1);
+    }
+    return child.pid;
+  }
+  const zombieNetDirFailsToList =
+    isLinux &&
+    (() => {
+      try {
+        readdirSync(`/proc/${spawnZombie()}/net`);
+      } catch (err: any) {
+        return err.code === "EINVAL";
+      }
+      return false;
+    })();
+
+  it.skipIf(!zombieNetDirFailsToList)("subdirectory that opens but cannot be listed", () => {
+    using dir = tempDir("readdir-recursive-error-path-einval", { "keep.txt": "x" });
+    const root = String(dir);
+    const failed = join(root, "sub");
+    const netDir = `/proc/${spawnZombie()}/net`;
+    symlinkSync(netDir, failed);
+
+    expectSyncError(root, failed, "EINVAL");
+    // The same failure on the root itself reports the root as given.
+    expect(shape(readdirSyncError(netDir))).toEqual({ code: "EINVAL", syscall: "scandir", path: netDir });
+  });
+
+  // Linux only: the tree is built through /proc/self/fd because the paths involved
+  // are longer than PATH_MAX. The walkers open subdirectories relative to the root,
+  // so they still reach the failing entry; the async walk used to report the root
+  // instead once root + relative path no longer fit in a path buffer.
+  it.skipIf(!isLinux)("subdirectory whose path is longer than PATH_MAX", async () => {
+    using dir = tempDir("readdir-recursive-error-path-long", {});
+    const segment = Buffer.alloc(255, "d").toString();
+    const root = join(String(dir), Buffer.alloc(255, "r").toString());
+    mkdirSync(root);
+    // 15 levels of NAME_MAX-sized names is the deepest the walkers descend
+    // (NAME_MAX + 1 + the 3839-byte relative path still fits PATH_MAX).
+    const levels = Array.from({ length: 15 }, () => segment);
+    let fd = openSync(root, "r");
+    try {
+      for (let depth = 0; depth < levels.length; depth++) {
+        mkdirSync(`/proc/self/fd/${fd}/${segment}`);
+        const next = openSync(`/proc/self/fd/${fd}/${segment}`, "r");
+        closeSync(fd);
+        fd = next;
+      }
+      symlinkSync("loop", `/proc/self/fd/${fd}/loop`);
+    } finally {
+      closeSync(fd);
+    }
+    const failed = join(root, ...levels, "loop");
+    expect(failed.length).toBeGreaterThan(4096);
+
+    // err.message is not checked here: it is formatted into a 4 KiB buffer and a
+    // path this long gets cut off in it, for every fs error (tracked separately).
+    for (const kind of resultKinds) {
+      expect(shape(readdirSyncError(root, kind))).toEqual({ code: "ELOOP", syscall: "scandir", path: failed });
+    }
+    await expectAsyncPath(root, failed, "ELOOP");
   });
 
   it("root that cannot be listed is still reported as given", () => {
@@ -1843,7 +1919,6 @@ describe("readdirSync({recursive: true}) error names the directory that failed",
     const missing = join(String(dir), "missing");
     const file = join(String(dir), "file.txt");
 
-    const shape = (err: any) => ({ code: err.code, syscall: err.syscall, path: err.path });
     expect(shape(readdirSyncError(missing))).toEqual({ code: "ENOENT", syscall: "scandir", path: missing });
     expect(shape(readdirSyncError(file))).toEqual({ code: "ENOTDIR", syscall: "scandir", path: file });
     expect(shape(readdirSyncError(missing, { withFileTypes: true }))).toEqual({

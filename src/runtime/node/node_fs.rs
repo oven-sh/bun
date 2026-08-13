@@ -6313,16 +6313,12 @@ impl NodeFS {
             ),
         };
         match maybe {
-            // Node reports every readdir failure as `scandir`, naming the directory
-            // whose listing failed: for a recursive walk that is the subdirectory
-            // the walker attached, not necessarily `args.path`.
-            Err(err) => {
-                let path: &[u8] = if err.path.is_empty() {
-                    args.path.slice()
-                } else {
-                    &err.path
-                };
-                Err(err.with_path_and_syscall(path, sys::Tag::scandir))
+            // Node reports every readdir failure as `scandir`. `err.path` already names
+            // the directory whose listing failed, which for a recursive walk is not
+            // necessarily `args.path`.
+            Err(mut err) => {
+                err.syscall = sys::Tag::scandir;
+                Err(err)
             }
             Ok(result) => Ok(result),
         }
@@ -6449,6 +6445,16 @@ impl NodeFS {
         Ok(())
     }
 
+    /// Both recursive walkers open subdirectories by `relative`, their path
+    /// relative to the root; Node reports a failing one as
+    /// `path.join(root argument, relative)`.
+    fn readdir_subdir_error(err: &sys::Error, root: &[u8], relative: &[u8]) -> sys::Error {
+        let mut spill: Vec<u8> = Vec::new();
+        let joined =
+            paths::resolve_path::join_spill::<paths::platform::Auto>(&mut spill, &[root, relative]);
+        err.with_path(joined)
+    }
+
     pub(crate) fn readdir_with_entries_recursive_async<T: ReaddirEntry>(
         buf: &mut PathBuffer,
         async_task: &mut AsyncReaddirRecursiveTask,
@@ -6498,15 +6504,11 @@ impl NodeFS {
                         E::ENOENT | E::ENOTDIR | E::EPERM => return Ok(()),
                         _ => {}
                     }
-                    if root_basename.len() + 1 + basename.as_bytes().len() + 1
-                        < paths::MAX_PATH_BYTES
-                    {
-                        let joined = paths::resolve_path::join_z_buf::<paths::platform::Auto>(
-                            &mut buf[..],
-                            &[root_basename, basename.as_bytes()],
-                        );
-                        return Err(err.with_path(joined.as_bytes()));
-                    }
+                    return Err(Self::readdir_subdir_error(
+                        &err,
+                        root_basename,
+                        basename.as_bytes(),
+                    ));
                 }
                 return Err(err.with_path(root_basename));
             }
@@ -6531,15 +6533,12 @@ impl NodeFS {
             let current = match iterator.next() {
                 Err(err) => {
                     dirent_path_prev.deref();
-                    if !is_root
-                        && root_basename.len() + 1 + basename.as_bytes().len() + 1
-                            < paths::MAX_PATH_BYTES
-                    {
-                        let joined = paths::resolve_path::join_z_buf::<paths::platform::Auto>(
-                            &mut buf[..],
-                            &[root_basename, basename.as_bytes()],
-                        );
-                        return Err(err.with_path(joined.as_bytes()));
+                    if !is_root {
+                        return Err(Self::readdir_subdir_error(
+                            &err,
+                            root_basename,
+                            basename.as_bytes(),
+                        ));
                     }
                     return Err(err.with_path(root_basename));
                 }
@@ -6632,22 +6631,6 @@ impl NodeFS {
         Ok(())
     }
 
-    /// `err` failed the subdirectory at `relative` (the walker's path relative to
-    /// the root fd). Node reports that directory as `path.join(root, relative)`;
-    /// `readdir_with_entries_recursive_async` attaches the same path.
-    fn readdir_recursive_subdir_error(
-        err: &sys::Error,
-        args: &args::Readdir,
-        relative: &[u8],
-    ) -> sys::Error {
-        let mut spill: Vec<u8> = Vec::new();
-        let joined = paths::resolve_path::join_spill::<paths::platform::Auto>(
-            &mut spill,
-            &[args.path.slice(), relative],
-        );
-        err.with_path(joined)
-    }
-
     fn readdir_with_entries_recursive_sync<T: ReaddirEntry>(
         buf: &mut PathBuffer,
         args: &args::Readdir,
@@ -6719,9 +6702,9 @@ impl NodeFS {
                         // Node doesn't gracefully handle errors like these. It fails the entire operation.
                         E::ENOENT | E::ENOTDIR | E::EPERM => continue,
                         _ => {
-                            return Err(Self::readdir_recursive_subdir_error(
+                            return Err(Self::readdir_subdir_error(
                                 &err,
-                                args,
+                                args.path.slice(),
                                 basename_bytes,
                             ));
                         }
@@ -6748,9 +6731,9 @@ impl NodeFS {
                         if is_root {
                             return Err(err.with_path(args.path.slice()));
                         }
-                        return Err(Self::readdir_recursive_subdir_error(
+                        return Err(Self::readdir_subdir_error(
                             &err,
-                            args,
+                            args.path.slice(),
                             basename_bytes,
                         ));
                     }

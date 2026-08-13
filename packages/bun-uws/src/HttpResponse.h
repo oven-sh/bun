@@ -378,6 +378,20 @@ public:
             }
         }
 
+        auto* responseData = getHttpResponseData();
+
+        /* Request bytes parked behind this handshake (HttpParser::parkedRequestBytes)
+         * go down with the HTTP state destructed below, like bytes trailing a
+         * synchronous upgrade in the same read (a client may not send anything
+         * before the 101 anyway, RFC 6455 4.1). Parking paused reads; the adopted
+         * WebSocket needs them flowing, and us_socket_adopt keeps the flag. Dropped
+         * before internalEnd so markDone() does not arm a replay dispatch that
+         * would land on the WebSocket as a spurious drain. */
+        if (!responseData->parkedRequestBytes.isEmpty()) [[unlikely]] {
+            responseData->parkedRequestBytes.clear();
+            Super::resume();
+        }
+
         /* keepCorked so the handshake stays buffered and can batch with the
          * first WebSocket frames written in the open handler. */
         internalEnd({nullptr, 0}, 0, false, false, false, true);
@@ -386,7 +400,6 @@ public:
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((struct us_socket_t *) this);
 
         /* Move any backpressure out of HttpResponse */
-        auto* responseData = getHttpResponseData();
         BackPressure backpressure(std::move(((AsyncSocketData<SSL> *) responseData)->buffer));
 
         auto* socketData = responseData->socketData;

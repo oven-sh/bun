@@ -1,5 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { checkPrime, checkPrimeSync, randomBytes, randomFill, randomFillSync, randomInt } from "crypto";
+import {
+  checkPrime,
+  checkPrimeSync,
+  generatePrime,
+  generatePrimeSync,
+  randomBytes,
+  randomFill,
+  randomFillSync,
+  randomInt,
+} from "crypto";
 import { bunEnv, bunExe, isLinux, isMacOS, isMusl, tempDir } from "harness";
 import { join } from "path";
 
@@ -256,6 +265,224 @@ describe("checkPrime candidate handling", () => {
     const result = await promise;
     expect(checksReads).toBe(1);
     expect(result).toBe(true);
+  });
+});
+
+describe.concurrent("generatePrime with safe and add/rem", () => {
+  // BoringSSL's BN_generate_prime_ex search for safe primes on a progression
+  // (probable_prime_dh_safe) never checks the size of what it walks to and
+  // trial-divides small candidates by themselves, so every size below ~13 bits
+  // returned the same 13-bit value (7523 for the progressions below), and with
+  // an odd `add` it drifted off the progression and frequently never returned.
+  // BignumPointer::generate() now walks the progression itself the way
+  // OpenSSL's search (the one behind Node's results) does, except that it keeps
+  // stepping after a Miller-Rabin failure where OpenSSL restarts from a new
+  // random value; see the comment on generateSafePrimeInProgression. Generation
+  // happens in a subprocess with a kill guard so that the never-returning
+  // inputs fail instead of wedging the test runner (the async form would
+  // otherwise leave a threadpool thread spinning forever).
+  // Every case goes through generatePrimeSync and through generatePrime (the
+  // threadpool job) `runs` times each (default 1). Results are indexed
+  // [form][case][run].
+  type Case = { bits: number; add: bigint; rem?: bigint; runs?: number };
+  type Form = "generatePrimeSync" | "generatePrime";
+  const forms: Form[] = ["generatePrimeSync", "generatePrime"];
+  type Results = Record<Form, bigint[][]>;
+
+  const label = (c: Case) => `${c.bits} bits, add ${c.add}${c.rem === undefined ? "" : `, rem ${c.rem}`}`;
+
+  async function generateSafePrimes(cases: Case[]): Promise<Results> {
+    const serialized = JSON.stringify(cases, (_, v) => (typeof v === "bigint" ? String(v) : v));
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { generatePrime, generatePrimeSync } = require("crypto");
+         const cases = ${serialized};
+         const options = c => ({
+           safe: true,
+           bigint: true,
+           add: BigInt(c.add),
+           ...(c.rem === undefined ? {} : { rem: BigInt(c.rem) }),
+         });
+         const forms = {
+           generatePrimeSync: c => Promise.resolve(generatePrimeSync(c.bits, options(c))),
+           generatePrime: c => new Promise((resolve, reject) =>
+             generatePrime(c.bits, options(c), (err, p) => (err ? reject(err) : resolve(p)))),
+         };
+         (async () => {
+           const out = {};
+           for (const form in forms) {
+             out[form] = [];
+             for (const c of cases) {
+               const primes = [];
+               for (let i = 0; i < (c.runs ?? 1); i++) primes.push(String(await forms[form](c)));
+               out[form].push(primes);
+             }
+           }
+           process.stdout.write(JSON.stringify(out));
+         })();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, signalCode: proc.signalCode, exitCode }).toEqual({ stderr: "", signalCode: null, exitCode: 0 });
+    const out: Record<Form, string[][]> = JSON.parse(stdout);
+    const toBigInts = (form: string[][]) => form.map(primes => primes.map(BigInt));
+    return { generatePrimeSync: toBigInts(out.generatePrimeSync), generatePrime: toBigInts(out.generatePrime) };
+  }
+
+  // For sizes this small the set of possible results is fixed: the first safe
+  // prime on the progression at or after a random `bits`-bit start. As in
+  // OpenSSL, the result is one bit wider than requested when the start is past
+  // the last safe prime of that size (263 for 8 bits; 5 for 2 bits, where no
+  // safe prime exists). Node returns exactly these sets for the first five
+  // rows. The last row pins the two branches Node's output cannot: every 4-bit
+  // start lands on 17 (a start of 9 first projects to 7, below 4 bits, and has
+  // to be stepped up), 17 passes the sieve but (17 - 1) / 2 = 8 is not prime,
+  // and the walk has to step on through 27 and 37 to 47; Node restarts from a
+  // fresh 4-bit value here and never returns.
+  //
+  // `variesBetweenCalls` pools both forms' results. With these run counts the
+  // chance that a row with several allowed values returns the same one on every
+  // call is below 1e-8 per row (the likeliest 8-bit value has probability 3/8,
+  // the two 4-bit values 1/2 each). Runs are kept low because under a debug
+  // build every call pays the full Miller-Rabin confirmation of two primes.
+  const smallCases: Array<[Case, bigint[]]> = [
+    [{ bits: 8, add: 12n, rem: 11n, runs: 10 }, [167n, 179n, 227n, 263n]],
+    [{ bits: 8, add: 4n, rem: 3n, runs: 10 }, [167n, 179n, 227n, 263n]],
+    [{ bits: 4, add: 4n, rem: 3n, runs: 14 }, [11n, 23n]],
+    [{ bits: 3, add: 4n, rem: 3n, runs: 2 }, [7n]],
+    [{ bits: 2, add: 2n, rem: 1n, runs: 2 }, [5n]],
+    [{ bits: 4, add: 10n, rem: 7n, runs: 10 }, [47n]],
+  ];
+
+  it("small sizes return the next safe prime on the progression, not a fixed 13-bit value", async () => {
+    const results = await generateSafePrimes(smallCases.map(([c]) => c));
+    const summary = smallCases.map(([c, allowed], i) => ({
+      case: label(c),
+      unexpected: Object.fromEntries(
+        forms.map(form => [form, [...new Set(results[form][i].filter(p => !allowed.includes(p)))]]),
+      ),
+      variesBetweenCalls: new Set(forms.flatMap(form => results[form][i])).size > 1,
+    }));
+    expect(summary).toEqual(
+      smallCases.map(([c, allowed]) => ({
+        case: label(c),
+        unexpected: { generatePrimeSync: [], generatePrime: [] },
+        variesBetweenCalls: allowed.length > 1,
+      })),
+    );
+  });
+
+  // Inputs the old search never returned from or answered incorrectly: an odd
+  // `add` took it off the progression (and hung it whenever the random start
+  // shared a factor with `add`), `add` without `rem` must use OpenSSL's
+  // safe-prime default residue of 3, `add: 1n` divided by zero internally, and
+  // the only 3-bit safe prime that is 1 (mod 4) is 5, whose (p - 1) / 2 is 2.
+  //
+  // The last row has `add` as wide as the requested size, so every 16-bit start
+  // projects onto the same value (32771) and the search is deterministic. The
+  // progression's first safe prime from there is 1736759 (21 bits), which is
+  // what stepping past failed candidates returns; restarting from a new random
+  // start after a failure (OpenSSL, and BoringSSL's old search) retests the same
+  // first candidate forever, so Node and the old code both hang on this input.
+  // Third element: expected bit length when it is not the requested size.
+  const residueCases: Array<[Case, bigint, number?]> = [
+    [{ bits: 64, add: 5n }, 3n],
+    [{ bits: 64, add: 5n, rem: 3n }, 3n],
+    [{ bits: 64, add: 5n, rem: 2n }, 2n],
+    [{ bits: 64, add: 7n, rem: 2n }, 2n],
+    [{ bits: 64, add: 4n }, 3n],
+    [{ bits: 64, add: 4n, rem: 3n }, 3n],
+    [{ bits: 64, add: 12n, rem: 11n }, 11n],
+    [{ bits: 64, add: 1n, rem: 0n }, 0n],
+    [{ bits: 3, add: 4n, rem: 1n }, 1n],
+    [{ bits: 16, add: 32769n, rem: 2n }, 2n, 21],
+  ];
+
+  it("terminates and honors add/rem, including odd add and a missing rem", async () => {
+    const results = await generateSafePrimes(residueCases.map(([c]) => c));
+    const describePrime = (c: Case, [p]: bigint[]) => ({
+      bits: p.toString(2).length,
+      residue: p % c.add,
+      safePrime: checkPrimeSync(p) && checkPrimeSync((p - 1n) / 2n),
+    });
+    const summary = residueCases.map(([c], i) => ({
+      case: label(c),
+      ...Object.fromEntries(forms.map(form => [form, describePrime(c, results[form][i])])),
+    }));
+    expect(summary).toEqual(
+      residueCases.map(([c, rem, resultBits = c.bits]) => {
+        const expected = { bits: resultBits, residue: rem, safePrime: true };
+        return { case: label(c), generatePrimeSync: expected, generatePrime: expected };
+      }),
+    );
+  });
+
+  it("safe without add, and add without safe, still go through BN_generate_prime_ex", async () => {
+    const safe = generatePrimeSync(64, { safe: true, bigint: true });
+    expect([safe.toString(2).length, checkPrimeSync(safe), checkPrimeSync((safe - 1n) / 2n)]).toEqual([64, true, true]);
+
+    const { promise, resolve, reject } = Promise.withResolvers<bigint>();
+    generatePrime(64, { add: 12n, rem: 11n, bigint: true }, (err, p) => (err ? reject(err) : resolve(p)));
+    const onProgression = await promise;
+    expect([onProgression.toString(2).length, onProgression % 12n, checkPrimeSync(onProgression)]).toEqual([
+      64,
+      11n,
+      true,
+    ]);
+  });
+
+  it("a generation that fails (add 0) does not hand back the untested starting value", () => {
+    // The binding currently surfaces a failed generation as the untouched 0n
+    // output; propagating it as an exception would be fine too. What must not
+    // happen is the random value the walk was seeded with coming back as a prime.
+    let outcome: bigint | "threw";
+    try {
+      outcome = generatePrimeSync(64, { safe: true, add: 0n, bigint: true });
+    } catch {
+      outcome = "threw";
+    }
+    expect([0n, "threw"]).toContain(outcome);
+  });
+
+  it("worker.terminate() interrupts a search on a progression the sieve always rejects", async () => {
+    // p == 1 (mod 3) makes (p - 1) / 2 a multiple of 3, so no candidate ever
+    // reaches Miller-Rabin and the walk can only stop at its cancellation
+    // callback. The kill guard makes an uninterruptible build fail here.
+    using dir = tempDir("generate-prime-terminate", {
+      "main.js": `
+        const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+        worker.onmessage = async () => {
+          await worker.terminate();
+          console.log("terminated");
+          process.exit(0);
+        };
+      `,
+      "worker.js": `
+        postMessage("started");
+        require("crypto").generatePrimeSync(512, { safe: true, add: 6n, rem: 1n });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: "terminated\n",
+      stderr: "",
+      signalCode: null,
+      exitCode: 0,
+    });
   });
 });
 

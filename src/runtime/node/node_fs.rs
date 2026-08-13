@@ -6313,9 +6313,7 @@ impl NodeFS {
             ),
         };
         match maybe {
-            // Node reports every readdir failure as `scandir`. `err.path` already names
-            // the directory whose listing failed, which for a recursive walk is not
-            // necessarily `args.path`.
+            // Node's operation name; `err.path` already names the directory that failed.
             Err(mut err) => {
                 err.syscall = sys::Tag::scandir;
                 Err(err)
@@ -6445,9 +6443,7 @@ impl NodeFS {
         Ok(())
     }
 
-    /// Both recursive walkers open subdirectories by `relative`, their path
-    /// relative to the root; Node reports a failing one as
-    /// `path.join(root argument, relative)`.
+    /// Node names a failing subdirectory as `path.join(root argument, path relative to root)`.
     fn readdir_subdir_error(err: &sys::Error, root: &[u8], relative: &[u8]) -> sys::Error {
         let mut spill: Vec<u8> = Vec::new();
         let joined =

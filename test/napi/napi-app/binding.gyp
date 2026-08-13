@@ -297,5 +297,43 @@
                 "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
             ],
         },
+        {
+            "target_name": "no_delay_load_hook_addon",
+            "sources": ["no_delay_load_hook_addon.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
+            ],
+            # /DELAYLOAD:node.exe with no win_delay_load_hook, like cmake-js
+            # projects that omit ${CMAKE_JS_SRC} (issue #10690).
+            "win_delay_load_hook": "false",
+            "conditions": [
+                ["OS=='win'", {
+                    "msvs_settings": {
+                        "VCLinkerTool": {
+                            "DelayLoadDLLs": ["node.exe"],
+                            "AdditionalOptions": ["/ignore:4199"],
+                        },
+                    },
+                    "libraries": ["delayimp.lib"],
+                }],
+            ],
+        },
+        {
+            "target_name": "regular_node_exe_import_addon",
+            "sources": ["no_delay_load_hook_addon.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
+            ],
+            # Non-delay node.exe import, like Zig-built prebuilds (issue #30454).
+            "win_delay_load_hook": "false",
+        },
     ]
 }

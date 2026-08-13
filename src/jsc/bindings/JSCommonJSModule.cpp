@@ -1449,24 +1449,12 @@ void JSCommonJSModule::evaluate(
     evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get());
 }
 
-// The source code of a CommonJS module arrives here as a function expression that
-// evaluateCommonJSModuleOnce() calls. Two producers emit it:
-//
-//   the transpiler (js_parser, WrapMode::BunCommonjs):
-//     (function(exports, require, module, __filename, __dirname) {\n...\n});\n
-//     followed by "//# sourceMappingURL=" and "//# sourceURL=" lines when the inspector is attached;
-//     an empty .cjs file is the synthetic "(function(){})"
-//
-//   `bun build --target=bun --format=cjs` (postProcessJSChunk), loaded verbatim because of the pragma:
-//     [#!...\n]// @bun [@bytecode ]@bun-cjs\n(function(exports, require, module, __filename, __dirname) {...})\n
-//     followed by "//# debugId=" and "//# sourceMappingURL=" lines with --sourcemap; --minify leaves
-//     the last statement directly in front of the "})"
-//
-// Returns the source with the wrapper removed: every line in front of the wrapper is replaced
-// by an empty line so the body keeps the line numbers of the source text, and the comment lines
-// after the wrapper are kept. Returns nullopt when the source is not shaped like the above, for
-// example `bun build --footer` with code after the wrapper; the caller then evaluates the source
-// as it is.
+// Accepts the two shapes of wrapped CommonJS source, the transpiler's
+//   (function(exports, require, module, __filename, __dirname) {\n...\n});\n       ("(function(){})" for an empty .cjs file)
+// and the verbatim output of `bun build --target=bun --format=cjs`
+//   [#!...\n]// @bun [@bytecode ]@bun-cjs\n(function(exports, require, module, __filename, __dirname) {...})\n
+// each optionally followed by "//# sourceMappingURL=" style comment lines. Skipped leading lines become
+// empty lines so the body keeps its line numbers; nullopt for anything else (e.g. a --footer with code).
 static std::optional<WTF::String> commonJSSourceWithoutWrapper(const WTF::String& source)
 {
     StringView text { source };
@@ -1487,8 +1475,6 @@ static std::optional<WTF::String> commonJSSourceWithoutWrapper(const WTF::String
         return std::nullopt;
     unsigned bodyStart = openingBrace + 1;
 
-    // Walk back over what may follow the closing "})": whitespace, line comments and the ";"
-    // the transpiler prints after the expression statement.
     unsigned end = text.length();
     unsigned lineStart = 0;
     while (true) {
@@ -1507,9 +1493,7 @@ static std::optional<WTF::String> commonJSSourceWithoutWrapper(const WTF::String
     if (end < bodyStart + 2 || text[end - 2] != '}' || text[end - 1] != ')')
         return std::nullopt;
     unsigned bodyEnd = end - 2;
-    // Both producers put the closing "})" either on a line of its own or, when the whole module is
-    // one line, on the line that opened the wrapper. A "})" ending a line of other code is the end
-    // of something else, such as a `bun build --footer`.
+    // A "})" ending a line of other code closes something in a --footer, not the wrapper.
     if (lineStart != bodyEnd && lineStart >= bodyStart)
         return std::nullopt;
 
@@ -1549,9 +1533,7 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
             return;
         }
         WTF::String sourceString = source.source_code.toWTFString(BunString::ZeroCopy);
-        // module._compile(code, filename) receives the module body, which Module.prototype._compile
-        // wraps again. Without a recognizable wrapper there is no body to hand over, so such a
-        // module is evaluated as-is below.
+        // Module.prototype._compile wraps the body again; a source without a recognizable wrapper is evaluated as-is below.
         if (auto body = commonJSSourceWithoutWrapper(sourceString)) {
             if (source.needsDeref) {
                 source.needsDeref = false;

@@ -1735,3 +1735,82 @@ test.concurrent("timeout during a nested event-loop wait beneath the script", as
   expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT\n");
   expect(exitCode).toBe(0);
 });
+
+describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
+  // Node's validator accepts any int32 here. JSC stores positions as ints,
+  // converts the offset to one-based and counts the source's own lines on top
+  // of it, so an offset this large used to overflow in the parser: assertion
+  // builds abort in JSTextPosition::checkConsistency ("line >= 0"), release
+  // builds report wrapped negative line numbers. Each case gets its own
+  // process because the failure mode is an abort.
+  const INT32_MAX = 2147483647;
+
+  async function runFixture(body: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const vm = require("node:vm");\n${body}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout;
+  }
+
+  test.concurrent.each([
+    ["new Script, one-line source", `new vm.Script("1", { lineOffset: ${INT32_MAX} })`],
+    [
+      "new Script, second line steps past INT32_MAX",
+      `new vm.Script(${JSON.stringify("1;\n2;")}, { lineOffset: ${INT32_MAX - 1} })`,
+    ],
+    ["new Script, columnOffset", `new vm.Script(${JSON.stringify("1;\n2;")}, { columnOffset: ${INT32_MAX} })`],
+    ["compileFunction", `vm.compileFunction("return 1", [], { lineOffset: ${INT32_MAX} })`],
+    [
+      "compileFunction with params and both offsets",
+      `vm.compileFunction("return a", ["a"], { lineOffset: ${INT32_MAX}, columnOffset: ${INT32_MAX} })`,
+    ],
+    ["SourceTextModule", `new vm.SourceTextModule(${JSON.stringify("1;\n2;")}, { lineOffset: ${INT32_MAX} })`],
+  ])("%s compiles", async (_, expression) => {
+    const stdout = await runFixture(`${expression};\nconsole.log("ok");`);
+    expect(stdout).toBe("ok\n");
+  });
+
+  test.concurrent.each([
+    [
+      "line of a runtime error thrown by a Script",
+      `new vm.Script(${JSON.stringify('1;\nthrow new Error("q")')}, { filename: "big.js", lineOffset: ${INT32_MAX - 1} }).runInThisContext()`,
+      /big\.js:(-?\d+)/,
+    ],
+    [
+      "line of a compile-time SyntaxError from a Script",
+      `new vm.Script(${JSON.stringify("1;\n%%")}, { filename: "big.js", lineOffset: ${INT32_MAX - 1} })`,
+      /big\.js:(-?\d+)/,
+    ],
+    [
+      "column of a runtime error thrown on the first line of a Script",
+      `new vm.Script('throw new Error("q")', { filename: "big.js", columnOffset: ${INT32_MAX} }).runInThisContext()`,
+      /big\.js:1:(-?\d+)/,
+    ],
+    [
+      "line of a runtime error thrown by a compileFunction body",
+      `vm.compileFunction('throw new Error("q")', [], { filename: "big.js", lineOffset: ${INT32_MAX} })()`,
+      /big\.js:(-?\d+)/,
+    ],
+    [
+      "line of a compile-time SyntaxError from compileFunction",
+      `vm.compileFunction("%%", [], { filename: "big.js", lineOffset: ${INT32_MAX} })`,
+      /big\.js:(-?\d+)/,
+    ],
+  ])("%s stays near the requested offset", async (_, expression, pattern) => {
+    const stdout = await runFixture(`try { ${expression}; } catch (e) { console.log(e.stack); }`);
+    const match = pattern.exec(stdout);
+    expect(match).not.toBeNull();
+    // The offset is only pulled down by as much as the (tiny) source could
+    // possibly add to it, so the reported position stays just below INT32_MAX
+    // rather than wrapping negative or being dropped.
+    const position = Number(match![1]);
+    expect(position).toBeGreaterThan(INT32_MAX - 100);
+    expect(position).toBeLessThanOrEqual(INT32_MAX);
+  });
+});

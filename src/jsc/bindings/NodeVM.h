@@ -33,6 +33,12 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
 // `url` must be caller-resolved: `new Script` falls back to evalmachine.<anonymous>
 // when no filename was provided; compileFunction has no such default.
 void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* error, StringView sourceString, const String& url, const JSC::ParserError& parseError, OrdinalNumber lineOffset);
+// Node accepts any int32 lineOffset/columnOffset, but JSC keeps positions in
+// ints and adds one (one-based) plus the source's own line terminators or
+// first-line columns on top of the offset, so values near INT_MAX overflow in the
+// parser. Neither count can exceed the source's length in code units, so an
+// offset of at most INT_MAX - 1 - sourceLength keeps every derived position in range.
+OrdinalNumber clampOffsetForSource(OrdinalNumber offset, unsigned sourceLength);
 void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, ASCIILiteral codeGenerationKey, JSValue* importer);
 NodeVMGlobalObject* getGlobalObjectFromContext(JSGlobalObject* globalObject, JSValue contextValue, bool canThrow);
 JSC::EncodedJSValue INVALID_ARG_VALUE_VM_VARIATION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value);

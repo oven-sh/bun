@@ -130,6 +130,17 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
+    // wrap the arguments in an anonymous function expression
+    int startOffset = 0;
+    String program = stringifyAnonymousFunction(globalObject, args, throwScope, &startOffset);
+    EXCEPTION_ASSERT(!!throwScope.exception() == program.isNull());
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
+
+    // The wrapped program is the longest text parsed here, so bounding the
+    // offsets against it also covers the standalone parse of the body below.
+    options.lineOffset = clampOffsetForSource(options.lineOffset, program.length());
+    options.columnOffset = clampOffsetForSource(options.columnOffset, program.length());
+
     TextPosition position(options.lineOffset, options.columnOffset);
     LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
 
@@ -180,11 +191,6 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
         }
     }
 
-    // wrap the arguments in an anonymous function expression
-    int startOffset = 0;
-    String code = stringifyAnonymousFunction(globalObject, args, throwScope, &startOffset);
-    EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
-
     // The user's body starts on line 2 of the wrapped program (after the
     // "(function () {\n" prefix). Shift the provider's start position up one
     // line so reported positions line up with the body the way V8's
@@ -196,7 +202,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     TextPosition wrappedPosition(OrdinalNumber::fromZeroBasedInt(lineZeroBased > 0 ? lineZeroBased - 1 : lineZeroBased), position.m_column);
 
     SourceCode sourceCode(
-        JSC::StringSourceProvider::create(code, sourceOrigin, WTF::move(options.filename), sourceTaintOrigin, wrappedPosition, SourceProviderSourceType::Program),
+        JSC::StringSourceProvider::create(program, sourceOrigin, WTF::move(options.filename), sourceTaintOrigin, wrappedPosition, SourceProviderSourceType::Program),
         wrappedPosition.m_line.oneBasedInt(), wrappedPosition.m_column.oneBasedInt());
 
     CodeCache* cache = vm.codeCache();
@@ -636,6 +642,14 @@ void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* err
     }
 
     writeArrowHeaderStack(vm, errorInstance, url, reportedLine, sourceLineText, caretColumn, stack);
+}
+
+OrdinalNumber clampOffsetForSource(OrdinalNumber offset, unsigned sourceLength)
+{
+    int64_t maxOffset = std::max<int64_t>(static_cast<int64_t>(std::numeric_limits<int>::max()) - 1 - sourceLength, 0);
+    if (offset.zeroBasedInt() <= maxOffset)
+        return offset;
+    return OrdinalNumber::fromZeroBasedInt(static_cast<int>(maxOffset));
 }
 
 void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, ASCIILiteral codeGenerationKey, JSValue* importer)

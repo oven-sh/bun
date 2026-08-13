@@ -129,7 +129,7 @@ fn read_units(fd: Fd, out: &mut [u16]) -> Maybe<usize> {
             )
         };
         let err = Win32Error::get();
-        // Ctrl+C / Ctrl+Break surface as a failure or an empty success; retried like ReadFile's path.
+        // Ctrl+C / Ctrl+Break surface as a failure or an empty success; retried like ReadFile.
         if err == Win32Error::OPERATION_ABORTED && (ok == 0 || n == 0) {
             continue;
         }

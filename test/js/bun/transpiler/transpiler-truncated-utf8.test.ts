@@ -124,13 +124,23 @@ describe("ill-formed UTF-8 in JS source decodes to U+FFFD", () => {
   });
 
   describe("is a syntax error outside of literals", () => {
-    test.each<[string, (string | number[])[]]>([
-      ["0xFF where an identifier is expected", ["var ", [0xff], " = 1;"]],
-      ["0xA0 where whitespace is expected", ["var", [0xa0], "x = 1;"]],
-      ["0xBA after an identifier", ["var x", [0xba], " = 1;"]],
-      ["truncated sequence at the end of the file", ["var x = 1;", [0xe2]]],
-    ])("%s", (_name, parts) => {
-      expect(() => transpiler.transformSync(source(...parts))).toThrow();
+    /** The first parse error reported for the bytes, or null when they parse. */
+    function firstParseError(...parts: (string | number[])[]): string | null {
+      try {
+        transpiler.transformSync(source(...parts));
+        return null;
+      } catch (error) {
+        return (error instanceof AggregateError ? error.errors[0] : error).message;
+      }
+    }
+
+    test.each<[string, (string | number[])[], string]>([
+      ["0xFF where an identifier is expected", ["var ", [0xff], " = 1;"], 'Expected identifier but found "\uFFFD"'],
+      ["0xA0 where whitespace is expected", ["var", [0xa0], "x = 1;"], 'Expected identifier but found "\uFFFD"'],
+      ["0xBA after an identifier", ["var x", [0xba], " = 1;"], 'Expected ";" but found "\uFFFD"'],
+      ["truncated sequence at the end of the file", ["var x = 1;", [0xe2]], "Unexpected \uFFFD"],
+    ])("%s", (_name, parts, message) => {
+      expect(firstParseError(...parts)).toBe(message);
     });
   });
 
@@ -187,7 +197,7 @@ describe("ill-formed UTF-8 in JS source decodes to U+FFFD", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("");
-    expect(stderr).toContain("error: Expected identifier");
+    expect(stderr).toContain('error: Expected identifier but found "\uFFFD"');
     expect(exitCode).toBe(1);
   });
 });

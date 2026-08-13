@@ -6676,6 +6676,31 @@ fn is_nt_object_name(p: &[u16]) -> bool {
         || bun_core::strings::has_prefix_comptime_utf16(p, b"\\Device\\")
 }
 
+/// `OBJECT_ATTRIBUTES.RootDirectory` for an NT call naming `path`: none for
+/// an absolute NT object name, otherwise `dir` (the cwd when `dir` is the
+/// "invalid_fd" sentinel).
+///
+/// An empty name is refused with ENOENT, as POSIX `*at()` calls refuse it: NT
+/// resolves it to `RootDirectory` itself, which made `readdir("")` list and
+/// `rm -r ""` empty the directory the name was relative to.
+#[cfg(windows)]
+fn nt_root_directory(
+    dir: Fd,
+    path: &[u16],
+    syscall: Tag,
+) -> Maybe<bun_windows_sys::externs::HANDLE> {
+    if path.is_empty() {
+        return Err(Error::from_code(E::ENOENT, syscall));
+    }
+    Ok(if is_nt_object_name(path) {
+        core::ptr::null_mut()
+    } else if dir.is_valid() {
+        dir.native()
+    } else {
+        Fd::cwd().native()
+    })
+}
+
 /// `openDirAtWindowsNtPath` — `NtCreateFile` with
 /// `FILE_DIRECTORY_FILE`.
 #[cfg(windows)]
@@ -6734,6 +6759,7 @@ pub(crate) fn open_dir_at_windows_nt_path(
         );
     }
 
+    let root_directory = nt_root_directory(dir_fd, p, Tag::open)?;
     let path_len_bytes = (p.len() * 2) as u16;
     let mut nt_name = w::UNICODE_STRING {
         Length: path_len_bytes,
@@ -6742,13 +6768,7 @@ pub(crate) fn open_dir_at_windows_nt_path(
     };
     let mut attr = w::OBJECT_ATTRIBUTES {
         Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-        RootDirectory: if is_nt_object_name(p) {
-            core::ptr::null_mut()
-        } else if dir_fd.is_valid() {
-            dir_fd.native()
-        } else {
-            Fd::cwd().native()
-        },
+        RootDirectory: root_directory,
         Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
         ObjectName: &mut nt_name,
         SecurityDescriptor: core::ptr::null_mut(),
@@ -6796,6 +6816,7 @@ pub(crate) fn open_file_at_windows_nt_path(
 ) -> Maybe<Fd> {
     use bun_windows_sys::externs as w;
     let p = path.as_slice();
+    let root_directory = nt_root_directory(dir, p, Tag::open)?;
     let mut result: w::HANDLE = core::ptr::null_mut();
     let path_len_bytes = match u16::try_from(p.len() * 2) {
         Ok(v) => v,
@@ -6812,13 +6833,7 @@ pub(crate) fn open_file_at_windows_nt_path(
         // name of a device object (`\??\…`, `\Device\…`), unless it is the
         // name of a file relative to the directory specified by RootDirectory.
         ObjectName: &mut nt_name,
-        RootDirectory: if is_nt_object_name(p) {
-            core::ptr::null_mut()
-        } else if dir.is_valid() {
-            dir.native()
-        } else {
-            Fd::cwd().native()
-        },
+        RootDirectory: root_directory,
         Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
         SecurityDescriptor: core::ptr::null_mut(),
         SecurityQualityOfService: core::ptr::null_mut(),
@@ -7153,6 +7168,7 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
     if path.len() > 2 && path[0] == b'.' as u16 && path[1] == b'\\' as u16 {
         path = &path[2..];
     }
+    let root_directory = nt_root_directory(dir, path, Tag::access)?;
     let path_len_bytes = (path.len() * 2) as u16;
     let mut nt_name = w::UNICODE_STRING {
         Length: path_len_bytes,
@@ -7161,13 +7177,7 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
     };
     let attr = w::OBJECT_ATTRIBUTES {
         Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-        RootDirectory: if is_nt_object_name(path) {
-            core::ptr::null_mut()
-        } else if dir.is_valid() {
-            dir.native()
-        } else {
-            Fd::cwd().native()
-        },
+        RootDirectory: root_directory,
         Attributes: 0,
         ObjectName: &mut nt_name,
         SecurityDescriptor: core::ptr::null_mut(),

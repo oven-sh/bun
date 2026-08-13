@@ -124,11 +124,8 @@ function injectFakeEmitter(Class) {
     return event.error;
   }
 
-  // node hands a node-style listener emit()'s argument when the event came from
-  // emit(), and otherwise the Event itself: its native 'close' is
-  // dispatchEvent(new MessagePortCloseEvent()). emit() below stashes its argument
-  // on the event it synthesizes; every other event (bun's native 'close' Event,
-  // anything passed to dispatchEvent()) is delivered as-is.
+  // node: .on() listeners get emit()'s argument, or the Event itself for anything
+  // dispatched as an event (its 'close' is a dispatched MessagePortCloseEvent).
   const kEmitArg = Symbol("emitArg");
   function eventOrEmitArgHandler(event: Event) {
     return kEmitArg in event ? event[kEmitArg] : event;

@@ -1,28 +1,9 @@
-//! In-place lowering of `accessor` class members (auto-accessors).
-//!
-//! JavaScriptCore does not implement the keyword, so every auto-accessor has
-//! to be desugared. Classes that go through the standard-decorator lowering
-//! (`lower_decorators.rs`) get that done there. This pass covers the classes
-//! it never sees: TypeScript files compiled with `experimentalDecorators` /
-//! `emitDecoratorMetadata`, whose decorators `P::lower_class` lowers instead.
-//! Each accessor is replaced, at its own position in the class body, by the
-//! desugaring the decorators proposal defines for it (and the one tsc emits),
-//! so the order of keys and initializers is preserved and nothing leaves the
-//! class body:
+//! Lowers `accessor` members of classes that skip the standard-decorator
+//! lowering (TypeScript with `experimentalDecorators`), in place:
 //!
 //! ```js
-//! class A { accessor x = 1; }
-//! // becomes
-//! class A { #x = 1; get x() { return this.#x; } set x(v) { this.#x = v; } }
+//! accessor x = 1;  // -> #x = 1; get x() { return this.#x; } set x(v) { this.#x = v; }
 //! ```
-//!
-//! Legacy decorators on an accessor move to the generated setter (the member
-//! of the pair whose key is the bare temporary when the key is computed). tsc
-//! decorates an auto-accessor the way it decorates a getter/setter pair (the
-//! decorator receives the property descriptor), which is what `lower_class`
-//! emits for a decorated method-like member; the pair is marked
-//! `IsLoweredAutoAccessor` so that its `emitDecoratorMetadata` output
-//! describes the member's declared type, as tsc's does.
 
 use bun_collections::VecExt;
 
@@ -35,13 +16,8 @@ use bun_ast::{self as js_ast, B, DeclaredSymbol, E, Expr, Flags, G, S};
 type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    /// Replaces every `PropertyKind::AutoAccessor` member of `class` with a
-    /// private backing field plus a getter/setter pair.
-    ///
-    /// Runs from `visit_class`, after the members have been visited and while
-    /// the class body scope is still the current scope: the backing fields are
-    /// declared in that scope, and the collision check has to see the private
-    /// names of this class and of the classes enclosing it.
+    /// Call with the visited class body scope still current: the backing
+    /// fields are declared in it.
     pub(crate) fn lower_auto_accessors_in_place(&mut self, class: &mut G::Class) {
         let accessor_count = class
             .properties
@@ -143,9 +119,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ..Default::default()
         });
 
-        // A computed key expression must still be evaluated exactly once, at
-        // the accessor's position in the class body:
-        //   get [_computedKey = expr]() {} set [_computedKey]() {}
+        // `get [_computedKey = expr]() {} set [_computedKey]() {}`
         let needs_key_temp = is_computed
             && !matches!(
                 key.data,
@@ -194,12 +168,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         });
 
         // set x(v) { this.#x = v; }
-        // The setter takes over the member's legacy decorators and declared type.
-        // `lower_class` then decorates it the way tsc decorates an accessor (with
-        // the property descriptor, and with the declared type as metadata), and
-        // since the setter's key is the bare temporary for a computed key, the
-        // decorate call it builds from that key does not evaluate the key
-        // expression a second time.
+        // The decorators go on the setter because `lower_class` reuses the decorated
+        // member's key, and the setter's is the one without the assignment.
         let value_ref = self.new_sym(js_ast::symbol::Kind::Other, b"v");
         let value_binding = self.b(B::Identifier { r#ref: value_ref }, loc);
         let setter_arg = self.arena.alloc(G::Arg {
@@ -235,12 +205,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         });
     }
 
-    /// `preferred`, or `preferred2`, `preferred3`, ... if that spelling is
-    /// taken. Private names keep their spelling unless identifiers are
-    /// minified, so the generated name must differ from every private name
-    /// declared by this class or by an enclosing class (code in this class
-    /// body may refer to those) and from the ones generated earlier for this
-    /// class.
+    /// Private names are printed as written (only the minifier renames them), so
+    /// the name must not be visible from this class body already.
     fn unused_private_name(&self, preferred: &'a [u8], generated: &[&'a [u8]]) -> &'a [u8] {
         let mut candidate = preferred;
         let mut suffix: usize = 2;
@@ -251,13 +217,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         candidate
     }
 
-    /// Creates the symbol for a `var` that `lower_auto_accessors_in_place`
-    /// declares in front of the statement containing the class. The symbol is
-    /// registered in the scope such a `var` hoists to, and recorded as a
-    /// top-level declaration of the current part when that scope is the module
-    /// scope, so the bundler's renamer treats it like any other top-level
-    /// `var` instead of letting a later file's top-level binding take the same
-    /// name.
+    /// Symbol for a `var` emitted next to the class: it lives in the scope the
+    /// `var` hoists to, and the bundler's renamer only sees module-level
+    /// symbols through `declared_symbols`.
     fn declare_var_temp_ref(&mut self, name: &'a [u8]) -> Ref {
         let mut scope = self.current_scope;
         while !scope.kind_stops_hoisting() {

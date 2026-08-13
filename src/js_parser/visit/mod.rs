@@ -1011,10 +1011,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.fn_only_data_visit.class_name_ref = old_class_name_ref;
             }
 
-            // Classes headed for `lower_standard_decorators_*` keep their `accessor`
-            // members for it; any other class gets them desugared here, before the
-            // `useDefineForClassFields: false` lowering below so that the generated
-            // backing fields are relocated like the other instance fields.
+            // Before the useDefineForClassFields lowering below, which has to see
+            // the generated backing fields.
             if !class.should_lower_standard_decorators {
                 self.lower_auto_accessors_in_place(class);
             }

@@ -5034,10 +5034,11 @@ function destroySessionSocketDelayedNT(socket, error) {
 // Node's finishSessionClose. Either way end() goes first, so the final GOAWAY
 // leaves behind a FIN instead of an abortive close.
 //
-// `graceful` is a session that was close()d: it has announced the shutdown and
-// waits for the peer to hang up, only resume()ing "so we can detect the peer
-// closing" (unread inbound bytes, e.g. the peer's own GOAWAY, would otherwise
-// turn our eventual close into an RST the peer reads as ECONNRESET).
+// `graceful` is a session that was close()d (and is not dying with an error on
+// top of that): it has announced the shutdown and waits for the peer to hang
+// up, only resume()ing "so we can detect the peer closing" (unread inbound
+// bytes, e.g. the peer's own GOAWAY, would otherwise turn our eventual close
+// into an RST the peer reads as ECONNRESET).
 //
 // Everything else is a destroy(), and node hard-destroys the socket once the
 // FIN is out (a tick later, "to try to avoid ECONNRESET on Windows"). That

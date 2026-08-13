@@ -8637,6 +8637,24 @@ describe("outdated", () => {
 // This test is to verify that BinLinkingShim.zig creates correct shim files as
 // well as bun_shim_impl.exe works in various edge cases. There are many fast
 // paths for many many cases.
+// The parts of a Windows `.bunx` file that the tests below look at (the layout
+// is documented in src/install/windows-shim/BinLinkingShim.rs): the UTF-16
+// target path, which ends at a `"`, and the flags word that ends the file. Bit 3
+// of the flags is `is_absolute_target`; the bits above it are the format
+// version. Launchers built before that bit existed check the version bits for
+// exactly this value, so it must stay the same for both kinds of shim.
+const BUNX_VERSION_BITS = 0xab30;
+function readBunxShim(path: string) {
+  const bytes = readFileSync(path);
+  const text = bytes.toString("utf16le");
+  const flags = bytes.readUInt16LE(bytes.length - 2);
+  return {
+    target: text.slice(0, text.indexOf('"')),
+    isAbsoluteTarget: (flags & 0b1000) !== 0,
+    versionBits: flags & 0xfff0,
+  };
+}
+
 describe("windows bin linking shim should work", async () => {
   if (!isWindows) return;
 
@@ -8714,6 +8732,20 @@ describe("windows bin linking shim should work", async () => {
     { bin: "native", name: "exe" },
     { bin: "uses-native", name: `exe ${packageDir}\\node_modules\\bunx-bins\\uses-native.ts` },
   ];
+
+  test("the .bunx files store the target relative to node_modules", () => {
+    const binDir = join(packageDir, "node_modules", ".bin");
+    expect(readBunxShim(join(binDir, "native.bunx"))).toEqual({
+      target: "bunx-bins\\native.exe",
+      isAbsoluteTarget: false,
+      versionBits: BUNX_VERSION_BITS,
+    });
+    expect(readBunxShim(join(binDir, "bin-bun.bunx"))).toEqual({
+      target: "bunx-bins\\bin-bun.ts",
+      isAbsoluteTarget: false,
+      versionBits: BUNX_VERSION_BITS,
+    });
+  });
 
   for (const { bin, name } of bins) {
     test(`bun run ${bin} arg1 arg2`, async () => {
@@ -8812,13 +8844,21 @@ describe("global bin links when the package dir is inside the bin dir", () => {
     root = tmpdirSync();
     binDir = join(root, "bin");
     globalDir = join(binDir, "global");
+    const tmp = join(root, "tmp");
+    await mkdir(tmp);
+    // `env` is shared with the file-level beforeEach, which points its cache and
+    // temp dirs at whichever test ran last; pin them so `bunx` below (which puts
+    // `<temp>/bunx-*/node_modules/.bin` ahead of PATH) sees the same thing in
+    // every run.
     globalEnv = mergeWindowEnvs([
       env,
       {
         BUN_INSTALL_BIN: binDir,
         BUN_INSTALL_GLOBAL_DIR: globalDir,
         BUN_INSTALL_CACHE_DIR: join(root, "cache"),
-        BUN_TMPDIR: join(root, "tmp"),
+        BUN_TMPDIR: tmp,
+        TMPDIR: tmp,
+        TEMP: tmp,
         PATH: binDir + delimiter + process.env.PATH,
       },
     ]);
@@ -8851,26 +8891,17 @@ describe("global bin links when the package dir is inside the bin dir", () => {
     expect(await exists(join(binDir, "bin-bun"))).toBe(true);
   });
 
-  // The `.bunx` layout is described in src/install/windows-shim/BinLinkingShim.rs:
-  // the target path in UTF-16 terminated by a `"`, and the flags as the last u16.
-  function readShim(bin: string) {
-    const bytes = readFileSync(join(binDir, `${bin}.bunx`));
-    const text = bytes.toString("utf16le");
-    return {
-      target: text.slice(0, text.indexOf('"')),
-      isAbsoluteTarget: (bytes.readUInt16LE(bytes.length - 2) & 0b1000) !== 0,
-    };
-  }
-
   test.skipIf(!isWindows)("the .bunx files store the absolute path of the target", () => {
     const packageDir = join(globalDir, "node_modules", "bunx-bins");
-    expect(readShim("native")).toEqual({
+    expect(readBunxShim(join(binDir, "native.bunx"))).toEqual({
       target: join(packageDir, "native.exe"),
       isAbsoluteTarget: true,
+      versionBits: BUNX_VERSION_BITS,
     });
-    expect(readShim("bin-bun")).toEqual({
+    expect(readBunxShim(join(binDir, "bin-bun.bunx"))).toEqual({
       target: join(packageDir, "bin-bun.ts"),
       isAbsoluteTarget: true,
+      versionBits: BUNX_VERSION_BITS,
     });
   });
 

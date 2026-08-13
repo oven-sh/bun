@@ -43,7 +43,9 @@
 //! This file is compiled twice: into bun.exe (for the bunx fast paths below) and as
 //! the standalone `bun_shim_impl.exe` PE (see `main.rs` / the `shim_standalone`
 //! feature), which is then `include_bytes!`-embedded into Bun by `BinLinkingShim.rs`.
-//! When the encoding changes, `BinLinkingShim::VersionFlag::CURRENT` should be bumped.
+//! When the encoding changes, `BinLinkingShim::VersionFlag::CURRENT` should be bumped, unless
+//! the change only affects files carrying a new flag bit that older launchers already reject
+//! (see the assertions below `Flags` in `BinLinkingShim.rs`).
 //!
 //! Theorized and written by @paperclover during one of the most entranced all-nighters of her life.
 

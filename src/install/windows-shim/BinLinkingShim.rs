@@ -40,13 +40,9 @@ impl VersionFlag {
 
     /// Fixed bugs where passing arguments did not always work.
     ///
-    /// Before `Flags::is_absolute_target` existed this was the 13-bit value
-    /// 5478 stored at bit 3 of `Flags`. It now occupies the 12 bits above the
-    /// flag and `2739 << 4 == 5478 << 3`, so a `.bunx` written before the flag
-    /// existed has exactly these bits (with the flag clear) and still
-    /// validates, while a `.bunx` with the flag set reads as version 5479 to a
-    /// launcher that predates it and is rejected instead of being resolved as
-    /// a relative path.
+    /// Was the 13-bit value 5478 at bit 3 of `Flags` before
+    /// `Flags::is_absolute_target` took that bit; `2739 << 4` is the same bit
+    /// pattern. The assertions below `Flags` explain and pin this.
     const V5: VersionFlag = VersionFlag(2739);
 
     /// Maximum 12-bit value.
@@ -129,6 +125,13 @@ impl Flags {
         (self.0 & mask) == compare_to
     }
 }
+
+// Launchers that predate `is_absolute_target` validate `bits >> 3 == 5478`. A relative
+// shim must still satisfy that (they keep working on existing installs, and the bunx fast
+// path in a newer bun.exe keeps accepting the files they wrote), and an absolute shim must
+// not (they would otherwise resolve the absolute path as a relative one).
+const _: () = assert!(Flags::new(false, false, false, false, VersionFlag::V5).bits() == 5478 << 3);
+const _: () = assert!(Flags::new(false, false, false, true, VersionFlag::V5).bits() >> 3 != 5478);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Host-side encoding / embedding. None of this is compiled into the

@@ -602,10 +602,7 @@ pub fn global_object_has_ipc(global: &JSGlobalObject) -> bool {
     CHANNEL.get().is_some() || global.bun_vm().as_mut().pending_ipc.is_some()
 }
 
-/// When IPC environment variables are passed, the socket is not immediately opened,
-/// but rather we wait for a `message`/`disconnect` listener, a channel ref, or
-/// process.send() before opening it, to avoid missing messages at the start of
-/// the program. See `node_cluster_binding::open_channel`.
+/// The socket is opened lazily (first listener, channel ref, or send()) so startup messages are not missed.
 pub(crate) fn ensure_process_ipc_initialized(global: &JSGlobalObject) {
     let _ = get_ipc_instance(global.bun_vm().as_mut());
 }

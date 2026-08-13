@@ -277,10 +277,7 @@ fn enabled_argument(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<bool
     Ok(arguments[0].to_boolean())
 }
 
-/// Node reads the IPC pipe from startup; Bun opens it lazily. Every path that
-/// takes a reference on the channel has to open it too, or a child whose only
-/// IPC activity is `ref()`/`refCounted()` never notices the parent going away
-/// and never exits.
+/// Bun opens the IPC pipe lazily; a ref'd channel must be reading it or the child never sees the parent exit.
 fn open_channel(global: &JSGlobalObject) {
     crate::ipc_host::ensure_process_ipc_initialized(global);
 }
@@ -326,8 +323,6 @@ pub(crate) fn set_ref_counted(global: &JSGlobalObject, frame: &CallFrame) -> JsR
     Ok(JSValue::UNDEFINED)
 }
 
-/// The listener share of the count, reported as a total by `process`'s
-/// listener hook (`BunProcess.cpp`) whenever it changes.
 // HOST_EXPORT(Bun__setChannelListenerCount, c)
 pub fn set_channel_listener_count(global: &JSGlobalObject, count: u32) {
     if count > 0 && global.bun_vm().channel_listener_refs == 0 {

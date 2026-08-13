@@ -1580,6 +1580,21 @@ folded: >
           expect(YAML.parse("? !!str\n  0x10\n: a\n")).toEqual({ "0x10": "a" });
         });
 
+        test("property on the line before a flow-sequence pair's key annotates the pair mapping", () => {
+          // [154] wants an implicit key's properties on its line (js-yaml and
+          // yaml reject these). Accepted leniently; a tag goes where an anchor
+          // in the same position already went.
+          const r = YAML.parse("[&a\n0x10: 1, *a]\n");
+          expect(r).toEqual([{ 16: 1 }, { 16: 1 }]);
+          expect(r[1]).toBe(r[0]);
+          expect(YAML.parse("[!!str\n0x10: a]\n")).toEqual([{ 16: "a" }]);
+          // A flow mapping's key has no pair mapping of its own to annotate.
+          expect(YAML.parse("{!!str\n0x10: a}\n")).toEqual({ "0x10": "a" });
+          // Valid single-line pair: the tag is the key's.
+          expect(YAML.parse("[!!str 0x10: a]\n")).toEqual([{ "0x10": "a" }]);
+          expect(YAML.parse("[&k 0x10: 1, *k]\n")).toEqual([{ 16: 1 }, 16]);
+        });
+
         test("tag on e-node resolves per resolve_null", () => {
           expect(YAML.parse("a: !!null\nb: y\n")).toEqual({ a: null, b: "y" });
           expect(YAML.parse("a: !!str\nb: y\n").a).toBe("");

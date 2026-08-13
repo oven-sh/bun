@@ -863,5 +863,44 @@ pub(crate) fn load(
 
     debug_assert!(stream.pos as u64 == total_buffer_size);
 
+    restore_workspace_dependency_paths(lockfile);
+
     Ok(res)
+}
+
+/// bun.lockb stores an edge as tag plus literal, so a workspace edge reloads holding
+/// the literal's value (`*`), while a fresh parse of the manifest holds the member's
+/// path, which is what `Version::eql` compares. Point the edges of the root and
+/// workspace packages back at the path of the member they resolved to.
+fn restore_workspace_dependency_paths(lockfile: &mut Lockfile) {
+    let packages = lockfile.packages.slice();
+    let package_resolutions = packages.items_resolution();
+    let package_dependencies = packages.items_dependencies();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_mut_slice();
+
+    for (dependency_slice, resolution) in package_dependencies.iter().zip(package_resolutions) {
+        if !matches!(
+            resolution.tag,
+            ResolutionTag::Root | ResolutionTag::Workspace
+        ) {
+            continue;
+        }
+        for dep_id in dependency_slice.begin() as usize..dependency_slice.end() as usize {
+            let dep = &mut dependencies[dep_id];
+            if dep.version.tag != dependency::Tag::Workspace {
+                continue;
+            }
+            let Some(target) = resolutions
+                .get(dep_id)
+                .and_then(|&package_id| package_resolutions.get(package_id as usize))
+            else {
+                continue;
+            };
+            if target.tag != ResolutionTag::Workspace {
+                continue;
+            }
+            dep.version.value.workspace = *target.workspace();
+        }
+    }
 }

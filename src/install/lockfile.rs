@@ -3221,6 +3221,130 @@ impl Lockfile {
 
         false
     }
+
+    /// The dependency to re-resolve so that workspace member `package_id` is
+    /// read from disk again: resolving a `workspace:` dependency declared by the
+    /// root or a member re-parses the member into the same package id, so one
+    /// such edge is enough. Members reached some other way (an override on an
+    /// npm range, for instance) fall back to whichever dependency resolved to
+    /// them, which re-applies that route.
+    pub(crate) fn dependency_to_reresolve_workspace(
+        &self,
+        package_id: PackageID,
+    ) -> Option<DependencyID> {
+        let packages = self.packages.slice();
+        let resolutions = self.buffers.resolutions.as_slice();
+        let dependencies = self.buffers.dependencies.as_slice();
+        let resolves_to_member = |dep_id: usize| {
+            resolutions[dep_id] == package_id && !dependencies[dep_id].behavior.is_optional_peer()
+        };
+
+        let pick = |candidates: &mut dyn Iterator<Item = usize>| {
+            let mut fallback = None;
+            for dep_id in candidates.filter(|&dep_id| resolves_to_member(dep_id)) {
+                if dependencies[dep_id].version.tag == dependency::Tag::Workspace {
+                    return Some(dep_id);
+                }
+                fallback.get_or_insert(dep_id);
+            }
+            fallback
+        };
+
+        let mut declared = packages
+            .items_resolution()
+            .iter()
+            .zip(packages.items_dependencies())
+            .filter(|(resolution, _)| {
+                matches!(
+                    resolution.tag,
+                    ResolutionTag::Root | ResolutionTag::Workspace
+                )
+            })
+            .flat_map(|(_, list)| list.begin() as usize..list.end() as usize);
+        let dep_id = pick(&mut declared).or_else(|| pick(&mut (0..dependencies.len())))?;
+        Some(dep_id as DependencyID)
+    }
+
+    /// Whether bun.lock would keep this `trustedDependencies` entry: the
+    /// writer only emits the names that some dependency in the tree, or the
+    /// npm package one resolved to, has (the two names `has_trusted_dependency`
+    /// checks). The differ uses this for entries that are new in package.json,
+    /// so the ones a save would drop anyway are not reported on every install.
+    pub(crate) fn stores_trusted_dependency(&self, name: &[u8]) -> bool {
+        let name_hash = SemverStringBuilder::string_hash(name);
+        let buf = self.buffers.string_bytes.as_slice();
+        let packages = self.packages.slice();
+        let pkg_names = packages.items_name();
+        let pkg_name_hashes = packages.items_name_hash();
+        let pkg_resolutions = packages.items_resolution();
+
+        self.buffers
+            .dependencies
+            .iter()
+            .zip(self.buffers.resolutions.iter())
+            .any(|(dep, &package_id)| {
+                let Some(&pkg_name_hash) = pkg_name_hashes.get(package_id as usize) else {
+                    return false;
+                };
+                (dep.name_hash == name_hash && dep.name.slice(buf) == name)
+                    || (pkg_name_hash == name_hash
+                        && pkg_resolutions[package_id as usize].tag == ResolutionTag::Npm
+                        && pkg_names[package_id as usize].slice(buf) == name)
+            })
+    }
+
+    /// Whether bun.lock would keep any of the entries of `patched` (a
+    /// `patchedDependencies` map from another lockfile) that `f` accepts: the
+    /// writer only emits the entries whose `name@version` (built the way its
+    /// tree walk builds it) names a package in the lockfile. The differ uses
+    /// this for entries that are new in package.json.
+    pub(crate) fn stores_any_patched_dependency(
+        &self,
+        patched: &PatchedDependenciesMap,
+        mut f: impl FnMut(PackageNameAndVersionHash) -> bool,
+    ) -> bool {
+        if patched.count() == 0 {
+            return false;
+        }
+        let buf = self.buffers.string_bytes.as_slice();
+        let packages = self.packages.slice();
+        let mut name_and_version: Vec<u8> = Vec::new();
+        for ((&name, &name_hash), resolution) in packages
+            .items_name()
+            .iter()
+            .zip(packages.items_name_hash())
+            .zip(packages.items_resolution())
+        {
+            if resolution.tag == ResolutionTag::Root {
+                continue;
+            }
+            name_and_version.clear();
+            let _ = write!(
+                &mut name_and_version,
+                "{}@",
+                bstr::BStr::new(name.slice(buf))
+            );
+            match resolution.tag {
+                ResolutionTag::Workspace => {
+                    if let Some(workspace_version) = self.workspace_versions.get(&name_hash) {
+                        let _ = write!(&mut name_and_version, "{}", workspace_version.fmt(buf));
+                    }
+                }
+                _ => {
+                    let _ = write!(
+                        &mut name_and_version,
+                        "{}",
+                        resolution.fmt(buf, PathSep::Posix)
+                    );
+                }
+            }
+            let key = SemverStringBuilder::string_hash(&name_and_version);
+            if patched.contains(&key) && f(key) {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────

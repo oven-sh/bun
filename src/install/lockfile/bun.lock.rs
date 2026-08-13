@@ -525,6 +525,17 @@ impl Stringifier {
                                 found_trusted_dependencies.insert(dep.name_hash, dep.name);
                             }
                         }
+                        // `has_trusted_dependency` checks an npm package under its
+                        // own name, which differs from `dep.name` behind an `npm:` alias.
+                        if res.tag == ResolutionTag::Npm {
+                            if let Some(trusted_name) = trusted_dependencies
+                                .get(&(pkg_name_hash as TruncatedPackageNameHash))
+                            {
+                                if **trusted_name == *pkg_name.slice(buf) {
+                                    found_trusted_dependencies.insert(pkg_name_hash, pkg_name);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -533,17 +544,24 @@ impl Stringifier {
 
             tree_sort_buf.sort_by(tree_sort_is_less_than);
 
-            if found_trusted_dependencies.len() > 0 {
+            // The field being present is what turns the default trusted list
+            // off, so it is written even when none of its names made it into
+            // the tree (bun.lockb has HAS_EMPTY_TRUSTED_DEPENDENCIES_TAG for this).
+            if lockfile.trusted_dependencies.is_some() {
                 Self::write_indent(writer, *indent)?;
-                writer.write_all(b"\"trustedDependencies\": [\n")?;
-                *indent += 1;
-                for dep_name in found_trusted_dependencies.values() {
-                    Self::write_indent(writer, *indent)?;
-                    writeln!(writer, "\"{}\",", bstr::BStr::new(dep_name.slice(buf)))?;
-                }
+                if found_trusted_dependencies.len() == 0 {
+                    writer.write_all(b"\"trustedDependencies\": [],\n")?;
+                } else {
+                    writer.write_all(b"\"trustedDependencies\": [\n")?;
+                    *indent += 1;
+                    for dep_name in found_trusted_dependencies.values() {
+                        Self::write_indent(writer, *indent)?;
+                        writeln!(writer, "\"{}\",", bstr::BStr::new(dep_name.slice(buf)))?;
+                    }
 
-                Self::dec_indent(writer, indent)?;
-                writer.write_all(b"],\n")?;
+                    Self::dec_indent(writer, indent)?;
+                    writer.write_all(b"],\n")?;
+                }
             }
 
             if found_patched_dependencies.len() > 0 {
@@ -1849,6 +1867,9 @@ pub(crate) fn parse_into_binary_lockfile(
     mut manager: Option<&mut PackageManager>,
 ) -> Result<(), ParseError> {
     lockfile.init_empty();
+    let link_workspace_packages = manager
+        .as_deref()
+        .is_none_or(|manager| manager.options.link_workspace_packages);
 
     let Some(lockfile_version_expr) = root.get(b"lockfileVersion") else {
         log.add_error(Some(source), root.loc, b"Missing lockfile version");
@@ -2388,7 +2409,10 @@ pub(crate) fn parse_into_binary_lockfile(
             &mut optional_peers_buf,
             None,
             None,
-            Some(&workspaces_obj),
+            Some(RootWorkspaces {
+                workspaces_obj: &workspaces_obj,
+                link_workspace_packages,
+            }),
             true,
         )?;
 
@@ -3051,10 +3075,6 @@ pub(crate) fn parse_into_binary_lockfile(
             .resize(lockfile.buffers.dependencies.len(), invalid_package_id);
         lockfile.buffers.resolutions.fill(invalid_package_id);
 
-        // a package can list the same dependency in each dependnecy group, but only the first
-        // is chosen (dev -> optional -> prod -> peer)
-        let mut seen_deps: bun_collections::StringArrayHashMap<()> = Default::default();
-
         // The two `[0]` writes are done first via
         // sequential `&mut` accessors so the loops can take all column views
         // immutably without overlapping exclusive borrows or `unsafe`.
@@ -3073,6 +3093,7 @@ pub(crate) fn parse_into_binary_lockfile(
         let package_index = &lockfile.package_index;
         let overrides = &lockfile.overrides;
         let catalogs: &CatalogMap = &lockfile.catalogs;
+        let workspace_versions = &lockfile.workspace_versions;
 
         // Disjoint-field split of `lockfile.buffers` so each loop body can hold
         // `&mut dependencies[i]` and `&mut resolutions[i]` together with a shared
@@ -3113,22 +3134,17 @@ pub(crate) fn parse_into_binary_lockfile(
                     return Err(ParseError::InvalidPackageInfo);
                 };
 
-                if !dep.behavior.is_workspace()
-                    && seen_deps
-                        .get_or_put(dep.name.slice(string_buf))?
-                        .found_existing
-                {
-                    resolutions[dep_id as usize] = res_id;
-                    continue;
-                }
-
-                map_dep_to_pkg(
+                map_manifest_dep_to_pkg(
                     dep,
                     dep_id,
                     res_id,
                     resolutions,
                     lockfile_version,
                     pkg_resolutions,
+                    overrides,
+                    workspace_versions,
+                    link_workspace_packages,
+                    string_buf,
                 );
             }
         }
@@ -3140,8 +3156,6 @@ pub(crate) fn parse_into_binary_lockfile(
             for _pkg_id in workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len {
                 let pkg_id: PackageID = _pkg_id;
                 let workspace_name = pkg_names[pkg_id as usize].slice(string_buf);
-
-                seen_deps.clear_retaining_capacity();
 
                 let deps = pkg_deps[pkg_id as usize];
                 for _dep_id in deps.begin()..deps.end() {
@@ -3198,18 +3212,17 @@ pub(crate) fn parse_into_binary_lockfile(
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
-                    if seen_deps.get_or_put(dep_name)?.found_existing {
-                        resolutions[dep_id as usize] = res_id;
-                        continue;
-                    }
-
-                    map_dep_to_pkg(
+                    map_manifest_dep_to_pkg(
                         dep,
                         dep_id,
                         res_id,
                         resolutions,
                         lockfile_version,
                         pkg_resolutions,
+                        overrides,
+                        workspace_versions,
+                        link_workspace_packages,
+                        string_buf,
                     );
                 }
             }
@@ -3432,6 +3445,64 @@ pub(crate) fn resolve_peer_dep_version_based(
     None
 }
 
+/// Root and workspace edges are diffed against a fresh parse of their
+/// package.json, so an edge resolved to a workspace package is tagged as a
+/// workspace dependency only where `Package::parse_dependency` tags it too:
+/// `workspace:` specifiers, and npm ranges satisfied by the workspace version
+/// the lockfile recorded (peers, overridden edges and `*` on a versionless
+/// workspace reach a workspace without that and stay npm-tagged). With linking
+/// disabled the parser links nothing, so a plain range that still points at a
+/// workspace is stale; tagging it makes the differ re-resolve it.
+///
+/// Edges of npm packages are not diffed and go through `map_dep_to_pkg`.
+fn map_manifest_dep_to_pkg(
+    dep: &mut Dependency,
+    dep_id: DependencyID,
+    pkg_id: PackageID,
+    resolutions: &mut [PackageID],
+    text_lockfile_version: Version,
+    pkg_resolutions: &[Resolution],
+    overrides: &OverrideMap,
+    workspace_versions: &VersionHashMap,
+    link_workspace_packages: bool,
+    string_buf: &[u8],
+) {
+    let tag_as_workspace = match dep.version.tag {
+        DependencyVersionTag::Workspace => true,
+        DependencyVersionTag::Npm => {
+            let npm = dep.version.npm();
+            if link_workspace_packages {
+                // Like the parser, an `npm:` alias is matched against the
+                // workspace it points at, not the alias name.
+                let name_hash = if npm.is_alias {
+                    StringBuilder::string_hash(npm.name.slice(string_buf))
+                } else {
+                    dep.name_hash
+                };
+                workspace_versions
+                    .get(&name_hash)
+                    .is_some_and(|version| npm.version.satisfies(*version, string_buf, string_buf))
+            } else {
+                !dep.behavior.is_peer() && (npm.is_alias || !overrides.map.contains(&dep.name_hash))
+            }
+        }
+        _ => false,
+    };
+
+    if tag_as_workspace {
+        map_dep_to_pkg(
+            dep,
+            dep_id,
+            pkg_id,
+            resolutions,
+            text_lockfile_version,
+            pkg_resolutions,
+        );
+    } else {
+        resolutions[dep_id as usize] = pkg_id;
+    }
+}
+
 // Taking `&mut BinaryLockfile` plus a `&mut Dependency` that
 // points into `lockfile.buffers.dependencies` would be illegal aliasing.
 // The function only touches `buffers.resolutions[dep_id]` and reads
@@ -3514,6 +3585,13 @@ fn dependency_resolution_failure(
     Ok(())
 }
 
+/// What `parse_append_dependencies::<_, true>` needs to give the root its
+/// edges to the workspace members.
+struct RootWorkspaces<'a> {
+    workspaces_obj: &'a Expr,
+    link_workspace_packages: bool,
+}
+
 // A separate `string_buf` parameter would borrow the same
 // `lockfile.buffers.string_bytes` / `string_pool` fields and alias `lockfile`.
 // Instead each append constructs a fresh `sbuf!(lockfile)` so the borrow
@@ -3528,7 +3606,8 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     // Only meaningful when `CHECK_FOR_BUNDLED`; carried as Option.
     pkg_path: Option<&[u8]>,
     bundled_pkgs: Option<&PkgPathSet>,
-    workspaces_obj: Option<&Expr>,
+    // Only meaningful when `IS_ROOT`.
+    root_workspaces: Option<RootWorkspaces<'_>>,
     catalogs_apply: bool,
 ) -> Result<(u32, u32), ParseError> {
     // Clearing on entry is equivalent to clearing on every exit path for all
@@ -3663,7 +3742,10 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     }
 
     if IS_ROOT {
-        let workspaces_obj = workspaces_obj.expect("workspaces_obj required when IS_ROOT");
+        let RootWorkspaces {
+            workspaces_obj,
+            link_workspace_packages,
+        } = root_workspaces.expect("root_workspaces required when IS_ROOT");
         'workspaces: for workspace_path in lockfile.workspace_paths.values() {
             for row in object_rows(workspaces_obj) {
                 let path = row.key.slice();
@@ -3681,6 +3763,27 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                     .as_utf8_string_literal()
                     .expect("infallible: is_string checked");
                 let name_hash = StringBuilder::string_hash(name);
+
+                // `Package::parse_dependency` replaces this edge with the root's own
+                // entry for the member when that entry is an npm range it does not link.
+                if let Some(&workspace_version) = lockfile.workspace_versions.get(&name_hash) {
+                    let string_buf = lockfile.buffers.string_bytes.as_slice();
+                    let replaced = lockfile.buffers.dependencies[off..].iter().any(|dep| {
+                        dep.version.tag == DependencyVersionTag::Npm && {
+                            let npm = dep.version.npm();
+                            StringBuilder::string_hash(npm.name.slice(string_buf)) == name_hash
+                                && !(link_workspace_packages
+                                    && npm.version.satisfies(
+                                        workspace_version,
+                                        string_buf,
+                                        string_buf,
+                                    ))
+                        }
+                    });
+                    if replaced {
+                        continue 'workspaces;
+                    }
+                }
 
                 let dep = Dependency {
                     name: sbuf!(lockfile).append_with_hash(name, name_hash)?,

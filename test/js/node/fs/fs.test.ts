@@ -3138,19 +3138,25 @@ describe("rm", () => {
   }
 
   // One directory stays open per level, so the walk visits each directory once:
-  // this 2000-deep chain costs ~0.4 s of CPU in a debug+ASAN build, against 27 s
-  // or more for a walk quadratic in the depth (#37939). That quadratic work is
-  // pure CPU (re-reading cached directories), so the bound is on CPU time, which
-  // process.cpuUsage() also counts for the fs thread pool; wall-clock time, and
-  // hence the test timeout, mostly tracks I/O contention on the machine.
+  // a 2000-deep chain costs ~0.4 s of CPU in a Linux debug+ASAN build, against
+  // 27 s or more for a walk quadratic in the depth (#37939). That quadratic work
+  // is pure CPU (re-reading cached directories), so the bound is on CPU time,
+  // which process.cpuUsage() also counts for the fs thread pool; wall-clock time,
+  // and hence the test timeout, mostly tracks I/O contention on the machine.
+  // Windows machines differ ~60x in what removing one directory costs (0.05 ms
+  // of CPU on a fast box, 3 ms on CI), so no bound is both safe on CI and below
+  // what the quadratic walk costs on a fast box; Windows only checks that a
+  // chain far deeper than the walk's initial 16-slot stack reservation is
+  // removed and cleaned up after.
+  const deepChain = isWindows ? { depth: 200, cpuBudgetMs: undefined } : { depth: 2000, cpuBudgetMs: 5_000 };
   it.each([
     ["rmSync", (p: string) => rmSync(p, { recursive: true, force: true })],
     ["promises.rm", (p: string) => promises.rm(p, { recursive: true, force: true })],
   ])(
-    "%s removes a directory chain nested 2000 levels deep in linear time",
+    `%s removes a directory chain nested ${deepChain.depth} levels deep`,
     async (_, rm) => {
       using dir = tempDir("rm-deep-chain", {});
-      const { top, seam } = makeDeepChain(String(dir), 2000);
+      const { top, seam } = makeDeepChain(String(dir), deepChain.depth);
       expect(statSync(seam).isDirectory()).toBe(true);
 
       const maxFDBefore = getMaxFD();
@@ -3162,7 +3168,9 @@ describe("rm", () => {
       // Every level's directory handle must have been released again; the fs
       // thread pool may have opened a handful of fds of its own.
       expect(getMaxFD() - maxFDBefore).toBeLessThan(5);
-      expect((cpu.user + cpu.system) / 1000).toBeLessThan(5000);
+      if (deepChain.cpuBudgetMs !== undefined) {
+        expect((cpu.user + cpu.system) / 1000).toBeLessThan(deepChain.cpuBudgetMs);
+      }
     },
     30_000,
   );

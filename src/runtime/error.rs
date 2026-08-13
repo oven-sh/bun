@@ -817,8 +817,7 @@ impl Error {
         }
     }
 
-    /// The env loader already printed the error for the `--env-file` that
-    /// failed to load, so CLI error sinks exit without printing a second line.
+    /// The env loader already printed this one; error sinks exit without adding a second line.
     pub(crate) fn is_env_file_load_failed(&self) -> bool {
         matches!(
             self,

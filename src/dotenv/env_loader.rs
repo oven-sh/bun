@@ -855,8 +855,7 @@ impl Loader {
             return Ok(());
         }
 
-        // Unlike the default `.env` discovery above, these files were asked for
-        // by name (`--env-file`), so failing to load one is fatal, as in Node.
+        // Asked for by name (`--env-file`), so failing to load it is fatal, as in Node.
         let file = match bun_sys::open_file(file_path, bun_sys::OpenFlags::READ_ONLY) {
             Ok(f) => f,
             Err(err) => return Err(explicit_env_file_failed(file_path, err.name())),
@@ -895,8 +894,7 @@ fn explicit_env_file_failed(file_path: &[u8], errno_name: &[u8]) -> crate::Error
 enum ReadEnvFile {
     /// Zero-length — caller marks the slot and returns.
     Empty,
-    /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — a default file
-    /// warns (unless `quiet`) and is skipped; an explicit `--env-file` fails.
+    /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR); defaults skip it, explicit files fail.
     ReadErr(bun_sys::Error),
     /// File contents; `buf.len()` is the amount read.
     Bytes(Vec<u8>),

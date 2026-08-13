@@ -8,6 +8,7 @@ import {
   runInNewContext,
   runInThisContext,
   Script,
+  SourceTextModule,
 } from "node:vm";
 
 function capture(_: any, _1?: any) {}
@@ -1483,4 +1484,133 @@ test("node:vm Object.defineProperty on the context global when the sandbox is an
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe(JSON.stringify({ result: 1, sandboxArray: 1 }));
   expect(exitCode).toBe(0);
+});
+
+describe("node:vm SourceTextModule identifier and lineOffset/columnOffset", () => {
+  // Node compiles the source under the identifier and adds the zero-based
+  // offsets to every reported position: physical line L reports as
+  // L + lineOffset, and columnOffset shifts the first line only.
+  const source = [
+    "export function onLine1() { throw new Error('line 1'); }",
+    "export function onLine2() { throw new Error('line 2'); }",
+  ].join("\n");
+
+  async function evaluated(sourceText: string, options?: ConstructorParameters<typeof SourceTextModule>[1]) {
+    const m = new SourceTextModule(sourceText, options);
+    await m.link(() => {
+      throw new Error("unexpected import");
+    });
+    await m.evaluate();
+    return m;
+  }
+
+  function topFrame(error: unknown) {
+    const frame = String((error as Error).stack)
+      .split("\n")
+      .find(line => /^\s+at /.test(line));
+    const match = /^\s+at (?:.* \()?(.+?):(\d+):(\d+)\)?$/.exec(frame ?? "");
+    if (!match) throw new Error(`no frame in ${(error as Error).stack}`);
+    return { url: match[1], line: Number(match[2]), column: Number(match[3]) };
+  }
+
+  function thrownBy(fn: () => unknown) {
+    try {
+      fn();
+    } catch (e) {
+      return e;
+    }
+    throw new Error("expected fn to throw");
+  }
+
+  test("frames report the identifier and the offset positions", async () => {
+    const plain = await evaluated(source, { identifier: "plain.mjs" });
+    const line1 = topFrame(thrownBy(() => plain.namespace.onLine1()));
+    const line2 = topFrame(thrownBy(() => plain.namespace.onLine2()));
+    expect(line1).toEqual({ url: "plain.mjs", line: 1, column: expect.any(Number) });
+    // Both lines hold the same text, so the throw sits at the same column on each.
+    expect(line2).toEqual({ url: "plain.mjs", line: 2, column: line1.column });
+
+    const offset = await evaluated(source, { identifier: "offset.mjs", lineOffset: 10, columnOffset: 7 });
+    expect(topFrame(thrownBy(() => offset.namespace.onLine1()))).toEqual({
+      url: "offset.mjs",
+      line: 11,
+      column: line1.column + 7,
+    });
+    expect(topFrame(thrownBy(() => offset.namespace.onLine2()))).toEqual({
+      url: "offset.mjs",
+      line: 12,
+      column: line1.column,
+    });
+  });
+
+  test("the generated identifier is used when none is given", async () => {
+    const m = await evaluated(source);
+    expect(m.identifier).toMatch(/^vm:module\(\d+\)$/);
+    expect(topFrame(thrownBy(() => m.namespace.onLine1()))).toMatchObject({ url: m.identifier, line: 1 });
+  });
+
+  test("errors thrown while evaluating the module body", async () => {
+    const m = new SourceTextModule("1;\n2;\nthrow new Error('top level');", {
+      identifier: "body.mjs",
+      lineOffset: 100,
+    });
+    await m.link(() => {
+      throw new Error("unexpected import");
+    });
+    let error: unknown;
+    await m.evaluate().catch(e => (error = e));
+    expect(m.error).toBe(error);
+    expect(topFrame(error)).toMatchObject({ url: "body.mjs", line: 103 });
+  });
+
+  test("SyntaxError thrown by the constructor points at the identifier and offset line", () => {
+    const error = thrownBy(() => new SourceTextModule("1;\n%%", { identifier: "broken.mjs", lineOffset: 5 })) as Error;
+    expect(error).toBeInstanceOf(SyntaxError);
+    expect(error.stack).toContain("broken.mjs:7");
+  });
+
+  test("cachedData is accepted regardless of identifier and offsets, which then apply to the consumer", async () => {
+    const plain = await evaluated(source, { identifier: "plain.mjs" });
+    const { column } = topFrame(thrownBy(() => plain.namespace.onLine1()));
+
+    const cachedData = new SourceTextModule(source).createCachedData();
+    const consumer = await evaluated(source, {
+      identifier: "consumer.mjs",
+      lineOffset: 20,
+      columnOffset: 3,
+      cachedData,
+    });
+    expect(topFrame(thrownBy(() => consumer.namespace.onLine1()))).toEqual({
+      url: "consumer.mjs",
+      line: 21,
+      column: column + 3,
+    });
+  });
+
+  test("any int32 offset is accepted, as in Node", async () => {
+    // JSC cannot count positions from below line 1 / column 1, so a negative
+    // offset compiles the module and reports physical positions, like vm.Script.
+    for (const options of [
+      { lineOffset: -1 },
+      { columnOffset: -1 },
+      { lineOffset: -0, columnOffset: -0 },
+      { lineOffset: -2147483648, columnOffset: -2147483648 },
+    ]) {
+      const m = await evaluated(source, { identifier: "negative.mjs", ...options });
+      expect(topFrame(thrownBy(() => m.namespace.onLine1())).url).toBe("negative.mjs");
+    }
+
+    // The native binding relies on vm.ts validating the range and integrality.
+    for (const value of [1.5, 2 ** 31, -(2 ** 31) - 1]) {
+      expect(() => new SourceTextModule(source, { lineOffset: value })).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
+      expect(() => new SourceTextModule(source, { columnOffset: value })).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
+    }
+    expect(() => new SourceTextModule(source, { lineOffset: "1" as any })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
 });

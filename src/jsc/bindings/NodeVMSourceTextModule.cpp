@@ -48,14 +48,16 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         return nullptr;
     }
 
+    // vm.ts already ran validateInt32 on the offsets; like Node's ModuleWrap this
+    // only checks the type. Negative offsets are valid, and -0 fails isAnyInt().
     JSValue lineOffsetValue = args.at(3);
-    if (!lineOffsetValue.isUInt32AsAnyInt()) {
+    if (!lineOffsetValue.isNumber()) {
         throwArgumentTypeError(*globalObject, scope, 3, "lineOffset"_s, "Module"_s, "Module"_s, "number"_s);
         return nullptr;
     }
 
     JSValue columnOffsetValue = args.at(4);
-    if (!columnOffsetValue.isUInt32AsAnyInt()) {
+    if (!columnOffsetValue.isNumber()) {
         throwArgumentTypeError(*globalObject, scope, 4, "columnOffset"_s, "Module"_s, "Module"_s, "number"_s);
         return nullptr;
     }
@@ -85,10 +87,11 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         return nullptr;
     }
 
-    uint32_t lineOffset = lineOffsetValue.toUInt32(globalObject);
+    int32_t lineOffset = lineOffsetValue.toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    uint32_t columnOffset = columnOffsetValue.toUInt32(globalObject);
+    int32_t columnOffset = columnOffsetValue.toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
+    TextPosition startPosition { OrdinalNumber::fromZeroBasedInt(lineOffset), OrdinalNumber::fromZeroBasedInt(columnOffset) };
 
     RefPtr fetcher(NodeVMScriptFetcher::create(vm, dynamicImportCallback, moduleWrapper));
     RETURN_IF_EXCEPTION(scope, nullptr);
@@ -97,15 +100,15 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
 
     WTF::String sourceText = sourceTextValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-
-    Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(WTF::move(sourceText), sourceOrigin, String {}, SourceTaintedOrigin::Untainted,
-        TextPosition { OrdinalNumber::fromZeroBasedInt(lineOffset), OrdinalNumber::fromZeroBasedInt(columnOffset) }, SourceProviderSourceType::Module);
-
-    SourceCode sourceCode(WTF::move(sourceProvider), lineOffset, columnOffset);
-
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
     WTF::String identifier = identifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
+
+    // Built the same way vm.Script builds its source: the identifier is the URL
+    // stack frames report, and makeSource converts the zero-based offsets to the
+    // one-based first line/column that SourceCode counts positions from.
+    SourceCode sourceCode = makeSource(sourceText, sourceOrigin, SourceTaintedOrigin::Untainted, identifier, startPosition, SourceProviderSourceType::Module);
+
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
     NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(
         vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), WTF::move(identifier), contextValue,
         WTF::move(sourceCode), moduleWrapper, initializeImportMeta);

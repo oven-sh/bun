@@ -424,6 +424,22 @@ pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
     component_count == 1 || (component_count == 2 && alias[0] == b'@')
 }
 
+/// Formats the version label `PackageInstall` verifies and hashes patches
+/// against. npm versions fit `buf`; tarball, folder and git resolutions (and
+/// prerelease tags) repeat a user-supplied path, URL or tag of unbounded
+/// length, so a label that does not fit is formatted into `spill` instead.
+fn print_package_version<'a>(
+    buf: &'a mut [u8],
+    spill: &'a mut Vec<u8>,
+    args: core::fmt::Arguments<'_>,
+) -> &'a [u8] {
+    if let Ok(label) = bun_core::fmt::buf_print(buf, args) {
+        return label;
+    }
+    std::io::Write::write_fmt(spill, args).expect("formatting into a Vec is infallible");
+    spill
+}
+
 impl<'a> PackageInstaller<'a> {
     // ──────────────────────────────────────────────────────────────────────
     // BACKREF accessors
@@ -1311,6 +1327,7 @@ impl<'a> PackageInstaller<'a> {
         let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
 
         let mut resolution_buf = [0u8; 512];
+        let mut resolution_spill = Vec::new();
         let package_version: &[u8] = if resolution.tag == resolution::Tag::Workspace {
             'brk: {
                 if let Some(workspace_version) = self
@@ -1319,22 +1336,22 @@ impl<'a> PackageInstaller<'a> {
                     .workspace_versions
                     .get(&pkg_name_hash)
                 {
-                    break 'brk bun_core::fmt::buf_print(
+                    break 'brk print_package_version(
                         &mut resolution_buf,
+                        &mut resolution_spill,
                         format_args!("{}", workspace_version.fmt(string_buf!())),
-                    )
-                    .expect("unreachable");
+                    );
                 }
 
                 // no version
                 break 'brk b"";
             }
         } else {
-            bun_core::fmt::buf_print(
+            print_package_version(
                 &mut resolution_buf,
+                &mut resolution_spill,
                 format_args!("{}", resolution.fmt(string_buf!(), PathSep::Posix)),
             )
-            .expect("unreachable")
         };
 
         let (patch_patch, patch_contents_hash, patch_name_and_version_hash, remove_patch) = 'brk: {

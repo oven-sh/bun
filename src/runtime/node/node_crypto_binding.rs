@@ -205,16 +205,17 @@ pub mod random {
     use super::*;
 
     // No `Clone`: `value` is JSC-protected in `init`/unprotected in `deinit`, and
-    // `bytes` borrows into that ArrayBuffer. Cloning would alias the protect/unprotect
+    // `InPlace` borrows into that ArrayBuffer. Cloning would alias the protect/unprotect
     // pair and the borrowed buffer. `CryptoJob::init` moves the ctx by value.
-    /// `crypto.randomFill` / `randomBytes` off the JS thread: fills either
-    /// the target ArrayBuffer's bytes directly (under the VM borrow that keeps
-    /// them alive) or a scratch buffer copied in on completion.
-    struct RandomFillJob {
-        bytes: Option<JsPtr<u8>>,
-        offset: u32,
-        length: usize,
-        scratch: Option<Vec<u8>>,
+    /// `crypto.randomFill` / `randomBytes` off the JS thread.
+    enum RandomFillJob {
+        /// `randomBytes`: the ArrayBuffer was allocated by us and nothing else
+        /// can observe it yet, so fill its bytes directly (under the VM borrow
+        /// that keeps it alive).
+        InPlace { bytes: JsPtr<u8>, length: usize },
+        /// `randomFill`: the caller's buffer stays untouched until completion;
+        /// fill `scratch` off-thread and copy it in at `offset` on the JS thread.
+        Scratch { scratch: Vec<u8>, offset: u32 },
     }
 
     #[derive(bun_jsc::JsAffine)]
@@ -239,29 +240,29 @@ pub mod random {
             vm: &Borrow,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
-            if let Some(scratch) = &mut this.scratch {
-                boringssl::rand_bytes(scratch);
-                return Some(done);
+            match this {
+                RandomFillJob::Scratch { scratch, .. } => boringssl::rand_bytes(scratch),
+                RandomFillJob::InPlace { bytes, length } => {
+                    // SAFETY: `bytes` points into the ArrayBuffer `value` keeps alive;
+                    // the borrow keeps the VM (and so that buffer) alive; `length` is
+                    // the buffer's own allocation size.
+                    let slice = unsafe {
+                        core::slice::from_raw_parts_mut(
+                            core::ptr::from_mut(bytes.under_borrow(vm)),
+                            *length,
+                        )
+                    };
+                    boringssl::rand_bytes(slice);
+                }
             }
-            let bytes = this.bytes.expect("bytes or scratch");
-            // SAFETY: `bytes` points into the ArrayBuffer `value` keeps alive; the
-            // borrow keeps the VM (and so that buffer) alive; offset/length were
-            // range-checked against it on the JS thread.
-            let slice = unsafe {
-                core::slice::from_raw_parts_mut(
-                    core::ptr::from_mut(bytes.under_borrow(vm)).add(this.offset as usize),
-                    this.length,
-                )
-            };
-            boringssl::rand_bytes(slice);
             Some(done)
         }
 
-        fn then(mut this: Self, js: RandomFillJs, cx: &JsThread<'_>) -> JsResult<()> {
+        fn then(this: Self, js: RandomFillJs, cx: &JsThread<'_>) -> JsResult<()> {
             let global = cx.global();
-            if let Some(scratch) = this.scratch.take() {
+            if let RandomFillJob::Scratch { scratch, offset } = this {
                 if let Some(mut buf) = js.value.value().as_array_buffer(global) {
-                    let off = this.offset as usize;
+                    let off = offset as usize;
                     let dst = buf.slice_mut();
                     match off.checked_add(scratch.len()) {
                         Some(end) if end <= dst.len() => {
@@ -605,15 +606,13 @@ pub mod random {
             schedule(
                 global,
                 callback,
-                RandomFillJob {
+                RandomFillJob::InPlace {
                     // SAFETY: `bytes` is `result`'s backing store, kept alive by the job's
                     // Js side; a slice's data pointer is non-null even when empty.
-                    bytes: Some(unsafe {
+                    bytes: unsafe {
                         JsPtr::new(core::ptr::NonNull::new_unchecked(bytes.as_mut_ptr()))
-                    }),
-                    offset: 0,
+                    },
                     length: size as usize,
-                    scratch: None,
                 },
                 result,
             );
@@ -726,12 +725,7 @@ pub mod random {
             schedule(
                 global,
                 callback,
-                RandomFillJob {
-                    bytes: None,
-                    offset,
-                    length: size,
-                    scratch: Some(scratch),
-                },
+                RandomFillJob::Scratch { scratch, offset },
                 buf_value,
             );
 

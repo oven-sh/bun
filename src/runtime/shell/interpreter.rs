@@ -1525,7 +1525,7 @@ impl Interpreter {
                 }
 
                 if let Some(worker_ptr) = vm.worker {
-                    // SAFETY: `vm.worker` is set in `VirtualMachine::initWorker`
+                    // SAFETY: `vm.worker` is set in `VirtualMachine::init_worker`
                     // to a live `*WebWorker` for the worker's lifetime.
                     let worker = unsafe { &*worker_ptr.cast::<bun_jsc::web_worker::WebWorker>() };
                     let argv = worker.argv();
@@ -2317,7 +2317,6 @@ pub enum ParseFlagResult {
     Done,
     IllegalOption(*const [u8]),
     Unsupported(*const [u8]),
-    ShowUsage,
 }
 
 /// Returns just `name` and lets the caller's `fmt_error_arena` add the
@@ -2352,7 +2351,6 @@ pub(crate) fn parse_flags<'a, O: FlagParser>(
             ParseFlagResult::ContinueParsing => {}
             ParseFlagResult::IllegalOption(s) => return Err(ParseError::IllegalOption(s)),
             ParseFlagResult::Unsupported(s) => return Err(ParseError::Unsupported(s)),
-            ParseFlagResult::ShowUsage => return Err(ParseError::ShowUsage),
         }
         idx += 1;
     }

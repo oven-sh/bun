@@ -2730,7 +2730,7 @@ pub mod args {
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let fd = FD::from_js_required(ctx, arguments)?;
-            let mut buffers = VectorArrayBuffer::from_js(
+            let buffers = VectorArrayBuffer::from_js(
                 ctx,
                 arguments.protect_eat_next().ok_or_else(|| {
                     ctx.throw_invalid_arguments(format_args!("Expected an ArrayBufferView[]"))
@@ -2739,21 +2739,10 @@ pub mod args {
                 // each element and pin its backing store until completion.
                 arguments.will_be_async,
             )?;
-            let mut position: Option<u64> = None;
-            if let Some(pos_value) = arguments.next_eat() {
-                if !pos_value.is_undefined_or_null() {
-                    if pos_value.is_number() {
-                        position = Some(pos_value.to_int64() as u64);
-                    } else {
-                        // `buffers` never reaches the Unprotect hook on this
-                        // path; drop its element roots and pins here.
-                        buffers.release();
-                        return Err(
-                            ctx.throw_invalid_arguments(format_args!("position must be a number"))
-                        );
-                    }
-                }
-            }
+            let position: Option<u64> = arguments
+                .next_eat()
+                .and_then(i52::offset_from_js)
+                .and_then(|p| u64::try_from(p).ok());
             Ok(Self {
                 fd,
                 buffers,
@@ -3723,14 +3712,8 @@ pub mod args {
                         )?)
                         .expect("infallible: validated range");
                         arguments.eat();
-                        let Some(next) = arguments.next() else {
-                            break 'parse;
-                        };
-                        current = next;
-                        if !(current.is_number() || current.is_big_int()) {
-                            break 'parse;
-                        }
-                        let length = current.to_int64();
+                        // Node bounds `offset` by the buffer whether or not a
+                        // `length` follows (`length` defaults to the rest).
                         let buf_len = args.buffer.buffer().map(|b| b.slice().len()).unwrap_or(0);
                         let max_offset = buf_len as i64;
                         if args.offset as i64 > max_offset {
@@ -3743,6 +3726,14 @@ pub mod args {
                                 },
                             ));
                         }
+                        let Some(next) = arguments.next() else {
+                            break 'parse;
+                        };
+                        current = next;
+                        if !(current.is_number() || current.is_big_int()) {
+                            break 'parse;
+                        }
+                        let length = current.to_int64();
                         let max_len = ((buf_len as u64 - args.offset) as i64).min(i32::MAX as i64);
                         if length > max_len || length < 0 {
                             return Err(ctx.throw_range_error(
@@ -3764,19 +3755,15 @@ pub mod args {
                         if !(current.is_number() || current.is_big_int()) {
                             break 'parse;
                         }
-                        let position = i52::from_js(current);
-                        if position >= 0 {
+                        if let Some(position @ 0..) = i52::offset_from_js(current) {
                             args.position = Some(position);
                         }
                         arguments.eat();
                     }
                     // fs.write(fd, string[, position[, encoding]], callback)
                     _ => {
-                        if current.is_number() {
-                            let position = i52::from_js(current);
-                            if position >= 0 {
-                                args.position = Some(position);
-                            }
+                        if let Some(position @ 0..) = i52::offset_from_js(current) {
+                            args.position = Some(position);
                         }
                         // Node consumes the position slot whatever its type
                         // (null, undefined, a non-number); the encoding is
@@ -5902,10 +5889,18 @@ impl NodeFS {
     pub(crate) fn mkdtemp(&mut self, args: &args::MkdirTemp, _: Flavor) -> Maybe<ret::Mkdtemp> {
         let prefix_buf = &mut self.sync_error_buf;
         let prefix_slice = args.prefix.slice();
-        let len = prefix_slice.len().min(prefix_buf.len().saturating_sub(7));
-        if len > 0 {
-            prefix_buf[..len].copy_from_slice(&prefix_slice[..len]);
+        // Node rejects an empty prefix with EINVAL (its snprintf builds a
+        // five-X template here); otherwise we'd create a random dir in cwd.
+        if prefix_slice.is_empty() {
+            return Err(sys::Error {
+                errno: SystemErrno::EINVAL as _,
+                syscall: sys::Tag::mkdtemp,
+                path: [b'X'; 5].into(),
+                ..Default::default()
+            });
         }
+        let len = prefix_slice.len().min(prefix_buf.len().saturating_sub(7));
+        prefix_buf[..len].copy_from_slice(&prefix_slice[..len]);
         prefix_buf[len..len + 6].copy_from_slice(b"XXXXXX");
         prefix_buf[len + 6] = 0;
 
@@ -10227,10 +10222,11 @@ impl NodeFSFunctionEnum {
 struct i52;
 impl i52 {
     const MIN: i64 = -(1i64 << 51);
-    /// Truncate to the low
-    /// 52 bits and sign-extend bit 51.
+    /// Node's `GetOffset`: only a safe JS integer selects positional I/O.
     #[inline]
-    fn from_js(v: JSValue) -> i64 {
-        (v.to_int64() << 12) >> 12
+    fn offset_from_js(v: JSValue) -> Option<i64> {
+        let n = v.get_number()?;
+        (n.is_finite() && n.trunc() == n && n.abs() <= bun_jsc::MAX_SAFE_INTEGER as f64)
+            .then_some(n as i64)
     }
 }

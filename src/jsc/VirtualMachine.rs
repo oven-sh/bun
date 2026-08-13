@@ -178,8 +178,9 @@ pub struct VirtualMachine {
     pub runtime_state: *mut c_void,
     pub event_loop_handle: Option<*mut PlatformEventLoop>,
     /// Pending `unref` count drained by the event-loop thread. Atomic because
-    /// `KeepAlive::unref_on_next_tick_concurrently` increments it from OTHER
-    /// threads.
+    /// `KeepAlive::unref_on_next_tick` increments it from OTHER threads
+    /// (POSIX only; on Windows that path calls `loop_dec()` instead and the
+    /// counter stays at zero).
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
@@ -232,10 +233,6 @@ pub struct VirtualMachine {
     // stored as the enum's `u8` repr.
     pub(crate) default_verbose_fetch: core::cell::Cell<Option<u8>>,
 
-    /// Do not access this field directly! It exists in the VirtualMachine struct so
-    /// that we don't accidentally make a stack copy of it; only use it through
-    /// `source_mappings`.
-    pub(crate) saved_source_map_table: crate::saved_source_map::HashTable,
     pub source_mappings: SavedSourceMap,
 
     // BACKREF — `&'a mut Arena` in spirit; caller-owned (web_worker) and
@@ -2202,7 +2199,7 @@ bun_io::link_impl_EventLoopCtx! {
             let rare = vm_from_owner(this.cast()).rare_data();
             &raw mut **rare.file_polls.get_or_insert_with(|| Box::new(bun_io::Store::init()))
         },
-        // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick_concurrently`.
+        // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick`.
         // Do NOT route through `vm_from_owner()` — that mints `&mut VM`, which
         // would alias the JS thread's `&mut`. Atomic RMW through a shared ref.
         increment_pending_unref_counter() => {
@@ -2481,12 +2478,7 @@ impl VirtualMachine {
             let _ = (*regular).tasks.ensure_unused_capacity(64);
             addr_of_mut!((*vm).event_loop).write(regular);
 
-            // `source_mappings.map` is a sibling-field backref onto
-            // `saved_source_map_table`.
-            addr_of_mut!((*vm).saved_source_map_table)
-                .write(crate::saved_source_map::HashTable::default());
             addr_of_mut!((*vm).source_mappings).write(SavedSourceMap::default());
-            (*addr_of_mut!((*vm).source_mappings)).map = addr_of_mut!((*vm).saved_source_map_table);
         }
 
         // High-tier per-VM state — Transpiler / Timer::All / entry_point.
@@ -3067,7 +3059,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         // the writer's lifetime. The caller MUST rederive its own
         // `&mut BufferPrinter` from the raw pointer after
         // `print_with_source_map` returns (see jsc_hooks.rs). See
-        // `printer_ptr()` for why this is not a `&mut`-returning accessor.
+        // `SourceMapHandlerGetter` doc for why `printer` is not stored as `&'a mut`.
         let printer = unsafe { &mut *self.printer };
 
         let encode_len = bun_base64::encode_len(temp_json_buffer.list.as_slice());
@@ -4701,8 +4693,7 @@ impl VirtualMachine {
 
         drop_source_code_printer();
 
-        // Note: `SavedSourceMap`'s `Drop` frees
-        // each stored map and `deinit()`s the sibling `saved_source_map_table`.
+        // `SavedSourceMap`'s `Drop` frees each stored map along with its table.
         drop(core::mem::take(&mut self.source_mappings));
 
         // Drain cron jobs BEFORE taking rare_data off `self`: the teardown

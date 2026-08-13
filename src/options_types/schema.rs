@@ -125,6 +125,7 @@ pub mod api {
         pub serve_public_path: Option<Box<[u8]>>,
         pub serve_hmr: Option<bool>,
         pub serve_define: Option<StringMap>,
+        pub serve_sourcemap: Option<SourceMapMode>,
 
         /// from `--no-addons`. `None` == `true`.
         pub allow_addons: Option<bool>,

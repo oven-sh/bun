@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
@@ -444,6 +444,53 @@ test("dns.lookup (localhost)", () => {
   return promise;
 });
 
+// dns.lookup()'s contract is getaddrinfo(3), so it must use the system
+// resolver, not c-ares, which reads /etc/resolv.conf directly and bypasses
+// NSS/systemd-resolved on split-DNS hosts (#37378). "127.1" is a legacy IPv4
+// literal: getaddrinfo resolves it locally with no DNS traffic, while c-ares
+// treats it as a hostname and queries the configured servers, here a local
+// responder that REFUSEs every query. Linux-only: it is the one platform
+// where the default Bun.dns backend is c-ares.
+test.skipIf(!isLinux)("dns.lookup uses getaddrinfo, not the c-ares resolver", async () => {
+  const fixture = `
+    const dns = require("node:dns");
+    function refused(msg) {
+      const r = Buffer.from(msg);
+      r[2] = 0x81; // QR + RD
+      r[3] = 0x85; // RA + rcode REFUSED
+      r.fill(0, 6, 12); // zero the answer counts
+      return r;
+    }
+    const server = await Bun.udpSocket({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { data(sock, buf, port, addr) { sock.send(refused(buf), port, addr); } },
+    });
+    dns.setServers(["127.0.0.1:" + server.port]);
+    const fromPromises = await dns.promises.lookup("127.1").then(
+      ({ address, family }) => ({ address, family }),
+      e => ({ code: e.code }),
+    );
+    const fromCallback = await new Promise(resolve => {
+      dns.lookup("127.1", (e, address, family) => resolve(e ? { code: e.code } : { address, family }));
+    });
+    server.close();
+    console.log(JSON.stringify({ fromPromises, fromCallback }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    fromPromises: { address: "127.0.0.1", family: 4 },
+    fromCallback: { address: "127.0.0.1", family: 4 },
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("dns.getServers", () => {
   function parseResolvConf() {
     const servers = [];
@@ -631,6 +678,22 @@ describe("dns.lookupService", () => {
     expect(hostname).toStrictEqual(expected[0]);
     expect(service).toStrictEqual(expected[1]);
   });
+
+  // https://github.com/oven-sh/bun/issues/37486
+  it("treats an IPv4-mapped IPv6 address like its embedded IPv4 address", async () => {
+    // getnameinfo for 127.0.0.1 may ENOTFOUND on Windows, so assert the
+    // mapped form yields the same outcome rather than a specific result.
+    const settle = p =>
+      p.then(
+        v => ({ ok: v }),
+        e => ({ err: e.code }),
+      );
+    const [mapped, v4] = await Promise.all([
+      settle(dns_promises.lookupService("::ffff:127.0.0.1", 53)),
+      settle(dns_promises.lookupService("127.0.0.1", 53)),
+    ]);
+    expect(mapped).toEqual(v4);
+  });
 });
 
 // Deprecated reference: https://nodejs.org/api/deprecations.html#DEP0118
@@ -668,9 +731,9 @@ describe("uses `dns.promises` implementations for `util.promisify` factory", () 
   });
 
   it("util.promisify(dns.lookup) acts like dns.promises.lookup", async () => {
-    // This test previously used example.com, but that domain has multiple A records, which can cause this test to fail.
-    // As of this writing, google.com has only one A record. If that changes, update this test with a domain that has only one A record.
-    expect(await util.promisify(dns.lookup)("google.com")).toEqual(await dns.promises.lookup("google.com"));
+    // Use a name that resolves locally: a public name with several A records
+    // behind round-robin DNS can return a different first address per call.
+    expect(await util.promisify(dns.lookup)("localhost")).toEqual(await dns.promises.lookup("localhost"));
   });
 });
 
@@ -697,6 +760,27 @@ describe("hostnames containing NUL bytes", () => {
 
   it("plain localhost still resolves", async () => {
     const { address } = await dns_promises.lookup("localhost");
+    expect(["127.0.0.1", "::1"]).toContain(address);
+  });
+});
+
+// Node treats a null option field the same as an absent one (its guards are
+// `!= null`), so e.g. `{ hints: null }` must not throw. https://github.com/oven-sh/bun/issues/37318
+describe("dns.lookup null option fields are treated as unset", () => {
+  const fields = ["hints", "all", "verbatim", "order", "family"];
+
+  it.each(fields)("dns.lookup with {%s: null} resolves", async field => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    dns.lookup("localhost", { [field]: null }, (err, address, family) => {
+      if (err) reject(err);
+      else resolve({ address, family });
+    });
+    const { address } = await promise;
+    expect(["127.0.0.1", "::1"]).toContain(address);
+  });
+
+  it.each(fields)("dns.promises.lookup with {%s: null} resolves", async field => {
+    const { address } = await dns_promises.lookup("localhost", { [field]: null });
     expect(["127.0.0.1", "::1"]).toContain(address);
   });
 });

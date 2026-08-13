@@ -172,7 +172,7 @@ pub fn close_child_ipc(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
     if let Some(current_ipc) = crate::ipc_host::get_ipc_instance(vm) {
         // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance`.
-        unsafe { (*current_ipc).data().close_socket_next_tick(true) };
+        unsafe { (*current_ipc).data().disconnect() };
     }
 }
 
@@ -414,7 +414,7 @@ pub fn bindgen_bunobject_dispatch_gc(
     // SAFETY: `arg_force`/`out` are valid C++ stack locals.
     let force = unsafe { *arg_force };
     // `garbage_collect(force)`: mimalloc cleanup, then sync `runGC(true)`
-    // when `force`, else `collectAsync()` + `heap.size()`.
+    // when `force`, else `collect_async()` + `heap_size()`.
     // SAFETY: bun_vm() never null for a Bun-owned global.
     unsafe { *out = global.bun_vm().as_mut().garbage_collect(force) };
     true

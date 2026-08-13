@@ -23,13 +23,9 @@ bun_core::declare_scope!(FileSink, visible);
 // ───────────────────────────────────────────────────────────────────────────
 
 // R-2 (`&mut self` host-fn re-entrancy → noalias UB): JS-reachable host-fns
-// take `&self` and mutate via `Cell`/`JsCell`. Init-time / `finalize` paths
-// keep `&mut self` for write+dealloc provenance (they reach `FileSink::deref`
-// which may `heap::take`) — those derive `&mut self` from the codegen shim's
-// `&mut T`, which carries a Unique tag over the whole allocation, so dealloc
-// through them is sound. The PipeWriter IO callbacks do NOT use `&self`/`&mut
-// self` at all: they take the canonical `*mut FileSink` (the heap-alloc
-// pointer threaded through `set_parent`) directly — see the `borrow = ptr`
+// take `&self` and mutate via `Cell`/`JsCell`. Paths that may drop the last
+// ref (`finalize`, the PipeWriter IO callbacks, the promise handlers) take the
+// canonical `*mut FileSink` instead of any receiver — see the `borrow = ptr`
 // note on the `impl_streaming_writer_parent!` invocation below.
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
@@ -917,7 +913,10 @@ impl FileSink {
         }
     }
 
-    pub fn finalize(&mut self) {
+    /// # Safety
+    /// `this` is the live sink whose JS wrapper holds the +1 released here; it
+    /// must not be used after the call, which may free it.
+    pub(crate) unsafe fn finalize(this: *mut FileSink) {
         // Called from (a) `~JSFileSink` during lazy sweep, and (b) synchronously
         // from `${name}__doClose` (prototype `.close()`). Must satisfy both
         // contexts: no touching live JS cells (sweep), and no tearing down
@@ -930,20 +929,17 @@ impl FileSink {
         // `.pending` otherwise strands its keep-alive ref forever and the sink
         // leaks). Only under `is_shutting_down`: on a live VM those events
         // still arrive and must keep the sink alive past the wrapper.
-        if let Some(vm) = self.js_vm() {
-            if vm.is_shutting_down() {
-                let this = std::ptr::from_mut::<Self>(self);
-                // SAFETY: `this` is the canonical allocation pointer (finalize
-                // receives the wrapper's `m_ctx`); the wrapper's +1 is still
-                // held until the trailing `deref` below, so neither release
-                // can free `this` mid-body. `clear_keep_alive_ref` is
-                // flag-gated, so a (theoretical) late `onClose` is a no-op.
-                unsafe { FileSink::clear_keep_alive_ref(this) };
-                if self.run_pending_later.has.get() {
-                    self.run_pending_later.has.set(false);
-                    // SAFETY: as above; balances the `ref_()` taken in
-                    // `run_pending_later()` for a task that will never run.
-                    unsafe { FileSink::deref(this) };
+        // `clear_keep_alive_ref` is flag-gated, so a (theoretical) late
+        // `onClose` is a no-op.
+        // SAFETY: caller contract — the wrapper's +1 is held until the trailing
+        // `deref` below, so neither release here can free `this`.
+        unsafe {
+            if (*this).js_vm().is_some_and(|vm| vm.is_shutting_down()) {
+                FileSink::clear_keep_alive_ref(this);
+                if (*this).run_pending_later.has.replace(false) {
+                    // Balances the `ref_()` taken in `run_pending_later()` for
+                    // a task that will never run.
+                    FileSink::deref(this);
                 }
             }
         }
@@ -957,10 +953,11 @@ impl FileSink {
         // `to_js()` must `deref()` once to release init's +1 (see
         // `Blob::get_writer`). `pending`/`readable_stream` are left for
         // `deinit` (Box drop) since in-flight IO may still need them.
-        self.js_sink_ref.with_mut(|r| r.deinit());
-        // SAFETY: `&mut self` carries write provenance over the whole
-        // allocation; this is the last use of `self` in `finalize`.
-        unsafe { FileSink::deref(std::ptr::from_mut::<Self>(self)) };
+        // SAFETY: as above; the `deref` is the last use of `this`.
+        unsafe {
+            (*this).js_sink_ref.with_mut(|r| r.deinit());
+            FileSink::deref(this);
+        }
     }
 
     /// Protect the JS wrapper object from GC collection while an async operation is pending.
@@ -1289,40 +1286,19 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     const HAS_GET_FD: bool = true;
     const START_TAG: Option<streams::StartTag> = Some(streams::StartTag::FileSink);
 
-    fn memory_cost(&self) -> usize {
-        Self::memory_cost(self)
-    }
-    fn finalize(&mut self) {
-        Self::finalize(self)
+    crate::impl_js_sink_forwarders!();
+
+    unsafe fn finalize(this: *mut Self) {
+        // SAFETY: same contract, forwarded.
+        unsafe { Self::finalize(this) }
     }
     fn construct(this: &mut core::mem::MaybeUninit<Self>) {
         // `Self::construct()` allocates with `ref_count=1`; that +1 belongs to
         // the C++ `JSFileSink` wrapper `js_construct` is about to create.
         this.write(Self::construct());
     }
-    fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable {
-        Self::write(self, data)
-    }
-    fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable {
-        Self::write_utf16(self, data)
-    }
-    fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable {
-        Self::write_latin1(self, data)
-    }
-    fn end(&mut self, err: Option<sys::Error>) -> sys::Result<()> {
-        Self::end(self, err)
-    }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> sys::Result<JSValue> {
         Self::end_from_js(self, global)
-    }
-    fn flush(&mut self) -> sys::Result<()> {
-        Self::flush(self)
-    }
-    fn flush_from_js(&mut self, global: &JSGlobalObject, wait: bool) -> sys::Result<JSValue> {
-        Self::flush_from_js(self, global, wait)
-    }
-    fn start(&mut self, config: streams::Start) -> sys::Result<()> {
-        Self::start(self, &config)
     }
     fn source(&mut self) -> Option<&mut streams::SourceHandle> {
         // SAFETY: JsCell — trait receiver is `&mut self`; sole borrow of `source`.

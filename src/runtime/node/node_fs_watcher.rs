@@ -340,7 +340,6 @@ pub enum EventType {
     Rename = 0,
     Change = 1,
     Error = 2,
-    Abort = 3,
     Close = 4,
 }
 

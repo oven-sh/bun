@@ -400,7 +400,7 @@ impl DateHeaderTimer {
         // separate allocation from `RuntimeState.timer` so no aliasing with
         // `&mut self`).
         let loop_ = vm.uws_loop_mut();
-        let now = Timespec::now(TimespecMockMode::AllowMockedTime);
+        let now = Timespec::now(TimespecMockMode::ForceRealTime);
 
         // Record when we last ran it.
         self.event_loop_timer.next = ElTimespec {

@@ -541,7 +541,7 @@ impl SourceMapStore {
         }
 
         let expire = Timespec::ms_from_now(
-            TimespecMockMode::AllowMockedTime,
+            TimespecMockMode::ForceRealTime,
             WEAK_REF_EXPIRY_SECONDS * 1000,
         );
         self.weak_refs

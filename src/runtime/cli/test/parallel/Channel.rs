@@ -108,6 +108,9 @@ pub type Socket = uws::NewSocketHandler<false>;
 #[cfg(not(windows))]
 pub struct PosixBackend {
     pub(crate) socket: Cell<Socket>,
+    /// Bytes at the front of `out` already written to the kernel;
+    /// front-draining per partial write instead is quadratic in backlog size.
+    out_head: Cell<usize>,
 }
 
 #[cfg(not(windows))]
@@ -115,6 +118,7 @@ impl Default for PosixBackend {
     fn default() -> Self {
         Self {
             socket: Cell::new(Socket::DETACHED),
+            out_head: Cell::new(0),
         }
     }
 }
@@ -448,13 +452,27 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         {
             while !self.done.get() {
                 let mut pending = self.out.replace(Vec::new());
-                if pending.is_empty() {
+                let mut head = self.backend.out_head.get();
+                debug_assert!(head <= pending.len());
+                if pending.len() <= head {
+                    self.backend.out_head.set(0);
                     self.out.set(pending);
                     return;
                 }
-                let wrote = self.backend.socket.get().write(pending.as_slice());
-                let w = usize::try_from(wrote).unwrap_or(0).min(pending.len());
-                pending.drain_front(w);
+                let wrote = self.backend.socket.get().write(&pending[head..]);
+                let w = usize::try_from(wrote)
+                    .unwrap_or(0)
+                    .min(pending.len() - head);
+                head += w;
+                if head == pending.len() {
+                    pending.clear();
+                    head = 0;
+                } else if head >= pending.len() - head {
+                    // Sent prefix caught up to the tail: compact (amortized linear).
+                    pending.drain_front(head);
+                    head = 0;
+                }
+                self.backend.out_head.set(head);
                 self.out.with_mut(|cur| {
                     pending.extend_from_slice(cur);
                     *cur = pending;

@@ -251,8 +251,6 @@ enum RegisterState {
     BootingOut,
     #[cfg(target_os = "macos")]
     Bootstrapping,
-    Done,
-    Failed,
 }
 
 // Forward as raw ptr — `maybe_finished` (via `CronJobBase`) may free `this`.
@@ -422,11 +420,6 @@ impl CronJobBase for CronRegisterJob {
     unsafe fn finish(this: *mut Self) {
         // SAFETY: caller transfers the unique Box<Self> leaked in cron_register.
         let mut job = unsafe { bun_core::heap::take(this) };
-        job.state = if job.err_msg.is_some() {
-            RegisterState::Failed
-        } else {
-            RegisterState::Done
-        };
         job.poll.unref(bun_io::js_vm_ctx());
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
@@ -1084,8 +1077,6 @@ enum RemoveState {
     ReadingCrontab,
     InstallingCrontab,
     BootingOut,
-    Done,
-    Failed,
 }
 
 // Forward as raw ptr — `maybe_finished` (via `CronJobBase`) may free `this`.
@@ -1233,11 +1224,6 @@ impl CronJobBase for CronRemoveJob {
     unsafe fn finish(this: *mut Self) {
         // SAFETY: caller transfers the unique Box<Self> leaked in cron_remove.
         let mut job = unsafe { bun_core::heap::take(this) };
-        job.state = if job.err_msg.is_some() {
-            RemoveState::Failed
-        } else {
-            RemoveState::Done
-        };
         job.poll.unref(bun_io::js_vm_ctx());
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
@@ -2474,7 +2460,7 @@ unsafe fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         // callback + double-free on reader close).
         if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
             debug_assert!(core::ptr::eq(Box::as_ref(&pipe), stderr_pipe_ptr));
-            s!().stderr_reader().source = Some(bun_io::Source::Pipe(pipe));
+            s!().stderr_reader().set_source(bun_io::Source::Pipe(pipe));
             s!().stderr_reader().set_parent(this_ptr);
             *s!().remaining_fds() += 1;
             if s!().stderr_reader().start_with_current_pipe().is_err() {

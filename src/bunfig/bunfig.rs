@@ -1614,6 +1614,33 @@ impl<'a> Parser<'a> {
             }
         }
 
+        if let Some(sourcemap) = serve_obj.get(b"sourcemap") {
+            if let Some(v) = sourcemap.as_bool() {
+                self.ctx.args.serve_sourcemap = Some(if v {
+                    api::SourceMapMode::Linked
+                } else {
+                    api::SourceMapMode::None
+                });
+            } else if let Some(s) = sourcemap.as_string(self.bump) {
+                match s {
+                    b"none" => self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::None),
+                    b"linked" => self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::Linked),
+                    b"inline" => self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::Inline),
+                    b"external" => {
+                        self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::External)
+                    }
+                    _ => {
+                        self.add_error(
+                            sourcemap.loc,
+                            b"Expected sourcemap to be one of 'none', 'linked', 'inline', or 'external'",
+                        )?;
+                    }
+                }
+            } else {
+                self.add_error(sourcemap.loc, b"Expected sourcemap to be boolean or string")?;
+            }
+        }
+
         if let Some(expr) = serve_obj.get(b"define") {
             self.ctx.args.serve_define = Some(self.parse_define_map(&expr)?);
         }

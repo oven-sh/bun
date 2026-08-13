@@ -42,6 +42,7 @@
 #include "GeneratedBunObject.h"
 #include "JavaScriptCore/BunV8HeapSnapshotBuilder.h"
 #include "BunObjectModule.h"
+#include "_NativeModule.h"
 #include "JSCookie.h"
 #include "JSCookieMap.h"
 #include "Secrets.h"
@@ -1148,56 +1149,26 @@ JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)
     return JSBunObject::create(vm, uncheckedDowncast<Zig::GlobalObject>(globalObject));
 }
 
-static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues)
-{
-    exportNames.reserveCapacity(std::size(bunObjectTableValues) + 1);
-    exportValues.ensureCapacity(std::size(bunObjectTableValues) + 1);
-
-    PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    object->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(scope, void());
-
-    exportNames.append(vm.propertyNames->defaultKeyword);
-    exportValues.append(object);
-
-    for (const auto& propertyName : propertyNames) {
-        exportNames.append(propertyName);
-        auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
-        // Yes, we have to call getters :(
-        JSValue value = object->get(globalObject, propertyName);
-
-        if (topExceptionScope.exception()) {
-            (void)topExceptionScope.tryClearException();
-            value = jsUndefined();
-        }
-        exportValues.append(value);
-    }
-}
-
 } // namespace Bun
 
 namespace Zig {
-void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
+JSC::JSObject* generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
     JSC::Identifier moduleKey,
     Vector<JSC::Identifier, 4>& exportNames,
     JSC::MarkedArgumentBuffer& exportValues)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* object = globalObject->bunObject();
 
-    // :'(
-    if (object->hasNonReifiedStaticProperties()) [[likely]] {
-        object->reifyAllStaticProperties(lexicalGlobalObject);
-    }
+    // Static table entries are listed whether or not they have been reified, so this is the same export
+    // list that reifying them all used to produce, minus the cost of constructing every one of them.
+    PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    object->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
-    RETURN_IF_EXCEPTION(scope, void());
-
-    Bun::exportBunObject(vm, globalObject, object, exportNames, exportValues);
+    return exportObjectProperties(vm, object, propertyNames, exportNames, exportValues);
 }
 
 } // namespace Zig

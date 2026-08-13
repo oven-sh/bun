@@ -200,6 +200,64 @@ test("--parallel --bail stops dispatching new files after threshold", async () =
   expect(exitCode).toBe(1);
 });
 
+test(
+  "--parallel --bail: a worker that dies mid-file after the bail is reported as a crash",
+  async () => {
+    // Two files run side by side. `a` fails (tripping --bail=1) only once `b`
+    // is running; `b` then waits for a's worker to be gone (it is shut down
+    // right after the bail) before exiting mid-file. The coordinator has to
+    // report that exit as a crash of b: only a worker panic makes sibling
+    // deaths collateral, a plain bail does not.
+    const poll = `
+    const deadline = Date.now() + 30_000;
+    function waitFor(cond) { while (!cond() && Date.now() < deadline) Bun.sleepSync(5); }
+  `;
+    using dir = tempDir("parallel-bail-then-exit", {
+      "a.test.js": `
+      import { test, expect } from "bun:test";
+      import { existsSync, writeFileSync } from "node:fs";
+      import { join } from "node:path";
+      ${poll}
+      test("fail once b is running", () => {
+        waitFor(() => existsSync(join(import.meta.dir, "b-started")));
+        writeFileSync(join(import.meta.dir, "a-pid"), String(process.pid));
+        expect(1).toBe(2);
+      }, 60_000);
+    `,
+      "b.test.js": `
+      import { test } from "bun:test";
+      import { existsSync, readFileSync, writeFileSync } from "node:fs";
+      import { join } from "node:path";
+      ${poll}
+      test("exit after a's worker is gone", () => {
+        writeFileSync(join(import.meta.dir, "b-started"), "");
+        const pidFile = join(import.meta.dir, "a-pid");
+        let pid = 0;
+        waitFor(() => existsSync(pidFile) && (pid = Number(readFileSync(pidFile, "utf8"))) > 0);
+        waitFor(() => { try { process.kill(pid, 0); return false; } catch { return true; } });
+        process.exit(7);
+      }, 60_000);
+    `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--bail=1"],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Bailed out after 1 failure");
+    expect(stderr).toContain("b.test.js");
+    expect(stderr).toContain("(worker crashed: exit code 7)");
+    expect(stderr).not.toContain("sibling worker panicked");
+    expect(exitCode).toBe(1);
+  },
+  isASAN || isDebug ? 60_000 : 20_000,
+);
+
 // POSIX classifies worker crashes as panics by fatal signal — see
 // is_panic_status. (On Windows a crash caught by Bun's crash handler exits
 // with code 3, indistinguishable from process.exit(3); the Windows
@@ -873,6 +931,55 @@ test("--parallel: a test producing a >64MB result line is truncated, not treated
   expect(stderr).toContain("[output truncated:");
   expect(stderr).toContain("1 pass");
   expect(stderr).toContain("1 fail");
+  expect(exitCode).toBe(1);
+}, 90_000);
+
+test("--parallel: back-to-back huge result lines drain in linear time without corrupting the channel", async () => {
+  // Two tests whose status lines each come in just under the 64MB IPC frame
+  // cap, from the same worker. The second frame is queued while the first
+  // backlog is still draining, so this exercises the write cursor, the
+  // amortized compaction, and appends to a partially-sent backlog. The 60s
+  // kill is the regression signal: draining the backlog by memmoving the
+  // whole remainder after every partial write is quadratic in frame size,
+  // and on macOS (~8KB socketpair buffers) one 64MB frame alone took ~90s
+  // of memmove.
+  const TITLE_LENGTH = 60_000_000;
+  using dir = tempDir("parallel-huge-backlog", {
+    "huge.test.js": `import {test,expect} from "bun:test";
+      test(Buffer.alloc(${TITLE_LENGTH}, "A").toString(), () => expect(1).toBe(2));
+      test(Buffer.alloc(${TITLE_LENGTH}, "B").toString(), () => expect(1).toBe(2));`,
+    "ok.test.js": `import {test,expect} from "bun:test"; test("ok",()=>expect(1).toBe(1));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+    timeout: 60_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  // Both huge tests failed normally: the channel survived both frames (no
+  // worker "crashed"), both 60MB status lines arrived intact (each stays
+  // just under the 64MB frame cap, so no truncation), and ok.test.js's pass
+  // survived on the other worker.
+  expect(stderr).not.toContain("crashed");
+  // Each title must arrive as one contiguous run of exactly TITLE_LENGTH
+  // characters: a shorter run (dropped bytes) leaves indexOf at -1, and a
+  // longer run (duplicated bytes) puts the title's letter right after the
+  // first match. Checked via index math so a failure doesn't dump 60MB
+  // strings into the log.
+  for (const letter of ["A", "B"]) {
+    const title = Buffer.alloc(TITLE_LENGTH, letter).toString();
+    const start = stderr.indexOf(title);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(stderr[start + TITLE_LENGTH]).not.toBe(letter);
+  }
+  expect(stderr).toContain("1 pass");
+  expect(stderr).toContain("2 fail");
+  expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);
 }, 90_000);
 

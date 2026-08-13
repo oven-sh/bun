@@ -232,10 +232,11 @@ impl Blob {
             self.is_heap_allocated(),
             "`finalize` may only be called on a heap-allocated Blob"
         );
-        // `release` returns the raw `m_ctx` pointer without dropping;
-        // `Blob__deref` runs `deinit()` (which `drop(heap::take)`s) when the
-        // count reaches zero.
-        Blob__deref(bun_core::heap::release(self));
+        // SAFETY: `self` is the allocation `Blob::new` produced and the JS
+        // wrapper's `+1` is the count released here. `into_raw` hands the box
+        // over without dropping it; `Blob__deref` runs `deinit()` (which
+        // `drop(heap::take)`s) when the count reaches zero.
+        unsafe { Blob__deref(bun_core::heap::into_raw(self)) }
     }
 
     #[inline]
@@ -471,34 +472,59 @@ impl Blob {
 unsafe impl bun_ptr::ExternalSharedDescriptor for Blob {
     unsafe fn ext_ref(this: *mut Self) {
         // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
-        unsafe { Blob__ref(&mut *this) }
+        unsafe { Blob__ref(this) }
     }
     unsafe fn ext_deref(this: *mut Self) {
-        // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
-        unsafe { Blob__deref(&mut *this) }
+        // SAFETY: caller guarantees `this` points to a live heap-allocated Blob
+        // and is releasing a count it owns.
+        unsafe { Blob__deref(this) }
     }
 }
 
+/// Retain half of the refcount protocol behind `BlobImplRefDerefTraits`
+/// (`src/jsc/bindings/blob.h`) and [`bun_ptr::ExternalShared`].
+///
+/// # Safety
+/// `this` must point to a live `Blob` produced by [`Blob::new`], and the call
+/// must happen on the thread that owns it (the count is not atomic). A
+/// by-value `Blob` has a count of zero; bumping it would make a later
+/// [`Blob::deinit`] free an address that was never heap-allocated.
 #[unsafe(no_mangle)]
-pub extern "C" fn Blob__ref(self_: &mut Blob) {
-    debug_assert!(
-        self_.is_heap_allocated(),
-        "cannot ref: this Blob is not heap-allocated"
-    );
-    self_.ref_count.increment();
+unsafe extern "C" fn Blob__ref(this: *mut Blob) {
+    // SAFETY: caller contract above.
+    unsafe {
+        debug_assert!(
+            (*this).is_heap_allocated(),
+            "cannot ref: this Blob is not heap-allocated"
+        );
+        (*this).ref_count.increment();
+    }
 }
 
+/// Release half of the refcount protocol behind `BlobImplRefDerefTraits`
+/// (`src/jsc/bindings/blob.h`), [`bun_ptr::ExternalShared`] and the JS
+/// wrapper's [`Blob::finalize`].
+///
+/// # Safety
+/// `this` must point to a live `Blob` produced by [`Blob::new`], the caller
+/// must own one of its counts (which this call consumes), and the call must
+/// happen on the thread that owns it (the count is not atomic). Releasing the
+/// last count frees the `Blob`, so `this` is dangling once this returns.
 #[unsafe(no_mangle)]
-pub extern "C" fn Blob__deref(self_: &mut Blob) {
-    debug_assert!(
-        self_.is_heap_allocated(),
-        "cannot deref: this Blob is not heap-allocated"
-    );
-    if self_.ref_count.decrement() == bun_ptr::raw_ref_count::DecrementResult::ShouldDestroy {
-        // `deinit` has its own `is_heap_allocated()` guard around the
-        // `drop(heap::take)`, so re-arm so it returns true.
-        self_.ref_count.increment();
-        self_.deinit();
+unsafe extern "C" fn Blob__deref(this: *mut Blob) {
+    // SAFETY: caller contract above. `deinit` frees the allocation, so `this`
+    // is not touched after it.
+    unsafe {
+        debug_assert!(
+            (*this).is_heap_allocated(),
+            "cannot deref: this Blob is not heap-allocated"
+        );
+        if (*this).ref_count.decrement() == bun_ptr::raw_ref_count::DecrementResult::ShouldDestroy {
+            // `deinit` has its own `is_heap_allocated()` guard around the
+            // `drop(heap::take)`, so re-arm so it returns true.
+            (*this).ref_count.increment();
+            (*this).deinit();
+        }
     }
 }
 

@@ -4,10 +4,9 @@ use bun_alloc::Arena;
 use bun_core::String as BunString;
 use bun_glob::BunGlobWalker as GlobWalker;
 use bun_jsc::bun_string_jsc;
-use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_jsc::{
-    ArgumentsSlice, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, JsTerminated,
-    StringJsc as _, SysErrorJsc as _,
+    ArgumentsSlice, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsPtr,
+    JsResult, JsThread, StringJsc as _, SysErrorJsc as _,
 };
 use bun_paths::resolve_path::join_string_buf;
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, platform};
@@ -192,12 +191,40 @@ impl ScanOpts {
     }
 }
 
-pub(crate) struct WalkTask<'a> {
+/// `Glob.scan()` off the JS thread.
+pub(crate) struct WalkTask {
     // `Box<GlobWalker>` drop runs `GlobWalker::Drop` then frees the box.
     walker: Box<GlobWalker>,
     err: Option<WalkTaskErr>,
-    global: &'a JSGlobalObject,
-    has_pending_activity: &'a AtomicUsize,
+}
+// SAFETY: the walker owns its pattern/arena; nothing in it is thread-affine.
+unsafe impl Send for WalkTask {}
+
+/// While a scan is pending the `Glob` wrapper reports `hasPendingActivity`
+/// (so it is not collected); released on the JS thread with the completion.
+pub(crate) struct PendingScan(JsPtr<AtomicUsize>);
+// SAFETY: a counter inside the Glob's native part, which its wrapper owns.
+unsafe impl bun_jsc::job::JsAffine for PendingScan {}
+impl PendingScan {
+    fn new(counter: &AtomicUsize) -> Self {
+        let _ = counter.fetch_add(1, Ordering::SeqCst);
+        // SAFETY: the Glob's m_ctx, kept alive by hasPendingActivity while > 0.
+        Self(unsafe { JsPtr::new(core::ptr::NonNull::from(counter)) })
+    }
+}
+impl Drop for PendingScan {
+    fn drop(&mut self) {
+        // Only ever dropped on the JS thread (a job's Js side); the pointer is
+        // live because the count we hold kept the wrapper alive.
+        // SAFETY: as above.
+        let _ = unsafe { &*self.0.as_ptr() }.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[derive(bun_jsc::JsAffine)]
+pub(crate) struct WalkJs {
+    promise: JSPromiseStrong,
+    _pending: PendingScan,
 }
 
 pub(crate) enum WalkTaskErr {
@@ -216,63 +243,40 @@ impl WalkTaskErr {
     }
 }
 
-pub(crate) type AsyncGlobWalkTask<'a> = ConcurrentPromiseTask<'a, WalkTask<'a>>;
+impl JobContext for WalkTask {
+    type OffThread = Self;
+    type Js = WalkJs;
 
-impl<'a> WalkTask<'a> {
-    fn create(
-        global_this: &'a JSGlobalObject,
-        glob_walker: Box<GlobWalker>,
-        has_pending_activity: &'a AtomicUsize,
-    ) -> Box<AsyncGlobWalkTask<'a>> {
-        let walk_task = Box::new(WalkTask {
-            walker: glob_walker,
-            global: global_this,
-            err: None,
-            has_pending_activity,
-        });
-        AsyncGlobWalkTask::create_on_js_thread(global_this, walk_task)
-    }
-}
-
-impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncGlobWalkTask;
-    fn run(&mut self) {
-        let guard = scopeguard::guard(self.has_pending_activity, |hpa| {
-            decr_pending_activity_flag(hpa);
-        });
-        let result = match self.walker.walk() {
+    fn run(
+        this: &mut Self,
+        _vm: &bun_jsc::vm_handle::Borrow,
+        done: bun_jsc::Completion<Self>,
+    ) -> Option<bun_jsc::Completion<Self>> {
+        let result = match this.walker.walk() {
             Ok(r) => r,
             Err(err) => {
-                self.err = Some(WalkTaskErr::Unknown(err.into()));
-                drop(guard);
-                return;
+                this.err = Some(WalkTaskErr::Unknown(err.into()));
+                return Some(done);
             }
         };
-        match result {
-            bun_sys::Result::Err(err) => {
-                self.err = Some(WalkTaskErr::Syscall(err));
-            }
-            bun_sys::Result::Ok(()) => {}
+        if let bun_sys::Result::Err(err) = result {
+            this.err = Some(WalkTaskErr::Syscall(err));
         }
-        drop(guard);
+        Some(done)
     }
 
-    fn then(&mut self, promise: &mut JSPromise) -> Result<(), JsTerminated> {
-        // Ownership of `Box<WalkTask>` is held by `ConcurrentPromiseTask.ctx`; the wrapper is
-        // freed via `ConcurrentPromiseTask::destroy` on the `.manual_deinit` path
-        // after `run_from_js` returns, which drops `ctx` (and thus `walker`).
-
-        if let Some(err) = &self.err {
-            promise.reject_with_async_stack(self.global, err.to_js(self.global))?;
+    fn then(mut this: Self, mut js: WalkJs, cx: &JsThread<'_>) -> JsResult<()> {
+        let global = cx.global();
+        let promise = js.promise.swap();
+        if let Some(err) = &this.err {
+            promise.reject_with_async_stack(global, err.to_js(global))?;
             return Ok(());
         }
-
-        let js_strings = match glob_walk_result_to_js(&mut self.walker, self.global) {
+        let js_strings = match glob_walk_result_to_js(&mut this.walker, global) {
             Ok(v) => v,
-            // `reject()` pulls the pending exception off the VM.
-            Err(e) => return promise.reject(self.global, Err(e)),
+            Err(e) => return Ok(promise.reject(global, Err(e))?),
         };
-        promise.resolve(self.global, js_strings)
+        Ok(promise.resolve(global, js_strings)?)
     }
 }
 
@@ -396,14 +400,6 @@ impl Glob {
     }
 }
 
-fn incr_pending_activity_flag(has_pending_activity: &AtomicUsize) {
-    let _ = has_pending_activity.fetch_add(1, Ordering::SeqCst);
-}
-
-fn decr_pending_activity_flag(has_pending_activity: &AtomicUsize) {
-    let _ = has_pending_activity.fetch_sub(1, Ordering::SeqCst);
-}
-
 impl Glob {
     // R-2 (host-fn re-entrancy): all JS-exposed methods take `&self`. `Glob`'s
     // fields are read-only after construction (`pattern`) or already atomic
@@ -436,18 +432,21 @@ impl Glob {
                 Ok(Some(gw)) => gw,
             };
 
-        incr_pending_activity_flag(&self.has_pending_activity);
-        let mut task = WalkTask::create(global_this, glob_walker, &self.has_pending_activity);
-        let promise = task.promise.value();
-        task.schedule();
-        // Ownership passes to the work pool / event loop; freed via
-        // `ConcurrentPromiseTask::destroy` on the `.manual_deinit` path.
-        // WalkTask<'_> borrows `&self.has_pending_activity`
-        // and `global_this`. Both referents outlive the task: `Glob` is GC-rooted
-        // via `hasPendingActivity()`, and `JSGlobalObject` lives until VM teardown.
-        // `into_raw` erases the stack-tied `'_` once the heap allocation escapes.
-        let _ = bun_core::heap::into_raw(task);
-        Ok(promise)
+        let cx = global_this.js_thread();
+        let promise = JSPromiseStrong::init(global_this);
+        let value = promise.value();
+        Job::<WalkTask>::schedule(
+            &cx,
+            WalkTask {
+                walker: glob_walker,
+                err: None,
+            },
+            WalkJs {
+                promise,
+                _pending: PendingScan::new(&self.has_pending_activity),
+            },
+        );
+        Ok(value)
     }
 
     #[bun_jsc::host_fn(method)]

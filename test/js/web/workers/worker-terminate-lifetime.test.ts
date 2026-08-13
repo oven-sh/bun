@@ -142,15 +142,15 @@ test.skipIf(!isASAN)(
             // Hermetic: point the global resolver's c-ares channel at a local
             // UDP socket that never replies, so both queries are guaranteed
             // in-flight (socket registered, no completion) when terminate()
-            // lands. dns.lookup() only respects setServers() where the c-ares
-            // backend is the default (Linux); elsewhere resolve4 alone still
-            // covers the socket-state and EDESTRUCTION paths hermetically.
+            // lands. node:dns.lookup() uses the getaddrinfo backend, so opt
+            // into c-ares explicitly to put an ares_getaddrinfo request in
+            // flight alongside resolve4's ares_query.
             'const dgram = require("dgram");' +
             'const dns = require("dns");' +
             'const s = dgram.createSocket("udp4");' +
             's.bind(0, "127.0.0.1", () => {' +
             '  dns.setServers(["127.0.0.1:" + s.address().port]);' +
-            '  if (process.platform === "linux") dns.lookup("example.org", () => {});' +
+            '  Bun.dns.lookup("example.org", { backend: "c-ares" }).catch(() => {});' +
             '  dns.resolve4("example.org", () => {});' +
             '  require("worker_threads").parentPort.postMessage(0);' +
             '});',
@@ -454,4 +454,70 @@ test.skipIf(!isDebug)(
     expect(exitCode).toBe(0);
   },
   120_000,
+);
+
+// Regression: terminating a worker with in-flight fs.readFile calls whose
+// result is zero bytes (empty file, or a FIFO/pipe hitting EOF) wild-freed the
+// dangling empty-buffer pointer when the dead VM refused the completed
+// thread-pool job: MarkedArrayBuffer::from_bytes claimed ownership of an empty
+// Box<[u8]> (no backing allocation), and dropping the undelivered result
+// called free(0x1). ASAN catches it as a SEGV in the allocator on the pool or
+// worker thread.
+test(
+  "terminate with in-flight zero-length fs.readFile results does not wild-free",
+  async () => {
+    const cellRounds = slow ? 4 : 10;
+    using dir = tempDir("worker-terminate-empty-readfile", {
+      "empty.txt": "",
+      "main.cjs": `
+        const { Worker, isMainThread, parentPort } = require("node:worker_threads");
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const empty = path.join(__dirname, "empty.txt");
+        if (isMainThread) {
+          let n = 0;
+          const again = () => {
+            const w = new Worker(__filename);
+            w.on("message", () =>
+              w.terminate().then(() => {
+                if (++n < ${cellRounds}) again();
+                else {
+                  console.log("survived", n);
+                  process.exit(0);
+                }
+              }),
+            );
+          };
+          again();
+        } else {
+          // 64 concurrent chains of zero-byte reads; signal once completions
+          // are churning so terminate() lands with results still in flight.
+          let signaled = false;
+          const go = () =>
+            fs.readFile(empty, () => {
+              if (!signaled) {
+                signaled = true;
+                parentPort.postMessage("busy");
+              }
+              go();
+            });
+          for (let i = 0; i < 64; i++) go();
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: `survived ${cellRounds}`,
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  timeout,
 );

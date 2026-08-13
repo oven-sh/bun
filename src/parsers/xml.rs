@@ -112,7 +112,6 @@ impl XML {
         bump: &'a Bump,
         options: Options,
     ) -> crate::Result<Expr> {
-        bun_core::analytics::Features::xml_parse_inc();
         let mut tape = Tape::new_in(bump, core::mem::size_of_val(contents));
         // SAFETY: see `Tape::object_from`.
         unsafe { tape.tape.as_mut() }.encoding = if U::WIDE {
@@ -599,8 +598,8 @@ impl<U: Unit> core::fmt::Display for KindDisplay<'_, U> {
 
 /// See `Parser::content_step`.
 enum Step {
-    Done,
-    Continue,
+    /// One content item was consumed (a child opened or the element closed).
+    Handled,
     Slow,
 }
 
@@ -3820,8 +3819,8 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             // through `next_content`'s tokens.
             if self.scanner.in_document() && self.scanner.idx.is_some() {
                 match self.content_step(name, frame)? {
+                    Step::Handled => continue,
                     Step::Slow => {}
-                    _ => continue,
                 }
             }
             self.advance_content()?;
@@ -3982,7 +3981,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             };
             let end_frame = sc.frame_id;
             self.close_element(name, frame, end_name, stop, end_frame)?;
-            return Ok(Step::Done);
+            return Ok(Step::Handled);
         }
         sc.pos = stop + 1;
         sc.tag_degraded = false;
@@ -3994,7 +3993,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             spaced: false,
         };
         self.open_element()?;
-        Ok(Step::Continue)
+        Ok(Step::Handled)
     }
 
     /// The attributes of the start tag of `element`, streamed to the sink:

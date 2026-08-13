@@ -1,11 +1,13 @@
 // Tests for installing git dependencies that live in ONE repository as
-// multiple branches (issue #35420), `git+file://` dependencies, and
-// tarball-URL / `github:` dependencies that appear both directly and
-// transitively (issues #10915, #8501, #11348, #28284). Everything is local:
-// a bare repo on disk (served over git's dumb HTTP protocol by Bun.serve
-// when an http URL is needed) or static tarballs.
+// multiple branches (issue #35420), `git+file://` dependencies, tarball-URL /
+// `github:` dependencies that appear both directly and transitively (issues
+// #10915, #8501, #11348, #28284), and refreshing the cached bare clone when
+// the upstream repository moves (issues #13769, #11548, #18947, #15336).
+// Everything is local: a bare repo on disk (served over git's dumb HTTP
+// protocol by Bun.serve when an http URL is needed) or static tarballs.
 import { expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
+import { rm } from "fs/promises";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import { pathToFileURL } from "url";
@@ -29,6 +31,15 @@ async function run(cwd: string, cmd: string[], what: string) {
 
 function git(cwd: string, ...args: string[]) {
   return run(cwd, ["git", ...args], `git ${args.join(" ")}`);
+}
+
+async function gitStdout(cwd: string, ...args: string[]): Promise<string> {
+  await using proc = Bun.spawn({ cmd: ["git", ...args], cwd, env: gitEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) {
+    throw new Error(`git ${args.join(" ")} failed in ${cwd}:\n${stderr}`);
+  }
+  return stdout.trim();
 }
 
 interface BranchPackage {
@@ -61,6 +72,31 @@ async function makeSharedRepo(root: string, packages: BranchPackage[]): Promise<
   return bare;
 }
 
+// Adds a commit on `branch` in the work tree created by `makeSharedRepo` and
+// returns its SHA. The served bare repo is not touched; see `pushRef`.
+async function commitOn(root: string, branch: string, marker: string): Promise<string> {
+  const work = join(root, "work");
+  await git(work, "checkout", "-q", branch);
+  writeFileSync(join(work, "index.js"), `module.exports = ${JSON.stringify(marker)};\n`);
+  await git(work, "commit", "-aqm", marker, "--no-gpg-sign");
+  return gitStdout(work, "rev-parse", "HEAD");
+}
+
+// Force-pushes one ref (a branch name or `refs/tags/<tag>`) from the work
+// tree to the served bare repo, so a moved tag lands like a new one.
+async function pushRef(root: string, ref: string) {
+  const bare = join(root, "shared-repo.git");
+  await git(join(root, "work"), "push", "-q", bare, `+${ref}`);
+  await git(bare, "update-server-info");
+}
+
+async function installedVersionOf(dir: string, name: string): Promise<string | null> {
+  const file = Bun.file(join(dir, "node_modules", name, "index.js"));
+  if (!(await file.exists())) return null;
+  const text = await file.text();
+  return JSON.parse(text.slice(text.indexOf("=") + 1, text.lastIndexOf(";")));
+}
+
 function serveStatic(root: string) {
   return Bun.serve({
     port: 0,
@@ -71,14 +107,14 @@ function serveStatic(root: string) {
   });
 }
 
-async function runInstall(cwd: string, cacheDir: string, extraEnv: Record<string, string>, ...args: string[]) {
+async function runBun(cwd: string, cacheDir: string, extraEnv: Record<string, string>, ...cmd: string[]) {
   const env = { ...gitEnv, ...extraEnv, BUN_INSTALL_CACHE_DIR: cacheDir };
   // Set on ASAN CI lanes; it arms a subreaper around internal git spawns that
   // SIGKILLs concurrent clone tasks (see #33982). This test exercises install
   // task bookkeeping, not orphan reaping.
   delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install", ...args],
+    cmd: [bunExe(), ...cmd],
     cwd,
     env,
     stdout: "pipe",
@@ -88,11 +124,51 @@ async function runInstall(cwd: string, cacheDir: string, extraEnv: Record<string
   return { stdout, stderr, exitCode };
 }
 
-async function installedVersionOf(dir: string, name: string): Promise<string | null> {
-  const file = Bun.file(join(dir, "node_modules", name, "index.js"));
-  if (!(await file.exists())) return null;
-  const text = await file.text();
-  return JSON.parse(text.slice(text.indexOf("=") + 1, text.lastIndexOf(";")));
+function runInstall(cwd: string, cacheDir: string, extraEnv: Record<string, string>, ...args: string[]) {
+  return runBun(cwd, cacheDir, extraEnv, "install", ...args);
+}
+
+// Creates a one-branch `shared-repo.git` under `root` (already served on
+// `port`; HEAD points at the branch like a normal upstream) and installs a
+// project depending on it as `dep`, so the cache holds the bare clone and the
+// lockfile pins the branch's first commit. `tag`, when given, is created on
+// that commit and pushed. `committish` defaults to the tag or the branch; ""
+// depends on the remote HEAD.
+async function installedFromBranch(
+  root: string,
+  port: number,
+  branch: string,
+  { tag = "", committish = tag || branch, env = {} as Record<string, string> } = {},
+) {
+  const bare = await makeSharedRepo(root, [{ name: "dep", branch }]);
+  await git(bare, "symbolic-ref", "HEAD", `refs/heads/${branch}`);
+  if (tag) {
+    await git(join(root, "work"), "tag", tag);
+    await pushRef(root, `refs/tags/${tag}`);
+  }
+
+  const repoUrl = `git+http://localhost:${port}/shared-repo.git`;
+  const spec = committish === "" ? repoUrl : `${repoUrl}#${committish}`;
+  const project = join(root, "project");
+  mkdirSync(project);
+  writeFileSync(join(project, "package.json"), JSON.stringify({ name: "project", dependencies: { dep: spec } }));
+
+  const cache = join(root, "cache");
+  const { stderr, exitCode } = await runInstall(project, cache, env);
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+  expect(await installedVersionOf(project, "dep")).toBe(branch);
+
+  return { bare, project, cache, spec };
+}
+
+// Removes node_modules and the per-commit checkout directories, keeping the
+// bare clone, so the next install has to refresh and check out from it.
+async function dropCheckouts(project: string, cache: string) {
+  await rm(join(project, "node_modules"), { recursive: true, force: true });
+  for await (const entry of new Bun.Glob("@G@*").scan({ cwd: cache, onlyFiles: false })) {
+    await rm(join(cache, entry), { recursive: true, force: true });
+  }
 }
 
 // issue #35420 bug 1: with no lockfile and a cold cache, dependencies that
@@ -400,26 +476,225 @@ for (const linker of ["hoisted", "isolated"] as const) {
 // issue #35420 bug 3: `git+file://` dependencies never cloned at all — the
 // clone task recognized neither an https nor an ssh URL and finished without
 // running git, leaving a poisoned repo handle behind.
-test.concurrent("installs a git+file:// dependency", async () => {
-  using dir = tempDir("git-dep-file", {});
-  const root = String(dir);
-  const bare = await makeSharedRepo(root, [{ name: "@scope/pkg-b", branch: "pkg-b" }]);
+test.concurrent(
+  "installs a git+file:// dependency",
+  async () => {
+    using dir = tempDir("git-dep-file", {});
+    const root = String(dir);
+    const bare = await makeSharedRepo(root, [{ name: "@scope/pkg-b", branch: "pkg-b" }]);
 
-  const project = join(root, "project");
-  mkdirSync(project);
-  writeFileSync(
-    join(project, "package.json"),
-    JSON.stringify({
-      name: "project",
-      version: "1.0.0",
-      dependencies: {
-        "@scope/pkg-b": `git+${pathToFileURL(bare)}#pkg-b`,
-      },
-    }),
-  );
+    const project = join(root, "project");
+    mkdirSync(project);
+    writeFileSync(
+      join(project, "package.json"),
+      JSON.stringify({
+        name: "project",
+        version: "1.0.0",
+        dependencies: {
+          "@scope/pkg-b": `git+${pathToFileURL(bare)}#pkg-b`,
+        },
+      }),
+    );
 
-  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
-  expect(stderr).not.toContain("error:");
-  expect(await installedVersionOf(project, "@scope/pkg-b")).toBe("pkg-b");
-  expect(exitCode).toBe(0);
-});
+    const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+    expect(stderr).not.toContain("error:");
+    expect(await installedVersionOf(project, "@scope/pkg-b")).toBe("pkg-b");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// The tests below cover refreshing a bare clone that is already in the cache.
+// `git clone --bare` configures no fetch refspec, so the refresh used to be a
+// bare `git fetch` that only updated FETCH_HEAD: every later resolution of a
+// branch, tag or HEAD read the refs as they were when the repo was first
+// cached, until `bun pm cache rm`.
+
+// issue #13769: `bun update` kept the commit the lockfile was first written
+// with. The global gitconfig here also sets `clone.defaultRemoteName`, which
+// the refresh must not depend on (it fetches from `origin` by name).
+test.concurrent(
+  "bun update moves a HEAD-tracking git dependency to the new upstream HEAD",
+  async () => {
+    using dir = tempDir("git-dep-update-head", {});
+    const root = String(dir);
+    await using server = serveStatic(root);
+    const gitconfig = join(root, "gitconfig");
+    writeFileSync(gitconfig, "[clone]\n\tdefaultRemoteName = upstream\n");
+    const env = { GIT_CONFIG_GLOBAL: gitconfig };
+    const { project, cache } = await installedFromBranch(root, server.port, "main", { committish: "", env });
+
+    const sha = await commitOn(root, "main", "main-v2");
+    await pushRef(root, "main");
+
+    const { stdout, stderr, exitCode } = await runBun(project, cache, env, "update");
+    expect(stderr).not.toContain("error:");
+    expect(stdout).not.toContain("no changes");
+    expect(await installedVersionOf(project, "dep")).toBe("main-v2");
+    expect(await Bun.file(join(project, "bun.lock")).text()).toContain(sha);
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// issue #13769: same for `bun update <name>` on a `#branch` dependency.
+test.concurrent(
+  "bun update <name> moves a branch git dependency to the new branch tip",
+  async () => {
+    using dir = tempDir("git-dep-update-branch", {});
+    const root = String(dir);
+    await using server = serveStatic(root);
+    const { project, cache } = await installedFromBranch(root, server.port, "release");
+
+    await commitOn(root, "release", "release-v2");
+    await pushRef(root, "release");
+
+    const { stderr, exitCode } = await runBun(project, cache, {}, "update", "dep");
+    expect(stderr).not.toContain("error:");
+    expect(await installedVersionOf(project, "dep")).toBe("release-v2");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+test.concurrent(
+  "bun update leaves the lockfile alone when upstream has not moved",
+  async () => {
+    using dir = tempDir("git-dep-update-noop", {});
+    const root = String(dir);
+    await using server = serveStatic(root);
+    const { project, cache } = await installedFromBranch(root, server.port, "main");
+
+    const lockBefore = await Bun.file(join(project, "bun.lock")).text();
+    const { stderr, exitCode } = await runBun(project, cache, {}, "update");
+    expect(stderr).not.toContain("error:");
+    expect(await installedVersionOf(project, "dep")).toBe("main");
+    expect(await Bun.file(join(project, "bun.lock")).text()).toBe(lockBefore);
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// The refresh runs on plain `bun install` too whenever the pinned commit's
+// checkout is missing from the cache; it must update the bare clone without
+// changing what the lockfile pins.
+test.concurrent(
+  "bun install keeps the locked commit after upstream moves",
+  async () => {
+    using dir = tempDir("git-dep-install-pinned", {});
+    const root = String(dir);
+    await using server = serveStatic(root);
+    const { project, cache } = await installedFromBranch(root, server.port, "main");
+
+    await commitOn(root, "main", "main-v2");
+    await pushRef(root, "main");
+    await dropCheckouts(project, cache);
+
+    const lockBefore = await Bun.file(join(project, "bun.lock")).text();
+    const { stderr, exitCode } = await runInstall(project, cache, {});
+    expect(stderr).not.toContain("error:");
+    expect(await installedVersionOf(project, "dep")).toBe("main");
+    expect(await Bun.file(join(project, "bun.lock")).text()).toBe(lockBefore);
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// A branch renamed upstream into a nested name (`release` -> `release/1.0`)
+// collides with the stale `refs/heads/release` file in the bare clone; the
+// refresh has to prune it or every later fetch of that repo fails.
+test.concurrent(
+  "bun install survives an upstream branch renamed into a nested name",
+  async () => {
+    using dir = tempDir("git-dep-renamed-branch", {});
+    const root = String(dir);
+    await using server = serveStatic(root);
+    const { bare, project, cache } = await installedFromBranch(root, server.port, "release");
+
+    await git(bare, "branch", "-m", "release", "release/1.0");
+    await git(bare, "update-server-info");
+    await dropCheckouts(project, cache);
+
+    const { stderr, exitCode } = await runInstall(project, cache, {});
+    expect(stderr).not.toContain("error:");
+    expect(await installedVersionOf(project, "dep")).toBe("release");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// issues #11548, #18947: switching a dependency to a tag created after the
+// repo was cached failed with "no commit matching". Only the tag is pushed,
+// so tag auto-following on the branch refspec can't be what makes it visible.
+test.concurrent(
+  "bun install resolves a tag pushed after the repo was cached",
+  async () => {
+    using dir = tempDir("git-dep-new-tag", {});
+    const root = String(dir);
+    await using server = serveStatic(root);
+    const { project, cache, spec } = await installedFromBranch(root, server.port, "main");
+
+    await commitOn(root, "main", "main-v2");
+    await git(join(root, "work"), "tag", "v2");
+    await pushRef(root, "refs/tags/v2");
+    writeFileSync(
+      join(project, "package.json"),
+      JSON.stringify({ name: "project", dependencies: { dep: spec.replace(/#main$/, "#v2") } }),
+    );
+
+    const { stderr, exitCode } = await runInstall(project, cache, {});
+    expect(stderr).not.toContain("no commit matching");
+    expect(stderr).not.toContain("error:");
+    expect(await installedVersionOf(project, "dep")).toBe("main-v2");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// issue #15336: same for a branch created after the repo was cached.
+test.concurrent(
+  "bun install resolves a branch created after the repo was cached",
+  async () => {
+    using dir = tempDir("git-dep-new-branch", {});
+    const root = String(dir);
+    await using server = serveStatic(root);
+    const { project, cache, spec } = await installedFromBranch(root, server.port, "main");
+
+    await git(join(root, "work"), "branch", "release/2.0");
+    await commitOn(root, "release/2.0", "release-2.0");
+    await pushRef(root, "release/2.0");
+    writeFileSync(
+      join(project, "package.json"),
+      JSON.stringify({ name: "project", dependencies: { dep: spec.replace(/#main$/, "#release/2.0") } }),
+    );
+
+    const { stderr, exitCode } = await runInstall(project, cache, {});
+    expect(stderr).not.toContain("no commit matching");
+    expect(stderr).not.toContain("error:");
+    expect(await installedVersionOf(project, "dep")).toBe("release-2.0");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// A tag moved upstream (`git tag -f`) only lands in the bare clone because
+// the tags refspec is a forcing one.
+test.concurrent(
+  "bun update follows a tag that was moved upstream",
+  async () => {
+    using dir = tempDir("git-dep-moved-tag", {});
+    const root = String(dir);
+    await using server = serveStatic(root);
+    const { project, cache } = await installedFromBranch(root, server.port, "main", { tag: "v1" });
+
+    await commitOn(root, "main", "main-v2");
+    await git(join(root, "work"), "tag", "-f", "v1");
+    await pushRef(root, "refs/tags/v1");
+
+    const { stderr, exitCode } = await runBun(project, cache, {}, "update");
+    expect(stderr).not.toContain("error:");
+    expect(await installedVersionOf(project, "dep")).toBe("main-v2");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);

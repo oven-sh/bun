@@ -722,7 +722,7 @@ impl RepositoryExt for Repository {
                     &[folder_name.as_bytes()],
                 );
 
-                // `clone --bare` sets no fetch refspec, so name heads/tags explicitly.
+                // Bare clones have no fetch refspec; --prune clears refs renamed upstream.
                 if let Err(err) = exec(
                     env,
                     &[
@@ -731,18 +731,17 @@ impl RepositoryExt for Repository {
                         path,
                         b"fetch",
                         b"--quiet",
-                        url,
+                        b"--prune",
+                        b"origin",
                         b"+refs/heads/*:refs/heads/*",
                         b"+refs/tags/*:refs/tags/*",
                     ],
                 ) {
-                    if err == crate::Error::RepositoryNotFound || attempt > 1 {
-                        log.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!("\"git fetch\" for \"{}\" failed", BStr::new(name)),
-                        );
-                    }
+                    log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!("\"git fetch\" for \"{}\" failed", BStr::new(name)),
+                    );
                     return Err(err);
                 }
                 Ok(dir)
@@ -766,6 +765,9 @@ impl RepositoryExt for Repository {
                         b"core.longpaths=true",
                         b"--quiet",
                         b"--bare",
+                        // The refresh fetches "origin" by name; ignore clone.defaultRemoteName.
+                        b"-o",
+                        b"origin",
                         url,
                         target,
                     ],

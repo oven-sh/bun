@@ -5,7 +5,7 @@ description: "File types and loaders supported by Bun's bundler and runtime"
 
 The Bun bundler implements a set of default loaders. As a rule of thumb, the bundler and the runtime support the same set of file types.
 
-`.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` `.jsx` `.css` `.json` `.jsonc` `.json5` `.toml` `.yaml` `.yml` `.xml` `.txt` `.md` `.wasm` `.node` `.html` `.sh`
+`.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` `.jsx` `.css` `.json` `.jsonc` `.json5` `.toml` `.yaml` `.yml` `.xml` `.txt` `.md` `.markdown` `.wasm` `.node` `.html` `.sh`
 
 Bun uses the file extension to pick the built-in _loader_ that parses the file. Every loader has a name, such as `js`, `tsx`, or `json`. These names are used when building [plugins](/bundler/plugins) that extend Bun with custom loaders.
 

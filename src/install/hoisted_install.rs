@@ -478,9 +478,6 @@ pub(crate) fn install_hoisted_packages(
                 installer.install_package(*dependency_id, log_level);
             }
 
-            // Flush any ParallelHoistedTasks accumulated for this tree so
-            // workers start immediately rather than waiting for the full
-            // tree iteration to finish.
             installer.schedule_parallel_batch();
 
             run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
@@ -571,14 +568,7 @@ pub(crate) fn install_hoisted_packages(
         this.tick_lifecycle_scripts();
         this.report_slow_lifecycle_scripts();
 
-        // Wait for any thread-pool package installs kicked off during the
-        // tree iteration above, then run their result handling (summary,
-        // bins, scripts, tree counts) serially. This must happen before the
-        // forced pending-install drain below so bin linking and lifecycle
-        // scripts see a fully populated node_modules. If any worker
-        // discovered a package missing from the cache, the result handler
-        // re-enters the serial path which enqueues a download/extract task;
-        // drain those here.
+        // Must precede the pending-install drain and bin linking below, which need these on disk.
         if installer.complete_parallel_installs(log_level) {
             struct DrainClosure<'a, 'b> {
                 installer: &'a mut PackageInstaller<'b>,
@@ -625,8 +615,7 @@ pub(crate) fn install_hoisted_packages(
                 err: None,
                 manager: mgr,
             };
-            // run_tasks pushes task_batch to the thread pool via
-            // drain_dependency_list, so call it once before sleeping.
+            // is_done() is what submits the rerouted batch; never sleep on work that was not submitted.
             if !DrainClosure::is_done(&mut drain_closure) {
                 // SAFETY: see the sibling `sleep_until` call above.
                 unsafe {

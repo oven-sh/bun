@@ -96,9 +96,7 @@ new!(pub BUN_INSPECT_PRELOAD: string, "BUN_INSPECT_PRELOAD", {});
 new!(pub BUN_INSTALL: string, "BUN_INSTALL", {});
 new!(pub BUN_INSTALL_BIN: string, "BUN_INSTALL_BIN", {});
 new!(pub BUN_INSTALL_GLOBAL_DIR: string, "BUN_INSTALL_GLOBAL_DIR", {});
-// Opt out of the parallel hoisted node_modules linker and fall back
-// to linking packages one at a time on the main thread. Escape hatch
-// if the thread-pool fan-out misbehaves on a filesystem.
+// Escape hatch: link hoisted packages serially on the main thread instead of on the thread pool.
 new!(pub BUN_INSTALL_SERIAL_HOISTED: boolean, "BUN_INSTALL_SERIAL_HOISTED", { default: false });
 // Minimum response `Content-Length` (in bytes) for `bun install` to
 // stream a tarball directly into libarchive instead of buffering the
@@ -281,9 +279,7 @@ pub mod feature_flag {
     // Test-only: bypass the stdin isatty gate in `bun update --interactive` so
     // tests can drive the multi-select by writing keystrokes to a pipe.
     new_feature_flag!(pub BUN_INTERNAL_INTERACTIVE_ASSUME_TTY, "BUN_INTERNAL_INTERACTIVE_ASSUME_TTY", {});
-    // Test-only: emit "[ParallelHoistedInstall] N tasks" to stderr from
-    // the hoisted linker's thread-pool drain so tests can assert the
-    // parallel path was taken without timing.
+    // Test-only: prints "[ParallelHoistedInstall] N tasks" so tests can assert the parallel path ran.
     new_feature_flag!(pub BUN_INTERNAL_PARALLEL_HOISTED_MARKER, "BUN_INTERNAL_PARALLEL_HOISTED_MARKER", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN, "BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT, "BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT", {});

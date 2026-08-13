@@ -113,17 +113,12 @@ pub struct PackageInstaller<'a> {
 
     pub(crate) seen_bin_links: StringHashMap<()>,
 
-    /// Heap-allocated tasks fanned to `manager.thread_pool` by the
-    /// hoisted linker on POSIX when `node_modules` is being created fresh.
-    /// Drained in `complete_parallel_installs()` on the main thread, where
-    /// each task's stored `InstallResult` is fed through
-    /// `handle_install_result()`. See `ParallelHoistedTask`.
+    /// Joined and replayed by `complete_parallel_installs()`; see `ParallelHoistedTask`.
     #[cfg(unix)]
     pub(crate) parallel_tasks: Vec<*mut ParallelHoistedTask>,
     #[cfg(unix)]
     pub(crate) parallel_wait_group: bun_threading::WaitGroup,
-    /// Accumulates tasks for the current tree; flushed to
-    /// `manager.thread_pool` per tree via `schedule_parallel_batch()`.
+    /// Flushed to the thread pool once per tree by `schedule_parallel_batch()`.
     #[cfg(unix)]
     pub(crate) parallel_batch: bun_threading::thread_pool::Batch,
 }
@@ -379,49 +374,29 @@ fn abs_node_modules_path(
 }
 
 #[cfg(unix)]
-/// A single package's cache→`node_modules` link operation, run on
-/// `manager.thread_pool`. Created by
-/// `install_package_with_name_and_resolution()` when the package is
-/// already cached and the hoisted linker is populating a fresh
-/// `node_modules` on POSIX. Workers call `PackageInstall::install()`
-/// (the expensive hardlink/clonefile walk) and store the result;
-/// `complete_parallel_installs()` then runs the result handling
-/// (summary, bin links, tree counts, lifecycle scripts) serially on
-/// the main thread.
+/// A cache→`node_modules` link on the thread pool; replayed by `complete_parallel_installs()`.
 pub(crate) struct ParallelHoistedTask {
-    /// BACKREF — raw so the worker doesn't hold a `&mut` that the main
-    /// thread's iteration also needs. Workers read only
-    /// `root_node_modules_folder` (shared fd), `lockfile` (for
-    /// `PackageInstall.lockfile: &Lockfile`), and `parallel_wait_group`
-    /// (atomic). They never touch the column slices, `trees`, `summary`,
-    /// or `node_modules` — those belong to the main thread.
+    /// BACKREF; aliasing contract in `run()`'s SAFETY note.
     installer: *mut PackageInstaller<'static>,
     pub(crate) task: bun_threading::thread_pool::Task,
 
-    /// Owned absolute path to this task's `node_modules` directory.
-    /// For `tree_id == 0` this equals the root and the worker reuses
-    /// `installer.root_node_modules_folder` instead of reopening.
     node_modules_path: Box<[u8]>,
-    /// Owned NUL-terminated alias (e.g. `@scope/name\0`).
+    /// NUL-terminated.
     destination_dir_subpath: Box<[u8]>,
-    /// Owned NUL-terminated cache subpath. The cache directory itself
-    /// (`cache_dir`) is a borrowed fd owned by `PackageManager`.
+    /// NUL-terminated.
     cache_dir_subpath: Box<[u8]>,
+    /// Borrowed; owned by `PackageManager`.
     cache_dir: Fd,
 
     pub(crate) resolution_tag: resolution::Tag,
     pub(crate) dependency_id: DependencyID,
     pub(crate) package_id: PackageID,
     pub(crate) tree_id: lockfile::tree::Id,
-    /// Snapshot of `installer.names[package_id]` at enqueue time.
-    /// `fix_cached_lockfile_package_slices()` may rewrite that slice's
-    /// backing storage while workers run.
+    /// Snapshot: `fix_cached_lockfile_package_slices()` may reallocate `names` under workers.
     pub(crate) package_name: String,
 
     pub(crate) result: package_install::InstallResult,
-    /// `result` is a cache-miss `Failure` (ENOENT opening the cache
-    /// subpath). `complete_parallel_installs()` re-routes these through
-    /// the serial download path.
+    /// Cache ENOENT; `complete_parallel_installs()` reroutes to the download path.
     pub(crate) missing_from_cache: bool,
 }
 
@@ -445,13 +420,13 @@ impl ParallelHoistedTask {
     }
 
     fn run(&mut self) -> package_install::InstallResult {
-        // SAFETY: BACKREF — see field doc. Project the two fields we need
-        // via raw place expressions so no `&PackageInstaller` is formed
-        // while the main thread may hold `&mut PackageInstaller`
-        // (`run_tasks(this, &mut installer, ...)` and the next tree's
-        // `install_package(&mut self)` run concurrently with workers).
-        // `root_node_modules_folder` is never mutated during the install
-        // pass; `lockfile` is a stable raw pointer.
+        // SAFETY: BACKREF. The main thread holds `&mut PackageInstaller` while workers run
+        // (`run_tasks(this, &mut installer, ..)`, the next tree's `install_package`), so a worker
+        // must never form `&PackageInstaller`; it projects individual fields with `addr_of!`.
+        // Workers touch exactly three fields: these two, which are not mutated during the install
+        // pass (`root_node_modules_folder` is an open fd, `lockfile` a stable pointer), and the
+        // atomic `parallel_wait_group` in `run_from_thread_pool`. Everything else (column slices,
+        // `trees`, `summary`, `node_modules`, `parallel_tasks`) is main-thread only.
         let (root_node_modules_folder, lockfile): (&Dir, &Lockfile) = unsafe {
             (
                 &*core::ptr::addr_of!((*self.installer).root_node_modules_folder),
@@ -459,9 +434,7 @@ impl ParallelHoistedTask {
             )
         };
 
-        // For nested trees open (and if racing another worker, create)
-        // the destination `node_modules`. The root tree reuses the
-        // already-open `root_node_modules_folder` fd.
+        // Root tree reuses the open fd; nested trees open (creating if needed) their own.
         let owned_dir: Option<Dir> = if self.tree_id == 0 {
             None
         } else {
@@ -626,12 +599,7 @@ impl<'a> PackageInstaller<'a> {
         unsafe { &mut *self.progress }
     }
 
-    /// Whether the hoisted linker should fan per-package
-    /// `PackageInstall::install()` out to `manager.thread_pool` instead
-    /// of running it inline on the main thread. Only enabled on POSIX
-    /// for a fresh `node_modules` (where `skip_delete` is true so there
-    /// is no per-package delete/rename-aside step to serialise).
-    /// Windows already fans out per-file via `HardLinkWindowsInstallTask`.
+    /// Fresh `node_modules` only: `skip_delete` means there is no rename-aside step to serialise.
     #[cfg(unix)]
     pub(crate) fn can_use_parallel_hoisted_install(&self) -> bool {
         if bun_core::env_var::BUN_INSTALL_SERIAL_HOISTED
@@ -643,8 +611,7 @@ impl<'a> PackageInstaller<'a> {
         self.skip_delete
     }
 
-    /// Flush `parallel_batch` to the thread pool. Called once per tree
-    /// so workers start while the main thread continues iterating.
+    /// Called once per tree so workers start before the iteration finishes.
     #[cfg(unix)]
     pub(crate) fn schedule_parallel_batch(&mut self) {
         if self.parallel_batch.len == 0 {
@@ -654,8 +621,7 @@ impl<'a> PackageInstaller<'a> {
         self.manager_mut().thread_pool.schedule(batch);
     }
 
-    /// No-op on Windows so `hoisted_install` can call these
-    /// unconditionally.
+    /// Windows no-ops so `hoisted_install` can call these unconditionally.
     #[cfg(windows)]
     #[inline]
     pub(crate) fn schedule_parallel_batch(&mut self) {}
@@ -665,12 +631,7 @@ impl<'a> PackageInstaller<'a> {
         false
     }
 
-    /// Block on all in-flight `ParallelHoistedTask`s, then feed each
-    /// stored result through `handle_install_result()` on the main
-    /// thread. Tasks whose worker hit a cache miss re-enter the serial
-    /// download path (`install_package_with_name_and_resolution::<false,
-    /// true>()`). Returns `true` if any task re-routed, so
-    /// `hoisted_install` can drain the resulting download tasks.
+    /// Joins the workers and replays their results; `true` means some were rerouted to downloads.
     #[cfg(unix)]
     pub(crate) fn complete_parallel_installs(&mut self, log_level: Options::LogLevel) -> bool {
         self.schedule_parallel_batch();
@@ -720,11 +681,7 @@ impl<'a> PackageInstaller<'a> {
                 );
             } else {
                 let resolution = self.resolutions[t.package_id as usize];
-                // `destination_dir_fd` is only consumed by the EACCES
-                // fstat writability check. The parallel path only runs
-                // on a fresh `node_modules` where bun just created
-                // every nested dir itself (same owner/mode as root), so
-                // root's writability is representative.
+                // Root fd suffices for the EACCES fstat: on a fresh tree every nested dir has its mode.
                 self.handle_install_result(
                     t.dependency_id,
                     t.package_id,
@@ -1310,12 +1267,10 @@ impl<'a> PackageInstaller<'a> {
         true
     }
 
-    // All other owned fields (`pending_lifecycle_scripts: Vec`,
-    // `completed_trees: Bitset`, `trees: Box<[TreeContext]>`,
-    // `tree_ids_to_trees_the_id_depends_on`, `node_modules`,
-    // `trusted_dependencies_from_update_requests`) impl Drop. Borrowed
-    // fields (`manager`, `lockfile`, etc.) are not freed. See `impl Drop`
-    // for the parallel-task drain.
+    // `pub fn deinit` dropped. All owned fields (`pending_lifecycle_scripts: Vec`,
+    // `completed_trees: Bitset`, `trees: Box<[TreeContext]>`, `tree_ids_to_trees_the_id_depends_on`,
+    // `node_modules`, `trusted_dependencies_from_update_requests`) impl Drop. Borrowed fields
+    // (`manager`, `lockfile`, etc.) are not freed.
 
     /// Call when you mutate the length of `lockfile.packages`
     pub(crate) fn fix_cached_lockfile_package_slices(&mut self) {
@@ -1511,10 +1466,7 @@ impl<'a> PackageInstaller<'a> {
         count
     }
 
-    /// Result-handling half of `install_package_with_name_and_resolution()`,
-    /// split out so `complete_parallel_installs()` can feed a worker's
-    /// stored `InstallResult` through the same summary / bin-link /
-    /// tree-count / lifecycle-script path the serial linker uses.
+    /// Shared by the serial path and `complete_parallel_installs()`.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_install_result(
         &mut self,
@@ -2178,13 +2130,7 @@ impl<'a> PackageInstaller<'a> {
             || !installer.verify(resolution, &self.root_node_modules_folder);
 
         if needs_install {
-            // Fast path: package is cached, node_modules is fresh, and
-            // the install method is a real link (not a symlink). Hand
-            // the hardlink/clonefile walk to a thread-pool worker and
-            // return; `complete_parallel_installs()` picks up the
-            // result. The cache-presence check here is optimistic —
-            // the worker re-checks on open and sets
-            // `missing_from_cache` for reroute.
+            // No cache-presence check here: the worker sees ENOENT and the result is rerouted.
             #[cfg(unix)]
             if needs_verify
                 && !is_pending_package_install
@@ -2200,13 +2146,10 @@ impl<'a> PackageInstaller<'a> {
                         | resolution::Tag::RemoteTarball
                 )
             {
-                // Copy everything needed from the `PackageInstall` and
-                // end its borrows into `self` (folder_path_buf,
-                // destination_dir_subpath_buf) before `self` is cast
-                // to a raw pointer for the task.
                 let dest = Box::<[u8]>::from(installer.destination_dir_subpath.as_bytes_with_nul());
                 let cache = Box::<[u8]>::from(installer.cache_dir_subpath.as_bytes_with_nul());
                 let cache_dir = installer.cache_dir;
+                // Ends `installer`'s borrows of `self.*_buf` before `self` is cast to a raw pointer.
                 #[allow(clippy::drop_non_drop)]
                 drop(installer);
 
@@ -2864,11 +2807,7 @@ impl<'a> PackageInstaller<'a> {
 #[cfg(unix)]
 impl Drop for PackageInstaller<'_> {
     fn drop(&mut self) {
-        // Any early error return from `hoisted_install` drops the
-        // `PackageInstaller` while workers may still be running. Flush
-        // the current batch so nothing sits un-scheduled, wait for
-        // workers to finish, then free every heap task. After this the
-        // field `Drop`s run safely.
+        // An error return from `hoisted_install` can drop this with workers in flight; join them first.
         self.schedule_parallel_batch();
         if !self.parallel_tasks.is_empty() {
             self.parallel_wait_group.wait();

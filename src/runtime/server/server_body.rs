@@ -2495,7 +2495,7 @@ where
     }
 
     /// `node:https` `Server#addContext()` after `listen()`: registers the SNI
-    /// context on the running app and installs this server's routes for it.
+    /// context on the running TCP app and installs this server's routes for it.
     pub(crate) fn add_sni_context(
         &mut self,
         global: &JSGlobalObject,
@@ -2511,6 +2511,7 @@ where
         if self.app.is_none() {
             return Ok(JSValue::UNDEFINED);
         }
+        debug_assert!(self.h3_app.is_none());
         // Same guard as `Listener::add_server_name`: the SNI tree would file an
         // empty name on its root, where nothing can ever match it.
         if hostname.is_empty() {
@@ -2572,37 +2573,12 @@ where
             }
             return Err(JsError::Thrown);
         }
-        if super::throw_ssl_error_if_necessary(global) {
-            return Err(JsError::Thrown);
-        }
         // SAFETY: server_name is a CString with a trailing NUL byte.
         let z = unsafe {
             bun_core::ZStr::from_raw(server_name.as_ptr().cast(), server_name.as_bytes().len())
         };
+        // Routes are installed into the router domain() selects.
         self.app_mut().domain(z);
-        if super::throw_ssl_error_if_necessary(global) {
-            return Err(JsError::Thrown);
-        }
-
-        if Self::HAS_H3 {
-            if let Some(h3_app) = self.h3_app {
-                if bun_opaque::opaque_deref_mut(h3_app)
-                    .add_server_name_with_options(z, &ssl_opts)
-                    .is_err()
-                {
-                    if !global.has_exception() && !super::throw_ssl_error_if_necessary(global) {
-                        return Err(global.throw(format_args!(
-                            "Failed to add serverName \"{}\" for HTTP/3",
-                            bstr::BStr::new(server_name.to_bytes())
-                        )));
-                    }
-                    return Err(JsError::Thrown);
-                }
-                if super::throw_ssl_error_if_necessary(global) {
-                    return Err(JsError::Thrown);
-                }
-            }
-        }
         let _ = self.set_routes();
         Ok(JSValue::UNDEFINED)
     }

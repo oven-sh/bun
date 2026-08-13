@@ -2610,9 +2610,7 @@ class Http2Stream extends Duplex {
     this.#sentTrailers = headers;
     this[kSendingTrailers] = true;
     try {
-      // An empty trailer list ends the stream with an empty DATA frame, as in node (the compat
-      // layer sends {} on every response). Native sendTrailers() does the same when every field
-      // is skipped; this is only the short-cut.
+      // Like node, an empty trailer list ends the stream with an empty DATA frame.
       if (ObjectKeys(headers).length === 0) {
         session[bunHTTP2Native]?.noTrailers(this.#id);
       } else {
@@ -6221,8 +6219,8 @@ class ClientHttp2Session extends Http2Session {
       const sensitiveNames = buildSensitiveNames(headers, sensitives);
       // Validate header names in JS like node's buildNgHeaderString does: request() must throw
       // synchronously for an invalid name even while the session is still connecting (the native
-      // encoder only sees the headers once a queued request is actually submitted). Empty names and
-      // undefined values are left to the encoder, which accepts the former and skips the latter.
+      // encoder only sees the headers once a queued request is actually submitted). Empty names
+      // keep going to the native validator, matching its acceptance.
       {
         const headerNames = ObjectKeys(headers);
         for (let i = 0; i < headerNames.length; i++) {

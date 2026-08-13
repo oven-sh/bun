@@ -1570,8 +1570,9 @@ describe("code frame of an error thrown from a vm script", () => {
       stderr: "pipe",
     });
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    expect(stdout).toBe("");
     expect(stderr.split("\n").slice(0, fooFrame.length)).toEqual(fooFrame);
     expect(exitCode).toBe(1);
   });

@@ -525,13 +525,10 @@ impl ExtractTarball {
             // Now that we've extracted the archive, we rename.
             #[cfg(windows)]
             {
-                // The rename fails transiently when another process holds a
-                // handle into either directory: a concurrent `bun install`
-                // sharing the cache still has the destination open (EXIST /
-                // NOTEMPTY, or PERM since NTFS reports replacing a directory
-                // that way too), or a scanner has one of our freshly extracted
-                // files open (PERM / BUSY, see `cache_rename`). Both are
-                // retried against the same `RenameRetry` budget.
+                // Transient on Windows while another process holds a handle
+                // in either directory: a concurrent `bun install` sharing the
+                // cache (EXIST/NOTEMPTY, or PERM for a directory destination)
+                // or a scanner reading what we just extracted (PERM/BUSY).
                 let mut retry = RenameRetry::start();
                 let mut path2_buf = WPathBuffer::uninit();
                 let path2 = strings::to_wpath_normalized(&mut path2_buf, folder_name);

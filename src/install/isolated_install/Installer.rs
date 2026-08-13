@@ -2818,11 +2818,9 @@ pub enum Which {
 fn is_rename_collision(err: &sys::Error, final_: &ZStr) -> bool {
     match err.get_errno() {
         sys::Errno::EEXIST | sys::Errno::ENOTEMPTY => true,
-        // Windows maps a rename onto an existing directory to
-        // ERROR_ACCESS_DENIED, but reports a scanner holding one of our
-        // staged files open the same way (see `cache_rename`); only the
-        // destination existing makes it a collision. On POSIX PERM/ACCES are
-        // real permission failures and must propagate.
+        // Windows reports both "destination directory exists" and "a scanner
+        // has one of our staged files open" as ERROR_ACCESS_DENIED; only the
+        // former is a collision. On POSIX these are real permission failures.
         sys::Errno::EPERM | sys::Errno::EACCES => cfg!(windows) && sys::exists_z(final_),
         _ => false,
     }

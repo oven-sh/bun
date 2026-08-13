@@ -433,6 +433,22 @@ describe("net.createServer events", () => {
       });
   });
 
+  it("should stop listening to the signal once the server has closed", async () => {
+    const controller = new AbortController();
+    const server = createServer();
+    let closeEvents = 0;
+    server.on("close", () => closeEvents++);
+
+    await new Promise<void>(resolve => server.listen({ port: 0, signal: controller.signal }, resolve));
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    expect(closeEvents).toBe(1);
+
+    // Aborting now must not call close() again, which would emit a second 'close'.
+    controller.abort();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(closeEvents).toBe(1);
+  });
+
   it("should echo data", done => {
     const { mustNotCall } = createCallCheckCtx(done);
     let timeout: Timer;

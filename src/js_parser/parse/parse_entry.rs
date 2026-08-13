@@ -105,8 +105,7 @@ pub struct Options<'a> {
     /// - Wraps code with await in async IIFE
     pub repl_mode: bool,
 
-    /// The lazy-export expression came from the TOML parser and may contain
-    /// `toml_datetime`-tagged strings to lower into `Temporal.*.from` calls.
+    /// Lower `toml_datetime`-tagged strings in a lazy-export AST to `Temporal.*.from` calls.
     pub lower_toml_datetimes: bool,
 }
 

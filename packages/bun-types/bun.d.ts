@@ -816,13 +816,14 @@ declare module "bun" {
      * `Temporal.Instant`, `Temporal.PlainDateTime`, `Temporal.PlainDate`,
      * and `Temporal.PlainTime` values become the corresponding TOML
      * date/time literals, `Temporal.ZonedDateTime` becomes an offset
-     * date-time (dropping its time-zone annotation), and `Date` becomes an
-     * offset date-time. `null`, `BigInt`, circular structures, and Temporal
-     * types with no TOML form (`Temporal.PlainYearMonth`,
-     * `Temporal.PlainMonthDay`, `Temporal.Duration`) throw, since TOML
-     * cannot represent them; `undefined`, function, and symbol properties
-     * are skipped (inside arrays they throw, since TOML arrays cannot have
-     * holes).
+     * date-time, and `Date` becomes an offset date-time in UTC; time-zone
+     * and calendar annotations are dropped, since TOML has no syntax for
+     * them. `null`, `BigInt`, circular structures, invalid `Date`s, date
+     * values outside years 0000–9999, and Temporal types with no TOML form
+     * (`Temporal.PlainYearMonth`, `Temporal.PlainMonthDay`,
+     * `Temporal.Duration`) throw, since TOML cannot represent them;
+     * `undefined`, function, and symbol properties are skipped (inside
+     * arrays they throw, since TOML arrays cannot have holes).
      *
      * @category Utilities
      *

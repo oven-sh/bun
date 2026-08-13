@@ -537,10 +537,7 @@ impl Stringifier {
                 buf.len(),
             )
         }?;
-        // -2: an instant with no four-digit-year spelling. A leading `+`/`-`
-        // is the expanded-year form of a `PlainDate`/`PlainDateTime`, which
-        // TOML's 4-digit `date-fullyear` cannot carry either.
-        if len < 1 || !buf[0].is_ascii_digit() {
+        if len < 0 {
             return Err(global
                 .throw(format_args!(
                     "TOML.stringify cannot serialize a {} outside years 0000-9999",

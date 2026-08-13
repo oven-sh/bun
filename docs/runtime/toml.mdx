@@ -83,7 +83,7 @@ role = "backend"
 
 #### Date/times
 
-Each of TOML's four date/time types maps 1:1 onto a Temporal type, losslessly (Temporal carries nanosecond precision):
+Each of TOML's four date/time types maps 1:1 onto a Temporal type. Temporal carries nanosecond precision; as the TOML spec permits, fractional seconds beyond nine digits are truncated:
 
 ```ts
 const doc = Bun.TOML.parse(`
@@ -141,13 +141,16 @@ The top-level value must be an object — a TOML document is a table.
 `Temporal.Instant`, `Temporal.PlainDateTime`, `Temporal.PlainDate`, and
 `Temporal.PlainTime` values become the corresponding TOML date/time
 literals, so `stringify(parse(doc))` round-trips date/time types.
-`Temporal.ZonedDateTime` becomes an offset date-time (its time-zone
-annotation has no TOML form and is dropped), and `Date` becomes an offset
-date-time. Because TOML cannot represent them, `null` values, `BigInt`,
-circular structures, `Temporal.PlainYearMonth`, `Temporal.PlainMonthDay`,
-and `Temporal.Duration` throw; `undefined`, function, and symbol
-properties are skipped (inside arrays they throw, since TOML arrays
-cannot have holes).
+`Temporal.ZonedDateTime` becomes an offset date-time and `Date` becomes
+an offset date-time in UTC. TOML has no syntax for time-zone or calendar
+annotations, so those are dropped (the ISO fields are written), and its
+years are four digits, so date values outside 0000–9999 and invalid
+`Date`s throw. Because TOML cannot represent them, `null` values,
+`BigInt`, circular structures, `Temporal.PlainYearMonth`,
+`Temporal.PlainMonthDay`, and `Temporal.Duration` also throw; `undefined`,
+function, and symbol properties are skipped (inside arrays they throw,
+since TOML arrays cannot have holes), and passing one of those as the
+top-level value returns `undefined`, as `JSON.stringify` does.
 
 ---
 

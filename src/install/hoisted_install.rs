@@ -115,23 +115,10 @@ pub(crate) fn install_hoisted_packages(
     // block above, so no other borrow of `*mgr_ptr` is live here.
     let this = unsafe { &mut *mgr_ptr };
 
-    // Remove stale packages from workspace `node_modules` directories before
-    // the install loop runs. A previous install (especially a package-local
-    // one) may have placed packages inside `packages/<workspace>/node_modules`
-    // that the current hoisted layout no longer expects — those directories
-    // would shadow the hoisted copies during module resolution. The installer
-    // only visits trees that still have dependencies, so without this sweep the
-    // stale entries are never seen, let alone removed.
-    //
-    // We build the expected set from the *unfiltered* `original_trees` on
-    // purpose: with `--filter` the filtered tree omits excluded workspaces
-    // entirely, but those workspaces' `node_modules` still belong to them and
-    // must not be wiped based on what the _current_ install would re-create.
-    // (Issue #29793.)
-    //
-    // Skipped when `packages_to_install` narrows the pass (the security
-    // scanner's pre-install of just the scanner package) — the full install
-    // that follows performs the same prune.
+    // Must use the *unfiltered* `original_trees`: the filtered tree omits
+    // `--filter`-excluded workspaces, whose `node_modules` must not be wiped.
+    // Skipped on the security scanner's narrowed pre-install pass; the full
+    // install that follows performs the prune.
     if packages_to_install.is_none() && this.lockfile.workspace_paths.count() > 0 {
         prune_stale_workspace_node_modules(&this.lockfile, &original_trees, &original_tree_dep_ids);
     }
@@ -639,24 +626,13 @@ pub(crate) fn install_hoisted_packages(
     Ok(summary)
 }
 
-/// Walks each workspace's `node_modules/` directory on disk and deletes any
-/// package folder the current hoisted tree does not list as belonging there.
-///
-/// A previous package-local install (or a manual edit) may have left
-/// `packages/<workspace>/node_modules/<pkg>` behind. When the current install
-/// hoists `<pkg>` to the root, the leftover workspace-local copy shadows the
-/// hoisted one during module resolution. The tree iterator only visits
-/// `node_modules` directories that still contain entries, so those stale
-/// folders are otherwise never seen, let alone removed.
-///
-/// Only operates on top-level entries of each workspace's `node_modules/`
-/// (plus one level into `@scope/` directories). Transitive `node_modules`
-/// nested inside surviving packages are handled by the normal install
-/// verify/uninstall path.
-///
-/// `trees`/`tree_dep_ids` are the **unfiltered** buffers captured before
-/// `Lockfile::filter()` runs, so entries a `--filter`-excluded workspace
-/// legitimately owns stay put (see the call site / issue #29793).
+/// Deletes top-level entries of each workspace's `node_modules/` (one level
+/// into `@scope/`) that the hoisted tree does not place there. Stale leftovers
+/// from a previous package-local install shadow the hoisted copy during
+/// resolution, and the installer never visits a workspace tree whose deps all
+/// hoisted away (issue #29793). `trees`/`tree_dep_ids` must be the unfiltered
+/// buffers captured before `Lockfile::filter()` so `--filter`-excluded
+/// workspaces keep the entries they own.
 fn prune_stale_workspace_node_modules(
     lockfile: &crate::lockfile::Lockfile,
     trees: &[tree::Tree],
@@ -672,11 +648,8 @@ fn prune_stale_workspace_node_modules(
     let packages_slice = lockfile.packages.slice();
     let pkg_resolutions = packages_slice.items_resolution();
 
-    // Resolve every workspace to (package id, filesystem-relative path). Only
-    // workspaces that resolve cleanly are walked — if `get_workspace_package_id`
-    // returns 0 (name-hash collision, stale lockfile, workspace dropped from
-    // `packages`) we leave that directory alone rather than wipe it with an
-    // empty expected set.
+    // Walk only workspaces that resolve cleanly; pkg_id 0 (stale lockfile,
+    // hash collision) would otherwise wipe the dir with an empty expected set.
     let mut workspaces_to_walk: Vec<(PackageID, Vec<u8>)> = Vec::new();
     {
         let hashes = lockfile.workspace_paths.keys();
@@ -698,13 +671,9 @@ fn prune_stale_workspace_node_modules(
         return;
     }
 
-    // Map of workspace filesystem-relative `node_modules` path (posix
-    // separators) to the set of folder names the tree places directly there.
-    // Only workspace-scope trees are indexed — transitive nested trees aren't
-    // workspace node_modules we need to prune.
+    // Workspace `node_modules` path -> folder names the tree places there.
     let mut expected_by_ws_path: StringHashMap<StringHashMap<()>> = StringHashMap::default();
 
-    // Quick lookup from workspace package id → filesystem path for the tree loop.
     let fs_path_for = |pkg_id: PackageID| -> Option<&[u8]> {
         workspaces_to_walk
             .iter()
@@ -713,8 +682,7 @@ fn prune_stale_workspace_node_modules(
     };
 
     for t in trees {
-        // Only trees whose `dependency_id` resolves to a workspace package
-        // correspond to a workspace's `node_modules` directory.
+        // Only workspace-package trees are a workspace's `node_modules`.
         if t.dependency_id == crate::invalid_dependency_id {
             continue;
         }
@@ -765,12 +733,10 @@ fn prune_stale_workspace_node_modules(
     }
 }
 
-/// Builds the normalized `<ws_path>/node_modules` key used both to index the
-/// expected-set map and to look it up during the walk. Single source of truth
-/// so the two call sites can't silently diverge — a mismatch would route
-/// pruning through the `expected == None` branch and delete legitimate entries.
+/// Normalized `<ws_path>/node_modules` key, shared by the expected-set map
+/// and the walk so the two can't diverge (a miss routes through the
+/// `expected == None` branch and deletes legitimate entries).
 fn workspace_node_modules_key(ws_path: &[u8]) -> Vec<u8> {
-    // Tolerate a stray trailing separator (either `/` or `\`).
     let trimmed = match ws_path.last() {
         Some(b'/') | Some(b'\\') => &ws_path[..ws_path.len() - 1],
         _ => ws_path,
@@ -778,8 +744,7 @@ fn workspace_node_modules_key(ws_path: &[u8]) -> Vec<u8> {
     let mut key = Vec::with_capacity(trimmed.len() + b"/node_modules".len());
     key.extend_from_slice(trimmed);
     key.extend_from_slice(b"/node_modules");
-    // The on-disk walk uses the key as-is; normalize any backslash separators
-    // to forward slashes so the hash lookup is canonical on Windows.
+    // Canonicalize separators so the Windows hash lookup matches.
     if cfg!(windows) {
         for b in key.iter_mut() {
             if *b == b'\\' {
@@ -795,18 +760,14 @@ fn workspace_node_modules_key(ws_path: &[u8]) -> Vec<u8> {
 /// directories so scoped packages are handled. Missing directories are ignored.
 fn prune_node_modules_at(rel_path: &[u8], expected: Option<&StringHashMap<()>>) {
     let cwd = Fd::cwd();
-    // `Dir` owns the fd (closes on drop) — no separate scopeguard, or we'd
-    // double-close.
+    // `Dir` closes the fd on drop.
     let dir = match sys::open_dir_for_iteration(cwd, rel_path) {
         Ok(fd) => Dir::from_fd(fd),
         Err(_) => return,
     };
 
-    // Snapshot the directory listing before deleting anything. `delete_tree`
-    // mutates the parent directory, and the platform readdir iterators read in
-    // batches — deleting the current entry is fine, but a batch refill after a
-    // delete can re-surface entries on some filesystems. Iterating an owned
-    // list keeps the loop independent of the underlying directory shape.
+    // Snapshot the listing first: deleting during batched readdir iteration
+    // can re-surface entries on some filesystems.
     let mut names: Vec<Vec<u8>> = Vec::new();
     let mut iter = sys::iterate_dir(dir.fd());
     loop {
@@ -824,8 +785,7 @@ fn prune_node_modules_at(rel_path: &[u8], expected: Option<&StringHashMap<()>>) 
 
     for name in &names {
         if name[0] == b'@' {
-            // Scoped package directory. Recurse one level; the expected set
-            // stores scoped packages as `@scope/pkg`.
+            // The expected set stores scoped packages as `@scope/pkg`.
             prune_scoped_node_modules(dir.fd(), name, expected);
             continue;
         }

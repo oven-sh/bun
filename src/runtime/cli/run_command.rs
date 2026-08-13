@@ -2048,10 +2048,7 @@ impl RunCommand {
         )
     }
 
-    /// Exits 1 because the spawn failed or the exit status could not be
-    /// collected. Not gated on `--silent` (which bunx also sets): that only
-    /// suppresses the messages below about a status we did collect, whereas
-    /// nothing else explains this exit code.
+    /// Not gated on `silent` (bunx sets it): nothing else explains this exit code.
     fn run_binary_generic_error(executable: &[u8], err: &sys::Error) -> ! {
         pretty_errorln!(
             "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to:\n{}",
@@ -2111,9 +2108,7 @@ impl RunCommand {
             Err(err) => {
                 bun_core::handle_error_return_trace(&err);
 
-                // an error occurred before the process was spawned; printed
-                // regardless of `silent` for the same reason as
-                // `run_binary_generic_error`.
+                // an error occurred before the process was spawned
                 #[allow(unused_labels)]
                 'print_error: {
                     #[cfg(unix)]

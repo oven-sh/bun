@@ -276,9 +276,9 @@ impl RuntimeTranspilerStore {
             if !first {
                 // if there are more, we need to drain the microtasks from the previous run
                 // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
-                if let Err(stopped) =
-                    unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) }
-                {
+                let drained =
+                    unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) };
+                if let Err(stopped) = drained {
                     return Err(stopped.throw(global));
                 }
             }

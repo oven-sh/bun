@@ -503,12 +503,9 @@ impl ServerWebSocket {
             Opcode::Binary => self.binary_to_js(global_object, message),
             _ => unreachable!(),
         };
-        let data = match data {
-            Ok(v) => v,
-            // Converting the payload threw (or the VM is terminating): there is
-            // no message to deliver; the exception is reported, not passed on.
-            Err(e) => return Err(e),
-        };
+        // Converting the payload threw (or the VM is terminating): there is
+        // no message to deliver; `Wrap` folds it.
+        let data = data?;
         let arguments = [
             self.this_value
                 .get()
@@ -621,10 +618,7 @@ impl ServerWebSocket {
         // This is the start of a task.
         let _loop_guard = vm.enter_event_loop_scope();
 
-        let data = match self.binary_to_js(global_this, data) {
-            Ok(v) => v,
-            Err(e) => return Err(e),
-        };
+        let data = self.binary_to_js(global_this, data)?;
         let args = [
             self.this_value
                 .get()
@@ -656,10 +650,7 @@ impl ServerWebSocket {
         // This is the start of a task.
         let _loop_guard = vm.enter_event_loop_scope();
 
-        let data = match self.binary_to_js(global_this, data) {
-            Ok(v) => v,
-            Err(e) => return Err(e),
-        };
+        let data = self.binary_to_js(global_this, data)?;
         let args = [
             self.this_value
                 .get()

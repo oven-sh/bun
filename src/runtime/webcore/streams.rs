@@ -962,18 +962,18 @@ impl SourceHandle {
             SourceHandle::ByteStream(p) => p.on_close(err),
             SourceHandle::FileReader(p) => p.on_close(err),
             SourceHandle::Subprocess(p) => p.on_close(err),
-            // SAFETY: live backref; cleared before the pointee is freed.
             SourceHandle::ShellWritable(mut p) => {
+                // SAFETY: live backref; cleared before the pointee is freed.
                 unsafe { p.get_mut() }.on_close(err);
                 Ok(())
             }
-            // SAFETY: live backref; cleared before the pointee is freed.
             SourceHandle::FetchResponseBody(mut p) => {
+                // SAFETY: live backref; cleared before the pointee is freed.
                 unsafe { p.get_mut() }.on_stream_cancelled();
                 Ok(())
             }
-            // SAFETY: live backref; cleared before the pointee is freed.
             SourceHandle::S3DownloadBody(mut p) => {
+                // SAFETY: live backref; cleared before the pointee is freed.
                 unsafe { p.get_mut() }.on_stream_cancelled();
                 Ok(())
             }

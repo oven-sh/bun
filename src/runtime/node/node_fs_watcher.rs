@@ -205,9 +205,15 @@ impl FSWatchTaskPosix {
             let emitted = match &entry.event {
                 Event::Rename(file_path) => self.ctx().emit::<{ EventType::Rename }>(file_path),
                 Event::Change(file_path) => self.ctx().emit::<{ EventType::Change }>(file_path),
-                Event::Error { err, close } => Ok(self.ctx().emit_error(err, *close)),
+                Event::Error { err, close } => {
+                    self.ctx().emit_error(err, *close);
+                    Ok(())
+                }
                 Event::NoFilename(event_type) => self.ctx().emit_null_filename(*event_type),
-                Event::Abort => Ok(self.ctx().emit_if_aborted()),
+                Event::Abort => {
+                    self.ctx().emit_if_aborted();
+                    Ok(())
+                }
                 Event::Close => self.ctx().emit::<{ EventType::Close }>(b""),
             };
             if let Err(err) = emitted {

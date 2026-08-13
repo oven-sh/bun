@@ -579,6 +579,7 @@ mod run_impls {
             // SAFETY: tag identifies pointee; `interp` set at enqueue and
             // outlives the task.
             let t = unsafe { &mut *this };
+            // SAFETY: the interpreter outlives its queued async tasks.
             let interp = unsafe { &*t.interp };
             ShellAsync::run_from_main_thread(interp, t.node);
             Ok(())
@@ -714,8 +715,10 @@ mod run_impls {
         #[inline]
         unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
             // SAFETY: heap-allocated in `Task::enqueue`; `deinit` frees it.
-            unsafe { (*this).run() };
-            unsafe { Self::deinit(this) };
+            unsafe {
+                (*this).run();
+                Self::deinit(this);
+            }
             Ok(())
         }
     }
@@ -725,8 +728,10 @@ mod run_impls {
         #[inline]
         unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
             // SAFETY: as `HotReloadTask`.
-            unsafe { (*this).run() };
-            unsafe { Self::deinit(this) };
+            unsafe {
+                (*this).run();
+                Self::deinit(this);
+            }
             Ok(())
         }
     }
@@ -1283,25 +1288,29 @@ pub(crate) unsafe fn __bun_fire_timer(
             // construction; `t` is the connection's `timer` field.
             let container = unsafe { PostgresSQLConnection::from_timer_ptr(t) };
             // SAFETY: per fn contract.
-            IntoTimerResult::into_timer_result(unsafe { (*container).on_connection_timeout() })
+            unsafe { (*container).on_connection_timeout() };
+            Ok(())
         }
         EventLoopTimerTag::PostgresSQLConnectionMaxLifetime => {
             // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
             let container = unsafe { PostgresSQLConnection::from_max_lifetime_timer_ptr(t) };
             // SAFETY: per fn contract.
-            IntoTimerResult::into_timer_result(unsafe { (*container).on_max_lifetime_timeout() })
+            unsafe { (*container).on_max_lifetime_timeout() };
+            Ok(())
         }
         EventLoopTimerTag::MySQLConnectionTimeout => {
             // SAFETY: §Dispatch — `t` is the connection's `timer` field.
             let container = unsafe { MySQLConnection::from_timer_ptr(t) };
             // SAFETY: per fn contract.
-            IntoTimerResult::into_timer_result(unsafe { (*container).on_connection_timeout() })
+            unsafe { (*container).on_connection_timeout() };
+            Ok(())
         }
         EventLoopTimerTag::MySQLConnectionMaxLifetime => {
             // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
             let container = unsafe { MySQLConnection::from_max_lifetime_timer_ptr(t) };
             // SAFETY: per fn contract.
-            IntoTimerResult::into_timer_result(unsafe { (*container).on_max_lifetime_timeout() })
+            unsafe { (*container).on_max_lifetime_timeout() };
+            Ok(())
         }
         EventLoopTimerTag::ValkeyConnectionTimeout => {
             timer_arm!(Valkey, timer, |c, _now, _vm| (*c).on_connection_timeout())
@@ -1362,7 +1371,8 @@ pub(crate) unsafe fn __bun_fire_timer(
         EventLoopTimerTag::QuicEndpoint => {
             let c: *mut crate::node::quic::QuicEndpoint =
                 owner!(crate::node::quic::QuicEndpoint, event_loop_timer);
-            IntoTimerResult::into_timer_result(crate::node::quic::QuicEndpoint::on_timer_fire(c))
+            crate::node::quic::QuicEndpoint::on_timer_fire(c);
+            Ok(())
         }
     };
     fired.map_err(Into::into)

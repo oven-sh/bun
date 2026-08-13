@@ -1964,13 +1964,9 @@ impl Terminal {
         // MarkedArrayBuffer::from_bytes takes a `&mut [u8]` it will own (freed
         // via mimalloc on the C++ side) — leak the Box and hand over the slice.
         let bytes: &'static mut [u8] = Box::leak(v.into_boxed_slice());
-        let data = match MarkedArrayBuffer::from_bytes(bytes, jsc::JSType::Uint8Array)
-            .to_node_buffer(global_this)
-        {
-            Ok(data) => data,
-            // OOM / a termination request: the reader's trampoline folds it.
-            Err(err) => return Err(err),
-        };
+        // OOM / a termination request: the reader's trampoline folds it.
+        let data = MarkedArrayBuffer::from_bytes(bytes, jsc::JSType::Uint8Array)
+            .to_node_buffer(global_this)?;
 
         // Each chunk's `data` callback is its own top-level call: reported and
         // reading continues, as a stream 'data' listener that throws does.

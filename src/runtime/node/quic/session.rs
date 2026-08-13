@@ -1131,9 +1131,7 @@ impl QuicSession {
                 // the closure: a collected `Vec<JSValue>` is not GC-scanned,
                 // so early strings would be collectible.
                 let js_arr = JSValue::create_array_from_iter(global, pairs.iter(), |s| {
-                    Ok(bun_core::String::clone_latin1(s)
-                        .to_js(global)
-                        ?)
+                    bun_core::String::clone_latin1(s).to_js(global)
                 });
                 let js_arr = js_arr?;
                 {

@@ -741,9 +741,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 loc,
             })
         } else if p.options.framework.is_some() || p.options.lower_import_meta {
-            // Bake serves its own `import.meta` object, and non-module output has
-            // none at all, so the properties whose value is known at bundle time
-            // are inlined.
+            // Bake serves its own `import.meta` and non-module output has none,
+            // so properties with a bundle-time-known value are inlined.
             match name {
                 b"dir" | b"dirname" => {
                     Some(p.new_expr(e_string_init(p.source.path.name().dir), name_loc))

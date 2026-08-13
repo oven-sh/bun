@@ -94,11 +94,9 @@ pub struct Options<'a> {
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
 
-    /// The output format is not an ES module (`cjs`, or `iife` loaded as a
-    /// script), so `import.meta` must not survive into the output: the
-    /// properties with a known value are inlined and every other reference is
-    /// rewritten to a per-file `var import_meta = {}` (see
-    /// `P::value_for_import_meta`). Set by the bundler only.
+    /// The output format is not an ES module, so `import.meta` is inlined
+    /// where its value is known and otherwise rewritten to a per-file
+    /// `var import_meta = {}` (`P::value_for_import_meta`). Bundler only.
     pub lower_import_meta: bool,
 
     /// When using react fast refresh or server components, the framework is
@@ -1215,13 +1213,9 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // `options.lower_import_meta`: declare the object that the `import.meta`
-        // references which were not inlined now point at (`value_for_import_meta`):
-        //
-        //    var import_meta = {};
-        //
-        // As a removable part it disappears again when none of those references
-        // survive tree shaking.
+        // `options.lower_import_meta`: declare the `var import_meta = {}` that
+        // non-inlined `import.meta` references point at, as a part that tree
+        // shaking can remove.
         if p.options.lower_import_meta
             && !p.import_meta_ref.is_empty()
             && p.symbols.as_slice()[p.import_meta_ref.inner_index() as usize].use_count_estimate > 0
@@ -1263,8 +1257,7 @@ impl<'a> Parser<'a> {
             let format_name = p.options.output_format.name();
             for i in 0..p.empty_import_meta_locs.len() {
                 let loc = p.empty_import_meta_locs[i];
-                // `import.meta` spans two tokens; cover both unless the source
-                // spells it unusually, in which case the `import` keyword will do.
+                // Cover both tokens of `import.meta` when spelled normally.
                 let range = match p.source.contents.get(loc.to_usize()..) {
                     Some(rest) if rest.starts_with(b"import.meta") => bun_ast::Range {
                         loc,

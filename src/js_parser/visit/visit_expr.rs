@@ -159,9 +159,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // The property accesses with a known value (`import.meta.url`, ...) are
-        // inlined by `maybe_rewrite_import_meta_property` once the parent
-        // EDot/EIndex sees this replacement as its target.
+        // The parent EDot/EIndex inlines known properties of this replacement
+        // via `maybe_rewrite_import_meta_property`.
         if p.options.lower_import_meta {
             *e = p.value_for_import_meta(expr.loc);
         }

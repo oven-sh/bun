@@ -1236,6 +1236,9 @@ describe("a port transferred away fires 'close' on the sender's object", () => {
     carrier.port1.postMessage(port1, [port1]);
     port1.on("close", () => events.push("port1 close (listener added after the transfer)"));
     events.push("postMessage returned");
+    // The event is queued as a task, which runs before the first setImmediate. A fixed
+    // window instead of awaiting it keeps the exact lists below meaningful: they also
+    // assert what must not fire (port2 now, port1 again at the end).
     for (let i = 0; i < 2; i++) await new Promise(r => setImmediate(r));
     expect(events).toEqual([
       "postMessage returned",
@@ -1291,7 +1294,10 @@ describe("a port transferred away fires 'close' on the sender's object", () => {
   });
 
   // Ports transferred through the Worker constructor's transferList, through
-  // worker.postMessage(), and from the worker through parentPort.postMessage().
+  // worker.postMessage(), and from the worker through parentPort.postMessage(). Each
+  // route also passes a message through the port the other side received, so the
+  // sender's 'close' is shown to leave the channel itself intact. The process exits on
+  // its own once the worker has finished, so every line is in before it does.
   test("transfers to and from a Worker", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -1302,27 +1308,40 @@ describe("a port transferred away fires 'close' on the sender's object", () => {
          const viaPostMessage = new MessageChannel();
          viaConstructor.port2.on("close", () => console.log("transferList: close"));
          viaPostMessage.port2.on("close", () => console.log("worker.postMessage: close"));
+         viaConstructor.port1.once("message", m => console.log("transferList: " + m));
+         viaPostMessage.port1.once("message", m => console.log("worker.postMessage: " + m));
          const w = new Worker(
            \`const { parentPort, workerData, MessageChannel } = require("worker_threads");
-            const { port1 } = new MessageChannel();
-            port1.on("close", () => parentPort.postMessage("parentPort.postMessage: close"));
-            parentPort.postMessage(port1, [port1]);\`,
+            workerData.postMessage("received port works");
+            parentPort.once("message", received => {
+              received.postMessage("received port works");
+              const { port1, port2 } = new MessageChannel();
+              port2.postMessage("received port works");
+              port1.on("close", () => parentPort.postMessage("parentPort.postMessage: close"));
+              parentPort.postMessage(port1, [port1]);
+            });\`,
            { eval: true, workerData: viaConstructor.port2, transferList: [viaConstructor.port2] },
          );
          w.postMessage(viaPostMessage.port2, [viaPostMessage.port2]);
          w.on("message", m => {
-           if (typeof m === "string") {
-             console.log(m);
-             w.unref();
-           }
+           if (typeof m === "string") console.log(m);
+           else m.once("message", x => console.log("parentPort.postMessage: " + x));
          });`,
       ],
       env: bunEnv,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The routes complete independently of each other, so the order of the lines varies.
     expect({ lines: stdout.trim().split("\n").sort(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-      lines: ["parentPort.postMessage: close", "transferList: close", "worker.postMessage: close"],
+      lines: [
+        "parentPort.postMessage: close",
+        "parentPort.postMessage: received port works",
+        "transferList: close",
+        "transferList: received port works",
+        "worker.postMessage: close",
+        "worker.postMessage: received port works",
+      ],
       stderr: "",
       exitCode: 0,
       signalCode: null,

@@ -345,10 +345,11 @@ describe.skipIf(!isWindows)("fs.mkdir - recursive with ReadOnly attribute (Windo
 });
 
 // A directory symlink or junction carries the directory attribute itself, whether or
-// not its target exists. The recursive mkdir's "already exists, is it a directory?"
-// check used to read that attribute, so a link to nowhere passed as an existing
-// directory and mkdir reported success for a path nothing can be created under.
-// POSIX builds fail the same calls with EEXIST (and ENOENT below a link to nowhere).
+// not it can be followed. The recursive mkdir's "already exists, is it a directory?"
+// check used to read that attribute, so a link to nowhere (or to itself) passed as an
+// existing directory and mkdir reported success for a path nothing can be created
+// under. POSIX builds fail the same calls with EEXIST (and ENOENT below a link to
+// nowhere).
 describe.skipIf(!isWindows)("fs.mkdir - recursive on a directory link (Windows)", () => {
   let tmpdir: string;
   let real: string;
@@ -359,6 +360,7 @@ describe.skipIf(!isWindows)("fs.mkdir - recursive on a directory link (Windows)"
   let junctionTarget: string;
   let danglingFileLink: string;
   let linkTarget: string;
+  let loopLink: string;
 
   const mkdirForms = {
     mkdirSync: (pathname: string) => Promise.resolve().then(() => fs.mkdirSync(pathname, { recursive: true })),
@@ -391,6 +393,8 @@ describe.skipIf(!isWindows)("fs.mkdir - recursive on a directory link (Windows)"
     danglingJunction = path.join(tmpdir, "dangling-junction");
     fs.symlinkSync(junctionTarget, danglingJunction, "junction");
     fs.rmdirSync(junctionTarget);
+    loopLink = path.join(tmpdir, "loop");
+    fs.symlinkSync(loopLink, loopLink, "dir");
   });
 
   afterEach(() => {
@@ -412,6 +416,11 @@ describe.skipIf(!isWindows)("fs.mkdir - recursive on a directory link (Windows)"
       await expect(mkdirForms[form](danglingJunction)).rejects.toMatchObject({ code: "EEXIST", syscall: "mkdir" });
       expect(fs.existsSync(junctionTarget)).toBe(false);
       expect(fs.lstatSync(danglingJunction).isSymbolicLink()).toBe(true);
+    });
+
+    it("fails with EEXIST on a directory symlink that points at itself", async () => {
+      await expect(mkdirForms[form](loopLink)).rejects.toMatchObject({ code: "EEXIST", syscall: "mkdir" });
+      expect(fs.lstatSync(loopLink).isSymbolicLink()).toBe(true);
     });
 
     it("fails with ENOENT below a directory symlink to nowhere", async () => {

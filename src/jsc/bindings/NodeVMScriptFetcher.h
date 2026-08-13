@@ -42,9 +42,8 @@ public:
         });
     }
 
-    // The compileFunction program whose first line starts with the `(function (...) {`
-    // wrapper, and the wrapper's length. Keyed by provider: eval() and new Function()
-    // inside the body inherit this fetcher through the SourceOrigin but have no wrapper.
+    // compileFunction's program and the length of the `(function (...) {` wrapper on its first line.
+    // Keyed by provider: eval() and new Function() code inherits this fetcher but has no wrapper.
     void setWrapper(JSC::SourceProvider& provider, unsigned prefixLength)
     {
         m_wrapperSourceID = provider.asID();

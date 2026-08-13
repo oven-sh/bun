@@ -188,9 +188,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
-    // The body starts on the program's first line (see stringifyAnonymousFunction),
-    // so that line's columns already include the wrapper: only the part of
-    // columnOffset beyond it is applied, as a source cannot start at a negative column.
+    // Line 1's columns already include the wrapper, so only the excess of columnOffset over it is applied.
     int columnOffset = position.m_column.zeroBasedInt();
     TextPosition wrappedPosition(position.m_line, OrdinalNumber::fromZeroBasedInt(columnOffset > wrapperPrefixLength ? columnOffset - wrapperPrefixLength : 0));
 
@@ -380,10 +378,9 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
     RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(globalObject, thenResult));
 }
 
-// Builds `(function (<params>) {<body>\n})`; *outOffset is the body's offset.
-// The body must start on the wrapper's own line: JSC clamps a SourceCode's first
-// line to 1, so a wrapper line could not be compensated for at lineOffset 0 and
-// every body line would be reported one too high.
+// Builds `(function (<params>) {<body>\n})`; *outOffset is the body's offset. The body shares the
+// wrapper's line on purpose: JSC clamps a source's first line to 1, so a wrapper line cannot be
+// compensated for when lineOffset is 0.
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset)
 {
     // How we stringify functions is important for creating anonymous function expressions
@@ -581,8 +578,6 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
         unsigned caretColumn = 0;
         if (JSC::CodeBlock* codeBlock = stack_frame.codeBlock()) {
             if (JSC::SourceProvider* provider = codeBlock->source().provider()) {
-                // Non-zero only for a compileFunction program, whose first line
-                // (text and columns) starts with the wrapper.
                 unsigned wrapperPrefixLength = 0;
                 if (auto* fetcher = provider->sourceOrigin().fetcher(); fetcher && fetcher->fetcherType() == ScriptFetcher::Type::NodeVM)
                     wrapperPrefixLength = static_cast<NodeVMScriptFetcher*>(fetcher)->wrapperPrefixLength(*provider);

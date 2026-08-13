@@ -1785,6 +1785,248 @@ test("MessagePort: peer closing while a port is in transit still delivers 'close
   });
 });
 
+// When one port of a channel is close()d, node closes the other one as well (once the
+// close has propagated): it fires 'close', drops its loop refs, and from then on it is
+// rejected as a transferable like any closed port. Bun fired 'close' on the peer but
+// left it open, so a dead endpoint could be transferred; a peer with no listeners was
+// not told at all.
+describe("a port whose peer closed is closed too", () => {
+  const detached = expect.objectContaining({
+    name: "DataCloneError",
+    message: "MessagePort in transfer list is already detached",
+  });
+  const tick = () => new Promise(r => setImmediate(r));
+
+  // Probe without transferring anything: the trailing plain object is itself invalid, so the
+  // post always throws, and the message says whether `port` (checked first, in list order)
+  // was rejected as detached.
+  function isRejectedAsDetached(port: MessagePort): boolean {
+    const carrier = new MessageChannel();
+    let message: string | undefined;
+    try {
+      carrier.port1.postMessage(null, [port, {} as any]);
+    } catch (e: any) {
+      message = e.message;
+    } finally {
+      carrier.port1.close();
+      carrier.port2.close();
+    }
+    if (message === undefined) throw new Error("the probe post must throw");
+    return message === "MessagePort in transfer list is already detached";
+  }
+
+  test("with a 'close' listener: rejected by postMessage and structuredClone, transfer stays atomic", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const carrier = new MessageChannel();
+    const closed = once(port1, "close");
+    port2.close();
+    await closed;
+
+    const ab = new ArrayBuffer(8);
+    expect(() => carrier.port1.postMessage(null, [ab, port1])).toThrow(detached);
+    // Same as node: a bad port later in the list means nothing earlier in it is transferred.
+    expect(ab.byteLength).toBe(8);
+    expect(() => structuredClone(port1, { transfer: [port1] })).toThrow(detached);
+    expect(port1.hasRef()).toBe(false);
+    carrier.port1.close();
+    carrier.port2.close();
+  });
+
+  test("with a 'message' listener: what the peer sent first is delivered, then the port closes", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const events: string[] = [];
+    port1.on("message", m => events.push(m));
+    const closed = once(port1, "close");
+    port2.postMessage("m1");
+    port2.close();
+    await closed;
+    events.push("close");
+
+    expect(events).toEqual(["m1", "close"]);
+    expect(isRejectedAsDetached(port1)).toBe(true);
+    expect(port1.hasRef()).toBe(false);
+  });
+
+  test("the port is already closed when its own 'close' listener runs", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const { promise, resolve } = Promise.withResolvers<boolean>();
+    port1.on("close", () => resolve(isRejectedAsDetached(port1)));
+    port2.close();
+    expect(await promise).toBe(true);
+  });
+
+  test("with no listeners at all", async () => {
+    const { port1, port2 } = new MessageChannel();
+    port2.close();
+    // The close reaches port1 as a task; poll for it rather than assume how many turns it takes.
+    let rejected = false;
+    for (let i = 0; i < 100 && !rejected; i++) {
+      await tick();
+      rejected = isRejectedAsDetached(port1);
+    }
+    expect(rejected).toBe(true);
+  });
+
+  test("Worker.postMessage() and the Worker constructor's transferList reject it as well", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const closed = once(port1, "close");
+    port2.close();
+    await closed;
+
+    const worker = new Worker("", { eval: true });
+    try {
+      expect(() => worker.postMessage(port1, [port1])).toThrow(detached);
+      expect(() => new Worker("", { eval: true, workerData: port1, transferList: [port1] })).toThrow(detached);
+    } finally {
+      await worker.terminate();
+    }
+  });
+
+  // node's close notification sits behind whatever the peer posted before closing: a port
+  // that is not receiving keeps those messages and stays open until they are consumed.
+  test("a port that is not receiving stays open until a 'message' listener drains the queue", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const events: string[] = [];
+    const closed = once(port1, "close");
+    port2.postMessage("m1");
+    port2.postMessage("m2");
+    port2.close();
+    for (let i = 0; i < 4; i++) await tick();
+    expect({ events, rejected: isRejectedAsDetached(port1) }).toEqual({ events: [], rejected: false });
+
+    port1.on("message", m => events.push(m));
+    await closed;
+    events.push("close");
+    expect(events).toEqual(["m1", "m2", "close"]);
+    expect(isRejectedAsDetached(port1)).toBe(true);
+  });
+
+  test("a port that is not receiving stays open until receiveMessageOnPort() drains the queue", async () => {
+    const { port1, port2 } = new MessageChannel();
+    let closes = 0;
+    const closed = once(port1, "close");
+    port1.on("close", () => closes++);
+    port2.postMessage("m1");
+    port2.close();
+    for (let i = 0; i < 4; i++) await tick();
+    expect({ closes, rejected: isRejectedAsDetached(port1) }).toEqual({ closes: 0, rejected: false });
+
+    expect(receiveMessageOnPort(port1)).toEqual({ message: "m1" });
+    // Taking the last message does not close it yet (node closes on reaching the notification).
+    expect({ closes, rejected: isRejectedAsDetached(port1) }).toEqual({ closes: 0, rejected: false });
+
+    // This call reaches the peer's close: no message, and the port is closed on the spot.
+    expect(receiveMessageOnPort(port1)).toBeUndefined();
+    expect({ closes, rejected: isRejectedAsDetached(port1) }).toEqual({ closes: 0, rejected: true });
+    await closed;
+    expect(closes).toBe(1);
+  });
+
+  test("a port left open that way is still a valid transferable; the receiver gets the queue and the close", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const carrier = new MessageChannel();
+    let senderCloses = 0;
+    port1.on("close", () => senderCloses++);
+    port2.postMessage("m1");
+    port2.close();
+    for (let i = 0; i < 4; i++) await tick();
+    expect(senderCloses).toBe(0);
+
+    carrier.port1.postMessage(port1, [port1]);
+    const [received] = (await once(carrier.port2, "message")) as [MessagePort];
+    const events: string[] = [];
+    const closed = once(received, "close");
+    received.on("message", m => events.push(m));
+    await closed;
+    events.push("close");
+    expect(events).toEqual(["m1", "close"]);
+    carrier.port1.close();
+    carrier.port2.close();
+  });
+
+  // Only an explicit close counts. Bun collects an entangled port whose wrapper is unreachable
+  // (node never does) and notifies the peer so it releases its loop refs; closing the peer on
+  // top of that would make its transfer fail or not depending on when GC ran.
+  test("a peer that was garbage collected rather than closed leaves the port transferable", async () => {
+    const carrier = new MessageChannel();
+    let port1!: MessagePort;
+    (() => {
+      const channel = new MessageChannel();
+      port1 = channel.port1;
+      port1.on("close", () => {});
+    })();
+    for (let i = 0; i < 5; i++) {
+      Bun.gc(true);
+      await tick();
+    }
+    expect(isRejectedAsDetached(port1)).toBe(false);
+    carrier.port1.postMessage(port1, [port1]);
+    carrier.port1.close();
+    carrier.port2.close();
+  });
+
+  // ...and an idle port is not even told: its one 'close' event has to stay available for
+  // the close() that eventually happens (node's test-worker-message-port.js relies on this).
+  test("a port whose peer was garbage collected still delivers close(cb) when it is closed later", async () => {
+    let idle!: MessagePort;
+    let unread!: MessagePort;
+    (() => {
+      idle = new MessageChannel().port2;
+      const channel = new MessageChannel();
+      unread = channel.port2;
+      channel.port1.postMessage("queued");
+    })();
+    for (let i = 0; i < 5; i++) {
+      Bun.gc(true);
+      await tick();
+    }
+
+    // 'close' is dispatched from a task queued by close(); give it a few turns, then give up.
+    function closeCallbackFires(port: MessagePort): Promise<string> {
+      return Promise.race([
+        new Promise<string>(resolve => port.close(() => resolve("called"))),
+        (async () => {
+          for (let i = 0; i < 20; i++) await tick();
+          return "not called";
+        })(),
+      ]);
+    }
+
+    expect(await closeCallbackFires(idle)).toBe("called");
+    // close() from inside the 'message' handler, as node's test does.
+    const unreadResult = await new Promise<string>(resolve => {
+      unread.on("message", m => closeCallbackFires(unread).then(cb => resolve(`${m}, close(cb) ${cb}`)));
+    });
+    expect(unreadResult).toBe("queued, close(cb) called");
+  });
+
+  // The same missing notification left a ref()'d port with no listeners pinning the loop
+  // forever after its peer closed; node's port closes and the process exits.
+  test("a ref()'d port with no listeners lets the process exit once its peer closes", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { MessageChannel } = require("worker_threads");
+         const { port1, port2 } = new MessageChannel();
+         port1.ref();
+         port2.close();
+         // unref'd, so it only ever fires if something else (the port) is still holding the loop open.
+         setTimeout(() => { console.log("still running, hasRef=" + port1.hasRef()); process.exit(1); }, 3000).unref();
+         process.on("exit", code => console.log("exit " + code + ", hasRef=" + port1.hasRef()));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "exit 0, hasRef=false",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 test("workerData is not unwrapped for a non-node globalThis.Worker", async () => {
   await using proc = Bun.spawn({
     cmd: [

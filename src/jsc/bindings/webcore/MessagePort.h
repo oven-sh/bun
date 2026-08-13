@@ -79,8 +79,9 @@ public:
     // The worker's entry module finished evaluating: a start() requested before that takes effect now.
     void entrySettled();
     void close();
-    // Called on the entangled peer when this side closes: dispatches a
-    // 'close' event and releases the event-loop ref so the loop can idle.
+    // Called (via the pipe, as a task) on the entangled peer of a side that closed.
+    // Delivers what is still queued if this port is receiving, then closes this port
+    // too, as node does; see the body for the not-receiving and collected-peer cases.
     void peerClosed();
     void dispatchCloseEvent();
 

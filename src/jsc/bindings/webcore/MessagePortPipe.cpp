@@ -234,9 +234,10 @@ void MessagePortPipe::attach(uint8_t side, ScriptExecutionContextIdentifier ctxI
     }
     if (wakeCtx)
         scheduleDrain(side, wakeCtx);
-    // Peer already closed while this side was in transit (detach() cleared
-    // ContextKnown so notifyPeerClosed() early-returned): re-deliver to the new
-    // owner, or the receiving context's listener loop-ref is never released.
+    // Peer already closed: notify again now that this side is receiving. The task runs
+    // after the drain scheduled above, so a peerClosed() that earlier left the port
+    // open because messages were still queued (see MessagePort::peerClosed) now
+    // delivers whatever is left and completes the close.
     if (m_sides[1 - side].state.load(std::memory_order_acquire) & Closed)
         notifyPeerClosed(side);
 }

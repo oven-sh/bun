@@ -1154,4 +1154,18 @@ export function validateBunConfig(cfg: Config): void {
       );
     }
   }
+
+  // --local-deps names must match a dep — a typo would otherwise silently
+  // build the pinned tarball while the banner claims `local:<typo>`.
+  const depsByName = new Map(allDeps.map(d => [d.name, d]));
+  for (const name of Object.keys(cfg.localDeps)) {
+    const dep = depsByName.get(name);
+    assert(dep !== undefined, `--local-deps: unknown dep '${name}'`, {
+      hint: `Known deps: ${[...depsByName.keys()].sort().join(", ")}`,
+    });
+    assert(
+      !dep.enabled || dep.enabled(cfg),
+      `--local-deps: ${name} is not built for this target/config, so a local checkout would be ignored`,
+    );
+  }
 }

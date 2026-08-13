@@ -1,7 +1,10 @@
+import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { isWindows } from "harness";
 import crypto from "node:crypto";
 import net from "node:net";
+
+type ServerWS = import("bun").ServerWebSocket<unknown>;
 
 // Drives the uws BackPressure buffer through its append / erase / resize paths
 // and verifies the bytes that reach the client exactly match what was sent.
@@ -234,4 +237,219 @@ describe("BackPressure buffer", () => {
     expect(received).toBe(target);
     expect(hash.digest("hex")).toBe(expectedHash);
   });
+});
+
+// A >=16KB send with nothing buffered is written straight to the socket with
+// writev (us_socket_write2). drain() runs inside the socket's writable dispatch,
+// which afterwards drops writable interest unless a write in between flagged the
+// socket as backpressured. A short writev from inside drain() therefore has to
+// set that flag like every other write path does; otherwise the tail that send()
+// buffered is never flushed, bufferedAmount stays > 0 and drain() never fires
+// again. Without the fix both tests hang waiting for the drain() after the short
+// write.
+describe("direct send from drain()", () => {
+  // Unexpected closes reject whichever step the test is currently awaiting.
+  function failure() {
+    const failed = Promise.withResolvers<never>();
+    // Only observed through until(); the closes at the end of a passing test
+    // also call fail() and must not surface as an unhandled rejection.
+    failed.promise.catch(() => {});
+    return {
+      fail: (why: string) => failed.reject(new Error(why)),
+      until: <T>(step: Promise<T>) => Promise.race([step, failed.promise]),
+    };
+  }
+
+  // Unmasked server frame with a 64-bit extended length, as sent for payloads >= 64KB.
+  function binaryFrame(payload: Buffer): Buffer {
+    const header = Buffer.alloc(10);
+    header[0] = 0x82;
+    header[1] = 0x7f;
+    header.writeBigUInt64BE(BigInt(payload.length), 2);
+    return Buffer.concat([header, payload]);
+  }
+
+  // Every send here starts with an empty buffer, so each one takes the direct
+  // path and the one returning -1 is the one whose writev came up short.
+  function sendUntilBackpressure(ws: ServerWS, payload: Buffer): { sends: number; last: number } {
+    const MAX_SENDS = 512;
+    let last = 0;
+    for (let sends = 1; sends <= MAX_SENDS; sends++) {
+      last = ws.sendBinary(payload);
+      if (last !== payload.length) return { sends, last };
+    }
+    return { sends: MAX_SENDS, last };
+  }
+
+  // Skipped on Windows for the same reason as above: loopback never backpressures.
+  it.skipIf(isWindows)("keeps draining after a send from drain() comes up short on the kernel buffer", async () => {
+    const CHUNK = 256 * 1024;
+    const payload = patternBuffer(CHUNK, 0x5eed);
+    const frame = binaryFrame(payload);
+    const { fail, until } = failure();
+
+    let sent = 0;
+    const opened = Promise.withResolvers<ServerWS>();
+    const drainFill = Promise.withResolvers<{ last: number; buffered: number }>();
+    const drainAfterShortWrite = Promise.withResolvers<void>();
+    let filledFromDrain = false;
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req, s) {
+        if (s.upgrade(req)) return;
+        return new Response("no", { status: 500 });
+      },
+      websocket: {
+        // The idle-timeout ping goes through the buffered write path, which
+        // would flush a stalled tail and hide the stall.
+        idleTimeout: 0,
+        open(ws) {
+          opened.resolve(ws);
+        },
+        drain(ws) {
+          // Partial progress: the tail of a frame is still buffered, so a send
+          // from here would not take the direct path.
+          if (ws.getBufferedAmount() !== 0) return;
+          if (filledFromDrain) {
+            drainAfterShortWrite.resolve();
+            return;
+          }
+          filledFromDrain = true;
+          const { sends, last } = sendUntilBackpressure(ws, payload);
+          sent += sends;
+          drainFill.resolve({ last, buffered: ws.getBufferedAmount() });
+        },
+        message() {},
+        close(_ws, code, reason) {
+          fail(`server websocket closed early (${code} ${reason})`);
+        },
+      },
+    });
+
+    const { sock, initial } = await pausedClient(server.port);
+    const ws = await until(opened.promise);
+
+    // Phase 1, from outside any handler: fill the paused client's kernel buffers
+    // so that the writable event which empties the buffer runs drain().
+    const first = sendUntilBackpressure(ws, payload);
+    sent += first.sends;
+    expect(first.last).toBe(-1);
+    expect(ws.getBufferedAmount()).toBeGreaterThan(0);
+
+    const hash = crypto.createHash("sha1");
+    let received = initial.length;
+    hash.update(initial);
+    let target = Infinity;
+    const allReceived = Promise.withResolvers<void>();
+    sock.on("data", (chunk: Buffer) => {
+      hash.update(chunk);
+      received += chunk.length;
+      if (received >= target) allReceived.resolve();
+    });
+    sock.on("close", () => fail(`client socket closed after ${received} of ${target} bytes`));
+    sock.resume();
+
+    // Phase 2 happens in drain(); the last of its sends is the short write under test.
+    const fill = await until(drainFill.promise);
+    expect(fill.last).toBe(-1);
+    expect(fill.buffered).toBeGreaterThan(0);
+    target = sent * frame.length;
+    if (received >= target) allReceived.resolve();
+
+    await until(drainAfterShortWrite.promise);
+    await until(allReceived.promise);
+    expect(ws.getBufferedAmount()).toBe(0);
+    sock.destroy();
+
+    const expected = crypto.createHash("sha1");
+    for (let i = 0; i < sent; i++) expected.update(frame);
+    expect(received).toBe(target);
+    expect(hash.digest("hex")).toBe(expected.digest("hex"));
+  });
+
+  // Same stall, driven deterministically: a writev that writes 0 bytes stands
+  // in for a full kernel buffer, so this does not depend on loopback buffer
+  // sizes. 16KB is the smallest message that takes the direct path.
+  it.skipIf(!fault.available() || isWindows)(
+    "keeps draining after a send from drain() hits an injected zero-byte writev",
+    async () => {
+      const SIZE = 16 * 1024;
+      const payload = patternBuffer(SIZE, 0xf00d);
+      const FRAME_LENGTH = SIZE + 4; // header with a 16-bit extended length
+      const { fail, until } = failure();
+
+      const opened = Promise.withResolvers<ServerWS>();
+      const drainSend = Promise.withResolvers<{ status: number; buffered: number }>();
+      const drainAfterShortWrite = Promise.withResolvers<void>();
+      let sentFromDrain = false;
+      await using server = Bun.serve({
+        port: 0,
+        fetch(req, s) {
+          if (s.upgrade(req)) return;
+          return new Response("no", { status: 500 });
+        },
+        websocket: {
+          idleTimeout: 0,
+          open(ws) {
+            opened.resolve(ws);
+          },
+          drain(ws) {
+            if (ws.getBufferedAmount() !== 0) return;
+            if (sentFromDrain) {
+              drainAfterShortWrite.resolve();
+              return;
+            }
+            // This writable dispatch just flushed the first message. Send the
+            // second one from in here with its writev forced to write nothing,
+            // so the whole frame ends up buffered.
+            sentFromDrain = true;
+            fault.set({ syscall: "writev", action: "zero", repeat: 1 });
+            const status = ws.sendBinary(payload);
+            drainSend.resolve({ status, buffered: ws.getBufferedAmount() });
+          },
+          message() {},
+          close(_ws, code, reason) {
+            fail(`server websocket closed early (${code} ${reason})`);
+          },
+        },
+      });
+
+      const messages: Buffer[] = [];
+      const clientOpen = Promise.withResolvers<void>();
+      const twoMessages = Promise.withResolvers<void>();
+      const client = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+      client.binaryType = "arraybuffer";
+      client.onopen = () => clientOpen.resolve();
+      client.onmessage = ev => {
+        messages.push(Buffer.from(ev.data as ArrayBuffer));
+        if (messages.length === 2) twoMessages.resolve();
+      };
+      client.onclose = ev => fail(`client closed after ${messages.length} messages (${ev.code} ${ev.reason})`);
+
+      try {
+        const ws = await until(opened.promise);
+        // The 101 response stays in the cork buffer until the upgrade returns,
+        // and a send with corked data does not take the direct path. Once the
+        // client has seen the 101 the handshake is flushed.
+        await until(clientOpen.promise);
+
+        // Outside of any handler a short direct write arms the writable poll
+        // fine either way; this one only sets up the writable dispatch that
+        // runs drain() with an empty buffer.
+        fault.set({ syscall: "writev", action: "zero", repeat: 1 });
+        const status = ws.sendBinary(payload);
+        expect({ status, buffered: ws.getBufferedAmount() }).toEqual({ status: -1, buffered: FRAME_LENGTH });
+
+        expect(await until(drainSend.promise)).toEqual({ status: -1, buffered: FRAME_LENGTH });
+        await until(drainAfterShortWrite.promise);
+        await until(twoMessages.promise);
+        expect(ws.getBufferedAmount()).toBe(0);
+      } finally {
+        fault.clear();
+        client.close();
+      }
+
+      expect(messages).toEqual([payload, payload]);
+    },
+  );
 });

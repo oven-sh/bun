@@ -409,11 +409,15 @@ struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned cha
 #endif
 }
 
-/* Re-arm writable for a backpressured write without resuming the read side of
- * a paused socket: us_poll_change sets absolute flags, so including READABLE
- * unconditionally would silently undo us_socket_pause mid-backpressure and
- * deliver data the caller asked to defer. */
+/* Re-arm writable for a backpressured write. The flag is what keeps the poll
+ * armed when the write was issued from inside the writable dispatch itself (a
+ * WebSocket drain handler sending more): loop.c clears it before on_writable and
+ * drops writable interest again afterwards unless a write set it, so the poll
+ * change alone would be undone there. READABLE is not added back unconditionally
+ * because us_poll_change sets absolute flags, and doing so would silently undo
+ * us_socket_pause mid-backpressure and deliver data the caller asked to defer. */
 static void us_internal_rearm_writable(struct us_socket_t *s) {
+    s->flags.last_write_failed = 1;
     us_poll_change(&s->p, s->group->loop,
                    LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
 }
@@ -510,7 +514,6 @@ int us_socket_write(struct us_socket_t *s, const char *data, int length) {
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);
     if (written != length) {
-        s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
 
@@ -565,7 +568,6 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
          * classifying them as fatal made the node:net drain path drop the
          * buffered bytes on a socket that kept flowing. */
         if (bsd_would_block() || bsd_send_is_transient_error()) {
-            s->flags.last_write_failed = 1;
             us_internal_rearm_writable(s);
             return 0;
         }
@@ -588,7 +590,6 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
         if (!us_internal_send_errno_is_peer_gone(errno) &&
             s->unclassified_send_failures < US_UNCLASSIFIED_SEND_RETRY_LIMIT) {
             s->unclassified_send_failures++;
-            s->flags.last_write_failed = 1;
             us_internal_rearm_writable(s);
             return 0;
         }
@@ -614,7 +615,6 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
     }
     s->unclassified_send_failures = 0;
     if (written != length) {
-        s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
     return written;
@@ -631,7 +631,6 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
 
     ssize_t written = bsd_writev(us_poll_fd(&s->p), iov, count);
     if (written != (ssize_t)total) {
-        s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
 
@@ -650,7 +649,6 @@ int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);
     if (written != length) {
-        s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
 
@@ -696,7 +694,6 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
     }
 
     if (sent != length) {
-        s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
 

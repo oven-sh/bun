@@ -345,11 +345,7 @@ function skipBlockComment(text: string, i: number): number {
   return i;
 }
 
-/**
- * Rewrites every `$k` in a `sql.unsafe` fragment to `$(k + offset)`, tokenizing like the server so `$k` inside
- * literals, comments and identifiers such as `col$1` stays as written. A `$k` the fragment has no value for
- * (`count`) would alias one of the enclosing query's values once shifted, so it throws instead.
- */
+/** Rewrites each `$k` of a `sql.unsafe` fragment with `count` values to `$(k + offset)`, tokenized like the server. */
 function offsetParameterReferences(fragment: string, offset: number, count: number): string {
   const len = fragment.length;
   let out = "";
@@ -364,6 +360,7 @@ function offsetParameterReferences(fragment: string, offset: number, count: numb
           while (isDigit(fragment.charCodeAt(j))) j++;
           const k = Number(fragment.slice(i + 1, j));
           if (k < 1 || k > count) {
+            // shifted, it would silently read one of the enclosing query's values
             throw new SyntaxError(
               `Nested sql.unsafe fragment references $${k} but was given ${count} parameter${count === 1 ? "" : "s"}`,
             );

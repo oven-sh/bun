@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 import {
   compileFunction,
   constants,
@@ -1483,4 +1483,96 @@ test("node:vm Object.defineProperty on the context global when the sandbox is an
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe(JSON.stringify({ result: 1, sandboxArray: 1 }));
   expect(exitCode).toBe(0);
+});
+
+// A vm script has no source map, so the code frame bun prints above an error
+// thrown from it is cut out of the script text itself (the same path serves
+// eval and new Function). Bun.inspect renders the same frame as the
+// uncaught-error printer.
+describe("code frame of an error thrown from a vm script", () => {
+  function codeFrame(source: string, options: { lineOffset?: number } = {}): string[] {
+    let error: unknown;
+    try {
+      // With displayErrors, node:vm replaces err.stack with node's own header.
+      runInThisContext(source, { filename: "frame.js", displayErrors: false, ...options });
+    } catch (e) {
+      error = e;
+    }
+    return Bun.inspect(error).split("\n");
+  }
+
+  const throwLine = "throw new Error('x');";
+  const numbered = (count: number) => Array.from({ length: count }, (_, i) => `'L${i + 1}';`);
+  // JSC positions a ReferenceError one past the end of the identifier.
+  const fooFrame = ["1 | 'L1';", "2 | foo", "       ^", "ReferenceError: foo is not defined"];
+  const fooAtEndOfSource = "'L1';\nfoo";
+
+  test.each([
+    [
+      "every line above the error, numbered",
+      [...numbered(4), throwLine].join("\n"),
+      ["1 | 'L1';", "2 | 'L2';", "3 | 'L3';", "4 | 'L4';", `5 | ${throwLine}`, "          ^", "error: x"],
+    ],
+    ["error on line 2", ["'L1';", throwLine].join("\n"), ["1 | 'L1';", `2 | ${throwLine}`, "          ^", "error: x"]],
+    [
+      "at most five lines above the error",
+      [...numbered(9), throwLine].join("\n"),
+      [
+        " 5 | 'L5';",
+        " 6 | 'L6';",
+        " 7 | 'L7';",
+        " 8 | 'L8';",
+        " 9 | 'L9';",
+        `10 | ${throwLine}`,
+        "           ^",
+        "error: x",
+      ],
+    ],
+    [
+      "blank lines, including a blank first line",
+      ["", "'L2';", "", throwLine].join("\n"),
+      ["1 | ", "2 | 'L2';", "3 | ", `4 | ${throwLine}`, "          ^", "error: x"],
+    ],
+    [
+      "CRLF line endings",
+      ["'L1';", "'L2';", throwLine, "'L4';", ""].join("\r\n"),
+      ["1 | 'L1';", "2 | 'L2';", `3 | ${throwLine}`, "          ^", "error: x"],
+    ],
+    ["error positioned on the newline ending its line", "'L1';\nfoo\n'L3';", fooFrame],
+    ["error positioned at the end of the source", fooAtEndOfSource, fooFrame],
+  ])("%s", (_, source, expected) => {
+    expect(codeFrame(source).slice(0, expected.length)).toEqual(expected);
+  });
+
+  test("line numbers include lineOffset", () => {
+    const expected = ["11 | 'L1';", "12 | 'L2';", `13 | ${throwLine}`, "           ^", "error: x"];
+    expect(codeFrame([...numbered(2), throwLine].join("\n"), { lineOffset: 10 }).slice(0, expected.length)).toEqual(
+      expected,
+    );
+  });
+
+  test("uncaught error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `require("node:vm").runInThisContext(${JSON.stringify(fooAtEndOfSource)}, { filename: "frame.js", displayErrors: false })`,
+      ],
+      env: {
+        ...bunEnv,
+        // Malloc=1 routes JSC's allocations through the system allocator so ASAN
+        // sees a read past the end of the source string; detect_leaks=0 because
+        // that also exposes JSC's never-freed startup allocations to LSAN.
+        ...(isWindows ? {} : { Malloc: "1" }),
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr.split("\n").slice(0, fooFrame.length)).toEqual(fooFrame);
+    expect(exitCode).toBe(1);
+  });
 });

@@ -5403,6 +5403,8 @@ restart:
                 return true;
             }
             auto* prop = entry.key();
+            if (entry.attributes() & PropertyAttribute::DontEnum)
+                return true;
 
             if (prop == propertyNames->constructor
                 || prop == propertyNames->underscoreProto
@@ -5511,9 +5513,7 @@ restart:
                     continue;
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-                    if (property == propertyNames->underscoreProto
-                        || property == propertyNames->toStringTagSymbol || property == propertyNames->__esModule)
-                        continue;
+                    continue;
                 }
 
                 if (!visitedProperties.add(property.impl()).isNewEntry)
@@ -5671,9 +5671,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
         }
 
         if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-            if (property == vm.propertyNames->underscoreProto
-                || property == vm.propertyNames->toStringTagSymbol)
-                continue;
+            continue;
         }
 
         JSC::JSValue propertyValue = jsUndefined();

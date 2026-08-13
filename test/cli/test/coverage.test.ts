@@ -727,7 +727,13 @@ export function run(flag: boolean) {
         "--coverage-dir=cov",
       ],
       cwd: dir,
-      env: bunEnv,
+      env: {
+        ...bunEnv,
+        // detect_leaks=0: a mid-file bail exits without tearing the VM down,
+        // so LSAN appends a leak report to stderr and aborts (#32183). This
+        // test covers what bail writes before exiting, not that exit path.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
       stdout: "ignore",
       stderr: "pipe",
     });

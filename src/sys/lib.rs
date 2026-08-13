@@ -6676,10 +6676,8 @@ fn is_nt_object_name(p: &[u16]) -> bool {
         || bun_core::strings::has_prefix_comptime_utf16(p, b"\\Device\\")
 }
 
-/// `OBJECT_ATTRIBUTES.RootDirectory` for an NT call naming `path`: none for
-/// an absolute NT object name, otherwise `dir` (the cwd when `dir` is the
-/// "invalid_fd" sentinel). An empty name fails with ENOENT as POSIX `*at()`
-/// calls do; NT would resolve it to `RootDirectory` itself.
+/// `OBJECT_ATTRIBUTES.RootDirectory` for an NT call naming `path`. An empty
+/// name fails with ENOENT as on POSIX; NT would resolve it to `RootDirectory` itself.
 #[cfg(windows)]
 fn nt_root_directory(
     dir: Fd,

@@ -1802,12 +1802,13 @@ describe("stream release after a queued END_STREAM", () => {
       // is flushed from the queue (an upload nobody reads gets reset instead, and a reset releases
       // the stream through a different path).
       uploaded.push(
-        new Promise(resolve => {
+        new Promise((resolve, reject) => {
           let bytes = 0;
           stream.on("data", (chunk: Buffer) => {
             bytes += chunk.length;
           });
           stream.on("end", () => resolve(bytes));
+          stream.on("error", reject);
         }),
       );
       stream.respond({ ":status": 200 });

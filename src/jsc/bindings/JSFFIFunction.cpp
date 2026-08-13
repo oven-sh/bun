@@ -26,6 +26,7 @@
 #include "root.h"
 #include "JSFFIFunction.h"
 
+#include <JavaScriptCore/FFIConversions.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/VM.h>
 #include "ZigGlobalObject.h"
@@ -73,14 +74,17 @@ extern "C" void Bun__FFIFunction_setDataPtr(JSC::EncodedJSValue jsValue, void* p
 extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, bool addPtrField, void* symbolFromDynamicLibrary)
 {
     if (addPtrField) {
-        auto* function = Zig::JSFFIFunction::createForFFI(globalObject->vm(), globalObject, argCount, symbolName != nullptr ? Zig::toStringCopy(*symbolName) : String(), reinterpret_cast<Bun::CFFIFunction>(functionPointer));
         auto& vm = JSC::getVM(globalObject);
-        // We should only expose the "ptr" field when it's a JSCallback for bun:ffi.
-        // Not for internal usages of this function type.
-        // We should also consider a separate JSFunction type for our usage to not have this branch in the first place...
-        function->putDirect(vm, JSC::Identifier::fromString(vm, String("ptr"_s)), JSC::jsNumber(std::bit_cast<double>(functionPointer)), JSC::PropertyAttribute::ReadOnly | 0);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto* function = Zig::JSFFIFunction::createForFFI(vm, globalObject, argCount, symbolName != nullptr ? Zig::toStringCopy(*symbolName) : String(), reinterpret_cast<Bun::CFFIFunction>(functionPointer));
+        // `functionPointer` is the TinyCC-compiled JSC-ABI wrapper; `.ptr` has to be the native
+        // function it calls, encoded like the engine-native dlopen() symbols and JSCallback encode theirs,
+        // so that CFunction / linkSymbols / pointer arguments accept it.
+        JSC::JSValue ptr = JSC::FFI::pointerToJSValue(globalObject, reinterpret_cast<uint64_t>(symbolFromDynamicLibrary));
+        RETURN_IF_EXCEPTION(scope, {});
+        function->putDirect(vm, JSC::Identifier::fromString(vm, "ptr"_s), ptr, JSC::PropertyAttribute::ReadOnly | 0);
         function->symbolFromDynamicLibrary = symbolFromDynamicLibrary;
-        return JSC::JSValue::encode(function);
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(function));
     }
 
     return Bun__CreateFFIFunctionWithDataValue(globalObject, symbolName, argCount, functionPointer, nullptr);

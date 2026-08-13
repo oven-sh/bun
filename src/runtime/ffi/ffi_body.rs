@@ -165,6 +165,11 @@ mod exposed_to_ffi {
 }
 
 /// `host_fn::NewRuntimeFunction` thin wrapper. See host_fn.rs:310.
+///
+/// `input_function_ptr` is the native function `function_pointer` wraps; with
+/// `add_ptr_property` it becomes the symbol's `.ptr`. Encoding it can throw
+/// (addresses above 2^53 allocate a BigInt), in which case C++ returns zero.
+#[track_caller]
 #[inline]
 fn new_runtime_function(
     global: &JSGlobalObject,
@@ -173,19 +178,21 @@ fn new_runtime_function(
     function_pointer: *const c_void,
     add_ptr_property: bool,
     input_function_ptr: Option<*mut c_void>,
-) -> JSValue {
-    // SAFETY: thin FFI wrapper; `global` is a live opaque JSC handle,
-    // `function_pointer` is a JIT'd entry point owned by the caller.
-    unsafe {
-        Bun__CreateFFIFunctionValue(
-            global,
-            symbol_name,
-            arg_count,
-            function_pointer,
-            add_ptr_property,
-            input_function_ptr.unwrap_or(core::ptr::null_mut()),
-        )
-    }
+) -> JsResult<JSValue> {
+    jsc::call_zero_is_throw(global, || {
+        // SAFETY: thin FFI wrapper; `global` is a live opaque JSC handle,
+        // `function_pointer` is a JIT'd entry point owned by the caller.
+        unsafe {
+            Bun__CreateFFIFunctionValue(
+                global,
+                symbol_name,
+                arg_count,
+                function_pointer,
+                add_ptr_property,
+                input_function_ptr.unwrap_or(core::ptr::null_mut()),
+            )
+        }
+    })
 }
 
 /// `jsc::codegen::JSFFI::symbols_value_set_cached` thin wrapper.
@@ -1249,7 +1256,7 @@ impl FFI {
                         compiled.ptr.cast_const(),
                         true,
                         function.symbol_from_dynamic_library,
-                    );
+                    )?;
                     // `cb` is rooted by the `symbolsValue` cached own-property set below.
                     obj.put(global_this, str.slice(), cb);
                 }

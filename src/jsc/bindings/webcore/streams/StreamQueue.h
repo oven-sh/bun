@@ -81,8 +81,8 @@ struct SourceAlgorithmSlots {
     // null ⇒ the trivial algorithm.
     JSC::WriteBarrier<JSC::JSObject> method2;
     // NON-JavaScript kinds only: Transform → JSTransformStream; TeeBranch/ByteTeeBranch →
-    // JSStreamTeeState; FromIterable → JSStreamFromIterableContext; Native →
-    // JSNativeStreamSourceAdapter.
+    // JSStreamTeeState; FromIterable → JSStreamFromIterableContext; CrossRealm →
+    // JSCrossRealmTransformState; Native → JSNativeStreamSourceAdapter.
     JSC::WriteBarrier<JSC::JSCell> algorithmContext;
 };
 
@@ -104,7 +104,8 @@ struct SinkAlgorithmSlots {
     // JavaScript kind only: the converted `abort` method ([[abortAlgorithm]]);
     // null ⇒ the trivial algorithm.
     JSC::WriteBarrier<JSC::JSObject> method3;
-    // NON-JavaScript kinds only: Transform → JSTransformStream.
+    // NON-JavaScript kinds only: Transform → JSTransformStream;
+    // CrossRealm → JSCrossRealmTransformState.
     JSC::WriteBarrier<JSC::JSCell> algorithmContext;
 };
 

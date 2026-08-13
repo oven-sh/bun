@@ -147,7 +147,8 @@ namespace WebCore {
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_TS_CONTROLLER(V) \
     V(onTSPerformTransformRejected)
 
-// owner: CrossRealmTransform.cpp (transferable streams are not implemented).
+// owner: CrossRealmTransform.cpp (transferable streams are not implemented; the handler may
+// assert-not-reached). context = the JSCrossRealmTransformState.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_CROSS_REALM(V) \
     V(onCrossRealmWritableBackpressureFulfilled)
 
@@ -310,6 +311,7 @@ JSC_DECLARE_HOST_FUNCTION(jsWebStreamsCountQueuingStrategySize);
     V(pullIntoDescriptorStructure, JSPullIntoDescriptor)                     \
     V(pipeToOperationStructure, JSStreamPipeToOperation)                     \
     V(teeStateStructure, JSStreamTeeState)                                   \
+    V(crossRealmTransformStateStructure, JSCrossRealmTransformState)         \
     V(fromIterableContextStructure, JSStreamFromIterableContext)             \
     V(directStreamControllerStructure, JSDirectStreamController)             \
     V(nativeStreamSourceAdapterStructure, JSNativeStreamSourceAdapter)       \

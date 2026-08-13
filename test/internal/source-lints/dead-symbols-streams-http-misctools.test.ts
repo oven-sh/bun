@@ -1,6 +1,6 @@
-// Guards against reintroduction of code removed as dead: the transferable-streams
-// scaffolding in the WebCore streams bindings, the TextEncoder impl stubs, the
-// JSKeyObject base-class allocation helpers, the unreachable "deprecated reply"
+// Guards against reintroduction of code removed as dead: the unread stream slots and
+// private-name accessors in the WebCore streams bindings, the TextEncoder impl stubs,
+// the JSKeyObject base-class allocation helpers, the unreachable "deprecated reply"
 // ServerResponse path in node:http, unused bun_sys / lsquic_sys / spawn_sys /
 // tcc_sys wrappers, stale hawk.toml overrides, and a set of orphaned files
 // (Zig-era misctools, an unreferenced ncrypto.patch, stray fixtures). Every entry
@@ -42,16 +42,11 @@ function resurrected(checks: Array<[string, RegExp]>): string[] {
   return checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
 }
 
-test("transferable-streams scaffolding and other dead C++ bindings do not reappear", () => {
+test("dead stream slots and other dead C++ bindings do not reappear", () => {
   expect(
     resurrected([
-      // JSCrossRealmTransformState was never created: Bun's structured clone never
-      // transfers a stream, so the cell, its per-global Structure slot, its iso
-      // subspaces and the [[Detached]] bitfields had no readers.
-      ["src/jsc/bindings/webcore/streams/JSStreamsRuntime.h", /crossRealmTransformStateStructure/],
-      ["src/jsc/bindings/webcore/streams/JSStreamsRuntime.cpp", /JSCrossRealmTransformState/],
-      ["src/jsc/bindings/webcore/DOMIsoSubspaces.h", /m_subspaceForCrossRealmTransformState/],
-      ["src/jsc/bindings/webcore/DOMClientIsoSubspaces.h", /m_clientSubspaceForCrossRealmTransformState/],
+      // Transferable streams are not implemented, so nothing ever read or wrote the
+      // [[Detached]] bitfields; m_nativeType only had the accessor removed below.
       ["src/jsc/bindings/webcore/streams/JSReadableStream.h", /\bm_detached\b|\bm_nativeType\b/],
       ["src/jsc/bindings/webcore/streams/JSTransformStream.h", /\bm_detached\b/],
       ["src/jsc/bindings/webcore/streams/JSWritableStream.h", /\bm_detached\b/],
@@ -63,6 +58,7 @@ test("transferable-streams scaffolding and other dead C++ bindings do not reappe
       // exports; the WebCore impl stubs and the EncodeIntoResult dictionary
       // converters were never called.
       ["src/jsc/bindings/webcore/TextEncoder.h", /EncodeIntoResult|\bencodeInto\b/],
+      ["src/jsc/bindings/webcore/TextEncoder.cpp", /TextEncoder::encode(Into)?\(/],
       ["src/jsc/bindings/webcore/JSTextEncoder.h", /EncodeIntoResult/],
       ["src/jsc/bindings/webcore/JSTextEncoder.cpp", /convertDictionary(ToJS)?<?.*EncodeIntoResult/],
       // Every KeyObject is one of the three concrete subclasses, which define their
@@ -160,10 +156,6 @@ test("orphaned files stay deleted", () => {
     "packages/bun-usockets/misc/gen_test_certs.sh",
     "packages/bun-usockets/misc/layout.png",
     "packages/bun-usockets/module.modulemap",
-    // the streams/TextEncoder C++ removed above
-    "src/jsc/bindings/webcore/streams/JSCrossRealmTransformState.cpp",
-    "src/jsc/bindings/webcore/streams/JSCrossRealmTransformState.h",
-    "src/jsc/bindings/webcore/TextEncoder.cpp",
   ];
   const tree = headTree();
   expect(gone.filter(p => tree.has(p))).toEqual([]);

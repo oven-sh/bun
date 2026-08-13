@@ -123,6 +123,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadIntoRequest;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPullIntoDescriptor;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForStreamTeeState;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCrossRealmTransformState;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForStreamFromIterableContext;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDirectStreamController;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNativeStreamSourceAdapter;

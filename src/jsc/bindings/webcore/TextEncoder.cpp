@@ -22,24 +22,17 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#pragma once
+#include "config.h"
+#include "TextEncoder.h"
 
-#include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
-#include <wtf/RefPtr.h>
-#include <wtf/text/WTFString.h>
+#include <JavaScriptCore/GenericTypedArrayViewInlines.h>
+#include <JavaScriptCore/JSCInlines.h>
 
-// THIS FILE IS UNUSED
-// IT EXISTS TO MAKE THE BINDINGS HAPPY
 namespace WebCore {
 
-class TextEncoder : public RefCounted<TextEncoder> {
-public:
-    static Ref<TextEncoder> create() { return adoptRef(*new TextEncoder); }
-    String encoding() const;
-
-private:
-    TextEncoder() {};
-};
+String TextEncoder::encoding() const
+{
+    return "utf-8"_s;
+}
 
 }

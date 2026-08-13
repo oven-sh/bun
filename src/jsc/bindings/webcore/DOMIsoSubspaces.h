@@ -105,6 +105,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForReadIntoRequest;
     std::unique_ptr<IsoSubspace> m_subspaceForPullIntoDescriptor;
     std::unique_ptr<IsoSubspace> m_subspaceForStreamTeeState;
+    std::unique_ptr<IsoSubspace> m_subspaceForCrossRealmTransformState;
     std::unique_ptr<IsoSubspace> m_subspaceForStreamFromIterableContext;
     std::unique_ptr<IsoSubspace> m_subspaceForDirectStreamController;
     std::unique_ptr<IsoSubspace> m_subspaceForNativeStreamSourceAdapter;

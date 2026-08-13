@@ -1944,21 +1944,33 @@ describe("a port whose peer closed is closed too", () => {
     carrier.port2.close();
   });
 
+  // Makes a channel, drops one port and collects it (its WeakRef clearing is the proof; the
+  // collection runs ~MessagePort, which posts the peer notification), then gives the surviving
+  // port a turn to process that notification and returns it.
+  async function survivorOfCollectedPeer(prepare: (survivor: MessagePort, doomed: MessagePort) => void) {
+    const { survivor, doomed } = (() => {
+      const { port1, port2 } = new MessageChannel();
+      prepare(port1, port2);
+      return { survivor: port1, doomed: new WeakRef(port2) };
+    })();
+    let collected = false;
+    for (let i = 0; i < 20 && !collected; i++) {
+      // new WeakRef() / deref() keep the target alive for the rest of the current turn.
+      await tick();
+      Bun.gc(true);
+      collected = doomed.deref() === undefined;
+    }
+    expect(collected).toBe(true);
+    await tick();
+    return survivor;
+  }
+
   // Only an explicit close counts. Bun collects an entangled port whose wrapper is unreachable
   // (node never does) and notifies the peer so it releases its loop refs; closing the peer on
   // top of that would make its transfer fail or not depending on when GC ran.
   test("a peer that was garbage collected rather than closed leaves the port transferable", async () => {
     const carrier = new MessageChannel();
-    let port1!: MessagePort;
-    (() => {
-      const channel = new MessageChannel();
-      port1 = channel.port1;
-      port1.on("close", () => {});
-    })();
-    for (let i = 0; i < 5; i++) {
-      Bun.gc(true);
-      await tick();
-    }
+    const port1 = await survivorOfCollectedPeer(survivor => survivor.on("close", () => {}));
     expect(isRejectedAsDetached(port1)).toBe(false);
     carrier.port1.postMessage(port1, [port1]);
     carrier.port1.close();
@@ -1968,18 +1980,8 @@ describe("a port whose peer closed is closed too", () => {
   // ...and an idle port is not even told: its one 'close' event has to stay available for
   // the close() that eventually happens (node's test-worker-message-port.js relies on this).
   test("a port whose peer was garbage collected still delivers close(cb) when it is closed later", async () => {
-    let idle!: MessagePort;
-    let unread!: MessagePort;
-    (() => {
-      idle = new MessageChannel().port2;
-      const channel = new MessageChannel();
-      unread = channel.port2;
-      channel.port1.postMessage("queued");
-    })();
-    for (let i = 0; i < 5; i++) {
-      Bun.gc(true);
-      await tick();
-    }
+    const idle = await survivorOfCollectedPeer(() => {});
+    const unread = await survivorOfCollectedPeer((_survivor, doomed) => doomed.postMessage("queued"));
 
     // 'close' is dispatched from a task queued by close(); give it a few turns, then give up.
     function closeCallbackFires(port: MessagePort): Promise<string> {

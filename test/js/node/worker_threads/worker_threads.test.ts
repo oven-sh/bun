@@ -1092,7 +1092,9 @@ test("a worker exiting right after closing ref'd ports shuts down cleanly", asyn
 // takes a self-ref on the native port that only its 'close' task or the teardown
 // releases, so a port closed right before exit leaks outright if teardown skips it.
 // Malloc=1 routes WebKit allocations through the system allocator so LSan can see the
-// port; LSan itself is only available on the (Linux-only) ASAN builds.
+// port. Linux is where that combination is verified clean (CI's ASAN lane); keep the
+// fixture on the main thread, since every exited worker thread leaves its thread_local
+// eventNames() table behind under Malloc=1, which LSan would report here.
 test.skipIf(!isASAN || !isLinux)("ports closed right before exit are released by the VM teardown", async () => {
   await using proc = Bun.spawn({
     cmd: [

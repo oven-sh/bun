@@ -655,41 +655,28 @@ void evaluateCommonJSCustomExtension(
     RETURN_IF_EXCEPTION(scope, );
 }
 
-// Hand freshly-transpiled source to the module registry ahead of a
-// synchronous require(esm) load. provideFetch() only accepts a New entry;
-// when the async transpiler already started fetching this specifier (it is a
-// dependency of an ESM graph that is mid-load), settle the entry's fetch
-// promise with this source instead so the synchronous load can proceed
-// without yielding to the transpiler thread. The async result lands later on
-// an already-settled promise and is dropped (PromiseFulfillWithoutHandlerJob
-// checks for a pending target).
+// Registers source for a synchronous require(esm) load. An entry the
+// surrounding import graph is still fetching on the transpiler thread is
+// settled with this source (provideFetch() would ignore it); the transpiler's
+// own result later lands on a settled promise and is dropped.
 static void provideFetchForSyncLoad(Zig::GlobalObject* globalObject, const WTF::String& specifier, JSC::JSSourceCode* jsSourceCode)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto key = JSC::Identifier::fromString(vm, specifier);
     auto* loader = globalObject->moduleLoader();
-    if (auto* entry = loader->registryEntry(key)) {
-        if (entry->status() == JSC::ModuleRegistryEntry::Status::Fetching) {
-            // Guarantees the FetchSettled reaction is attached to the fetch
-            // promise (a no-op for entries hostLoadImportedModule created).
-            entry->ensureModulePromise(globalObject);
-            JSC::JSPromise* fetchPromise = entry->ensureFetchPromise(globalObject);
-            if (fetchPromise->status() == JSC::JSPromise::Status::Pending) {
-                // The async path pipeFrom()'d this promise, which set the
-                // first-resolving-function flag, so the guarded fulfill()
-                // would no-op; settle it directly. The FetchSettled reaction
-                // lands on the synchronous module queue the caller is about
-                // to drain.
-                fetchPromise->fulfillPromise(vm, jsSourceCode);
-            }
-            // Already-settled fetch: the FetchSettled reaction either ran or
-            // is stranded on the normal microtask queue, in which case
-            // hostLoadImportedModule's synchronous-replay path makes the
-            // module from the settled source inline.
-            return;
-        }
+    auto* entry = loader->registryEntry(key);
+    if (!entry || entry->status() != JSC::ModuleRegistryEntry::Status::Fetching) {
+        scope.release();
+        loader->provideFetch(globalObject, key, JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
+        return;
     }
-    loader->provideFetch(globalObject, key, JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
+    entry->ensureModulePromise(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+    JSC::JSPromise* fetchPromise = entry->ensureFetchPromise(globalObject);
+    // fulfillPromise, not fulfill(): pipeFrom() already claimed this promise's resolving functions.
+    if (fetchPromise->status() == JSC::JSPromise::Status::Pending)
+        fetchPromise->fulfillPromise(vm, jsSourceCode);
 }
 
 JSValue fetchCommonJSModule(

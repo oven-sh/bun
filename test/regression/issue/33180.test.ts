@@ -1,21 +1,8 @@
 // https://github.com/oven-sh/bun/issues/33180
-//
-// A CommonJS module imported by an ESM graph has its body run while the graph
-// is still loading. If that body require()s a plain ESM module (no top-level
-// await) that the same graph is also importing, the module's registry entry is
-// still mid-fetch, and 1.3.14 misreported it as
-//   TypeError: require() async module "..." is unsupported. use "await import()" instead.
-// 1.3.11 and Node both load it synchronously.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test.concurrent("require() of an ESM module the surrounding import graph is still fetching", async () => {
-  // Deterministic: starter.cjs is a one-line module, so its body runs as soon
-  // as it is delivered, before a.cjs and b.mjs have finished fetching, on
-  // every run. b.mjs importing a.cjs back while a.cjs is still evaluating
-  // additionally checks that the synchronous load hands the ESM side the live
-  // exports of the half-evaluated CJS module and does not run it twice. Node
-  // prints the same JSON.
   using dir = tempDir("issue-33180-cycle", {
     "entry.mjs": `
       import "./starter.cjs";
@@ -51,9 +38,6 @@ test.concurrent("require() of an ESM module the surrounding import graph is stil
 });
 
 test.concurrent("consecutive require()s of several ESM siblings that are still transpiling", async () => {
-  // The shape from the issue: the siblings are large so their transpile on the
-  // transpiler thread is still in flight when the tiny CJS module's body runs
-  // and require()s each of them in turn.
   const files: Record<string, string> = {
     "entry.mjs": `
       import "./e1.mjs";

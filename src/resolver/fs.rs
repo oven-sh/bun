@@ -173,6 +173,8 @@ impl Entry {
     /// has always done, and what a case-insensitive filesystem does itself. Once
     /// two siblings share the key the filesystem is known to be case-sensitive,
     /// so only the sibling spelled byte-for-byte like `name` exists on disk.
+    /// Only the current listing counts: once a re-read finds the other
+    /// sibling gone, the survivor is a lone entry again.
     fn select_case_variant(head_ptr: *mut Entry, name: &[u8]) -> Option<*mut Entry> {
         // SAFETY: EntryStore slots are never freed (see `dir_entry::EntryStore`).
         let head = unsafe { &*head_ptr };

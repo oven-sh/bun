@@ -6,6 +6,7 @@ import {
   mkdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -22,7 +23,7 @@ import {
   tempDir,
   tempDirWithFiles,
 } from "harness";
-import { join, resolve, sep } from "path";
+import { basename, join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
 
@@ -1711,6 +1712,32 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
 });
 
 describe("sibling files whose names differ only in case", () => {
+  // Bundles `entry` in-process and returns the on-disk spelling of every
+  // module it pulled in (bun build prints a `// <path>` line above each module
+  // with content), or the build errors. In-process because later Bun.build
+  // calls in a process run at a higher resolver generation and therefore
+  // re-read the directories an earlier build cached, which is the path the
+  // re-read tests exercise.
+  async function bundledModules(dir: string, entry: string): Promise<string[]> {
+    const result = await Bun.build({ entrypoints: [join(dir, entry)], throw: false });
+    if (!result.success) return result.logs.map(log => log.message);
+    const bundle = await result.outputs[0].text();
+    return Array.from(bundle.matchAll(/^\/\/ (.+)$/gm), match => basename(match[1])).filter(name => name !== entry);
+  }
+
+  // The generation is bumped by the bundle thread once it has drained its
+  // queue, which can land after the previous build's promise has already
+  // resolved; a build enqueued before that still sees the old listing. Each
+  // attempt is itself a build, so a later attempt re-reads, provided no other
+  // test keeps the queue from draining: the tests using this are serial.
+  async function expectBundledModulesAfterChange(dir: string, entry: string, expected: string[]) {
+    let actual = await bundledModules(dir, entry);
+    for (let attempt = 0; attempt < 50 && !Bun.deepEquals(actual, expected); attempt++) {
+      actual = await bundledModules(dir, entry);
+    }
+    expect(actual).toEqual(expected);
+  }
+
   // The directory cache keys entries by lowercased name, so each of these
   // used to return whichever of the two files readdir listed last. Only a
   // case-sensitive filesystem can hold both files at once.
@@ -1820,59 +1847,84 @@ describe("sibling files whose names differ only in case", () => {
       });
     });
 
-    it.concurrent("re-reading a directory between Bun.build calls tracks added and removed variants", async () => {
-      // Later Bun.build calls in a process run at a higher resolver generation,
-      // so they re-read an already cached directory in place, carrying the
-      // entries of still-present files over. Runs in-process because that is
-      // what makes the later builds take the re-read path.
+    it.serial("re-reading a directory between Bun.build calls tracks added and removed variants", async () => {
       using dir = tempDir("resolve-case-reread", {
-        "mod.mjs": `export const who = "lower";`,
-        "Mod.mjs": `export const who = "UPPER";`,
+        "mod.mjs": `console.log("lower");`,
+        "Mod.mjs": `console.log("UPPER");`,
         "two.mjs": `
-          import { who as lower } from "./mod.mjs";
-          import { who as upper } from "./Mod.mjs";
-          console.log(lower, upper);
+          import "./mod.mjs";
+          import "./Mod.mjs";
         `,
         "three.mjs": `
-          import { who as lower } from "./mod.mjs";
-          import { who as upper } from "./Mod.mjs";
-          import { who as shout } from "./MOD.mjs";
-          console.log(lower, upper, shout);
+          import "./mod.mjs";
+          import "./Mod.mjs";
+          import "./MOD.mjs";
         `,
         "lower-shout.mjs": `
-          import { who as lower } from "./mod.mjs";
-          import { who as shout } from "./MOD.mjs";
-          console.log(lower, shout);
+          import "./mod.mjs";
+          import "./MOD.mjs";
         `,
-        "upper.mjs": `import { who } from "./Mod.mjs"; console.log(who);`,
+        "upper.mjs": `import "./Mod.mjs";`,
       });
-      const build = async (entry: string) => {
-        const result = await Bun.build({ entrypoints: [join(String(dir), entry)], throw: false });
-        if (!result.success) return result.logs.map(log => log.message);
-        const bundle = await result.outputs[0].text();
-        return Array.from(bundle.matchAll(/"(lower|UPPER|SHOUT)"/g), match => match[1]);
-      };
-      // The generation is bumped by the bundle thread once it has drained its
-      // queue, which can land after the previous build's promise has already
-      // resolved; a build enqueued before that still sees the old listing.
-      // Each attempt is itself a build, so a later attempt always re-reads.
-      const buildAfterChange = async (entry: string, expected: string[]) => {
-        let actual = await build(entry);
-        for (let attempt = 0; attempt < 50 && !Bun.deepEquals(actual, expected); attempt++) {
-          actual = await build(entry);
-        }
-        expect(actual).toEqual(expected);
-      };
 
-      expect(await build("two.mjs")).toEqual(["lower", "UPPER"]);
+      expect(await bundledModules(String(dir), "two.mjs")).toEqual(["mod.mjs", "Mod.mjs"]);
 
-      writeFileSync(join(String(dir), "MOD.mjs"), `export const who = "SHOUT";`);
-      await buildAfterChange("three.mjs", ["lower", "UPPER", "SHOUT"]);
+      writeFileSync(join(String(dir), "MOD.mjs"), `console.log("SHOUT");`);
+      await expectBundledModulesAfterChange(String(dir), "three.mjs", ["mod.mjs", "Mod.mjs", "MOD.mjs"]);
 
       unlinkSync(join(String(dir), "Mod.mjs"));
-      await buildAfterChange("lower-shout.mjs", ["lower", "SHOUT"]);
-      await buildAfterChange("upper.mjs", ['Could not resolve: "./Mod.mjs"']);
+      await expectBundledModulesAfterChange(String(dir), "lower-shout.mjs", ["mod.mjs", "MOD.mjs"]);
+      await expectBundledModulesAfterChange(String(dir), "upper.mjs", ['Could not resolve: "./Mod.mjs"']);
     });
+
+    // Exact spelling is only required while several spellings exist; once the
+    // other file is gone, the survivor is a lone entry again and any spelling
+    // resolves to it, as for any other lone file. Both orders are run because
+    // which of the two files readdir lists first (and so which one the re-read
+    // has to unhook from the other) depends on the filesystem.
+    it.serial.each([
+      ["mod.mjs", "Mod.mjs"],
+      ["Mod.mjs", "mod.mjs"],
+    ])("deleting %s between Bun.build calls makes other spellings resolve to %s again", async (removed, kept) => {
+      using dir = tempDir("resolve-case-shrink", {
+        "mod.mjs": `console.log("lower");`,
+        "Mod.mjs": `console.log("UPPER");`,
+        "both.mjs": `
+          import "./mod.mjs";
+          import "./Mod.mjs";
+        `,
+        "shout.mjs": `import "./MOD.mjs";`,
+        "removed.mjs": `import "./${removed}";`,
+      });
+
+      expect(await bundledModules(String(dir), "both.mjs")).toEqual(["mod.mjs", "Mod.mjs"]);
+      expect(await bundledModules(String(dir), "shout.mjs")).toEqual(['Could not resolve: "./MOD.mjs"']);
+
+      unlinkSync(join(String(dir), removed));
+      await expectBundledModulesAfterChange(String(dir), "removed.mjs", [kept]);
+      await expectBundledModulesAfterChange(String(dir), "shout.mjs", [kept]);
+    });
+  });
+
+  it.serial("re-reading a directory between Bun.build calls picks up a case-only rename", async () => {
+    // The re-read only reuses the previous entry for a name spelled exactly
+    // the same, so the renamed file gets an entry carrying its new spelling
+    // (the old one kept resolving to the old path, which on a case-sensitive
+    // filesystem no longer exists). Works on any filesystem: a case-only
+    // rename is allowed on case-insensitive ones too.
+    using dir = tempDir("resolve-case-rename", {
+      "x.mjs": `console.log("x");`,
+      "before.mjs": `import "./x.mjs";`,
+      "exact.mjs": `import "./X.mjs";`,
+      "old-spelling.mjs": `import "./x.mjs";`,
+    });
+
+    expect(await bundledModules(String(dir), "before.mjs")).toEqual(["x.mjs"]);
+
+    renameSync(join(String(dir), "x.mjs"), join(String(dir), "X.mjs"));
+    await expectBundledModulesAfterChange(String(dir), "exact.mjs", ["X.mjs"]);
+    // A lone file still resolves under any spelling, but to its current name.
+    await expectBundledModulesAfterChange(String(dir), "old-spelling.mjs", ["X.mjs"]);
   });
 
   it.concurrent("a specifier whose case differs from the only file of that name still resolves", async () => {

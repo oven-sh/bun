@@ -343,6 +343,15 @@ describe("vm", () => {
         expect(compileFunction("return rest.length", ["...rest"])(1, 2, 3)).toBe(3);
       });
 
+      test("a body too deeply nested to parse throws the parser's RangeError, without an arrow header", () => {
+        const body = "return " + Buffer.alloc(100_000, "(").toString();
+        for (const params of [[], ["a"]]) {
+          const err = thrownBy(() => compileFunction(body, params));
+          expect(err).toBeInstanceOf(RangeError);
+          expect(err.stack.startsWith("RangeError")).toBe(true);
+        }
+      });
+
       test("the arrow header and line point into the body", () => {
         const header = (err: any) => {
           expect(err).toBeInstanceOf(SyntaxError);
@@ -362,6 +371,13 @@ describe("vm", () => {
         expect(header(moved)).toEqual(["f.js:7", "  %%", "  ^", ""]);
         expect(header(thrownBy(() => compileFunction("return 1;\n%%", [], { lineOffset: -5 })))).toEqual([
           ":-3",
+          "%%",
+          "^",
+          "",
+        ]);
+        // Params spanning lines do not shift the reported position.
+        expect(header(thrownBy(() => compileFunction("return 1;\n%%", ["a,\nb"], { filename: "f.js" })))).toEqual([
+          "f.js:2",
           "%%",
           "^",
           "",

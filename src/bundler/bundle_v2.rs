@@ -6084,8 +6084,10 @@ pub mod bv2_impl {
                     }
                 }
 
-                // By default, we treat .sqlite files as external.
-                if import_record.loader == Some(Loader::Sqlite) {
+                // By default, we treat .sqlite files as external; the Bun runtime opens
+                // them. For other targets the record falls through to the parse task,
+                // which reports that the sqlite loader requires target "bun".
+                if import_record.loader == Some(Loader::Sqlite) && ctx.target.is_bun() {
                     import_record
                         .flags
                         .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);

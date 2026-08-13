@@ -38,6 +38,57 @@ describe("bundler", () => {
     },
     run: { stdout: "RedisClient\nRedisClient\nRedisClient\n" },
   });
+  // Only the Bun runtime can open a database the bundle leaves external, so
+  // every way of selecting the sqlite loader has to fail the build for the
+  // other targets. The `with { type: "sqlite" }` form used to be externalized
+  // before that check ran: the build succeeded and the output imported the
+  // database as a plain module, with the attribute dropped.
+  describe("sqlite loader requires target bun", () => {
+    const database = (() => {
+      const db = new Database(":memory:");
+      db.exec("create table messages (message text)");
+      db.exec("insert into messages values ('Hello, world!')");
+      return db.serialize();
+    })();
+    const targetError = {
+      "/db.sqlite": ['To use the "sqlite" loader, set target to "bun"'],
+    };
+    for (const target of ["node", "browser"] as const) {
+      itBundled(`bun/sqlite-file-target-${target}`, {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+            import db from './db.sqlite' with {type: "sqlite"};
+            console.log(db);
+          `,
+          "/db.sqlite": database,
+        },
+        bundleErrors: targetError,
+      });
+      itBundled(`bun/sqlite-file-dynamic-import-target-${target}`, {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+            const { default: db } = await import('./db.sqlite', {with: {type: "sqlite"}});
+            console.log(db);
+          `,
+          "/db.sqlite": database,
+        },
+        bundleErrors: targetError,
+      });
+      itBundled(`bun/embedded-sqlite-file-target-${target}`, {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+            import db from './db.sqlite' with {type: "sqlite", embed: "true"};
+            console.log(db);
+          `,
+          "/db.sqlite": database,
+        },
+        bundleErrors: targetError,
+      });
+    }
+  });
   itBundled("bun/embedded-sqlite-file", {
     target: "bun",
     outfile: "",

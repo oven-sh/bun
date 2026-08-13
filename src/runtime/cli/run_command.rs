@@ -3078,8 +3078,9 @@ struct RemoteImageDownload {
     // prefetchRemoteImages (can't be set in the literal because
     // AsyncHTTP.init needs a pointer to response_buffer, which only
     // has a stable address once the owning struct is live).
-    // Self-referential: borrows from `url: Box<[u8]>` below (and its proxy
-    // URL, if any, from the arena-backed env loader in prefetch_remote_images).
+    // Self-referential: borrows from `url: Box<[u8]>` below. Its proxy URL,
+    // if any, borrows the env loader on prefetch_remote_images' stack, which
+    // outlives every download.
     async_http: bun_http::AsyncHTTP<'static>,
     response_buffer: bun_core::MutableString,
     url: Box<[u8]>,
@@ -3201,11 +3202,10 @@ impl RunCommand {
 
         bun_http::http_thread::init(&Default::default());
 
-        // Lives in the process-lifetime CLI arena (the caller exits right
-        // after rendering) so the proxy URLs borrowed from it below satisfy
-        // the `AsyncHTTP<'static>` stored in each download.
-        let env: &'static DotEnv::Loader = {
-            let env = runner_arena().alloc(DotEnv::Loader::init());
+        // Declared before `downloads`: the proxy URLs handed to the downloads
+        // below are views into this map, so it must be dropped after them.
+        let env = {
+            let mut env = DotEnv::Loader::init();
             env.load_process().unwrap_or_oom();
             env
         };
@@ -3250,7 +3250,13 @@ impl RunCommand {
             };
             let d_ptr: *mut RemoteImageDownload = slot;
             let url = bun_url::URL::parse(url_static);
-            let http_proxy = env.get_http_proxy_for(&url);
+            // SAFETY: the proxy URL is a view into `env`, which is immutable
+            // from here on and declared before `downloads`, so it is dropped
+            // after every AsyncHTTP holding the view; none of them is still
+            // in flight by then because the channel loop below waits for all.
+            let http_proxy = env
+                .get_http_proxy_for(&url)
+                .map(|proxy| unsafe { proxy.erase_lifetime() });
             let async_http = bun_http::AsyncHTTP::init(
                 bun_http::Method::GET,
                 url,

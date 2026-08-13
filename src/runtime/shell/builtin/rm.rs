@@ -174,8 +174,7 @@ impl Rm {
 
                                 for i in args_start..argc {
                                     let path = Builtin::of(interp, cmd).arg_bytes(i);
-                                    // Joined onto the cwd, `""` would look like the cwd
-                                    // here; its task fails it with ENOENT instead.
+                                    // Joined below, `""` would resolve to the cwd itself.
                                     if path.is_empty() {
                                         continue;
                                     }
@@ -1203,8 +1202,6 @@ impl ShellRmTask {
         vtable: &mut V,
     ) -> bun_sys::Maybe<()> {
         let dirfd = self.cwd;
-        // Every operand is classified here first, so this is where an empty one
-        // gets the ENOENT (and `-f`) treatment of any other missing operand.
         match reject_empty_path(path.as_bytes(), bun_sys::Tag::unlink)
             .and_then(|()| bun_sys::unlinkat_with_flags(dirfd, path, 0))
         {

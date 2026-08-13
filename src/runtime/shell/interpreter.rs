@@ -2224,11 +2224,9 @@ pub(crate) fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<b
     }
 }
 
-/// Fails an empty path operand with ENOENT, which is what every POSIX syscall
-/// returns for `""`. The shell's own path handling does not: joining `""` onto
-/// the cwd yields the cwd, and the Windows `*at()` emulation opens the
-/// directory handle itself for an empty name, so without this `touch ""`,
-/// `rm -r ""`, `cp -R "" x`, ... operate on the current directory.
+/// Syscalls fail on `""` with ENOENT, but the shell's own resolution would turn
+/// it into the cwd: joining it onto the cwd string, or the Windows `*at()`
+/// emulation, for which an empty name is the directory handle itself.
 pub(crate) fn reject_empty_path(path: &[u8], syscall: bun_sys::Tag) -> bun_sys::Result<()> {
     if path.is_empty() {
         return Err(bun_sys::Error::from_code(bun_sys::E::ENOENT, syscall));

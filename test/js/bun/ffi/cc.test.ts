@@ -10,7 +10,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 // TODO: we need to install build-essential and Apple SDK in CI.
@@ -145,16 +145,19 @@ describe("given a source file with syntax errors", () => {
 // JS with its first bytes replaced by allocator metadata, a use after free
 // under ASan) and read them as Latin-1 although TinyCC echoes UTF-8 source.
 describe("TinyCC diagnostics thrown by cc()", () => {
+  // On Mach-O, TinyCC prefixes C symbols with "_" and reports them that way;
+  // asm labels are taken verbatim, so the one below supplies the prefix itself.
+  const symbolPrefix = isMacOS ? "_" : "";
+
   // One spawned fixture covers both places cc() can fail:
   // - unresolved.c compiles but does not link, so the diagnostic is collected
   //   and thrown under a "N errors while compiling" header;
   // - clash.c defines JSFunctionCall, the entry point of the wrapper cc()
   //   compiles around every symbol, so the user's C compiles and the wrapper
   //   does not, and that diagnostic is thrown on its own;
-  // - nonascii.c exports its function under the asm label "y ñ" (TinyCC keeps
-  //   asm labels verbatim, hence the underscore macOS symbols otherwise get),
-  //   so the wrapper's declaration of it is a syntax error whose diagnostic
-  //   quotes the non-ASCII token.
+  // - nonascii.c exports its function under the asm label "y ñ", so the
+  //   wrapper's declaration of it is a syntax error whose diagnostic quotes
+  //   the non-ASCII token.
   it("reach JS byte for byte", async () => {
     using dir = tempDir("bun-ffi-cc-diagnostics", {
       "unresolved.c": /* c */ `
@@ -165,11 +168,7 @@ describe("TinyCC diagnostics thrown by cc()", () => {
         int JSFunctionCall(int a) { return a + 1; }
       `,
       "nonascii.c": /* c */ `
-        #ifdef __APPLE__
-        int add(int a, int b) __asm__("_y ñ");
-        #else
-        int add(int a, int b) __asm__("y ñ");
-        #endif
+        int add(int a, int b) __asm__("${symbolPrefix}y ñ");
         int add(int a, int b) { return a + b; }
       `,
       "fixture.js": /* js */ `
@@ -214,7 +213,7 @@ describe("TinyCC diagnostics thrown by cc()", () => {
     // but it is not asserted empty: debug builds print benign warnings.
     expect({ messages, stderr, exitCode }).toMatchObject({
       messages: {
-        unresolved: `1 errors while compiling ${messages.source}\ntcc: error: unresolved reference to 'bun_test_missing_symbol'\n`,
+        unresolved: `1 errors while compiling ${messages.source}\ntcc: error: unresolved reference to '${symbolPrefix}bun_test_missing_symbol'\n`,
         clash: expect.stringMatching(/^<string>:\d+: error: .*'JSFunctionCall'$/),
         nonascii: expect.stringMatching(/^<string>:\d+: error: .*'ñ'/),
       },

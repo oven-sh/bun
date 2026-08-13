@@ -5790,13 +5790,20 @@ describe.if(isWindows)("kernel32 paths are normalized before the \\\\?\\ prefix 
     ["fs.copyFile", (src, dest) => promisify(fs.copyFile)(src, dest)],
     ["fs.promises.copyFile", (src, dest) => promises.copyFile(src, dest)],
   ];
-  // Ways of spelling `${dir}\${name}` that only work once the path is normalized.
+  // `\\localhost\X$\...` is the administrative-share spelling of `X:\...`, which
+  // the "windows path handling" suite above relies on as well.
+  const uncShare = (dir: string) => `\\\\localhost\\${dir[0]}$`;
+  // Ways of spelling `${dir}\${name}` (dir is `X:\...`) that only work once the
+  // path is normalized.
   const spellings: [string, (dir: string, name: string) => string][] = [
     ["trailing backslash", (dir, name) => `${dir}\\${name}\\`],
     ["trailing slash", (dir, name) => `${dir}/${name}/`],
     ["`..` component", (dir, name) => `${dir}\\missing\\..\\${name}`],
+    ["`..` above the drive root", (dir, name) => `${dir.slice(0, 2)}\\..\\..${dir.slice(2)}\\${name}`],
     ["`.` component", (dir, name) => `${dir}\\.\\${name}`],
     ["doubled separator", (dir, name) => `${dir}\\\\${name}`],
+    ["UNC path with a trailing backslash", (dir, name) => `${uncShare(dir)}${dir.slice(2)}\\${name}\\`],
+    ["UNC path with `..` above the share root", (dir, name) => `${uncShare(dir)}\\..\\..${dir.slice(2)}\\${name}`],
   ];
 
   describe.each(copyFileApis)("%s", (_, copyFile) => {
@@ -5822,32 +5829,51 @@ describe.if(isWindows)("kernel32 paths are normalized before the \\\\?\\ prefix 
 
   // Relative paths and rooted paths (`\dir\file`, no drive letter: resolved
   // against the cwd's drive) depend on the cwd, so they run in a child
-  // started inside the temp dir.
+  // started inside the temp dir. Every result is collected into one object so
+  // a failure shows the whole matrix.
   it("relative and rooted spellings", async () => {
     using dir = tempDir("fs-kernel32-normalize", { "src.txt": "payload" });
     const fixture = `
       const fs = require("node:fs");
       const { sep } = require("node:path");
       const cwd = process.cwd();
+      const drive = cwd.slice(0, 2);
       const rooted = cwd.slice(2);
       const out = { cwd };
-      function copy(key, src, dest, created) {
+      function attempt(key, fn) {
         try {
-          fs.copyFileSync(src, dest);
-          out[key] = fs.readFileSync(created, "utf8");
+          out[key] = fn();
         } catch (e) {
           out[key] = e.code;
         }
+      }
+      function copy(key, src, dest, created) {
+        attempt(key, () => {
+          fs.copyFileSync(src, dest);
+          return created ? fs.readFileSync(created, "utf8") : "copied";
+        });
       }
       copy("relativeDestTrailingSep", "src.txt", "a" + sep, "a");
       copy("relativeSrcTrailingSep", "src.txt" + sep, "b", "b");
       copy("rootedDestTrailingSep", "src.txt", rooted + sep + "c" + sep, "c");
       copy("rootedSrcTrailingSep", rooted + sep + "src.txt" + sep, "d", "d");
-      copy("rootedDestDotDot", "src.txt", rooted + sep + "missing" + sep + ".." + sep + "e", "e");
-      out.existsRootedFileTrailingSep = fs.existsSync(rooted + sep + "src.txt" + sep);
-      out.existsDriveFileTrailingSep = fs.existsSync(cwd + sep + "src.txt" + sep);
-      out.mkdirRootedTrailingSep = fs.mkdirSync(rooted + sep + "made-rooted" + sep, { recursive: true });
-      out.mkdirDriveTrailingSep = fs.mkdirSync(cwd + sep + "made-drive" + sep, { recursive: true });
+      copy("rootedSrcDotDotAboveRoot", sep + ".." + rooted + sep + "src.txt", "e", "e");
+      // Spellings of the current directory itself: copying onto a directory is
+      // EPERM (as it already was for "."), unlike the ENOENT of an empty path.
+      copy("destCwdSpelledDotSlash", "src.txt", "." + sep);
+      copy("destCwdSpelledDirDotDot", "src.txt", "missing" + sep + "..");
+      copy("destEmpty", "src.txt", "");
+      attempt("existsCwdSpelledDotSlash", () => fs.existsSync("." + sep));
+      attempt("existsCwdSpelledDirDotDot", () => fs.existsSync("missing/.."));
+      attempt("existsEmpty", () => fs.existsSync(""));
+      attempt("existsRootedFileTrailingSep", () => fs.existsSync(rooted + sep + "src.txt" + sep));
+      attempt("existsRootedFileDotDotAboveRoot", () => fs.existsSync(sep + ".." + rooted + sep + "src.txt"));
+      attempt("existsDriveFileTrailingSep", () => fs.existsSync(cwd + sep + "src.txt" + sep));
+      attempt("mkdirRootedTrailingSep", () => fs.mkdirSync(rooted + sep + "made-rooted" + sep, { recursive: true }));
+      attempt("mkdirDriveTrailingSep", () => fs.mkdirSync(cwd + sep + "made-drive" + sep, { recursive: true }));
+      attempt("mkdirDriveDotDotAboveRoot", () =>
+        fs.mkdirSync(drive + sep + ".." + rooted + sep + "made-above", { recursive: true }),
+      );
       process.stdout.write(JSON.stringify(out));
     `;
     await using proc = Bun.spawn({
@@ -5865,11 +5891,19 @@ describe.if(isWindows)("kernel32 paths are normalized before the \\\\?\\ prefix 
       relativeSrcTrailingSep: "payload",
       rootedDestTrailingSep: "payload",
       rootedSrcTrailingSep: "payload",
-      rootedDestDotDot: "payload",
+      rootedSrcDotDotAboveRoot: "payload",
+      destCwdSpelledDotSlash: "EPERM",
+      destCwdSpelledDirDotDot: "EPERM",
+      destEmpty: "ENOENT",
+      existsCwdSpelledDotSlash: true,
+      existsCwdSpelledDirDotDot: true,
+      existsEmpty: false,
       existsRootedFileTrailingSep: true,
+      existsRootedFileDotDotAboveRoot: true,
       existsDriveFileTrailingSep: true,
       mkdirRootedTrailingSep: `\\\\?\\${join(cwd, "made-rooted")}`,
       mkdirDriveTrailingSep: `\\\\?\\${join(cwd, "made-drive")}`,
+      mkdirDriveDotDotAboveRoot: `\\\\?\\${join(cwd, "made-above")}`,
     });
     expect(exitCode).toBe(0);
   });

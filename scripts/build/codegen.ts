@@ -9,6 +9,9 @@
  * Source lists come from the patterns in glob-sources.ts, globbed once at
  * configure time via `globAllSources()`. The expanded
  * paths are baked into build.ninja; adding a file picks up on next configure.
+ * Removing one only picks up if the step's edge also tracks the SET of files
+ * (see `sourceListFile`): to ninja, an input that vanished from the list is
+ * not a change.
  *
  * bindgenv2 is special: its output set is dynamic (depends on which types
  * the .bindv2.ts files export). We invoke it with `--command=list-outputs`
@@ -46,9 +49,14 @@ import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
 import { generateXmlByteClass } from "./xmlByteClass.ts";
 
-// The individual emit functions take these four params. Bundled to keep
+// The individual emit functions take these params. Bundled to keep
 // signatures short.
-interface Ctx {
+//
+// Ctx and the emitters that take a globbed source list are exported for
+// test/internal/source-lints/build-codegen-source-lists.test.ts, which emits
+// those steps on their own: emitCodegen() as a whole spawns bun (bindgenv2
+// list-outputs).
+export interface Ctx {
   n: Ninja;
   cfg: Config;
   sources: Sources;
@@ -382,11 +390,44 @@ function shJoin(cfg: Config, args: string[]): string {
   return quoteArgs(args, cfg.host.os === "windows");
 }
 
+/**
+ * Write a globbed source list to `<codegenDir>/<name>-sources.txt` and return
+ * the path, for use as an implicit input of the step that reads those files.
+ *
+ * Listing the files themselves as inputs only tracks edits to them. Ninja
+ * re-runs an edge when an input is newer than its outputs or its command line
+ * changed; a file that disappeared from the input list is neither, so after
+ * `rm src/js/internal/foo.ts` the reconfigured bundle-modules edge is up to
+ * date and the deleted module stays in the binary until some surviving input
+ * is touched. The manifest turns the set into an input: writeIfChanged moves
+ * its mtime only when the list changes, so a removal re-runs the step and an
+ * unchanged list keeps the no-op reconfigure a no-op.
+ *
+ * Needed by every step whose output depends on which files exist without the
+ * command line saying so: bundle-modules, bindgen and generate-host-exports
+ * readdir the tree themselves, cppbind reads this very file, bun-error and
+ * bake are bundles (which files exist decides how imports resolve). Steps
+ * that pass the list on their command line (generate-classes, bindgenv2,
+ * build-fallbacks) get this from ninja's command-line tracking instead.
+ *
+ * Written at CONFIGURE time, not by a ninja rule: it's a derived manifest of
+ * our glob, like build_options.rs. One repo-relative forward-slash path per
+ * line, which is also the format cppbind reads its manifest in. codegenDir
+ * may not exist yet on a first configure.
+ */
+function sourceListFile(cfg: Config, name: string, files: string[]): string {
+  mkdirSync(cfg.codegenDir, { recursive: true });
+  const file = resolve(cfg.codegenDir, `${name}-sources.txt`);
+  const lines = files.map(p => relative(cfg.cwd, p).replace(/\\/g, "/"));
+  writeIfChanged(file, lines.join("\n") + "\n");
+  return file;
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Individual step emitters
 // ───────────────────────────────────────────────────────────────────────────
 
-function emitBunError({ n, cfg, sources, o, dirStamp }: Ctx): void {
+export function emitBunError({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const sourceDir = resolve(cfg.cwd, "packages", "bun-error");
   const installStamp = emitBunInstall(n, cfg, sourceDir);
 
@@ -399,7 +440,7 @@ function emitBunError({ n, cfg, sources, o, dirStamp }: Ctx): void {
     inputs: sources.bunError,
     // Install stamp as implicit — changing preact version re-bundles.
     // Root install as well (esbuild tool lives there).
-    implicitInputs: [installStamp, o.rootInstall],
+    implicitInputs: [sourceListFile(cfg, "bun-error", sources.bunError), installStamp, o.rootInstall],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: sourceDir,
@@ -614,7 +655,7 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // .lut.txt is consumed by emitObjectLuts below
 }
 
-function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
+export function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "generate-host-exports.ts");
   const output = resolve(cfg.codegenDir, "generated_host_exports.rs");
 
@@ -634,7 +675,7 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
     outputs: [output],
     rule: "codegen",
     inputs: [script],
-    implicitInputs: rsInputs,
+    implicitInputs: [sourceListFile(cfg, "host-exports", rsInputs), ...rsInputs],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -650,24 +691,15 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.rustInputs.push(output);
 }
 
-function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
+export function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "cppbind.ts");
 
   const outputRs = resolve(cfg.codegenDir, "cpp.rs");
 
-  // Write the .cpp file list for cppbind to scan. Build system owns the
-  // glob (glob-sources.ts); we hand the result to cppbind
-  // as an explicit input instead of it reading a magic hardcoded path.
-  // Relative paths, forward slashes — same format cppbind expects.
-  //
-  // Written at CONFIGURE time (not via a ninja rule): it's a derived
-  // manifest from our glob, and we want writeIfChanged semantics so a
-  // stable .cpp set → unchanged mtime → ninja doesn't re-run cppbind.
-  // codegenDir may not exist yet on first configure — mkdir it.
-  mkdirSync(cfg.codegenDir, { recursive: true });
-  const cxxSourcesFile = resolve(cfg.codegenDir, "cxx-sources.txt");
-  const cxxSourcesLines = sources.cxx.map(p => relative(cfg.cwd, p).replace(/\\/g, "/"));
-  writeIfChanged(cxxSourcesFile, cxxSourcesLines.join("\n") + "\n");
+  // The .cpp file list for cppbind to scan. Build system owns the glob
+  // (glob-sources.ts); we hand the result to cppbind as an argument instead
+  // of it reading a magic hardcoded path.
+  const cxxSourcesFile = sourceListFile(cfg, "cxx", sources.cxx);
 
   n.build({
     outputs: [outputRs],
@@ -702,7 +734,7 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.rustInputs.push(outputRs);
 }
 
-function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
+export function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bundle-modules.ts");
 
   // InternalModuleRegistry.cpp is read by the script (for a sanity check).
@@ -738,6 +770,9 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     outputs,
     rule: "codegen",
     inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput],
+    // The script readdirs src/js itself; the source list is what re-runs it
+    // when a module is deleted (see sourceListFile).
+    implicitInputs: [sourceListFile(cfg, "js", sources.js)],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -754,7 +789,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.cppHeaders.push(...outputs.filter(p => p.endsWith(".h")));
 }
 
-function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
+export function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bake-codegen.ts");
 
   // InternalModuleRegistry.cpp is listed as a dep in CMake for this step too.
@@ -777,6 +812,7 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     outputs,
     rule: "codegen",
     inputs: [script, ...sources.bakeRuntime],
+    implicitInputs: [sourceListFile(cfg, "bake", sources.bakeRuntime)],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -852,18 +888,20 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.bindgenV2Cpp.push(...cppOutputs);
 }
 
-function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
+export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
 
   const cppOut = resolve(cfg.codegenDir, "GeneratedBindings.cpp");
 
   // bindgen.ts scans src/ for .bind.ts files itself — this list is only for
-  // ninja dependency tracking. New .bind.ts files need a reconfigure to be
-  // picked up (next glob gets them).
+  // ninja dependency tracking. Added or deleted .bind.ts files need a
+  // reconfigure to be picked up (next glob gets them; the file list is what
+  // makes a deletion re-run the step).
   n.build({
     outputs: [cppOut],
     rule: "codegen",
     inputs: [script, ...sources.bindgen],
+    implicitInputs: [sourceListFile(cfg, "bindgen", sources.bindgen)],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,

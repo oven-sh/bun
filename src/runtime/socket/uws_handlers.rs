@@ -30,7 +30,7 @@ use bun_sql_jsc::postgres;
 /// A driver's inherent `on_*` returns `()` (it handled everything itself: postgres, mysql) or a
 /// `JsResult<()>` (it settled promises / converted values and something threw: valkey). Both become the
 /// `JsResult<()>` the dispatcher folds at the entry.
-trait IntoJsResult {
+pub(crate) trait IntoJsResult {
     fn into_js_result(self) -> bun_jsc::JsResult<()>;
 }
 impl IntoJsResult for () {

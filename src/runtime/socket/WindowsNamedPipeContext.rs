@@ -110,16 +110,18 @@ fn socket_from_named_pipe<const SSL: bool>(
 /// `on_*` block below.
 macro_rules! match_socket {
     ($scrutinee:expr, |$s:ident: NewSocket<$ssl:ident>| $body:expr) => {
+        // This context is the named-pipe sockets' trampoline: what a handler
+        // left pending is folded here.
         match $scrutinee {
             SocketType::Tls($s) => {
                 const $ssl: bool = true;
                 let _ = $ssl;
-                $body
+                super::uws_handlers::fold(super::uws_handlers::IntoJsResult::into_js_result($body))
             }
             SocketType::Tcp($s) => {
                 const $ssl: bool = false;
                 let _ = $ssl;
-                $body
+                super::uws_handlers::fold(super::uws_handlers::IntoJsResult::into_js_result($body))
             }
             SocketType::None => {}
         }
@@ -192,14 +194,14 @@ impl WindowsNamedPipeContext {
         // Only the TLS wrapper parks sessions; the TCP arm can never get here.
         // SAFETY: see `on_open`.
         if let SocketType::Tls(s) = unsafe { (*this).socket } {
-            TLSSocket::on_session(s, session);
+            super::uws_handlers::fold(TLSSocket::on_session(s, session));
         }
     }
 
     fn on_keylog(this: *mut Self, line: &[u8]) {
         // SAFETY: see `on_open`.
         if let SocketType::Tls(s) = unsafe { (*this).socket } {
-            TLSSocket::on_keylog(s, line);
+            super::uws_handlers::fold(TLSSocket::on_keylog(s, line));
         }
     }
 
@@ -250,8 +252,7 @@ impl WindowsNamedPipeContext {
                 // SAFETY: `this` is live; `global_this` is disjoint from the caller's
                 // `&mut named_pipe` and the borrow ends before `handle_error` runs JS.
                 let js_err = err.to_js(unsafe { &(*this).global_this });
-                // TODO(one-fold): libuv named-pipe trampoline; folds with the libuv dispatcher.
-                super::uws_handlers::fold(s.handle_error(js_err));
+                s.handle_error(js_err)
             });
         } else {
             match_socket!(socket, |s: NewSocket<SSL>| NewSocket::handle_connect_error(
@@ -280,9 +281,10 @@ impl WindowsNamedPipeContext {
             (socket, ptr::addr_of_mut!((*this).named_pipe))
         };
         match_socket!(socket, |s: NewSocket<SSL>| {
-            NewSocket::on_close(s, socket_from_named_pipe::<SSL>(pipe), 0, None);
+            let closed = NewSocket::on_close(s, socket_from_named_pipe::<SSL>(pipe), 0, None);
             // Release the +1 ref taken in `create()`.
             s.get().deref();
+            closed
         });
         // SAFETY: `this` is the live ctx pointer registered in create();
         // releasing the named-pipe's ref may schedule deinit.

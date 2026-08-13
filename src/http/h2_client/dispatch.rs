@@ -293,8 +293,6 @@ fn dispatch_frame(
             }
         }
         FT_HEADERS => {
-            // The guard above rejects HEADERS while a block is still open, so
-            // every HEADERS frame starts a fresh CONTINUATION budget.
             session.continuation_count = 0;
             let mut fragment = payload;
             let maybe_stream = session.streams.get(&stream_id).copied();

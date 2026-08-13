@@ -3,7 +3,10 @@
 // heuristic silently dropped rows for valid SQL it could not tokenize and
 // misreported affected-row counts for INSERT ... SELECT (#30811).
 import { SQL } from "bun";
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { join } from "node:path";
 
 describe("row-returning detection (column count, not tokenizer)", () => {
   test("LIKE predicate containing a double quote returns rows", async () => {
@@ -303,6 +306,31 @@ INSERT INTO t (id, name) SELECT id + 20, name FROM t WHERE id <= 2`;
     for (const q of ["   ", "-- noop", "/* placeholder */", "-- a\n-- b\n"]) {
       await expect(Promise.resolve(sql.unsafe(q))).rejects.toThrow("Query contained no valid SQL statement");
     }
+  });
+
+  test("a SELECT that SQLite refuses to compile rejects instead of resolving empty", async () => {
+    using dir = tempDir("sqlite-sql-busy", {});
+    const filename = join(String(dir), "db.sqlite");
+    using holder = new Database(filename);
+    holder.run("CREATE TABLE t (v TEXT)");
+    holder.run("INSERT INTO t VALUES ('a')");
+    // An exclusive lock makes the probe prepare (which needs the schema) fail
+    // with SQLITE_BUSY; that error must reach the caller, not send the SELECT
+    // through the row-discarding db.run() path.
+    holder.run("BEGIN EXCLUSIVE");
+
+    await using sql = new SQL({ adapter: "sqlite", filename });
+    await expect(Promise.resolve(sql`SELECT v FROM t`)).rejects.toMatchObject({
+      name: "SQLiteError",
+      code: "SQLITE_BUSY",
+    });
+
+    holder.run("ROLLBACK");
+    expect(await sql`SELECT v FROM t`).toEqual([{ v: "a" }]);
+    await expect(Promise.resolve(sql`SELECT v FROM nope`)).rejects.toMatchObject({
+      name: "SQLiteError",
+      message: "no such table: nope",
+    });
   });
 
   test("multi-statement writes still execute every statement", async () => {

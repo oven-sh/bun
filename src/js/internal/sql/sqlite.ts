@@ -185,8 +185,11 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
       let stmt: BunSQLiteModule.Statement | undefined;
       try {
         stmt = db.prepare(sql);
-      } catch {
-        // Empty or comment-only SQL does not prepare; db.run() below reports it.
+      } catch (err) {
+        // SQLite itself refused the statement (syntax error, missing table, SQLITE_BUSY, ...):
+        // report that. Empty or comment-only SQL yields no statement and is a plain Error;
+        // db.run() below reports it with a clearer message.
+        if (err && typeof err === "object" && "name" in err && err.name === "SQLiteError") throw err;
       }
 
       if (stmt && stmt.native.columnsCount > 0) {

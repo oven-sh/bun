@@ -1268,6 +1268,55 @@ test.skipIf(!canUseRunuser)("process.env is preserved when cwd lacks read permis
   }
 });
 
+// Explicit files are opened by path, so they must not depend on the cwd
+// listing that default .env discovery needs. Same execute-only cwd setup as above.
+describe.skipIf(!canUseRunuser)("--env-file when cwd lacks read permission", () => {
+  function runAsNobodyIn(files: Record<string, string>, envFileArg: string) {
+    using dir = tempDir("env-file-eacces", { ...files, "noread/.keep": "" });
+    const noreadDir = path.join(dir, "noread");
+    fs.chmodSync(dir, 0o755);
+    for (const name of Object.keys(files)) fs.chmodSync(path.join(dir, name), 0o644);
+    fs.chmodSync(noreadDir, 0o111);
+    try {
+      const result = Bun.spawnSync({
+        cmd: [
+          "runuser",
+          "-m",
+          "-u",
+          "nobody",
+          "--",
+          "/bin/sh",
+          "-c",
+          `cd '${noreadDir}' && exec '${bunExe()}' --env-file='${path.join(dir, envFileArg)}' '${path.join(dir, "script.ts")}'`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      return { stdout: result.stdout.toString(), stderr: result.stderr.toString(), exitCode: result.exitCode };
+    } finally {
+      fs.chmodSync(noreadDir, 0o755);
+    }
+  }
+
+  const script = { "script.ts": 'console.log(process.env.MY_VAR ?? "unset");' };
+
+  test("an existing file is still loaded", () => {
+    expect(runAsNobodyIn({ ...script, "vars.env": "MY_VAR=from-file\n" }, "vars.env")).toEqual({
+      stdout: "from-file\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a missing file still fails", () => {
+    const { stdout, stderr, exitCode } = runAsNobodyIn(script, "missing.env");
+    expect(stdout).toBe("");
+    expect(stderr).toMatch(/^error: ENOENT loading env file ".*\/missing\.env"\n$/);
+    expect(exitCode).toBe(1);
+  });
+});
+
 // `st_size` is only a hint (sparse file, writer racing the loader): the env
 // loader's whole-file read used to `reserve_exact` it and abort the process in
 // `handle_alloc_error` before any user code ran. It must surface as a

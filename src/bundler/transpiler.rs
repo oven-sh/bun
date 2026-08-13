@@ -752,37 +752,30 @@ impl<'a> Transpiler<'a> {
                     self.resolver.opts.set_production(true);
                 }
 
-                // Load the project root for .env file discovery. If the cwd
-                // (or a parent) is unreadable, readDirInfo may return null;
-                // bail out of .env file loading in that case, but process
-                // env vars were already loaded above.
+                // The cwd listing only drives default `.env*` discovery; an
+                // unreadable cwd leaves it empty so nothing is probed, while
+                // explicit `--env-file` paths below are still opened directly.
                 let top_level_dir = self.fs().top_level_dir;
-                let dir_info = match self.resolver.read_dir_info(top_level_dir) {
-                    Ok(Some(d)) => d,
-                    _ => return Ok(()),
-                };
+                let mut dir = dot_env::DirEntryKeys(Vec::new());
+                if let Ok(Some(dir_info)) = self.resolver.read_dir_info(top_level_dir) {
+                    if let Some(tsconfig) = dir_info.tsconfig_json() {
+                        merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
+                    }
 
-                if let Some(tsconfig) = dir_info.tsconfig_json() {
-                    merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
-                }
-
-                // Copy the listing's basenames out under `entries_mutex`,
-                // refreshing it at our generation in the same critical
-                // section: concurrent resolvers rewrite the `DirEntry` map in
-                // place under that lock, and `dot_env::Loader::load` does
-                // file I/O between probes.
-                let dir = {
+                    // Copy the listing's basenames out under `entries_mutex`,
+                    // refreshing it at our generation in the same critical
+                    // section: concurrent resolvers rewrite the `DirEntry` map in
+                    // place under that lock, and `dot_env::Loader::load` does
+                    // file I/O between probes.
                     let _entries_lock = bun_resolver::fs::FileSystem::instance()
                         .fs
                         .entries_mutex
                         .lock_guard();
-                    match dir_info.get_entries_ref_locked(self.resolver.generation) {
-                        Some(entries) => dot_env::DirEntryKeys(
-                            entries.data.iter().map(|(k, _)| Box::from(&**k)).collect(),
-                        ),
-                        None => return Ok(()),
+                    if let Some(entries) = dir_info.get_entries_ref_locked(self.resolver.generation)
+                    {
+                        dir.0 = entries.data.iter().map(|(k, _)| Box::from(&**k)).collect();
                     }
-                };
+                }
 
                 // `Env.files: Box<[Box<[u8]>]>` but `Loader::load`
                 // wants `&[&[u8]]`. Re-borrow into a small Vec; the explicit

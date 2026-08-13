@@ -8562,7 +8562,8 @@ impl NodeFS {
         src: &OSPathSliceZ,
         dest: &OSPathSliceZ,
         mode: constants::Copyfile,
-        // Stat on posix, file attributes on windows
+        // The caller's `lstat` of `src` on posix (the symlink checks below rely
+        // on it not following links), file attributes on windows
         #[cfg(windows)] reuse_stat: Option<windows::DWORD>,
         #[cfg(not(windows))] reuse_stat: Option<&sys::Stat>,
         args: &args::Cp,

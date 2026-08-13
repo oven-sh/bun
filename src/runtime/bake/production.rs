@@ -197,7 +197,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     vm.is_main_thread = true;
     jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
-    // SAFETY: vm.jsc_vm is the live JSC::VM* set in `VirtualMachine::initBake`;
+    // SAFETY: vm.jsc_vm is the live JSC::VM* set in `VirtualMachine::init_bake`;
     // raw-ptr deref yields an unbounded `&VM` so the `ApiLock<'_>` does not
     // borrow `vm` (the VirtualMachine) and the body below can keep using it.
     //

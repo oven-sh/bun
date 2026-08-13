@@ -329,7 +329,7 @@ impl EventLoop {
         jsc_vm: &jsc::VM,
     ) -> Result<(), JsTerminated> {
         // Hoist the VM backref once. LLVM can't CSE the `Option<NonNull>` field
-        // load across the FFI calls below (`release_weak_refs`, `drainMicrotasks`,
+        // load across the FFI calls below (`release_weak_refs`, `JSC__JSGlobalObject__drainMicrotasks`,
         // `deferred_tasks.run`), so each `self.vm_ref()` re-loaded
         // `self.virtual_machine` from memory (5× per call, ~2×/request).
         // SAFETY: `virtual_machine` is set in `VirtualMachine::init()` to the
@@ -870,7 +870,7 @@ impl EventLoop {
         let mut exception_thrown = false;
         for task in to_run_now.iter() {
             // SAFETY: ImmediateObject pointers are kept alive by the JS heap
-            // until `runImmediateTask` consumes them; `virtual_machine` is the
+            // until `__bun_run_immediate_task` consumes them; `virtual_machine` is the
             // live owning VM per caller contract.
             exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
         }
@@ -1067,7 +1067,9 @@ impl EventLoop {
     #[inline(always)]
     pub fn global_ref(&self) -> &'static JSGlobalObject {
         // `self.global` is always assigned `vm.global` at every write site
-        // (`__bun_spawn_sync_*`, `init_runtime_state`, `reload_global`), so
+        // (`VirtualMachine::init`/`init_bake`, `enable_macro_mode`,
+        // `swap_global_for_test_isolation`, `__bun_spawn_sync_*`, bake
+        // `production.rs`), so
         // read it directly instead of the vm→global dependent-load chain.
         // `'static` so callers can hold it across `&mut self` (see
         // `drain_microtasks`), matching `vm_ref()`.

@@ -265,8 +265,11 @@ impl StatWatcherScheduler {
         // SAFETY: main-thread-only per fn contract; `runtime_state()` is non-null
         // after `bun_runtime::init()`. Raw-ptr-per-field re-entry pattern.
         let timer_all = unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer };
-        // SAFETY: `this` is live — the caller holds a ref (`set_interval`'s
-        // BACKREF, or `update_timer`'s `ParentRef`).
+        // SAFETY: `this` is live: a scheduler ref is held for the whole call by
+        // every caller (`set_interval`'s caller, `timer_callback`'s `&mut self`,
+        // `shutdown_for_exit`'s `RareData` ref) or, for `StatWatcherTimerUpdate`
+        // (whose `scheduler` is a non-owning `ParentRef`), by the watcher's
+        // `RefPtr<StatWatcherScheduler>` held across the hop.
         let elt = unsafe { core::ptr::addr_of_mut!((*this).event_loop_timer) };
 
         // if the interval is 0 means that we stop the timer
@@ -415,7 +418,7 @@ impl StatWatcherScheduler {
         }
 
         if this_ref.is_shutdown.load(Ordering::Relaxed) {
-            // Do not enqueue an `update_timer` Holder onto a JS-thread queue
+            // Do not enqueue a `StatWatcherTimerUpdate` onto a JS-thread queue
             // that will never tick again.
             this_ref.current_interval.store(0, Ordering::Relaxed);
         } else if contain_watchers {
@@ -630,7 +633,7 @@ impl StatWatcher {
             }
         };
         // SAFETY: `raw` was produced by `into_raw` above (or on a prior call) and
-        // the VM ref keeps it alive; bump the count for the caller's `dupeRef()`.
+        // the VM ref keeps it alive; bump the count for the caller's `RefPtr`.
         unsafe { RefPtr::init_ref(raw) }
     }
 
@@ -729,7 +732,7 @@ impl StatWatcher {
 
     // Safe fn: reachable via the `#[ref_count(destroy = …)]` derive (whose
     // generated trait `destructor` upholds the sole-owner contract) and
-    // the `errdefer` scopeguard in `do_watch` (which owns the only reference
+    // the `errdefer` scopeguard in `init` (which owns the only reference
     // on the error path). Not `impl Drop` — this is a `.classes.ts` m_ctx
     // payload with intrusive refcount; teardown is driven by ref_count, and
     // `finalize()` is the GC entry point.
@@ -764,7 +767,7 @@ impl StatWatcher {
         // `path` freed by ZBox Drop below.
 
         // SAFETY: the caller is the sole owner (refcount hit zero, or the
-        // error-path scopeguard in `do_watch` holds the only reference);
+        // error-path scopeguard in `init` holds the only reference);
         // heap::take reclaims and drops the allocation.
         drop(unsafe { bun_core::heap::take(this) });
     }

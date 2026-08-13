@@ -1217,7 +1217,7 @@ impl FFI {
         for function in compile_c.symbols.map.values_mut() {
             // Clone the name before `compile(&mut self)` so the
             // immutable borrow of `function.base_name` doesn't overlap.
-            let function_name = function.base_name.clone().unwrap();
+            let function_name = function.base_name.clone();
 
             if let Err(err) = function.compile(napi_env) {
                 if !global_this.has_exception() {
@@ -1310,7 +1310,6 @@ impl FFI {
         }
 
         // TODO: WeakRefHandle that automatically frees it?
-        func.base_name = Some(ZBox::from_bytes(b""));
         js_callback.ensure_still_alive();
 
         let arg_types: Vec<u8> = func.arg_types.iter().map(|t| *t as u8).collect();
@@ -1556,7 +1555,7 @@ impl FFI {
         let _js_object_guard = js_object.protected();
 
         for function in symbols.values_mut() {
-            let function_name = ZBox::from_bytes(function.base_name.as_ref().unwrap().as_bytes());
+            let function_name = ZBox::from_bytes(function.base_name.as_bytes());
             // Reshaped for borrowck — clone base_name to drop &function borrow
 
             // optional if the user passed "ptr"
@@ -1653,7 +1652,7 @@ impl FFI {
         let _js_object_guard = js_object.protected();
 
         for function in symbols.values_mut() {
-            let function_name = ZBox::from_bytes(function.base_name.as_ref().unwrap().as_bytes());
+            let function_name = ZBox::from_bytes(function.base_name.as_bytes());
 
             if function.symbol_from_dynamic_library.is_none() {
                 let ret = global.to_invalid_arguments(format_args!(
@@ -1855,7 +1854,6 @@ pub(super) fn generate_symbol_for_function(
     }
 
     *function = Function::default();
-    function.base_name = None;
     function.arg_types = abi_types;
     function.return_type = return_type;
     function.threadsafe = threadsafe;
@@ -1914,7 +1912,7 @@ pub(super) fn generate_symbols(
         }
         let base_name = prop.to_owned_slice_z();
         let key = base_name.as_bytes().to_vec().into_boxed_slice();
-        function.base_name = Some(base_name);
+        function.base_name = base_name;
 
         symbols.insert(&key, function);
     }
@@ -1926,7 +1924,7 @@ pub(super) fn generate_symbols(
 
 pub struct Function {
     pub symbol_from_dynamic_library: Option<*mut c_void>,
-    pub base_name: Option<ZBox>,
+    pub base_name: ZBox,
     pub state: Option<NonNull<TCC::State>>,
 
     pub return_type: ABIType,
@@ -1940,7 +1938,7 @@ impl Default for Function {
     fn default() -> Self {
         Self {
             symbol_from_dynamic_library: None,
-            base_name: None,
+            base_name: ZBox::default(),
             state: None,
             return_type: ABIType::Void,
             arg_types: Vec::new(),
@@ -2078,10 +2076,7 @@ impl Function {
         // `symbol_from_dynamic_library` is a dlsym'd address; valid for the
         // loaded library's lifetime, which outlives the TCC state.
         if state
-            .add_symbol(
-                self.base_name.as_ref().unwrap(),
-                self.symbol_from_dynamic_library.unwrap(),
-            )
+            .add_symbol(&self.base_name, self.symbol_from_dynamic_library.unwrap())
             .is_err()
         {
             debug_assert!(matches!(self.step, Step::Failed { .. }));
@@ -2132,7 +2127,7 @@ impl Function {
         writer.write_all(b"/* --- The Function To Call */\n")?;
         self.return_type.typename(writer)?;
         writer.write_all(b" ")?;
-        writer.write_all(self.base_name.as_ref().unwrap().as_bytes())?;
+        writer.write_all(self.base_name.as_bytes())?;
         writer.write_all(b"(")?;
         let mut first = true;
         for (i, arg) in self.arg_types.iter().enumerate() {
@@ -2206,11 +2201,7 @@ impl Function {
             self.return_type.typename(writer)?;
             writer.write_all(b" return_value = ")?;
         }
-        write!(
-            writer,
-            "{}(",
-            BStr::new(self.base_name.as_ref().unwrap().as_bytes())
-        )?;
+        write!(writer, "{}(", BStr::new(self.base_name.as_bytes()))?;
         first = true;
         arg_buf[0..3].copy_from_slice(b"arg");
         for (i, arg) in self.arg_types.iter().enumerate() {

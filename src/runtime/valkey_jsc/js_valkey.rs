@@ -1188,6 +1188,20 @@ impl JSValkeyClient {
         }
     }
 
+    /// `ValkeyClient::on_close()` is otherwise only reached from a socket's
+    /// close or connect-error callback. Run it for a dial that failed before
+    /// there was a socket, so the connect() promise, `onclose`, the retry
+    /// policy and the poll ref are handled the same way. `on_close()` releases
+    /// the ref a socket would have held, so take one for it to release.
+    fn on_close_without_socket(&self) -> JsTerminatedResult<()> {
+        let _guard = self.ref_scope();
+        self.ref_();
+        self.client_mut().status = valkey::Status::Disconnected;
+        let result = narrow_terminated(self.client_mut().on_close());
+        self.update_poll_ref();
+        result
+    }
+
     pub(crate) fn on_reconnect_timer(&self) {
         debug!("Reconnect timer fired, attempting to reconnect");
 
@@ -1221,15 +1235,13 @@ impl JSValkeyClient {
         });
 
         if let Err(err) = self.connect() {
-            self.fail_with_js_value(
-                self.global_object
-                    .err(
-                        jsc::ErrorCode::SOCKET_CLOSED_BEFORE_CONNECTION,
-                        format_args!("{} reconnecting", err.name()),
-                    )
-                    .to_js(),
+            debug!(
+                "reconnect failed before a socket was opened: {}",
+                err.name()
             );
-            self.poll_ref.with_mut(|r| r.disable());
+            // Same outcome as a dial that fails asynchronously: another retry,
+            // or fail() and a settled connect() promise once retries are used up.
+            let _ = self.on_close_without_socket();
             return;
         }
 
@@ -1375,11 +1387,16 @@ impl JSValkeyClient {
     // Callback for when Valkey client needs to reconnect
     pub(crate) fn on_valkey_reconnect(&self) {
         // SAFETY: adopts connect()'s socket keep-alive ref for the just-closed
-        // socket. Reached only from `ValkeyClient::on_close()`'s reconnect
-        // branch, which never calls `on_valkey_close()`, so this scope is the
-        // sole releaser. The caller holds its own scoped ref, so count > 0.
+        // socket (or the one `on_close_without_socket()` took in its place).
+        // Reached only from `ValkeyClient::on_close()`'s reconnect branch,
+        // which never calls `on_valkey_close()`, so this scope is the sole
+        // releaser. The caller holds its own scoped ref, so count > 0.
         let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
 
+        // This timer was bounding the attempt that just ended; left armed it
+        // fires during the retry delay, and `fail()` then has no socket to
+        // close and nothing settles connect(). `reconnect()` arms a new one.
+        self.timer.disarm(self);
         self.reconnect_timer
             .arm(self, self.client.get().get_reconnect_delay());
     }
@@ -1388,8 +1405,9 @@ impl JSValkeyClient {
     pub(crate) fn on_valkey_close(&self) -> JsTerminatedResult<()> {
         let global_object = self.global_object;
 
-        // SAFETY: adopts connect()'s socket keep-alive ref; the caller holds
-        // its own scoped ref so count stays > 0 until this drops.
+        // SAFETY: adopts connect()'s socket keep-alive ref (or the one
+        // `on_close_without_socket()` took in its place); the caller holds its
+        // own scoped ref so count stays > 0 until this drops.
         let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
         let _defer = scopeguard::guard(BackRef::new(self), |p| p.update_poll_ref());
 
@@ -1434,19 +1452,6 @@ impl JSValkeyClient {
         err: protocol::RedisError,
     ) -> JsTerminatedResult<()> {
         narrow_terminated(self.client_mut().fail(message, err))
-    }
-
-    pub(crate) fn fail_with_js_value(&self, value: JSValue) {
-        let Some(this_value) = self.this_value.get().try_get() else {
-            return;
-        };
-        let global_object = self.global_object;
-        if let Some(on_close) = Js::onclose_get_cached(this_value) {
-            let _exit = self.vm().enter_event_loop_scope();
-            if let Err(e) = on_close.call(&global_object, this_value, &[value]) {
-                global_object.report_active_exception_as_unhandled(e);
-            }
-        }
     }
 
     fn close_socket_next_tick(&self) {

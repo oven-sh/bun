@@ -1,7 +1,8 @@
 import { RedisClient } from "bun";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import net from "net";
+import path from "path";
 import { DEFAULT_REDIS_OPTIONS, DEFAULT_REDIS_URL, delay, isEnabled } from "../test-utils";
 
 /**
@@ -467,6 +468,8 @@ describe("Valkey: Recovering After fail()", () => {
         new Promise<number>(resolve =>
           server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port)),
         ),
+      listenUnix: (socketPath: string) => new Promise<void>(resolve => server.listen(socketPath, resolve)),
+      close: () => new Promise(resolve => server.close(resolve)),
     };
   }
 
@@ -522,6 +525,82 @@ describe("Valkey: Recovering After fail()", () => {
       client.close();
     }
   });
+
+  test("a connection timeout shorter than the retry delay does not stop the retries from settling connect()", async () => {
+    const fake = helloServer();
+    const port = await fake.listen();
+    await fake.close();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // The refusal comes back within a few milliseconds and the retry is
+        // scheduled 50ms after it, so a 30ms timeout armed for the first attempt
+        // would fire while no socket exists; the retry must still run and give up.
+        const client = new Bun.RedisClient("redis://127.0.0.1:${port}", { connectionTimeout: 30, maxRetries: 1 });
+        client.onclose = err => console.log("onclose", err.code);
+        await client.connect().catch(err => console.log("connect rejected", err.code));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "onclose ERR_REDIS_CONNECTION_CLOSED\nconnect rejected ERR_REDIS_CONNECTION_CLOSED\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.skipIf(isWindows)("a reconnect whose dial fails outright is retried like a refused one", async () => {
+    using dir = tempDir("valkey-unix", {});
+    const socketPath = path.join(String(dir), "r.sock");
+    const first = helloServer();
+    const second = helloServer();
+    await first.listenUnix(socketPath);
+    const client = new RedisClient(`redis+unix://${socketPath}`);
+    try {
+      await client.connect();
+      client.close();
+      await first.close();
+      // connect(2) on a path nobody listens on fails before a socket exists.
+      const reconnected = client.connect();
+      await second.listenUnix(socketPath);
+      await reconnected;
+      expect(await client.ping()).toBe("PONG");
+      expect({ first: first.connections, second: second.connections }).toEqual({ first: 1, second: 1 });
+    } finally {
+      client.close();
+      await second.close();
+    }
+  });
+
+  test.skipIf(isWindows)(
+    "a reconnect whose dial fails outright rejects connect() when auto-reconnect is off",
+    async () => {
+      using dir = tempDir("valkey-unix", {});
+      const socketPath = path.join(String(dir), "r.sock");
+      const fake = helloServer();
+      await fake.listenUnix(socketPath);
+      const client = new RedisClient(`redis+unix://${socketPath}`, { autoReconnect: false });
+      try {
+        await client.connect();
+        client.close();
+        await fake.close();
+        const outcome = await client.connect().then(
+          () => "connected",
+          (err: Error & { code: string }) => `rejected: ${err.code}`,
+        );
+        expect(outcome).toBe("rejected: ERR_REDIS_CONNECTION_CLOSED");
+        await expect(client.ping()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
+      } finally {
+        client.close();
+      }
+    },
+  );
 
   test("a connect() issued from onclose is not fed the replies left over from the failed connection", async () => {
     // With a database in the URL, HELLO and SELECT are written together, so a

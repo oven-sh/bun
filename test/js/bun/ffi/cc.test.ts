@@ -125,6 +125,7 @@ describe("calling a symbol with fewer arguments than it declares", () => {
         int f32_is_nan(float x) { return x != x; }
         int ptr_is_null(void* p) { return p == 0; }
         int cstring_is_null(const char* s) { return s == 0; }
+        int function_is_null(void (*f)(void)) { return f == 0; }
         /* bit i is set when parameter i arrived as the value undefined converts to */
         int missing_mask(int a, double b, void* c, _Bool d) {
           return (a == 0) | ((b != b) << 1) | ((c == 0) << 2) | ((d == 0) << 3);
@@ -147,6 +148,7 @@ describe("calling a symbol with fewer arguments than it declares", () => {
             f32_is_nan: { args: ["f32"], returns: "i32" },
             ptr_is_null: { args: ["ptr"], returns: "i32" },
             cstring_is_null: { args: ["cstring"], returns: "i32" },
+            function_is_null: { args: ["function"], returns: "i32" },
             missing_mask: { args: ["i32", "f64", "ptr", "bool"], returns: "i32" },
             echo_napi_value: { args: ["napi_env", "napi_value"], returns: "napi_value" },
           },
@@ -167,7 +169,8 @@ describe("calling a symbol with fewer arguments than it declares", () => {
             all: symbols.digits(1, 2, 3),
             extra: symbols.digits(1, 2, 3, 4),
           },
-          u8: { missing: symbols.u8_value(), passed: symbols.u8_value(200) },
+          // 200.5 is a double-encoded JSValue; integer parameters used to receive the raw slot bits.
+          u8: { missing: symbols.u8_value(), passed: symbols.u8_value(200), double_encoded: symbols.u8_value(200.5) },
           bool: { missing: symbols.bool_value(), passed: symbols.bool_value(true) },
           f64_is_nan: { missing: symbols.f64_is_nan(), passed: symbols.f64_is_nan(1.5) },
           f32_is_nan: { missing: symbols.f32_is_nan(), passed: symbols.f32_is_nan(1.5) },
@@ -180,6 +183,9 @@ describe("calling a symbol with fewer arguments than it declares", () => {
             address: symbols.ptr_is_null(ptr(bytes)),
           },
           cstring_is_null: { missing: symbols.cstring_is_null(), undefined: symbols.cstring_is_null(undefined) },
+          // The engine's FFI throws a TypeError for an undefined callback; the cc() wrapper
+          // has no throwing conversion yet (#37989 adds it), so C receives NULL until then.
+          function_is_null: { missing: symbols.function_is_null(), undefined: symbols.function_is_null(undefined) },
           missing_mask: {
             none: symbols.missing_mask(),
             first_only: symbols.missing_mask(5),
@@ -211,12 +217,13 @@ describe("calling a symbol with fewer arguments than it declares", () => {
     expect({ results, stderr, exitCode }).toMatchObject({
       results: {
         digits: { none: 0, one: 100, two: 120, all: 123, extra: 123 },
-        u8: { missing: 0, passed: 200 },
+        u8: { missing: 0, passed: 200, double_encoded: 200 },
         bool: { missing: 0, passed: 1 },
         f64_is_nan: { missing: 1, passed: 0 },
         f32_is_nan: { missing: 1, passed: 0 },
         ptr_is_null: { missing: 1, missing_500_times: 500, undefined: 1, null: 1, typed_array: 0, address: 0 },
         cstring_is_null: { missing: 1, undefined: 1 },
+        function_is_null: { missing: 1, undefined: 1 },
         missing_mask: { none: 0b1111, first_only: 0b1110, all: 0 },
         echo_napi_value: { none: "undefined", placeholder_only: "undefined", passed: 42 },
       },

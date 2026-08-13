@@ -375,7 +375,8 @@ float not_a_callback(float arg0);
 /* ---- Your Wrapper Function ---- */
 ZIG_REPR_TYPE JSFunctionCall(void* JS_GLOBAL_OBJECT, void* callFrame) {
   LOAD_ARGUMENTS_FROM_CALL_FRAME;
-  EncodedJSValue arg0 = { .asInt64 = ARGUMENT(0) };
+  EncodedJSValue arg0;
+  arg0.asInt64 = ARGUMENT(0);
     float return_value = not_a_callback(    JSVALUE_TO_FLOAT(arg0));
 
     return FLOAT_TO_JSVALUE(return_value).asZigRepr;

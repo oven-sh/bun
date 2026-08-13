@@ -3997,7 +3997,6 @@ CREATE TABLE ${table_name} (
     });
     test("reserve connection", async () => {
       await using sql = postgres({ ...options, max: 1 });
-      const reserved = await sql.reserve();
 
       const resolved: number[] = [];
       const track = (query: Promise<{ x: number }[]>) =>
@@ -4005,19 +4004,23 @@ CREATE TABLE ${table_name} (
           resolved.push(x);
         });
 
-      const first = track(reserved`select 1 as x`);
-      // max is 1 and that one connection is reserved, so the pool cannot run this until release()
-      const pooled = track(sql`select 2 as x`);
-      const third = track(reserved`select 3 as x`);
+      let pooled: Promise<void>;
+      let beforeRelease: number[];
+      {
+        // released however this block exits: closing the pool above waits for outstanding
+        // reservations, so a leaked one would report any failure in here as a timeout
+        await using reserved = await sql.reserve();
 
-      await Promise.all([first, third]);
-      const beforeRelease = [...resolved];
+        const first = track(reserved`select 1 as x`);
+        // max is 1 and that connection is reserved, so this cannot run until the block releases it
+        pooled = track(sql`select 2 as x`);
+        const third = track(reserved`select 3 as x`);
 
-      // release before asserting: closing the pool waits for the reservation, so a failed
-      // expect here would otherwise hang the `await using` disposal until the test times out
-      await reserved.release();
+        await Promise.all([first, third]);
+        beforeRelease = [...resolved];
+      }
+
       await pooled;
-
       expect(beforeRelease).toEqual([1, 3]);
       expect(resolved).toEqual([1, 3, 2]);
     });

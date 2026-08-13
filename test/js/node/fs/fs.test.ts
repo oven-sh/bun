@@ -937,6 +937,38 @@ describe("copyFileSync", () => {
     }).toThrow();
   });
 
+  // Node skips the copy when both names are one file; the >128 KiB size is
+  // what routes macOS through its unlink-before-clonefile path.
+  it("copying a file onto itself is a no-op", () => {
+    const tempdir = tmpdirTestMkdir();
+    const file = tempdir + "/self.blob";
+    const content = Buffer.alloc(256 * 1024, "A");
+    writeFileSync(file, content);
+
+    copyFileSync(file, file);
+    expect(readFileSync(file).equals(content)).toBe(true);
+
+    const link = tempdir + "/self.link";
+    fs.linkSync(file, link);
+    copyFileSync(file, link);
+    expect(readFileSync(file).equals(content)).toBe(true);
+
+    expect(() => copyFileSync(file, file, fs.constants.COPYFILE_EXCL)).toThrow(
+      expect.objectContaining({ code: "EEXIST" }),
+    );
+    expect(readFileSync(file).equals(content)).toBe(true);
+  });
+
+  it.skipIf(!isLinux)("FICLONE_FORCE of a file onto itself is a no-op", () => {
+    const tempdir = tmpdirTestMkdir();
+    const file = tempdir + "/self-force.blob";
+    const content = Buffer.alloc(256 * 1024, "B");
+    writeFileSync(file, content);
+
+    copyFileSync(file, file, fs.constants.COPYFILE_FICLONE_FORCE);
+    expect(readFileSync(file).equals(content)).toBe(true);
+  });
+
   if (process.platform === "linux") {
     describe("should work when copyFileRange is not available", () => {
       it("on large files", () => {

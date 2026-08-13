@@ -4764,11 +4764,7 @@ impl VirtualMachine {
         let mut formatter = crate::console_object::Formatter::new(self.global());
         let colors = bun_core::Output::enable_ansi_colors_stderr();
         let exception_cell = exception.to_js();
-        // A thrown Error is printed from the error itself (the stack captured
-        // when it was constructed, its own properties, its cause), exactly as
-        // when it escapes synchronously. Anything else that was thrown has no
-        // stack of its own, so the Exception cell, which records the throw
-        // site, is printed instead.
+        // An Error carries its own stack, properties and cause; anything else only has the cell's throw site.
         let value = match exception_cell.to_error() {
             Some(error) if error.is_error() => error,
             _ => exception_cell,

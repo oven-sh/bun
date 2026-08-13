@@ -1083,7 +1083,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             NodeTag::Str => {
                 // always becomes string
             }
-            NodeTag::Verbatim(_) | NodeTag::Unknown(_) => {
+            NodeTag::Merge | NodeTag::Verbatim(_) | NodeTag::Unknown(_) => {
                 // also always becomes a string
             }
         }
@@ -1532,6 +1532,8 @@ pub enum NodeTag {
     Null,
     /// '!!str'
     Str,
+    /// '!!merge'
+    Merge,
     /// '!<...>'
     Verbatim(StringRange),
     /// '!!unknown'
@@ -1546,11 +1548,24 @@ impl NodeTag {
             | NodeTag::Int
             | NodeTag::Float
             | NodeTag::Null
+            | NodeTag::Merge
             | NodeTag::Verbatim(_)
             | NodeTag::Unknown(_) => Expr::init(E::Null {}, loc),
 
             // non-specific tags become seq, map, or str
             NodeTag::NonSpecific | NodeTag::Str => Expr::init(E::String::default(), loc),
+        }
+    }
+
+    /// Whether a `<<` scalar carrying this tag is a merge key
+    /// (yaml.org/type/merge.html). Untagged, only a plain `<<` resolves to
+    /// `!!merge`: a quoted `"<<"` (what `YAML.stringify` emits for that
+    /// property name) or a `!!str <<` is an ordinary string key.
+    pub(crate) fn resolves_merge_key(self, style: ScalarStyle) -> bool {
+        match self {
+            NodeTag::None => matches!(style, ScalarStyle::Plain { .. }),
+            NodeTag::Merge => true,
+            _ => false,
         }
     }
 }
@@ -2113,6 +2128,13 @@ pub struct Parser<'i, Enc: Encoding> {
     pub(crate) tab_after_indent: bool,
     pub(crate) line: Line,
     pub(crate) token: Token<Enc>,
+    /// `NodeTag::resolves_merge_key` for the scalar `parse_node` most
+    /// recently produced. Style and tag are gone once the scalar is an
+    /// `Expr`, so a mapping parser reads this right after it obtains a key
+    /// (parsing the value overwrites it) and hands it to `append_entry`,
+    /// which only consults it for a key whose text is `<<`. A key that is not
+    /// a scalar leaves it describing some scalar inside the key.
+    pub(crate) scalar_may_be_merge_key: bool,
 
     /// Growable buffers use the global
     /// allocator (and `Drop`); the arena is threaded for the few places that
@@ -2173,6 +2195,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 indent: Indent::NONE,
                 line: Line::from(1),
             }),
+            scalar_may_be_merge_key: false,
             context: ContextStack::init(),
             block_indents: IndentStack::init(),
             explicit_document_start_line: None,
@@ -2545,6 +2568,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     // [150] ns-flow-pair ::= '?' s-separate ns-flow-map-explicit-entry
                     let pair_start = self.token.start;
                     let key = self.parse_flow_explicit_key()?;
+                    let key_may_merge = self.scalar_may_be_merge_key;
                     let value = if matches!(self.token.data, TokenData::MappingValue) {
                         self.scan(ScanOptions::default())?;
                         if matches!(
@@ -2567,7 +2591,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         Expr::init(E::Null {}, self.token.start.loc())
                     };
                     let mut props = MappingProps::init();
-                    self.append_entry(&mut props, key, value)?;
+                    self.append_entry(&mut props, key, key_may_merge, value)?;
                     Expr::init(
                         E::Object {
                             properties: props.move_list(),
@@ -2649,6 +2673,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.context.unset(Context::FlowKey);
                     k?
                 };
+                let key_may_merge = self.scalar_may_be_merge_key;
 
                 match self.token.data {
                     TokenData::CollectEntry => {
@@ -2702,7 +2727,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         current_mapping_indent: Some(self.token.indent),
                         ..Default::default()
                     })?;
-                    self.append_entry(&mut props, key, value)?;
+                    self.append_entry(&mut props, key, key_may_merge, value)?;
                 }
 
                 // [140] ns-s-flow-map-entries: after an entry, only `,` or `}`.
@@ -2853,7 +2878,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         })
     }
 
-    /// The current token is the one after `first_key`.
+    /// The current token is the one after `first_key`, which is the node
+    /// parsed most recently, so `scalar_may_be_merge_key` still describes it.
     fn parse_block_mapping_entries(
         &mut self,
         first_key: Expr,
@@ -2861,6 +2887,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         mapping_line: Line,
         flow_pair_allowed: bool,
     ) -> Result<E::Object, ParseError> {
+        let first_key_may_merge = self.scalar_may_be_merge_key;
+
         if let Some(explicit_document_start_line) = self.explicit_document_start_line {
             if mapping_line == explicit_document_start_line {
                 // TODO: more specific error
@@ -2942,7 +2970,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     _ => Expr::init(E::Null {}, mapping_value_start.loc()),
                 };
 
-                self.append_entry(&mut props, first_key, value)?;
+                self.append_entry(&mut props, first_key, first_key_may_merge, value)?;
             }
 
             if self.context.get() == Context::FlowIn {
@@ -2976,6 +3004,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         current_mapping_indent: Some(mapping_indent),
                         ..Default::default()
                     })?;
+                    let key_may_merge = self.scalar_may_be_merge_key;
 
                     match self.token.data {
                         TokenData::Eof => {
@@ -3071,7 +3100,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                     };
 
-                    self.append_entry(&mut props, key, value)?;
+                    self.append_entry(&mut props, key, key_may_merge, value)?;
                 }
 
                 Ok(())
@@ -3178,19 +3207,22 @@ impl MappingProps {
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
-    /// Appends `key: value` to `props`, expanding a `<<` merge key. A merge
-    /// cannot pull in a collection that is still being parsed (its properties
-    /// are not there yet).
+    /// Appends `key: value` to `props`, expanding a `<<` merge key;
+    /// `key_may_merge` is `scalar_may_be_merge_key` as read right after `key`
+    /// was parsed. A merge cannot pull in a collection that is still being
+    /// parsed (its properties are not there yet).
     fn append_entry(
         &mut self,
         props: &mut MappingProps,
         key: Expr,
+        key_may_merge: bool,
         value: Expr,
     ) -> Result<(), ParseError> {
-        let is_merge_key = match &key.data {
-            ast::ExprData::EString(key_str) => key_str.eql_comptime(b"<<"),
-            _ => false,
-        };
+        let is_merge_key = key_may_merge
+            && match &key.data {
+                ast::ExprData::EString(key_str) => key_str.eql_comptime(b"<<"),
+                _ => false,
+            };
 
         if is_merge_key {
             self.reject_open_merge_source(&value)?;
@@ -3848,6 +3880,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             return Err(ParseError::StackOverflow);
         }
 
+        // Set by the Scalar arm; an alias to a `<<` scalar is not a merge key.
+        self.scalar_may_be_merge_key = false;
+
         // c-ns-properties
         let mut node_props: NodeProperties<Enc> = NodeProperties::default();
 
@@ -4211,6 +4246,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         _ => unreachable!("token.data was Scalar at match guard"),
                     };
 
+                    self.scalar_may_be_merge_key =
+                        node_props.tag().resolves_merge_key(scalar.style);
+
                     let json_key = if scalar.style == ScalarStyle::Quoted {
                         self.maybe_set_json_key(opts.flow_pair_allowed)?
                     } else {
@@ -4284,6 +4322,17 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
 
                         let implicit_key = scalar.data.to_expr(scalar_start, self.input, self.bump);
+
+                        // [200] a tag on an earlier line (`foo: !custom` above
+                        // `<<: *base`) is the block mapping's, so the key
+                        // itself is untagged.
+                        if node_props
+                            .tag_line()
+                            .is_some_and(|line| line != scalar_line)
+                        {
+                            self.scalar_may_be_merge_key =
+                                NodeTag::None.resolves_merge_key(scalar.style);
+                        }
 
                         let anchors = node_props.take_implicit_key_anchors(scalar_line)?;
                         if let Some(key_anchor) = anchors.key_anchor {
@@ -5674,6 +5723,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
         if eq_ascii::<Enc>(s, b"str") {
             return NodeTag::Str;
+        }
+        if eq_ascii::<Enc>(s, b"merge") {
+            return NodeTag::Merge;
         }
         NodeTag::Unknown(shorthand)
     }

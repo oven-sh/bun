@@ -58,14 +58,32 @@ describe.each(macros)("%s", (macro, args, expansion) => {
   });
 });
 
-test("type arguments inside strings and comments are not code", () => {
-  const code = `{ const s = "$rust<T>(a, b)"; /* $cpp<T>(a, b) */ // $newRustFunction<T>(a, b, 0)\n}`;
+test("type arguments are rejected inside macro arguments and template substitutions too", () => {
+  // $assert's condition is sliced in end-on-comma mode, which uses the other
+  // stop regexp; template substitutions re-enter the slicer.
+  expect(() => expand(`$assert($rust<T>("node_util_binding.rs", "internalErrorName"))`)).toThrow(
+    "$rust does not accept type arguments",
+  );
+  expect(() => expand(`$debug("x", $newCppFunction<T>("NodeValidator.cpp", "validateInteger", 4))`)).toThrow(
+    "$newCppFunction does not accept type arguments",
+  );
+  expect(() => expand('`${$cpp<T>("NodeValidator.cpp", "validateInteger")}`')).toThrow(
+    "$cpp does not accept type arguments",
+  );
+});
+
+test("type arguments inside strings, comments and template text are not code", () => {
+  const code = `{ const s = "$rust<T>(a, b)" + \`$bindgenFn<T>(a, b) \${1}\`; /* $cpp<T>(a, b) */ // $newRustFunction<T>(a, b, 0)\n}`;
   expect(sliceSourceCode(code, true)).toEqual({ result: code, rest: "" });
 });
 
 test("a macro name that is not being called passes through as a plain intrinsic", () => {
   // `$debug` is also a value: bundle-modules defines `__intrinsic__debug` to the
   // debug-logging flag, so `if ($debug)` is a real pattern in src/js.
+  expect(sliceSourceCode(`{ if ($debug) { x(); } }`, true)).toEqual({
+    result: `{ if (__intrinsic__debug) { x(); } }`,
+    rest: "",
+  });
   expect(expand(`$debug && !handle`)).toBe(`__intrinsic__debug && !handle`);
 });
 

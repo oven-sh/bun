@@ -6359,8 +6359,8 @@ impl NodeFS {
             };
 
             if T::IS_DIRENT && dirent_path.is_empty() {
-                // `parentPath` is the argument as the caller spelled it, as in
-                // node, not the form handed to the syscall.
+                // Node keeps `parentPath` as the caller spelled it, not the
+                // syscall form.
                 dirent_path = webcore::encoding::to_bun_string(
                     args.path.slice(),
                     encoding_to_node(args.encoding),

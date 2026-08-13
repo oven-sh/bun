@@ -6677,11 +6677,10 @@ pub fn normalize_path_windows_opts<'a>(
     let facts = bun_paths::classify_rel_t(rel, bun_paths::PathFormat::Windows);
     let saw_sep_or_dot = facts.has_sep || facts.has_dot;
 
-    // Relative path with no separators or `.` can be passed straight through
-    // to `NtCreateFile` against `RootDirectory`. Not when it carries a drive
-    // prefix: NT would read `C:name` as the stream `name` of a file `C`, so
-    // that spelling resolves against the dirfd below like `C:a.b` does.
-    // Win32 consumers resolve drive-relative names themselves.
+    // Relative, no separators or `.`: pass straight through to `NtCreateFile`
+    // against `RootDirectory`. Drive-qualified names are excluded (NT reads
+    // `C:name` as stream `name` of file `C`) unless the caller is Win32,
+    // which resolves drive-relative names itself.
     if !saw_sep_or_dot && (!drive_qualified || !opts.add_nt_prefix) {
         if path.len() >= buf.len() {
             return Err(too_long());
@@ -10293,8 +10292,7 @@ mod normalize_path_windows_tests {
             normalize(*dir, "C:foo"),
             format!("{}\\foo", normalize(*dir, "."))
         );
-        // Win32 consumers get the drive-relative spelling, which Win32
-        // resolves itself.
+        // Win32 consumers get the drive-relative spelling unchanged.
         assert_eq!(normalize_opts(*dir, "C:foo", false), "C:foo");
     }
 

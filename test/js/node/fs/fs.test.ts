@@ -6277,6 +6277,11 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
       "fs.read",
       `const fs = require("fs"); fs.open(${file}, "r", (e, fd) => fs.read(fd, Buffer.alloc(4), 0, 4, 0, () => { throw new Error("boom"); }))`,
     ],
+    // The three ways a void operation reaches its callback on success:
+    // nullcallback (chmod and most others), mkdir's own handler, and cp's.
+    ["fs.chmod", `require("fs").chmod(${file}, 0o644, () => { throw new Error("boom"); })`],
+    ["fs.mkdir", `require("fs").mkdir(${dirLit} + "/mk", () => { throw new Error("boom"); })`],
+    ["fs.cp", `require("fs").cp(${file}, ${dirLit} + "/cp.txt", () => { throw new Error("boom"); })`],
     // Both symlink overloads: the 4-argument form takes a different path.
     ["fs.symlink (3-arg)", `require("fs").symlink(${file}, ${dirLit} + "/l3", () => { throw new Error("boom"); })`],
     [

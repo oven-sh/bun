@@ -1020,7 +1020,9 @@ function cp(src, dest, options, callback) {
   // Unlike the other void operations, node's fs.cp is util.callbackify(cpFn),
   // so a successful copy calls back with (null, undefined):
   // https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L1098
-  promises.cp(src, dest, options).then(callOnceWithNullThen.bind(null, callback), callback);
+  promises
+    .cp(src, dest, options)
+    .then(FunctionPrototypeBind.$call(callOnceWithNullThen, undefined, callback), callback);
 }
 
 function _toUnixTimestamp(time: any, name = "time") {

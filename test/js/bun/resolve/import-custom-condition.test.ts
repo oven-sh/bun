@@ -461,6 +461,35 @@ describe("'bun' export condition falls through when its target file is missing",
     expect(exitCode).toBe(1);
   });
 
+  it.concurrent("retry armed by one entry does not bypass 'bun': null in another", async () => {
+    // "./foo.js" arms the retry (bun target missing); the ".js"-stripped "./foo" entry
+    // has an explicit bun: null, which must still block on the second pass.
+    using cwd = tempDir("bun-cond-null-other-entry", {
+      "index.mjs": `import "pkg/foo.js"; console.log("loaded");`,
+      "node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        type: "module",
+        exports: {
+          "./foo.js": { bun: "./dist/missing.mjs" },
+          "./foo": { bun: null, default: "./dist/default.mjs" },
+        },
+      }),
+      "node_modules/pkg/dist/default.mjs": `export {};`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(cwd),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Cannot find module 'pkg/foo.js'");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
   it.concurrent("still fails when no other condition resolves to an existing file", async () => {
     using cwd = tempDir("bun-cond-no-fallback", {
       "index.mjs": `import "pkg";`,

@@ -1278,7 +1278,7 @@ pub(crate) struct ESModule<'a> {
     pub(crate) conditions: &'a ConditionsMap,
     // allocator dropped — global mimalloc
     pub(crate) module_type: &'a mut ModuleType,
-    /// Input: skip the "bun" key (second pass of the #7142 retry).
+    /// Input: skip "bun" targets, but not "bun": null (second pass of the #7142 retry).
     pub(crate) skip_bun_condition: bool,
     /// Output: the "bun" key matched and produced a target, so a failed load is worth retrying.
     pub(crate) matched_bun_condition: &'a mut bool,
@@ -2114,14 +2114,6 @@ impl<'a> ESModule<'a> {
             EntryData::Map(object) => {
                 for entry in object.list.iter() {
                     let key: &[u8] = &entry.key;
-                    if self.skip_bun_condition && key == b"bun" {
-                        if let Some(log) = self.debug_logs.as_deref_mut() {
-                            log.add_note_fmt(format_args!(
-                                "The key \"bun\" is being skipped on this retry"
-                            ));
-                        }
-                        continue;
-                    }
                     if self.conditions.contains_key(key) {
                         if let Some(log) = self.debug_logs.as_deref_mut() {
                             log.add_note_fmt(format_args!(
@@ -2142,14 +2134,8 @@ impl<'a> ESModule<'a> {
                             continue;
                         }
 
-                        if key == b"import" {
-                            *self.module_type = ModuleType::Esm;
-                        }
-
-                        if key == b"require" {
-                            *self.module_type = ModuleType::Cjs;
-                        }
-
+                        // A "bun" target is what the #7142 retry exists for; "bun": null is
+                        // not a target and stays terminal on both passes.
                         if key == b"bun"
                             && matches!(
                                 result.status,
@@ -2159,7 +2145,24 @@ impl<'a> ESModule<'a> {
                                     | Status::PackageResolve
                             )
                         {
+                            if self.skip_bun_condition {
+                                if let Some(log) = self.debug_logs.as_deref_mut() {
+                                    log.add_note_fmt(format_args!(
+                                        "The key \"bun\" is being skipped on this retry"
+                                    ));
+                                }
+                                *self.module_type = prev_module_type;
+                                continue;
+                            }
                             *self.matched_bun_condition = true;
+                        }
+
+                        if key == b"import" {
+                            *self.module_type = ModuleType::Esm;
+                        }
+
+                        if key == b"require" {
+                            *self.module_type = ModuleType::Cjs;
                         }
 
                         return result;

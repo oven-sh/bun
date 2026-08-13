@@ -1668,7 +1668,8 @@ function streamFdOf(item): number | undefined {
 
   if (item.destroyed) return undefined;
 
-  const sink = item[require("internal/fs/streams").kWriteStreamFastPath];
+  // Another child's stdin socket, or a fs.WriteStream on its FileSink fast path.
+  const sink = item[kStdinSink] ?? item[require("internal/fs/streams").kWriteStreamFastPath];
   if (sink && sink !== true) {
     const fd = sink._getFd();
     if (typeof fd === "number" && fd >= 0) return fd;

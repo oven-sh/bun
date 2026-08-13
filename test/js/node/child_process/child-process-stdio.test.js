@@ -175,6 +175,8 @@ describe("child.stdin", () => {
 // https://github.com/oven-sh/bun/issues/26505
 // https://github.com/oven-sh/bun/issues/11011
 describe("ChildProcess stdio pipe streams are net.Socket", () => {
+  // https://github.com/oven-sh/bun/issues/11011 (setEncoding on child.stdin)
+  // https://github.com/oven-sh/bun/issues/26505 (instanceof net.Socket)
   it("stdin/stdout/stderr pass instanceof and shape checks", async () => {
     const child = spawn(bunExe(), ["-e", ""], { env: bunEnv, stdio: "pipe" });
     try {
@@ -187,9 +189,31 @@ describe("ChildProcess stdio pipe streams are net.Socket", () => {
         "typeof ref": typeof child[name].ref,
         "typeof unref": typeof child[name].unref,
         "typeof setEncoding": typeof child[name].setEncoding,
+        "typeof pause": typeof child[name].pause,
+        "typeof resume": typeof child[name].resume,
+        "typeof write": typeof child[name].write,
+        "typeof end": typeof child[name].end,
+        "typeof destroySoon": typeof child[name].destroySoon,
         "unref() === this": child[name].unref() === child[name],
         "ref() === this": child[name].ref() === child[name],
       });
+      const expected = {
+        "constructor.name": "Socket",
+        "instanceof net.Socket": true,
+        "instanceof Duplex": true,
+        "instanceof Readable": true,
+        "instanceof Writable": true,
+        "typeof ref": "function",
+        "typeof unref": "function",
+        "typeof setEncoding": "function",
+        "typeof pause": "function",
+        "typeof resume": "function",
+        "typeof write": "function",
+        "typeof end": "function",
+        "typeof destroySoon": "function",
+        "unref() === this": true,
+        "ref() === this": true,
+      };
       expect({
         stdin: shape("stdin"),
         stdout: shape("stdout"),
@@ -197,42 +221,9 @@ describe("ChildProcess stdio pipe streams are net.Socket", () => {
         "stdin.readable": child.stdin.readable,
         "stdin.writable": child.stdin.writable,
       }).toEqual({
-        stdin: {
-          "constructor.name": "Socket",
-          "instanceof net.Socket": true,
-          "instanceof Duplex": true,
-          "instanceof Readable": true,
-          "instanceof Writable": true,
-          "typeof ref": "function",
-          "typeof unref": "function",
-          "typeof setEncoding": "function",
-          "unref() === this": true,
-          "ref() === this": true,
-        },
-        stdout: {
-          "constructor.name": "Socket",
-          "instanceof net.Socket": true,
-          "instanceof Duplex": true,
-          "instanceof Readable": true,
-          "instanceof Writable": true,
-          "typeof ref": "function",
-          "typeof unref": "function",
-          "typeof setEncoding": "function",
-          "unref() === this": true,
-          "ref() === this": true,
-        },
-        stderr: {
-          "constructor.name": "Socket",
-          "instanceof net.Socket": true,
-          "instanceof Duplex": true,
-          "instanceof Readable": true,
-          "instanceof Writable": true,
-          "typeof ref": "function",
-          "typeof unref": "function",
-          "typeof setEncoding": "function",
-          "unref() === this": true,
-          "ref() === this": true,
-        },
+        stdin: expected,
+        stdout: expected,
+        stderr: expected,
         "stdin.readable": false,
         "stdin.writable": true,
       });
@@ -250,7 +241,8 @@ describe("ChildProcess stdio pipe streams are net.Socket", () => {
     expect(child.stdin instanceof net.Socket).toBe(true);
     expect(child.stdout instanceof net.Socket).toBe(true);
 
-    for (const name of ["stdin", "stdout", "stderr"]) {
+    // python-shell calls setEncoding on all three stdio streams unconditionally.
+    for (const name of ["stdout", "stdin", "stderr"]) {
       expect(child[name].setEncoding("utf8")).toBe(child[name]);
     }
 
@@ -264,9 +256,10 @@ describe("ChildProcess stdio pipe streams are net.Socket", () => {
     child.stdin.write("world\n");
     child.stdin.end();
 
-    const [code] = await once(child, "close");
+    const [code, signal] = await once(child, "close");
     expect(data).toBe("data: hello world\n");
     expect(code).toBe(0);
+    expect(signal).toBeNull();
   });
 
   it("stdin.write respects the encoding argument", async () => {

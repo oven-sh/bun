@@ -186,15 +186,18 @@ describe.concurrent("auto-install reports why a package could not be installed",
 });
 
 // A registry whose every package has exactly one version, 1.0.0, published now.
+// `pkg-with-bad-tarball-url` exists too, but its manifest does not say where
+// the tarball is.
 function registryWithOneFreshVersion() {
   const registry = Bun.serve({
     port: 0,
     fetch(req) {
       const name = decodeURIComponent(new URL(req.url).pathname.slice(1));
+      const tarball = name === "pkg-with-bad-tarball-url" ? "not a url" : `http://127.0.0.1:1/${name}-1.0.0.tgz`;
       return Response.json({
         name,
         "dist-tags": { latest: "1.0.0" },
-        versions: { "1.0.0": { name, version: "1.0.0", dist: { tarball: `http://127.0.0.1:1/${name}-1.0.0.tgz` } } },
+        versions: { "1.0.0": { name, version: "1.0.0", dist: { tarball } } },
         time: { "1.0.0": new Date().toISOString() },
       });
     },
@@ -281,6 +284,21 @@ describe.concurrent("auto-install reports why a package could not be resolved", 
     expect(stderr).toContain("error: Cannot find package 'pkg-published-today'");
     expect(noteLines(stderr)).toEqual([
       'note: Package "pkg-published-today" with tag "latest" not found (all versions blocked by minimum-release-age: 86400 seconds)',
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  // Any other error ends up named after its error code, like the
+  // "'main' returned error.InvalidURL" line `bun install` prints after the
+  // specific message.
+  test("error without a dedicated message", async () => {
+    using r = registryWithOneFreshVersion();
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.js", `import "pkg-with-bad-tarball-url";\n`);
+
+    expect(stderr).toContain("while resolving package 'pkg-with-bad-tarball-url' from");
+    expect(noteLines(stderr)).toEqual([
+      'note: Expected tarball URL to start with https:// or http://, got "not a url" while fetching package "pkg-with-bad-tarball-url"',
+      'note: InvalidURL while resolving package "pkg-with-bad-tarball-url"',
     ]);
     expect(exitCode).toBe(1);
   });

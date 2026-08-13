@@ -41,10 +41,6 @@ public:
      * those callbacks will eventually never be called anymore. But it'll work the first time!
      */
     LazyProperty<JSGlobalObject, Structure> m_encodeIntoObjectStructure;
-    // CallSite structure lives here (rather than Zig::GlobalObject) so that
-    // node:vm realms get their own per-realm prototype chain for the
-    // `sites` array entries passed to Error.prepareStackTrace. Otherwise the
-    // host-realm Object/Function constructors leak into the vm sandbox.
     LazyProperty<JSGlobalObject, Structure> m_callSiteStructure;
 };
 

@@ -96,10 +96,10 @@ async function buildImports(
     env,
     cwd,
     stdout: "pipe",
-    // A key-after-spread element logs a deprecation warning here; it is not what these tests check.
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  // stderr is drained but not asserted: the key-after-spread fixture logs a deprecation warning there.
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { imports: importsOf(stdout), exitCode };
 }
 
@@ -205,7 +205,7 @@ describe("tsconfig jsxImportSource selects the createElement fallback import too
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "shim createElement\ndev jsxDEV", exitCode: 0 });
   });
 

@@ -703,9 +703,7 @@ impl<'a> Transpiler<'a> {
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
                 if let Some(tsconfig) = root_dir.tsconfig_json() {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig.
-                    // Merge rather than replace: `options.jsx.development` may already hold
-                    // NODE_ENV (`bun build` runs `configure_defines` first), and a tsconfig
-                    // without "jsx" has no say in it.
+                    // Merged, not replaced: `jsx.development` may already carry NODE_ENV.
                     if self.options.transform_options.jsx.is_none() {
                         merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
                     }

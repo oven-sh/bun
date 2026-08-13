@@ -242,12 +242,8 @@ function emitCloseNT(self, hasError) {
 // Shared-fd TLS pair teardown: mirrors node's close ordering, where the
 // close-callbacks phase runs after the check phase (lib/net.js close path in
 // node v26.3.0), so destroy()-time setImmediates still see the pair alive.
-function closeAdoptedTLSRawNT(handle, self, isException) {
-  setImmediate(closeAdoptedTLSRawNowNT, handle, self, isException);
-}
-function closeAdoptedTLSRawNowNT(handle, self, isException) {
-  handle.close(onSocketHandleClosed);
-  setImmediate(emitCloseNT, self, isException);
+function closeAdoptedTLSRawNT(self, handle, isException) {
+  setImmediate(closeSocketHandle, self, handle, isException);
 }
 function detachSocket(self) {
   if (!self) self = this;
@@ -2198,16 +2194,17 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       // Enqueue closing the socket as a microtask, so that the socket can be
       // accessible when an `error` event is handled in the `next tick queue`.
       // Close the handle captured above rather than re-reading _handle: when
-      // the TLS engine runs over a stream (upgradeDuplexToTLS) its close
-      // callback fires right after the failed handshake that brought us here
-      // and detaches _handle before this microtask runs. Nothing else emits
-      // 'close' once _destroy has run, so the deferred close must not bail.
+      // the failed handshake was dispatched with JS already on the stack (the
+      // stream-level TLS engine fed from a 'data' listener, resumeSNI from an
+      // asynchronous SNICallback completion), the native close callback runs
+      // right behind it, before any microtask, and detaches _handle. Nothing
+      // else emits 'close' once _destroy has run, so this must not bail.
       queueMicrotask(() => closeSocketHandle(this, currentHandle, isException, true));
     } else if (currentHandle[kAdoptedTLSRaw]) {
       // Shared-fd TLS pair: defer the close two check-phase turns
       // (test-tls-socket-close); see closeAdoptedTLSRawNT.
       currentHandle.pause?.();
-      setImmediate(closeAdoptedTLSRawNT, currentHandle, this, isException);
+      setImmediate(closeAdoptedTLSRawNT, this, currentHandle, isException);
     } else {
       closeSocketHandle(this, currentHandle, isException);
     }

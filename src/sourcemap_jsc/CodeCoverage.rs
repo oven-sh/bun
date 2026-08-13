@@ -388,14 +388,8 @@ impl<'a> Generator<'a> {
     }
 }
 
-/// A textual basic block (or, after `function_start_offset`, a whole function) as JSC's
-/// control flow profiler reports it: inclusive `[start_offset, end_offset]` offsets into the
-/// source text JSC executed.
-///
-/// JSC cuts the functions nested in a block out of its range, so one block arrives as several
-/// ranges. When those cut-outs overlap (the initializer JSC synthesizes for class fields spans
-/// the whole file) the leftovers come out inverted, `[file_length, 0]` and the like, and
-/// describe nothing.
+/// A basic block (or, after `function_start_offset`, a whole function) of JSC's control flow
+/// profiler: inclusive offsets into the text JSC executed.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct BasicBlockRange {
@@ -410,14 +404,10 @@ impl BasicBlockRange {
         self.has_executed || self.execution_count > 0
     }
 
-    /// The offsets attributed to lines; empty for inverted ranges and for the `-1` JSC uses
-    /// when a range maps to nothing.
-    ///
-    /// `end_offset` itself is left out: a block runs up to the byte before the next block
-    /// starts, so its last byte is either the closing brace of the construct it ends at or the
-    /// last character of a statement whose other bytes already mark the line. Attributing it
-    /// would report every `}` line that follows a `return`/`throw`/`break` as uncovered.
-    /// (Function ranges end on their closing brace too.)
+    /// `end_offset` is deliberately excluded: it is the closing brace of the construct the
+    /// block ends at, which would otherwise be reported uncovered after every `return`.
+    /// Inverted ranges (what JSC leaves of a block after cutting out nested functions whose
+    /// ranges overlap, e.g. `[file_length, 0]`) and JSC's `-1` yield nothing.
     fn byte_offsets(&self) -> core::ops::Range<u32> {
         match (
             u32::try_from(self.start_offset),
@@ -428,14 +418,10 @@ impl BasicBlockRange {
         }
     }
 
-    /// A class without a `constructor` gets one synthesized by JSC from a fixed source string.
-    /// JSC records it in the function table of the file defining the class, but with offsets
-    /// into that string, and nothing ever marks that entry as executed. Without this filter
-    /// every such class counts as an uncalled function whose range lands on the first line of
-    /// the file.
+    /// JSC registers the constructor it synthesizes for a class without one in the defining
+    /// file's function table, with offsets into its template string
+    /// (`BuiltinExecutables::defaultConstructorSourceCode`), and never marks it executed.
     fn is_synthesized_default_constructor(&self) -> bool {
-        // BuiltinExecutables::defaultConstructorSourceCode; the range runs from the
-        // `function` keyword to the closing brace.
         const BASE: &str = "(function () { })";
         const DERIVED: &str = "(function (...args) { super(...args); })";
         const FUNCTION_KEYWORD: c_int = "(".len() as c_int;
@@ -448,15 +434,13 @@ impl BasicBlockRange {
     }
 }
 
-/// One line of the source text JSC executed (the transpiled output, not the file on disk).
+/// One line of the text JSC executed (the transpiled output, not the file on disk).
 #[derive(Clone, Copy)]
 struct Line {
     start: u32,
-    /// `[code_start, code_end)` is the line with its indentation and line terminator trimmed
-    /// off. Only offsets inside it are attributed to the line: a block that begins after a
-    /// statement begins on the terminator of that statement's line, and the indentation of a
-    /// generated line maps back to the previous original line (see `OriginalLines`), so
-    /// attributing either would shift the block up by one line.
+    /// The line minus indentation and terminator. Only these offsets count as the line: a block
+    /// that follows a statement starts on that statement's line terminator, and indentation maps
+    /// back to the previous original line.
     code_start: u32,
     code_end: u32,
 }
@@ -537,8 +521,6 @@ impl ByteRangeMapping {
             bun_jsc::VirtualMachine::VirtualMachine::get().as_mut()
                 .source_mappings()
                 .get(source_url.slice());
-        // Without a source map (or with `coverageIgnoreSourcemaps`) the report is about the
-        // executed text itself and its line numbers are used as they are.
         let mut original = match parsed_mappings_.as_deref() {
             Some(source_map) if !ignore_sourcemap => Some(OriginalLines {
                 source_map,
@@ -595,11 +577,9 @@ impl ByteRangeMapping {
             let did_fn_execute = function.has_executed();
             let mut has_lines = false;
 
-            // A function that never ran has no basic blocks (JSC never compiled it), so its
-            // range is all we know: every line with code in it is executable and unexecuted.
-            // One that ran is already described by its blocks; its range only tells whether it
-            // exists in the reported file at all (functions the transpiler synthesized don't,
-            // and are not counted).
+            // A function that never ran has no blocks, so its range is what marks its lines. One
+            // that ran is described by its blocks; its range only tells whether it has lines in
+            // the reported file at all (functions the transpiler synthesized don't count).
             for byte_offset in function.byte_offsets() {
                 let Some(line) = self.line_of(byte_offset, original.as_mut()) else {
                     continue;
@@ -633,8 +613,8 @@ impl ByteRangeMapping {
         })
     }
 
-    /// The reported line for `byte_offset`, or `None` when the byte is not part of any line's
-    /// code (see `Line::code_start`) or has no position in the original file.
+    /// The reported line for `byte_offset`; `None` for whitespace and for bytes without a position
+    /// in the original file.
     fn line_of(&self, byte_offset: u32, original: Option<&mut OriginalLines<'_>>) -> Option<usize> {
         let index = self
             .lines
@@ -686,8 +666,7 @@ impl ByteRangeMapping {
     }
 }
 
-/// Maps positions in the text JSC executed back to lines of the file the user wrote, through
-/// the source map the transpiler produced for it.
+/// Maps positions in the executed text back to lines of the file on disk.
 struct OriginalLines<'a> {
     source_map: &'a ParsedSourceMap,
     cursor: Option<internal_source_map::Cursor>,
@@ -705,12 +684,9 @@ impl OriginalLines<'_> {
                 .find_mapping(Ordinal::from_zero_based(generated_line), column),
         }?;
 
-        // The printer starts every generated line with a mapping. When the line's first token
-        // has none of its own, that mapping is a copy of the previous line's last one
-        // (`cover_lines_without_mappings` in bun_sourcemap's Chunk.rs). A byte that resolves to
-        // the copy, e.g. the `)` and `;` of a `});` line, has no position of its own in the
-        // original file; charging it to the previous line would give that line the coverage of
-        // whatever construct the byte belongs to.
+        // The printer opens every generated line with a copy of the previous mapping
+        // (`cover_lines_without_mappings`). Bytes that only resolve to the copy, such as a `});`
+        // line, have no position of their own and must not be charged to the previous line.
         if mapping.generated.columns == Ordinal::START
             && generated_line > 0
             && let Some(previous) = self.source_map.find_mapping(

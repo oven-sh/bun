@@ -101,9 +101,9 @@ const {
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
-// Cluster worker state: the primary's shared listen handle this server accepts on, and the
-// counter that tells a late primary reply that close() or a newer listen() superseded it.
+// The cluster primary's shared listen handle this server accepts on (workers only).
 const kClusterHandle = Symbol("http.server.clusterHandle");
+// Bumped by listen() and close(); a primary reply carrying an older value is stale.
 const kClusterListeningId = Symbol("http.server.clusterListeningId");
 
 // node.http trace events ('http.server.request' b/e). The agent module is
@@ -666,21 +666,12 @@ Server.prototype.listen = function () {
 
     if (cluster === undefined) cluster = require("node:cluster");
 
-    // The worker binds its own socket when node would (exclusive, or reusePort which implies
-    // it), when there is no primary to ask (NODE_UNIQUE_ID inherited by a plain child, or
-    // already disconnected), when the arguments are nothing the primary could bind (Bun.serve
-    // reports them), and on Windows: processes accepting on copies of one listening socket
-    // block each other in accept() there, and the primary's alternative of handing over each
-    // accepted connection is something Bun.serve's native accept loop cannot take.
-    if (
-      exclusive ||
-      !process.connected ||
-      process.platform === "win32" ||
-      !isBindableByPrimary(port, host, socketPath)
-    ) {
+    // Windows: processes accepting on copies of one listening socket block each other in accept().
+    const bindsInWorker =
+      exclusive || !process.connected || process.platform === "win32" || !isBindableByPrimary(port, host, socketPath);
+    if (bindsInWorker) {
       notifyPrimaryWhenListening(server, port, host, socketPath);
-      // Only an exclusive listen gets to opt out of SO_REUSEPORT: the other cases still need
-      // it for the workers to end up on one port at all.
+      // Non-exclusive workers still share a fixed port through SO_REUSEPORT.
       server[kRealListen](tls, port, host, socketPath, exclusive ? reusePort : true, onListen);
       return this;
     }
@@ -693,8 +684,7 @@ Server.prototype.listen = function () {
   return this;
 };
 
-// A listen() that failed after Bun.serve() had already returned (while wiring the listener up)
-// must not leave that listener running behind the 'error' it reports.
+// A listener that Bun.serve() created before the failure must not stay up behind the 'error'.
 function emitListenError(server, err, previousBunServer) {
   if (server[serverSymbol] !== previousBunServer) server.close();
   setTimeout(() => server.emit("error", err), 1);
@@ -726,17 +716,13 @@ function notifyPrimaryWhenListening(server, port, host, socketPath) {
   });
 }
 
-// Like net's listenInCluster: the primary binds the address once (or hands out the socket it
-// already bound for this key, which is how every worker's listen(0) ends up on one port) and
-// sends each worker the descriptor to accept on. Bun.serve accepts natively, so the server
-// always asks for a shared handle (sharedOnly), the same way a TLS net.Server does.
+// net.Server's listenInCluster, minus round-robin: Bun.serve accepts natively, so like a TLS
+// net.Server it always asks for the shared handle (the primary's bound socket) of its key.
 function listenInCluster(server, tls, port, host, socketPath, onListen) {
   const listeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
   const listenArgs = { server, listeningId, tls, port, host, socketPath, onListen };
 
-  // Same (address, port, addressType) tuple net.Server sends, so the primary keys the handle
-  // the way node does: pipes are port -1 / addressType -1, and _getServer adds the per-listen
-  // index that makes each worker's first listen(0) land on the same handle.
+  // The (address, port, addressType) tuple must match net.Server's, since it keys the primary's handles.
   if (socketPath) {
     queryPrimary(listenArgs, socketPath, -1, -1);
     return;
@@ -745,14 +731,13 @@ function listenInCluster(server, tls, port, host, socketPath, onListen) {
     queryPrimary(listenArgs, null, port, 4);
     return;
   }
-  // Bun.serve() (the other way a worker binds) takes an IPv6 literal in brackets; the primary's
-  // bind, like isIP, wants it bare. `host` itself still goes to Bun.serve for reporting.
+  // Bun.serve() accepts "[::1]"; the primary's bind (and isIP) want it bare.
   const address = host.length > 2 && host.charCodeAt(0) === 0x5b /* [ */ ? host.slice(1, -1) : host;
   const addressType = isIP(address);
   if (addressType !== 0) {
     queryPrimary(listenArgs, address, port, addressType);
   } else {
-    // The primary binds an address, not a name; node resolves it in the worker first.
+    // The primary binds addresses, not names (node resolves in the worker too).
     require("node:dns").lookup(address, (err, ip, family) => {
       if (listeningId !== server[kClusterListeningId]) return;
       if (err) {
@@ -774,8 +759,7 @@ function queryPrimary({ server, listeningId, tls, port, host, socketPath, onList
     }
     const sharedFd = handle?.sharedFd;
     if (!err && typeof sharedFd !== "number") {
-      // A primary that answers a sharedOnly query with a round-robin handle is not Bun's;
-      // connections handed over one at a time cannot be fed to Bun.serve.
+      // A round-robin handle despite sharedOnly (a foreign primary): Bun.serve cannot use it.
       handle?.close();
       err = process.binding("uv").UV_EINVAL;
     }
@@ -788,16 +772,14 @@ function queryPrimary({ server, listeningId, tls, port, host, socketPath, onList
     server[kClusterHandle] = handle;
     // Lets worker.disconnect() close this server along with the worker's other servers.
     handle[kClusterOwner] = server;
-    // Once Bun.serve() returns, its listener owns the descriptor and releasing the handle must
-    // only notify the primary; until then the descriptor is ours to close.
+    // adopted: the handle's close() leaves the descriptor to the listener and only notifies the primary.
     handle.adopted = true;
     const previousBunServer = server[serverSymbol];
     try {
       server[kRealListen](tls, port, host, socketPath, false, onListen, sharedFd);
     } catch (err) {
       if (server[serverSymbol] === previousBunServer) {
-        // Bun.serve() itself failed, so the descriptor is still ours. (Otherwise the listener
-        // has it, and the close() in emitListenError releases the handle along with it.)
+        // Bun.serve() itself failed: no listener took the descriptor, so close it here.
         handle.adopted = false;
         releaseClusterHandle(server);
       }

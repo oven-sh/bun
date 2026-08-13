@@ -55,11 +55,8 @@ pub struct ServerConfig {
     pub(crate) websocket: Option<WebSocketServerContext>,
 
     pub(crate) reuse_port: bool,
-    /// Accept on this already-bound descriptor instead of binding `address`.
-    /// Set by node:http in a cluster worker, which receives the primary's
-    /// shared listen socket; `address` still describes what was bound so
-    /// `address`/`url`/errors report it. Consumed by the listen socket on
-    /// success; a failed listen leaves it to the caller.
+    /// Accept on this already-bound descriptor (node:http in a cluster worker) instead
+    /// of binding `address`, which still describes it for `address`/`url`/errors.
     pub(crate) listen_fd: Option<uws::LIBUS_SOCKET_DESCRIPTOR>,
     pub(crate) id: Box<[u8]>,
     pub(crate) allow_hot: bool,
@@ -630,8 +627,7 @@ impl ServerConfig {
 
 // ─── from_js + JS-side parsing ───────────────────────────────────────────────
 
-/// A JS `fd` number as the OS descriptor `us_socket_group_listen_fd` accepts:
-/// the POSIX int, or (as for `Bun.listen({ fd })`) the raw Windows SOCKET value.
+/// POSIX fd, or (like `Bun.listen({ fd })`) the raw SOCKET value on Windows.
 fn listen_fd_from_number(number: f64) -> Option<uws::LIBUS_SOCKET_DESCRIPTOR> {
     if !(number >= 0.0 && number.fract() == 0.0) {
         return None;
@@ -642,7 +638,6 @@ fn listen_fd_from_number(number: f64) -> Option<uws::LIBUS_SOCKET_DESCRIPTOR> {
     }
     #[cfg(windows)]
     {
-        // Exact in f64 up to 2^53; a SOCKET is a kernel handle, far below that.
         (number < (1u64 << 53) as f64).then(|| number as u64 as uws::LIBUS_SOCKET_DESCRIPTOR)
     }
 }
@@ -1381,8 +1376,7 @@ impl ServerConfig {
             }
             args.on_node_http_request = on_request_;
 
-            // Only node:http servers may hand over a descriptor (see `listen_fd`);
-            // for a plain `Bun.serve()` the key is not an option and is left alone.
+            // `fd` is not a public Bun.serve() option: only node:http servers get to pass one.
             if let Some(fd) = arg.get(global, "fd")? {
                 let Some(fd) = fd.get_number().and_then(listen_fd_from_number) else {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -1390,8 +1384,7 @@ impl ServerConfig {
                     )));
                 };
                 args.listen_fd = Some(fd);
-                // The descriptor is consumed by this listen; a `--hot` reload
-                // matching a previous server by address would silently drop it.
+                // A `--hot` reload reusing the old server by address would drop the descriptor.
                 args.allow_hot = false;
             }
         }

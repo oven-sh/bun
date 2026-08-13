@@ -1719,8 +1719,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         self.notify_inspector_server_stopped();
 
-        // An inherited descriptor's socket file belongs to whoever bound it (the
-        // cluster primary unlinks it once the last worker lets go).
+        // A shared socket's file is unlinked by whoever bound it (the cluster primary).
         if self.config.listen_fd.is_none() {
             if let server_config::Address::Unix(path) = &self.config.address {
                 let bytes = path.as_bytes();
@@ -1992,9 +1991,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let global = self.global_this();
 
         if self.config.listen_fd.is_some() {
-            // Nothing was bound here: the descriptor itself could not be
-            // listened on (HttpContext::listen_fd stores the cause in errno).
-            // EINVAL is what node reports for a descriptor it cannot serve on.
+            // HttpContext::listen_fd left the cause in errno; EINVAL is node's answer for an unusable fd.
             let errno = match bun_sys::get_errno(-1i32) {
                 bun_sys::E::SUCCESS => bun_sys::E::EINVAL,
                 e => e,
@@ -3047,8 +3044,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         match addr {
             Addr::Fd(fd) => {
-                // `ServerConfig::from_js` rejects http3 together with a descriptor,
-                // so there is no H3 listener to pair with it.
+                // No H3 listener to pair with it: `from_js` rejects http3 together with a descriptor.
                 // SAFETY: app is a live uws handle owned by this server. No
                 // `&*this` is live across this call; the trampoline's
                 // `&mut *this` is the sole borrow while it runs.

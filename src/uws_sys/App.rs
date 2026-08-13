@@ -287,9 +287,8 @@ impl<const SSL: bool> App<SSL> {
         }
     }
 
-    /// Accept on `fd`, a descriptor something else already bound (node:cluster's
-    /// shared listen handle). The listen socket takes ownership of `fd` when the
-    /// handler receives a non-null socket; otherwise the caller still owns it.
+    /// Accept on an already-bound `fd`; it is owned by the listen socket the handler
+    /// receives, or still by the caller when the handler receives null.
     pub fn listen_fd(
         &mut self,
         handler: c::uws_listen_handler,
@@ -298,8 +297,7 @@ impl<const SSL: bool> App<SSL> {
         options: i32,
     ) {
         // Callers supply the C-ABI shim directly.
-        // SAFETY: self is a valid app; `fd` is a plain value and `handler`/`user_data`
-        // are only invoked synchronously inside this call.
+        // SAFETY: self is a valid app; the handler is only invoked synchronously inside this call.
         unsafe {
             c::uws_app_listen_fd(
                 Self::SSL_FLAG,

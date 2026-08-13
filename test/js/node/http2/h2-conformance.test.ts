@@ -367,6 +367,45 @@ describe("CONTINUATION (checklist §3,§7)", () => {
     expect(goawayErrorCode(goaway)).toBe(ErrorCode.PROTOCOL_ERROR);
     c.destroy();
   });
+
+  test("a header block spanning HEADERS and two CONTINUATION frames is reassembled (§6.10)", async () => {
+    const seen: Record<string, unknown>[] = [];
+    const server = http2.createServer();
+    server.on("stream", (stream: any, headers: any) => {
+      seen.push({ path: headers[":path"], a: headers["x-a"], b: headers["x-b"] });
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      // Two literal fields (new name, not indexed), split mid-instruction between the CONTINUATIONs
+      // so the block only decodes if all three fragments are concatenated in order.
+      const tail = Buffer.concat([
+        Buffer.from([0x00]),
+        hpackLiteral("x-a"),
+        hpackLiteral("1"),
+        Buffer.from([0x00]),
+        hpackLiteral("x-b"),
+        hpackLiteral("2"),
+      ]);
+      c.sendFrame(FrameType.HEADERS, 0x1 /* END_STREAM, no END_HEADERS */, 1, requestHeaderBlock("GET"));
+      c.sendFrame(FrameType.CONTINUATION, 0, 1, tail.subarray(0, 3));
+      c.sendFrame(FrameType.CONTINUATION, 0x4 /* END_HEADERS */, 1, tail.subarray(3));
+      const resp = await c.waitFor(
+        f => (f.type === FrameType.HEADERS && f.streamId === 1) || f.type === FrameType.GOAWAY,
+      );
+      expect(resp.type).toBe(FrameType.HEADERS);
+      expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+      expect(seen).toEqual([{ path: "/", a: "1", b: "2" }]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
 });
 
 describe("SETTINGS value ranges (checklist §6.5.2)", () => {

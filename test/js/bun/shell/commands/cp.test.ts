@@ -3,7 +3,7 @@ import { shellInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { linkSync, mkdirSync, readFileSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, parse, relative } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -208,6 +208,8 @@ describe.concurrent("bunshell cp of a file onto itself", () => {
     return { stdout: `1\ncp: ${src} and ${tgt} are identical (not copied)\n`, stderr: "", exitCode: 0 };
   }
   const copied = { stdout: "0\n", stderr: "", exitCode: 0 };
+  /** What the builtin puts between a directory operand and the basename it appends to it. */
+  const sep = isWindows ? "\\" : "/";
 
   // Larger than the 128 KB above which the macOS copy unlinks the destination
   // before cloning the source into its place.
@@ -223,6 +225,24 @@ describe.concurrent("bunshell cp of a file onto itself", () => {
     using dir = setup("trailing-slash");
     expect(await cp(String(dir), "cp d/f d/")).toEqual(refused("d/f", p("d/f")));
     expect(readFileSync(join(String(dir), "d/f"), "utf8")).toBe("F\n");
+  });
+
+  // The destination operand is reported as written, as cp(1) does, not normalized.
+  test("into its own directory written as d/. is refused", async () => {
+    using dir = setup("dot-segment");
+    expect(await cp(String(dir), "cp d/f d/.")).toEqual(refused("d/f", `d/.${sep}f`));
+  });
+
+  test("into its own directory written with a very long operand is refused", async () => {
+    using dir = setup("long-operand");
+    // Climbs to the filesystem root and back down into the temp dir: resolves
+    // to a short absolute path, but as written it is longer than PATH_MAX (4096
+    // on Linux), so reporting it must not go through a path buffer.
+    const { root } = parse(String(dir));
+    const fromRoot = relative(root, String(dir)).replaceAll("\\", "/");
+    const operand = `${Buffer.alloc(1500 * 3, "../").toString()}${fromRoot}/d`;
+    expect(operand.length).toBeGreaterThan(4096);
+    expect(await cp(String(dir), `cp d/f ${operand}`)).toEqual(refused("d/f", `${operand}${sep}f`));
   });
 
   test("into its own directory with -R is refused", async () => {

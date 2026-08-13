@@ -720,19 +720,23 @@ impl ShellCpTask {
         }
 
         if !src_is_dir && Self::is_same_file(src, tgt) {
-            let mut display_buf = bun_paths::path_buffer_pool::get();
-            let shown_tgt: &[u8] = match appended_basename {
-                Some(basename) => resolve_path::join_string_buf::<platform::Auto>(
-                    &mut display_buf[..],
-                    &[self.tgt.as_slice(), basename],
-                ),
-                None => &self.tgt,
-            };
+            // Named the way cp(1) names it: the operand as given, plus the
+            // basename when the copy would have landed inside it.
+            let mut shown_tgt = self.tgt.clone();
+            if let Some(basename) = appended_basename {
+                while shown_tgt.len() > 1 && Self::has_trailing_sep(&shown_tgt) {
+                    shown_tgt.pop();
+                }
+                if !Self::has_trailing_sep(&shown_tgt) {
+                    shown_tgt.push(bun_paths::SEP);
+                }
+                shown_tgt.extend_from_slice(basename);
+            }
             return Some(ShellErr::Custom(
                 format!(
                     "{} and {} are identical (not copied)",
                     bstr::BStr::new(&self.src),
-                    bstr::BStr::new(shown_tgt)
+                    bstr::BStr::new(&shown_tgt)
                 )
                 .into_bytes()
                 .into_boxed_slice(),

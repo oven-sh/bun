@@ -66,13 +66,13 @@ async function coverageOf(dir: string, file: string) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const row = stderr
     .split("\n")
-    .find(line => line.startsWith(` ${file} `))!
-    .trimEnd();
+    .find(line => line.startsWith(` ${file} `))
+    ?.trimEnd();
+  expect({ stdout, stderr, exitCode, row }).toMatchObject({ exitCode: 0, row: expect.any(String) });
 
   const record = readFileSync(path.join(dir, "cov", "lcov.info"), "utf-8")
     .split("end_of_record")
@@ -230,6 +230,47 @@ test("pick", () => {
   });
   // `pick` is the only function: the constructor JSC synthesizes for `WithField` is not one.
   expect(record).toContain("\nFNF:1\nFNH:1\n");
+});
+
+// Shapes from #8290, #7025 and #29691: uncalled methods are reported on their own lines, and the
+// constructors JSC synthesizes (base class, class expression, derived class) are neither counted
+// as uncalled functions nor charged to the first line of the file.
+test.concurrent("coverage of classes counts methods, not synthesized constructors", async () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": skipTestFiles,
+    "classes.js": `export class Base {
+  calls = [];
+  async consume(event) {
+    this.calls.push(event);
+  }
+  covered() { return 1; }
+  another() { return 2; }
+}
+export const factory = () => class {};
+export class Derived extends factory() {}
+`,
+    "classes.test.js": `import { test, expect } from "bun:test";
+import { Base, Derived } from "./classes.js";
+test("covered", () => {
+  expect(new Base().covered()).toBe(1);
+  expect(Derived.name).toBe("Derived");
+});
+`,
+  });
+
+  const { row, record, status } = await coverageOf(String(dir), "classes.js");
+  // consume, covered, another and factory; covered and factory ran.
+  expect(record).toContain("\nFNF:4\nFNH:2\n");
+  expect(row).toMatch(/^ classes\.js \|   50\.00 \| +\d+\.\d\d \| 3-4,7$/);
+  expect(status(10)).toMatchObject({
+    3: "MISSED",
+    4: "MISSED",
+    5: "-",
+    6: "hit",
+    7: "MISSED",
+    9: "hit",
+    10: "hit",
+  });
 });
 
 test.concurrent("coverageIgnoreSourcemaps reports the line of the dead statement itself", async () => {

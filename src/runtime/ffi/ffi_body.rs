@@ -2154,8 +2154,7 @@ impl Function {
             )?;
         }
 
-        // A napi_env parameter is filled in by `to_c` below but still takes up
-        // its position in the JS argument list, so `i` is the JS index too.
+        // napi_env comes from `to_c` but still occupies its JS argument position, so `i` is the JS index.
         if self.arg_types.iter().any(|arg| *arg != ABIType::NapiEnv) {
             writer.write_all(b"  LOAD_ARGUMENTS_FROM_CALL_FRAME;\n")?;
             for (i, arg) in self.arg_types.iter().enumerate() {

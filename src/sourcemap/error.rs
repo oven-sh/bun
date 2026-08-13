@@ -37,7 +37,7 @@ pub enum Error {
 }
 
 impl Error {
-    /// What `ParseResult::Fail` reports to the user.
+    /// What a `ParseFail` reports to the user.
     pub fn message(self) -> &'static str {
         match self {
             Self::MissingGeneratedColumnValue => "Missing generated column value",

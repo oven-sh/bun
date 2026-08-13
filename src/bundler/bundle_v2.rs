@@ -3732,7 +3732,7 @@ pub mod bv2_impl {
         /// `source_without_index` is copied and assigned a new source index. That index is returned.
         pub(crate) fn enqueue_server_component_generated_file(
             &mut self,
-            data: crate::ServerComponentParseTask::Data,
+            data: crate::ServerComponentParseTask::ReferenceProxy,
             source_without_index: bun_ast::Source,
         ) -> Result<IndexInt, AllocError> {
             let mut new_source = source_without_index;
@@ -3754,32 +3754,27 @@ pub mod bv2_impl {
             })?;
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
-            // `bun.new(ServerComponentParseTask, …)` — heap-owned by the
-            // worker pool; freed via `bun.destroy` in `on_complete` after the
-            // result posts back to the bundle thread.
-            let task = bun_core::heap::into_raw(Box::new(ServerComponentParseTask {
-                data,
-                // SAFETY: `from_mut(self)` is the live bundle (write provenance for
-                // `on_complete`'s `assume_mut`) and outlives the task; `'a` erased to
-                // `'static` for the BACKREF.
-                ctx: Some(unsafe {
-                    bun_ptr::ParentRef::from_raw_mut(
-                        core::ptr::from_mut(&mut *self).cast::<BundleV2<'static>>(),
-                    )
-                }),
-                source: task_source,
-                // `..Default::default()` supplies `task: ThreadPoolTask { callback: task_callback_wrap }`.
-                ..Default::default()
-            }));
+            // SAFETY: `from_mut(self)` is the live bundle (write provenance for
+            // `on_complete`'s `assume_mut`) and outlives the task; `'a` erased to
+            // `'static` for the BACKREF.
+            let ctx = unsafe {
+                bun_ptr::ParentRef::from_raw_mut(
+                    core::ptr::from_mut(&mut *self).cast::<BundleV2<'static>>(),
+                )
+            };
 
             self.increment_scan_counter();
 
-            // SAFETY: `task` is the just-allocated arena box; sole reference here.
+            // The pool owns the box from here; `ServerComponentParseTask::run_owned`
+            // drops it once the generated file's AST has been built.
             self.graph
                 .pool()
                 .worker_pool()
-                .schedule(bun_threading::thread_pool::Batch::from(unsafe {
-                    core::ptr::addr_of_mut!((*task).task)
+                .schedule_owned(Box::new(ServerComponentParseTask {
+                    task: bun_threading::thread_pool::Task::default(),
+                    data,
+                    ctx,
+                    source: task_source,
                 }));
 
             Ok(u32::try_from(source_index).expect("int cast"))
@@ -7179,25 +7174,32 @@ pub mod bv2_impl {
                     // `result.ast` is moved into `graph.ast` and `result.source` was
                     // swapped earlier, so snapshot the data the use-directive block
                     // needs *before* the move. Only paid for files that hit the SCB gate.
-                    let named_exports_for_scb = if result.use_directive != crate::UseDirective::None
-                        && {
-                            let separate = this
-                                .framework
-                                .as_ref()
-                                .unwrap()
-                                .server_components
-                                .as_ref()
-                                .unwrap()
-                                .separate_ssr_graph;
-                            let is_client = result.use_directive == crate::UseDirective::Client;
-                            let is_browser = result_ast_target == Target::Browser;
-                            if separate {
-                                is_client == is_browser
-                            } else {
-                                is_client != is_browser
-                            }
-                        } {
-                        Some(result.ast.named_exports.clone().expect("oom"))
+                    let scb_export_names = if result.use_directive != crate::UseDirective::None && {
+                        let separate = this
+                            .framework
+                            .as_ref()
+                            .unwrap()
+                            .server_components
+                            .as_ref()
+                            .unwrap()
+                            .separate_ssr_graph;
+                        let is_client = result.use_directive == crate::UseDirective::Client;
+                        let is_browser = result_ast_target == Target::Browser;
+                        if separate {
+                            is_client == is_browser
+                        } else {
+                            is_client != is_browser
+                        }
+                    } {
+                        Some(
+                            result
+                                .ast
+                                .named_exports
+                                .keys()
+                                .iter()
+                                .map(|name| Box::<[u8]>::from(&name[..]))
+                                .collect::<Box<[_]>>(),
+                        )
                     } else {
                         None
                     };
@@ -7219,7 +7221,7 @@ pub mod bv2_impl {
                         .expect("oom");
                     }
 
-                    if let Some(named_exports) = named_exports_for_scb {
+                    if let Some(export_names) = scb_export_names {
                         if result.use_directive == crate::UseDirective::Server {
                             bun_core::todo_panic!("\"use server\"");
                         }
@@ -7247,12 +7249,10 @@ pub mod bv2_impl {
                                 this.graph.input_files.items_source()[result_source_index].clone();
                             let reference_source_index = this
                                 .enqueue_server_component_generated_file(
-                                    crate::ServerComponentParseTask::Data::ClientReferenceProxy(
-                                        crate::ServerComponentParseTask::ReferenceProxy {
-                                            other_source,
-                                            named_exports,
-                                        },
-                                    ),
+                                    crate::ServerComponentParseTask::ReferenceProxy {
+                                        other_source,
+                                        export_names,
+                                    },
                                     scb_source,
                                 )
                                 .expect("oom");

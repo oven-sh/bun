@@ -1491,6 +1491,58 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           }
         });
 
+        it("reassembles a header block split across HEADERS + CONTINUATION + CONTINUATION", async () => {
+          const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
+          const block = http2utils.kFakeResponseHeaders;
+          const server = net.createServer(async socket => {
+            socket.on("error", () => {});
+            const settings = new http2utils.SettingsFrame(true);
+            socket.write(settings.data);
+            await waitToWrite;
+
+            // Split 2 bytes into the cache-control literal and again inside the date value, so
+            // every fragment is needed and none decodes on its own. The middle fragment is a raw
+            // CONTINUATION without END_HEADERS (the helper always sets it): the partially
+            // assembled block has to be kept across it and completed by the last frame only.
+            socket.write(new http2utils.HeadersFrame(1, block.subarray(0, 7), 0, /* EOH */ false, false).data);
+            const middle = block.subarray(7, 30);
+            socket.write(Buffer.concat([new http2utils.Frame(middle.byteLength, 9, 0, 1).data, middle]));
+            socket.write(new http2utils.ContinuationFrame(1, block.subarray(30), 0, false).data);
+          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          const client = http2.connect(url);
+          try {
+            const { promise, resolve, reject } = Promise.withResolvers();
+            client.on("error", reject);
+            let sawTrailers = false;
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.on("error", reject);
+              req.on("trailers", () => {
+                sawTrailers = true;
+              });
+              req.on("response", headers => {
+                queueMicrotask(() => resolve(headers));
+              });
+              req.end();
+              allowWrite();
+            });
+            const headers = await promise;
+            expect(headers[":status"]).toBe(302);
+            expect(headers["cache-control"]).toBe("private");
+            expect(headers["date"]).toBe("Mon, 21 Oct 2013 20:13:21 GMT");
+            expect(headers["location"]).toBe("https://www.example.com");
+            expect(sawTrailers).toBe(false);
+          } finally {
+            client.destroy();
+            server.close();
+          }
+        });
+
         it("treats an HPACK decode error in a complete header block as COMPRESSION_ERROR", async () => {
           const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
           const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
@@ -1580,8 +1632,29 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
         it("rejects a header block whose compressed size exceeds maxHeaderListSize", async () => {
           const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
           const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
+          const { promise: goawayReceived, resolve: onGoaway, reject: noGoaway } = Promise.withResolvers();
+          // Walks the frames the client sent (after its 24-byte connection preface) and returns
+          // the payload of the first GOAWAY among them.
+          function findGoaway(fromClient) {
+            let offset = http2utils.kClientMagic.byteLength;
+            while (offset + 9 <= fromClient.byteLength) {
+              const length = fromClient.readUIntBE(offset, 3);
+              if (offset + 9 + length > fromClient.byteLength) break;
+              if (fromClient[offset + 3] === 7 /* GOAWAY */) {
+                return fromClient.subarray(offset + 9, offset + 9 + length);
+              }
+              offset += 9 + length;
+            }
+          }
           const server = net.createServer(async socket => {
-            socket.on("error", () => {});
+            socket.on("error", noGoaway);
+            socket.on("close", () => noGoaway(new Error("client closed the connection without sending GOAWAY")));
+            let fromClient = Buffer.alloc(0);
+            socket.on("data", chunk => {
+              fromClient = Buffer.concat([fromClient, chunk]);
+              const goaway = findGoaway(fromClient);
+              if (goaway) onGoaway(goaway);
+            });
             const settings = new http2utils.SettingsFrame(true);
             socket.write(settings.data);
             await waitToWrite;
@@ -1617,6 +1690,13 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
             // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
             expect(result.message).toBe("Protocol error");
+            // Every locally detected violation surfaces as "Protocol error"; only the GOAWAY on the
+            // wire says which one. COMPRESSION_ERROR (the 65536-byte block cap) is reached on the
+            // fourth CONTINUATION, which requires the partial block to survive each CONTINUATION
+            // without END_HEADERS; had it been dropped after the first one, the second would be an
+            // unexpected CONTINUATION and the GOAWAY would carry PROTOCOL_ERROR.
+            const goaway = await goawayReceived;
+            expect(goaway.readUInt32BE(4)).toBe(http2.constants.NGHTTP2_COMPRESSION_ERROR);
           } finally {
             server.close();
           }

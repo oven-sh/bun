@@ -1622,4 +1622,63 @@ describe("inbound stream lifecycle", () => {
       server.close();
     }
   });
+
+  // §5.1: HEADERS for a stream the client itself just reset is a stream error (RST_STREAM with
+  // STREAM_CLOSED), not a connection error, and §4.3 still requires the whole block (CONTINUATION
+  // half included) to be decoded so the connection-scoped HPACK dynamic table stays in sync.
+  // The RST_STREAM and the HEADERS have to arrive in one read: closed streams are evicted between
+  // reads, after which a late HEADERS simply opens a fresh stream.
+  test("keeps HPACK state in sync when a header block for a stream the client reset spans HEADERS and CONTINUATION", async () => {
+    const seen: { path: string; sync?: string }[] = [];
+    const server = http2.createServer();
+    server.on("stream", (stream: any, headers: any) => {
+      stream.on("error", () => {});
+      // Whether stream 3's first (valid) HEADERS reaches JS before the RST_STREAM pipelined
+      // behind it is processed is not what this test pins down; only stream 5 is recorded.
+      if (stream.id !== 5) return;
+      seen.push({ path: headers[":path"], sync: headers["x-bun-sync"] });
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      const cancel = Buffer.alloc(4);
+      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+      // The closed stream's block inserts `x-bun-sync: 1` into the dynamic table (literal with
+      // incremental indexing) from its CONTINUATION half.
+      const insert = Buffer.concat([Buffer.from([0x40]), hpackLiteral("x-bun-sync"), hpackLiteral("1")]);
+      const ping = Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]);
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 3, requestHeaderBlock("POST")),
+          encodeFrame(FrameType.RST_STREAM, 0, 3, cancel),
+          encodeFrame(FrameType.HEADERS, 0x1 /* END_STREAM, no END_HEADERS */, 3, requestHeaderBlock("GET")),
+          encodeFrame(FrameType.CONTINUATION, 0x4 /* END_HEADERS */, 3, insert),
+          encodeFrame(FrameType.PING, 0, 0, ping),
+        ]),
+      );
+      const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 3);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.STREAM_CLOSED);
+      // The PING behind the block is answered: the connection itself survived.
+      const ack = await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      expect(Buffer.compare(ack.payload, ping)).toBe(0);
+
+      // 0xbe: indexed field 62 = the entry the closed stream's block inserted. If that block had
+      // not been decoded this is a COMPRESSION_ERROR and stream 5 never reaches JS.
+      c.sendFrame(FrameType.HEADERS, 0x5, 5, Buffer.concat([requestHeaderBlock("GET"), Buffer.from([0xbe])]));
+      const resp = await c.waitFor(
+        f => (f.type === FrameType.HEADERS && f.streamId === 5) || f.type === FrameType.GOAWAY,
+      );
+      expect(resp.type).toBe(FrameType.HEADERS);
+      expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+      expect(seen).toEqual([{ path: "/", sync: "1" }]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
 });

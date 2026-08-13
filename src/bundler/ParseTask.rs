@@ -1456,6 +1456,7 @@ pub mod parse_worker {
         fs_cache: &mut bun_resolver::cache::Fs,
         bump: &Bump,
         file_path: &mut Fs::Path,
+        loader: Loader,
     ) -> core::result::Result<CacheEntry, AnyError> {
         match &task.contents_or_fd {
             ContentsOrFd::Fd { dir, file } => 'brk: {
@@ -1529,6 +1530,7 @@ pub mod parse_worker {
                     false,
                     contents_file.unwrap_valid(),
                     read_arena,
+                    Fs::BomHandling::for_loader(loader),
                 ) {
                     Ok(e) => {
                         // `bun_resolver::cache::Entry` ↔ `crate::cache::Entry`
@@ -1631,7 +1633,9 @@ pub mod parse_worker {
         };
 
         if !might_have_on_parse_plugins {
-            return get_code_for_parse_task_without_plugins(task, log, fs_cache, bump, file_path);
+            return get_code_for_parse_task_without_plugins(
+                task, log, fs_cache, bump, file_path, *loader,
+            );
         }
 
         let should_continue_running = core::cell::Cell::new(1i32);
@@ -1943,6 +1947,7 @@ pub mod parse_worker {
                 this.fs_cache,
                 this.bump,
                 this.file_path,
+                result.loader,
             ) {
                 Ok(e) => e,
                 Err(e) => {
@@ -2207,6 +2212,7 @@ pub mod parse_worker {
                 self.fs_cache,
                 self.bump,
                 self.file_path,
+                *self.loader,
             )
         }
     }

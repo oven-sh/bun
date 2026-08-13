@@ -365,6 +365,35 @@ describe("HTMLRewriter", () => {
       }
     });
 
+    // On the JS-pump path the pump's own settlement decides how the body ends,
+    // because the sink's close() carries no error. So a direct pull() that
+    // closes the controller and then rejects fails the body, whether or not a
+    // handler suspended the rewrite in between (fetch() fails a request with
+    // this body the same way).
+    it.each(["synchronous", "suspending"])(
+      "a direct ReadableStream whose pull() rejects after close() rejects the body (%s handler)",
+      async kind => {
+        const stream = new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            controller.write("<p>x</p>");
+            controller.close();
+            throw new Error("pull rejected after close");
+          },
+        });
+        const handler =
+          kind === "suspending"
+            ? {
+                async element() {
+                  await setImmediatePromise();
+                },
+              }
+            : { element() {} };
+        const res = new HTMLRewriter().on("p", handler).transform(new Response(stream));
+        await expect(res.text()).rejects.toThrow("pull rejected after close");
+      },
+    );
+
     // `fail()` must settle the `WritablePending` slot so a direct `pull()`
     // parked on `await controller.flush(true)` resumes, letting the pump
     // promise settle and release the input `+1` (`cancel_from_output`
@@ -1066,6 +1095,124 @@ describe("HTMLRewriter", () => {
           threw: true,
         });
       });
+    });
+
+    // A JS ReadableStream body that is already errored when transform() runs
+    // fails the pump synchronously, inside transform() itself. The transformed
+    // body must reject with the stream's error like a direct read of the input
+    // does, instead of resolving as an empty document. (A stream that errors
+    // after transform() returned is covered under "async handlers suspend the
+    // rewrite".)
+    describe("input stream already errored when transform() is called", () => {
+      const erroredInputs = {
+        "error() in start() after enqueuing": () =>
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("<p>partial"));
+              controller.error(new Error("upstream boom"));
+            },
+          }),
+        "error() in start() with nothing enqueued": () =>
+          new ReadableStream({
+            start(controller) {
+              controller.error(new Error("upstream boom"));
+            },
+          }),
+        "error() between construction and transform()": () => {
+          let controller;
+          const stream = new ReadableStream({
+            start(c) {
+              controller = c;
+            },
+          });
+          controller.error(new Error("upstream boom"));
+          return stream;
+        },
+        "error() in start() of a byte stream": () =>
+          new ReadableStream({
+            type: "bytes",
+            start(controller) {
+              controller.error(new Error("upstream boom"));
+            },
+          }),
+      };
+      const shapes = Object.keys(erroredInputs);
+      const erroredInput = shape => new Response(erroredInputs[shape](), { headers: { "content-type": "text/html" } });
+      const rejectedWithUpstreamError = { rejected: true, name: "Error", message: "upstream boom" };
+
+      it.each(shapes)("%s: .text() rejects like a direct read of the input", async shape => {
+        expect(await settle(erroredInput(shape).text())).toEqual(rejectedWithUpstreamError);
+        expect(await settle(rewriter().transform(erroredInput(shape)).text())).toEqual(rejectedWithUpstreamError);
+      });
+
+      it(".arrayBuffer() rejects", async () => {
+        const transformed = rewriter().transform(erroredInput(shapes[0]));
+        expect(await settle(transformed.arrayBuffer())).toEqual(rejectedWithUpstreamError);
+      });
+
+      it("reading .body rejects", async () => {
+        const transformed = rewriter().transform(erroredInput(shapes[0]));
+        expect(await settle(transformed.body.getReader().read())).toEqual(rejectedWithUpstreamError);
+      });
+
+      it("does not invoke onDocument end", async () => {
+        let endCalls = 0;
+        const rw = rewriter().onDocument({
+          end() {
+            endCalls++;
+          },
+        });
+        expect(await settle(rw.transform(erroredInput(shapes[0])).text())).toEqual(rejectedWithUpstreamError);
+        expect(endCalls).toBe(0);
+      });
+
+      it("the transformed body is already failed when transform() returns", async () => {
+        const transformed = rewriter().transform(erroredInput(shapes[0]));
+        // Same rule as "transform() of a body that already failed" above: a
+        // second rewriter chained onto the failed body throws the upstream
+        // error instead of rewriting an empty document.
+        expect(() => rewriter().transform(transformed)).toThrow("upstream boom");
+      });
+
+      it("Bun.serve routes the error to error() instead of sending an empty 200", async () => {
+        const seen = Promise.withResolvers();
+        await using server = Bun.serve({
+          port: 0,
+          error(e) {
+            seen.resolve(e.message);
+            return new Response("handled", { status: 500 });
+          },
+          fetch: () => rewriter().transform(erroredInput(shapes[0])),
+        });
+        const res = await fetch(`http://localhost:${server.port}/`);
+        expect({ status: res.status, body: await res.text() }).toEqual({ status: 500, body: "handled" });
+        expect(await seen.promise).toBe("upstream boom");
+      });
+
+      // The clean counterpart settles the pump inside transform() too; it must
+      // still complete the document, exactly once.
+      it.each(["with a chunk", "empty"])(
+        "control: an input stream already closed (%s) still completes the rewrite",
+        async shape => {
+          const stream = new ReadableStream({
+            start(controller) {
+              if (shape === "with a chunk") controller.enqueue(new TextEncoder().encode("<p>hi</p>"));
+              controller.close();
+            },
+          });
+          let endCalls = 0;
+          const rw = rewriter().onDocument({
+            end(end) {
+              endCalls++;
+              end.append("<!--end-->", { html: true });
+            },
+          });
+          expect(await rw.transform(new Response(stream)).text()).toBe(
+            shape === "with a chunk" ? '<p seen="1">hi</p><!--end-->' : "<!--end-->",
+          );
+          expect(endCalls).toBe(1);
+        },
+      );
     });
   });
 

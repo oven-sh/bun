@@ -715,10 +715,13 @@ pub struct RewriterPipe {
     /// Input EOF arrived while a suspension or output backpressure kept us
     /// from calling `end_rewrite()`; run it once unblocked.
     input_ended: Cell<bool>,
-    /// `true` while a JS-pump `.then()` reaction (attached in
+    /// `true` while the JS pump's result (the `assign_to_stream` return value
+    /// or, if that is a pending promise, its `.then()` reaction attached in
     /// [`Self::wire_input`]) is still owed. The generated `${controller}__close`
     /// drops its error argument, so `end_from_stream` defers terminal work to
-    /// the reaction (which carries the real error) while this is set.
+    /// that result (which carries the real error) while this is set. Armed
+    /// before the pump is entered: a stream that is already errored or closed
+    /// settles the pump synchronously, inside `assign_to_stream`.
     js_pump_reaction_pending: Cell<bool>,
     /// Bytes accepted from the input while suspended or output-backpressured.
     pending_input: JsCell<Vec<u8>>,
@@ -1145,49 +1148,44 @@ impl RewriterPipe {
         // GC destructor), so it owns a ref until `release_pump_ref`.
         this.pump_controller_attached.set(true);
         this.ref_();
+        // A stream that is already errored (or closed) settles the pump inside
+        // `assign_to_stream`, calling `controller.close(error)` / `end()` (which
+        // reach `end_from_stream` without the error) before the pump promise
+        // settles. Arm the deferral first so the pump's result, handled below,
+        // is the terminal signal whether it settles now or later.
+        this.js_pump_reaction_pending.set(true);
         let assignment_result =
             JSSink::<RewriterPipe>::assign_to_stream(global, stream.value, pipe.into());
         assignment_result.ensure_still_alive();
 
-        if let Some(err) = assignment_result.to_error() {
-            this.end_from_stream(Some(StreamError::JSValue(jsc::strong::Optional::create(
-                err, global,
-            ))));
-            return;
-        }
-
-        if !assignment_result.is_empty_or_undefined_or_null() {
-            if let Some(promise) = assignment_result.as_any_promise() {
-                match promise.status() {
-                    jsc::js_promise::Status::Pending => {
-                        this.js_pump_reaction_pending.set(true);
-                        assignment_result.then_with_value(
-                            global,
-                            this.cell.get(),
-                            on_resolve_input_stream_shim,
-                            on_reject_input_stream_shim,
-                        );
-                        return;
-                    }
-                    jsc::js_promise::Status::Fulfilled => {
-                        this.end_from_stream(None);
-                        return;
-                    }
-                    jsc::js_promise::Status::Rejected => {
-                        promise.set_handled(global.vm());
-                        let result = promise.result(global.vm());
-                        this.end_from_stream(Some(StreamError::JSValue(
-                            jsc::strong::Optional::create(result, global),
-                        )));
-                        return;
-                    }
+        let err = if let Some(err) = assignment_result.to_error() {
+            Some(err)
+        } else if let Some(promise) = assignment_result.as_any_promise() {
+            match promise.status() {
+                jsc::js_promise::Status::Pending => {
+                    assignment_result.then_with_value(
+                        global,
+                        this.cell.get(),
+                        on_resolve_input_stream_shim,
+                        on_reject_input_stream_shim,
+                    );
+                    return;
+                }
+                jsc::js_promise::Status::Fulfilled => None,
+                jsc::js_promise::Status::Rejected => {
+                    promise.set_handled(global.vm());
+                    Some(promise.result(global.vm()))
                 }
             }
-        }
-
-        // undefined/null: the stream drained synchronously inside
-        // assignToStream.
-        this.end_from_stream(None);
+        } else {
+            // undefined/null: the stream drained synchronously inside
+            // assignToStream.
+            None
+        };
+        this.js_pump_reaction_pending.set(false);
+        this.end_from_stream(
+            err.map(|err| StreamError::JSValue(jsc::strong::Optional::create(err, global))),
+        );
     }
 
     /// `PendingValue::on_start_streaming` — the output Response's body is
@@ -1286,12 +1284,12 @@ impl RewriterPipe {
         self.detach_input_source(false);
 
         if self.js_pump_reaction_pending.get() {
-            // The pump-promise `.then()` reaction is the single terminal
-            // authority on the JS-pump path: `rsisAbrupt` calls
-            // `controller.close(error)` synchronously (the generated `__close`
-            // drops the argument) before rejecting the pump promise, so running
-            // `end_rewrite` here would resolve the body with truncated output
-            // and pre-empt the reject reaction.
+            // The pump's result (handled in `wire_input`, or by its `.then()`
+            // reaction) is the single terminal authority on the JS-pump path:
+            // `rsisAbrupt` calls `controller.close(error)` (the generated
+            // `__close` drops the argument) before rejecting the pump promise,
+            // so running `end_rewrite` here would resolve the body with
+            // truncated output and pre-empt the rejection.
             return;
         }
 

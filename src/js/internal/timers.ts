@@ -5,10 +5,12 @@ const NumberIsFinite = Number.isFinite;
 const TIMEOUT_MAX = 2 ** 31 - 1;
 
 /**
- * Monotonic milliseconds for deadlines the runtime itself measures. Not
- * `Date.now()` / `performance.now()`: bun:test's `setSystemTime()` and
- * `useFakeTimers()` override both inside the engine (capturing the function
- * does not help), which would freeze or skew an internal deadline.
+ * The real monotonic clock in whole milliseconds, for deadlines the runtime's
+ * own JS keeps (a mark recorded now and compared against when a timer fires).
+ * No JS-visible clock will do: bun:test's `setSystemTime()` overrides
+ * `Date.now()` inside the engine, and `useFakeTimers()` also overrides
+ * `performance.now()` and `process.hrtime()`, so a deadline measured with any
+ * of them freezes or jumps along with the mock.
  */
 const monotonicNowMs = $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.monotonicNowMs", 0);
 

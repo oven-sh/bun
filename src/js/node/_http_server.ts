@@ -2513,14 +2513,17 @@ function onResponseFinishHandleSocket(server, socket, res) {
     // kept-alive connection), leave it in place and only record when this
     // idle period started; onSocketTimeoutTimerExpired grants the remaining
     // budget if the timer fires early, so the socket still closes after
-    // exactly `total` ms of idle.
+    // exactly `total` ms of idle. The mark is taken before the timer is armed:
+    // both are whole milliseconds, so a timer armed after the mark measures at
+    // least `total` when it fires and closes instead of re-arming for a
+    // rounding millisecond.
+    socket[kKeepAliveIdleStart] = monotonicNowMs();
     const timer = socket[kSocketTimeoutTimer];
     if (timer !== undefined && timer._idleTimeout === total) {
       socket.timeout = total;
     } else {
       socket.setTimeout(total);
     }
-    socket[kKeepAliveIdleStart] = monotonicNowMs();
     socket[kKeepAliveTimeoutSet] = true;
   }
 }

@@ -527,6 +527,50 @@ test.concurrent('"bun": a throwing getter fails mock.restore() and keeps the moc
   expect(exitCode).toBe(0);
 });
 
+test.concurrent(
+  '"bun": a getter that itself calls mock.module() and mock.restore() does not derail the restore',
+  async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "reexport.mjs": bunReexport,
+        "dep.mjs": `export const value = "real dep";`,
+        "lazy.test.ts": `
+        import { expect, mock, test } from "bun:test";
+        import * as dep from "./dep.mjs";
+
+        // Defined before anything builds the "bun" module record, so it becomes a lazy export with a user getter.
+        let reads = 0;
+        Object.defineProperty(Bun, "userLazy", {
+          configurable: true,
+          enumerable: true,
+          get() {
+            reads++;
+            mock.module("./dep.mjs", () => ({ value: "mocked from the getter" }));
+            mock.restore();
+            return "from the getter";
+          },
+        });
+
+        test("re-entrant restore", async () => {
+          const reexported = await import("./reexport.mjs");
+          mock.module("./reexport.mjs", () => ({ userLazy: "mocked", Glob: "mocked glob" }));
+          expect([reexported.userLazy, reexported.Glob]).toEqual(["mocked", "mocked glob"]);
+          mock.restore();
+          expect(reads).toBe(1);
+          expect(reexported.userLazy).toBe("from the getter");
+          expect(reexported.Glob).toBe(Bun.Glob);
+          expect(dep.value).toBe("real dep");
+        });
+      `,
+      },
+      ["test", "lazy.test.ts"],
+    );
+    expect(stderr).toContain(" 1 pass");
+    expect(stderr).toContain(" 0 fail");
+    expect(exitCode).toBe(0);
+  },
+);
+
 test.concurrent("node:process: linking constructs the linked bindings, not the stdio streams", async () => {
   const result = await runEntry(`
     import proc, { on, release } from "node:process";

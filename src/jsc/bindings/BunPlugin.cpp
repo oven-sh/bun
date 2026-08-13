@@ -947,9 +947,10 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // If one throws (a lazy export's getter can), what is done is dropped and the rest stays for the next restore().
+    // Taken out of the log first: a lazy export's getter runs JS, which may call mock.module() or restore() itself.
+    Vector<ModuleMockUndoLog::Binding> bindings = std::exchange(log->bindings, {});
     size_t restored = 0;
-    for (auto& binding : log->bindings) {
+    for (auto& binding : bindings) {
         JSValue value = binding.original.get();
         if (auto* lazySource = binding.lazySource.get()) {
             value = lazySource->get(globalObject, binding.localName);
@@ -961,7 +962,12 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
             break;
         restored++;
     }
-    log->bindings.removeAt(0, restored);
+    if (restored < bindings.size()) {
+        // On a throw the entries not yet restored stay logged (ahead of anything logged meanwhile) for the next restore().
+        bindings.removeAt(0, restored);
+        bindings.appendVector(std::exchange(log->bindings, {}));
+        log->bindings = WTF::move(bindings);
+    }
     RETURN_IF_EXCEPTION(scope, void());
 
     for (auto& entry : log->commonJSModules)

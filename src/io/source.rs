@@ -253,16 +253,15 @@ impl Source {
         unsafe { tty.get_mut() }
     }
 
-    /// For a tty source, hand libuv the handle-owned read buffer (see
-    /// `uv::Tty::read_scratch`) with at least `size` spare bytes. `None` for
-    /// every other source.
+    /// For a tty source, hand libuv the handle-owned read buffer with at
+    /// least `size` spare bytes (`uv::Tty::read_scratch`); `None` otherwise.
     pub(crate) fn tty_read_scratch(&mut self, size: usize) -> Option<&mut [u8]> {
         let Source::Tty(tty) = self else { return None };
         let scratch = &mut Self::tty_mut(tty).read_scratch;
         scratch.clear();
         scratch.reserve(size);
         // SAFETY: spare capacity handed to libuv to write into; the read
-        // callback copies out the written prefix before anything reads it.
+        // callback copies out the written prefix.
         Some(unsafe { bun_core::vec::spare_bytes_mut(scratch) })
     }
 
@@ -399,8 +398,7 @@ impl Source {
             return stdin_tty::get_stdin_tty(loop_);
         }
 
-        // Not `boxed_zeroed`: `read_scratch` is a `Vec` (zeroed is UB); only
-        // the `uv` half is plain-old-data libuv fills in.
+        // Not `boxed_zeroed`: a zeroed `Vec` is UB.
         let mut tty: Box<Tty> = Box::new(Tty {
             uv: bun_core::ffi::zeroed(),
             read_scratch: Vec::new(),

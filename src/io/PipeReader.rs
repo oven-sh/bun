@@ -1230,14 +1230,8 @@ impl WindowsBufferedReader {
         // Never empty: reads are only issued while the limit has not been reached (`start_reading`, `on_read`), and libuv treats an empty buffer as an error.
         debug_assert!(!limit.reached());
         let size = limit.clamp_len(suggested_size);
-        // Tty reads are served from the handle-owned scratch, not `_buffer`:
-        // a cooked-mode console line read hands this buffer to a worker
-        // thread that writes into it until `ReadConsoleW` returns, and a read
-        // cancelled by `uv_read_stop` is never returned through `read_cb` —
-        // so the buffer must outlive any reader teardown, which the tty does
-        // (see `uv::Tty::read_scratch`). Pipe reads complete synchronously
-        // inside `uv__pipe_read_data`, so `_buffer` is safe for them;
-        // `on_stream_read` stages tty chunks back into `_buffer`.
+        // Tty reads must not target `_buffer`: libuv can retain the pointer
+        // past reader teardown (see `uv::Tty::read_scratch` for the contract).
         if matches!(self.source, Some(Source::Tty(_))) {
             let scratch = self
                 .source
@@ -1411,15 +1405,11 @@ impl WindowsBufferedReader {
                 let slice = unsafe { b.slice_mut() };
                 let data = &mut slice[..len];
                 if matches!(this.source, Some(Source::Tty(_))) {
-                    // Tty chunks arrive in the handle-owned scratch (see
-                    // get_read_buffer_with_stable_memory_address); stage them
-                    // into `_buffer`'s spare capacity so `on_read` commits
-                    // them exactly like a pipe chunk.
+                    // Tty chunks arrive in the tty-owned scratch; stage them
+                    // into `_buffer` so `on_read` commits them like a pipe chunk.
                     this._buffer.reserve(len);
-                    // SAFETY: `_buffer` has at least `len` spare bytes and its
-                    // heap block is disjoint from both `this` and the tty
-                    // scratch; the raw round-trip matches the alloc_cb slice
-                    // libuv hands back for pipes.
+                    // SAFETY: `_buffer` has `len` spare bytes, disjoint from
+                    // `this` and the scratch.
                     let staged = unsafe {
                         let dst = bun_core::vec::spare_bytes_mut(&mut this._buffer).as_mut_ptr();
                         core::ptr::copy_nonoverlapping(data.as_ptr(), dst, len);
@@ -1821,10 +1811,9 @@ impl WindowsBufferedReader {
                 // Dropping the `Box<Pipe>` here would free a uv_pipe_t still
                 // linked into the loop's handle queue → UAF. Restore the source
                 // so close_impl can do the proper take + hand-off to libuv
-                // (into_raw + uv_close). It also parks `_buffer` on the File
-                // when a uv_fs_read is still in flight (orphaned_read_buf), so
-                // the buffer must still be intact here — freeing it first
-                // would hand the threadpool write a dead block.
+                // (into_raw + uv_close). close_impl also parks `_buffer` on
+                // the File for an in-flight uv_fs_read (orphaned_read_buf),
+                // which is why `_buffer` is freed after this, not before.
                 self.source = Some(source);
                 self.close_impl::<false>();
             } else {
@@ -1849,11 +1838,9 @@ impl WindowsBufferedReader {
     #[cfg(windows)]
     extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
         // `close_impl` set `handle.data = handle` and called `uv_close(handle)`;
-        // libuv passes the same pointer back, and `Tty::from_uv` recovers the
-        // owning `Tty`. Caller already gates on `!is_stdin_tty` before
-        // scheduling close, so `tty` is heap-allocated (open_tty). libuv only
-        // runs this callback once no requests are pending on the handle, so
-        // the read scratch dropped with the Box has no in-flight writer.
+        // libuv passes the same pointer back; `Tty::from_uv` recovers the
+        // owning `Tty`. Caller gates on `!is_stdin_tty`, so it is heap-owned,
+        // and no request is pending once this runs (`uv::Tty::read_scratch`).
         let tty = crate::source::Tty::from_uv(handle);
         debug_assert!(!crate::source::stdin_tty::is_stdin_tty(tty));
         // SAFETY: non-stdin tty is heap-allocated; sole owner after uv_close.

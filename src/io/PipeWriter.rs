@@ -1322,8 +1322,8 @@ extern "C" fn on_pipe_close(handle: *mut uv::Pipe) {
 #[cfg(windows)]
 extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
     // `close()` set `handle.data = handle` and then called `uv_close(handle)`;
-    // libuv passes the same pointer back, and `Tty::from_uv` recovers the
-    // owning `Tty`. The stdin tty (fd 0) lives in static storage; never free it.
+    // libuv passes the same pointer back; `Tty::from_uv` recovers the owning
+    // `Tty`. The stdin tty (fd 0) lives in static storage; never free it.
     let tty = crate::source::Tty::from_uv(handle);
     if !crate::source::stdin_tty::is_stdin_tty(tty) {
         // SAFETY: non-stdin tty is heap-allocated (open_tty).

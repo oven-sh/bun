@@ -1351,30 +1351,26 @@ pub struct uv_tty_t {
     tty: tty_u,
 }
 /// A console handle plus the read buffer whose lifetime libuv ties to the
-/// handle rather than to any reader.
-///
-/// `uv` must remain the first field of this `#[repr(C)]` struct: libuv
-/// callbacks and `open_handles` traffic in the inner `uv_tty_t*`, and
-/// [`Tty::from_uv`] plus the handle-subtype casts rely on both being the
-/// same address.
+/// handle rather than to any reader. `uv` must remain the first field
+/// (`#[repr(C)]`): callbacks and `open_handles` traffic in the inner
+/// `uv_tty_t*`, and [`Tty::from_uv`] relies on both being the same address.
 #[repr(C)]
 pub struct Tty {
     pub uv: uv_tty_t,
 
     /// Destination buffer for this handle's console reads. A cooked-mode
-    /// line read stores the `alloc_cb` buffer and has a worker thread write
-    /// the typed (or cancellation-injected) line into it whenever
-    /// `ReadConsoleW` returns; a read cancelled by `uv_read_stop` is never
-    /// handed back through `read_cb`. The buffer therefore has to be owned
-    /// by something libuv guarantees outlives the read: this handle — its
-    /// close callback only runs once no requests are pending, and the
-    /// process-static stdin tty is never closed at all.
+    /// line read parks a worker thread in `ReadConsoleW` writing into the
+    /// `alloc_cb` buffer, and a read cancelled by `uv_read_stop` is never
+    /// handed back through `read_cb` — so the buffer must be owned by
+    /// something libuv guarantees outlives the read. The handle is that
+    /// thing: its close callback only runs once no requests are pending,
+    /// and the process-static stdin tty is never closed at all.
     pub read_scratch: Vec<u8>,
 }
 
 impl Tty {
     /// Recover the owning `Tty` from the `uv_tty_t*` libuv hands back
-    /// (`uv` is the first `#[repr(C)]` field, so both are the same address).
+    /// (same address: `uv` is the first `#[repr(C)]` field).
     #[inline]
     pub fn from_uv(handle: *mut uv_tty_t) -> *mut Tty {
         handle.cast()

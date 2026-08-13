@@ -207,10 +207,8 @@ pub fn stop_all_for_vm_teardown() {
             // SAFETY: as above (a leaked Box<Tty> nobody adopted).
             (None, Kind::Tty) => unsafe {
                 unsafe extern "C" fn free_tty(t: *mut uv_tty_t) {
-                    // SAFETY: heap tty (stdin's static tty is never listed).
-                    // Every listed tty is a `Box<Tty>` whose `uv` field was
-                    // registered by `uv_tty_t::init`; `from_uv` recovers the
-                    // owning box.
+                    // SAFETY: heap `Box<Tty>` (stdin's static tty is never
+                    // listed); `from_uv` recovers the owning box.
                     drop(unsafe { Box::from_raw(super::Tty::from_uv(t)) });
                 }
                 uv_close(

@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isLinux, isWindows, shellExe } from "harness";
+import { bunEnv, bunExe, gcTick, isLinux, isWindows, shellExe, tempDir } from "harness";
 import path from "path";
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -181,6 +181,49 @@ it.concurrent.skipIf(isWindows)(
     }
   },
 );
+
+// Same race as "delivers messages sent right before exit" above, on every POSIX platform that can
+// force the waiter thread (macOS included, where /proc is not available): the child writes a
+// sentinel file once it has sent, and the parent stays off its event loop until the sentinel exists
+// and the child has had time to exit, so the exit is normally processed before the channel is read.
+it.concurrent.skipIf(isWindows)("delivers a message sent right before exit on the waiter-thread path", async () => {
+  using dir = tempDir("ipc-exit-message", {});
+  const sentinel = path.join(String(dir), "sent");
+  const child = `process.send("hello"); require("node:fs").writeFileSync(${JSON.stringify(sentinel)}, ""); Promise.resolve().then(() => process.exit(0));`;
+  const parent = `
+    const { existsSync } = require("node:fs");
+    const received = [];
+    const child = Bun.spawn({
+      cmd: [process.execPath, "-e", ${JSON.stringify(child)}],
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: "json",
+      ipc(message) { received.push(message); },
+    });
+    const deadline = Date.now() + 30_000;
+    while (!existsSync(${JSON.stringify(sentinel)})) {
+      if (Date.now() > deadline) throw new Error("child did not send");
+      Bun.sleepSync(1);
+    }
+    // The child exits right after writing the sentinel; stay off the event loop until the waiter
+    // thread has had time to post the exit.
+    Bun.sleepSync(100);
+    const exitCode = await child.exited;
+    console.log(JSON.stringify({ received, exitCode }));
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", parent],
+    // Only honored together with BUN_GARBAGE_COLLECTOR_LEVEL, which bunEnv sets.
+    env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ received: ["hello"], exitCode: 0 }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
 
 describe("ipc mode advanced", () => {
   it("unwraps the Buffer envelope before cmd dispatch", async () => {

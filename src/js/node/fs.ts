@@ -425,9 +425,7 @@ var access = function access(path, mode, callback) {
     } else if ($isCallable(callback)) {
       callback = wrapFsCallback(callback);
     } else {
-      // node does not validate the 4-argument overload's callback; a
-      // non-callable one is skipped on completion, on failure as well as on
-      // success.
+      // node does not validate this overload's callback: it skips a non-function one, on failure too
       callback = discardResult;
     }
 

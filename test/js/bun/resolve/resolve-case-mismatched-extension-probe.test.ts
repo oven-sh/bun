@@ -231,6 +231,26 @@ describe("extensionless import with case-differing sibling (#22686)", () => {
     expect(exitCode).toBe(0);
   });
 
+  // handle_esm_resolution has no extension loop, so a case-mismatched exports target is accepted like
+  // the bare-path probe accepts one; what changed is that the cached path is the on-disk spelling.
+  // Before, the queried spelling was cached: ENOENT on a case-sensitive filesystem, and the wrong
+  // path reported on a case-insensitive one.
+  test("exports target spelled in a different case than the file resolves to the on-disk path", async () => {
+    using dir = tempDir("22686-exports-target", {
+      "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { ".": "./dist/foo.js" } }),
+      "node_modules/pkg/dist/Foo.js": `export const which = "on-disk";`,
+      "entry.ts": `
+        import { which } from "pkg";
+        console.log(which);
+        console.log(Bun.resolveSync("pkg", import.meta.dir));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "entry.ts");
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n")).toEqual(["on-disk", join(String(dir), "node_modules", "pkg", "dist", "Foo.js")]);
+    expect(exitCode).toBe(0);
+  });
+
   // A specifier ending in a separator still goes through the js -> ts rewrite. Deriving the cached
   // path from the probed spelling gave "<dir>/ffoo.ts" there (basename offset off by one) and, as
   // the entry is shared, broke every later import of foo.ts in the process too.

@@ -1396,14 +1396,7 @@ void RequireResolveFunctionPrototype::finishCreation(JSC::VM& vm)
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
-// The transpiler (and `bun build --format=cjs`, behind `#!` / `// @bun` lines) emits
-//
-//   (function(exports, require, module, __filename, __dirname) {
-//     ...
-//   });
-//
-// possibly followed by `//` comments. Returns the body, or a null String if the
-// source does not look like this.
+// Matches the wrapper emitted by js_parser (WrapMode::BunCommonjs) and by `bun build --format=cjs --target=bun`; null String when the source is not shaped like that.
 static WTF::String commonJSModuleBodyWithoutWrapper(const WTF::String& source)
 {
     unsigned headerStart = 0;

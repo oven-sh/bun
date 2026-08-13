@@ -160,10 +160,7 @@ impl TargetExt for Target {
 
 // ─── Loader: schema-coupled extension methods ─────────────────────────────
 
-/// `schema::api`-coupled methods on [`bun_ast::Loader`]. User loader maps
-/// (`--loader`, bunfig `[loader]`, `Bun.build({ loader })`) round-trip through
-/// `to_api` and `from_api`, so a `to_api` arm that merges two loaders changes
-/// what the user's loader name means.
+/// `schema::api`-coupled methods on [`bun_ast::Loader`].
 pub trait LoaderExt: sealed::Sealed {
     fn to_api(self) -> api::Loader;
     fn from_api(loader: api::Loader) -> Loader;
@@ -178,8 +175,9 @@ impl LoaderExt for Loader {
             Loader::Tsx => api::Loader::tsx,
             Loader::Css => api::Loader::css,
             Loader::Html => api::Loader::html,
-            // The bundler has no shell-script loader (`Bunsh` parses to an
-            // empty module), so a `"sh"` mapping copies the file instead.
+            // Loader maps (`--loader`, bunfig, `Bun.build`) round-trip through here; this
+            // is the one arm that changes what a name means. The bundler parses `Bunsh`
+            // to an empty module, so an `"sh"` mapping copies the file instead.
             Loader::File | Loader::Bunsh => api::Loader::file,
             Loader::Json => api::Loader::json,
             Loader::Jsonc => api::Loader::jsonc,

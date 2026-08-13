@@ -985,11 +985,11 @@ pub(crate) fn GetFinalPathNameByHandle(
 
 /// `GetFullPathNameW`: the resolution Win32 applies to a path before opening
 /// it (`CreateFileW` and friends run the same routine), written into `out`.
-/// This is the only way to resolve a drive-relative path (`C:foo`) the way
-/// Win32 does: against the process cwd when `C:` is the cwd's drive, otherwise
-/// against that drive's own current directory (the hidden `=C:` environment
-/// variable), falling back to the drive root. Pure string processing, no
-/// filesystem access. `None` when the call fails or the result does not fit.
+/// For a drive-relative path (`C:foo`) that means the process cwd when `C:`
+/// is the cwd's drive, otherwise that drive's own current directory (the
+/// hidden `=C:` environment variable), otherwise the drive root; `.` and `..`
+/// are collapsed as well. Pure string processing, no filesystem access.
+/// `None` when the call fails or the result does not fit `out`.
 pub fn get_full_path_name_w<'a>(
     path: &bun_core::WStr,
     out: &'a mut [u16],

@@ -5477,20 +5477,14 @@ describe.if(isWindows)("windows drive-relative paths", () => {
       await runFixture(
         String(dir),
         `
-          let missingError;
-          try {
-            fs.rmSync(rel("missing"), { recursive: true });
-          } catch (e) {
-            missingError = e;
-          }
-          await fs.promises.rm(rel("promise-tree"), { recursive: true });
+          // force: true used to turn the misread path into a silent no-op.
+          await fs.promises.rm(rel("promise-tree"), { recursive: true, force: true });
           const created = fs.mkdirSync(rel(path.join("created", "nested")), { recursive: true });
           Object.assign(out, {
             tree: code(() => fs.rmSync(rel("tree"), { recursive: true })),
             file: code(() => fs.rmSync(rel("file.txt"), { recursive: true })),
+            missing: code(() => fs.rmSync(rel("missing"), { recursive: true })),
             missingForced: code(() => fs.rmSync(rel("missing"), { recursive: true, force: true })),
-            missing: missingError.code,
-            missingPathAsGiven: missingError.path === rel("missing"),
             existing: fs.mkdirSync(rel("existing"), { recursive: true }) ?? null,
             created,
             // Node returns the first directory it created as the namespaced
@@ -5505,9 +5499,8 @@ describe.if(isWindows)("windows drive-relative paths", () => {
     ).toEqual({
       tree: "ok",
       file: "ok",
-      missingForced: "ok",
       missing: "ENOENT",
-      missingPathAsGiven: true,
+      missingForced: "ok",
       existing: null,
       created: expect.any(String),
       createdIsNamespacedCwdPath: true,

@@ -124,8 +124,7 @@ function injectFakeEmitter(Class) {
     return event.error;
   }
 
-  // node: .on() listeners get emit()'s argument, or the Event itself for anything
-  // dispatched as an event (its 'close' is a dispatched MessagePortCloseEvent).
+  // node hands .on() listeners emit()'s argument, and any dispatched event (e.g. its 'close') as the event itself.
   const kEmitArg = Symbol("emitArg");
   function eventOrEmitArgHandler(event: Event) {
     return kEmitArg in event ? event[kEmitArg] : event;

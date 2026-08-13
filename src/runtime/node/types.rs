@@ -858,13 +858,10 @@ pub trait PathLikeExt {
     fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr
     where
         Self: Sized;
-    /// The path in the form the platform's file calls take (`&ZStr` as given
-    /// on POSIX). On Windows this is the only conversion for a path that
-    /// reaches kernel32 (`CreateDirectoryW`, `CopyFileW`, `GetFileAttributesW`,
-    /// ...): normalized, rooted paths resolved against the current drive, and
-    /// drive-letter paths given the `\\?\` prefix, without which those calls
-    /// reject anything longer than `MAX_PATH`. Paths opened through `Nt*`
-    /// calls take the `bun_sys` NT-path helpers instead.
+    /// The path for the platform's file calls: as given on POSIX; on Windows
+    /// normalized and `\\?\`-prefixed, the only form the kernel32 calls
+    /// (`CreateDirectoryW`, `CopyFileW`, ...) accept past `MAX_PATH`. Paths for
+    /// `Nt*` calls use the `bun_sys` NT-path helpers instead.
     fn os_path_kernel32<'a>(
         &'a self,
         buf: &'a mut PathBuffer,

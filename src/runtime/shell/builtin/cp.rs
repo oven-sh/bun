@@ -581,13 +581,9 @@ impl ShellCpTask {
         }
     }
 
-    /// The operand in the form the copy reports it in its errors. The copy
-    /// converts its operands with `os_path_kernel32`, which on Windows
-    /// normalizes them and gives a rooted `\dir\file` its drive letter, and
-    /// builds its error paths from the result. `on_shell_cp_task_done` compares
-    /// those error paths against `src_absolute` / `tgt_absolute`, so the
-    /// operands are stored, and handed to the copy, already in that form; a
-    /// drive-qualified file path comes back from the copy's conversion unchanged.
+    /// The operand as the copy's errors will spell it (`os_path_kernel32` form:
+    /// on Windows a rooted `\dir\file` gains its drive letter), which is what
+    /// `on_shell_cp_task_done` compares those errors against.
     fn as_copied_operand(path: &[u8]) -> Vec<u8> {
         #[cfg(windows)]
         {

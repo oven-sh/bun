@@ -452,11 +452,9 @@ fn directory_exists_at_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<bool> {
     }
 }
 
-/// Copies a `cp` operand, converted with `os_path_kernel32`, into the buffer
-/// the copy goes on appending entry names to; the result (NUL included) always
-/// lives in `buf`. Every path built from it is handed to `mkdir_os_path` /
-/// `copy_single_file_sync`, which on Windows are the kernel32 calls that need
-/// that conversion to accept paths longer than `MAX_PATH`.
+/// Copies a `cp` operand, in the `os_path_kernel32` form every path derived
+/// from it needs (`mkdir_os_path`, `copy_single_file_sync`), into the buffer
+/// the copy appends entry names to. The result, NUL included, lives in `buf`.
 fn cp_operand<'a>(path: &PathLike, buf: &'a mut OSPathBuffer) -> Maybe<&'a OSPathSliceZ> {
     let name_too_long = || sys::Error {
         errno: E::ENAMETOOLONG as _,
@@ -477,11 +475,9 @@ fn cp_operand<'a>(path: &PathLike, buf: &'a mut OSPathBuffer) -> Maybe<&'a OSPat
     Ok(OSPathSliceZ::from_buf(&buf[..], len))
 }
 
-/// Appends `name` as a child of the directory path in `buf[..dir_len]`,
-/// NUL-terminates the result and returns its length. No separator is inserted
-/// after a path that already ends in one (a filesystem root, or an operand
-/// given with a trailing separator): Windows passes `\\?\` paths to the kernel
-/// unnormalized, so a doubled separator would make every call on the path fail.
+/// Appends `name` to the directory path in `buf[..dir_len]`, NUL-terminated;
+/// returns the new length. A path already ending in a separator (a root, or an
+/// operand given with one) gets no second one: `\\?\` paths are not normalized.
 fn cp_append_entry(buf: &mut OSPathBuffer, dir_len: usize, name: &[OSPathChar]) -> usize {
     debug_assert!(dir_len + 1 + name.len() < buf.len());
     let mut len = dir_len;

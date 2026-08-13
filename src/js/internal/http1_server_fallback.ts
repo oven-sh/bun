@@ -291,8 +291,7 @@ function connectionListenerHTTP1(server, socket, options) {
     req.url = url;
     req.method = typeof methodNum === "number" ? allMethods[methodNum] : methodNum;
     req.upgrade = upgrade;
-    // Like Node's parserOnHeadersComplete (and the native dispatcher): _addHeaderLine reads this
-    // off the request when it combines duplicates of a header that is not list-valued.
+    // _addHeaderLine reads this off the request (Node's parserOnHeadersComplete copies it the same way).
     if (server.joinDuplicateHeaders) {
       req.joinDuplicateHeaders = true;
     }

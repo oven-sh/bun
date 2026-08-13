@@ -674,10 +674,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
         return JSC::JSValue::encode(jsUndefined());
     }
 
-    // Once .stack is materialized the frames are gone. Installing new ones would make the native error
-    // printer (which prefers frames over .stack) show this call site plus the source's frames, and trip
-    // computeErrorInfo's !m_errorInfoMaterialized assertion when GC finalizes the error. Leave both
-    // errors alone instead, as Bun__attachAsyncStackFromPromise does.
+    // Materializing .stack dropped the frames; frames installed now would replace it in the native printer (same no-op as Bun__attachAsyncStackFromPromise).
     if (destination->hasMaterializedErrorInfo()) {
         return JSC::JSValue::encode(jsUndefined());
     }

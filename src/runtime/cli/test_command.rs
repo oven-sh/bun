@@ -1400,15 +1400,7 @@ impl CommandLineReporter {
                 this.summary().fail += 1;
 
                 if this.summary().fail == this.jest.bail {
-                    this.print_summary();
-                    pretty_error!(
-                        "\nBailed out after {} failure{}<r>\n",
-                        this.jest.bail,
-                        if this.jest.bail == 1 { "" } else { "s" }
-                    );
-                    Output::flush();
-                    this.write_junit_report_if_needed();
-                    this.write_timings_if_needed();
+                    this.bail_out(VirtualMachine::get());
                     Global::exit(1);
                 }
             }
@@ -1456,10 +1448,28 @@ impl CommandLineReporter {
         }
     }
 
+    /// Writes every end-of-run report for a `--bail` exit; the caller exits the process.
+    pub(crate) fn bail_out(&mut self, vm: &VirtualMachine) {
+        Output::flush();
+        let mut coverage_options: CodeCoverageOptions = self.jest.test_options.coverage.clone();
+        if coverage_options.enabled {
+            self.generate_code_coverage(vm, &mut coverage_options);
+        }
+        self.print_summary();
+        pretty_error!(
+            "\nBailed out after {} failure{}<r>\n",
+            self.jest.bail,
+            if self.jest.bail == 1 { "" } else { "s" }
+        );
+        Output::flush();
+        self.write_junit_report_if_needed();
+        self.write_timings_if_needed();
+    }
+
     /// This process's coverage, one `Report` per instrumented file, sorted by
     /// path, with `coveragePathIgnorePatterns` applied.
     pub(crate) fn for_each_coverage_report(
-        vm: &mut VirtualMachine,
+        vm: &VirtualMachine,
         opts: &CodeCoverageOptions,
         mut each: impl FnMut(CodeCoverageReport<'_>),
     ) {
@@ -1489,7 +1499,7 @@ impl CommandLineReporter {
 
     pub(crate) fn generate_code_coverage(
         &mut self,
-        vm: &mut VirtualMachine,
+        vm: &VirtualMachine,
         opts: &mut CodeCoverageOptions,
     ) {
         let _trace = bun::perf::trace("TestCommand.printCodeCoverage");
@@ -2915,14 +2925,7 @@ impl TestCommand {
                     reporter.summary().fail += 1;
 
                     if reporter.jest.bail == reporter.summary().fail {
-                        reporter.print_summary();
-                        pretty_error!(
-                            "\nBailed out after {} failure{}<r>\n",
-                            reporter.jest.bail,
-                            if reporter.jest.bail == 1 { "" } else { "s" }
-                        );
-                        reporter.write_junit_report_if_needed();
-                        reporter.write_timings_if_needed();
+                        reporter.bail_out(vm);
 
                         vm.exit_handler.exit_code = 1;
                         vm.is_shutting_down = true;

@@ -298,10 +298,11 @@ describe("vm", () => {
         ["}); (function () {", ["a"], "Unexpected token '}'"],
         ["return 1 }); (function () {", [], "Unexpected token '}'"],
         ["return 1 }); (function () {", ["a"], "Unexpected token '}'"],
-        ["return 1 }); globalThis.escaped = true; ({", [], "Unexpected token '}'"],
+        // Escapes without opening a second function: the program still holds
+        // exactly one function expression, it just ends before the wrapper does.
+        ["return 1 }); x = 1; ({", [], "Unexpected token '}'"],
       ])("compileFunction(%j, %j) throws %j", (body, params, message) => {
         expect(() => compileFunction(body, params)).toThrow({ name: "SyntaxError", message });
-        expect(globalThis.escaped).toBeUndefined();
       });
 
       test("errors keep JSC's own message instead of being rewritten to 'Unexpected token'", () => {

@@ -709,6 +709,7 @@ interface Map<K, V> {
 interface ObjectConstructor {
   $defineProperty: typeof Object.defineProperty;
   $defineProperties: typeof Object.defineProperties;
+  $getOwnPropertyDescriptor: typeof Object.getOwnPropertyDescriptor;
 }
 
 declare const $Object: ObjectConstructor;

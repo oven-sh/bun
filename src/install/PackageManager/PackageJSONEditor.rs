@@ -39,10 +39,7 @@ fn arena_dup<'a>(arena: &'a bun_alloc::Arena, bytes: &[u8]) -> &'a [u8] {
     arena.alloc_slice_copy(bytes)
 }
 
-/// Splits an `npm:` alias into the `npm:<name>` part `bun update` keeps and the version
-/// (or dist-tag) after it, which is empty for `npm:<name>` alone. The separator is the
-/// first `@` after the name, as in `Dependency::parse`, so a scoped name's leading `@`
-/// is not mistaken for it: `npm:@foo/bar@~1.2.3` -> (`npm:@foo/bar`, `~1.2.3`).
+/// `npm:@foo/bar@~1.2.3` -> (`npm:@foo/bar`, `~1.2.3`); `npm:foo` -> (`npm:foo`, `""`).
 fn split_npm_alias(literal: &[u8]) -> Option<(&[u8], &[u8])> {
     let literal = strings::trim(literal, &strings::WHITESPACE_CHARS);
     let name = literal.strip_prefix(b"npm:")?;
@@ -59,9 +56,7 @@ fn split_npm_alias(literal: &[u8]) -> Option<(&[u8], &[u8])> {
     }
 }
 
-/// The version `--latest` resolves in place of `version_literal`: `latest`, or
-/// `npm:<name>@latest` so an alias still resolves the aliased package rather than
-/// a package named after the alias.
+/// What `--latest` resolves instead of `version_literal`: `latest`, or `npm:<name>@latest`.
 fn latest_version_literal<'a>(arena: &'a bun_alloc::Arena, version_literal: &[u8]) -> &'a [u8] {
     match split_npm_alias(version_literal) {
         Some((alias, _)) => {
@@ -74,9 +69,7 @@ fn latest_version_literal<'a>(arena: &'a bun_alloc::Arena, version_literal: &[u8
     }
 }
 
-/// The version `bun update` writes back once `original_version_literal` resolved to
-/// `resolved`: the original pin style (`1.2.3`, `~1.2.3` or `^1.2.3`) unless
-/// `exact_versions`, behind the original `npm:<name>@` prefix if it was an alias.
+/// `resolved` in the pin style of `original_version_literal`, behind its `npm:<name>@` if any.
 fn updated_version_literal(
     original_version_literal: &[u8],
     resolved: semver::Version,
@@ -365,7 +358,6 @@ pub(crate) fn edit_update_no_args_in(
                         let version_literal = value
                             .as_utf8_string_literal()
                             .unwrap_or_else(|| bun_core::out_of_memory());
-                        // `Tag::infer` classifies an `npm:` alias by the version after its name.
                         let tag = dependency::Tag::infer(version_literal);
 
                         // npm versions only (and dist-tags with --latest); `catalog:` is handled by edit_catalogs_*.
@@ -547,8 +539,7 @@ fn for_each_catalog_object(
 }
 
 /// Records the original version of every catalog entry and, with `--latest`,
-/// rewrites each to `latest` (`npm:<name>@latest` for aliases) in memory so the
-/// resolver fetches it.
+/// rewrites each to `latest` in memory so the resolver fetches it.
 pub(crate) fn edit_catalogs_before_update(
     manager: &mut PackageManager,
     root_package_json: &Expr,
@@ -831,8 +822,6 @@ pub(crate) fn edit(
                                                 else {
                                                     break 'add_packages_to_update;
                                                 };
-                                                // `Tag::infer` classifies an `npm:` alias by
-                                                // the version after its name.
                                                 let tag = dependency::Tag::infer(version_literal);
 
                                                 if tag != dependency::Tag::Npm
@@ -1295,8 +1284,7 @@ pub(crate) fn edit(
             if request.package_id as usize >= resolutions.len()
                 || resolutions[request.package_id as usize].tag == resolution::Tag::Uninitialized
             {
-                // `bun update <name>` re-resolves what package.json already has; everything
-                // else resolves the request itself.
+                // `bun update <name>` re-resolves the existing entry; anything else, the request.
                 let version_literal: bun_ast::StoreStr = if manager.subcommand != Subcommand::Update
                     || !options.before_install
                     || e_string.is_blank()
@@ -1314,7 +1302,6 @@ pub(crate) fn edit(
                 e_string.data = if manager.subcommand == Subcommand::Update
                     && manager.options.do_.contains(Do::UPDATE_TO_LATEST)
                 {
-                    // Keeps an alias pointed at its target: `npm:<name>@latest`, not `latest`.
                     latest_version_literal(arena, version_literal.slice()).into()
                 } else {
                     version_literal

@@ -603,9 +603,9 @@ pub fn global_object_has_ipc(global: &JSGlobalObject) -> bool {
 }
 
 /// When IPC environment variables are passed, the socket is not immediately opened,
-/// but rather we wait for process.on('message') or process.send() to be called, THEN
-/// we open the socket. This is to avoid missing messages at the start of the program.
-// HOST_EXPORT(Bun__ensureProcessIPCInitialized, c)
-pub fn ensure_process_ipc_initialized(global: &JSGlobalObject) {
+/// but rather we wait for a `message`/`disconnect` listener, a channel ref, or
+/// process.send() before opening it, to avoid missing messages at the start of
+/// the program. See `node_cluster_binding::open_channel`.
+pub(crate) fn ensure_process_ipc_initialized(global: &JSGlobalObject) {
     let _ = get_ipc_instance(global.bun_vm().as_mut());
 }

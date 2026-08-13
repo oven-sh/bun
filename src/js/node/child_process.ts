@@ -1868,7 +1868,6 @@ class Control extends EventEmitter {
   unrefCounted() {
     if (--this.#refs === 0 && !this.#refExplicitlySet) {
       this.#handle.$setChannelRef(false);
-      this.emit("unref");
     }
   }
 

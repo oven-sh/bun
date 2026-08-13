@@ -176,7 +176,6 @@ extern "C" bool Bun__closeChildIPC(JSGlobalObject*);
 
 extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
-extern "C" bool Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
 extern "C" const char* Bun__sqlite3_version();
 BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
@@ -1598,9 +1597,6 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
             }
             auto totalListenerCount = messageListenerCount + disconnectListenerCount;
             if (Bun__GlobalObject__hasIPC(global)) {
-                if (isAdded && totalListenerCount == 1) {
-                    Bun__ensureProcessIPCInitialized(global);
-                }
                 Bun__setChannelListenerCount(global, static_cast<uint32_t>(totalListenerCount));
             }
             return;

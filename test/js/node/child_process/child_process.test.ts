@@ -1300,8 +1300,6 @@ describe("fork IPC channel ref/unref", () => {
       unrefCounted: typeof channel.unrefCounted,
     }));
     let got = null;
-    const events = [];
-    channel.on("unref", () => events.push("unref"));
     c.on("message", m => { got = m; });
     c.send("ping");
     c.unref();
@@ -1319,7 +1317,7 @@ describe("fork IPC channel ref/unref", () => {
         channel.unrefCounted();
         break;
     }
-    process.on("exit", () => console.log(JSON.stringify({ gotReply: !!got, events })));
+    process.on("exit", () => console.log(JSON.stringify({ gotReply: !!got })));
   `;
   const kidScript = `
     process.on("message", m => {
@@ -1334,13 +1332,13 @@ describe("fork IPC channel ref/unref", () => {
 
   it.each([
     // subprocess.unref() alone does not release an established channel (node docs for subprocess.unref()).
-    { mode: "none", gotReply: true, events: [] },
-    { mode: "unref", gotReply: false, events: [] },
-    // refCounted()/unrefCounted() returning to zero releases the channel and emits "unref", as node's Control does.
-    { mode: "counted", gotReply: false, events: ["unref"] },
+    { mode: "none", gotReply: true },
+    { mode: "unref", gotReply: false },
+    // refCounted()/unrefCounted() returning to zero releases the channel, as node's Control does.
+    { mode: "counted", gotReply: false },
     // An explicit ref() wins over the counted form afterwards.
-    { mode: "ref-then-counted", gotReply: true, events: [] },
-  ])("parent: subprocess.unref() + channel mode $mode", async ({ mode, gotReply, events }) => {
+    { mode: "ref-then-counted", gotReply: true },
+  ])("parent: subprocess.unref() + channel mode $mode", async ({ mode, gotReply }) => {
     using dir = tempDir("cp-ipc-channel-" + mode, { "index.js": fixture });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "index.js"],
@@ -1352,7 +1350,7 @@ describe("fork IPC channel ref/unref", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const lines = stdout.trim().split("\n");
-    expect(lines.map(l => JSON.parse(l))).toEqual([methods, { gotReply, events }]);
+    expect(lines.map(l => JSON.parse(l))).toEqual([methods, { gotReply }]);
     expect(exitCode).toBe(0);
   });
 
@@ -1360,15 +1358,23 @@ describe("fork IPC channel ref/unref", () => {
   // listeners on `process` and by refCounted()/unrefCounted(), as node's
   // _forkChild() arranges. The kid exits on its own once the count reaches zero;
   // none of these kids call process.exit() or disconnect().
-  async function runKid(name: string, kidSource: string, onMessage?: (child: ChildProcess, message: unknown) => void) {
+  async function runKid(
+    name: string,
+    kidSource: string,
+    hooks: {
+      onMessage?: (child: ChildProcess, message: unknown) => void;
+      afterFork?: (child: ChildProcess) => void;
+    } = {},
+  ) {
     using dir = tempDir("cp-ipc-kid-" + name, { "kid.js": kidSource });
     const child = fork(path.join(String(dir), "kid.js"), [], { execPath: bunExe(), env: bunEnv, silent: true });
     try {
       const messages: unknown[] = [];
       child.on("message", m => {
         messages.push(m);
-        onMessage?.(child, m);
+        hooks.onMessage?.(child, m);
       });
+      hooks.afterFork?.(child);
       child.stdout!.resume();
       let stderr = "";
       child.stderr!.on("data", chunk => (stderr += chunk));
@@ -1391,8 +1397,10 @@ describe("fork IPC channel ref/unref", () => {
         process.channel.unrefCounted();
         process.send(typeof process.channel.refCounted + "/" + typeof process.channel.unrefCounted);
       `,
-      (child, message) => {
-        if (message === "function/function") child.send("ping");
+      {
+        onMessage(child, message) {
+          if (message === "function/function") child.send("ping");
+        },
       },
     );
     expect(result).toEqual({ messages: ["function/function", { pong: "ping" }], stderr: "", exitCode: 0 });
@@ -1415,7 +1423,6 @@ describe("fork IPC channel ref/unref", () => {
     const result = await runKid(
       "reref",
       `
-        process.channel.on("unref", () => process.send("unref event"));
         process.on("message", m => {
           process.send({ pong: m });
           process.channel.unrefCounted();
@@ -1426,17 +1433,29 @@ describe("fork IPC channel ref/unref", () => {
         process.channel.refCounted();
         process.send("ready");
       `,
-      (child, message) => {
-        if (message === "ready") child.send("ping");
+      {
+        onMessage(child, message) {
+          if (message === "ready") child.send("ping");
+        },
       },
     );
-    // The first "unref event" is the undo reaching zero, the second is the final unrefCounted().
-    expect(result).toEqual({
-      messages: ["unref event", "ready", { pong: "ping" }, "unref event"],
-      stderr: "",
-      exitCode: 0,
-    });
+    // Had refCounted() not taken the channel back, the kid would have exited right
+    // after "ready" instead of staying around for the ping.
+    expect(result).toEqual({ messages: ["ready", { pong: "ping" }], stderr: "", exitCode: 0 });
   });
+
+  // Node's child reads the channel from startup; Bun only opens it on demand, so
+  // taking a reference has to open it too. Otherwise a kid that only ref'd the
+  // channel could never observe the parent's disconnect and would outlive it.
+  it.each(["refCounted", "ref"])(
+    "child: %s() with no listeners still lets the kid exit when the parent disconnects",
+    async method => {
+      const result = await runKid(method + "-only", `process.channel.${method}();`, {
+        afterFork: child => child.disconnect(),
+      });
+      expect(result).toEqual({ messages: [], stderr: "", exitCode: 0 });
+    },
+  );
 
   it("disconnect() releases the IPC keepalive", async () => {
     using dir = tempDir("cp-ipc-disconnect", {

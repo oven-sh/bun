@@ -614,9 +614,7 @@ export function getChannel() {
     }
 
     unrefCounted() {
-      if (setRefCounted(false)) {
-        this.emit("unref");
-      }
+      setRefCounted(false);
     }
 
     ref() {

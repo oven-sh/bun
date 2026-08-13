@@ -2060,7 +2060,7 @@ impl QuicSession {
                 (*qs).outbound.with_mut(|o| {
                     o.started = true;
                     o.data.extend(buf.byte_slice().iter().copied());
-                    o.fin_pending = true;
+                    o.end = super::stream::PendingEnd::Fin;
                 });
                 // As attach_source/init_streaming_source/send_headers do: this
                 // is what makes a later setOutbound() throw instead of

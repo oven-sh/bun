@@ -1,7 +1,7 @@
 import { $, ShellOutput } from "bun";
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { lstatSync, readFileSync } from "fs";
+import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
@@ -63,6 +63,115 @@ describe("error messages", () => {
     expect(stderr).toContain("bun patch-commit node_modules/<package>");
     expect(stderr).toContain("bun patch-commit --help");
     expect(exitCode).toBe(1);
+  });
+});
+
+// `bun patch` identifies packages by `name@label`, where a tarball package's label is
+// the spec it was installed from. These labels used to be formatted into 1024 byte
+// stack buffers (512 bytes in the installer itself), so a long enough spec crashed
+// every command that formatted it.
+describe("packages whose label is longer than 1024 bytes", () => {
+  const registry = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  // `x/../` normalizes away, so the tarball still lives at a short path that is valid
+  // on every platform while the recorded spec stays long.
+  const longSpec = (tarball: string) => `./${Buffer.alloc(1050, "x/../").toString()}${tarball}`;
+
+  async function createProject(tarball: string, packageJson: Record<string, unknown>) {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify(packageJson),
+        [tarball]: readFileSync(join(import.meta.dir, tarball)),
+      },
+    });
+    return packageDir;
+  }
+
+  async function runBun(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  async function install(cwd: string) {
+    const { stderr, exitCode } = await runBun(cwd, "install");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  test.concurrent("bun patch <name>@<label>", async () => {
+    const spec = longSpec("bar-0.0.2.tgz");
+    const packageDir = await createProject("bar-0.0.2.tgz", { name: "foo", dependencies: { bar: spec } });
+    await install(packageDir);
+
+    const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", `bar@${spec}`);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("To patch bar, edit the following folder:\n\n  node_modules/bar\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun patch <path>` and `bun patch --commit <path>` find the package by comparing the
+  // label of every package with that name against the version in <path>/package.json.
+  // The lockfile lists the long-labeled `bar` before `bar-from-npm`, so both commands
+  // format the long label before reaching the package that matches.
+  test.concurrent("bun patch <path> when another package with the same name has a long label", async () => {
+    const packageDir = await createProject("bar-0.0.2.tgz", {
+      name: "foo",
+      dependencies: { "bar": longSpec("bar-0.0.2.tgz"), "bar-from-npm": "npm:bar@0.0.7" },
+    });
+    await install(packageDir);
+
+    const prepare = await runBun(packageDir, "patch", "node_modules/bar-from-npm");
+    expect(prepare.stderr).not.toContain("error:");
+    expect(prepare.stdout).toContain("To patch bar, edit the following folder:\n\n  node_modules/bar-from-npm\n");
+    expect(prepare.exitCode).toBe(0);
+
+    await Bun.write(join(packageDir, "node_modules", "bar-from-npm", "index.js"), "module.exports = 'patched';\n");
+
+    const commit = await runBun(packageDir, "patch", "--commit", "node_modules/bar-from-npm");
+    expect(commit.stderr).not.toContain("error:");
+    expect(commit.exitCode).toBe(0);
+    expect((await Bun.file(join(packageDir, "package.json")).json()).patchedDependencies).toEqual({
+      "bar@0.0.7": "patches/bar@0.0.7.patch",
+    });
+    expect(await Bun.file(join(packageDir, "patches", "bar@0.0.7.patch")).text()).toContain(
+      "+module.exports = 'patched';",
+    );
+  });
+
+  // Committing formats `name@label` before doing anything else. The commit itself cannot
+  // succeed for such a package (the patch file is named after the label, which no file
+  // system accepts at this length), so what is pinned here is that it fails as an error.
+  test.concurrent("bun patch --commit of a long-labeled package exits 1 without recording a patch", async () => {
+    const packageJson = { name: "foo", dependencies: { baz: longSpec("baz-0.0.3.tgz") } };
+    const packageDir = await createProject("baz-0.0.3.tgz", packageJson);
+    await install(packageDir);
+
+    const prepare = await runBun(packageDir, "patch", "node_modules/baz");
+    expect(prepare.stderr).not.toContain("error:");
+    expect(prepare.exitCode).toBe(0);
+
+    await Bun.write(join(packageDir, "node_modules", "baz", "index.js"), "console.log('patched baz');\n");
+
+    const commit = await runBun(packageDir, "patch", "--commit", "node_modules/baz");
+    expect(commit.stderr).toContain("error:");
+    expect(commit.exitCode).toBe(1);
+    expect(await Bun.file(join(packageDir, "package.json")).json()).toEqual(packageJson);
   });
 });
 

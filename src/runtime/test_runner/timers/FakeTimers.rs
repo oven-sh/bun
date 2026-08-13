@@ -5,6 +5,7 @@ use bun_threading::RwLock;
 use bun_core::Environment;
 use bun_core::Timespec;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
+use crate::api::cron::CronJob;
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::timer::{
     AbortSignalTimeout, ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
@@ -116,7 +117,7 @@ fn from_el_timespec(t: &ElTimespec) -> Timespec {
 }
 
 /// Owners of the nodes [`FakeTimers::clear`] popped, still to be told their
-/// timer is gone. Released only once the `FakeTimers` borrow has ended: both
+/// timer is gone. Released only once the `FakeTimers` borrow has ended: these
 /// paths re-enter `timer::All` (`TimerObjectInternals::cancel` → `All::remove`,
 /// `Timeout` deinit → `timer_remove`).
 #[derive(Default)]
@@ -132,6 +133,8 @@ struct ClearedTimers {
     /// pins an observed signal's wrapper for as long as that is set. Only the
     /// signal's `cancelTimer()` clears it (and frees the box).
     signal_timeouts: Vec<*mut AbortSignalTimeout>,
+    /// A `Bun.cron()` job keeps the event loop alive until it is stopped.
+    cron_jobs: Vec<*mut CronJob>,
 }
 
 impl ClearedTimers {
@@ -144,6 +147,13 @@ impl ClearedTimers {
             // still owned by a live signal; JS thread; the `FakeTimers` borrow
             // ended before this call. `t` is freed by the call.
             unsafe { AbortSignalTimeout::discard(t) };
+        }
+        for job in self.cron_jobs {
+            // SAFETY: `clear` popped `job`'s node from the fake heap, so the
+            // job was scheduled and its JS wrapper (strong while scheduled)
+            // keeps it alive; no JS has run since; the `FakeTimers` borrow
+            // ended before this call.
+            unsafe { CronJob::stop_dropped_from_fake_heap(job) };
         }
     }
 }
@@ -197,7 +207,14 @@ impl FakeTimers {
                             .signal_timeouts
                             .push(AbortSignalTimeout::from_timer_ptr(timer));
                     }
-                    _ => {}
+                    EventLoopTimerTag::CronJob => {
+                        cleared.cron_jobs.push(CronJob::from_timer_ptr(timer));
+                    }
+                    tag => debug_assert!(
+                        false,
+                        "{} timer in the fake heap has no release path",
+                        <&'static str>::from(tag),
+                    ),
                 }
             }
         }

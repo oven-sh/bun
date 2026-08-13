@@ -606,14 +606,19 @@ impl Package<u64> {
             .zip(resolutions.iter_mut())
             .enumerate()
         {
-            // Optional-peer slots are re-derived by `hoist` (Cloner::flush), not carried over.
-            if old_dependencies[i].behavior.is_optional_peer() {
+            if *old_resolution >= max_package_id {
                 *resolution = invalid_package_id;
                 continue;
             }
 
-            if *old_resolution >= max_package_id {
-                *resolution = invalid_package_id;
+            let pending = PendingResolution {
+                old_resolution: *old_resolution,
+                resolve_id: new_package.resolutions.off + PackageID::try_from(i).expect("int cast"),
+            };
+
+            // Peer slots must not keep their target alive; bound in `Cloner::flush`.
+            if old_dependencies[i].behavior.is_optional_peer() {
+                cloner.optional_peers.push(pending);
                 continue;
             }
 
@@ -621,11 +626,7 @@ impl Package<u64> {
             if mapped < max_package_id {
                 *resolution = mapped;
             } else {
-                cloner.clone_queue.push(PendingResolution {
-                    old_resolution: *old_resolution,
-                    resolve_id: new_package.resolutions.off
-                        + PackageID::try_from(i).expect("int cast"),
-                });
+                cloner.clone_queue.push(pending);
             }
         }
 

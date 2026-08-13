@@ -2206,3 +2206,121 @@ test("matching workspace devDependency and npm peerDependency", async () => {
   expect(err).not.toContain("updated");
   expect(out).toContain("no changes");
 });
+
+// While linking, the hoisted installer formats each package's version label (its
+// version, or for tarball/folder/git packages the spec it was resolved from) into a
+// 512 byte stack buffer. Labels longer than that used to abort the whole install.
+describe("packages whose version label is longer than 512 bytes", () => {
+  // Long enough to overflow the buffer, but `x/../` normalizes away, so the tarball
+  // still lives at a short path that is valid on every platform. The resolution
+  // recorded in the lockfile (and formatted by the installer) is the spec verbatim.
+  const longTarballSpec = (tarball: string) => `./${Buffer.alloc(650, "x/../").toString()}${tarball}`;
+
+  async function installHoisted(ctx: TestCtx) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--linker", "hoisted"],
+      cwd: ctx.packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: ctx.env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+  }
+
+  test.concurrent("local tarball", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    const spec = longTarballSpec("bar-0.0.2.tgz");
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "foo", dependencies: { bar: spec } })),
+      cp(join(import.meta.dir, "bar-0.0.2.tgz"), join(packageDir, "bar-0.0.2.tgz")),
+    ]);
+
+    await installHoisted(ctx);
+
+    expect(await file(join(packageDir, "bun.lock")).text()).toContain(`"bar@${spec}"`);
+    expect(await file(join(packageDir, "node_modules", "bar", "package.json")).json()).toEqual({
+      name: "bar",
+      version: "0.0.2",
+    });
+  });
+
+  test.concurrent("remote tarball", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    const tarball = file(join(import.meta.dir, "bar-0.0.2.tgz"));
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () => new Response(tarball),
+    });
+    const url = `${server.url}${Buffer.alloc(600, "a").toString()}/bar-0.0.2.tgz`;
+    await write(packageJson, JSON.stringify({ name: "foo", dependencies: { bar: url } }));
+
+    await installHoisted(ctx);
+
+    expect(await file(join(packageDir, "bun.lock")).text()).toContain(`"bar@${url}"`);
+    expect(await file(join(packageDir, "node_modules", "bar", "package.json")).json()).toEqual({
+      name: "bar",
+      version: "0.0.2",
+    });
+  });
+
+  // Workspace packages are labeled with their own version rather than a resolution.
+  test.concurrent("workspace package with a long prerelease version", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    const version = `1.0.0-${Buffer.alloc(600, "a").toString()}`;
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "foo", workspaces: ["pkgs/*"] })),
+      write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version })),
+    ]);
+
+    await installHoisted(ctx);
+
+    expect(await file(join(packageDir, "node_modules", "pkg1", "package.json")).json()).toEqual({
+      name: "pkg1",
+      version,
+    });
+  });
+
+  // The same label is the version half of the `name@version` patchedDependencies key,
+  // so a patch keyed by a long spec has to be found and applied, not just not crash.
+  test.concurrent("patchedDependencies keyed by the long label is applied", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    const spec = longTarballSpec("baz-0.0.3.tgz");
+    const patch = [
+      "diff --git a/index.js b/index.js",
+      "--- a/index.js",
+      "+++ b/index.js",
+      "@@ -1,3 +1,3 @@",
+      " #! /usr/bin/env node",
+      " ",
+      '-console.log("run baz");',
+      '+console.log("patched baz");',
+      "",
+    ].join("\n");
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: { baz: spec },
+          patchedDependencies: { [`baz@${spec}`]: "patches/baz.patch" },
+        }),
+      ),
+      write(join(packageDir, "patches", "baz.patch"), patch),
+      cp(join(import.meta.dir, "baz-0.0.3.tgz"), join(packageDir, "baz-0.0.3.tgz")),
+    ]);
+
+    await installHoisted(ctx);
+
+    expect(await file(join(packageDir, "node_modules", "baz", "index.js")).text()).toBe(
+      '#! /usr/bin/env node\n\nconsole.log("patched baz");\n',
+    );
+  });
+});

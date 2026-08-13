@@ -3975,6 +3975,11 @@ mod windows_impl {
         // CRT-fd-backed `Fd` and ignores the directory/nofollow flags.
         super::openat_windows_a(dir, path.as_bytes(), flags, mode)
     }
+    /// `DuplicateHandle` with `bInheritHandle = FALSE`, the equivalent of the
+    /// POSIX arm's `F_DUPFD_CLOEXEC`: libuv spawns children with
+    /// `bInheritHandles = TRUE`, so an inheritable duplicate would leak into
+    /// every process spawned while it is open. Stdio handed to a child is
+    /// duplicated again (inheritable) by libuv itself, so nothing needs it.
     pub fn dup(fd: Fd) -> Maybe<Fd> {
         // DuplicateHandle on the underlying HANDLE.
         let process = w::kernel32::GetCurrentProcess();
@@ -3986,7 +3991,7 @@ mod windows_impl {
                 process,
                 &mut target,
                 0,
-                w::TRUE,
+                w::FALSE,
                 w::DUPLICATE_SAME_ACCESS,
             )
         };

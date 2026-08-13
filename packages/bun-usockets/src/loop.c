@@ -584,6 +584,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             s = us_internal_socket_follow_adopted(s);
             /* The group can change after calling a callback but the loop is always the same */
             struct us_loop_t* loop = s->group->loop;
+            /* Captured before the read loop folds recv()==0 into `eof`; error events keep the error path. */
+            const int hangup = (eof & LIBUS_POLL_HANGUP) && !error;
             if (events & LIBUS_SOCKET_WRITABLE && !error) {
                 s->flags.last_write_failed = 0;
                 #ifdef LIBUS_USE_KQUEUE
@@ -790,7 +792,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         }
                         #endif
                     } else if (!length) {
-                        eof = 1; // lets handle EOF in the same place
+                        eof = LIBUS_POLL_EOF; // lets handle EOF in the same place
                         break;
                     } else if (length == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
                         if (eof && read_any) {
@@ -832,7 +834,16 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * are exempt (their peer's FIN must still close them promptly below),
              * as are error-flagged events. */
             if (eof && s && !error && s->flags.is_paused && !us_socket_is_shut_down(s) &&
-                !us_socket_is_closed(s)) {
+                !us_socket_is_closed(s) && !(hangup && s->read_eof)) {
+#ifdef LIBUS_USE_EPOLL
+                /* EPOLLHUP is unmaskable: leave epoll while paused so it cannot re-fire; the unread tail stays in
+                 * the kernel until resume() re-adds the fd via us_poll_change (end() while paused keeps it parked). */
+                if (hangup) {
+                    us_poll_stop(&s->p, loop);
+                    /* Sync the recorded mask with the DEL (a pause from on_data leaves WRITABLE) so end() is a no-op. */
+                    s->p.state.poll_type = us_internal_poll_type(&s->p);
+                }
+#endif
                 eof = 0;
             }
             if(eof && s) {
@@ -845,10 +856,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }
-                if (s->flags.allow_half_open && s->read_eof) {
+                if (s->flags.allow_half_open && !hangup && s->read_eof) {
                     /* on_end already delivered (libuv UV_HANDLE_READ_EOF): just drop the readable interest that re-surfaced it. */
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
-                } else if(s->flags.allow_half_open) {
+                } else if(s->flags.allow_half_open && !hangup) {
                     s->read_eof = 1;
                     /* EOF with half-open allowed: stop polling readable but KEEP
                      * polling writable. Masking with the current events dropped
@@ -869,8 +880,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 #endif
                     s = s->ssl ? us_internal_ssl_on_end(s) : us_dispatch_end(s);
                 } else {
-                    /* We dont allow half open just emit end and close the socket */
-                    s = s->ssl ? us_internal_ssl_on_end(s) : us_dispatch_end(s);
+                    /* Half-open not allowed, or a hangup (both directions down, level-triggered):
+                     * emit end unless a FIN already did, then close so EPOLLHUP stops re-firing. */
+                    if (!s->read_eof) {
+                        s = s->ssl ? us_internal_ssl_on_end(s) : us_dispatch_end(s);
+                    }
                     s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }

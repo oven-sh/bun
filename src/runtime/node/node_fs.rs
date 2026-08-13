@@ -8498,11 +8498,12 @@ impl NodeFS {
             Err(err) if err.get_errno() == E::ENOENT => return Ok(()),
             Err(err) => return Err(err),
         };
-        // `cp -R link .`: the entry is the link being copied. Inode 0 means the
-        // filesystem has no file ids.
+        // cp's same-file rule for a link source: the entry may be neither the link
+        // itself (`cp -R link .`) nor what it points at (`cp -R link target`).
+        // Inode 0 means the filesystem has no file ids.
+        let same = |s: sys::Stat| s.st_dev == dest_stat.st_dev && s.st_ino == dest_stat.st_ino;
         let is_src = dest_stat.st_ino != 0
-            && Syscall::lstat(src)
-                .is_ok_and(|s| s.st_dev == dest_stat.st_dev && s.st_ino == dest_stat.st_ino);
+            && (Syscall::lstat(src).is_ok_and(same) || Syscall::stat(src).is_ok_and(same));
         if is_src {
             return Err(sys::Error {
                 errno: E::EINVAL as _,

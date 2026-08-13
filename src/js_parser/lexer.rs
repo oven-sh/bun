@@ -1109,7 +1109,7 @@ lexer_impl_header! {
             return first as CodePoint;
         }
 
-        strings::lexer_step::next_codepoint_multibyte(contents, &mut self.current, first)
+        strings::lexer_step::next_codepoint_multibyte(contents, &mut self.current)
     }
 
     /// PERF: `contents` threaded by value — see [`Self::next_codepoint_with`].

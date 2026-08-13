@@ -11,8 +11,8 @@ use bun_simdutf_sys::simdutf;
 
 pub use self::unicode::{
     CodepointIterator, Cursor, NewCodePointIterator, UnsignedCodepointIterator,
-    contains_non_bmp_code_point_or_is_invalid_identifier, decode_wtf8_rune_t,
-    decode_wtf8_rune_t_multibyte, wtf8_byte_sequence_length,
+    contains_non_bmp_code_point_or_is_invalid_identifier, decode_wtf8_non_ascii,
+    decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte, wtf8_byte_sequence_length,
     wtf8_byte_sequence_length_with_invalid,
 };
 pub use unicode_draft::CodePointZero;
@@ -96,12 +96,73 @@ pub mod unicode {
         pub c: CodePoint,
     }
 
+    /// Decodes the sequence led by the non-ASCII byte `tail[0]`, returning the code
+    /// point and the number of bytes it spans (always `1..=4` and never more than
+    /// `tail.len()`).
+    ///
+    /// Well-formed WTF-8 (UTF-8 plus encoded surrogates) decodes as-is. Anything else
+    /// becomes U+FFFD spanning the ill-formed sequence's maximal subpart, which is how
+    /// the WHATWG UTF-8 decoder (V8, `TextDecoder`, `Bun.file().text()`) replaces
+    /// ill-formed input: a byte that cannot lead a sequence is replaced on its own, and
+    /// a sequence cut short is replaced as a unit (`E2 82 41` is U+FFFD followed by
+    /// `A`). A replacement never spans an ASCII byte, so callers scanning for ASCII
+    /// syntax (quotes, newlines, braces) never skip any.
+    #[inline(never)]
+    pub fn decode_wtf8_non_ascii(tail: &[u8]) -> (CodePoint, u8) {
+        let first = tail[0];
+        debug_assert!(first >= 0x80);
+        let len = wtf8_byte_sequence_length(first);
+        if len == 1 {
+            // Continuation byte or 0xF8..=0xFF: cannot lead a sequence.
+            return (super::UNICODE_REPLACEMENT as CodePoint, 1);
+        }
+        let take = (len as usize).min(tail.len());
+        let mut quad = [0u8; 4];
+        quad[..take].copy_from_slice(&tail[..take]);
+        let cp = decode_wtf8_rune_t_multibyte::<CodePoint>(quad, len, -1);
+        if cp == -1 {
+            return (
+                super::UNICODE_REPLACEMENT as CodePoint,
+                ill_formed_sequence_width(quad, len),
+            );
+        }
+        (cp, len)
+    }
+
+    /// Byte count of the maximal subpart of the ill-formed sequence in `quad` (whose
+    /// lead byte declares `len` bytes): the lead byte plus each following byte that is
+    /// still valid for its position per the UTF-8 table (Unicode §3.9, table 3-7; the
+    /// surrogates WTF-8 additionally allows only matter for complete sequences, which
+    /// decode successfully and never get here). `quad` is zero-padded past the end of
+    /// the input and 0x00 is never a valid continuation byte, so the result never
+    /// exceeds the bytes actually present.
+    #[cold]
+    fn ill_formed_sequence_width(quad: [u8; 4], len: u8) -> u8 {
+        let second_ok = match quad[0] {
+            0xE0 => matches!(quad[1], 0xA0..=0xBF),
+            0xED => matches!(quad[1], 0x80..=0x9F),
+            0xF0 => matches!(quad[1], 0x90..=0xBF),
+            0xF4 => matches!(quad[1], 0x80..=0x8F),
+            0xC2..=0xDF | 0xE1..=0xEF | 0xF1..=0xF3 => matches!(quad[1], 0x80..=0xBF),
+            // 0xC0, 0xC1 and 0xF5..=0xF7 only encode overlong forms or code points
+            // above U+10FFFF, so they cannot lead a sequence at all.
+            _ => false,
+        };
+        if !second_ok {
+            1
+        } else if len == 4 && matches!(quad[2], 0x80..=0xBF) {
+            3
+        } else {
+            2
+        }
+    }
+
     impl<'a> NewCodePointIterator<'a> {
         /// Cursor advance. Returns `false` at end.
         // PERF: `#[inline]` alone is hint-only; LLVM declined to inline
-        // this cross-crate into `bun_js_printer::print_identifier_ascii_only`
-        // (the multibyte slow path makes the body look heavy). Called per-byte
-        // of every printed identifier under `ASCII_ONLY=true`. Force it.
+        // this cross-crate into `bun_js_printer::print_identifier_ascii_only`.
+        // Called per-byte of every printed identifier under `ASCII_ONLY=true`.
+        // Force it; the multibyte path stays out of line in `decode_wtf8_non_ascii`.
         #[inline(always)]
         pub fn next(&self, cursor: &mut Cursor) -> bool {
             let bytes = self.bytes;
@@ -121,19 +182,7 @@ pub mod unicode {
                 cursor.width = 1;
                 return true;
             }
-            let len = wtf8_byte_sequence_length(first);
-            // `take ∈ 1..=4` clamped to the remaining length.
-            let take = (len as usize).min(tail.len());
-            let mut buf = [0u8; 4];
-            buf[..take].copy_from_slice(&tail[..take]);
-            let cp = decode_wtf8_rune_t::<CodePoint>(buf, len, -1);
-            if cp == -1 {
-                cursor.c = super::UNICODE_REPLACEMENT as CodePoint;
-                cursor.width = 1;
-            } else {
-                cursor.c = cp;
-                cursor.width = len;
-            }
+            (cursor.c, cursor.width) = decode_wtf8_non_ascii(tail);
             true
         }
     }
@@ -184,68 +233,30 @@ pub fn peek_n_codepoints_wtf8(bytes: &[u8], at: usize, n: usize) -> &[u8] {
     &bytes[at..end]
 }
 
-/// WTF-8 codepoint stepper shared by the JS and JSON lexers.
-///
-/// The JS and JSON lexers call the same
-/// `wtf8_byte_sequence_length_with_invalid` / `decode_wtf8_rune_t_multibyte`
-/// pair defined alongside this module, so the stepper belongs here.
-///
-/// NOT the same algorithm as [`CodepointIterator::next_codepoint`] — that one
-/// uses `utf8ByteSequenceLength` + `next_width` lookahead, has no `end`
-/// cursor, and does not advance-by-1 on U+FFFD.
+/// Non-ASCII tail of the JS lexer's `step()`. Decodes exactly like
+/// `CodepointIterator::next` (both go through [`decode_wtf8_non_ascii`]), so
+/// the code points the lexer scans over are the ones the string-literal, JSX
+/// and template decoders later produce from the same bytes.
 pub mod lexer_step {
-    use super::{
-        CodePoint, UNICODE_REPLACEMENT, decode_wtf8_rune_t_multibyte,
-        wtf8_byte_sequence_length_with_invalid,
-    };
+    use super::{CodePoint, decode_wtf8_non_ascii};
 
-    /// Non-ASCII tail of [`next_codepoint`]. Kept out-of-line so the hot
-    /// ASCII path stays small enough to inline into every `step()` site.
+    /// Decodes the non-ASCII sequence at `contents[*current]` (the caller has
+    /// already handled EOF and ASCII) and advances `*current` past it. Ill-formed
+    /// bytes yield U+FFFD, never the lexer's `-1` EOF sentinel, so the main lex
+    /// loop reports them as a syntax error instead of ending the file early.
     ///
-    /// `#[cold]` is required: with fat LTO + `codegen-units = 1`, LLVM's
-    /// single-caller heuristic merges an `#[inline(never)]`-only callee back
-    /// into its sole caller, which then makes `next_codepoint` too large to
-    /// inline into `next()` (perf showed it as a separate ~2.6% symbol with
-    /// the multibyte decode folded in). `cold` parks this in `.text.unlikely`
-    /// and survives LTO's IPO inliner.
+    /// Kept out-of-line so the hot ASCII path stays small enough to inline into
+    /// every `step()` site. `#[cold]` is required: with fat LTO +
+    /// `codegen-units = 1`, LLVM's single-caller heuristic merges an
+    /// `#[inline(never)]`-only callee back into its sole caller, which then makes
+    /// `next_codepoint` too large to inline into `next()` (perf showed it as a
+    /// separate ~2.6% symbol with the multibyte decode folded in). `cold` parks
+    /// this in `.text.unlikely` and survives LTO's IPO inliner.
     #[cold]
     #[inline(never)]
-    pub fn next_codepoint_multibyte(contents: &[u8], current: &mut usize, first: u8) -> CodePoint {
-        let len = contents.len();
-        let cp_len = wtf8_byte_sequence_length_with_invalid(first) as usize;
-        let avail = len - *current;
-
-        // The ASCII fast path above handled `first < 0x80`; here `first >= 0x80` but `cp_len`
-        // may still be 1 for invalid lead bytes (0x80-0xBF, 0xF8-0xFF) — those must yield the
-        // raw byte, NOT the EOF sentinel, so the main lex loop falls through to its syntax-error
-        // arm instead of silently emitting TEndOfFile mid-stream.
-        let code_point: CodePoint = if cp_len == 1 {
-            first as CodePoint
-        } else if avail < cp_len {
-            // truncated multibyte at EOF
-            -1
-        } else {
-            let mut quad = [0u8; 4];
-            // SAFETY: `*current < len` (checked by caller), `cp_len ∈ 2..=4`, and
-            // `avail >= cp_len`, so `contents[current..current + cp_len]` is in-bounds.
-            // `decode_wtf8_rune_t_multibyte` only dereferences `p[0..len]`; pad bytes are
-            // never read.
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    contents.as_ptr().add(*current),
-                    quad.as_mut_ptr(),
-                    cp_len,
-                );
-            }
-            decode_wtf8_rune_t_multibyte(quad, cp_len as u8, UNICODE_REPLACEMENT as CodePoint)
-        };
-
-        *current += if code_point != UNICODE_REPLACEMENT as CodePoint {
-            cp_len
-        } else {
-            1
-        };
-
+    pub fn next_codepoint_multibyte(contents: &[u8], current: &mut usize) -> CodePoint {
+        let (code_point, width) = decode_wtf8_non_ascii(&contents[*current..]);
+        *current += width as usize;
         code_point
     }
 }
@@ -2753,5 +2764,73 @@ mod tests {
         assert_eq!(out, &[0xD800][..]);
         let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xC3\xA9\xF0\x9F\x98\x80");
         assert_eq!(out, &[0x00E9, 0xD83D, 0xDE00][..]);
+    }
+
+    /// Every (code point, width) the iterator yields for `bytes`; the lexer's
+    /// `step()` goes through the same `decode_wtf8_non_ascii`, so this is what
+    /// both see.
+    fn code_points(bytes: &[u8]) -> Vec<(i32, u8)> {
+        let iter = super::CodepointIterator::init(bytes);
+        let mut cursor = super::Cursor::default();
+        let mut out = Vec::new();
+        while iter.next(&mut cursor) {
+            out.push((cursor.c, cursor.width));
+        }
+        out
+    }
+
+    #[test]
+    fn codepoint_iterator_decodes_well_formed_wtf8() {
+        assert_eq!(
+            code_points(b"a\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80\xEF\xBF\xBD"),
+            [(0x61, 1), (0xE9, 2), (0x20AC, 3), (0x1F600, 4), (0xFFFD, 3)]
+        );
+        // WTF-8: an encoded surrogate is passed through, not replaced.
+        assert_eq!(code_points(b"\xED\xA0\x80"), [(0xD800, 3)]);
+    }
+
+    #[test]
+    fn codepoint_iterator_replaces_bytes_that_cannot_lead_a_sequence() {
+        for byte in (0x80..=0xC1).chain(0xF5..=0xFF) {
+            assert_eq!(
+                code_points(&[b'a', byte, b'b']),
+                [(0x61, 1), (0xFFFD, 1), (0x62, 1)],
+                "byte {byte:#04X}"
+            );
+        }
+        // Continuation bytes after a byte that cannot lead a sequence are each
+        // replaced on their own, as are the ones after an overlong or
+        // out-of-range lead.
+        assert_eq!(code_points(b"\xF5\x80\x80\x80"), [(0xFFFD, 1); 4]);
+        assert_eq!(code_points(b"\xC0\x80"), [(0xFFFD, 1); 2]);
+        assert_eq!(code_points(b"\xE0\x80\x80"), [(0xFFFD, 1); 3]);
+        assert_eq!(code_points(b"\xF0\x80\x80\x80"), [(0xFFFD, 1); 4]);
+        assert_eq!(code_points(b"\xF4\x90\x80\x80"), [(0xFFFD, 1); 4]);
+    }
+
+    #[test]
+    fn codepoint_iterator_replaces_a_truncated_sequence_as_one_unit() {
+        // Interrupted by ASCII: the replacement spans the valid prefix only.
+        assert_eq!(code_points(b"\xC2A"), [(0xFFFD, 1), (0x41, 1)]);
+        assert_eq!(code_points(b"\xE2A"), [(0xFFFD, 1), (0x41, 1)]);
+        assert_eq!(code_points(b"\xE2\x82A"), [(0xFFFD, 2), (0x41, 1)]);
+        assert_eq!(code_points(b"\xF0\x9FA"), [(0xFFFD, 2), (0x41, 1)]);
+        assert_eq!(code_points(b"\xF0\x9F\x98A"), [(0xFFFD, 3), (0x41, 1)]);
+        // Interrupted by the end of the input.
+        assert_eq!(code_points(b"\xE2"), [(0xFFFD, 1)]);
+        assert_eq!(code_points(b"\xE2\x82"), [(0xFFFD, 2)]);
+        assert_eq!(code_points(b"\xF0\x9F\x98"), [(0xFFFD, 3)]);
+        // Interrupted by another lead byte: that byte starts its own sequence.
+        assert_eq!(code_points(b"\xE2\x82\xC3\xA9"), [(0xFFFD, 2), (0xE9, 2)]);
+        // A second byte outside the lead's narrower range does not belong to the
+        // sequence (E0: A0..BF, ED: 80..9F, F0: 90..BF, F4: 80..8F).
+        assert_eq!(code_points(b"\xE0\x9F\x80"), [(0xFFFD, 1); 3]);
+        assert_eq!(
+            code_points(b"\xED\xA0A"),
+            [(0xFFFD, 1), (0xFFFD, 1), (0x41, 1)]
+        );
+        assert_eq!(code_points(b"\xED\x9FA"), [(0xFFFD, 2), (0x41, 1)]);
+        assert_eq!(code_points(b"\xF0\x8F\x80"), [(0xFFFD, 1); 3]);
+        assert_eq!(code_points(b"\xF4\x8FA"), [(0xFFFD, 2), (0x41, 1)]);
     }
 }

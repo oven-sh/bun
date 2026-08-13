@@ -926,6 +926,71 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(await Bun.file(dest).text()).toBe("<p>x</p>");
   });
 
+  // An S3 source is streamed into the destination through a FileSink. The sink
+  // opened the destination without O_TRUNC, so downloading an object over a
+  // longer existing file left the old file's tail after the object's bytes.
+  it("Bun.write(localFile, s3file) replaces an existing longer file", async () => {
+    const stale = Buffer.alloc(1000, "o").toString();
+    using dir = tempDir("bun-write-s3-replaces-file", {
+      "path-dest.bin": stale,
+      "file-dest.bin": stale,
+      "method-dest.bin": stale,
+      "fixture.js": `
+        const objects = new Map();
+        const server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            const { pathname } = new URL(req.url);
+            if (req.method === "PUT") {
+              objects.set(pathname, await req.bytes());
+              return new Response(null, { status: 200 });
+            }
+            const body = objects.get(pathname);
+            if (!body) return new Response("<Error><Code>NoSuchKey</Code></Error>", { status: 404 });
+            return new Response(body);
+          },
+        });
+        const client = new Bun.S3Client({
+          endpoint: server.url.href,
+          bucket: "bucket",
+          accessKeyId: "AKIAIOSFODNN7EXAMPLE",
+          secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        });
+        await client.file("five").write("HELLO");
+        await Bun.write("path-dest.bin", client.file("five"));
+        await Bun.write(Bun.file("file-dest.bin"), client.file("five"));
+        await Bun.file("method-dest.bin").write(client.file("five"));
+        server.stop(true);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      cwd: String(dir),
+      // S3Client does not consult NO_PROXY (#32045), so a proxy inherited from
+      // the environment would intercept the loopback requests.
+      env: {
+        ...bunEnv,
+        HTTP_PROXY: undefined,
+        HTTPS_PROXY: undefined,
+        http_proxy: undefined,
+        https_proxy: undefined,
+      },
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect({
+      "path-dest.bin": fs.readFileSync(join(String(dir), "path-dest.bin"), "utf8"),
+      "file-dest.bin": fs.readFileSync(join(String(dir), "file-dest.bin"), "utf8"),
+      "method-dest.bin": fs.readFileSync(join(String(dir), "method-dest.bin"), "utf8"),
+    }).toEqual({
+      "path-dest.bin": "HELLO",
+      "file-dest.bin": "HELLO",
+      "method-dest.bin": "HELLO",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   it("BunFile.name survives concurrent write() calls + GC", async () => {
     using dir = tempDir("bun-file-name-concurrent-write-gc", {});
     const filePath = join(String(dir), "out.txt");

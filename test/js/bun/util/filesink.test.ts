@@ -207,6 +207,34 @@ it("write result is not cumulative", async () => {
   await util.promisify(fs.close)(fd);
 });
 
+// Opening a path for writing replaces the file, as Bun.write() and fs.createWriteStream()
+// do. The sink used to open it without O_TRUNC, so writing less than the file already held
+// left the old tail in place.
+it("Bun.file(path).writer() truncates an existing file", async () => {
+  const target = path.join(tmpdirSync(), "truncate.txt");
+  fs.writeFileSync(target, Buffer.alloc(100, "o"));
+  const writer = Bun.file(target).writer();
+  writer.write("Short");
+  await writer.end();
+  expect(fs.readFileSync(target, "utf8")).toBe("Short");
+});
+
+// An fd belongs to the caller: the sink writes at its current position and leaves the rest
+// of the file alone.
+it("Bun.file(fd).writer() does not truncate the caller's file", async () => {
+  const target = path.join(tmpdirSync(), "keep.txt");
+  fs.writeFileSync(target, Buffer.alloc(10, "o"));
+  const fd = fs.openSync(target, "r+");
+  try {
+    const writer = Bun.file(fd).writer();
+    writer.write("Short");
+    await writer.end();
+  } finally {
+    fs.closeSync(fd);
+  }
+  expect(fs.readFileSync(target, "utf8")).toBe("Shortooooo");
+});
+
 // A backpressured write buffers everything `write(2)` would not take, so the
 // Promise it returns has to resolve with the chunk's own byte count. It used to
 // resolve with the partial `write(2)` return instead.

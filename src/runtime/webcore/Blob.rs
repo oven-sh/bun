@@ -1478,7 +1478,10 @@ impl BlobExt for Blob {
                     let path = pathlike.path().slice_z(&mut file_path);
                     match bun_sys::open(
                         path,
-                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
+                        bun_sys::O::WRONLY
+                            | bun_sys::O::CREAT
+                            | bun_sys::O::TRUNC
+                            | bun_sys::O::NONBLOCK,
                         WRITE_PERMISSIONS,
                     ) {
                         bun_sys::Result::Ok(result) => result,
@@ -1800,7 +1803,10 @@ impl BlobExt for Blob {
                     let mut file_path = bun_paths::PathBuffer::uninit();
                     match bun_sys::open(
                         p.slice_z(&mut file_path),
-                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
+                        bun_sys::O::WRONLY
+                            | bun_sys::O::CREAT
+                            | bun_sys::O::TRUNC
+                            | bun_sys::O::NONBLOCK,
                         WRITE_PERMISSIONS,
                     ) {
                         bun_sys::Result::Ok(result) => result,

@@ -206,9 +206,15 @@ impl Default for Options {
 }
 
 impl Options {
+    /// Only used when `input_path` is a path; an fd input is dup'd as-is, so
+    /// `TRUNC` never touches a caller-owned descriptor.
     pub(crate) fn flags(&self) -> i32 {
         let _ = self;
-        bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY
+        bun_sys::O::NONBLOCK
+            | bun_sys::O::CLOEXEC
+            | bun_sys::O::CREAT
+            | bun_sys::O::TRUNC
+            | bun_sys::O::WRONLY
     }
 }
 

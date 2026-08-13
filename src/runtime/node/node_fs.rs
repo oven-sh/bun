@@ -1520,12 +1520,8 @@ mod _async_tasks {
                 .cp_on_copy(src.as_ref(), dest.as_ref());
         }
 
-        /// Accounts for one file's `copy_single_file_sync` result, whether the
-        /// file is the whole `cp` or one entry of the directory walk. Only a
-        /// copy that happened is reported through `on_copy`; an `EEXIST` the
-        /// flags tolerate is neither a copy nor an error. Success needs no
-        /// record: `on_subtask_done` resolves with `Ok` unless an error was
-        /// recorded.
+        /// A tolerated `EEXIST` is neither a copy nor an error. Success is not
+        /// recorded: `on_subtask_done` resolves `Ok` unless an error was.
         fn record_copy_result(
             &self,
             src: &OSPathSliceZ,

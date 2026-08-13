@@ -100,7 +100,7 @@ unsafe extern "C" {
         arg_count: u32,
         function_pointer: *const c_void,
         add_ptr_property: bool,
-        input_function_ptr: *mut c_void,
+        symbol_from_dynamic_library: *mut c_void,
     ) -> JSValue;
 
     fn Bun__CreateJSCFFIFunction(
@@ -164,11 +164,9 @@ mod exposed_to_ffi {
     }
 }
 
-/// `host_fn::NewRuntimeFunction` thin wrapper. See host_fn.rs:310.
-///
-/// `input_function_ptr` is the native function `function_pointer` wraps; with
-/// `add_ptr_property` it becomes the symbol's `.ptr`. Encoding it can throw
-/// (addresses above 2^53 allocate a BigInt), in which case C++ returns zero.
+/// `cc()`'s variant of `host_fn::new_runtime_function`: with `add_ptr_property`
+/// the C++ side encodes `symbol_from_dynamic_library` as the symbol's `.ptr`,
+/// which allocates (and can throw) for addresses above 2^53.
 #[track_caller]
 #[inline]
 fn new_runtime_function(
@@ -177,7 +175,7 @@ fn new_runtime_function(
     arg_count: u32,
     function_pointer: *const c_void,
     add_ptr_property: bool,
-    input_function_ptr: Option<*mut c_void>,
+    symbol_from_dynamic_library: Option<*mut c_void>,
 ) -> JsResult<JSValue> {
     jsc::call_zero_is_throw(global, || {
         // SAFETY: thin FFI wrapper; `global` is a live opaque JSC handle,
@@ -189,7 +187,7 @@ fn new_runtime_function(
                 arg_count,
                 function_pointer,
                 add_ptr_property,
-                input_function_ptr.unwrap_or(core::ptr::null_mut()),
+                symbol_from_dynamic_library.unwrap_or(core::ptr::null_mut()),
             )
         }
     })

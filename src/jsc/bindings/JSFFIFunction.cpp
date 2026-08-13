@@ -77,9 +77,7 @@ extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Zig::GlobalObject* gl
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         auto* function = Zig::JSFFIFunction::createForFFI(vm, globalObject, argCount, symbolName != nullptr ? Zig::toStringCopy(*symbolName) : String(), reinterpret_cast<Bun::CFFIFunction>(functionPointer));
-        // `functionPointer` is the TinyCC-compiled JSC-ABI wrapper; `.ptr` has to be the native
-        // function it calls, encoded like the engine-native dlopen() symbols and JSCallback encode theirs,
-        // so that CFunction / linkSymbols / pointer arguments accept it.
+        // `functionPointer` is the TinyCC-compiled JSC-ABI wrapper, so `.ptr` must be the native function it calls.
         JSC::JSValue ptr = JSC::FFI::pointerToJSValue(globalObject, reinterpret_cast<uint64_t>(symbolFromDynamicLibrary));
         RETURN_IF_EXCEPTION(scope, {});
         function->putDirect(vm, JSC::Identifier::fromString(vm, "ptr"_s), ptr, JSC::PropertyAttribute::ReadOnly | 0);

@@ -741,9 +741,11 @@ WebCore::ExceptionOr<void> WebCore::WebSocket::send(WebCore::JSBlob* blob)
     if (m_state == CLOSING || m_state == CLOSED) {
         // Mirror the String/ArrayBuffer/ArrayBufferView send() overloads: per
         // spec, send() after close increases bufferedAmount by the size of the
-        // data instead of transmitting it.
+        // data instead of transmitting it. Clamp before saturateAdd: a
+        // file-backed Blob can exceed 4 GiB, and the implicit size_t->unsigned
+        // narrowing would wrap before the saturation check runs.
         size_t payloadSize = Blob__getSize(JSC::JSValue::encode(blob));
-        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, clampToUnsigned(payloadSize));
         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }
@@ -1824,8 +1826,9 @@ WebCore::ExceptionOr<void> WebCore::WebSocket::ping(WebCore::JSBlob* blob)
     if (m_state == CLOSING || m_state == CLOSED) {
         // Match the String/ArrayBuffer/ArrayBufferView ping() overloads, which
         // accumulate into bufferedAmount after close rather than transmitting.
+        // clampToUnsigned: see send(JSBlob*).
         size_t payloadSize = Blob__getSize(JSC::JSValue::encode(blob));
-        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, clampToUnsigned(payloadSize));
         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }
@@ -1853,8 +1856,9 @@ WebCore::ExceptionOr<void> WebCore::WebSocket::pong(WebCore::JSBlob* blob)
     if (m_state == CLOSING || m_state == CLOSED) {
         // Match the String/ArrayBuffer/ArrayBufferView pong() overloads, which
         // accumulate into bufferedAmount after close rather than transmitting.
+        // clampToUnsigned: see send(JSBlob*).
         size_t payloadSize = Blob__getSize(JSC::JSValue::encode(blob));
-        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, clampToUnsigned(payloadSize));
         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }

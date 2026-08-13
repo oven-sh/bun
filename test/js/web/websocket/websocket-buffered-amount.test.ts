@@ -142,6 +142,38 @@ describe("WebSocket.bufferedAmount (client)", () => {
     }
   });
 
+  // terminate() is close()'s abrupt sibling: it cancels the native client
+  // synchronously, so the C++ side snapshots the backlog eagerly before the
+  // send buffer is freed. The snapshot must survive the call.
+  test("does not reset to 0 after terminate() while a backlog is queued", async () => {
+    const { port, close } = await nonDrainingServer();
+    try {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/`);
+      const { promise, resolve, reject } = Promise.withResolvers<{ beforeTerminate: number; afterTerminate: number }>();
+      ws.onerror = () => reject(new Error("unexpected error event"));
+      ws.onopen = () => {
+        const chunk = Buffer.alloc(64 * 1024, 0x7c).toString();
+        for (let i = 0; i < 4000; i++) ws.send(chunk);
+        const beforeTerminate = ws.bufferedAmount;
+        // terminate() dispatches error/close synchronously; here they are
+        // expected, not failures.
+        ws.onerror = null;
+        ws.terminate();
+        const afterTerminate = ws.bufferedAmount;
+        resolve({ beforeTerminate, afterTerminate });
+      };
+      const { beforeTerminate, afterTerminate } = await promise;
+
+      expect(beforeTerminate).toBeGreaterThan(64 * 1024);
+      // terminate() snapshots the backlog before cancel frees the send buffer;
+      // the connection is gone afterward, so the value is frozen (same small
+      // flush tolerance as the close() case).
+      expect(afterTerminate).toBeGreaterThan(beforeTerminate * 0.95);
+    } finally {
+      close();
+    }
+  });
+
   // Every send()/ping()/pong() overload must account for data queued after
   // close() the same way the spec requires for send() ("increase the
   // bufferedAmount attribute by the size of the data"). The Blob overloads were
@@ -248,13 +280,18 @@ describe("WebSocket.bufferedAmount (client)", () => {
         resolve(max);
       };
       const max = await promise;
+      // The first promise is settled now; rewire failure events at the drain
+      // wait so an unexpected error/close fails fast instead of hanging (an
+      // abrupt close freezes bufferedAmount non-zero, so the poll would spin).
+      ws.onerror = ws.onclose = e => received.reject(new Error(`unexpected ${e.type} event during drain`));
       expect(max).toBeGreaterThan(payloadBytes);
 
       // The peer has the payloads; only the tail of the last frame can still be
       // in flight, so the live value must settle back to exactly 0.
       await received.promise;
-      while (ws.bufferedAmount !== 0) await Bun.sleep(1);
+      while (ws.bufferedAmount !== 0 && ws.readyState === WebSocket.OPEN) await Bun.sleep(1);
       expect(ws.readyState).toBe(WebSocket.OPEN);
+      expect(ws.bufferedAmount).toBe(0);
       ws.onclose = null;
       ws.close();
     } finally {

@@ -1869,10 +1869,10 @@ impl<const SSL: bool> WebSocket<SSL> {
     ///
     /// Takes `*const Self` (callers pass `self as *const Self`) and reads the
     /// disjoint `send_buffer`/`proxy_tunnel` fields via `addr_of!`. The proxy
-    /// tunnel in particular must be reached through a raw-ptr accessor (see
-    /// below): it is reachable from inside the tunnel's SSL-wrapper callbacks,
-    /// which hold a `&mut SslWrapper`, so a whole-struct `&WebSocketProxyTunnel`
-    /// would overlap it (see WebSocketProxyTunnel's Aliasing model doc).
+    /// tunnel in particular is reached through a raw-ptr accessor (see below):
+    /// it is reachable from inside the tunnel's SSL-wrapper callbacks, and the
+    /// tunnel's Aliasing model doc has callbacks touch only disjoint fields,
+    /// never a whole-struct `&WebSocketProxyTunnel`.
     ///
     /// # Safety
     /// `this` must point to a live `WebSocket<SSL>`.
@@ -1889,9 +1889,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         let tunnel = unsafe { (*core::ptr::addr_of!((*this).proxy_tunnel)).get() };
         if let Some(tunnel) = tunnel {
             // Raw-ptr accessor, not `tunnel.as_ref()`: reachable inside the
-            // tunnel's SSL-wrapper callbacks on abrupt close, where a
-            // whole-struct `&WebSocketProxyTunnel` would overlap the live
-            // `&mut SslWrapper` (see WebSocketProxyTunnel's Aliasing model doc).
+            // tunnel's SSL-wrapper callbacks on abrupt close, where the tunnel's
+            // Aliasing model doc has callbacks touch only disjoint fields, never
+            // a whole-struct `&WebSocketProxyTunnel`.
             // SAFETY: `tunnel` (NonNull) points to a live tunnel.
             buffered += unsafe { WebSocketProxyTunnel::buffered_amount(tunnel.as_ptr()) };
         }

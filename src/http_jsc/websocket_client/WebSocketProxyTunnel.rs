@@ -604,9 +604,10 @@ impl WebSocketProxyTunnel {
     ///
     /// Takes `*const Self` and projects to `write_buffer` via `addr_of!` rather
     /// than forming a whole-struct `&Self`: this is reachable from inside the
-    /// SSL-wrapper callbacks (abrupt close during the connected phase), which
-    /// hold a `&mut SslWrapper` over the `wrapper` field — a whole-struct borrow
-    /// would overlap it (see the module's Aliasing model doc).
+    /// SSL-wrapper callbacks (abrupt close during the connected phase), and the
+    /// module's Aliasing model doc has callbacks touch only disjoint fields,
+    /// never the whole struct (the overlap with the caller's `&SslWrapper` is
+    /// shared-over-shared today; field projection keeps the convention).
     ///
     /// # Safety
     /// `this` must point to a live `WebSocketProxyTunnel`.

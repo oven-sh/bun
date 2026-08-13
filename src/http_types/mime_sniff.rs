@@ -14,6 +14,8 @@
 //! exactly like the non-ASCII code points they encode, so byte-wise iteration
 //! is equivalent to the spec's code-point iteration.
 
+use bun_core::strings;
+
 /// <https://fetch.spec.whatwg.org/#http-whitespace>
 #[inline]
 fn is_http_whitespace(b: u8) -> bool {
@@ -204,7 +206,7 @@ fn parse_mime_type(input: &[u8]) -> Option<MimeRecord> {
 
     // Steps 3-6: `type` is everything before the first `/`, which must exist
     // (step 5), be non-empty, and solely contain HTTP token code points.
-    let slash = input.iter().position(|&b| b == b'/')?;
+    let slash = strings::index_of_char_usize(input, b'/')?;
     let type_ = &input[..slash];
     if type_.is_empty() || !type_.iter().copied().all(is_http_token) {
         return None;
@@ -213,10 +215,8 @@ fn parse_mime_type(input: &[u8]) -> Option<MimeRecord> {
 
     // Steps 7-9: `subtype` runs to the first `;`, with trailing HTTP
     // whitespace removed.
-    let subtype_end = input[pos..]
-        .iter()
-        .position(|&b| b == b';')
-        .map_or(input.len(), |i| pos + i);
+    let subtype_end =
+        strings::index_of_char_usize(&input[pos..], b';').map_or(input.len(), |i| pos + i);
     let subtype = trim_end(&input[pos..subtype_end], is_http_whitespace);
     if subtype.is_empty() || !subtype.iter().copied().all(is_http_token) {
         return None;

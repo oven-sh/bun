@@ -1,11 +1,11 @@
 use bun_alloc::ArenaVecExt as _;
 use bun_collections::VecExt;
-use core::ffi::c_void;
 use core::mem::MaybeUninit;
 
+use crate::Error;
 use bun_alloc::Arena; // bumpalo::Bump re-export
+use bun_core;
 use bun_core::strings;
-use bun_core::{self, Error, err};
 use bun_wyhash::Wyhash;
 
 use crate::parser::options;
@@ -15,7 +15,8 @@ use crate::defines::Define;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, WrapMode,
+    Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, StatementScope,
+    WrapMode,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -23,13 +24,7 @@ use bun_ast::{B, E, Expr, G, S, Stmt};
 
 // Named instantiations of `P<'_, TS, SCAN>`.
 pub type JavaScriptParser<'a> = P<'a, false, false>;
-pub type JSXParser<'a> = P<'a, false, false>;
-pub type TypeScriptParser<'a> = P<'a, true, false>;
 pub type TSXParser<'a> = P<'a, true, false>;
-pub type JavaScriptImportScanner<'a> = P<'a, false, true>;
-pub type JSXImportScanner<'a> = P<'a, false, true>;
-pub type TypeScriptImportScanner<'a> = P<'a, true, true>;
-pub type TSXImportScanner<'a> = P<'a, true, true>;
 
 // In AST crates, ListManaged(T) backed by the arena → bumpalo Vec.
 type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
@@ -57,16 +52,16 @@ macro_rules! init_p {
 }
 
 pub struct Parser<'a> {
-    pub options: Options<'a>,
-    pub lexer: js_lexer::Lexer<'a>,
+    pub(crate) options: Options<'a>,
+    pub(crate) lexer: js_lexer::Lexer<'a>,
     /// Raw pointer alias of `lexer.log`. Rust
     /// cannot hold two live `&'a mut Log`, so both the parser- and lexer-side
     /// handles are `NonNull` and dereferenced at use sites (see `log_mut` /
     /// `Lexer::log()`). The pointee outlives `'a` (see `init`).
-    pub log: core::ptr::NonNull<bun_ast::Log>,
-    pub source: &'a bun_ast::Source,
-    pub define: &'a Define,
-    pub bump: &'a Arena,
+    pub(crate) log: core::ptr::NonNull<bun_ast::Log>,
+    pub(crate) source: &'a bun_ast::Source,
+    pub(crate) define: &'a Define,
+    pub(crate) bump: &'a Arena,
 }
 
 pub struct Options<'a> {
@@ -77,7 +72,6 @@ pub struct Options<'a> {
     pub preserve_unused_imports_ts: bool,
     pub use_define_for_class_fields: bool,
     pub suppress_warnings_about_weird_code: bool,
-    pub filepath_hash_for_hmr: u32,
     pub features: RuntimeFeatures,
 
     pub tree_shaking: bool,
@@ -124,9 +118,8 @@ impl<'a> Default for Options<'a> {
             keep_names: true,
             ignore_dce_annotations: false,
             preserve_unused_imports_ts: false,
-            use_define_for_class_fields: false,
+            use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
-            filepath_hash_for_hmr: 0,
             features: RuntimeFeatures::default(),
             tree_shaking: false,
             bundle: false,
@@ -175,7 +168,6 @@ impl<'a> Options<'a> {
             preserve_unused_imports_ts: self.preserve_unused_imports_ts,
             use_define_for_class_fields: self.use_define_for_class_fields,
             suppress_warnings_about_weird_code: self.suppress_warnings_about_weird_code,
-            filepath_hash_for_hmr: self.filepath_hash_for_hmr,
             features: RuntimeFeatures {
                 react_fast_refresh: f.react_fast_refresh,
                 react_compiler: f.react_compiler,
@@ -211,9 +203,6 @@ impl<'a> Options<'a> {
                 bundler_feature_flags: None,
                 repl_mode: f.repl_mode,
                 jsx_optimization_inline: f.jsx_optimization_inline,
-                dynamic_require: f.dynamic_require,
-                remove_whitespace: f.remove_whitespace,
-                use_import_meta_require: f.use_import_meta_require,
             },
             tree_shaking: self.tree_shaking,
             bundle: self.bundle,
@@ -258,12 +247,16 @@ impl<'a> Options<'a> {
             hasher.update(b"no_dce");
         }
 
+        if !self.use_define_for_class_fields {
+            hasher.update(b"udfcf=0");
+        }
+
         self.features.hash_for_runtime_transpiler(hasher);
     }
 
     // Used to determine if `joinWithComma` should be called in `visitStmts`. We do this
     // to avoid changing line numbers too much to make source mapping more readable
-    pub fn runtime_merge_adjacent_expression_statements(&self) -> bool {
+    pub(crate) fn runtime_merge_adjacent_expression_statements(&self) -> bool {
         self.bundle
     }
 
@@ -276,9 +269,8 @@ impl<'a> Options<'a> {
             keep_names: true,
             ignore_dce_annotations: false,
             preserve_unused_imports_ts: false,
-            use_define_for_class_fields: false,
+            use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
-            filepath_hash_for_hmr: 0,
             features: RuntimeFeatures::default(),
             tree_shaking: false,
             bundle: false,
@@ -332,17 +324,6 @@ impl<'a> Parser<'a> {
             source,
             log: log_ptr,
         })
-    }
-
-    /// Reborrow the shared `Log`. Callers must not hold two results live at
-    /// once (or alongside `self.lexer.log()`).
-    #[inline]
-    pub fn log_mut(&mut self) -> &mut bun_ast::Log {
-        // SAFETY: `log` was created from the `&'a mut Log` passed to `init`,
-        // which outlives `'a` (and therefore `self`). `self.lexer.log` aliases
-        // the same allocation as a `NonNull` (not `&mut`), so this transient
-        // reborrow does not invalidate it.
-        unsafe { self.log.as_mut() }
     }
 }
 
@@ -438,7 +419,7 @@ impl<'a> Parser<'a> {
 
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
-            is_module_scope: true,
+            scope: StatementScope::Module,
             ..Default::default()
         };
 
@@ -449,7 +430,7 @@ impl<'a> Parser<'a> {
         match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
             Ok(_) => {}
             Err(e) => {
-                if e == err!("StackOverflow") {
+                if e == crate::Error::StackOverflow {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
                     p.log().add_error(
                         Some(p.source),
@@ -532,7 +513,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    pub fn to_lazy_export_ast(
+    pub(crate) fn to_lazy_export_ast(
         &mut self,
         expr: Expr,
         runtime_api_call: &'static [u8],
@@ -622,98 +603,6 @@ impl<'a> Parser<'a> {
             WrapMode::None,
             b"",
         )?))
-    }
-
-    pub fn analyze(
-        &mut self,
-        context: *mut c_void,
-        callback: &dyn Fn(*mut c_void, &mut TSXParser, &mut [js_ast::Part]) -> Result<(), Error>,
-    ) -> Result<(), Error> {
-        // See `_scan_imports`: move lexer/options out, leaving inert
-        // placeholders so `self` may drop without double-free.
-        //
-        // The placeholder lexer gets its own arena `Log` so it does not alias
-        // `self.log` (see `_scan_imports`).
-        let lexer = core::mem::replace(
-            &mut self.lexer,
-            js_lexer::Lexer::init_without_reading(
-                // Disjoint dummy `Log` (empty `Vec`, arena-leaked); the
-                // placeholder is never read after this point.
-                self.bump.alloc(bun_ast::Log::default()),
-                self.source,
-                self.bump,
-            ),
-        );
-        let options = core::mem::take(&mut self.options);
-        // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
-        // field docs), so handing the same raw pointer to both is defined —
-        // no `&mut` is materialized.
-        let mut __p = init_p!(TSXParser<'_>;
-            self.bump, self.log, self.source, self.define, lexer, options);
-        // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut TSXParser<'_> = unsafe { __p.assume_init_mut() };
-
-        // Consume a leading hashbang comment
-        let mut hashbang: &[u8] = b"";
-        if p.lexer.token == js_lexer::T::THashbang {
-            hashbang = p.lexer.identifier;
-            p.lexer.next()?;
-        }
-        let _ = hashbang;
-
-        // Parse the file in the first pass, but do not bind symbols
-        let mut opts = ParseStatementOptions {
-            is_module_scope: true,
-            ..Default::default()
-        };
-        let mut parse_tracer = bun_core::perf::trace("JSParser.parse");
-
-        let stmts = match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
-            Ok(s) => s,
-            Err(e) => {
-                #[cfg(target_arch = "wasm32")]
-                {
-                    Output::print(format_args!(
-                        "JSParser.parse: caught error {} at location: {}\n",
-                        e.name(),
-                        p.lexer.loc().start
-                    ));
-                    let _ = p.log().print(Output::writer());
-                }
-                return Err(e);
-            }
-        };
-
-        parse_tracer.end();
-
-        // `p.log` and
-        // `self.log` alias the same `NonNull<Log>` so either is fine — route
-        // through `p` for clarity.
-        if p.log().errors > 0 {
-            #[cfg(target_arch = "wasm32")]
-            {
-                // Each message is emitted unbuffered (one console.log line per
-                // write on wasm32). Diagnostics formatting only.
-                for msg in p.log().msgs.as_slice() {
-                    let mut m: bun_ast::Msg = *msg;
-                    let _ = m.write_format(Output::writer(), true);
-                }
-            }
-            return Err(err!("SyntaxError"));
-        }
-
-        let mut visit_tracer = bun_core::perf::trace("JSParser.visit");
-        p.prepare_for_visit_pass()?;
-
-        let mut parts = BumpVec::new_in(p.arena);
-
-        p.append_part(&mut parts, stmts.into_bump_slice_mut())?;
-        visit_tracer.end();
-
-        let mut analyze_tracer = bun_core::perf::trace("JSParser.analyze");
-        callback(context, p, parts.as_mut_slice())?;
-        analyze_tracer.end();
-        Ok(())
     }
 
     fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
@@ -811,7 +700,7 @@ impl<'a> Parser<'a> {
 
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
-            is_module_scope: true,
+            scope: StatementScope::Module,
             ..Default::default()
         };
         let mut parse_tracer = bun_core::perf::trace("JSParser::parse");
@@ -824,7 +713,7 @@ impl<'a> Parser<'a> {
             Ok(s) => s.into_bump_slice_mut(),
             Err(e) => {
                 parse_tracer.end();
-                if e == err!("StackOverflow") {
+                if e == crate::Error::StackOverflow {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
                     p.log().add_error(
                         Some(p.source),
@@ -833,7 +722,7 @@ impl<'a> Parser<'a> {
                     );
 
                     // Return a SyntaxError so that we reuse existing code for handling errors.
-                    return Err(err!("SyntaxError"));
+                    return Err(crate::Error::SyntaxError);
                 }
 
                 return Err(e);
@@ -848,7 +737,7 @@ impl<'a> Parser<'a> {
         //   Example where NOT halting causes a crash: A TS enum with a number literal as a member name
         //     https://discord.com/channels/876711213126520882/876711213126520885/1039325382488371280
         if p.log().errors > orig_error_count {
-            return Err(err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         // A second guard dropped at end of `_parse` restores the previous action.
@@ -1010,8 +899,7 @@ impl<'a> Parser<'a> {
                                 let _local = S::Local {
                                     kind: local.kind,
                                     is_export: local.is_export,
-                                    was_ts_import_equals: local.was_ts_import_equals,
-                                    was_commonjs_export: local.was_commonjs_export,
+                                    origin: local.origin,
                                     decls: G::DeclList::init_one(G::Decl {
                                         binding: decl.binding,
                                         value: decl.value,
@@ -1110,7 +998,7 @@ impl<'a> Parser<'a> {
 
         // If there were errors while visiting, also halt here
         if p.log().errors > orig_error_count {
-            return Err(err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         // `perf::Ctx` ends the span in its `Drop` impl — bind it for the rest of `_parse`.
@@ -1543,64 +1431,6 @@ impl<'a> Parser<'a> {
                     }
                     let _ = &mut *part;
                     continue 'outer_part_loop;
-                }
-            }
-        } else if p.options.bundle && parts.is_empty() {
-            // This flag is disabled because it breaks circular export * as from
-            //
-            //  entry.js:
-            //
-            //    export * from './foo';
-            //
-            //  foo.js:
-            //
-            //    export const foo = 123
-            //    export * as ns from './foo'
-            //
-            // This is permanently disabled (see the circular-export breakage above).
-            if false {
-                // If the file only contains "export * from './blah'
-                // we pretend the file never existed in the first place.
-                // the semantic difference here is in export default statements
-                // note: export_star_import_records are not filled in yet
-
-                if !before.is_empty() && p.import_records.len() == 1 {
-                    let export_star_redirect: Option<&S::ExportStar> = 'brk: {
-                        let mut export_star: Option<&S::ExportStar> = None;
-                        for part in before.iter() {
-                            for stmt in part.stmts.iter() {
-                                match &stmt.data {
-                                    js_ast::StmtData::SExportStar(star) => {
-                                        if star.alias.is_some() {
-                                            break 'brk None;
-                                        }
-
-                                        if export_star.is_some() {
-                                            break 'brk None;
-                                        }
-
-                                        export_star = Some(&**star);
-                                    }
-                                    js_ast::StmtData::SEmpty(_) | js_ast::StmtData::SComment(_) => {
-                                    }
-                                    _ => {
-                                        break 'brk None;
-                                    }
-                                }
-                            }
-                        }
-                        export_star
-                    };
-
-                    if let Some(star) = export_star_redirect {
-                        return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
-                            import_records: p.import_records.move_to_baby_list(p.arena),
-                            redirect_import_record_index: Some(star.import_record_index),
-                            named_imports: core::mem::take(&mut *p.named_imports),
-                            named_exports: core::mem::take(&mut p.named_exports),
-                            ..js_ast::Ast::empty_in(p.arena)
-                        })));
-                    }
                 }
             }
         }
@@ -2100,6 +1930,7 @@ impl<'a> Parser<'a> {
                     None,
                     b"import_",
                     true,
+                    js_ast::PartTag::Runtime,
                 )
                 .expect("unreachable");
             }
@@ -2132,6 +1963,7 @@ impl<'a> Parser<'a> {
                     None,
                     b"",
                     false,
+                    js_ast::PartTag::JsxImport,
                 )
                 .expect("unreachable");
             }
@@ -2146,6 +1978,7 @@ impl<'a> Parser<'a> {
                     None,
                     b"",
                     false,
+                    js_ast::PartTag::JsxImport,
                 )
                 .expect("unreachable");
             }

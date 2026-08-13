@@ -40,7 +40,7 @@ pub struct DecodeResult {
     pub next: usize,
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
+#[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HpackError {
     #[error("UnableToDecode")]
     UnableToDecode,
@@ -49,11 +49,8 @@ pub enum HpackError {
     #[error("UnableToEncode")]
     UnableToEncode,
 }
-bun_core::named_error_set!(HpackError);
 
 impl HPACK {
-    pub const LSHPACK_MAX_HEADER_SIZE: usize = 65536;
-
     /// DecodeResult name and value uses a thread_local shared buffer and should be copy/cloned before the next decode/encode call
     pub fn decode(&mut self, src: &[u8]) -> Result<DecodeResult, HpackError> {
         let mut header = lshpack_header::default();

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir, tempDirWithFiles } from "harness";
 import { spawnSync } from "node:child_process";
 import { existsSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -173,7 +173,7 @@ int main(int argc, char **argv) {
         return;
       }
 
-      const targetDir = tempDirWithFiles("stat-seccomp-target", { "file.txt": "hello" });
+      await using targetDir = tempDir("stat-seccomp-target", { "file.txt": "hello" });
       // symlink created here rather than via tempDirWithFiles (which only
       // supports regular files).
       symlinkSync("file.txt", join(targetDir, "link.txt"));

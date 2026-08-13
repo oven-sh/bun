@@ -180,7 +180,6 @@ impl AtomicSync {
 }
 
 pub struct ThreadPool {
-    pub sleep_on_idle_network_thread: bool,
     /// When `true` (default), each worker calls
     /// [`Output::Source::configure_named_thread`] on startup, which initializes
     /// the WTF `StackBounds` thread-local via `Bun__StackCheck__initialize`.
@@ -192,16 +191,14 @@ pub struct ThreadPool {
     /// Left as a public field (not in [`Config`]) so existing
     /// `Config { max_threads, stack_size }` literals keep compiling; callers
     /// flip it after [`ThreadPool::init`].
-    pub needs_stack_bounds: bool,
-    pub stack_size: u32,
-    pub max_threads: u32,
+    pub(crate) needs_stack_bounds: bool,
+    pub(crate) stack_size: u32,
+    pub(crate) max_threads: u32,
     sync: AtomicSync,
     idle_event: Event,
     join_event: Event,
     run_queue: node::Queue,
     threads: AtomicPtr<Thread>,
-    pub name: &'static [u8],
-    pub spawned_thread_count: AtomicU32,
     wait_group: WaitGroup,
     /// Used by `schedule` to optimize for the case where the thread pool isn't running yet.
     is_running: AtomicBool,
@@ -229,7 +226,6 @@ impl ThreadPool {
     /// Statically initialize the thread pool using the configuration.
     pub fn init(config: Config) -> ThreadPool {
         ThreadPool {
-            sleep_on_idle_network_thread: true,
             needs_stack_bounds: true,
             stack_size: 1.max(config.stack_size),
             max_threads: 1.max(config.max_threads),
@@ -238,8 +234,6 @@ impl ThreadPool {
             join_event: Event::default(),
             run_queue: node::Queue::default(),
             threads: AtomicPtr::new(ptr::null_mut()),
-            name: b"",
-            spawned_thread_count: AtomicU32::new(0),
             wait_group: WaitGroup::init(),
             is_running: AtomicBool::new(false),
             stats: PoolStats {
@@ -375,8 +369,8 @@ impl Task {
 #[derive(Default, Clone, Copy)]
 pub struct Batch {
     pub len: usize,
-    pub head: Option<NonNull<Task>>,
-    pub tail: Option<NonNull<Task>>,
+    pub(crate) head: Option<NonNull<Task>>,
+    pub(crate) tail: Option<NonNull<Task>>,
 }
 
 impl Batch {
@@ -612,10 +606,7 @@ impl ThreadPool {
             // `current` is the calling worker's own stack-local `Thread` (set in
             // `ThreadRegistration::new`); BackRef invariant — pointee outlives
             // this read — holds for the `thread_pool` field load.
-            if bun_ptr::BackRef::from(current)
-                .thread_pool
-                .as_ptr()
-                .cast_const()
+            if bun_ptr::BackRef::from(current).thread_pool.as_const_ptr()
                 == std::ptr::from_ref::<ThreadPool>(self)
             {
                 current.as_ptr()
@@ -822,7 +813,6 @@ impl ThreadPool {
                                     return unsafe { Self::unregister(self, ptr::null_mut()) };
                                 }
                             }
-                            // if (self.name.len > 0) thread.setName(self.name) catch {};
                             return;
                         }
 
@@ -901,6 +891,7 @@ impl ThreadPool {
                 if stats_enabled() {
                     self.stats.sleeps.fetch_add(1, Ordering::Relaxed);
                 }
+
                 self.idle_event.wait();
                 sync = self.sync.load(Ordering::Relaxed);
             }
@@ -909,7 +900,7 @@ impl ThreadPool {
 
     /// Marks the thread pool as shutdown
     #[inline(never)]
-    pub fn shutdown(&self) {
+    pub(crate) fn shutdown(&self) {
         let mut sync = self.sync.load(Ordering::Relaxed);
         while sync.state() != SyncState::Shutdown {
             let mut new_sync = sync;
@@ -1084,7 +1075,7 @@ impl Drop for ThreadRegistration {
         // SAFETY: per `new()` contract. `unregister` takes `*const` (not the
         // `BackRef`) because the pool may be freed by the joiner before it
         // returns — see `unregister`'s doc.
-        unsafe { ThreadPool::unregister(self.pool.as_ptr(), self.thread) };
+        unsafe { ThreadPool::unregister(self.pool.as_const_ptr(), self.thread) };
         CURRENT.with(|c| c.set(ptr::null_mut()));
     }
 }
@@ -1254,7 +1245,7 @@ impl Thread {
         }
     }
 
-    pub fn drain_idle_events(&self) {
+    pub(crate) fn drain_idle_events(&self) {
         let Ok(mut consumer) = self.idle_queue.try_acquire_consumer() else {
             return;
         };
@@ -1274,7 +1265,7 @@ impl Thread {
     /// already proved liveness once (`join()` waits on every registered
     /// worker), so the per-access raw-pointer derefs that the `*const`
     /// signature forced are gone.
-    pub fn pop(&mut self, thread_pool: &ThreadPool) -> Option<node::Stole> {
+    pub(crate) fn pop(&mut self, thread_pool: &ThreadPool) -> Option<node::Stole> {
         // Check our local buffer first
         if let Some(node) = self.run_buffer.pop() {
             return Some(node::Stole {
@@ -1353,7 +1344,7 @@ impl Default for Event {
 impl Event {
     const EMPTY: u32 = 0;
     const WAITING: u32 = 1;
-    pub(crate) const NOTIFIED: u32 = 2;
+    const NOTIFIED: u32 = 2;
     const SHUTDOWN: u32 = 3;
 
     /// Wait for and consume a notification
@@ -1362,7 +1353,7 @@ impl Event {
     fn wait(&self) {
         let mut acquire_with: u32 = Self::EMPTY;
         let mut state = self.state.load(Ordering::Relaxed);
-        let mut has_shrunk_memory: bool = false;
+        let mut has_swept: bool = false;
 
         loop {
             // If we're shutdown then exit early.
@@ -1412,15 +1403,17 @@ impl Event {
             // Acquiring to WAITING will make the next notify() or shutdown() wake a sleeping futex thread
             // who will either exit on SHUTDOWN or acquire with WAITING again, ensuring all threads are awoken.
             // This unfortunately results in the last notify() or shutdown() doing an extra futex wake but that's fine.
-            let timeout_ns: Option<u64> = if !has_shrunk_memory {
-                Some(10_000_000_000) // 10 seconds
+            // Sweep only when the wait TIMED OUT: genuinely idle for 100ms, not parking
+            // between tasks (that cost ~13% of vite preview rps). `has_swept` is a local,
+            // reset when notify() returns; a racing notify() stays NOTIFIED, never lost.
+            let timeout_ns: Option<u64> = if !has_swept {
+                Some(100_000_000) // 100ms
             } else {
                 None
             };
             if Futex::wait(&self.state, Self::WAITING, timeout_ns).is_err() {
-                has_shrunk_memory = true;
-                bun_core::Global::mimalloc_cleanup(false);
-                bun_alloc::wtf::release_fast_malloc_free_memory_for_this_thread();
+                has_swept = true;
+                bun_alloc::mimalloc::mi_on_thread_idle();
             }
             state = self.state.load(Ordering::Relaxed);
             acquire_with = Self::WAITING;
@@ -1455,9 +1448,9 @@ impl Event {
         // via the `acquire_with == EMPTY` path (see `wait`). For a normal
         // single `notify()` that is fine, because a later `notify()` re-arms and
         // wakes the sleeper. A teardown wake happens once, so a skipped wake
-        // here strands the parked worker until its 10s idle timeout, which shows
-        // up as a ~10s stall joining the pool. Always wake in that case; the
-        // extra syscall is negligible because these paths run once at teardown.
+        // here strands the parked worker: only its first wait has a timeout (the
+        // 100ms idle sweep), later waits are indefinite. Always wake in that
+        // case; the extra syscall is negligible once at teardown.
         if state == Self::WAITING || wake_threads == u32::MAX {
             Futex::wake(&self.state, wake_threads);
         }
@@ -1475,9 +1468,9 @@ pub mod node {
     use super::*;
 
     /// A linked list of Nodes
-    pub struct List {
-        pub head: NonNull<Node>,
-        pub tail: NonNull<Node>,
+    pub(crate) struct List {
+        pub(crate) head: NonNull<Node>,
+        pub(crate) tail: NonNull<Node>,
     }
 
     #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -1672,7 +1665,7 @@ pub mod node {
     }
 
     type Index = u32;
-    pub(crate) const CAPACITY: usize = 256; // Appears to be a pretty good trade-off in space vs contended throughput
+    const CAPACITY: usize = 256; // Appears to be a pretty good trade-off in space vs contended throughput
 
     const _: () = assert!(Index::MAX as usize >= CAPACITY);
     const _: () = assert!(CAPACITY.is_power_of_two());
@@ -1705,9 +1698,9 @@ pub mod node {
         }
     }
 
-    pub struct Stole {
-        pub node: NonNull<Node>,
-        pub pushed: bool,
+    pub(crate) struct Stole {
+        pub(crate) node: NonNull<Node>,
+        pub(crate) pushed: bool,
     }
 
     impl Buffer {

@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSAbortSignal.h"
 
-#include "ActiveDOMObject.h"
 #include "EventNames.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -130,18 +129,6 @@ template<> void JSAbortSignalDOMConstructor::initializeProperties(VM& vm, JSDOMG
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     putDirect(vm, vm.propertyNames->prototype, JSAbortSignal::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
     reifyStaticProperties(vm, JSAbortSignal::info(), JSAbortSignalConstructorTableValues, *this);
-    // if (!((&globalObject)->inherits<JSDOMWindowBase>() || (&globalObject)->inherits<JSWorkerGlobalScopeBase>())) {
-    //     auto propertyName = Identifier::fromString(vm, "timeout"_s);
-    //     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-    //     DeletePropertySlot slot;
-    //     JSObject::deleteProperty(this, &globalObject, propertyName, slot);
-    // }
-    // if (!uncheckedDowncast<JSDOMGlobalObject>(&globalObject)->scriptExecutionContext()->settingsValues().abortSignalAnyOperationEnabled) {
-    //     auto propertyName = Identifier::fromString(vm, "any"_s);
-    //     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-    //     DeletePropertySlot slot;
-    //     JSObject::deleteProperty(this, &globalObject, propertyName, slot);
-    // }
 }
 
 /* Hash table for prototype */
@@ -273,7 +260,7 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_abortBody(JSC
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto reason = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), throwScope, AbortSignal::abort(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), *context, WTF::move(reason)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), throwScope, AbortSignal::abort(*context, WTF::move(reason)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsAbortSignalConstructorFunction_abort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -330,6 +317,7 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_anyBody(JSC::
         }
         i++;
     });
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), throwScope, AbortSignal::any(*context, WTF::move(signals)))));
 }

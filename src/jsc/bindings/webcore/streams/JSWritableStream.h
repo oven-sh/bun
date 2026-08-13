@@ -50,6 +50,7 @@ public:
     // m_pendingAbortRequest.{promise,reason}, and m_writeRequests (a barrier container: UNDER
     // cellLock()).
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSC::JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -85,9 +86,9 @@ public:
     // [[state]]
     WritableStreamState m_state { WritableStreamState::Writable };
     // [[backpressure]]
-    bool m_backpressure { false };
+    bool m_backpressure : 1 { false };
     // [[Detached]] (transferable streams are not implemented; the slot exists)
-    bool m_detached { false };
+    bool m_detached : 1 { false };
 
 private:
     JSWritableStream(JSC::VM&, JSC::Structure*);

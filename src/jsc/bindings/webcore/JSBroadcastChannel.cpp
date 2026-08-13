@@ -22,6 +22,7 @@
 #include "JSBroadcastChannel.h"
 
 #include "ActiveDOMObject.h"
+
 #include "EventNames.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -248,7 +249,7 @@ JSBroadcastChannel::JSBroadcastChannel(Structure* structure, JSDOMGlobalObject& 
 {
 }
 
-// static_assert(std::is_base_of<ActiveDOMObject, BroadcastChannel>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
+static_assert(std::is_base_of<ActiveDOMObject, BroadcastChannel>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
 
 JSObject* JSBroadcastChannel::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {

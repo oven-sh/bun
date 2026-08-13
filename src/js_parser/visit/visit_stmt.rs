@@ -2101,7 +2101,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     //                 p.warnAboutTypeofAndString(s.Test, *c.Value)
                 }
                 let mut _stmts = stmts_to_list(p.arena, cases[i].body);
-                p.visit_stmts(&mut _stmts, StmtsKind::SwitchStmt)
+                p.visit_stmts(&mut _stmts, StmtsKind::None)
                     .expect("unreachable");
                 cases[i].body = list_to_stmts(_stmts);
             }

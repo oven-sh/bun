@@ -1028,7 +1028,6 @@ pub enum StmtsKind {
     #[default]
     None,
     LoopBody,
-    SwitchStmt,
     FnBody,
 }
 

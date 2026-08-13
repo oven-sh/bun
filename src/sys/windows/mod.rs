@@ -393,6 +393,7 @@ pub fn CreateIoCompletionPort(
 pub use bun_windows_sys::externs::BY_HANDLE_FILE_INFORMATION;
 pub use bun_windows_sys::externs::CreateFileW;
 pub use bun_windows_sys::externs::FILE_FLAG_BACKUP_SEMANTICS;
+pub use bun_windows_sys::externs::FILE_FLAG_OPEN_REPARSE_POINT;
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
 pub use bun_windows_sys::externs::GetFileInformationByHandle;
 pub use bun_windows_sys::externs::OPEN_EXISTING;
@@ -551,6 +552,57 @@ pub fn CreateHardLinkW(
 }
 
 pub use bun_windows_sys::externs::CopyFileW;
+
+pub use bun_windows_sys::externs::{
+    FILE_ATTRIBUTE_TAG_INFORMATION, IO_REPARSE_TAG_APPEXECLINK, is_reparse_tag_name_surrogate,
+};
+
+/// Attributes and reparse tag of the entry at `path` itself. A reparse point is
+/// opened rather than followed, so this works whatever its tag is, and the
+/// path goes through the same Win32 parsing as `GetFileAttributesW` /
+/// `CopyFileW` (a trailing separator is fine, unlike with `FindFirstFileW`).
+/// `None` when the entry cannot be opened.
+pub fn query_attribute_tag(path: &bun_core::WStr) -> Option<FILE_ATTRIBUTE_TAG_INFORMATION> {
+    // Zero access: attribute queries need none, and a handle without access
+    // bits is exempt from other openers' share modes.
+    // SAFETY: `path` is NUL-terminated (`WStr` invariant); null security
+    // attributes and template handle are allowed.
+    let handle = unsafe {
+        CreateFileW(
+            path.as_ptr(),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            ptr::null_mut(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return None;
+    }
+    // SAFETY: `handle` was just returned by `CreateFileW` and is closed once.
+    let _close = scopeguard::guard(handle, |h| unsafe {
+        let _ = externs::CloseHandle(h);
+    });
+    let mut io: IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+    let mut info = FILE_ATTRIBUTE_TAG_INFORMATION {
+        FileAttributes: 0,
+        ReparseTag: 0,
+    };
+    // SAFETY: `handle` is open; `io` and `info` are valid for writes of the
+    // sizes passed for the duration of the call.
+    let rc = unsafe {
+        ntdll::NtQueryInformationFile(
+            handle,
+            &mut io,
+            ptr::from_mut(&mut info).cast::<c_void>(),
+            size_of::<FILE_ATTRIBUTE_TAG_INFORMATION>() as ULONG,
+            windows::FileInformationClass::FileAttributeTagInformation,
+        )
+    };
+    NT_SUCCESS(rc).then_some(info)
+}
 
 pub use bun_windows_sys::externs::SetFileInformationByHandle;
 

@@ -1823,9 +1823,8 @@ mod _async_tasks {
                     }));
                     return;
                 }
-                let file_or_symlink = (attributes & bun_sys::c::FILE_ATTRIBUTE_DIRECTORY) == 0
-                    || (attributes & bun_sys::c::FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-                if file_or_symlink {
+                let kind = CpEntryKind::classify(src, attributes);
+                if kind != CpEntryKind::Directory {
                     let r = nodefs.copy_single_file_sync(
                         src,
                         dest,
@@ -1849,7 +1848,7 @@ mod _async_tasks {
                                 },
                             )
                         },
-                        Some(attributes),
+                        Some(kind),
                         &this.args,
                     );
                     if let Err(e) = &r {
@@ -2065,7 +2064,28 @@ mod _async_tasks {
                     return false;
                 }
 
-                match current.kind {
+                // The iterator reports every reparse point as `SymLink`; a
+                // non-link reparse directory (see `CpEntryKind`) is walked.
+                #[cfg(windows)]
+                let kind = match current.kind {
+                    crate::node::dirent::Kind::SymLink => {
+                        let sd = src_dir_len as usize;
+                        src_buf[sd + 1..sd + 1 + cname.len()].copy_from_slice(cname);
+                        src_buf[sd] = paths::SEP as OSPathChar;
+                        src_buf[sd + 1 + cname.len()] = 0;
+                        let child = OSPathSliceZ::from_buf(&src_buf[..], sd + 1 + cname.len());
+                        if CpEntryKind::reparse_entry_is_directory(child) {
+                            crate::node::dirent::Kind::Directory
+                        } else {
+                            current.kind
+                        }
+                    }
+                    kind => kind,
+                };
+                #[cfg(not(windows))]
+                let kind = current.kind;
+
+                match kind {
                     crate::node::dirent::Kind::Directory => {
                         let sd = src_dir_len as usize;
                         let dd = dest_dir_len as usize;
@@ -4573,6 +4593,63 @@ pub mod ret {
     pub(crate) type Chown = ();
     pub(crate) type Lutimes = ();
     pub(crate) type Writev = Write;
+}
+
+/// What the Windows `cp` paths (`cp_sync_inner`, `NewAsyncCpTask`,
+/// `copy_single_file_sync`) are copying. `FILE_ATTRIBUTE_REPARSE_POINT` alone
+/// does not make an entry a link: an entry is a link when `lstat` would report
+/// one, i.e. its reparse tag is a name surrogate (symlink, junction) or an
+/// app-exec link. Every other reparse point (cloud-file placeholder,
+/// deduplicated or projected file, ...) is an ordinary file or directory whose
+/// filter driver serves its contents through a normal open, so `CopyFileW`
+/// copies it and a directory walk descends into it.
+#[cfg(windows)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CpEntryKind {
+    File,
+    Directory,
+    Link { is_dir: bool },
+}
+
+#[cfg(windows)]
+impl CpEntryKind {
+    fn from_attribute_tag(attributes: windows::DWORD, reparse_tag: windows::DWORD) -> Self {
+        let is_dir = attributes & sys::c::FILE_ATTRIBUTE_DIRECTORY != 0;
+        if attributes & sys::c::FILE_ATTRIBUTE_REPARSE_POINT != 0
+            && (windows::is_reparse_tag_name_surrogate(reparse_tag)
+                || reparse_tag == windows::IO_REPARSE_TAG_APPEXECLINK)
+        {
+            Self::Link { is_dir }
+        } else if is_dir {
+            Self::Directory
+        } else {
+            Self::File
+        }
+    }
+
+    /// `attributes` is the `GetFileAttributesW` result for `src`. Only a
+    /// reparse point needs the extra lookup of its tag; one that cannot even be
+    /// opened for that stays a link, so the link branch reports the error.
+    pub(crate) fn classify(src: &OSPathSliceZ, attributes: windows::DWORD) -> Self {
+        if attributes & sys::c::FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+            return Self::from_attribute_tag(attributes, 0);
+        }
+        match windows::query_attribute_tag(src) {
+            Some(info) => Self::from_attribute_tag(info.FileAttributes, info.ReparseTag),
+            None => Self::Link {
+                is_dir: attributes & sys::c::FILE_ATTRIBUTE_DIRECTORY != 0,
+            },
+        }
+    }
+
+    /// For an entry the directory iterator reported as `SymLink`, which on
+    /// Windows only means the reparse-point attribute is set: does the copy
+    /// have to descend into it instead of copying it as a single entry?
+    pub(crate) fn reparse_entry_is_directory(src: &OSPathSliceZ) -> bool {
+        windows::query_attribute_tag(src).is_some_and(|info| {
+            Self::from_attribute_tag(info.FileAttributes, info.ReparseTag) == Self::Directory
+        })
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -8272,9 +8349,8 @@ impl NodeFS {
                     ..Default::default()
                 });
             }
-            if attributes & sys::c::FILE_ATTRIBUTE_DIRECTORY == 0
-                || attributes & sys::c::FILE_ATTRIBUTE_REPARSE_POINT != 0
-            {
+            let kind = CpEntryKind::classify(src, attributes);
+            if kind != CpEntryKind::Directory {
                 let r = self.copy_single_file_sync(
                     src,
                     dest,
@@ -8283,7 +8359,7 @@ impl NodeFS {
                     } else {
                         0i32
                     }),
-                    Some(attributes),
+                    Some(kind),
                     args,
                 );
                 if let Err(ref e) = r {
@@ -8415,7 +8491,22 @@ impl NodeFS {
             dest_buf[dd] = paths::SEP as OSPathChar;
             dest_buf[dd + 1 + name_slice.len()] = 0;
 
-            match current.kind {
+            // The iterator reports every reparse point as `SymLink`; a non-link
+            // reparse directory (see `CpEntryKind`) is walked.
+            #[cfg(windows)]
+            let kind = if current.kind == sys::FileKind::SymLink
+                && CpEntryKind::reparse_entry_is_directory(OSPathSliceZ::from_buf(
+                    &src_buf[..],
+                    sd + 1 + name_slice.len(),
+                )) {
+                sys::FileKind::Directory
+            } else {
+                current.kind
+            };
+            #[cfg(not(windows))]
+            let kind = current.kind;
+
+            match kind {
                 sys::FileKind::Directory => {
                     let r = self.cp_sync_inner(
                         src_buf,
@@ -8545,8 +8636,8 @@ impl NodeFS {
         src: &OSPathSliceZ,
         dest: &OSPathSliceZ,
         mode: constants::Copyfile,
-        // Stat on posix, file attributes on windows
-        #[cfg(windows)] reuse_stat: Option<windows::DWORD>,
+        // Stat on posix, the already classified entry on windows
+        #[cfg(windows)] reuse_stat: Option<CpEntryKind>,
         #[cfg(not(windows))] reuse_stat: Option<&sys::Stat>,
         args: &args::Cp,
     ) -> Maybe<ret::CopyFile> {
@@ -9008,8 +9099,8 @@ impl NodeFS {
                 sys::Tag::copyfile,
                 self.os_path_into_sync_error_buf(dest.as_slice()),
             );
-            let stat_ = match reuse_stat {
-                Some(a) => a,
+            let kind = match reuse_stat {
+                Some(kind) => kind,
                 None => {
                     let a = unsafe { sys::c::GetFileAttributesW(src.as_ptr()) };
                     if a == sys::c::INVALID_FILE_ATTRIBUTES {
@@ -9022,10 +9113,10 @@ impl NodeFS {
                         return Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, p)
                             .unwrap_or(src_enoent_maybe);
                     }
-                    a
+                    CpEntryKind::classify(src, a)
                 }
             };
-            if stat_ & sys::c::FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+            if !matches!(kind, CpEntryKind::Link { .. }) {
                 if unsafe {
                     sys::c::CopyFileW(
                         src.as_ptr(),
@@ -9098,7 +9189,7 @@ impl NodeFS {
                 } else {
                     bun_core::WStr::from_buf(&wbuf[..], len)
                 };
-                let is_dir = stat_ & windows::FILE_ATTRIBUTE_DIRECTORY != 0;
+                let is_dir = matches!(kind, CpEntryKind::Link { is_dir: true });
                 // `symlink_w`/`symlink_or_junction` (not raw `CreateSymbolicLinkW`)
                 // so unprivileged creation is requested. UNC targets skip the junction
                 // fallback: libuv's `fs__create_junction` only accepts drive-letter targets.

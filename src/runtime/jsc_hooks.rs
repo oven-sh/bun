@@ -2845,10 +2845,8 @@ fn transpile_source_code_inner(
                     return Err(crate::Error::ParseError);
                 }
 
-                // `has_loaded` gates every later module request (concurrent transpile
-                // dispatch, `require.extensions`, unknown-extension loaders), so set it on
-                // every path producing the entry's source, not only the printed one.
-                // Print-only fetches are excluded; they never load a module.
+                // Set before the early returns below (cache hit, `// @bun`, async queue):
+                // every later module load is gated on this flag.
                 if is_main && !disable_transpilying {
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     unsafe { (*jsc_vm).has_loaded = true };

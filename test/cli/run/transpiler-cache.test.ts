@@ -258,7 +258,7 @@ describe("transpiler cache", () => {
     // eligible for the cache at all.
     const filler = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
 
-    test("require.extensions is still consulted", () => {
+    test("require.extensions is still consulted", async () => {
       writeFileSync(
         join(temp_dir, "entry.js"),
         `require.extensions[".data"] = (module, filename) => {
@@ -269,16 +269,14 @@ describe("transpiler cache", () => {
       // If the custom loader is skipped, this is transpiled as JS/TS instead.
       writeFileSync(join(temp_dir, "asset.data"), `module.exports = "default-loader";`);
 
-      const a = bunRun(join(temp_dir, "entry.js"), env);
-      expect(a.stdout).toBe("custom-loader");
+      expect(await bunRun(join(temp_dir, "entry.js"), env)).toSpawn("custom-loader");
       expect(newCacheCount()).toBe(1);
 
-      const b = bunRun(join(temp_dir, "entry.js"), env);
-      expect(b.stdout).toBe("custom-loader");
+      expect(await bunRun(join(temp_dir, "entry.js"), env)).toSpawn("custom-loader");
       expect(newCacheCount()).toBe(0);
     });
 
-    test("unknown extensions still use the file loader", () => {
+    test("unknown extensions still use the file loader", async () => {
       writeFileSync(
         join(temp_dir, "entry.mjs"),
         `import asset from "./asset.someext";
@@ -287,12 +285,10 @@ describe("transpiler cache", () => {
       // Not valid JS/TS, so a non-file loader fails the run outright.
       writeFileSync(join(temp_dir, "asset.someext"), `hello world contents\n`);
 
-      const a = bunRun(join(temp_dir, "entry.mjs"), env);
-      expect(a.stdout).toBe("file-loader");
+      expect(await bunRun(join(temp_dir, "entry.mjs"), env)).toSpawn("file-loader");
       expect(newCacheCount()).toBe(1);
 
-      const b = bunRun(join(temp_dir, "entry.mjs"), env);
-      expect(b.stdout).toBe("file-loader");
+      expect(await bunRun(join(temp_dir, "entry.mjs"), env)).toSpawn("file-loader");
       expect(newCacheCount()).toBe(0);
     });
   });

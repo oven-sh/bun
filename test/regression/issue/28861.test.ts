@@ -12,79 +12,21 @@ function filterStderr(s: string): string {
 }
 
 describe.skipIf(isWindows).concurrent("issue/28861", () => {
-  test("new Worker() rejects file:// URLs with a non-localhost host", async () => {
+  test.each([
+    ["a relative-looking host", `new Worker("file://./worker_source.mjs", { type: "module" })`],
+    ["an example.com host", `new Worker("file://example.com/worker_source.mjs", { type: "module" })`],
+    [
+      "a preload option host",
+      `new Worker("file:///nonexistent_worker_12345.mjs", { type: "module", preload: ["file://example.com/preload.mjs"] })`,
+    ],
+  ])("new Worker() rejects a file:// URL with %s", async (_title, construct) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
         try {
-          new Worker("file://./worker_source.mjs", { type: "module" });
-          console.log("NO_THROW");
-        } catch (e) {
-          console.log(JSON.stringify({ name: e.name, message: e.message, code: e.code }));
-        }
-      `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    const platform = process.platform === "darwin" ? "darwin" : "linux";
-    expect(filterStderr(stderr)).toBe("");
-    expect(JSON.parse(stdout.trim())).toEqual({
-      name: "TypeError",
-      message: `File URL host must be "localhost" or empty on ${platform}`,
-      code: "ERR_INVALID_FILE_URL_HOST",
-    });
-    expect(exitCode).toBe(0);
-  });
-
-  test('new Worker() rejects file:// URLs with a host like "example.com"', async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        try {
-          new Worker("file://example.com/worker_source.mjs", { type: "module" });
-          console.log("NO_THROW");
-        } catch (e) {
-          console.log(JSON.stringify({ name: e.name, message: e.message, code: e.code }));
-        }
-      `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    const platform = process.platform === "darwin" ? "darwin" : "linux";
-    expect(filterStderr(stderr)).toBe("");
-    expect(JSON.parse(stdout.trim())).toEqual({
-      name: "TypeError",
-      message: `File URL host must be "localhost" or empty on ${platform}`,
-      code: "ERR_INVALID_FILE_URL_HOST",
-    });
-    expect(exitCode).toBe(0);
-  });
-
-  test("new Worker() rejects file:// URLs in the preload option with a non-localhost host", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        try {
-          new Worker("file:///nonexistent_worker_12345.mjs", {
-            type: "module",
-            preload: ["file://example.com/preload.mjs"],
-          });
+          ${construct};
           console.log("NO_THROW");
         } catch (e) {
           console.log(JSON.stringify({ name: e.name, message: e.message, code: e.code }));

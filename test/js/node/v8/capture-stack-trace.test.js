@@ -993,7 +993,7 @@ test("captureStackTrace does not crash when stackTraceLimit is non-numeric", () 
   }
 });
 
-test("Error.appendStackTrace moves the source's frames into the destination", () => {
+test("Error.appendStackTrace moves the source's frames behind the destination's own", () => {
   function inner() {
     try {
       null();
@@ -1001,14 +1001,27 @@ test("Error.appendStackTrace moves the source's frames into the destination", ()
       return e;
     }
   }
+  function makeDestination() {
+    const error = new Error("destination");
+    error.name = "DestinationError";
+    return error;
+  }
   const source = inner();
-  const destination = new Error("destination");
+  const destination = makeDestination();
   Error.appendStackTrace(source, destination);
-  expect(destination.stack).toContain("at inner");
+
+  const lines = destination.stack.split("\n");
+  const destinationFrame = lines.findIndex(line => line.includes("at makeDestination"));
+  const sourceFrame = lines.findIndex(line => line.includes("at inner"));
+  expect(lines[0]).toBe("DestinationError: destination");
+  expect(destinationFrame).toBeGreaterThan(0);
+  expect(sourceFrame).toBeGreaterThan(destinationFrame);
+  // The frames are moved, not copied: the source has none left.
+  expect(source.stack).toBeUndefined();
 });
 
-// The rest of these abort the process (or trip ASAN) when they fail, so each
-// runs its scenario in a child.
+// The rest of these can abort the process (or trip ASAN) when they fail, so
+// each runs its scenario in a child.
 test.concurrent("Error.appendStackTrace does not abort when stackTraceLimit is non-numeric or deleted", async () => {
   const src = `
     class Source {
@@ -1041,15 +1054,37 @@ test.concurrent("Error.appendStackTrace does not abort when stackTraceLimit is n
 });
 
 test.concurrent("Error.appendStackTrace is a no-op once the destination's .stack has been materialized", async () => {
+  // Without the guard, release builds install new frames on the destination
+  // (so the native printer shows the appendStackTrace call site instead of the
+  // frames .stack reports) and empty the source; debug builds also assert when
+  // GC finalizes the destination, which is what the new Function sources and
+  // the Bun.gc() calls provoke.
   const src = `
-    const destination = new Error("destination");
-    const stack = destination.stack;
-    for (let i = 0; i < 100; i++) {
-      Error.appendStackTrace(new Function("return new Error('source')")(), destination);
+    function makeDestination() {
+      const error = new Error("destination");
+      error.stack;
+      return error;
     }
+    function appendAll(destination) {
+      let source;
+      for (let i = 0; i < 100; i++) {
+        source = new Function("return new Error('source')")();
+        Error.appendStackTrace(source, destination);
+      }
+      return source;
+    }
+    const destination = makeDestination();
+    const stack = destination.stack;
+    const lastSource = appendAll(destination);
+    const printed = Bun.inspect(destination);
     Bun.gc(true);
     Bun.gc(true);
-    process.stdout.write(JSON.stringify({ unchanged: destination.stack === stack }));
+    process.stdout.write(JSON.stringify({
+      unchanged: destination.stack === stack,
+      printedOwnFrame: printed.includes("at makeDestination"),
+      printedAppendFrame: printed.includes("at appendAll"),
+      sourceIntact: typeof lastSource.stack === "string",
+    }));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", src],
@@ -1058,7 +1093,7 @@ test.concurrent("Error.appendStackTrace is a no-op once the destination's .stack
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: JSON.stringify({ unchanged: true }),
+    stdout: JSON.stringify({ unchanged: true, printedOwnFrame: true, printedAppendFrame: false, sourceIntact: true }),
     stderr: "",
     exitCode: 0,
   });
@@ -1071,8 +1106,11 @@ test.concurrent(
     // .column, .sourceURL) discards the native frames. The errors are created
     // inside eval'd functions so that each iteration's frames point at code GC
     // can reclaim, which is what makes finalizeUnconditionally look at them.
+    // The unmaterialized sources (c) keeping their frames is the part release
+    // builds can observe.
     const src = `
       const keep = [];
+      const sources = [];
       for (let i = 0; i < 200; i++) {
         eval(\`(function inner\${i}() {
           const a = new Error();
@@ -1085,12 +1123,13 @@ test.concurrent(
           const d = new Error();
           d.sourceURL;
           Error.appendStackTrace(c, d);
-          keep.push(c, d);
+          keep.push(d);
+          sources.push(c);
         })();\`);
       }
       Bun.gc(true);
       Bun.gc(true);
-      process.stdout.write("ok");
+      process.stdout.write(JSON.stringify({ sourcesIntact: sources.every(error => typeof error.stack === "string") }));
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", src],
@@ -1098,7 +1137,11 @@ test.concurrent(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ sourcesIntact: true }),
+      stderr: "",
+      exitCode: 0,
+    });
   },
 );
 

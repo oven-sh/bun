@@ -5354,13 +5354,8 @@ describe("await using lowering", () => {
   });
 
   it("files lowered by older versions of Bun still dispose through the current bun:wrap", async () => {
-    // What Bun used to emit for:
-    //
-    //   await using a = resource("a");
-    //   await using b = resource("b");
-    //   throw new Error("body");
-    //
-    // It awaits whatever __callDispose returns instead of stepping through it.
+    // The shape older versions emitted for two `await using` declarations followed by a
+    // throw: it awaits whatever __callDispose returns instead of stepping through it.
     using dir = tempDir("await-using-old-lowering", {
       "old.mjs": `
         import { __using, __callDispose } from "bun:wrap";

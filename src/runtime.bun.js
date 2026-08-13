@@ -1,8 +1,6 @@
 export * from "./runtime";
 
-// Duplicates RUNTIME_USING_BUN in src/bundler/ParseTask.rs, which documents the
-// protocol between __callDispose and the code the parser generates around it.
-// Keep the two in sync; the only intended difference is `next.then` below.
+// Same as RUNTIME_USING_BUN in src/bundler/ParseTask.rs (keep in sync), plus `next.then` below.
 export var __using = (stack, value, async) => {
   if (value != null) {
     if (typeof value !== "object" && typeof value !== "function")
@@ -66,11 +64,8 @@ export var __callDispose = (stack, error, hasError) => {
     (error = hasError
       ? new SuppressedError(e, error, "An error was suppressed during disposal")
       : ((hasError = true), e));
-  // Files transpiled by older versions of Bun import this module too, and their
-  // generated code is `_promise && await _promise`, so the stepper also has to
-  // be awaitable: `then` drives the remaining steps through a promise chain.
-  // The bundler's copies don't need this; a bundle always carries the helper
-  // matching its own generated code.
+  // Files lowered by older versions of Bun do `_promise && await _promise` on the
+  // return value, so the stepper is also awaitable and `then` drives the rest itself.
   let drive = () =>
     Promise.resolve(next.result).then(
       () => next() && drive(),

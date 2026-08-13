@@ -9112,21 +9112,9 @@ impl LowerUsingDeclarationsContext {
         };
 
         let finally_stmts: &'a mut [Stmt] = if self.has_await_using {
-            // `__callDispose` (see RUNTIME_USING_OTHER in bundler/ParseTask.rs)
-            // returns a stepper each time the spec would await something, so
-            // the awaits happen here in the user's async function and the block
-            // exits on the same microtask tick as a native `await using` would:
-            //
-            //   for (var _dispose = __callDispose(stack, error, hasError); _dispose; _dispose = _dispose())
-            //     try {
-            //       await _dispose.result;
-            //     } catch (_reason) {
-            //       _dispose.fail(_reason);
-            //     }
-            //
-            // If nothing needs awaiting (e.g. an error was thrown before the
-            // `await using`), `__callDispose` returns undefined and the loop body
-            // never runs, so no await happens at all.
+            // for (var _dispose = __callDispose(stack, error, hasError); _dispose; _dispose = _dispose())
+            //   try { await _dispose.result } catch (_reason) { _dispose.fail(_reason) }
+            // Awaiting here instead of inside the helper keeps the tick count identical to native code.
             let dispose_ref = p.generate_temp_ref(Some(b"_dispose"));
             let reason_ref = p.generate_temp_ref(Some(b"_reason"));
             scope.generated.append_slice(&[dispose_ref, reason_ref]);

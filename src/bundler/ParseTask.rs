@@ -419,27 +419,9 @@ export var __require = /* @__PURE__ */ (x =>
 // Bun's WebKit also has Symbol.asyncDispose, Symbol.dispose, and
 // SuppressedError, so no polyfills are needed.
 //
-// Keep these in sync with `__using` / `__callDispose` in `src/runtime.bun.js`
-// (the copies behind `bun:wrap`, which additionally stay awaitable for files
-// transpiled by older versions of Bun) and with the statements
-// `LowerUsingDeclarationsContext::finalize` in `js_parser/p.rs` generates
-// around them.
-//
-// `__using` mirrors the spec's CreateDisposableResource: an `await using` of
-// a value that only has `Symbol.dispose` gets a wrapper whose return value is
-// ignored and whose throw turns into a rejection, like the spec's synthesized
-// async dispose method.
-//
-// `__callDispose` mirrors DisposeResources, with one difference: it cannot
-// await. Each time the spec would perform an Await it returns `next`, with
-// `next.result` set to the value the spec would await, and the generated code
-// awaits that value itself, then calls `next.fail(reason)` if it rejected and
-// `next()` to keep going. The awaits therefore run in the user's own async
-// function and take exactly as many microtask ticks as native `await using`
-// does; routing them through a promise chain inside the helper would add a
-// tick per resource. When nothing is left to await, `next()` returns
-// undefined, or throws the (possibly Suppressed) error. For plain `using` the
-// whole thing runs synchronously and the return value is ignored.
+// Keep in sync with src/runtime.bun.js and the loop `LowerUsingDeclarationsContext::finalize` emits:
+// wherever DisposeResources would await, `__callDispose` returns `next` with `next.result` to await;
+// the generated code then calls `next.fail(reason)` on rejection and `next()` to continue.
 const RUNTIME_USING_BUN: &str = "\
 export var __using = (stack, value, async) => {
   if (value != null) {

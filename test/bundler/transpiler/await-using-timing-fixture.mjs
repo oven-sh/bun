@@ -1,7 +1,6 @@
-// Prints one line per scenario describing when each dispose call, block exit,
-// and error happened, measured in microtask ticks. transpiler.test.js runs this
-// file natively and again after lowering `using` / `await using`, and expects
-// the output to be identical.
+// Prints one line per scenario saying on which microtask tick each dispose call, block
+// exit, and error happened. transpiler.test.js runs this file natively and again with
+// `using` / `await using` lowered, and expects identical output.
 
 let tick = 0;
 const lines = [];

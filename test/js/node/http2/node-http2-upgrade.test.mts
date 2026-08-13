@@ -504,6 +504,47 @@ describe("HTTP/2 upgrade — server TLS options", () => {
       netServer.close();
     }
   });
+
+  test("unusable credentials are the server's error, and the injected connection is closed", async () => {
+    // Node rejects the key inside createSecureServer(). Bun builds the
+    // credentials on first use, which for a server that never listens is the
+    // first injected connection, and then reports the failure the way
+    // tls.Server does for server.emit('connection'): on the server's 'error'
+    // event, with the connection closed quietly. In neither runtime is the
+    // injected socket, which nothing listens to, where the error surfaces.
+    let h2Server: http2.Http2SecureServer;
+    try {
+      h2Server = http2.createSecureServer({ key: "not a key", cert: "not a cert" });
+    } catch (err) {
+      assert.strictEqual((err as NodeJS.ErrnoException).code, "ERR_OSSL_PEM_NO_START_LINE");
+      return;
+    }
+    const surfaced = Promise.withResolvers<NodeJS.ErrnoException>();
+    h2Server.on("error", surfaced.resolve);
+
+    let rawSocket: net.Socket | undefined;
+    let emitReturned: boolean | undefined;
+    const netServer = net.createServer(socket => {
+      rawSocket = socket;
+      emitReturned = h2Server.emit("connection", socket);
+    });
+    const port = await new Promise<number>(resolve => {
+      netServer.listen(0, "127.0.0.1", () => resolve((netServer.address() as net.AddressInfo).port));
+    });
+
+    const client = net.connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    try {
+      const err = await surfaced.promise;
+      assert.deepStrictEqual(
+        { code: err.code, emitReturned, rawDestroyed: rawSocket!.destroyed },
+        { code: "ERR_OSSL_PEM_NO_START_LINE", emitReturned: true, rawDestroyed: true },
+      );
+    } finally {
+      client.destroy();
+      netServer.close();
+    }
+  });
 });
 
 if (typeof Bun !== "undefined") {

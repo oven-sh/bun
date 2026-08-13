@@ -386,8 +386,14 @@ function upgradeRawSocketToH2(
       data: {},
     });
   } catch (e) {
-    rawSocket.destroy(e as Error);
-    tlsSocket.destroy(e as Error);
+    // The credentials are built on first use, so a bad key/cert is detected
+    // here, on the first injected connection. Report it the way tls.Server's
+    // own connection listener does, on the server's 'error' event; nothing
+    // listens on rawSocket yet, so an error handed to its destroy() would be
+    // an uncaught exception.
+    rawSocket.destroy();
+    tlsSocket.destroy();
+    server.emit("error", e);
     return true;
   }
 

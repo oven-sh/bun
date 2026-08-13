@@ -655,8 +655,6 @@ void evaluateCommonJSCustomExtension(
     RETURN_IF_EXCEPTION(scope, );
 }
 
-// provideFetch() ignores an entry the import graph is already fetching, so settle that entry's
-// fetch promise directly; the transpiler thread's result later finds it settled and is dropped.
 static void provideFetchForSyncLoad(Zig::GlobalObject* globalObject, const WTF::String& specifier, JSC::JSSourceCode* jsSourceCode)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -672,7 +670,8 @@ static void provideFetchForSyncLoad(Zig::GlobalObject* globalObject, const WTF::
     entry->ensureModulePromise(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
     JSC::JSPromise* fetchPromise = entry->ensureFetchPromise(globalObject);
-    // fulfillPromise, not fulfill(): pipeFrom() already claimed this promise's resolving functions.
+    // fulfillPromise, not fulfill(): pipeFrom() already claimed this promise for the transpiler
+    // thread's result, which will find it settled and be dropped.
     if (fetchPromise->status() == JSC::JSPromise::Status::Pending)
         fetchPromise->fulfillPromise(vm, jsSourceCode);
 }

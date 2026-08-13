@@ -1600,17 +1600,17 @@ describe("node:vm SourceTextModule identifier and lineOffset/columnOffset", () =
       expect(topFrame(thrownBy(() => m.namespace.onLine1())).url).toBe("negative.mjs");
     }
 
-    // The native binding relies on vm.ts validating the range and integrality.
-    for (const value of [1.5, 2 ** 31, -(2 ** 31) - 1]) {
-      expect(() => new SourceTextModule(source, { lineOffset: value })).toThrow(
-        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
-      );
-      expect(() => new SourceTextModule(source, { columnOffset: value })).toThrow(
-        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+    // The native binding reads the offsets with ToInt32 and relies on vm.ts
+    // having rejected everything that is not an int32 (Node's validateInt32).
+    for (const option of ["lineOffset", "columnOffset"] as const) {
+      for (const value of [1.5, NaN, Infinity, -Infinity, 2 ** 31, -(2 ** 31) - 1]) {
+        expect(() => new SourceTextModule(source, { [option]: value })).toThrow(
+          expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+        );
+      }
+      expect(() => new SourceTextModule(source, { [option]: "1" as any })).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
       );
     }
-    expect(() => new SourceTextModule(source, { lineOffset: "1" as any })).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-    );
   });
 });

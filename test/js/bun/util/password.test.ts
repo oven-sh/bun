@@ -504,6 +504,27 @@ test("verify rejects encoded argon2 hashes with cost parameters above the suppor
   await expect(password.verify("correct horse", junkMemory)).rejects.toThrow("InvalidEncoding");
 });
 
+test("verify's rejection has a .stack even when nothing awaits it", async () => {
+  // The error is created once the thread pool job completes, with no JS on the stack, and
+  // .then() leaves no await chain to recover frames from.
+  const err = await new Promise<any>(resolve => password.verify("correct horse", "not a hash").then(resolve, resolve));
+
+  expect(err.code).toBe("PASSWORD_UNSUPPORTED_ALGORITHM");
+  expect(err.stack).toBe(`${err.name}: ${err.message}`);
+});
+
+test("verify's rejection lists the async frame when awaited inside an async function", async () => {
+  async function check() {
+    await password.verify("correct horse", "not a hash");
+  }
+  const err = await check().then(
+    () => new Error("unexpected resolve"),
+    e => e,
+  );
+
+  expect(err.stack).toStartWith(`${err.name}: ${err.message}\n    at async check `);
+});
+
 test("verifySync reads the password buffer only after every argument has been coerced", () => {
   const hashed = password.hashSync("correct horse", { algorithm: "argon2id", memoryCost: 8, timeCost: 1 });
   const passwordBytes = new TextEncoder().encode("correct horse");

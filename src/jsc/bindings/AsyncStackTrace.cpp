@@ -4,6 +4,7 @@
 
 #include "BunClientData.h"
 #include "ErrorStackFrame.h"
+#include "FormatStackTraceForJS.h"
 
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/ErrorInstance.h>
@@ -166,13 +167,16 @@ extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObje
         return;
 
     size_t limit = globalObject->stackTraceLimit().value_or(10);
-    if (!limit)
-        return;
+    if (limit) {
+        WTF::Vector<JSC::StackFrame> frames;
+        collectAsyncStackFramesFromPromise(vm, instance, promise, frames, limit);
+        if (!frames.isEmpty()) {
+            instance->setStackFrames(vm, WTF::move(frames));
+            return;
+        }
+    }
 
-    WTF::Vector<JSC::StackFrame> frames;
-    collectAsyncStackFramesFromPromise(vm, instance, promise, frames, limit);
-    if (frames.isEmpty())
-        return;
-
-    instance->setStackFrames(vm, WTF::move(frames));
+    // Nothing was awaiting the promise (consumed via .then()/.catch(), a combinator, or
+    // top-level await), so the error keeps its empty trace; still give it a .stack.
+    Bun::installLazyStackIfFrameless(vm, globalObject, instance);
 }

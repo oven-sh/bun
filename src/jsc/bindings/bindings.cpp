@@ -171,6 +171,7 @@
 #include "ErrorStackFrame.h"
 #include "AsyncStackTrace.h"
 #include "ErrorStackTrace.h"
+#include "FormatStackTraceForJS.h"
 #include "ObjectBindings.h"
 
 #include <JavaScriptCore/VMInlines.h>
@@ -2583,6 +2584,9 @@ static JSC::EncodedJSValue systemErrorToErrorInstance(const SystemError* arg0, J
     auto& names = WebCore::builtinNames(vm);
 
     JSC::JSObject* result = createError(globalObject, errorType, message);
+    // Most of these are created once an fs/dns/socket/fetch operation completes, while no JS
+    // is running, which would otherwise leave them with no .stack at all.
+    Bun::installLazyStackIfFrameless(vm, globalObject, uncheckedDowncast<JSC::ErrorInstance>(result));
 
     auto clientData = WebCore::clientData(vm);
 

@@ -756,6 +756,24 @@ JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * g
     return true;
 }
 
+void installLazyStackIfFrameless(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::ErrorInstance* error)
+{
+    // ErrorInstance::materializeErrorInfoIfNeeded only defines .stack when the captured
+    // trace has at least one frame; an error created from native code while no JS is
+    // running captures none. V8 still gives such an error its "Name: message" line. A null
+    // trace means Error.stackTraceLimit was deleted, which leaves .stack undefined in V8 too.
+    auto* stackTrace = error->stackTrace();
+    if (!stackTrace || !stackTrace->isEmpty())
+        return;
+
+    // Already installed, or .stack was assigned explicitly.
+    if (error->getDirect(vm, vm.propertyNames->stack))
+        return;
+
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    error->putDirectCustomAccessor(vm, vm.propertyNames->stack, globalObject->m_lazyStackCustomGetterSetter.get(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor | 0);
+}
+
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);

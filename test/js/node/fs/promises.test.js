@@ -259,8 +259,8 @@ test("fs.promises async stack through Promise subclass", async () => {
 
   expect(caught).toBeDefined();
   expect(caught.code).toBe("ENOENT");
-  // Subclass .then() may not preserve the reaction chain — must not crash.
-  expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
+  // Subclass .then() may not preserve the reaction chain; the error still gets a .stack.
+  expect(caught.stack).toStartWith(`Error: ${caught.message}`);
 });
 
 test("fs.promises async stack through custom thenable", async () => {
@@ -282,8 +282,8 @@ test("fs.promises async stack through custom thenable", async () => {
 
   expect(caught).toBeDefined();
   expect(caught.code).toBe("ENOENT");
-  // Custom thenables break the direct reaction chain — must not crash.
-  expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
+  // Custom thenables break the direct reaction chain; the error still gets a .stack.
+  expect(caught.stack).toStartWith(`Error: ${caught.message}`);
 });
 
 test("fs.promises async stack with Promise.all", async () => {
@@ -300,8 +300,20 @@ test("fs.promises async stack with Promise.all", async () => {
 
   expect(caught).toBeDefined();
   expect(caught.code).toBe("ENOENT");
-  // Promise.all uses combinator context — must not crash.
-  expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
+  // Promise.all uses combinator context, so no async frames are recovered; the error
+  // still gets a .stack.
+  expect(caught.stack).toStartWith(`Error: ${caught.message}`);
+});
+
+test("fs.promises errors that nothing awaits still have a .stack", async () => {
+  // .catch() attaches a handler but nothing awaits the derived promise, so there is no
+  // async chain to recover frames from: the error keeps an empty trace.
+  const caught = await new Promise(resolve => readFile("/nonexistent-path/x.txt").catch(resolve));
+
+  expect(caught.code).toBe("ENOENT");
+  expect(caught.stack).toBe(`Error: ${caught.message}`);
+  expect(Object.prototype.hasOwnProperty.call(caught, "stack")).toBe(true);
+  expect(Object.keys(caught)).not.toContain("stack");
 });
 
 it("an unused FileHandle.writer() does not prevent close()", async () => {

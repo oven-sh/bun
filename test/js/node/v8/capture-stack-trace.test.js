@@ -1,7 +1,10 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
-import { afterEach, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { once } from "node:events";
+import fs from "node:fs";
+import net from "node:net";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -1120,4 +1123,147 @@ test("lazy error-info materialization does not store an empty stack value when t
     signalCode: null,
   });
   expect(exitCode).toBe(0);
+});
+
+describe("errors created by native code while no JS is running", () => {
+  // fs callbacks run from the event loop, so the ENOENT error is built with no JS frames
+  // on the stack and JSC captures an empty trace for it.
+  async function framelessError() {
+    using dir = tempDir("frameless-error", {});
+    const { promise, resolve } = Promise.withResolvers();
+    fs.readFile(join(String(dir), "missing.txt"), resolve);
+    const err = await promise;
+    expect(err.code).toBe("ENOENT");
+    return err;
+  }
+
+  test("have an own, non-enumerable .stack holding the 'name: message' line", async () => {
+    const err = await framelessError();
+    expect(Object.getOwnPropertyDescriptor(err, "stack")).toMatchObject({ enumerable: false, configurable: true });
+    expect(Object.keys(err)).not.toContain("stack");
+    expect(err.stack).toBe(`Error: ${err.message}`);
+    expect(Object.getOwnPropertyDescriptor(err, "stack")).toMatchObject({
+      value: `Error: ${err.message}`,
+      writable: true,
+      enumerable: false,
+    });
+  });
+
+  test(".stack is formatted on first read, like an error with frames", async () => {
+    const err = await framelessError();
+    err.name = "Renamed";
+    err.message = "changed";
+    expect(err.stack).toBe("Renamed: changed");
+  });
+
+  test("Error.prepareStackTrace runs on first read and receives no call sites", async () => {
+    const err = await framelessError();
+    Error.prepareStackTrace = mock((error, callSites) => `prepared ${error.code} with ${callSites.length} call sites`);
+    expect(err.stack).toBe("prepared ENOENT with 0 call sites");
+    expect(err.stack).toBe("prepared ENOENT with 0 call sites");
+    expect(Error.prepareStackTrace).toHaveBeenCalledTimes(1);
+  });
+
+  test("assigning .stack before it is read replaces it", async () => {
+    const err = await framelessError();
+    err.stack = "mine";
+    expect(Object.getOwnPropertyDescriptor(err, "stack")).toMatchObject({ value: "mine", enumerable: false });
+  });
+
+  // fetch() builds its error when the connection attempt fails and recovers frames, if any,
+  // from the async functions awaiting the promise it is about to reject.
+  async function closedPortURL() {
+    const listener = net.createServer();
+    await once(listener.listen(0, "127.0.0.1"), "listening");
+    const { port } = listener.address();
+    await new Promise(resolve => listener.close(resolve));
+    return `http://127.0.0.1:${port}/`;
+  }
+
+  test("a rejection nothing awaits gets the 'name: message' line", async () => {
+    const url = await closedPortURL();
+    const err = await new Promise(resolve => fetch(url).then(resolve, resolve));
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err.stack).toBe(`${err.name}: ${err.message}`);
+  });
+
+  test("a rejection awaited inside an async function still lists the async frame", async () => {
+    const url = await closedPortURL();
+    async function requestIt() {
+      await fetch(url);
+    }
+    const err = await requestIt().then(
+      () => new Error("unexpected response"),
+      e => e,
+    );
+
+    expect(err.stack).toStartWith(`${err.name}: ${err.message}\n    at async requestIt `);
+  });
+
+  test("Error.stackTraceLimit = 0 leaves the 'name: message' line, as in V8", () => {
+    using dir = tempDir("frameless-error", {});
+    const originalLimit = Error.stackTraceLimit;
+    Error.stackTraceLimit = 0;
+    let systemError, codeError;
+    try {
+      try {
+        fs.readFileSync(join(String(dir), "missing.txt"));
+      } catch (e) {
+        systemError = e;
+      }
+      try {
+        Buffer.alloc(-1);
+      } catch (e) {
+        codeError = e;
+      }
+    } finally {
+      Error.stackTraceLimit = originalLimit;
+    }
+    expect({ code: systemError.code, stack: systemError.stack }).toEqual({
+      code: "ENOENT",
+      stack: `Error: ${systemError.message}`,
+    });
+    expect(codeError.code).toBe("ERR_OUT_OF_RANGE");
+    expect(codeError.stack).toStartWith("RangeError");
+    expect(codeError.stack).toEndWith(`: ${codeError.message}`);
+  });
+
+  test("deleting Error.stackTraceLimit still disables .stack entirely, as in V8", () => {
+    using dir = tempDir("frameless-error", {});
+    const originalLimit = Error.stackTraceLimit;
+    delete Error.stackTraceLimit;
+    let systemError;
+    try {
+      try {
+        fs.readFileSync(join(String(dir), "missing.txt"));
+      } catch (e) {
+        systemError = e;
+      }
+    } finally {
+      Error.stackTraceLimit = originalLimit;
+    }
+    expect({ code: systemError.code, stack: systemError.stack }).toEqual({ code: "ENOENT", stack: undefined });
+  });
+
+  // node's unhandled rejection warning only prints the rejection value's .stack when the
+  // value has an own .stack property; without one it falls back to a generic rendering.
+  test("--unhandled-rejections=warn prints the error for a native rejection", async () => {
+    using dir = tempDir("frameless-error", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--unhandled-rejections=warn",
+        "-e",
+        `require("node:fs/promises").readFile(${JSON.stringify(join(String(dir), "missing.txt"))})`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("UnhandledPromiseRejectionWarning: Error: ENOENT: no such file or directory");
+    expect(stderr).not.toContain("[object Object]");
+    expect(exitCode).toBe(0);
+  });
 });

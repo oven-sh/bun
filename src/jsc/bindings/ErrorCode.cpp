@@ -29,6 +29,7 @@
 #include <openssl/err.h>
 #include "ErrorCode.h"
 #include "ErrorStackTrace.h"
+#include "FormatStackTraceForJS.h"
 #include "KeyObject.h"
 
 namespace WTF {
@@ -216,6 +217,9 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
         // exception were thrown by ErrorInstance::create)
         return uncheckedDowncast<JSObject>(thrown_exception->value());
     }
+    // Native code also builds these while no JS is running (e.g. the redis client reporting
+    // a dropped connection), which would otherwise leave them with no .stack at all.
+    Bun::installLazyStackIfFrameless(vm, globalObject, created_error);
     return created_error;
 }
 

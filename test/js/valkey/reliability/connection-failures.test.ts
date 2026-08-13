@@ -441,3 +441,25 @@ describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
     }
   });
 });
+
+describe("Valkey: Connection Error Shape", () => {
+  test("a command rejected because the connection failed has a .stack", async () => {
+    const listener = net.createServer();
+    await new Promise<void>(resolve => listener.listen(0, "127.0.0.1", resolve));
+    const { port } = listener.address() as net.AddressInfo;
+    await new Promise(resolve => listener.close(resolve));
+
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
+    try {
+      // The error is created by the socket's failure callback, with no JS on the stack, and
+      // .then() leaves no await chain to recover frames from.
+      const err = await new Promise<any>(resolve => client.get("key").then(resolve, resolve));
+
+      expect(err.code).toBe("ERR_REDIS_CONNECTION_CLOSED");
+      expect(err.stack).toStartWith(err.name);
+      expect(err.stack).toEndWith(`: ${err.message}`);
+    } finally {
+      client.close();
+    }
+  });
+});

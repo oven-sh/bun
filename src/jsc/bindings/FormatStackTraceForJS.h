@@ -79,6 +79,10 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace);
 JSC_DECLARE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter);
 JSC_DECLARE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter);
 
+// Gives an error whose captured trace has no frames (created from native code with no JS
+// on the stack) an own .stack that formats to "Name: message" on first access, as V8 does.
+void installLazyStackIfFrameless(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::ErrorInstance* error);
+
 // Internal wrapper functions for JSC error info callbacks
 WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, void* bunErrorData);
 JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, JSC::JSObject* errorInstance, void* bunErrorData);

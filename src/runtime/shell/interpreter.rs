@@ -2169,15 +2169,22 @@ pub(crate) fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
 /// `dirfd`'s drive root, `/dev/null` maps to `NUL`, and relative paths are
 /// joined against `dirfd`'s real path. Returns a NUL-terminated slice that
 /// either borrows `buf` or is `to` itself.
+///
+/// `to` is a command operand and can be arbitrarily long. `buf` fits every
+/// path Windows can open, so a rewritten path that does not fit it gets the
+/// `ENAMETOOLONG` that `syscall` would have returned for it, naming `to`.
 #[cfg(windows)]
 fn shell_get_path<'a>(
     dirfd: Fd,
     to: &'a bun_core::ZStr,
     buf: &'a mut bun_paths::PathBuffer,
+    syscall: bun_sys::Tag,
 ) -> bun_sys::Result<&'a bun_core::ZStr> {
     if to.as_bytes() == b"/dev/null" {
         return Ok(crate::shell::shell_body::WINDOWS_DEV_NULL);
     }
+    let name_too_long =
+        || bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, syscall).with_path(to.as_bytes());
     if bun_paths::Platform::Posix.is_absolute(to.as_bytes()) {
         let source_root_len = {
             let dirpath = bun_sys::get_fd_path(dirfd, buf).map_err(|e| e.with_fd(dirfd))?;
@@ -2188,6 +2195,9 @@ fn shell_get_path<'a>(
         // needed. Splice `to[1..]` after the root.
         let to_tail = &to.as_bytes()[1..];
         let end = source_root_len + to_tail.len();
+        if end >= buf.len() {
+            return Err(name_too_long());
+        }
         buf[source_root_len..end].copy_from_slice(to_tail);
         buf[end] = 0;
         return Ok(bun_core::ZStr::from_buf(buf.as_slice(), end));
@@ -2195,16 +2205,24 @@ fn shell_get_path<'a>(
     if bun_paths::Platform::Windows.is_absolute(to.as_bytes()) {
         return Ok(to);
     }
-    // Relative: resolve dirfd → path, then join.
-    // Note: a single-buffer join would read `dirpath` (a slice of `buf`)
-    // while writing `buf`; copy `dirpath`
-    // out first so the mutable borrow on `buf` is exclusive.
-    let dirpath = bun_sys::get_fd_path(dirfd, buf)
-        .map_err(|e| e.with_fd(dirfd))?
-        .to_vec();
-    Ok(bun_paths::resolve_path::join_z_buf::<
-        bun_paths::platform::Auto,
-    >(&mut buf[..], &[&dirpath, to.as_bytes()]))
+    // Relative: resolve dirfd → path, then join. `join_z_buf` straight into
+    // `buf` has no bounds check, so join outside it and copy the result in once
+    // its normalized length (`..` segments may have shrunk it) is known to fit.
+    let mut spill = Vec::new();
+    let joined = {
+        let dirpath = bun_sys::get_fd_path(dirfd, buf).map_err(|e| e.with_fd(dirfd))?;
+        bun_paths::resolve_path::join_spill::<bun_paths::platform::Auto>(
+            &mut spill,
+            &[dirpath, to.as_bytes()],
+        )
+    };
+    let len = joined.len();
+    if len >= buf.len() {
+        return Err(name_too_long());
+    }
+    buf[..len].copy_from_slice(joined);
+    buf[len] = 0;
+    Ok(bun_core::ZStr::from_buf(buf.as_slice(), len))
 }
 
 /// Windows: rewrite the path via `shell_get_path` then `bun_sys::stat`, tagging
@@ -2215,7 +2233,7 @@ pub(crate) fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<b
     #[cfg(windows)]
     {
         let mut buf = bun_paths::path_buffer_pool::get();
-        let p = shell_get_path(dir, path_, &mut buf)?;
+        let p = shell_get_path(dir, path_, &mut buf, bun_sys::Tag::fstatat)?;
         return bun_sys::stat(p).map_err(|e| e.with_path(path_.as_bytes()));
     }
     #[cfg(not(windows))]
@@ -2241,7 +2259,7 @@ pub(crate) fn shell_openat(
         if flags & bun_sys::O::DIRECTORY != 0 {
             if bun_paths::Platform::Posix.is_absolute(path.as_bytes()) {
                 let mut buf = bun_paths::path_buffer_pool::get();
-                let p = shell_get_path(dir, path, &mut buf)?;
+                let p = shell_get_path(dir, path, &mut buf, bun_sys::Tag::open)?;
                 return bun_sys::open_dir_at_windows_a(
                     dir,
                     p.as_bytes(),
@@ -2270,7 +2288,7 @@ pub(crate) fn shell_openat(
             .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail);
         }
         let mut buf = bun_paths::path_buffer_pool::get();
-        let p = shell_get_path(dir, path, &mut buf)?;
+        let p = shell_get_path(dir, path, &mut buf, bun_sys::Tag::open)?;
         // No `makeLibUVOwnedForSyscall` here: `bun_sys::open` on Windows
         // routes through `sys_uv` and already yields a uv-owned fd.
         return bun_sys::open(p, flags, perm);

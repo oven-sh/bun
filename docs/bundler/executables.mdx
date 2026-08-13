@@ -673,14 +673,14 @@ import icon from "./icon.png" with { type: "file" };
 
 console.log(icon);
 // During development: "./icon.png"
-// After compilation: "$bunfs/icon-a1b2c3d4.png" (internal path)
+// After compilation: "/$bunfs/root/icon-a1b2c3d4.png" (internal path)
 ```
 
 The import returns a **path string** that points to the embedded file. At build time, Bun:
 
 1. Reads the file contents
 2. Embeds the data into the executable
-3. Replaces the import with an internal path (prefixed with `$bunfs/`)
+3. Replaces the import with an internal path (prefixed with `/$bunfs/`)
 
 You can then read this embedded file using `Bun.file()` or Node.js `fs` APIs.
 
@@ -839,48 +839,47 @@ If you're using `@mapbox/node-pre-gyp` or similar tools, the `.node` file must b
 
 ### Embed directories
 
-To embed a directory with `bun build --compile`, include file patterns in your build:
+Use `--asset` (or `compile.assets` in the JavaScript API) to embed a file or directory tree into the executable under its original relative path. The embedded files live under `import.meta.dir` at runtime and are reachable via `node:fs` (`existsSync`, `statSync`, `readdirSync`, `readFileSync`) and `Bun.file()`.
 
 <Tabs>
   <Tab title="CLI">
     ```bash terminal icon="terminal"
-    bun build --compile ./index.ts ./public/**/*.png
+    bun build --compile ./index.ts --asset ./public --outfile myapp
     ```
   </Tab>
   <Tab title="JavaScript">
     ```ts build.ts icon="/icons/typescript.svg"
-    import { Glob } from "bun";
-
-    // Expand glob pattern to file list
-    const glob = new Glob("./public/**/*.png");
-    const pngFiles = Array.from(glob.scanSync("."));
-
     await Bun.build({
-      entrypoints: ["./index.ts", ...pngFiles],
+      entrypoints: ["./index.ts"],
       compile: {
         outfile: "./myapp",
+        assets: ["./public"],
       },
     });
     ```
-
   </Tab>
 </Tabs>
 
-Then, you can reference the files in your code:
-
 ```ts index.ts icon="/icons/typescript.svg"
-import icon from "./public/assets/icon.png" with { type: "file" };
-import { file } from "bun";
+import fs from "node:fs";
+import path from "node:path";
 
-export default {
-  fetch(req) {
-    // Embedded files can be streamed from Response objects
-    return new Response(file(icon));
-  },
-};
+const publicDir = path.join(import.meta.dir, "public");
+
+for (const entry of fs.readdirSync(publicDir, { withFileTypes: true })) {
+  console.log(entry.name, entry.isDirectory() ? "(dir)" : fs.statSync(path.join(publicDir, entry.name)).size);
+}
+
+const html = await Bun.file(path.join(publicDir, "index.html")).text();
 ```
 
-This is a workaround, and we expect to replace it with a more direct API.
+Pass `--asset` multiple times to embed several directories (for example `--asset ./client --asset ./prerendered` for a SvelteKit build). Only regular files are embedded; symlinks and empty subdirectories inside the tree are skipped.
+
+You can also embed individual files the old way, by adding them as extra entry points; imported assets are renamed according to `--asset-naming` (default `[name]-[hash].[ext]`):
+
+```ts
+import icon from "./public/assets/icon.png" with { type: "file" };
+```
 
 ### Detecting standalone mode at runtime
 
@@ -1065,7 +1064,10 @@ Available Windows options:
 - `description` - Description in file properties
 - `copyright` - Copyright notice in file properties
 
-<Warning>These flags cannot be used when cross-compiling because they depend on Windows APIs.</Warning>
+<Warning>
+  With the exception of `hideConsole`, these flags cannot be used when cross-compiling because they depend on Windows
+  APIs.
+</Warning>
 
 ---
 
@@ -1123,7 +1125,7 @@ Standalone executables support code splitting. Use `--compile` with `--splitting
 <Tabs>
   <Tab title="CLI">
     ```bash terminal icon="terminal"
-    bun build --compile --splitting ./src/entry.ts --outdir ./build
+    bun build --compile --splitting ./src/entry.ts --outfile ./build/entry
     ```
   </Tab>
   <Tab title="JavaScript">
@@ -1211,9 +1213,9 @@ Plugins can perform any transformation: compile YAML/TOML configs, inline SQL qu
 
 ## Unsupported CLI arguments
 
-The `--compile` flag can only accept a single entrypoint at a time and does not support the following flags:
+The `--compile` flag does not support the following flags:
 
-- `--outdir` — use `outfile` instead (except when using with `--splitting`).
+- `--outdir` — use `outfile` instead.
 - `--public-path`
 - `--target=node`
 - `--target=browser` (without HTML entrypoints — see [Standalone HTML](/bundler/standalone-html) for `--compile --target=browser` with `.html` files)
@@ -1228,13 +1230,14 @@ The `compile` option in `Bun.build()` accepts three forms:
 ```ts title="types" icon="/icons/typescript.svg"
 interface BuildConfig {
   entrypoints: string[];
-  compile: boolean | Bun.Build.Target | CompileBuildOptions;
+  compile: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
   // ... other BuildConfig options (minify, sourcemap, define, plugins, etc.)
 }
 
 interface CompileBuildOptions {
-  target?: Bun.Build.Target; // Cross-compilation target
+  target?: Bun.Build.CompileTarget; // Cross-compilation target
   outfile?: string; // Output executable path
+  assets?: string[]; // Files/directories to embed under import.meta.dir
   execArgv?: string[]; // Runtime arguments (process.execArgv)
   autoloadTsconfig?: boolean; // Load tsconfig.json (default: false)
   autoloadPackageJson?: boolean; // Load package.json (default: false)
@@ -1270,8 +1273,8 @@ compile: {
 
 ### Supported targets
 
-```ts title="Bun.Build.Target" icon="/icons/typescript.svg"
-type Target =
+```ts title="Bun.Build.CompileTarget" icon="/icons/typescript.svg"
+type CompileTarget =
   | "bun-darwin-x64"
   | "bun-darwin-x64-baseline"
   | "bun-darwin-arm64"

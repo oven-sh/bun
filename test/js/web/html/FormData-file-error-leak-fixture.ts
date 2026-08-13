@@ -15,6 +15,10 @@
 // `using tempDir(...)` so cleanup is guaranteed even if this process is
 // killed by signal.
 
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
 const iterations = parseInt(process.env.ITERATIONS || "100", 10);
 const warmup = parseInt(process.env.WARMUP || "10", 10);
 const realPath = process.env.REAL_PATH;
@@ -44,11 +48,11 @@ function iterate() {
 
 for (let i = 0; i < warmup; i++) iterate();
 Bun.gc(true);
-const baselineRss = process.memoryUsage.rss();
+const baselineRss = rss();
 
 for (let i = 0; i < iterations; i++) iterate();
 Bun.gc(true);
-const finalRss = process.memoryUsage.rss();
+const finalRss = rss();
 
 const growthMB = (finalRss - baselineRss) / (1024 * 1024);
 

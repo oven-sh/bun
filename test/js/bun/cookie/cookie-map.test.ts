@@ -90,6 +90,21 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(sessionCookie.isExpired()).toBe(false);
   });
 
+  test("Cookie.isExpired() gives Max-Age precedence over Expires", () => {
+    const past = new Date(Date.now() - 1000);
+    const future = new Date(Date.now() + 86_400_000);
+
+    // Max-Age wins over Expires regardless of which one the header listed first.
+    expect(new Bun.Cookie("name", "value", { maxAge: 3600, expires: past }).isExpired()).toBe(false);
+    expect(new Bun.Cookie("name", "value", { maxAge: 0, expires: future }).isExpired()).toBe(true);
+    expect(Bun.Cookie.parse("a=b; Max-Age=3600; Expires=Wed, 21 Oct 2015 07:28:00 GMT").isExpired()).toBe(false);
+    expect(Bun.Cookie.parse("a=b; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Max-Age=3600").isExpired()).toBe(false);
+
+    // A non-positive Max-Age is the "delete this cookie" signal.
+    expect(new Bun.Cookie("name", "value", { maxAge: 0 }).isExpired()).toBe(true);
+    expect(new Bun.Cookie("name", "value", { maxAge: -1 }).isExpired()).toBe(true);
+  });
+
   test("Cookie.parse works with all attributes", () => {
     const cookieStr =
       "name=value; Domain=example.com; Expires=Thu, 13 Mar 2025 12:00:00 GMT; Path=/foo; Max-Age=3600; Secure; HttpOnly; Partitioned; SameSite=Strict";
@@ -105,6 +120,55 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(cookie.expires).toEqual(new Date("Thu, 13 Mar 2025 12:00:00 GMT"));
     expect(cookie.partitioned).toBe(true);
     expect(cookie.sameSite).toBe("strict");
+  });
+
+  test("Cookie.parse keeps Expires when Max-Age comes first", () => {
+    const maxAgeFirst = Bun.Cookie.parse("a=b; Max-Age=60; Expires=Wed, 01 Jan 2031 00:00:00 GMT");
+    const expiresFirst = Bun.Cookie.parse("a=b; Expires=Wed, 01 Jan 2031 00:00:00 GMT; Max-Age=60");
+
+    expect(maxAgeFirst.toJSON()).toEqual({
+      name: "a",
+      value: "b",
+      path: "/",
+      expires: new Date("Wed, 01 Jan 2031 00:00:00 GMT"),
+      maxAge: 60,
+      secure: false,
+      sameSite: "lax",
+      httpOnly: false,
+      partitioned: false,
+    });
+    expect(maxAgeFirst.toJSON()).toEqual(expiresFirst.toJSON());
+    expect(maxAgeFirst.toString()).toBe(expiresFirst.toString());
+  });
+
+  test("Cookie.parse takes the last value of a repeated attribute", () => {
+    const cookie = Bun.Cookie.parse(
+      "a=b; Max-Age=10; Expires=Wed, 01 Jan 2031 00:00:00 GMT; Max-Age=60; Expires=Thu, 02 Jan 2031 00:00:00 GMT",
+    );
+
+    expect(cookie.maxAge).toBe(60);
+    expect(cookie.expires).toEqual(new Date("Thu, 02 Jan 2031 00:00:00 GMT"));
+  });
+
+  test("Cookie.parse reads every attribute in any order", () => {
+    const attributes = [
+      "Max-Age=3600",
+      "Expires=Thu, 13 Mar 2025 12:00:00 GMT",
+      "Domain=example.com",
+      "Path=/foo",
+      "Secure",
+      "HttpOnly",
+      "Partitioned",
+      "SameSite=Strict",
+    ];
+    const expected = Bun.Cookie.parse(`name=value; ${attributes.join("; ")}`).toJSON();
+    expect(expected).toHaveProperty("expires", new Date("Thu, 13 Mar 2025 12:00:00 GMT"));
+
+    // Rotating the attributes must never change the parsed cookie.
+    for (let i = 1; i < attributes.length; i++) {
+      const rotated = [...attributes.slice(i), ...attributes.slice(0, i)];
+      expect(Bun.Cookie.parse(`name=value; ${rotated.join("; ")}`).toJSON()).toEqual(expected);
+    }
   });
 
   test("Cookie.serialize creates cookie string", () => {
@@ -198,7 +262,7 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
         "foo=bar; Path=/; Secure; HttpOnly; Partitioned; SameSite=Lax",
-        "name=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+        "name=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
       ]
     `);
   });
@@ -368,7 +432,7 @@ describe("delete with prefixed cookie names", () => {
     const map = new Bun.CookieMap("__Host-id=1");
     map.delete("__Host-id");
     expect(map.toSetCookieHeaders()).toEqual([
-      "__Host-id=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; Secure; SameSite=Lax",
+      "__Host-id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; SameSite=Lax",
     ]);
   });
 
@@ -376,7 +440,7 @@ describe("delete with prefixed cookie names", () => {
     const map = new Bun.CookieMap("__Secure-id=1");
     map.delete("__Secure-id");
     expect(map.toSetCookieHeaders()).toEqual([
-      "__Secure-id=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; Secure; SameSite=Lax",
+      "__Secure-id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; SameSite=Lax",
     ]);
   });
 
@@ -385,8 +449,8 @@ describe("delete with prefixed cookie names", () => {
     map.delete("__Host-id");
     map.delete("id");
     expect(map.toSetCookieHeaders()).toEqual([
-      "__Host-id=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; Secure; SameSite=Lax",
-      "id=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      "__Host-id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; SameSite=Lax",
+      "id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
     ]);
   });
 });

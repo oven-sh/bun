@@ -100,7 +100,7 @@ pub struct RegularExpression(NonNull<()>);
 
 impl RegularExpression {
     #[inline]
-    pub(crate) fn matches(&self, input: &BunString) -> bool {
+    fn matches(&self, input: &BunString) -> bool {
         // SAFETY: self.0 was produced by `__bun_regex_compile`.
         unsafe { __bun_regex_matches(self.0, input) }
     }
@@ -118,7 +118,7 @@ impl Drop for RegularExpression {
 /// duplicating the `__bun_regex_*` extern block (one declarer per upward call,
 /// per PORTING.md §extern-Rust-ban).
 #[inline]
-pub(crate) fn compile_regex(pattern: BunString) -> Option<RegularExpression> {
+fn compile_regex(pattern: BunString) -> Option<RegularExpression> {
     // SAFETY: link-time extern; pattern ownership transfers.
     unsafe { __bun_regex_compile(pattern) }.map(RegularExpression)
 }
@@ -129,7 +129,7 @@ pub struct PnpmMatcher {
 }
 
 pub struct Matcher {
-    pub pattern: Pattern,
+    pub(crate) pattern: Pattern,
     pub is_exclude: bool,
 }
 
@@ -163,8 +163,6 @@ impl From<CreateMatcherError> for FromExprError {
         }
     }
 }
-
-bun_core::named_error_set!(FromExprError);
 
 impl PnpmMatcher {
     // `bun_ast::ExprData` exposes the real value-shaped enum
@@ -343,8 +341,6 @@ pub enum CreateMatcherError {
 bun_core::impl_tag_error!(CreateMatcherError);
 
 bun_core::oom_from_alloc!(CreateMatcherError);
-
-bun_core::named_error_set!(CreateMatcherError);
 
 pub fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMatcherError> {
     buf.clear();

@@ -323,7 +323,7 @@ bun pm pkg get scripts.build                      # nested property
 # set
 bun pm pkg set name="my-package"                  # simple property
 bun pm pkg set scripts.test="jest" version=2.0.0  # multiple properties
-bun pm pkg set {"private":"true"} --json          # JSON values with --json flag
+bun pm pkg set private=true --json                # JSON values with --json flag
 
 # delete
 bun pm pkg delete description                     # single property

@@ -4,7 +4,7 @@ sidebarTitle: Write Response
 mode: center
 ---
 
-Use [`Bun.write()`](/runtime/file-io#writing-files-bun-write) to write a `Response` to disk. Bun consumes the `Response` body according to its `Content-Type` header.
+Use [`Bun.write()`](/runtime/file-io#writing-files-bun-write) to write a `Response` to disk. The body of the `Response` is written to the destination.
 
 The first argument is a _destination_, like an absolute path or `BunFile` instance. The second argument is the _data_ to write.
 

@@ -84,10 +84,10 @@ macro_rules! arena_slice_newtype {
 #[derive(Debug, Clone, Copy)]
 pub struct DashedIdentReference {
     /// The referenced identifier.
-    pub ident: DashedIdent,
+    pub(crate) ident: DashedIdent,
     /// CSS modules extension: the filename where the variable is defined.
     /// Only enabled when the CSS modules `dashed_idents` option is turned on.
-    pub from: Option<crate::properties::css_modules::Specifier>,
+    pub(crate) from: Option<crate::properties::css_modules::Specifier>,
 }
 
 impl DashedIdentReference {
@@ -182,27 +182,6 @@ arena_slice_newtype! {
     /// Author defined idents must start with two dash characters ("--") or parsing will fail.
     DashedIdent
 }
-
-/// Hash/eql context for [`DashedIdentHashMap`]: keys hash their string bytes
-/// (wyhash seed 0, truncated to u32) and compare by byte equality.
-#[derive(Default, Clone, Copy)]
-pub struct DashedIdentContext;
-
-impl bun_collections::array_hash_map::ArrayHashContext<DashedIdent> for DashedIdentContext {
-    #[inline]
-    fn hash(&self, key: &DashedIdent) -> u32 {
-        bun_collections::array_hash_map::hash_string(key.v())
-    }
-
-    #[inline]
-    fn eql(&self, a: &DashedIdent, b: &DashedIdent, _b_index: usize) -> bool {
-        a.v() == b.v()
-    }
-}
-
-/// Inherent assoc type aliases
-/// are unstable in Rust, so this is a free type alias instead.
-pub type DashedIdentHashMap<V> = bun_collections::ArrayHashMap<DashedIdent, V, DashedIdentContext>;
 
 impl DashedIdent {
     pub fn parse(input: &mut Parser) -> CssResult<DashedIdent> {
@@ -310,26 +289,7 @@ impl IdentOrRef {
         IdentOrRef(v)
     }
 
-    #[cfg(debug_assertions)]
-    pub fn debug_ident(self) -> &'static [u8] {
-        // Returns an arena-borrowed slice; `'static` is a placeholder for the
-        // not-yet-threaded `'bump` lifetime.
-        if self.ref_bit() {
-            let ptr = self.ptrbits() as usize as *const *const [u8];
-            // SAFETY: in debug builds, `ptrbits` stores a valid arena-allocated `*const *const [u8]`
-            // written by `from_ref`; the pointee is an arena-owned slice (see `DashedIdent::v`).
-            unsafe { crate::arena_str(*ptr) }
-        } else {
-            // SAFETY: as_ident reconstructs the arena slice this was packed from
-            unsafe { crate::arena_str(self.as_ident().unwrap().v) }
-        }
-    }
-
-    // NOTE: no `#[cfg(not(debug_assertions))]` variant. `compile_error!` fires at expansion and
-    // would break every release build. Omitting the fn in release yields a name-resolution error
-    // at the call site, which is the intent: this is debug-only.
-
-    pub fn from_ident(ident: Ident) -> Self {
+    pub(crate) fn from_ident(ident: Ident) -> Self {
         let s = ident.v();
         let (ptr, len) = (s.as_ptr() as usize as u64, s.len() as u64);
         // narrowing usize→u63 is checked in debug
@@ -337,7 +297,7 @@ impl IdentOrRef {
         Self::pack(ptr, false, len)
     }
 
-    pub fn from_ref(r: Ref, debug_ident: DebugIdent<'_>) -> Self {
+    pub(crate) fn from_ref(r: Ref, debug_ident: DebugIdent<'_>) -> Self {
         let len: u64 = r.to_raw_bits();
         #[cfg(not(debug_assertions))]
         let this = Self::pack(0, true, len);
@@ -360,17 +320,17 @@ impl IdentOrRef {
     }
 
     #[inline]
-    pub fn is_ident(self) -> bool {
+    pub(crate) fn is_ident(self) -> bool {
         !self.ref_bit()
     }
 
     #[inline]
-    pub fn is_ref(self) -> bool {
+    pub(crate) fn is_ref(self) -> bool {
         self.ref_bit()
     }
 
     #[inline]
-    pub fn as_ident(self) -> Option<Ident> {
+    pub(crate) fn as_ident(self) -> Option<Ident> {
         if !self.ref_bit() {
             let ptr = self.ptrbits() as usize as *const u8;
             let len = self.len_bits() as usize;
@@ -383,7 +343,7 @@ impl IdentOrRef {
     }
 
     #[inline]
-    pub fn as_ref(self) -> Option<Ref> {
+    pub(crate) fn as_ref(self) -> Option<Ref> {
         if self.ref_bit() {
             // len_bits stores the exact u64 bit pattern written by from_ref
             return Some(Ref::from_raw_bits(self.len_bits()));
@@ -391,29 +351,7 @@ impl IdentOrRef {
         None
     }
 
-    pub fn as_str(
-        self,
-        map: &bun_ast::symbol::Map,
-        local_names: Option<&css::LocalsResultsMap>,
-    ) -> Option<&'static [u8]> {
-        // Returns an arena/symbol-table borrow; `'static` is a placeholder for
-        // the not-yet-threaded `'bump` lifetime.
-        if self.is_ident() {
-            // SAFETY: arena slice reconstructed from packed ptr/len
-            return Some(unsafe { crate::arena_str(self.as_ident().unwrap().v) });
-        }
-        let r = self.as_ref().unwrap();
-        let final_ref = map.follow(r);
-        // SAFETY: LocalsResultsMap values are `Box<[u8]>` owned by the linker
-        // for the symbol-map lifetime; `arena_str` erases to the placeholder
-        // `'static` until the proper `'bump` lifetime is threaded.
-        local_names
-            .unwrap()
-            .get(&final_ref)
-            .map(|p| unsafe { crate::arena_str(&raw const **p) })
-    }
-
-    pub fn as_original_string(self, symbols: &[bun_ast::Symbol]) -> &[u8] {
+    pub(crate) fn as_original_string(self, symbols: &[bun_ast::Symbol]) -> &[u8] {
         if self.is_ident() {
             // SAFETY: arena slice reconstructed from packed ptr/len
             return unsafe { crate::arena_str(self.as_ident().unwrap().v) };
@@ -422,7 +360,7 @@ impl IdentOrRef {
         symbols[r.inner_index() as usize].original_name.slice()
     }
 
-    pub fn hash(&self, hasher: &mut Wyhash) {
+    pub(crate) fn hash(&self, hasher: &mut Wyhash) {
         if let Some(ident) = self.as_ident() {
             hasher.update(ident.v());
         } else {
@@ -445,10 +383,6 @@ impl IdentOrRef {
             return a.eql(b);
         }
         false
-    }
-
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        *self
     }
 }
 
@@ -511,7 +445,7 @@ impl CustomIdent {
     }
 
     /// Write the custom ident to CSS.
-    pub fn to_css_with_options(
+    pub(crate) fn to_css_with_options(
         &self,
         dest: &mut Printer,
         enabled_css_modules: bool,

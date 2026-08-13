@@ -208,7 +208,6 @@ When `development` is `true`, Bun:
 - Disables minification
 - Re-bundles assets on each request to a `.html` file
 - Enables hot module reloading (unless `hmr: false` is set)
-- Echoes console logs from the browser to the terminal
 
 ### Advanced Development Configuration
 
@@ -509,6 +508,20 @@ If an environment variable is not set, you may see runtime errors like `Referenc
 
 See [HTML & static sites](/bundler/html-static#inline-environment-variables) for build-time configuration and examples.
 
+## Sourcemaps
+
+In development, Bun generates linked sourcemaps for bundled routes and serves them alongside the JavaScript and CSS chunks. In production (`development: false`), sourcemaps are disabled by default so your original source code is not exposed by the server.
+
+To override the default, set the `sourcemap` option in your `bunfig.toml`:
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static]
+sourcemap = "linked" # serve sourcemaps in production too
+# sourcemap = "inline"   # embed sourcemaps in the chunks
+# sourcemap = "external" # emit .map files without a sourceMappingURL comment
+# sourcemap = false      # never generate sourcemaps
+```
+
 ## How It Works
 
 Bun uses `HTMLRewriter` to scan for `<script>` and `<link>` tags in HTML files, uses them as entrypoints for Bun's bundler, generates an optimized bundle for the JavaScript/TypeScript/TSX/JSX and CSS files, and serves the result.
@@ -519,7 +532,7 @@ Bun uses `HTMLRewriter` to scan for `<script>` and `<link>` tags in HTML files, 
 <Step title="1. <script> Processing">
 - Transpiles TypeScript, JSX, and TSX in `<script>` tags
 - Bundles imported dependencies
-- Generates sourcemaps for debugging
+- Generates sourcemaps for debugging in development
 - Minifies when `development` is not `true` in `Bun.serve()`
 
 ```html title="index.html" icon="file-code"
@@ -993,7 +1006,7 @@ FROM oven/bun:1 as base
 WORKDIR /usr/src/app
 
 # Install dependencies
-COPY package.json bun.lockb ./
+COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
 # Copy source code
@@ -1065,13 +1078,11 @@ export default function handler(req, res) {
 
 ### Current Limitations
 
-- `bun build` CLI integration is not yet available for fullstack apps
 - Auto-discovery of API routes is not implemented
 - Server-side rendering (SSR) is not built-in
 
 ### Planned Features
 
-- Integration with `bun build` CLI
 - File-based routing for API endpoints
 - Built-in SSR support
 - Enhanced plugin ecosystem

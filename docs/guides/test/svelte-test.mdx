@@ -30,7 +30,7 @@ afterEach(async () => {
 });
 
 plugin({
-  title: "svelte loader",
+  name: "svelte loader",
   setup(builder) {
     builder.onLoad({ filter: /\.svelte(\?[^.]+)?$/ }, ({ path }) => {
       try {

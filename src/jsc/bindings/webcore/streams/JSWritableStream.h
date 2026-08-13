@@ -46,9 +46,11 @@ public:
 
     DECLARE_INFO;
     // visitChildrenImpl MUST visit: m_controller, m_writer, m_storedError, m_closeRequest,
-    // m_inFlightWriteRequest, m_inFlightCloseRequest, m_pendingAbortRequest.{promise,reason},
-    // and m_writeRequests (a barrier container: UNDER cellLock()).
+    // m_inFlightWriteRequest, m_inFlightCloseRequest, m_closedPromise,
+    // m_pendingAbortRequest.{promise,reason}, and m_writeRequests (a barrier container: UNDER
+    // cellLock()).
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSC::JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -76,14 +78,17 @@ public:
     JSC::WriteBarrier<JSC::JSPromise> m_inFlightWriteRequest;
     // [[inFlightCloseRequest]]
     JSC::WriteBarrier<JSC::JSPromise> m_inFlightCloseRequest;
+    // Settles when the stream reaches a terminal state, for observers that must not lock it
+    // (node:stream's finished()). Created on first request; empty until then.
+    JSC::WriteBarrier<JSC::JSPromise> m_closedPromise;
     // [[pendingAbortRequest]] — "undefined" ⇔ !m_pendingAbortRequest.promise.
     Bun::WebStreams::PendingAbortRequest m_pendingAbortRequest;
     // [[state]]
     WritableStreamState m_state { WritableStreamState::Writable };
     // [[backpressure]]
-    bool m_backpressure { false };
+    bool m_backpressure : 1 { false };
     // [[Detached]] (transferable streams are not implemented; the slot exists)
-    bool m_detached { false };
+    bool m_detached : 1 { false };
 
 private:
     JSWritableStream(JSC::VM&, JSC::Structure*);

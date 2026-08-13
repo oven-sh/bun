@@ -12,7 +12,7 @@ use bun_sys::{self, E, File};
 
 use crate::shell_completions::{Shell, ShellCompletionsExt as _};
 
-pub struct InstallCompletionsCommand;
+pub(crate) struct InstallCompletionsCommand;
 
 impl InstallCompletionsCommand {
     #[cfg(not(windows))]
@@ -23,7 +23,7 @@ impl InstallCompletionsCommand {
     };
 
     #[cfg(not(windows))]
-    fn install_bunx_symlink_posix(cwd: &[u8]) -> Result<(), bun_core::Error> {
+    fn install_bunx_symlink_posix(cwd: &[u8]) -> Result<(), crate::Error> {
         let mut buf = PathBuffer::uninit();
 
         // don't install it if it's already there
@@ -103,7 +103,7 @@ impl InstallCompletionsCommand {
     }
 
     #[cfg(windows)]
-    fn install_bunx_symlink_windows(_cwd: &[u8]) -> Result<(), bun_core::Error> {
+    fn install_bunx_symlink_windows(_cwd: &[u8]) -> Result<(), crate::Error> {
         use bun_core::{WStr, w};
         use bun_sys::windows;
 
@@ -111,10 +111,8 @@ impl InstallCompletionsCommand {
         // `bunx.exe` on windows is a hardlink to `bun.exe`
         // for this to work, we need to delete and recreate the hardlink every time
         let image_path: &[u16] = windows::exe_path_w();
-        let last_sep = image_path
-            .iter()
-            .rposition(|&c| c == b'\\' as u16)
-            .expect("unreachable");
+        let last_sep =
+            strings::last_index_of_char_t(image_path, u16::from(b'\\')).expect("unreachable");
         let image_dirname = &image_path[..last_sep + 1];
 
         let mut bunx_path_buf = WPathBuffer::uninit();
@@ -160,7 +158,7 @@ impl InstallCompletionsCommand {
         Ok(())
     }
 
-    fn install_bunx_symlink(cwd: &[u8]) -> Result<(), bun_core::Error> {
+    fn install_bunx_symlink(cwd: &[u8]) -> Result<(), crate::Error> {
         #[cfg(windows)]
         {
             Self::install_bunx_symlink_windows(cwd)
@@ -172,7 +170,7 @@ impl InstallCompletionsCommand {
     }
 
     #[cfg(windows)]
-    fn install_uninstaller_windows() -> Result<(), bun_core::Error> {
+    fn install_uninstaller_windows() -> Result<(), crate::Error> {
         use bun_core::w;
         use bun_sys::windows;
 
@@ -181,10 +179,8 @@ impl InstallCompletionsCommand {
         // powershell `install.ps1` was used to install.
 
         let image_path: &[u16] = windows::exe_path_w();
-        let last_sep = image_path
-            .iter()
-            .rposition(|&c| c == b'\\' as u16)
-            .expect("unreachable");
+        let last_sep =
+            strings::last_index_of_char_t(image_path, u16::from(b'\\')).expect("unreachable");
         let image_dirname = &image_path[..last_sep];
 
         if !image_dirname.ends_with(w!("bun\\bin")) {
@@ -208,7 +204,7 @@ impl InstallCompletionsCommand {
         Ok(())
     }
 
-    pub fn exec() -> Result<(), bun_core::Error> {
+    pub(crate) fn exec() -> Result<(), crate::Error> {
         // Fail silently on auto-update.
         let fail_exit_code: u32 = if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) {
             1
@@ -395,7 +391,7 @@ impl InstallCompletionsCommand {
                     }
                     Shell::Zsh => {
                         if let Some(fpath) = env_var::fpath.get() {
-                            for dir in fpath.split(|b| *b == b' ') {
+                            for dir in strings::split(fpath, b" ") {
                                 completions_dir = dir;
                                 if let Ok(d) = bun_sys::open_dir_absolute(dir) {
                                     break 'found d;

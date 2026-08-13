@@ -2,7 +2,7 @@ use bstr::BStr;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_ast as js_ast;
 use bun_collections::StringArrayHashMap;
-use bun_core::{ZStr, strings};
+use bun_core::strings;
 use bun_glob as glob;
 use bun_paths as path;
 use bun_paths::resolve_path;
@@ -23,9 +23,9 @@ type Map = StringArrayHashMap<Entry>;
 
 #[derive(Default)]
 pub struct Entry {
-    pub name: Box<[u8]>,
-    pub version: Option<Box<[u8]>>,
-    pub name_loc: bun_ast::Loc,
+    pub(crate) name: Box<[u8]>,
+    pub(crate) version: Option<Box<[u8]>>,
+    pub(crate) name_loc: bun_ast::Loc,
 }
 
 impl WorkspaceMap {
@@ -52,7 +52,7 @@ impl WorkspaceMap {
         self.map.get(key)
     }
 
-    pub(crate) fn insert(&mut self, key: &[u8], value: Entry) -> Result<(), bun_alloc::AllocError> {
+    fn insert(&mut self, key: &[u8], value: Entry) -> Result<(), bun_alloc::AllocError> {
         // No `bun.sys.exists(key)` debug check here: `key` is
         // relative to the workspace root while `exists` resolves against process
         // cwd — false positive whenever the two differ (e.g. `bun unlink` from a
@@ -117,13 +117,13 @@ impl<'a> NamesArray<'a> {
 
 fn process_workspace_name(
     json_cache: &mut WorkspacePackageJSONCache,
-    abs_package_json_path: &ZStr,
+    abs_package_json_path: &[u8],
     log: &mut bun_ast::Log,
-) -> Result<Entry, bun_core::Error> {
+) -> crate::Result<Entry> {
     let workspace_json = json_cache
         .get_with_path(
             log,
-            abs_package_json_path.as_bytes(),
+            abs_package_json_path,
             GetJSONOptions {
                 init_reset_store: false,
                 guess_indentation: true,
@@ -139,10 +139,10 @@ fn process_workspace_name(
     let name_expr = workspace_json
         .root
         .get(b"name")
-        .ok_or_else(|| bun_core::err!("MissingPackageName"))?;
+        .ok_or(crate::Error::MissingPackageName)?;
     let name = name_expr
         .as_string_cloned(&scratch)?
-        .ok_or_else(|| bun_core::err!("MissingPackageName"))?;
+        .ok_or(crate::Error::MissingPackageName)?;
 
     let entry = Entry {
         name: Box::<[u8]>::from(name),
@@ -159,7 +159,7 @@ fn process_workspace_name(
     bun_output::scoped_log!(
         Lockfile,
         "processWorkspaceName({}) = {}",
-        BStr::new(abs_package_json_path.as_bytes()),
+        BStr::new(abs_package_json_path),
         BStr::new(&entry.name)
     );
 
@@ -175,7 +175,7 @@ impl WorkspaceMap {
         source: &bun_ast::Source,
         loc: bun_ast::Loc,
         mut string_builder: Option<&mut StringBuilder<'_>>,
-    ) -> Result<u32, bun_core::Error> {
+    ) -> crate::Result<u32> {
         let workspace_names = self;
         let item_count = arr.len();
         if item_count == 0 {
@@ -199,7 +199,7 @@ impl WorkspaceMap {
                     arr.item_loc(source, i),
                     "Workspaces expects an array of strings, like:\n  <r><green>\"workspaces\"<r>: [\n    <green>\"path/to/package\"<r>\n  ]"
                 );
-                return Err(bun_core::err!("InvalidPackageJSON"));
+                return Err(crate::Error::InvalidPackageJSON);
             };
 
             if input_path.is_empty()
@@ -215,51 +215,52 @@ impl WorkspaceMap {
                 continue;
             }
 
-            let abs_package_json_path: &ZStr =
-                resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                    source.path.name().dir,
-                    filepath_buf,
-                    &[input_path, b"package.json"],
-                );
-
-            // skip root package.json
-            if strings::eql_long(
-                resolve_path::dirname::<path::platform::Auto>(abs_package_json_path.as_bytes()),
+            let processed = match resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
                 source.path.name().dir,
-                true,
+                filepath_buf,
+                &[input_path, b"package.json"],
             ) {
-                continue;
-            }
+                Some(abs_package_json_path) => {
+                    // skip root package.json
+                    if strings::eql_long(
+                        resolve_path::dirname::<path::platform::Auto>(abs_package_json_path),
+                        source.path.name().dir,
+                        true,
+                    ) {
+                        continue;
+                    }
 
-            let workspace_entry =
-                match process_workspace_name(json_cache, abs_package_json_path, log) {
-                    Ok(e) => e,
-                    Err(err) => {
-                        if err == bun_core::err!("EISNOTDIR")
-                            || err == bun_core::err!("EISDIR")
-                            || err == bun_core::err!("EACCESS")
-                            || err == bun_core::err!("EPERM")
-                            || err == bun_core::err!("ENOENT")
-                            || err == bun_core::err!("FileNotFound")
-                        {
-                            let _ = log.add_error_fmt(
-                                Some(source),
-                                arr.item_loc(source, i),
-                                format_args!("Workspace not found \"{}\"", BStr::new(input_path)),
-                            );
-                        } else if err == bun_core::err!("MissingPackageName") {
-                            let _ = log.add_error_fmt(
-                                Some(source),
-                                loc,
-                                format_args!(
-                                    "Missing \"name\" from package.json in {}",
-                                    BStr::new(input_path)
-                                ),
-                            );
-                        } else {
-                            let mut cwd_buf = vec![0u8; MAX_PATH_BYTES];
-                            let cwd_len = bun_sys::getcwd(&mut cwd_buf).expect("unreachable");
-                            let _ = log.add_error_fmt(
+                    process_workspace_name(json_cache, abs_package_json_path, log)
+                        .map(|entry| (abs_package_json_path, entry))
+                }
+                None => Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)),
+            };
+
+            let (abs_package_json_path, workspace_entry) = match processed {
+                Ok(processed) => processed,
+                Err(err) => {
+                    if err == crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
+                        || err == crate::Error::Sys(bun_errno::SystemErrno::EPERM)
+                        || err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                    {
+                        let _ = log.add_error_fmt(
+                            Some(source),
+                            arr.item_loc(source, i),
+                            format_args!("Workspace not found \"{}\"", BStr::new(input_path)),
+                        );
+                    } else if err == crate::Error::MissingPackageName {
+                        let _ = log.add_error_fmt(
+                            Some(source),
+                            loc,
+                            format_args!(
+                                "Missing \"name\" from package.json in {}",
+                                BStr::new(input_path)
+                            ),
+                        );
+                    } else {
+                        let mut cwd_buf = vec![0u8; MAX_PATH_BYTES];
+                        let cwd_len = bun_sys::getcwd(&mut cwd_buf).expect("unreachable");
+                        let _ = log.add_error_fmt(
                             Some(source),
                             arr.item_loc(source, i),
                             format_args!(
@@ -269,10 +270,10 @@ impl WorkspaceMap {
                                 BStr::new(&cwd_buf[..cwd_len]),
                             ),
                         );
-                        }
-                        continue;
                     }
-                };
+                    continue;
+                }
+            };
 
             if workspace_entry.name.len() == 0 {
                 continue;
@@ -281,7 +282,7 @@ impl WorkspaceMap {
             let rel_input_path = resolve_path::relative_platform::<path::platform::Auto, true>(
                 source.path.name().dir,
                 strings::without_suffix_comptime(
-                    abs_package_json_path.as_bytes(),
+                    abs_package_json_path,
                     const_format::concatcp!(SEP_STR, "package.json").as_bytes(),
                 ),
             );
@@ -336,7 +337,10 @@ impl WorkspaceMap {
                     b"package.json"
                 } else {
                     let parts: [&[u8]; 2] = [user_pattern, b"package.json"];
-                    arena.alloc_slice_copy(resolve_path::join::<path::platform::Auto>(&parts))
+                    let mut spill: Vec<u8> = Vec::new();
+                    arena.alloc_slice_copy(resolve_path::join_spill::<path::platform::Auto>(
+                        &mut spill, &parts,
+                    ))
                 };
 
                 let mut cwd = resolve_path::dirname::<path::platform::Auto>(source.path.text);
@@ -366,7 +370,7 @@ impl WorkspaceMap {
                             BStr::new(user_pattern),
                             <&'static str>::from(e.get_errno()),
                         );
-                        return Err(bun_core::err!("GlobError"));
+                        return Err(crate::Error::GlobError);
                     }
                 };
                 // walker dropped at end of loop iter; GlobWalker is heap-backed with no
@@ -382,7 +386,7 @@ impl WorkspaceMap {
                         BStr::new(user_pattern),
                         <&'static str>::from(e.get_errno()),
                     );
-                    return Err(bun_core::err!("GlobError"));
+                    return Err(crate::Error::GlobError);
                 }
 
                 'next_match: loop {
@@ -398,7 +402,7 @@ impl WorkspaceMap {
                                 BStr::new(user_pattern),
                                 <&'static str>::from(e.get_errno()),
                             );
-                            return Err(bun_core::err!("GlobError"));
+                            return Err(crate::Error::GlobError);
                         }
                     };
                     let matched_path: &[u8] = &matched_path_owned;
@@ -418,20 +422,16 @@ impl WorkspaceMap {
 
                         // check if it's negated by any remaining patterns
                         for next_pattern in &workspace_globs[i + 1..] {
-                            match glob::r#match(next_pattern, matched_path_without_package_json) {
-                                glob::MatchResult::NoMatch
-                                | glob::MatchResult::Match
-                                | glob::MatchResult::NegateMatch => {}
-
-                                glob::MatchResult::NegateNoMatch => {
-                                    bun_output::scoped_log!(
-                                        Lockfile,
-                                        "skipping negated path: {}, {}\n",
-                                        BStr::new(matched_path_without_package_json),
-                                        BStr::new(next_pattern)
-                                    );
-                                    continue 'next_match;
-                                }
+                            let result =
+                                glob::r#match(next_pattern, matched_path_without_package_json);
+                            if result.is_negated() && !result.matches() {
+                                bun_output::scoped_log!(
+                                    Lockfile,
+                                    "skipping negated path: {}, {}\n",
+                                    BStr::new(matched_path_without_package_json),
+                                    BStr::new(next_pattern)
+                                );
+                                continue 'next_match;
                             }
                         }
                     }
@@ -443,29 +443,25 @@ impl WorkspaceMap {
                         BStr::new(entry_dir)
                     );
 
-                    let abs_package_json_path = resolve_path::join_abs_string_buf_z::<
+                    let processed = match resolve_path::join_abs_string_buf_checked::<
                         path::platform::Auto,
                     >(
                         cwd, filepath_buf, &[entry_dir, b"package.json"]
-                    );
-                    let abs_workspace_dir_path: &[u8] = strings::without_suffix_comptime(
-                        abs_package_json_path.as_bytes(),
-                        b"package.json",
-                    );
-
-                    let workspace_entry = match process_workspace_name(
-                        json_cache,
-                        abs_package_json_path,
-                        log,
                     ) {
-                        Ok(e) => e,
+                        Some(abs_package_json_path) => {
+                            process_workspace_name(json_cache, abs_package_json_path, log)
+                                .map(|entry| (abs_package_json_path, entry))
+                        }
+                        None => Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)),
+                    };
+
+                    let (abs_package_json_path, workspace_entry) = match processed {
+                        Ok(processed) => processed,
                         Err(err) => {
                             let entry_base: &[u8] = path::basename(matched_path);
-                            if err == bun_core::err!("FileNotFound")
-                                || err == bun_core::err!("PermissionDenied")
-                            {
+                            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 continue;
-                            } else if err == bun_core::err!("MissingPackageName") {
+                            } else if err == crate::Error::MissingPackageName {
                                 let _ = log.add_error_fmt(
                                     Some(source),
                                     bun_ast::Loc::EMPTY,
@@ -497,6 +493,8 @@ impl WorkspaceMap {
                         continue;
                     }
 
+                    let abs_workspace_dir_path: &[u8] =
+                        strings::without_suffix_comptime(abs_package_json_path, b"package.json");
                     let workspace_path: &[u8] =
                         resolve_path::relative_platform::<path::platform::Auto, true>(
                             source.path.name().dir,
@@ -545,7 +543,7 @@ impl WorkspaceMap {
         }
 
         if orig_msgs_len != log.msgs.len() {
-            return Err(bun_core::err!("InstallFailed"));
+            return Err(crate::Error::InstallFailed);
         }
 
         // Sort the names for determinism

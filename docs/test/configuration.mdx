@@ -138,31 +138,6 @@ pathIgnorePatterns = [
   Command-line `--path-ignore-patterns` flags override the `bunfig.toml` value entirely -- the two are not merged.
 </Note>
 
-## Timeouts
-
-### Default Timeout
-
-Set the default timeout for all tests:
-
-```toml title="bunfig.toml" icon="settings"
-[test]
-timeout = 10000  # 10 seconds (default is 5000ms)
-```
-
-This applies to all tests unless overridden by individual test timeouts:
-
-```ts title="test.ts" icon="/icons/typescript.svg"
-// This test will use the default timeout from bunfig.toml
-test("uses default timeout", () => {
-  // test implementation
-});
-
-// This test overrides the default timeout
-test("custom timeout", () => {
-  // test implementation
-}, 30000); // 30 seconds
-```
-
 ## Reporters
 
 ### JUnit Reporter
@@ -421,23 +396,16 @@ prefer = "offline"
 [test]
 # Test-specific configuration
 coverage = true
-timeout = 10000
 ```
 
 ## Environment Variables
 
-Set environment variables for tests with `.env` files, which Bun loads from your project root automatically. For test-specific variables, create a `.env.test` file:
+Set environment variables for tests with `.env` files, which Bun loads from your project root automatically. For test-specific variables, create a `.env.test` file, which `bun test` loads automatically:
 
 ```ini title=".env.test" icon="settings"
 NODE_ENV=test
 DATABASE_URL=postgresql://localhost:5432/test_db
 LOG_LEVEL=error
-```
-
-Then load it with `--env-file`:
-
-```bash terminal icon="terminal"
-bun test --env-file=.env.test
 ```
 
 ## Complete Configuration Example
@@ -457,7 +425,6 @@ preload = ["./test-setup.ts", "./global-mocks.ts"]
 pathIgnorePatterns = ["vendor/**", "submodules/**"]
 
 # Execution settings
-timeout = 10000
 smol = true
 
 # Coverage configuration
@@ -487,74 +454,11 @@ Command-line options always override configuration file settings:
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
-timeout = 5000
 coverage = false
 ```
 
 ```bash terminal icon="terminal"
-# These CLI flags override the config file
-bun test --timeout 10000 --coverage
-# timeout will be 10000ms and coverage will be enabled
-```
-
-## Conditional Configuration
-
-You can use different configurations for different environments:
-
-```toml title="bunfig.toml" icon="settings"
-[test]
-# Default test configuration
-coverage = false
-timeout = 5000
-
-# Override for CI environment
-[test.ci]
-coverage = true
-coverageThreshold = 0.8
-timeout = 30000
-```
-
-Then in CI:
-
-```bash terminal icon="terminal"
-# Use CI-specific settings
-bun test --config=ci
-```
-
-## Validation and Troubleshooting
-
-### Invalid Configuration
-
-Bun warns about invalid configuration options:
-
-```toml title="bunfig.toml" icon="settings"
-[test]
-invalidOption = true  # This will generate a warning
-```
-
-### Common Configuration Issues
-
-1. **Path Resolution**: Relative paths in config are resolved relative to the config file location
-2. **Pattern Matching**: Glob patterns use standard glob syntax
-3. **Type Mismatches**: Ensure numeric values are not quoted unless they should be strings
-
-```toml title="bunfig.toml" icon="settings"
-[test]
-# Correct
-timeout = 10000
-
-# Incorrect - will be treated as string
-timeout = "10000"
-```
-
-### Debugging Configuration
-
-To see what configuration is being used:
-
-```bash terminal icon="terminal"
-# Show effective configuration
-bun test --dry-run
-
-# Verbose output to see configuration loading
-bun test --verbose
+# This CLI flag overrides the config file
+bun test --coverage
+# coverage will be enabled
 ```

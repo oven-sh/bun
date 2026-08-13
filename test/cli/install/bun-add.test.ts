@@ -1249,7 +1249,7 @@ it("should add aliased dependency (npm)", async () => {
 describe("npm aliases", () => {
   type TestCase = {
     args: string[];
-    resolved: { name: string; version: string };
+    resolved: { name: string; version: string; tarballVersion?: string };
     expected: BunLockFile["workspaces"][string];
   };
   const packageJSON = {
@@ -1258,11 +1258,11 @@ describe("npm aliases", () => {
   };
   const registryVersions = {
     "0.0.3": { bin: { "baz-run": "index.js" } },
-    "0.0.5": { bin: { "baz-run": "index.js" } },
+    "0.0.5-rc.123456789": { as: "0.0.5" },
     latest: "0.0.3",
   };
   const registryDistTags = {
-    rc: "0.0.5",
+    rc: "0.0.5-rc.123456789",
   };
   let ctx: import("./dummy.registry").TestContext;
   let urls: string[];
@@ -1304,8 +1304,8 @@ describe("npm aliases", () => {
     },
     {
       args: ["bar@npm:@scope/baz@rc"],
-      resolved: { name: "@scope/baz", version: "0.0.5" },
-      expected: { dependencies: { bar: "npm:@scope/baz@^0.0.5" } },
+      resolved: { name: "@scope/baz", version: "0.0.5-rc.123456789", tarballVersion: "0.0.5" },
+      expected: { dependencies: { bar: "npm:@scope/baz@^0.0.5-rc.123456789" } },
     },
     {
       args: ["--exact", "bar@npm:@scope/baz"],
@@ -1352,7 +1352,7 @@ describe("npm aliases", () => {
   test.each(testCases.map(testCase => ({ ...testCase, command: `bun add ${testCase.args.join(" ")}` })))(
     "$command",
     async ({ args, resolved, expected }) => {
-      const { stderr, exited } = spawn({
+      const { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "add", ...args],
         cwd: ctx.package_dir,
         stdout: "pipe",
@@ -1361,11 +1361,12 @@ describe("npm aliases", () => {
         env,
       });
 
+      const out = await stdout.text();
       expect(await stderr.text()).toContain("Saved lockfile");
       expect(await exited).toBe(0);
       expect(urls.sort()).toEqual([
         `${ctx.registry_url}${resolved.name.replace("/", "%2f")}`,
-        `${ctx.registry_url}${resolved.name}-${resolved.version}.tgz`,
+        `${ctx.registry_url}${resolved.name}-${resolved.tarballVersion ?? resolved.version}.tgz`,
       ]);
       expect(await file(join(ctx.package_dir, "package.json")).json()).toEqual({
         ...packageJSON,
@@ -1381,6 +1382,7 @@ describe("npm aliases", () => {
         throw new Error("Expected a dependency record");
       }
       const [alias] = Object.keys(dependencyRecord);
+      expect(out).toContain(`installed ${alias}@npm:${resolved.name}@${resolved.version}`);
       expect(lockfile.packages[alias]?.[0]).toBe(`${resolved.name}@${resolved.version}`);
 
       const frozenInstall = spawn({

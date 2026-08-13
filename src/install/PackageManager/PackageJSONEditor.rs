@@ -1555,7 +1555,7 @@ pub(crate) fn edit(
                                 request.resolved_npm_specifier(
                                     resolved_name,
                                     resolutions[request.package_id as usize].npm().version,
-                                    request.version_buf(),
+                                    string_buf,
                                     options.exact_versions,
                                 )
                             )

@@ -2712,6 +2712,11 @@ impl VirtualMachine {
                         return Ok(stored);
                     }
                     let resolved = JSC__JSInternalPromise__resolvedPromise(global_ref, ret);
+                    // The run command reports this promise's rejection once it
+                    // settles, like the module loader's promises (which JSC
+                    // creates already marked handled). Otherwise the unhandled
+                    // rejection tracker reports a late rejection a second time.
+                    crate::JSPromise::opaque_mut(resolved).set_handled();
                     self.pending_internal_promise = Some(resolved);
                     self.pending_internal_promise_is_protected = false;
                     return Ok(resolved);

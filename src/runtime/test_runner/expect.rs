@@ -28,11 +28,9 @@ use bun_jsc::js_error_to_write_error;
 
 
 
-/// Returns true if the active execution group has more than one sequence in
-/// flight (i.e. the caller is inside a `test.concurrent` group). Used by
-/// `expect.assertions` / `expect.hasAssertions` / snapshot matchers, which
-/// can't safely track per-sequence counters across `await` boundaries in a
-/// concurrent group (see https://github.com/oven-sh/bun/issues/29236).
+/// True when more than one `test.concurrent` sequence is in flight, where
+/// per-sequence state (assertion counters, snapshot slots) can't be resolved
+/// across `await` boundaries (see https://github.com/oven-sh/bun/issues/29236).
 fn is_in_multi_sequence_concurrent_group(buntest: &bun_test::BunTest) -> bool {
     if buntest.phase != bun_test::Phase::Execution {
         return false;
@@ -634,11 +632,7 @@ impl Expect {
         let parent = self.parent.as_ref().ok_or(crate::Error::NoTest)?;
         let buntest_strong = parent.bun_test().ok_or(crate::Error::TestNotActive)?;
         let buntest = buntest_strong.get();
-        // Snapshots in a concurrent group have the same limitation as
-        // `expect.assertions` — the sync call works, but a post-await call
-        // in the same test body can't resolve back to the right sequence.
-        // Reject at call time rather than silently writing to the wrong
-        // snapshot slot. See https://github.com/oven-sh/bun/issues/29236.
+        // Reject at call time rather than silently writing to the wrong snapshot slot.
         if is_in_multi_sequence_concurrent_group(buntest) {
             return Err(crate::Error::SnapshotInConcurrentGroup);
         }
@@ -1683,13 +1677,8 @@ impl Expect {
         };
         let buntest = buntest_strong.get();
         if is_in_multi_sequence_concurrent_group(buntest) {
-            // expect.hasAssertions() and expect.assertions() can't work in
-            // concurrent tests: we can set the constraint on the calling
-            // sequence synchronously, but subsequent expect() matchers that
-            // resume after an `await` have no way to resolve back to the
-            // same sequence, so the counter diverges and the test ends with
-            // a spurious "expected N assertions" failure. Throw at call
-            // time instead of silently miscounting later.
+            // Throw at call time; letting the per-sequence counter diverge
+            // across `await`s would fail the test with a wrong count instead.
             return Err(global_this.throw(format_args!(
                 "expect.hasAssertions() is not supported in concurrent tests. Remove `.concurrent` from the test or use `test.serial` instead."
             )));
@@ -1747,9 +1736,7 @@ impl Expect {
         };
         let buntest = buntest_strong.get();
         if is_in_multi_sequence_concurrent_group(buntest) {
-            // Same limitation as `expect.hasAssertions` — see that function's
-            // comment for why we throw at call time instead of letting the
-            // per-sequence counter silently diverge across `await` boundaries.
+            // Same limitation as `expect.hasAssertions`.
             return Err(global_this.throw(format_args!(
                 "expect.assertions() is not supported in concurrent tests. Remove `.concurrent` from the test or use `test.serial` instead."
             )));

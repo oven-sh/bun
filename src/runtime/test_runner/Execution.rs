@@ -1023,24 +1023,12 @@ fn step_sequence_one(
             (*on_stack_data_cell).set(prev_on_stack_data);
         });
 
-        // Mark this sequence/entry as the synchronously-executing callback
-        // so that `onTestFinished()` can look up which concurrent sequence
-        // it belongs to. Any awaited microtasks that are drained by
-        // `run_callback_with_result_and_forcefully_drain_microtasks` also
-        // see this context. The context is popped once the JS call returns,
-        // even if the returned promise is still pending.
-        //
-        // `expect.assertions()` / `expect.hasAssertions()` / snapshot
-        // matchers deliberately do NOT use this stack — they reject
-        // upfront in multi-sequence concurrent groups (see `expect.rs`)
-        // because their subsequent `expect(v)` matchers can't resolve the
-        // owning sequence once control has returned to the event loop.
-        // SAFETY: buntest_ptr is live through this call — it's the same
-        // ownership root `run_test_callback` uses, and we touch it before
-        // handing control to JS.
+        // Expose this sequence to hooks registered synchronously inside the
+        // callback (including microtasks drained by `run_test_callback`);
+        // popped when the JS call returns, even if its promise is pending.
+        // SAFETY: buntest_ptr is the same ownership root `run_test_callback`
+        // uses, touched before handing control to JS.
         unsafe { (*buntest_ptr.as_ptr()).push_current_callback(callback_data.clone()); }
-        // RAII guard pops on all exit paths, including the `return`s below
-        // and any early return from `run_test_callback`.
         struct PopGuard(core::ptr::NonNull<BunTest>);
         impl Drop for PopGuard {
             fn drop(&mut self) {

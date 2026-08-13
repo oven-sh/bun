@@ -236,26 +236,22 @@ pub mod js_fns {
                 Phase::Execution => {
                     let active = bun_test.get_current_state_data();
                     let Some((sequence, _)) = bun_test.execution.get_current_and_valid_execution_sequence(&active) else {
-                        // We only reach this branch when
-                        // `current_callback_stack` is empty *and* the active
-                        // concurrent group has more than one sequence in
-                        // flight. The common way to hit this is calling the
-                        // hook after the first `await` in a concurrent test
-                        // — by then the synchronous push/pop has already
-                        // been popped and we can no longer tell which
-                        // sequence the caller belongs to. Tell the user to
-                        // hoist the call above the first `await`, which is
-                        // the only actionable fix here.
-                        return Err(if tag == GenericHookTag::OnTestFinished {
-                            global_this.throw(format_args!(
+                        // Reached when the hook is called after the first `await` in a
+                        // concurrent test: the callback stack has been popped, so the
+                        // owning sequence can no longer be identified.
+                        return Err(match tag {
+                            GenericHookTag::OnTestFinished => global_this.throw(format_args!(
                                 "Cannot call {}() here. In a concurrent test, call it synchronously before the first `await`.",
                                 tag_name
-                            ))
-                        } else {
-                            global_this.throw(format_args!(
+                            )),
+                            GenericHookTag::AfterAll | GenericHookTag::AfterEach => global_this.throw(format_args!(
                                 "Cannot call {}() here. In a concurrent test, call it synchronously before the first `await`, or move it into a describe() block.",
                                 tag_name
-                            ))
+                            )),
+                            _ => global_this.throw(format_args!(
+                                "Cannot call {}() here. Call it inside describe() instead.",
+                                tag_name
+                            )),
                         });
                     };
 
@@ -658,16 +654,10 @@ pub struct BunTest {
     /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
     pub(crate) cloned_hook_entries: Vec<*mut ExecutionEntry>,
     pub(crate) wants_wakeup: bool,
-    /// Stack of concurrent-sequence contexts whose JS callback is currently
-    /// being executed synchronously. Pushed by `Execution::step_sequence_one`
-    /// before invoking `run_test_callback` and popped after it returns.
-    ///
-    /// During synchronous JS execution (including drained microtasks), the
-    /// top of this stack tells `get_current_state_data` which concurrent
-    /// sequence the calling code belongs to, so `onTestFinished()` resolves
-    /// to the correct test. `expect.assertions()` / `expect.hasAssertions()`
-    /// / snapshot matchers intentionally do not use this stack — see
-    /// `expect.rs` for why they reject concurrent-test calls outright.
+    /// Sequence contexts whose JS callback is executing synchronously
+    /// (pushed/popped around `run_test_callback` by `step_sequence_one`).
+    /// Lets `get_current_state_data` attribute hooks like `onTestFinished()`
+    /// to the right sequence in multi-sequence concurrent groups.
     pub(crate) current_callback_stack: Vec<RefDataValue>,
 
     pub(crate) phase: Phase,
@@ -716,12 +706,8 @@ impl BunTest {
                 active_scope: self.collection.active_scope,
             },
             Phase::Execution => 'blk: {
-                // If a JS callback is currently executing synchronously
-                // (including during drained microtasks), the innermost push
-                // on `current_callback_stack` tells us exactly which
-                // sequence/entry we're inside. This disambiguates the
-                // concurrent case, where multiple sequences may be in flight
-                // at the same time.
+                // The innermost synchronously-executing callback wins; this
+                // disambiguates concurrent groups with several sequences in flight.
                 if let Some(top) = self.current_callback_stack.last() {
                     if matches!(top, RefDataValue::Execution { .. }) {
                         break 'blk top.clone();
@@ -763,17 +749,11 @@ impl BunTest {
         }
     }
 
-    /// Push an entry onto the callback-execution stack. Must be paired with
-    /// `pop_current_callback`. Call this immediately before invoking user JS
-    /// from a concurrent-safe context so nested hooks (`onTestFinished`) can
-    /// recover which sequence they belong to.
+    /// Must be paired with `pop_current_callback`.
     pub fn push_current_callback(&mut self, data: RefDataValue) {
         self.current_callback_stack.push(data);
     }
 
-    /// Pop the innermost callback-execution entry. Tolerates an empty stack
-    /// at teardown — the only correct caller is the defer that paired a
-    /// preceding `push_current_callback`.
     pub fn pop_current_callback(&mut self) {
         if self.current_callback_stack.pop().is_none() {
             debug_assert!(false);
@@ -1438,9 +1418,7 @@ impl Drop for BunTest {
             // SAFETY: heap-boxed by `Order::generate_order_test`; same layout as `ManuallyDrop`.
             let _ = unsafe { Box::from_raw(entry.cast::<core::mem::ManuallyDrop<ExecutionEntry>>()) };
         }
-        // every push_current_callback must be paired with pop_current_callback —
-        // a non-empty stack at teardown means we leaked a frame.
-        debug_assert!(self.current_callback_stack.is_empty());
+        debug_assert!(self.current_callback_stack.is_empty()); // pushes must be balanced by pops
         // execution, collection, result_queue: dropped automatically
     }
 }

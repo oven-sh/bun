@@ -113,3 +113,30 @@ test.concurrent("error message after yielding await in concurrent test tells use
   expect(output).toMatch(/before the first `?await`?/);
   expect(exitCode).not.toBe(0);
 });
+
+// Side effect of the callback-stack fix: an unhandled rejection thrown
+// synchronously inside a concurrent test body is now attributed to that test
+// (matching serial behavior) instead of passing the test and printing an
+// unattributed "Unhandled error between tests" banner.
+test.concurrent("unhandled rejection in a concurrent test body fails that test", async () => {
+  using dir = tempDir("issue-29236-unhandled-rejection", {
+    "reject.test.ts": /* ts */ `
+      import { test } from "bun:test";
+      test.concurrent("a", () => { Promise.reject(new Error("boom")); });
+      test.concurrent("b", () => {});
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "reject.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const output = stdout + stderr;
+  expect(output).toMatch(/\(fail\) a/);
+  expect(output).toMatch(/\b1 pass\b/);
+  expect(output).toMatch(/\b1 fail\b/);
+  expect(exitCode).not.toBe(0);
+});

@@ -1361,9 +1361,9 @@ describe("npm aliases", () => {
         env,
       });
 
-      const out = await stdout.text();
-      expect(await stderr.text()).toContain("Saved lockfile");
-      expect(await exited).toBe(0);
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).toContain("Saved lockfile");
+      expect(exitCode).toBe(0);
       expect(urls.sort()).toEqual([
         `${ctx.registry_url}${resolved.name.replace("/", "%2f")}`,
         `${ctx.registry_url}${resolved.name}-${resolved.tarballVersion ?? resolved.version}.tgz`,
@@ -1374,7 +1374,7 @@ describe("npm aliases", () => {
       });
 
       const lockfilePath = join(ctx.package_dir, "bun.lock");
-      const lockfile: BunLockFile = await import(lockfilePath);
+      const lockfile = Bun.JSONC.parse(await file(lockfilePath).text()) as BunLockFile;
       expect(lockfile.workspaces[""]).toEqual({ name: packageJSON.name, ...expected });
 
       const dependencyRecord = Object.values(expected)[0];
@@ -1393,10 +1393,15 @@ describe("npm aliases", () => {
         env,
       });
 
-      expect(await frozenInstall.stderr.text()).toContain("Saved lockfile");
-      expect(await frozenInstall.exited).toBe(0);
+      const [, frozenErr, frozenExitCode] = await Promise.all([
+        frozenInstall.stdout.text(),
+        frozenInstall.stderr.text(),
+        frozenInstall.exited,
+      ]);
+      expect(frozenErr).toContain("Saved lockfile");
+      expect(frozenExitCode).toBe(0);
 
-      const lockfileAfterFrozenInstall: BunLockFile = await import(`${lockfilePath}?after-frozen-install`);
+      const lockfileAfterFrozenInstall = Bun.JSONC.parse(await file(lockfilePath).text()) as BunLockFile;
       expect(lockfileAfterFrozenInstall).toEqual(lockfile);
     },
   );

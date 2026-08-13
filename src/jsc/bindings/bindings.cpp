@@ -5523,25 +5523,7 @@ restart:
 
                 JSC::JSValue propertyValue = jsUndefined();
 
-                if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-                    if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-                        // If we can't use getPureResult, let's at least say it was a [Getter]
-                        if (!slot.isCacheableGetter()) {
-                            propertyValue = slot.getterSetter();
-                        } else {
-                            propertyValue = slot.getPureResult();
-                        }
-                    } else if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
-                        propertyValue = slot.getValue(globalObject, property);
-                    } else if (slot.isCustom()) {
-                        propertyValue = slot.getValue(globalObject, property);
-                    } else if (slot.isValue()) {
-                        propertyValue = slot.getValue(globalObject, property);
-                    } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
-                        RETURN_IF_EXCEPTION(scope, );
-                        propertyValue = slot.getValue(globalObject, property);
-                    }
-                } else if (slot.isAccessor()) {
+                if (slot.isAccessor()) {
                     // If we can't use getPureResult, let's at least say it was a [Getter]
                     if (!slot.isCacheableGetter()) {
                         propertyValue = slot.getterSetter();
@@ -5675,20 +5657,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
         }
 
         JSC::JSValue propertyValue = jsUndefined();
-        if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-            if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-                propertyValue = slot.getPureResult();
-            } else if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
-                propertyValue = slot.getValue(globalObject, property);
-            } else if (slot.isCustom()) {
-                propertyValue = slot.getValue(globalObject, property);
-            } else if (slot.isValue()) {
-                propertyValue = slot.getValue(globalObject, property);
-            } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
-                RETURN_IF_EXCEPTION(scope, );
-                propertyValue = slot.getValue(globalObject, property);
-            }
-        } else if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
+        if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
             propertyValue = slot.getPureResult();
         } else {
             propertyValue = slot.getValue(globalObject, property);

@@ -249,13 +249,13 @@ describe.concurrent.skipIf(isWindows)("bunshell cp of a FIFO", () => {
     expect(lstatSync(join(work, "out/pipe"), { throwIfNoEntry: false })).toBeUndefined();
   });
 
-  // The source is classified without following symlinks, so a symlink is
-  // recreated as one whatever it points at.
-  test("behind a symlink is copied as a symlink", async () => {
+  // With -R a symlink operand is copied as a link, so what it points at is
+  // never looked at.
+  test("behind a symlink is copied as a symlink by cp -R", async () => {
     using dir = setup("symlink");
     const work = join(String(dir), "work");
     symlinkSync("fifo", join(work, "link"));
-    expect(await cp(String(dir), "cp link out")).toEqual(copied);
+    expect(await cp(String(dir), "cp -R link out")).toEqual(copied);
     expect(lstatSync(join(work, "out")).isSymbolicLink()).toBe(true);
   });
 });

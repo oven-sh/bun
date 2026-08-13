@@ -8489,11 +8489,7 @@ impl NodeFS {
         result
     }
 
-    /// Classifies the source from its lstat before `copy_single_file_sync`
-    /// opens it: `open(2)` on a FIFO blocks until a writer shows up, and
-    /// sockets and devices have no contents to copy either, so only regular
-    /// files and symlinks (recreated by [`Self::cp_symlink`]) get as far as the
-    /// open. The macOS arm makes the same decision from the stat it takes anyway.
+    /// `open(2)` blocks on a FIFO with no writer, so the source kind is checked from its lstat first.
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     fn cp_check_source_kind(src: &ZStr, reuse_stat: Option<&sys::Stat>) -> Maybe<()> {
         let st_mode = match reuse_stat {
@@ -8562,8 +8558,7 @@ impl NodeFS {
         src: &OSPathSliceZ,
         dest: &OSPathSliceZ,
         mode: constants::Copyfile,
-        // The caller's `lstat` of `src` on posix (the symlink checks below rely
-        // on it not following links), file attributes on windows
+        // The caller's lstat on posix, file attributes on windows
         #[cfg(windows)] reuse_stat: Option<windows::DWORD>,
         #[cfg(not(windows))] reuse_stat: Option<&sys::Stat>,
         args: &args::Cp,

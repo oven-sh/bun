@@ -181,9 +181,8 @@ use crate::package_manager_task as Task;
 use crate::resolvers::folder_resolver::{Entry as FolderResolutionEntry, FolderResolution};
 use bun_install::lockfile::{self, Lockfile};
 use bun_install::{
-    Dependency, DependencyID, NetworkTask, PackageID, PackageManifestMap,
-    PackageNameAndVersionHash, PackageNameHash, PatchTask, PreinstallState, TaskCallbackContext,
-    initialize_store,
+    DependencyID, NetworkTask, PackageID, PackageManifestMap, PackageNameAndVersionHash,
+    PackageNameHash, PatchTask, PreinstallState, TaskCallbackContext, initialize_store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -279,7 +278,6 @@ pub type PatchTaskQueue = UnboundedQueue<PatchTask /* , .next */>;
 pub type AsyncNetworkTaskQueue = UnboundedQueue<NetworkTask /* , .next */>;
 
 pub(crate) type SuccessFn = fn(&mut PackageManager, DependencyID, PackageID);
-pub(crate) type FailFn = fn(&mut PackageManager, &Dependency, PackageID, Error);
 
 // Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified
 // if a proxy IS specified, default to 64. We have different values because we might change this in the future.
@@ -891,26 +889,6 @@ impl PackageManager {
 
     pub fn tls_reject_unauthorized(&self) -> bool {
         self.env().get_tls_reject_unauthorized()
-    }
-
-    pub(crate) fn fail_root_resolution(
-        &mut self,
-        dependency: &Dependency,
-        dependency_id: DependencyID,
-        err: Error,
-    ) {
-        if let Some(ctx) = self.on_wake.context {
-            // SAFETY: `ctx` is the `WakeHandler::context` registered alongside
-            // this callback (a live `*mut Queue`); see `runtime::jsc_hooks`.
-            unsafe {
-                (self.on_wake.get_on_dependency_error())(
-                    ctx.as_ptr(),
-                    dependency,
-                    dependency_id,
-                    err.name(),
-                );
-            }
-        }
     }
 
     /// Raw-pointer wake for concurrent task-thread callers (see

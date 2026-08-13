@@ -21,7 +21,7 @@ use crate::lockfile::PackageIndexEntry;
 use crate::lockfile::package::Package;
 use crate::lockfile_real as Lockfile;
 use crate::package_manager_real::{
-    self, FailFn, PackageManager, SuccessFn, TaskCallbackList, determine_preinstall_state,
+    self, PackageManager, SuccessFn, TaskCallbackList, determine_preinstall_state,
     get_cache_directory, get_preinstall_state, get_temporary_directory, run_tasks,
     set_preinstall_state,
 };
@@ -50,14 +50,12 @@ fn verbose_install() -> bool {
 // `PatchTask.callback` discriminant — routed to the real
 // `patch_install::Callback` enum (CalcHash / Apply).
 
-// `SuccessFn` / `FailFn` are bare `fn(&mut PackageManager, ...)` pointers; the
-// real bodies are inherent methods, so reference them via the type path.
+// `SuccessFn` is a bare `fn(&mut PackageManager, ...)` pointer; the real
+// bodies are inherent methods, so reference them via the type path.
 #[allow(non_upper_case_globals)]
 const assign_resolution: SuccessFn = PackageManager::assign_resolution;
 #[allow(non_upper_case_globals)]
 const assign_root_resolution: SuccessFn = PackageManager::assign_root_resolution;
-#[allow(non_upper_case_globals)]
-const fail_root_resolution: FailFn = PackageManager::fail_root_resolution;
 
 // The `use package_manager_real::PackageManager`
 // above already pulls the `declare_scope!`-generated `static PackageManager: ScopedLogger`
@@ -86,7 +84,6 @@ pub fn enqueue_dependency_with_main(
         resolution,
         install_peer,
         assign_resolution,
-        None,
         false,
     )
 }
@@ -580,7 +577,6 @@ pub fn enqueue_dependency_to_root(
             invalid_package_id,
             false,
             assign_root_resolution,
-            Some(fail_root_resolution),
             true,
         ) {
             return DependencyToEnqueue::Failure(err);
@@ -762,7 +758,12 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     resolution: PackageID,
     install_peer: bool,
     success_fn: SuccessFn,
-    fail_fn: Option<FailFn>,
+    // True for the dependencies runtime auto-install enqueues on the root
+    // (`enqueue_dependency_to_root`). Every resolution error of those goes to
+    // `this.log`, which the runtime attaches to the import's error, and the
+    // dependency stays unresolved; `bun install` propagates the ones that have
+    // no dedicated message below.
+    //
     // The two `SuccessFn` candidates
     // (`assign_resolution` / `assign_root_resolution`) have byte-identical
     // bodies in release builds, so Apple ld64 (which ignores `.llvm_addrsig`)
@@ -914,31 +915,26 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         Err(err) => {
                             if err == crate::Error::DistTagNotFound {
                                 if dependency.behavior.is_required() {
-                                    if let Some(fail) = fail_fn {
-                                        fail(this, dependency, id, err);
-                                    } else if dependency.behavior.is_peer() {
+                                    if dependency.behavior.is_peer() {
                                         warn_unmet_peer_dependency(this, name, &version);
                                     } else {
-                                        this.log_mut()
-                    .add_error_fmt(
-                                                None,
-                                                bun_ast::Loc::EMPTY,
-                                                format_args!(
-                                                    "Package \"{}\" with tag \"{}\" not found, but package exists",
-                                                    bstr::BStr::new(this.lockfile.str(&name)),
-                                                    bstr::BStr::new(
-                                                        this.lockfile.str(&version.dist_tag().tag)
-                                                    ),
+                                        this.log_mut().add_error_fmt(
+                                            None,
+                                            bun_ast::Loc::EMPTY,
+                                            format_args!(
+                                                "Package \"{}\" with tag \"{}\" not found, but package exists",
+                                                bstr::BStr::new(this.lockfile.str(&name)),
+                                                bstr::BStr::new(
+                                                    this.lockfile.str(&version.dist_tag().tag)
                                                 ),
-                                            );
+                                            ),
+                                        );
                                     }
                                 }
                                 return Ok(());
                             } else if err == crate::Error::NoMatchingVersion {
                                 if dependency.behavior.is_required() {
-                                    if let Some(fail) = fail_fn {
-                                        fail(this, dependency, id, err);
-                                    } else if dependency.behavior.is_peer() {
+                                    if dependency.behavior.is_peer() {
                                         warn_unmet_peer_dependency(this, name, &version);
                                     } else {
                                         bun_ast::add_error_pretty!(
@@ -954,54 +950,45 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 return Ok(());
                             } else if err == crate::Error::TooRecentVersion {
                                 if dependency.behavior.is_required() {
-                                    if let Some(fail) = fail_fn {
-                                        fail(this, dependency, id, err);
+                                    let age_gate_ms =
+                                        this.options.minimum_release_age_ms.unwrap_or(0.0);
+                                    if version.tag == dependency::version::Tag::DistTag {
+                                        bun_ast::add_error_pretty!(
+                                            this.log_mut(),
+                                            None,
+                                            bun_ast::Loc::EMPTY,
+                                            "Package \"{}\" with tag \"{}\" not found<r> <d>(all versions blocked by minimum-release-age: {} seconds)<r>",
+                                            bstr::BStr::new(this.lockfile.str(&name)),
+                                            bstr::BStr::new(
+                                                this.lockfile.str(&version.dist_tag().tag)
+                                            ),
+                                            age_gate_ms / MS_PER_S,
+                                        );
                                     } else {
-                                        let age_gate_ms =
-                                            this.options.minimum_release_age_ms.unwrap_or(0.0);
-                                        if version.tag == dependency::version::Tag::DistTag {
-                                            bun_ast::add_error_pretty!(
-                                                this.log_mut(),
-                                                None,
-                                                bun_ast::Loc::EMPTY,
-                                                "Package \"{}\" with tag \"{}\" not found<r> <d>(all versions blocked by minimum-release-age: {} seconds)<r>",
-                                                bstr::BStr::new(this.lockfile.str(&name)),
-                                                bstr::BStr::new(
-                                                    this.lockfile.str(&version.dist_tag().tag)
-                                                ),
-                                                age_gate_ms / MS_PER_S,
-                                            );
-                                        } else {
-                                            bun_ast::add_error_pretty!(
-                                                this.log_mut(),
-                                                None,
-                                                bun_ast::Loc::EMPTY,
-                                                "No version matching \"{}\" found for specifier \"{}\"<r> <d>(blocked by minimum-release-age: {} seconds)<r>",
-                                                bstr::BStr::new(this.lockfile.str(&name)),
-                                                bstr::BStr::new(
-                                                    this.lockfile.str(&version.literal)
-                                                ),
-                                                age_gate_ms / MS_PER_S,
-                                            );
-                                        }
+                                        bun_ast::add_error_pretty!(
+                                            this.log_mut(),
+                                            None,
+                                            bun_ast::Loc::EMPTY,
+                                            "No version matching \"{}\" found for specifier \"{}\"<r> <d>(blocked by minimum-release-age: {} seconds)<r>",
+                                            bstr::BStr::new(this.lockfile.str(&name)),
+                                            bstr::BStr::new(this.lockfile.str(&version.literal)),
+                                            age_gate_ms / MS_PER_S,
+                                        );
                                     }
                                 }
                                 return Ok(());
                             } else if err == crate::Error::MissingPackageJSON {
                                 if dependency.behavior.is_required() {
-                                    if let Some(fail) = fail_fn {
-                                        fail(this, dependency, id, err);
-                                    } else if version.tag == dependency::version::Tag::Folder {
-                                        this.log_mut()
-                    .add_error_fmt(
-                                                None,
-                                                bun_ast::Loc::EMPTY,
-                                                format_args!(
-                                                    "Could not find package.json for \"file:{}\" dependency \"{}\"",
-                                                    bstr::BStr::new(this.lockfile.str(version.folder())),
-                                                    bstr::BStr::new(this.lockfile.str(&name)),
-                                                ),
-                                            );
+                                    if version.tag == dependency::version::Tag::Folder {
+                                        this.log_mut().add_error_fmt(
+                                            None,
+                                            bun_ast::Loc::EMPTY,
+                                            format_args!(
+                                                "Could not find package.json for \"file:{}\" dependency \"{}\"",
+                                                bstr::BStr::new(this.lockfile.str(version.folder())),
+                                                bstr::BStr::new(this.lockfile.str(&name)),
+                                            ),
+                                        );
                                     } else {
                                         this.log_mut().add_error_fmt(
                                             None,
@@ -1014,11 +1001,18 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     }
                                 }
                                 return Ok(());
+                            } else if is_root {
+                                this.log_mut().add_error_fmt(
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    format_args!(
+                                        "{} while resolving package \"{}\"",
+                                        err.name(),
+                                        bstr::BStr::new(this.lockfile.str(&name)),
+                                    ),
+                                );
+                                return Ok(());
                             } else {
-                                if let Some(fail) = fail_fn {
-                                    fail(this, dependency, id, err);
-                                    return Ok(());
-                                }
                                 return Err(err);
                             }
                         }

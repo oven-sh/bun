@@ -160,11 +160,10 @@ impl TargetExt for Target {
 
 // ─── Loader: schema-coupled extension methods ─────────────────────────────
 
-/// `schema::api`-coupled methods on [`bun_ast::Loader`].
-///
-/// Loader names from `--loader`, bunfig `[loader]` and `Bun.build({ loader })`
-/// round-trip through `to_api` and then `from_api`, so an arm that merges two
-/// loaders here silently changes which loader the user's name selects.
+/// `schema::api`-coupled methods on [`bun_ast::Loader`]. User loader maps
+/// (`--loader`, bunfig `[loader]`, `Bun.build({ loader })`) round-trip through
+/// `to_api` and `from_api`, so a `to_api` arm that merges two loaders changes
+/// what the user's loader name means.
 pub trait LoaderExt: sealed::Sealed {
     fn to_api(self) -> api::Loader;
     fn from_api(loader: api::Loader) -> Loader;

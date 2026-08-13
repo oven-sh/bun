@@ -610,9 +610,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   flags: number = 0;
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
-  /// monotonicNowMs() when the current connect cycle started; 0 when not
-  /// connecting. Connect failures (server not yet accepting connections) are
-  /// retried until connectionTimeout elapses from this point.
+  /// monotonicNowMs() at the start of the current connect cycle; 0 when not connecting.
   connectStartedAt: number = 0;
   connectAttempts: number = 0;
   retryTimer: ReturnType<typeof setTimeout> | null = null;

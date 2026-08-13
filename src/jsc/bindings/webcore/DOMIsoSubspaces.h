@@ -105,7 +105,6 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForReadIntoRequest;
     std::unique_ptr<IsoSubspace> m_subspaceForPullIntoDescriptor;
     std::unique_ptr<IsoSubspace> m_subspaceForStreamTeeState;
-    std::unique_ptr<IsoSubspace> m_subspaceForCrossRealmTransformState;
     std::unique_ptr<IsoSubspace> m_subspaceForStreamFromIterableContext;
     std::unique_ptr<IsoSubspace> m_subspaceForDirectStreamController;
     std::unique_ptr<IsoSubspace> m_subspaceForNativeStreamSourceAdapter;
@@ -190,7 +189,6 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSDiffieHellmanGroup;
     std::unique_ptr<IsoSubspace> m_subspaceForJSECDH;
     std::unique_ptr<IsoSubspace> m_subspaceForJSCipher;
-    std::unique_ptr<IsoSubspace> m_subspaceForJSKeyObject;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSecretKeyObject;
     std::unique_ptr<IsoSubspace> m_subspaceForJSPublicKeyObject;
     std::unique_ptr<IsoSubspace> m_subspaceForJSPrivateKeyObject;

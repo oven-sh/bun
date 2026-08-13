@@ -5,7 +5,6 @@
 
 #include "BunStandaloneTextSink.h"
 #include "BunStreamSource.h"
-#include "JSCrossRealmTransformState.h"
 #include "JSDirectSinkCloseState.h"
 #include "JSAsyncIteratorSourceOperation.h"
 #include "JSDirectStreamController.h"

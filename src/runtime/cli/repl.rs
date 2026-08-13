@@ -62,6 +62,10 @@ unsafe extern "C" {
 
 const MAX_HISTORY_SIZE: usize = 1000;
 const HISTORY_FILENAME: &[u8] = b".bun_repl_history";
+/// The history file holds one entry per line, so the newlines inside a
+/// multi-line entry are stored as this byte instead (as node's repl history
+/// does). Nothing else puts a CR in an entry: the line editor reads it as Enter.
+const HISTORY_STORED_NEWLINE: &[u8] = b"\r";
 
 // ANSI escape codes
 const CSI: &str = concat!("\x1b", "[");
@@ -204,14 +208,13 @@ impl History {
         };
 
         for line in strings::split(&content, b"\n") {
-            // Tolerate a file re-saved with CRLF line endings: that CR is not part
-            // of the entry, unlike the ones inside the line (see save()).
+            // A CRLF line ending; never entry content, since add() gets newline-trimmed input.
             let line = strings::trim_suffix(line, b"\r");
             if line.is_empty() {
                 continue;
             }
-            self.entries
-                .push(strings::replace_owned(line, b"\r", b"\n").into_boxed_slice());
+            let entry = strings::replace_owned(line, HISTORY_STORED_NEWLINE, b"\n");
+            self.entries.push(entry.into_boxed_slice());
         }
 
         // Trim to max size
@@ -240,11 +243,8 @@ impl History {
 
         let mut content: Vec<u8> = Vec::new();
         for entry in &self.entries[start..] {
-            // One entry per line: the newlines of a multi-line entry are stored as
-            // CR, as node's repl history does. This is lossless because an entry
-            // never contains a CR (Key::from_byte reads it as Enter) and never ends
-            // in a newline (handle_enter trims them), so load() can undo it exactly.
-            content.extend_from_slice(&strings::replace_owned(entry, b"\n", b"\r"));
+            let stored = strings::replace_owned(entry, b"\n", HISTORY_STORED_NEWLINE);
+            content.extend_from_slice(&stored);
             content.push(b'\n');
         }
 

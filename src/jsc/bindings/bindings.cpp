@@ -1260,33 +1260,103 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        auto iter1 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
-        RETURN_IF_EXCEPTION(scope, {});
-        JSValue key1;
-        while (iter1->next(globalObject, key1)) {
-            bool has = set2->has(globalObject, key1);
+        // Fast path: sizes match, so the sets are equal if set2 contains every element of set1 by reference.
+        bool allFastPath = true;
+        {
+            auto iter1 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
             RETURN_IF_EXCEPTION(scope, {});
-            if (has) {
-                continue;
-            }
-
-            // We couldn't find the key in the second set. This may be a false positive due to how
-            // JSValues are represented in JSC, so we need to fall back to a linear search to be sure.
-            auto iter2 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set2, IterationKind::Keys);
-            RETURN_IF_EXCEPTION(scope, {});
-            JSValue key2;
-            bool foundMatchingKey = false;
-            while (iter2->next(globalObject, key2)) {
-                bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, false);
+            JSValue key1;
+            while (iter1->next(globalObject, key1)) {
+                bool has = set2->has(globalObject, key1);
                 RETURN_IF_EXCEPTION(scope, {});
-                if (equal) {
-                    foundMatchingKey = true;
+                if (!has) {
+                    allFastPath = false;
                     break;
                 }
             }
+        }
 
-            if (!foundMatchingKey) {
-                return false;
+        if (!allFastPath) {
+            // addToStack=true below keeps nested self-referential collections on the cycle stack.
+            if constexpr (enableAsymmetricMatchers) {
+                // Asymmetric matchers break transitivity, so use Jest's two-way subset check instead of a bijection.
+                // Forward: every element in set1 has a deep-equal match in set2.
+                {
+                    auto iter1 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    JSValue key1;
+                    while (iter1->next(globalObject, key1)) {
+                        auto iter2 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set2, IterationKind::Keys);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        JSValue key2;
+                        bool found = false;
+                        while (iter2->next(globalObject, key2)) {
+                            bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, true);
+                            RETURN_IF_EXCEPTION(scope, {});
+                            if (equal) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            return false;
+                        }
+                    }
+                }
+                // Backward pass; keep the forward (key1, key2) argument order because the cycle stack records pairs positionally.
+                {
+                    auto iter2 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set2, IterationKind::Keys);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    JSValue key2;
+                    while (iter2->next(globalObject, key2)) {
+                        auto iter1 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        JSValue key1;
+                        bool found = false;
+                        while (iter1->next(globalObject, key1)) {
+                            bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, true);
+                            RETURN_IF_EXCEPTION(scope, {});
+                            if (equal) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            return false;
+                        }
+                    }
+                }
+            } else {
+                // Plain deep equality is an equivalence, so a first-fit bijection over a consumed-slot bitset is exact.
+                WTF::BitVector matchedIndices;
+                matchedIndices.ensureSize(set2->size());
+
+                auto iter1 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
+                RETURN_IF_EXCEPTION(scope, {});
+                JSValue key1;
+                while (iter1->next(globalObject, key1)) {
+                    auto iter2 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set2, IterationKind::Keys);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    JSValue key2;
+                    bool found = false;
+                    size_t idx2 = 0;
+                    while (iter2->next(globalObject, key2)) {
+                        if (!matchedIndices.get(idx2)) {
+                            bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, true);
+                            RETURN_IF_EXCEPTION(scope, {});
+                            if (equal) {
+                                matchedIndices.set(idx2);
+                                found = true;
+                                break;
+                            }
+                        }
+                        idx2++;
+                    }
+
+                    if (!found) {
+                        return false;
+                    }
+                }
             }
         }
 
@@ -1309,40 +1379,120 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        auto iter1 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
-        RETURN_IF_EXCEPTION(scope, {});
-        JSValue key1, value1;
-        while (iter1->nextKeyValue(globalObject, key1, value1)) {
-            JSValue value2 = map2->get(globalObject, key1);
+        // Fast path: every key of map1 found in map2 by reference, with deep-equal values.
+        bool allFastPath = true;
+        {
+            auto iter1 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
             RETURN_IF_EXCEPTION(scope, {});
-            if (value2.isUndefined()) {
-                // We couldn't find the key in the second map. This may be a false positive due to
-                // how JSValues are represented in JSC, so we need to fall back to a linear search
-                // to be sure.
-                auto iter2 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map2, IterationKind::Entries);
+            JSValue key1, value1;
+            while (iter1->nextKeyValue(globalObject, key1, value1)) {
+                JSValue value2 = map2->get(globalObject, key1);
                 RETURN_IF_EXCEPTION(scope, {});
-                JSValue key2;
-                bool foundMatchingKey = false;
-                while (iter2->nextKeyValue(globalObject, key2, value2)) {
-                    bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, false);
+                if (value2.isUndefined()) {
+                    allFastPath = false;
+                    break;
+                }
+                bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, value1, value2, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!valuesEqual) {
+                    allFastPath = false;
+                    break;
+                }
+            }
+        }
+
+        if (!allFastPath) {
+            // A hash-matched key with an unequal value may still pair with a structurally-equal key elsewhere; same branches as the Set slow path.
+            if constexpr (enableAsymmetricMatchers) {
+                // Forward: every (k1, v1) in map1 has a deep-equal entry in map2.
+                {
+                    auto iter1 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
                     RETURN_IF_EXCEPTION(scope, {});
-                    if (keysEqual) {
-                        foundMatchingKey = true;
-                        break;
+                    JSValue key1, value1;
+                    while (iter1->nextKeyValue(globalObject, key1, value1)) {
+                        auto iter2 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map2, IterationKind::Entries);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        JSValue key2, value2;
+                        bool found = false;
+                        while (iter2->nextKeyValue(globalObject, key2, value2)) {
+                            bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, true);
+                            RETURN_IF_EXCEPTION(scope, {});
+                            if (keysEqual) {
+                                bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, value1, value2, gcBuffer, stack, scope, true);
+                                RETURN_IF_EXCEPTION(scope, {});
+                                if (valuesEqual) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!found) {
+                            return false;
+                        }
                     }
                 }
-
-                if (!foundMatchingKey) {
-                    return false;
+                // Backward pass, same argument order as forward for the cycle stack.
+                {
+                    auto iter2 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map2, IterationKind::Entries);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    JSValue key2, value2;
+                    while (iter2->nextKeyValue(globalObject, key2, value2)) {
+                        auto iter1 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        JSValue key1, value1;
+                        bool found = false;
+                        while (iter1->nextKeyValue(globalObject, key1, value1)) {
+                            bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, true);
+                            RETURN_IF_EXCEPTION(scope, {});
+                            if (keysEqual) {
+                                bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, value1, value2, gcBuffer, stack, scope, true);
+                                RETURN_IF_EXCEPTION(scope, {});
+                                if (valuesEqual) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!found) {
+                            return false;
+                        }
+                    }
                 }
+            } else {
+                // First-fit bijection; an entry is only consumed when both key and value match.
+                WTF::BitVector matchedIndices;
+                matchedIndices.ensureSize(leftSize);
 
-                // Compare both values below.
-            }
+                auto iter1 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
+                RETURN_IF_EXCEPTION(scope, {});
+                JSValue key1, value1;
+                while (iter1->nextKeyValue(globalObject, key1, value1)) {
+                    auto iter2 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map2, IterationKind::Entries);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    JSValue key2, value2;
+                    bool found = false;
+                    size_t idx2 = 0;
+                    while (iter2->nextKeyValue(globalObject, key2, value2)) {
+                        if (!matchedIndices.get(idx2)) {
+                            bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, true);
+                            RETURN_IF_EXCEPTION(scope, {});
+                            if (keysEqual) {
+                                bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, value1, value2, gcBuffer, stack, scope, true);
+                                RETURN_IF_EXCEPTION(scope, {});
+                                if (valuesEqual) {
+                                    matchedIndices.set(idx2);
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                        idx2++;
+                    }
 
-            bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, value1, value2, gcBuffer, stack, scope, false);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!valuesEqual) {
-                return false;
+                    if (!found) {
+                        return false;
+                    }
+                }
             }
         }
 

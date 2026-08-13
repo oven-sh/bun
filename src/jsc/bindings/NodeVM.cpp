@@ -601,7 +601,8 @@ void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* err
 {
     UNUSED_PARAM(globalObject);
     auto* errorInstance = dynamicDowncast<ErrorInstance>(error);
-    if (!errorInstance)
+    // Stack overflow and out-of-memory ParserErrors have no position to point at.
+    if (!errorInstance || parseError.line() < 0)
         return;
 
     // The caller's toErrorObject() already materialized the stack (running any

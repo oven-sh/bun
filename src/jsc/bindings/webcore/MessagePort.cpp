@@ -293,11 +293,8 @@ TransferredMessagePort MessagePort::disentangle()
     removeAllEventListeners();
     m_hasMessageEventListener = false;
 
-    // After transfer this object is inert (the receiving side gets a fresh
-    // MessagePort for the same pipe endpoint) and is no longer a destruction
-    // observer, so nothing else would ever release a jsRef() taken on it.
-    // (Clearing the listeners above already did this if any 'message' listener
-    // was attached; this covers a ref()'d port that had none.)
+    // The transferred-away object is inert and stops observing its context below, so nothing
+    // later would release a jsRef() taken on it (a port with no 'message' listener still has one).
     releaseJsRef();
 
     // A transferred port is inert; clear the listener keepalive too so hasRef()
@@ -387,9 +384,8 @@ void MessagePort::contextDestroyed()
 {
     ASSERT(scriptExecutionContext());
 
-    // A context torn down without a stop phase (a collected ShadowRealm global, a retired
-    // test-isolation global) gets here directly, and a port whose wrapper is already gone
-    // may be alive only through the self-ref that close() -> releaseJsRef() drops.
+    // Without a stop phase first (collected ShadowRealm / retired test-isolation global), the
+    // self-ref that close() drops may be this port's last reference.
     Ref protectedThis { *this };
     close();
     ActiveDOMObject::contextDestroyed();
@@ -502,8 +498,7 @@ void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& e
         break;
     }
     port.updateListenerEventLoopRef();
-    // node's setupPortReferencing unref()s the port outright when its last 'message'
-    // listener goes away, so an earlier .ref() (or onmessage=) does not outlive it.
+    // node (setupPortReferencing) unref()s outright when the last 'message' listener goes, .ref() or not.
     if (hadListeners && port.m_messageEventCount == 0)
         port.releaseJsRef();
 }
@@ -588,13 +583,10 @@ void MessagePort::releaseJsRef()
     if (!m_hasRef)
         return;
     m_hasRef = false;
-    // Same per-thread VM that jsRef() ref'd through the lexical global. The context is
-    // still attached here: contextDestroyed() reaches this via close() before detaching.
+    // The context's VM is the one jsRef() ref'd through the lexical global.
     if (auto* context = scriptExecutionContext())
         context->unrefEventLoop();
-    // Every caller (and the EventTarget code under the listener hook) keeps using the port
-    // after this, so the self-ref being dropped must not be its last reference: callers
-    // hold one themselves (JS wrapper, protectedThis, disentanglePorts' RefPtr, ...).
+    // Callers keep using the port afterwards, so this self-ref must not be its last reference.
     ASSERT(!hasOneRef());
     deref();
 }

@@ -203,10 +203,8 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);
 
-    // node: a callable handler starts the port and keeps the loop alive. Assigning anything
-    // else just removes the handler; MessagePort::onDidChangeListenerImpl releases the refs
-    // only if that removed the last 'message' listener (so `onmessage = null` with nothing
-    // set, or with other listeners still attached, changes nothing, as in node).
+    // node: a callable handler keeps the loop alive. Clearing one is a plain listener removal;
+    // MessagePort::onDidChangeListenerImpl releases the refs iff it was the last 'message' listener.
     if (value.isCallable())
         thisObject.wrapped().jsRef(&lexicalGlobalObject);
 

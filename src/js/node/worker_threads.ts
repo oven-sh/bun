@@ -342,9 +342,7 @@ function makePortReadable(port, incrementsPortRef) {
   let startedReading = false;
   function onMessage(payload) {
     if (payload === null) {
-      // The listener stays on until 'close' (below): removing a port's last 'message'
-      // listener releases its refs, and data still buffered in the stream has to keep
-      // the thread alive until it is consumed (node's kWaitingStreams).
+      // The listener (and with it the port's ref) comes off in 'close', once the buffered data is consumed.
       if (ended === false) {
         ended = true;
         stream.push(null);

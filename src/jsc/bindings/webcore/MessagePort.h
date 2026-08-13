@@ -159,9 +159,7 @@ private:
     // Read from the GC thread: a port whose only listener is 'close' must survive
     // until that event is delivered, or the peer's close is lost to a collection.
     std::atomic<bool> m_hasCloseEventListener { false };
-    // jsRef() (.ref(), or a callable .onmessage=) took a self-ref plus an event-loop ref.
-    // Released by unref(), close(), the peer closing, a transfer, and (as node's
-    // setupPortReferencing does) the removal of the last 'message' listener.
+    // jsRef() (.ref() or a callable .onmessage=) holds a self-ref plus an event-loop ref; releaseJsRef() drops both.
     bool m_hasRef { false };
     void releaseJsRef();
 

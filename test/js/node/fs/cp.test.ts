@@ -1,6 +1,12 @@
+import {
+  convertToPlaceholder,
+  exposePlaceholders,
+  isReparsePoint,
+  registerSyncRoot,
+} from "_util/windows-reparse-points.ts";
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isLinux, isPosix, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, isPosix, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { isAbsolute, join } from "path";
 
@@ -35,6 +41,31 @@ for (const [name, copy] of impls) {
       await copy(basename + "/from/a.txt", basename + "/to.txt");
 
       expect(fs.readFileSync(basename + "/to.txt", "utf8")).toBe("a");
+    });
+
+    // A cloud-file placeholder carries FILE_ATTRIBUTE_REPARSE_POINT but is a
+    // regular file (lstat says so, which is why the native single-file copy is
+    // used for it); node copies its contents, while this used to produce a
+    // symlink pointing back at the source. The fixture needs bun:ffi, which is
+    // unavailable on Windows arm64.
+    test.if(isWindows && !isArm64)("single file that is a reparse point but not a link", async () => {
+      await using basename = tempDir("cp", {
+        "from/a.txt": "a",
+      });
+      using _syncRoot = registerSyncRoot(basename + "\\from");
+      convertToPlaceholder(basename + "\\from\\a.txt");
+      using _exposed = exposePlaceholders();
+      expect(isReparsePoint(basename + "\\from\\a.txt")).toBe(true);
+
+      await copy(basename + "/from/a.txt", basename + "/to.txt");
+
+      const stat = fs.lstatSync(basename + "/to.txt");
+      expect({
+        isFile: stat.isFile(),
+        isSymbolicLink: stat.isSymbolicLink(),
+        reparsePoint: isReparsePoint(basename + "\\to.txt"),
+        content: fs.readFileSync(basename + "/to.txt", "utf8"),
+      }).toEqual({ isFile: true, isSymbolicLink: false, reparsePoint: false, content: "a" });
     });
 
     test("refuse to copy directory with 'recursive: false'", async () => {

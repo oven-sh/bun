@@ -855,35 +855,17 @@ impl Loader {
             return Ok(());
         }
 
+        // Unlike the default `.env` discovery above, these files were asked for
+        // by name (`--env-file`), so failing to load one is fatal, as in Node.
         let file = match bun_sys::open_file(file_path, bun_sys::OpenFlags::READ_ONLY) {
             Ok(f) => f,
-            Err(err) => {
-                // Only explicitly requested files reach here (default `.env`
-                // discovery goes through `load_default_files`), so a failed open
-                // is a user error: Node exits non-zero for
-                // `--env-file=<missing>`. Print the detailed line here while we
-                // have both the path and the errno, and return a sentinel the
-                // CLI sinks recognize as already reported.
-                bun_core::err_generic!(
-                    "{} reading env file {}",
-                    bstr::BStr::new(err.name()),
-                    bun_core::fmt::QuotedFormatter { text: file_path },
-                );
-                Output::flush();
-                return Err(crate::Error::EnvFileNotFound);
-            }
+            Err(err) => return Err(explicit_env_file_failed(file_path, err.name())),
         };
 
         match read_env_file_contents(&file)? {
             ReadEnvFile::Empty => {}
             ReadEnvFile::ReadErr(err) => {
-                if !self.quiet {
-                    bun_core::pretty_errorln!(
-                        "<r><red>{}<r> error loading {} file",
-                        bstr::BStr::new(err.name()),
-                        bstr::BStr::new(file_path)
-                    );
-                }
+                return Err(explicit_env_file_failed(file_path, err.name()));
             }
             ReadEnvFile::Bytes(buf) => {
                 Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
@@ -895,6 +877,16 @@ impl Loader {
     }
 }
 
+fn explicit_env_file_failed(file_path: &[u8], errno_name: &[u8]) -> crate::Error {
+    bun_core::err_generic!(
+        "{} loading env file {}",
+        bstr::BStr::new(errno_name),
+        bun_core::fmt::QuotedFormatter { text: file_path },
+    );
+    Output::flush();
+    crate::Error::EnvFileLoadFailed
+}
+
 /// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`:
 /// `File::read_to_end` (fstat-presized) with the recoverable-errno filter.
 /// The two callers differ in their open path, open-error handling, and the
@@ -903,8 +895,8 @@ impl Loader {
 enum ReadEnvFile {
     /// Zero-length — caller marks the slot and returns.
     Empty,
-    /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — caller prints
-    /// (unless `quiet`), marks the slot, and returns.
+    /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — a default file
+    /// warns (unless `quiet`) and is skipped; an explicit `--env-file` fails.
     ReadErr(bun_sys::Error),
     /// File contents; `buf.len()` is the amount read.
     Bytes(Vec<u8>),

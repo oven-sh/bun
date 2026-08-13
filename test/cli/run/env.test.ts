@@ -747,57 +747,111 @@ describe.concurrent("--env-file", () => {
     expect(res.stdout).toBe("BUNTEST_A=1,BUNTEST_B=1,BUNTEST_C=1,BUNTEST_D=,BUNTEST_E=1");
   });
 
-  // #21105: an explicitly requested --env-file that can't be opened must fail
-  // (like Node), not silently run without the variables. Default .env
-  // discovery (which stays silent when the file is missing) goes through a
-  // separate path and is covered by "when arg missing, fallback to default
-  // dotenv behavior" above.
-  describe("errors when an explicit env file does not exist", () => {
-    function check({ stdout, stderr, exitCode }: { stdout: string; stderr: string; exitCode: number | null }) {
-      expect(stdout).toBe("");
-      expect(stderr).toContain(".env.nonexisting");
-      expect(stderr).not.toContain("EnvFileNotFound");
-      expect(stderr).not.toContain("Failed to run");
-      expect(stderr).not.toContain("internal error");
-      expect(exitCode).not.toBe(0);
-    }
+  // https://github.com/oven-sh/bun/issues/21105
+  // Default .env discovery stays silent when nothing is there (covered by
+  // "when arg missing, fallback to default dotenv behavior" above).
+  describe("errors when an explicit env file cannot be loaded", () => {
+    const missing = 'error: ENOENT loading env file ".env.nonexisting"\n';
 
     test("bun <file>", async () => {
-      check(await spawnEnvFile(["--env-file=.env.nonexisting", `${dir}/index.ts`]));
+      expect(await spawnEnvFile(["--env-file=.env.nonexisting", `${dir}/index.ts`])).toEqual({
+        stdout: "",
+        stderr: missing,
+        exitCode: 1,
+      });
+    });
+
+    test("bun run <file>", async () => {
+      expect(await spawnEnvFile(["--env-file=.env.nonexisting", "run", `${dir}/index.ts`])).toEqual({
+        stdout: "",
+        stderr: missing,
+        exitCode: 1,
+      });
     });
 
     test("bun -e", async () => {
-      check(await spawnEnvFile(["--env-file=.env.nonexisting", "-e", "0"]));
-    });
-
-    test("bun run <script>", async () => {
-      using scriptDir = tempDir("dotenv-missing-script", {
-        "package.json": JSON.stringify({ scripts: { go: "echo hi" } }),
+      expect(await spawnEnvFile(["--env-file=.env.nonexisting", "-e", "console.log('ran')"])).toEqual({
+        stdout: "",
+        stderr: missing,
+        exitCode: 1,
       });
-      check(await spawnEnvFile(["--env-file=.env.nonexisting", "run", "go"], String(scriptDir)));
     });
 
     test("bun <file.sh>", async () => {
-      using shDir = tempDir("dotenv-missing-sh", { "script.sh": "echo hi\n" });
-      check(await spawnEnvFile(["--env-file=.env.nonexisting", `${shDir}/script.sh`], String(shDir)));
+      using shDir = tempDir("dotenv-missing-sh", { "script.sh": "echo ran\n" });
+      expect(await spawnEnvFile(["--env-file=.env.nonexisting", "script.sh"], String(shDir))).toEqual({
+        stdout: "",
+        stderr: missing,
+        exitCode: 1,
+      });
     });
 
     test("bun test", async () => {
       using testDir = tempDir("dotenv-missing-test", {
-        "a.test.ts": "import {test,expect} from 'bun:test'; test('x',()=>expect(1).toBe(1));",
+        "a.test.ts": "import { test } from 'bun:test'; test('ran', () => {});",
       });
-      const { stderr, exitCode } = await spawnEnvFile(
+      const { stdout, stderr, exitCode } = await spawnEnvFile(
         ["--env-file=.env.nonexisting", "test", "a.test.ts"],
         String(testDir),
       );
-      expect(stderr).toContain(".env.nonexisting");
-      expect(stderr).not.toContain("EnvFileNotFound");
-      expect(stderr).not.toContain("internal error");
-      expect(exitCode).not.toBe(0);
+      // Only the version banner, which is printed before env files load; no test ran.
+      expect(stdout).toMatch(/^bun test v[^\n]*\n$/);
+      expect(stderr).toBe(missing);
+      expect(exitCode).toBe(1);
+    });
+
+    // Each of these runs package.json scripts through a different CLI entry
+    // point, and each has its own error sink that must not add a second line.
+    test.each([
+      ["bun run <script>", ["run", "go"]],
+      ["bun run --parallel <script>", ["run", "--parallel", "go"]],
+      ["bun run --filter <script>", ["run", "--filter", "*", "go"]],
+    ])("%s", async (_, args) => {
+      using scriptDir = tempDir("dotenv-missing-script", {
+        "package.json": JSON.stringify({ name: "pkg", scripts: { go: "echo ran" } }),
+      });
+      expect(await spawnEnvFile(["--env-file=.env.nonexisting", ...args], String(scriptDir))).toEqual({
+        stdout: "",
+        stderr: missing,
+        exitCode: 1,
+      });
     });
 
     test("one missing in a comma list of several", async () => {
-      check(await spawnEnvFile(["--env-file=.env.a,.env.nonexisting,.env.b", `${dir}/index.ts`]));
+      expect(await spawnEnvFile(["--env-file=.env.a,.env.nonexisting,.env.b", `${dir}/index.ts`])).toEqual({
+        stdout: "",
+        stderr: missing,
+        exitCode: 1,
+      });
+    });
+
+    test("a directory (opens, then fails to read)", async () => {
+      const { stdout, stderr, exitCode } = await spawnEnvFile(["--env-file=subdir", `${dir}/index.ts`]);
+      expect(stdout).toBe("");
+      // The errno differs by platform (EISDIR on POSIX).
+      expect(stderr).toMatch(/^error: \w+ loading env file "subdir"\n$/);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a worker inherits the values instead of re-reading the file", async () => {
+      using workerDir = tempDir("dotenv-worker", {
+        ".env.w": "BUNTEST_W=1",
+        "index.ts": `
+          import { unlinkSync } from "fs";
+          unlinkSync(".env.w");
+          const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+          worker.onmessage = ({ data }) => {
+            console.log(data);
+            worker.terminate();
+          };
+        `,
+        "worker.ts": `postMessage(process.env.BUNTEST_W);`,
+      });
+      expect(await spawnEnvFile(["--env-file=.env.w", "index.ts"], String(workerDir))).toEqual({
+        stdout: "1\n",
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 });

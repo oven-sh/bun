@@ -605,8 +605,8 @@ impl WebWorker {
         // proxy_env_storage / env.map, copy of standalone_module_graph),
         // so a shared reference is sufficient.
         let parent = self.parent.get();
-        // Deref-clone out of the `Arc` — worker mutates `allow_addons` below
-        // and passes the owned struct as `args` to the new VM.
+        // Deref-clone out of the `Arc` — worker mutates `allow_addons` and the
+        // env-file fields below and passes the owned struct as `args` to the new VM.
         let mut transform_options = (*parent.transpiler.options.transform_options).clone();
 
         if let Some(exec_argv) = self.exec_argv() {
@@ -626,6 +626,15 @@ impl WebWorker {
                 let parent_allows = transform_options.allow_addons.unwrap_or(true);
                 transform_options.allow_addons = Some(parent_allows && allow_addons);
             }
+        }
+
+        // The parent's `--env-file` values arrive through the env map cloned
+        // below; re-reading the files here would fail the worker if one was
+        // removed after startup. Explicit files also disabled default `.env`
+        // discovery in the parent, so keep it disabled here.
+        if !transform_options.env_files.is_empty() {
+            transform_options.env_files.clear();
+            transform_options.disable_default_env_files = true;
         }
 
         // worker-thread only field; no other thread reads `arena`.

@@ -672,8 +672,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
 
             // Always skip default .env files for package.json script runner
-            // (the script's own bun instance loads .env). Propagate so a
-            // missing explicit `--env-file` surfaces as a non-zero exit.
+            // (the script's own bun instance loads .env)
             this_transpiler.run_env_loader(true)?;
         }
 
@@ -1728,9 +1727,7 @@ impl RunCommand {
             Output::error_writer(),
         ));
 
-        // The env loader prints the detailed line itself for a missing
-        // `--env-file`; don't add a second generic one.
-        if err.name() == "EnvFileNotFound" {
+        if err.is_env_file_load_failed() {
             Global::exit(1);
         }
 

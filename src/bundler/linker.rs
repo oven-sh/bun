@@ -4,7 +4,6 @@ use std::io::Write as _;
 
 use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
-use bun_collections::HashMap;
 use bun_paths::{self, SEP};
 // two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
 // the singleton `FileSystem` / `DirnameStore`; `bun_paths::fs` (`PFs`) defines
@@ -15,7 +14,6 @@ use bun_core::strings;
 use bun_paths::fs as PFs;
 use bun_resolver::fs as Fs;
 use bun_resolver::{self as resolver, Resolver};
-use bun_sys::Fd;
 use bun_url::URL;
 
 use crate::options::{self, BundleOptions, ImportPathFormat};
@@ -23,12 +21,6 @@ use crate::options_impl::Target as BundleTarget;
 use crate::transpiler::{
     BunPluginTarget, ParseResult, PluginResolver, PluginRunner, ResolveQueue, ResolveResults,
 };
-
-type HashedFileNameMap = HashMap<u64, &'static [u8]>;
-
-// Matches `Transpiler::IS_CACHE_ENABLED`; inlined so `get_hashed_filename`
-// doesn't need a `Transpiler` handle.
-const IS_CACHE_ENABLED: bool = false;
 
 pub struct Linker {
     // arena field dropped — global mimalloc (callers pass `bun.default_allocator`)
@@ -43,7 +35,6 @@ pub struct Linker {
     pub(crate) resolve_queue: *mut ResolveQueue,
     pub resolver: *mut Resolver<'static>,
     pub(crate) resolve_results: *mut ResolveResults,
-    pub(crate) hashed_filenames: HashedFileNameMap,
 
     pub plugin_runner: Option<*mut dyn PluginResolver>,
 }
@@ -131,12 +122,6 @@ pub(crate) fn dupe(src: &[u8]) -> &'static [u8] {
     // a slice borrowing that storage; the returned borrow is `'static`-valid
     // by construction.
     unsafe { ImportPathsList::append(relative_paths_list_ptr(), &src).expect("OOM") }
-}
-#[inline]
-fn intern(buf: Vec<u8>) -> &'static [u8] {
-    let r = dupe(buf.as_slice());
-    drop(buf);
-    r
 }
 impl Linker {
     // ── raw-pointer field accessors ──────────────────────────────────────
@@ -251,7 +236,6 @@ impl Linker {
             resolve_queue,
             resolver,
             resolve_results,
-            hashed_filenames: HashedFileNameMap::default(),
             plugin_runner: None,
         }
     }
@@ -276,77 +260,6 @@ impl Linker {
         self.resolver = resolver;
         self.resolve_results = resolve_results;
         self.fs = fs;
-    }
-
-    // ── getModKey / getHashedFilename ────────────────────────────────────
-    // `ModKey` lives at module scope (`bun_resolver::fs::ModKey`)
-    // alongside `RealFS`. `file_path` is typed `PFs::Path` (not `Fs::Path`)
-    // so `get_hashed_filename` — whose callers all build `PFs::Path` — can
-    // forward directly; only `.text` (a `&[u8]`) is read.
-    pub(crate) fn get_mod_key(
-        &mut self,
-        file_path: &PFs::Path<'_>,
-        fd: Option<Fd>,
-    ) -> crate::Result<Fs::ModKey> {
-        // Borrow the cached fd; own the freshly-opened one.
-        let _owned: Option<bun_sys::File>;
-        let raw_fd = match fd {
-            Some(f) => {
-                _owned = None;
-                f
-            }
-            None => {
-                let f = bun_sys::open_file(file_path.text, bun_sys::OpenFlags::READ_ONLY)?;
-                let raw = f.handle();
-                _owned = Some(f);
-                raw
-            }
-        };
-        let file = bun_sys::File::borrow(&raw_fd);
-        Fs::FileSystem::set_max_fd(file.handle().native());
-        // spec called `Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs,
-        // path, file)`; both leading args are unread (fs.rs:1386). The inline
-        // `bun_resolver::fs::RealFS` (which `self.fs.fs` is) and the full-port
-        // `fs_full::RealFS` are distinct types, so route through the
-        // RealFS-agnostic `from_file` wrapper added alongside the `ModKey`
-        // re-export.
-        Ok(Fs::ModKey::from_file(file)?)
-    }
-
-    pub(crate) fn get_hashed_filename(
-        &mut self,
-        file_path: &PFs::Path<'_>,
-        fd: Option<Fd>,
-    ) -> crate::Result<&'static [u8]> {
-        if IS_CACHE_ENABLED {
-            let hashed = bun_wyhash::hash(file_path.text);
-            if let Some(v) = self.hashed_filenames.get(&hashed) {
-                return Ok(*v);
-            }
-        }
-
-        let modkey = self.get_mod_key(file_path, fd)?;
-        // `ModKey::hash_name` writes into a caller-supplied buffer (1 KiB)
-        // and returns a borrow of it; `dupe` copies the bytes into the
-        // process-lifetime interner to satisfy this fn's `'static` return.
-        // Note: `IS_CACHE_ENABLED` is a hard `const false` (see above), so
-        // the `hashed_filenames` cache never dedups — every call interns a
-        // fresh copy for the life of the process. Accepted: the `'static`
-        // return contract forces a copy anyway, and the alternative (the old
-        // threadlocal slice return) was unsound. `dupe` also aborts on OOM
-        // where the old path propagated `?` — consistent with the
-        // `bun.handleOom` idiom for interner allocations.
-        // Spec passes `file_path.text` even though the param is named
-        // `basename`; preserved verbatim.
-        let mut hash_name_buf = [0u8; 1024];
-        let hash_name = dupe(modkey.hash_name(file_path.text, &mut hash_name_buf)?);
-
-        if IS_CACHE_ENABLED {
-            let hashed = bun_wyhash::hash(file_path.text);
-            self.hashed_filenames.insert(hashed, hash_name);
-        }
-
-        Ok(hash_name)
     }
 
     /// This modifies the Ast in-place! It resolves import records and
@@ -415,7 +328,6 @@ impl Linker {
                                 import_record.path = self.generate_import_path(
                                     source_dir,
                                     RUNTIME_SOURCE_PATH,
-                                    false,
                                     b"bun",
                                     origin,
                                     import_path_format,
@@ -502,7 +414,6 @@ impl Linker {
                                 import_record.path = self.generate_import_path(
                                     source_dir,
                                     path.text,
-                                    false,
                                     path.namespace,
                                     origin,
                                     import_path_format,
@@ -605,7 +516,6 @@ impl Linker {
         &mut self,
         source_dir: &[u8],
         source_path: &'static [u8],
-        use_hashed_name: bool,
         namespace: &'static [u8],
         origin: &URL<'_>,
         import_path_format: ImportPathFormat,
@@ -632,32 +542,15 @@ impl Linker {
             ImportPathFormat::Relative => {
                 let relative_name = bun_paths::resolve_path::relative(source_dir, source_path);
 
-                let pretty: &'static [u8];
-                let relative_name_out: &'static [u8];
-                if use_hashed_name {
-                    let basepath = PFs::Path::init(source_path);
-                    let basename = self.get_hashed_filename(&basepath, None)?;
-                    let name = basepath.name();
-                    let dir = name.dir_with_trailing_slash();
-                    let mut _pretty: Vec<u8> =
-                        Vec::with_capacity(dir.len() + basename.len() + name.ext.len());
-                    _pretty.extend_from_slice(dir);
-                    _pretty.extend_from_slice(basename);
-                    _pretty.extend_from_slice(name.ext);
-                    pretty = intern(_pretty);
-                    relative_name_out = dupe(relative_name);
+                let pretty: &'static [u8] = if relative_name.len() > 1
+                    && !(relative_name[0] == SEP || relative_name[0] == b'.')
+                {
+                    dupe(&strings::concat(&[b"./", relative_name]))
                 } else {
-                    if relative_name.len() > 1
-                        && !(relative_name[0] == SEP || relative_name[0] == b'.')
-                    {
-                        pretty = dupe(&strings::concat(&[b"./", relative_name]));
-                    } else {
-                        pretty = dupe(relative_name);
-                    }
-                    relative_name_out = pretty;
-                }
+                    dupe(relative_name)
+                };
 
-                Ok(PFs::Path::init_with_pretty(pretty, relative_name_out))
+                Ok(PFs::Path::init_with_pretty(pretty, pretty))
             }
 
             ImportPathFormat::AbsoluteUrl => {
@@ -693,12 +586,7 @@ impl Linker {
 
                     let dirname = bun_core::dirname(base).unwrap_or(b"");
 
-                    let mut basename: &[u8] = bun_paths::basename(base);
-
-                    if use_hashed_name {
-                        let basepath = PFs::Path::init(source_path);
-                        basename = self.get_hashed_filename(&basepath, None)?;
-                    }
+                    let basename: &[u8] = bun_paths::basename(base);
 
                     Ok(PFs::Path::init(dupe(&origin.join_alloc(
                         b"",

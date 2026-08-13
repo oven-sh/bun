@@ -1758,10 +1758,12 @@ impl WindowsBufferedReader {
                     if crate::source::stdin_tty::is_stdin_tty(p) {
                         // Node only ever closes stdin on process exit.
                     } else {
-                        // SAFETY: tty is a live heap-allocated Tty*.
+                        // SAFETY: tty is a live heap-allocated Tty*;
+                        // `Tty::close` keeps whole-struct provenance so
+                        // on_tty_close may reclaim the Box.
                         unsafe {
                             (*p).uv.data = p.cast::<c_void>();
-                            (*p).uv.close(Self::on_tty_close);
+                            crate::source::Tty::close(p, Self::on_tty_close);
                         }
                     }
 

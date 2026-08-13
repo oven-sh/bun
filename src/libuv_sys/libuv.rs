@@ -1378,22 +1378,43 @@ impl Tty {
 
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop, file: uv_file) -> ReturnCode {
-        self.uv.init(loop_, file)
+        // Init and register through a whole-struct pointer: the close paths
+        // reclaim the full `Tty` from this address, and `&mut self.uv` would
+        // narrow provenance to the field (same rule as `File::start_close`).
+        let uv_ptr = core::ptr::from_mut(self).cast::<uv_tty_t>();
+        // SAFETY: `uv` is the first `#[repr(C)]` field, sized for uv_tty_t.
+        let rc = unsafe { uv_tty_init(loop_, uv_ptr, file, 0) };
+        // fd 0 is the process-static stdin tty (never freed, shared across
+        // threads by design); everything else is a heap tty owned by this thread.
+        if rc.0 == 0 && file != 0 {
+            open_handles::add_tty(uv_ptr);
+        }
+        rc
+    }
+
+    /// `uv_close` through a whole-struct pointer so the close callback may
+    /// `Box::from_raw` the wrapper (`(*this).uv.close(..)` would autoref
+    /// `&mut uv_tty_t` and narrow provenance to the field).
+    ///
+    /// # Safety
+    /// `this` is a live, initialised tty that is not already closing.
+    pub unsafe fn close(this: *mut Self, cb: unsafe extern "C" fn(*mut uv_tty_t)) {
+        let handle = this.cast::<uv_handle_t>();
+        open_handles::remove(handle);
+        // SAFETY: `Tty` embeds `uv_handle_t` at offset 0; cb is ABI-identical.
+        unsafe {
+            uv_close(
+                handle,
+                Some(mem::transmute::<
+                    unsafe extern "C" fn(*mut uv_tty_t),
+                    unsafe extern "C" fn(*mut uv_handle_t),
+                >(cb)),
+            );
+        }
     }
 }
 
 impl uv_tty_t {
-    #[inline]
-    pub fn init(&mut self, loop_: *mut Loop, file: uv_file) -> ReturnCode {
-        // SAFETY: self is a valid `uv_tty_t`-sized allocation.
-        let rc = unsafe { uv_tty_init(loop_, self, file, 0) };
-        // fd 0 is the process-static stdin tty (never freed, shared across
-        // threads by design); everything else is a heap tty owned by this thread.
-        if rc.0 == 0 && file != 0 {
-            open_handles::add_tty(self);
-        }
-        rc
-    }
     #[inline]
     pub fn set_mode(&mut self, mode: TtyMode) -> ReturnCode {
         // SAFETY: tty was `init`ed.

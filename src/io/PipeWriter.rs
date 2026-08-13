@@ -1189,8 +1189,9 @@ pub trait BaseWindowsPipeWriter: Sized {
                 // SAFETY: tty is heap-allocated (via open_tty) or the
                 // process-static stdin tty; freed in on_tty_close (gated on is_stdin_tty).
                 unsafe { (*p).uv.data = p.cast::<c_void>() };
-                // SAFETY: tty is a live uv handle; libuv calls on_tty_close after close completes.
-                unsafe { (*p).uv.close(on_tty_close) };
+                // SAFETY: tty is a live uv handle; `Tty::close` keeps
+                // whole-struct provenance so on_tty_close may reclaim the Box.
+                unsafe { crate::source::Tty::close(p, on_tty_close) };
             }
         }
         *self.source_mut() = None;

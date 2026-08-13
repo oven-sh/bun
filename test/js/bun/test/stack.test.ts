@@ -186,6 +186,7 @@ switch (entryPoint) {
   case "queueMicrotask": queueMicrotask(callback); break;
   case "beforeExit": process.on("beforeExit", callback); break;
   case "exit": process.on("exit", callback); break;
+  case "rethrow": process.on("uncaughtException", err => { throw err; }); callback(); break;
 }
 `;
 
@@ -283,6 +284,29 @@ switch (entryPoint) {
     },
   );
 
+  // The error an uncaughtException listener rethrows is reported the same way
+  // (exit code 7 is the listener having thrown). https://github.com/oven-sh/bun/issues/30504
+  test.concurrent("an Error rethrown by an uncaughtException listener prints like a synchronous throw", async () => {
+    using dir = tempDir("uncaught-print", { "fixture.js": fixture });
+    const [sync, rethrown] = await Promise.all([
+      run(String(dir), "sync", "error"),
+      run(String(dir), "rethrow", "error"),
+    ]);
+    expect(errorOwnedOutput(rethrown)).toEqual({ ...errorOwnedOutput(sync), exitCode: 7 });
+  });
+
+  async function runBunTest(dir: string, file: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", file],
+      cwd: dir,
+      env: { ...bunEnv, ...env },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
   // `bun test` reports what a test body throws through the same printer.
   test.concurrent("bun test prints an error thrown by a test from the error itself", async () => {
     using dir = tempDir("uncaught-print", {
@@ -295,14 +319,7 @@ function makeAndThrow() {
 test("throws", makeAndThrow);
 `,
     });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "throws.test.js"],
-      cwd: String(dir),
-      env: { ...bunEnv, ...env },
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const { stderr, exitCode } = await runBunTest(String(dir), "throws.test.js");
     expect(frameLines(stderr)).toEqual([
       expect.stringMatching(/^at makeAndThrow \(.*throws\.test\.js:3:\d+\)$/),
       expect.stringMatching(/^at makeAndThrow \(.*throws\.test\.js:3:\d+\)$/),
@@ -324,6 +341,45 @@ test("throws", makeAndThrow);
       error: inner
           at makeAndThrow (file:NN:NN)
       (fail) throws
+
+       0 pass
+       1 fail
+      Ran 1 test across 1 file."
+    `);
+    expect(exitCode).toBe(1);
+  });
+
+  // Printing the error itself also means a stack rewritten with
+  // Error.captureStackTrace is honored. https://github.com/oven-sh/bun/issues/21211
+  test.concurrent("bun test honors Error.captureStackTrace on a thrown error", async () => {
+    using dir = tempDir("uncaught-print", {
+      "helper.ts": `export function fail(message: string) {
+  const error = new Error(message);
+  Error.captureStackTrace(error, fail);
+  throw error;
+}
+`,
+      "helper.test.ts": `import { test } from "bun:test";
+import { fail } from "./helper";
+
+test("something", () => {
+  fail("TEST FAILURE");
+});
+`,
+    });
+    const { stderr, exitCode } = await runBunTest(String(dir), "helper.test.ts");
+    expect(frameLines(stderr)).toEqual([expect.stringMatching(/^at <anonymous> \(.*helper\.test\.ts:5:\d+\)$/)]);
+    expect(withoutColumns(normalizeBunSnapshot(stderr))).toMatchInlineSnapshot(`
+      "helper.test.ts:
+      1 | import { test } from "bun:test";
+      2 | import { fail } from "./helper";
+      3 | 
+      4 | test("something", () => {
+      5 |   fail("TEST FAILURE");
+      ^
+      error: TEST FAILURE
+          at <anonymous> (file:NN:NN)
+      (fail) something
 
        0 pass
        1 fail

@@ -125,6 +125,8 @@ napi_value asNapiValue;
 
 EncodedJSValue ValueUndefined = { TagValueUndefined };
 EncodedJSValue ValueTrue = { TagValueTrue };
+// What a host function returns after throwing; JSC unwinds to the pending exception and ignores it.
+EncodedJSValue ValueEmpty = { 0 };
 
 typedef void* JSContext;
 
@@ -159,7 +161,13 @@ static EncodedJSValue FLOAT_TO_JSVALUE(float val) __attribute__((__always_inline
 static EncodedJSValue BOOLEAN_TO_JSVALUE(bool val) __attribute__((__always_inline__));
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) __attribute__((__always_inline__));
 
-static void* JSVALUE_TO_PTR(EncodedJSValue val) __attribute__((__always_inline__));
+// The engine's pointer-argument conversion, shared with dlopen()'d symbols. `abiType` is one of
+// the ABI_TYPE_* tags the runtime defines when it compiles this file. Throws a TypeError for values
+// that cannot become a pointer and sets `*threw`, in which case the generated wrapper returns
+// without calling the native function.
+void* JSVALUE_TO_PTR_SLOW(void* jsGlobalObject, int32_t abiType, bool* threw, int64_t val);
+static void* JSVALUE_TO_PTR(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue val) __attribute__((__always_inline__));
+static void* JSVALUE_TO_BUFFER(void* jsGlobalObject, bool* threw, EncodedJSValue val) __attribute__((__always_inline__));
 static int32_t JSVALUE_TO_INT32(EncodedJSValue val) __attribute__((__always_inline__));
 static float JSVALUE_TO_FLOAT(EncodedJSValue val) __attribute__((__always_inline__));
 static double JSVALUE_TO_DOUBLE(EncodedJSValue val) __attribute__((__always_inline__));
@@ -207,21 +215,35 @@ static uint64_t JSVALUE_TO_TYPED_ARRAY_LENGTH(EncodedJSValue val) {
 // Now, they're stored at the beginning of the 64-bit value
 // This behavior change enables the JIT to handle it better
 // It also is better readability when console.log(myPtr)
-static void* JSVALUE_TO_PTR(EncodedJSValue val) {
-  if (val.asInt64 == TagValueNull)
-    return 0;
+static void* JSVALUE_TO_PTR(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue val) {
+  if (JSVALUE_IS_INT32(val)) {
+    return (void*)(uintptr_t)JSVALUE_TO_INT32(val);
+  }
+
+  if (JSVALUE_IS_NUMBER(val)) {
+    val.asInt64 -= DoubleEncodeOffset;
+    return (void*)(uintptr_t)val.asDouble;
+  }
 
   if (JSCELL_IS_TYPED_ARRAY(val)) {
     return JSVALUE_TO_TYPED_ARRAY_VECTOR(val);
   }
 
-  if (JSVALUE_IS_INT32(val)) {
-    return (void*)(uintptr_t)JSVALUE_TO_INT32(val);
+  // A null callback is a TypeError (decided by the slow path), like it is for dlopen().
+  if (val.asInt64 == TagValueNull && abiType != ABI_TYPE_FUNCTION)
+    return 0;
+
+  // JSCallback, ArrayBuffer, BigInt, objects with a numeric `ptr`, undefined, strings, ...
+  return JSVALUE_TO_PTR_SLOW(jsGlobalObject, abiType, threw, val.asInt64);
+}
+
+static void* JSVALUE_TO_BUFFER(void* jsGlobalObject, bool* threw, EncodedJSValue val) {
+  if (JSCELL_IS_TYPED_ARRAY(val)) {
+    return JSVALUE_TO_TYPED_ARRAY_VECTOR(val);
   }
 
-  // Assume the JSValue is a double
-  val.asInt64 -= DoubleEncodeOffset;
-  return (void*)(uintptr_t)val.asDouble;
+  // Only views are accepted; the slow path throws for everything else.
+  return JSVALUE_TO_PTR_SLOW(jsGlobalObject, ABI_TYPE_BUFFER, threw, val.asInt64);
 }
 
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {

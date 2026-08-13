@@ -1087,6 +1087,290 @@ describe("double <-> JSValue conversions", () => {
   });
 });
 
+describe.concurrent("pointer-typed arguments (function, ptr, cstring, buffer)", () => {
+  // The wrapper cc() compiles used to treat anything that was not a number, a view, or null as a
+  // double, so a JSCallback object (or any other object) became a garbage pointer and a `function`
+  // argument called address -1. Everything the inline paths don't handle now goes through the
+  // engine's conversion, the one dlopen()/CFunction symbols use, so the fixture runs one input
+  // matrix through a cc() wrapper and through a CFunction over the very same C function and the
+  // two tables must agree. Runs in a subprocess because the unfixed path is a segfault.
+  it("accepts what dlopen accepts and throws a TypeError for the rest", async () => {
+    using dir = tempDir("bun-ffi-cc-pointer-args", {
+      "pointers.c": /* c */ `
+        typedef int (*callback_t)(int);
+        int call_callback(callback_t callback) { return callback(21) * 2; }
+        void* echo_ptr(void* p) { return p; }
+        void* echo_cstring(const char* s) { return (void*)s; }
+        void* echo_buffer(void* p) { return p; }
+
+        static int native_calls = 0;
+        int two_pointers(void* a, void* b) { native_calls++; return a == b; }
+        int get_native_calls(void) { return native_calls; }
+
+        void* address_of_call_callback(void) { return (void*)&call_callback; }
+        void* address_of_echo_ptr(void) { return (void*)&echo_ptr; }
+        void* address_of_echo_cstring(void) { return (void*)&echo_cstring; }
+        void* address_of_echo_buffer(void) { return (void*)&echo_buffer; }
+        void* address_of_two_pointers(void) { return (void*)&two_pointers; }
+      `,
+      "fixture.js": /* js */ `
+        import { cc, CFunction, JSCallback, ptr } from "bun:ffi";
+        import path from "path";
+
+        const signatures = {
+          call_callback: { args: ["function"], returns: "i32" },
+          echo_ptr: { args: ["ptr"], returns: "ptr" },
+          echo_cstring: { args: ["cstring"], returns: "ptr" },
+          echo_buffer: { args: ["buffer"], returns: "ptr" },
+          two_pointers: { args: ["ptr", "ptr"], returns: "i32" },
+        };
+        const { symbols: compiled } = cc({
+          source: path.join(import.meta.dir, "pointers.c"),
+          symbols: {
+            ...signatures,
+            get_native_calls: { args: [], returns: "i32" },
+            ...Object.fromEntries(Object.keys(signatures).map(name => ["address_of_" + name, { args: [], returns: "ptr" }])),
+          },
+        });
+        // The same C functions behind the engine's (dlopen-style) argument conversion.
+        const engine = Object.fromEntries(
+          Object.entries(signatures).map(([name, signature]) => [
+            name,
+            new CFunction({ ...signature, ptr: compiled["address_of_" + name]() }),
+          ]),
+        );
+
+        const callback = new JSCallback(x => x + 1, { args: ["i32"], returns: "i32" });
+        // A view over an explicit ArrayBuffer keeps one stable address shared by the view, the
+        // buffer, and a DataView over it.
+        const buffer = new ArrayBuffer(8);
+        const view = new Uint8Array(buffer);
+        const address = ptr(view);
+
+        const inputs = {
+          call_callback: {
+            jscallback: callback,
+            jscallback_ptr: callback.ptr,
+            object_with_ptr: { ptr: callback.ptr },
+            null: null,
+            undefined: undefined,
+            plain_function: () => 1,
+            plain_object: {},
+            string: "callback",
+          },
+          echo_ptr: {
+            number: address,
+            view,
+            array_buffer: buffer,
+            bigint: BigInt(address),
+            object_with_ptr: { ptr: address },
+            jscallback: callback,
+            null: null,
+            undefined: undefined,
+            plain_object: {},
+            string: "hello",
+            boolean: true,
+          },
+          echo_cstring: {
+            number: address,
+            view,
+            null: null,
+            plain_object: {},
+            string: "hello",
+          },
+          echo_buffer: {
+            view,
+            data_view: new DataView(buffer),
+            array_buffer: buffer,
+            number: address,
+            null: null,
+            plain_object: {},
+          },
+        };
+
+        function outcome(fn, input) {
+          try {
+            const result = fn(input);
+            if (result === address) return "address";
+            if (result === callback.ptr) return "callback.ptr";
+            return result;
+          } catch (error) {
+            return error.name + ": " + error.message;
+          }
+        }
+
+        function run(symbols) {
+          const table = {};
+          for (const name in inputs) {
+            table[name] = {};
+            for (const label in inputs[name]) table[name][label] = outcome(symbols[name], inputs[name][label]);
+          }
+          table.two_pointers = {
+            both_valid: outcome(x => symbols.two_pointers(x, view), address),
+            second_invalid: outcome(x => symbols.two_pointers(x, {}), address),
+            throwing_ptr_getter: outcome(
+              x => symbols.two_pointers(x, { get ptr() { throw new Error("from the ptr getter"); } }),
+              address,
+            ),
+            native_calls: compiled.get_native_calls(),
+          };
+          return table;
+        }
+
+        const results = { cc: run(compiled) };
+        results.engine = run(engine);
+        callback.close();
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const cannotConvert = (type: string) => `TypeError: bun:ffi cannot convert argument to '${type}'`;
+    const noCallback =
+      "TypeError: bun:ffi: expected a callback (a JSCallback or an FFI function) but got undefined/null";
+    const stringIsNotAPointer = "TypeError: To convert a string to a pointer, encode it as a buffer";
+    const bufferNeedsAView = "TypeError: bun:ffi 'buffer' argument must be a TypedArray or DataView";
+    const expected = {
+      call_callback: {
+        jscallback: 44,
+        jscallback_ptr: 44,
+        object_with_ptr: 44,
+        null: noCallback,
+        undefined: noCallback,
+        plain_function: cannotConvert("function"),
+        plain_object: cannotConvert("function"),
+        string: stringIsNotAPointer,
+      },
+      echo_ptr: {
+        number: "address",
+        view: "address",
+        array_buffer: "address",
+        bigint: "address",
+        object_with_ptr: "address",
+        jscallback: "callback.ptr",
+        null: null,
+        undefined: null,
+        plain_object: cannotConvert("ptr"),
+        string: stringIsNotAPointer,
+        boolean: cannotConvert("ptr"),
+      },
+      echo_cstring: {
+        number: "address",
+        view: "address",
+        null: null,
+        plain_object: cannotConvert("cstring"),
+        // Only the engine path transcodes JS strings (it owns an arena to free the copy after the
+        // call); cc() has nowhere to free it, so it refuses the string instead of passing garbage.
+        string: expect.any(Number),
+      },
+      echo_buffer: {
+        view: "address",
+        data_view: "address",
+        array_buffer: bufferNeedsAView,
+        number: bufferNeedsAView,
+        null: bufferNeedsAView,
+        plain_object: bufferNeedsAView,
+      },
+      two_pointers: {
+        both_valid: 1,
+        second_invalid: cannotConvert("ptr"),
+        throwing_ptr_getter: "Error: from the ptr getter",
+        // Only both_valid reached C: a failed conversion stops the call before it happens. The
+        // engine table runs second, so it sees its own call on top of the cc() one.
+        native_calls: 1,
+      },
+    };
+
+    // On a crash there is no JSON; report the process output instead so the failure shows it.
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : { stdout, stderr };
+    expect({ results, exitCode }).toEqual({
+      results: {
+        cc: {
+          ...expected,
+          echo_cstring: {
+            ...expected.echo_cstring,
+            string:
+              "TypeError: bun:ffi: a JavaScript string is not valid here; return it from a 'cstring'-returning callback, or pass a pointer/TypedArray",
+          },
+        },
+        engine: {
+          ...expected,
+          two_pointers: { ...expected.two_pointers, native_calls: 2 },
+        },
+      },
+      exitCode: 0,
+    });
+  });
+
+  // napi_env wrappers open a handle scope around the native call; a rejected pointer argument
+  // has to bail out before that happens and leave later calls working. cc()-compiled C only
+  // exercises napi on POSIX today (see the napi_create_double test above).
+  it.skipIf(isWindows)("a rejected pointer argument bails out of a napi_env wrapper too", async () => {
+    using dir = tempDir("bun-ffi-cc-pointer-args-napi", {
+      "napi_ptr.c": /* c */ `
+        typedef struct napi_env_fake* napi_env_t;
+        static int native_calls = 0;
+        /* bit 0: the trampoline filled in env, bit 1: p is non-null */
+        int with_env(napi_env_t env, void* p) { native_calls++; return (env != 0 ? 1 : 0) | (p != 0 ? 2 : 0); }
+        int get_native_calls(void) { return native_calls; }
+      `,
+      "fixture.js": /* js */ `
+        import { cc } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "napi_ptr.c"),
+          symbols: {
+            with_env: { args: ["napi_env", "ptr"], returns: "i32" },
+            get_native_calls: { args: [], returns: "i32" },
+          },
+        });
+
+        const results = {};
+        try {
+          results.rejected = symbols.with_env(undefined, {});
+        } catch (error) {
+          results.rejected = error.name + ": " + error.message;
+        }
+        results.calls_after_rejection = symbols.get_native_calls();
+        results.view = symbols.with_env(undefined, new Uint8Array(4));
+        results.null = symbols.with_env(undefined, null);
+        results.calls_at_end = symbols.get_native_calls();
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : { stdout, stderr };
+    expect({ results, exitCode }).toEqual({
+      results: {
+        rejected: "TypeError: bun:ffi cannot convert argument to 'ptr'",
+        calls_after_rejection: 0,
+        view: 3,
+        null: 1,
+        calls_at_end: 2,
+      },
+      exitCode: 0,
+    });
+  });
+});
+
 describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", () => {
   const plantedHeader = "#define bool int\n#define true 100\n#define false 0\n";
   const files = {

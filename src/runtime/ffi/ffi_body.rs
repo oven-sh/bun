@@ -151,7 +151,7 @@ fn create_jsc_ffi_function(
 
 /// Raw extern fn pointers fed to the TCC-JIT'd C trampolines via `add_symbol`.
 mod exposed_to_ffi {
-    use super::{JSGlobalObject, JSValue};
+    use super::{JSGlobalObject, JSValue, c_void};
     unsafe extern "C" {
         #[link_name = "JSC__JSValue__toInt64"]
         pub(super) fn JSVALUE_TO_INT64(value: JSValue) -> i64;
@@ -161,6 +161,15 @@ mod exposed_to_ffi {
         pub(super) fn INT64_TO_JSVALUE(global: *mut JSGlobalObject, i: i64) -> JSValue;
         #[link_name = "JSC__JSValue__fromUInt64NoTruncate"]
         pub(super) fn UINT64_TO_JSVALUE(global: *mut JSGlobalObject, i: u64) -> JSValue;
+        /// `JSCFFIBridge.cpp`: converts a `ptr`/`cstring`/`function`/`buffer` argument the inline
+        /// fast paths in `FFI.h` don't handle, using the same conversion as dlopen()'d symbols.
+        #[link_name = "Bun__FFI__jsValueToPointerSlow"]
+        pub(super) fn JSVALUE_TO_PTR_SLOW(
+            global: *mut JSGlobalObject,
+            abi_type: i32,
+            threw: *mut bool,
+            value: JSValue,
+        ) -> *mut c_void;
     }
 }
 
@@ -2145,12 +2154,6 @@ impl Function {
               ZIG_REPR_TYPE JSFunctionCall(void* JS_GLOBAL_OBJECT, void* callFrame) {\n",
         )?;
 
-        if self.needs_handle_scope() {
-            writer.write_all(
-                b"  void* handleScope = NapiHandleScope__open(&Bun__thisFFIModuleNapiEnv, false);\n",
-            )?;
-        }
-
         if !self.arg_types.is_empty() {
             writer.write_all(b"  LOAD_ARGUMENTS_FROM_CALL_FRAME;\n")?;
             for (i, arg) in self.arg_types.iter().enumerate() {
@@ -2195,6 +2198,34 @@ impl Function {
         // );
 
         let mut arg_buf = [0u8; 512];
+        arg_buf[0..3].copy_from_slice(b"arg");
+
+        // Pointer arguments are converted up front because the conversion can run JS (an object's
+        // `ptr` getter) and throw; the native function must not be called once something threw.
+        let mut declared_threw = false;
+        for (i, arg) in self.arg_types.iter().enumerate() {
+            if !arg.arg_conversion_can_throw() {
+                continue;
+            }
+            if !declared_threw {
+                declared_threw = true;
+                writer.write_all(b"  bool threw = false;\n")?;
+            }
+            let length_buf = bun_core::fmt::print_int(&mut arg_buf[3..], i);
+            let arg_name = &arg_buf[0..3 + length_buf];
+            write!(
+                writer,
+                "  void* ptr{} = {};\n  if (threw) return ValueEmpty.asZigRepr;\n",
+                i,
+                arg.to_c(arg_name)
+            )?;
+        }
+
+        if self.needs_handle_scope() {
+            writer.write_all(
+                b"  void* handleScope = NapiHandleScope__open(&Bun__thisFFIModuleNapiEnv, false);\n",
+            )?;
+        }
 
         writer.write_all(b"    ")?;
         if self.return_type != ABIType::Void {
@@ -2203,7 +2234,6 @@ impl Function {
         }
         write!(writer, "{}(", BStr::new(self.base_name.as_bytes()))?;
         first = true;
-        arg_buf[0..3].copy_from_slice(b"arg");
         for (i, arg) in self.arg_types.iter().enumerate() {
             if !first {
                 writer.write_all(b", ")?;
@@ -2213,7 +2243,9 @@ impl Function {
 
             let length_buf = bun_core::fmt::print_int(&mut arg_buf[3..], i);
             let arg_name = &arg_buf[0..3 + length_buf];
-            if arg.needs_a_cast_in_c() {
+            if arg.arg_conversion_can_throw() {
+                write!(writer, "ptr{}", i)?;
+            } else if arg.needs_a_cast_in_c() {
                 write!(writer, "{}", arg.to_c(arg_name))?;
             } else {
                 writer.write_all(arg_name)?;
@@ -2565,6 +2597,7 @@ impl CompilerRT {
                 jsc::JSType::MAX_TYPED_ARRAY.0 as i64,
             ),
         ]);
+        state.define_symbols(ABIType::POINTER_TAG_DEFINES);
     }
 
     pub(crate) fn inject(state: &mut TCC::State) {
@@ -2619,6 +2652,12 @@ impl CompilerRT {
             .add_symbol(
                 zstr!("UINT64_TO_JSVALUE_SLOW"),
                 WORKAROUND.uint64_to_jsvalue as *const c_void,
+            )
+            .expect("unreachable");
+        state
+            .add_symbol(
+                zstr!("JSVALUE_TO_PTR_SLOW"),
+                exposed_to_ffi::JSVALUE_TO_PTR_SLOW as *const c_void,
             )
             .expect("unreachable");
     }

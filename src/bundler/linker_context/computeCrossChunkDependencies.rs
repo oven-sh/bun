@@ -145,13 +145,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
             return;
         };
 
-        // CSS files are never members of a JS chunk (`compute_chunks` leaves
-        // them out of `files_with_parts_in_chunk`); instead
-        // `find_imported_parts_in_js_order` prints a copy of their live JS
-        // parts (namespace object, default export, wrapper) into every chunk
-        // that imports them. Those copies use runtime helpers such as
-        // `__export` that may live in another chunk, so their uses are imports
-        // of this chunk, while their declarations belong to no single chunk.
+        // CSS files belong to no chunk; their live JS parts are copied into every importing chunk.
         let css_asts = deps.css_asts;
         let copied_css_files = js
             .files_in_chunk_order

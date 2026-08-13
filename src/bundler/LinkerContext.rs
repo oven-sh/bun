@@ -2648,10 +2648,7 @@ impl<'a> LinkerContext<'a> {
                 }
             }
 
-            // CSS files are not skipped here: unlike esbuild, the JS side of a
-            // CSS file (namespace object, default export, require() wrapper)
-            // lives in this same source index, and its parts depend on runtime
-            // helpers such as `__export` that the chunk has to pull in.
+            // CSS files too: the JS printed for a stylesheet lives in the same source index.
             for part in ctx.parts[source_index as usize].as_slice() {
                 for dependency in part.dependencies.iter() {
                     let dep = dependency.source_index.get();

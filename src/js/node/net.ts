@@ -4271,8 +4271,6 @@ function initSocketHandle(self) {
 // intercepts close on `socket._handle` and invokes it, so always pass one.
 function onSocketHandleClosed() {}
 
-// `handle` is the one _destroy found; close() on one the native side already
-// closed is a no-op, and 'close' is emitted either way.
 function closeSocketHandle(self, handle, isException, isCleanupPending = false) {
   $debug("closeSocketHandle", isException, isCleanupPending);
   handle.close(onSocketHandleClosed);
@@ -4280,8 +4278,7 @@ function closeSocketHandle(self, handle, isException, isCleanupPending = false) 
     $debug("emit close", isCleanupPending);
     self.emit("close", isException);
     if (isCleanupPending) {
-      // The native close may have detached self._handle by now, or a re-attach
-      // replaced it; only tear down the handle captured here.
+      // self._handle may have been detached or replaced since.
       handle.onread = noop;
       if (self._handle === handle) {
         self._handle = null;

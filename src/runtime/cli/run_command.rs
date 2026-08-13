@@ -228,10 +228,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             .map_err(Into::into)
     }
 
-    /// Spawns the script body via the bun-shell or system shell. Returns only
-    /// if the script exited 0; otherwise (including when it could not be run)
-    /// exits. `silent` hides the command echo and the exit code/signal report,
-    /// not the reason a script could not be run.
+    /// Spawns the script body via the bun-shell or system shell and exits on
+    /// non-zero.
     ///
     /// `passthrough` is `&[Box<[u8]>]` to match `ctx.passthrough` directly.
     pub(crate) fn run_package_script_foreground(

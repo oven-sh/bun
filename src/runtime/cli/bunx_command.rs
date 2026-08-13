@@ -1356,6 +1356,15 @@ impl BunxCommand {
 
         let envp = env_loader.map.create_null_delimited_env_map()?;
 
+        fn install_failed(install_param: &[u8], err: &bun_sys::Error) -> ! {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: bunx failed to install <b>{}<r> due to error:\n{}",
+                BStr::new(install_param),
+                err,
+            );
+            Global::exit(1);
+        }
+
         let spawn_result = match proc_sync::spawn(&proc_sync::Options {
             argv: argv_to_use.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
 
@@ -1400,9 +1409,7 @@ impl BunxCommand {
                 Global::exit(1);
             }
             Ok(maybe) => match maybe {
-                bun_sys::Result::Err(_err) => {
-                    Global::exit(1);
-                }
+                bun_sys::Result::Err(err) => install_failed(&install_param, &err),
                 bun_sys::Result::Ok(result) => result,
             },
         };
@@ -1439,14 +1446,7 @@ impl BunxCommand {
                 // diverges with the *actual* signal.
                 Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(*sig));
             }
-            SpawnStatus::Err(err) => {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: bunx failed to install <b>{}<r> due to error:\n{}",
-                    BStr::new(&install_param),
-                    err,
-                );
-                Global::exit(1);
-            }
+            SpawnStatus::Err(err) => install_failed(&install_param, err),
             _ => {}
         }
 

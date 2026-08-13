@@ -2048,8 +2048,10 @@ impl RunCommand {
         )
     }
 
-    /// Not gated on `--silent` (which bunx also sets): unlike the exit code and
-    /// signal messages below, nothing else reports a binary that never ran.
+    /// Exits 1 because the spawn failed or the exit status could not be
+    /// collected. Not gated on `--silent` (which bunx also sets): that only
+    /// suppresses the messages below about a status we did collect, whereas
+    /// nothing else explains this exit code.
     fn run_binary_generic_error(executable: &[u8], err: &sys::Error) -> ! {
         pretty_errorln!(
             "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to:\n{}",

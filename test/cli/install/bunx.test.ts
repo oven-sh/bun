@@ -11,6 +11,7 @@ setDefaultTimeout(1000 * 60 * 5);
 
 let x_dir: string;
 let env: Record<string, string> = { ...bunEnv };
+const hasPerl = Bun.which("perl") != null;
 
 // Each test that hits the network gets its own isolated tmpdir + install cache
 // so the network-heavy tests can run concurrently without sharing bunx cache state.
@@ -525,6 +526,36 @@ describe("bunx --no-install", () => {
     expect(err).toBe("");
     expect(out).toBe("ran\n");
     expect(exited).toBe(3);
+  });
+
+  // Same report when the bin ran but its exit status could not be collected:
+  // with SIGCHLD ignored (inherited from the launcher; bun's own spawn resets
+  // it in children, hence perl) the kernel reaps the bin and waitpid() fails
+  // with ECHILD. bunx exits 1 either way; the point is that it says why.
+  it.concurrent.skipIf(isWindows || !hasPerl)("reports a bin whose exit status could not be collected", async () => {
+    const { x_dir, env } = setup();
+    const name = "bunx-unwaitable-bin-fixture";
+    await installLocalBin(x_dir, name, "#!/bin/sh\necho ran\n");
+
+    const subprocess = spawn({
+      cmd: ["perl", "-e", '$SIG{CHLD} = "IGNORE"; exec @ARGV or die $!', "--", bunExe(), "x", "--no-install", name],
+      cwd: x_dir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, out, exited] = await Promise.all([
+      subprocess.stderr.text(),
+      subprocess.stdout.text(),
+      subprocess.exited,
+    ]);
+
+    expect(normalizeBunSnapshot(err, x_dir)).toMatchInlineSnapshot(`
+      "error: Failed to run "bunx-unwaitable-bin-fixture" due to:
+      ECHILD: <dir>/node_modules/.bin/bunx-unwaitable-bin-fixture: No child processes (waitpid())"
+    `);
+    expect(out).toBe("ran\n");
+    expect(exited).toBe(1);
   });
 });
 

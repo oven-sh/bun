@@ -1,3 +1,4 @@
+// https://github.com/oven-sh/bun/issues/29681
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isMusl, tempDir } from "harness";
 import { join } from "node:path";
@@ -27,6 +28,17 @@ function hasOptionalCxxRuntimeProvider(): boolean {
 }
 
 const hasCxxRuntimeProvider = hasOptionalCxxRuntimeProvider();
+
+test.skipIf(!isMusl || !readelf)("bun does not depend on the host C++ runtime", () => {
+  const dynamic = Bun.spawnSync([readelf!, "-d", bunExe()]);
+  const stdout = dynamic.stdout.toString();
+  const forbiddenDependency = stdout.match(/NEEDED.*(?:libstdc\+\+\.so\.6|libgcc_s\.so\.1)/)?.[0] ?? "";
+  expect({ forbiddenDependency, stderr: dynamic.stderr.toString(), exitCode: dynamic.exitCode }).toEqual({
+    forbiddenDependency: "",
+    stderr: "",
+    exitCode: 0,
+  });
+});
 
 interface AddonFixture {
   compiler: string;
@@ -103,16 +115,19 @@ async function compileAndLoadAddon(fixture: AddonFixture) {
     stdout: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    before: [],
-    result: fixture.expectedResult,
-    after: expect.arrayContaining([
-      expect.stringContaining("libstdc++.so.6"),
-      expect.stringContaining("libgcc_s.so.1"),
-    ]),
+  let parsedStdout: unknown = stdout;
+  try {
+    parsedStdout = JSON.parse(stdout);
+  } catch {}
+  expect({ parsedStdout, stderr, exitCode }).toEqual({
+    parsedStdout: {
+      before: [],
+      result: fixture.expectedResult,
+      after: expect.arrayContaining([expect.stringContaining("libstdc++.so.6")]),
+    },
+    stderr: "",
+    exitCode: 0,
   });
-  expect(exitCode).toBe(0);
 }
 
 // The compatibility provider is optional, so clean musl developer images may not have it.

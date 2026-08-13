@@ -522,6 +522,11 @@ impl PostgresSQLQuery {
             }
             JsError::Thrown
         };
+        // Reached from user JS that another request's encoder is calling (a
+        // parameter's valueOf/toString/toJSON dispatched this query): only
+        // enqueue. Writing now would land inside that request's half-encoded
+        // message; see PostgresSQLConnection::while_dispatching.
+        let dispatching = connection.is_dispatching();
 
         if this.flags.get().simple {
             bun_core::scoped_log!(Postgres, "executeQuery");
@@ -539,7 +544,7 @@ impl PostgresSQLQuery {
             // Query is simple and it's the only owner of the statement
             this.statement.set(Some(stmt));
 
-            let can_execute = !connection.has_query_running();
+            let can_execute = !dispatching && !connection.has_query_running();
             if can_execute {
                 if let Err(err) = PostgresRequest::execute_query(query_str.slice(), writer) {
                     release_query_ref();
@@ -617,6 +622,7 @@ impl PostgresSQLQuery {
 
         let has_params = signature.fields.len() > 0;
         let mut did_write = false;
+        let mut enqueued = false;
         'enqueue: {
             // Note: `connection_entry_value` is a *mut into connection.statements value slot;
             // holding a `&mut` across other &mut connection borrows below trips borrowck, so
@@ -661,32 +667,60 @@ impl PostgresSQLQuery {
                             // request has already emitted its bytes; otherwise this
                             // Bind+Execute would overtake an earlier unwritten
                             // request on the wire while reply attribution stays FIFO.
-                            if (!connection.has_query_running() || connection.can_pipeline())
+                            if !dispatching
+                                && (!connection.has_query_running() || connection.can_pipeline())
                                 && connection.pending_requests.get() == 0
                             {
                                 this.update_flags(|f| f.binary = !stmt.fields.is_empty());
                                 bun_core::scoped_log!(Postgres, "bindAndExecute");
 
-                                // bindAndExecute will bind + execute, it will change to running after binding is complete
-                                if let Err(err) = PostgresRequest::bind_and_execute(
-                                    global_object,
-                                    stmt,
-                                    binding_value,
-                                    columns_value,
-                                    writer,
-                                ) {
+                                // Enqueue before encoding: bind_and_execute runs user
+                                // JS, and a query dispatched from there has to queue
+                                // up behind this one, since replies are attributed in
+                                // queue order. It goes in as Binding rather than
+                                // Pending because it is never counted in
+                                // pending_requests (the tail below only counts
+                                // requests still Pending).
+                                if connection
+                                    .requests
+                                    .with_mut(|q| q.write_item(this_ptr))
+                                    .is_err()
+                                {
                                     release_query_ref();
-                                    return Err(throw_write_error(
-                                        b"failed to bind and execute query",
-                                        err,
-                                    ));
+                                    return Err(global_object.throw_out_of_memory());
+                                }
+                                enqueued = true;
+                                this.status.set(Status::Binding);
+
+                                // bindAndExecute will bind + execute, it will change to running after binding is complete
+                                if let Err(err) = connection.while_dispatching(|| {
+                                    PostgresRequest::bind_and_execute(
+                                        global_object,
+                                        stmt,
+                                        binding_value,
+                                        columns_value,
+                                        writer,
+                                    )
+                                }) {
+                                    // If the encoder threw, its exception has to be off
+                                    // the VM while discard_failed_request dispatches what
+                                    // user JS enqueued meanwhile; it is rethrown below.
+                                    let exception = global_object.try_take_exception();
+                                    this.status.set(Status::Fail);
+                                    connection.discard_failed_request(this_ptr);
+                                    return Err(match exception {
+                                        Some(exception) => global_object.throw_value(exception),
+                                        None => throw_write_error(
+                                            b"failed to bind and execute query",
+                                            err,
+                                        ),
+                                    });
                                 }
                                 {
                                     let mut f = connection.flags.get();
                                     f.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
                                     connection.flags.set(f);
                                 }
-                                this.status.set(Status::Binding);
                                 this.update_flags(|f| f.counter = RequestCounter::Pipelined);
                                 connection
                                     .pipelined_requests
@@ -719,7 +753,7 @@ impl PostgresSQLQuery {
                 };
                 connection_entry_value = Some(entry_value_ptr);
             }
-            let can_execute = !connection.has_query_running();
+            let can_execute = !dispatching && !connection.has_query_running();
 
             if can_execute {
                 // If it does not have params, we can write and execute immediately in one go
@@ -838,10 +872,11 @@ impl PostgresSQLQuery {
             }
         }
 
-        if connection
-            .requests
-            .with_mut(|q| q.write_item(this_ptr))
-            .is_err()
+        if !enqueued
+            && connection
+                .requests
+                .with_mut(|q| q.write_item(this_ptr))
+                .is_err()
         {
             release_query_ref();
             return Err(global_object.throw_out_of_memory());

@@ -661,9 +661,17 @@ impl PostgresSQLConnection {
     }
 
     pub(crate) fn flush_data(&self) {
+        let flags = self.flags.get();
         // we know we still have backpressure so just return we will flush later
-        if self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE) {
+        if flags.contains(ConnectionFlags::HAS_BACKPRESSURE) {
             debug!("flushData: has backpressure");
+            return;
+        }
+        // Re-entered from user JS running inside an encoder: the buffer may end
+        // in a message whose length prefix is still to be patched in place.
+        // The dispatching caller flushes once it is done.
+        if flags.contains(ConnectionFlags::IS_DISPATCHING) {
+            debug!("flushData: dispatching");
             return;
         }
 
@@ -1555,6 +1563,50 @@ impl PostgresSQLConnection {
         self.requests.with_mut(|q| q.discard(1));
     }
 
+    /// Disposes of a request (already marked `Fail`) whose enqueue-time Bind
+    /// failed before any of its bytes were written, the same way `advance()`
+    /// disposes of its own failures: dropped right away while it heads the
+    /// queue, otherwise left in place behind the in-flight requests for
+    /// `advance()` to sweep when they finish. Queries that user JS dispatched
+    /// while the Bind was being encoded were only enqueued (see
+    /// [`Self::while_dispatching`]) and are dispatched here, so the caller
+    /// must have taken the encoder's exception off the VM first.
+    pub(crate) fn discard_failed_request(&self, request: *mut PostgresSQLQuery) {
+        debug_assert!(!self.is_dispatching());
+        self.discard_request(request);
+        if self.pending_requests.get() > 0 {
+            self.advance_and_flush();
+        }
+    }
+
+    #[inline]
+    pub(crate) fn is_dispatching(&self) -> bool {
+        self.flags.get().contains(ConnectionFlags::IS_DISPATCHING)
+    }
+
+    /// Runs `encode`, which appends queued requests' messages to `write_buffer`,
+    /// with [`ConnectionFlags::IS_DISPATCHING`] set.
+    ///
+    /// Encoding a Bind calls into user JS for every parameter (`valueOf`,
+    /// `toString`, `toJSON`, getters), and that JS can synchronously dispatch
+    /// another query on this very connection (`PostgresSQLQuery::do_run`).
+    /// While the flag is set that nested dispatch only enqueues its request,
+    /// `advance()` returns without draining, and `flush_data()` leaves the
+    /// buffer alone. Otherwise the nested call would splice its own frames into
+    /// the message under construction, bind the request being encoded a second
+    /// time (`advance()` leaves it Pending at the head of the queue until the
+    /// encoder returns), or flush the buffer out from under the outer encoder,
+    /// whose length prefixes are offsets into it. The caller drains the queue
+    /// and flushes once `encode` returns.
+    pub(crate) fn while_dispatching<T>(&self, encode: impl FnOnce() -> T) -> T {
+        debug_assert!(!self.is_dispatching());
+        self.update_flags(|f| f.insert(ConnectionFlags::IS_DISPATCHING));
+        scopeguard::defer! {
+            self.update_flags(|f| f.remove(ConnectionFlags::IS_DISPATCHING));
+        }
+        encode()
+    }
+
     pub(crate) fn has_query_running(&self) -> bool {
         !self
             .flags
@@ -1808,7 +1860,24 @@ impl PostgresSQLConnection {
         }
     }
 
+    /// Writes out as many queued requests as the connection state allows.
+    ///
+    /// Not re-entrant: a call made while a request is being encoded (user JS
+    /// inside the encoder dispatched a query, see [`Self::while_dispatching`])
+    /// returns at once. The request it was asked to write sits at the tail of
+    /// the queue: when the encoder runs inside this loop, the loop re-reads the
+    /// queue length on every iteration and gets to it once the current request
+    /// is done; when it runs inside `PostgresSQLQuery::do_run`, the request
+    /// being encoded is in flight and the ReadyForQuery it ends with gets here.
     fn advance(&self) {
+        if self.is_dispatching() {
+            debug!("advance: already dispatching");
+            return;
+        }
+        self.while_dispatching(|| self.advance_impl());
+    }
+
+    fn advance_impl(&self) {
         let mut offset: usize = 0;
         debug!("advance");
         // The cleanup loop runs after the main loop returns;

@@ -1591,9 +1591,10 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
     // re-derive a fresh `&mut *this` here (not carried in from a `noalias`
     // dispatch-frame borrow).
     #[inline]
-    unsafe fn on_open(this: *mut Self, ws: bun_uws_sys::AnyWebSocket) {
+    unsafe fn on_open(this: *mut Self, ws: bun_uws_sys::AnyWebSocket) -> HmrResult {
         // SAFETY: `this` is the live user-data pointer (per trait contract).
-        HmrSocket::on_open(unsafe { &mut *this }, ws)
+        HmrSocket::on_open(unsafe { &mut *this }, ws);
+        Ok(())
     }
     #[inline]
     unsafe fn on_message(
@@ -1601,19 +1602,34 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
         ws: bun_uws_sys::AnyWebSocket,
         message: &[u8],
         opcode: bun_uws_sys::Opcode,
-    ) {
+    ) -> HmrResult {
         // SAFETY: see `on_open`.
-        HmrSocket::on_message(unsafe { &mut *this }, ws, message, opcode)
+        HmrSocket::on_message(unsafe { &mut *this }, ws, message, opcode);
+        Ok(())
     }
     #[inline]
-    unsafe fn on_close(this: *mut Self, ws: bun_uws_sys::AnyWebSocket, code: i32, message: &[u8]) {
+    unsafe fn on_close(
+        this: *mut Self,
+        ws: bun_uws_sys::AnyWebSocket,
+        code: i32,
+        message: &[u8],
+    ) -> HmrResult {
         // SAFETY: see `on_open`.
-        HmrSocket::on_close(this, ws, code, message)
+        HmrSocket::on_close(this, ws, code, message);
+        Ok(())
     }
-    unsafe fn on_drain(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket) {}
-    unsafe fn on_ping(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
-    unsafe fn on_pong(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
+    unsafe fn on_drain(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket) -> HmrResult {
+        Ok(())
+    }
+    unsafe fn on_ping(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _: &[u8]) -> HmrResult {
+        Ok(())
+    }
+    unsafe fn on_pong(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _: &[u8]) -> HmrResult {
+        Ok(())
+    }
 }
+/// The HMR socket speaks a binary protocol and never enters user JS.
+type HmrResult = bun_uws_sys::web_socket::JsResult<()>;
 
 impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for DevServer {
     unsafe fn on_websocket_upgrade(
@@ -1622,7 +1638,7 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         req: &mut Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
         id: usize,
-    ) {
+    ) -> HmrResult {
         debug_assert_eq!(id, 0);
         // Note: DevServer always registers `*mut Self` with `id == 0`
         // (`set_routes` → `app.ws(prefix, this, 0, ..)`); live for the upgrade
@@ -1637,11 +1653,13 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         // SAFETY: `this` is the live DevServer registered for the upgrade callback.
         if !is_allowed_dev_host(unsafe { &*this }, req) {
             // SAFETY: `res` is live for this callback (see Note above).
-            return host_forbidden(unsafe { &mut *res }.as_any_response());
+            host_forbidden(unsafe { &mut *res }.as_any_response());
+            return Ok(());
         }
         if !is_allowed_dev_origin(req) {
             // SAFETY: `res` is live for this callback (see Note above).
-            return origin_forbidden(unsafe { &mut *res }.as_any_response());
+            origin_forbidden(unsafe { &mut *res }.as_any_response());
+            return Ok(());
         }
         // SAFETY: as above; the borrow is statement-scoped, ending before `upgrade`.
         let dw = bun_core::heap::into_raw(HmrSocket::new(unsafe { &mut *this }));
@@ -1658,6 +1676,7 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
                 Some(upgrade_ctx),
             )
         };
+        Ok(())
     }
 }
 

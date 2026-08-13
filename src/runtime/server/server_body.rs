@@ -1333,13 +1333,16 @@ where
         req: &mut uws_sys::Request,
         context: &mut WebSocketUpgradeContext,
         id: usize,
-    ) {
+    ) -> uws_sys::web_socket::JsResult<()> {
+        // A throwing `fetch`/route handler is the request's error response
+        // (`RequestContext::on_response`), so nothing is left pending here.
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         // SAFETY: forwarded raw — `this` is only dereferenced after the `id`
         // dispatch inside `on_web_socket_upgrade`.
         unsafe {
             Self::on_web_socket_upgrade(this, bun_opaque::opaque_deref_mut(res), req, context, id)
         };
+        Ok(())
     }
 }
 

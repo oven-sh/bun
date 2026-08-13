@@ -2,6 +2,7 @@
 // by SCENARIO) against the server at DATABASE_URL in its own process, because
 // before the fix several of these scenarios abort the process (panic in the
 // Bind encoder) or wedge the connection instead of failing a single assertion.
+// The test kills a wedged fixture when it times out.
 //
 // Every scenario binds a parameter whose conversion (valueOf(), or toString()
 // where the parameter goes out in text format) dispatches more queries on the
@@ -10,14 +11,6 @@
 // parameter was converted. One conversion per query is the observable side of
 // "one Bind message per request".
 import { SQL } from "bun";
-
-const watchdog = setTimeout(
-  () => {
-    console.log(JSON.stringify({ watchdog: "a query never settled" }));
-    process.exit(1);
-  },
-  Number(process.env.WATCHDOG_MS ?? 15_000),
-);
 
 const sql = new SQL({ url: process.env.DATABASE_URL!, max: 1, idleTimeout: 30 });
 await sql.connect();
@@ -182,5 +175,4 @@ if (!scenario) {
   process.exit(1);
 }
 console.log(JSON.stringify(await scenario()));
-clearTimeout(watchdog);
 await sql.close();

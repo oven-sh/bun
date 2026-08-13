@@ -18,20 +18,16 @@
 // delivered to the nested query and the outer one never settled.
 //
 // Now a dispatch that lands inside an encoder only enqueues, and whoever is
-// encoding drains the queue afterwards. Each scenario runs in a subprocess (the
-// failure modes are a process abort or a hang) and reports what every query
-// settled with and how many times the outer parameter was converted; one
-// conversion per query is the observable form of one Bind per request.
+// encoding drains the queue afterwards. Each scenario runs in a subprocess and
+// reports what every query settled with and how many times the outer parameter
+// was converted (one conversion per query is the observable form of one Bind
+// per request); a broken scenario shows up as a panic in the subprocess's
+// stderr or, for the wedged-connection shapes, as the test timing out.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, describeWithContainer } from "harness";
 import path from "node:path";
 
 const fixture = path.join(import.meta.dir, "postgres-dispatch-during-bind-fixture.ts");
-// A passing scenario is a few round trips to the server. The test timeout below
-// is a ceiling that outlasts the fixture's watchdog, so a query that never
-// settles is reported as the fixture's { watchdog } result, with the scenario's
-// stderr, instead of as a bare test timeout.
-const FIXTURE_WATCHDOG_MS = 15_000;
 
 const scenarios: Record<string, unknown> = {
   "first execution, nested new statement": {
@@ -89,35 +85,30 @@ const scenarios: Record<string, unknown> = {
 
 describeWithContainer("postgres", { image: "postgres_plain" }, container => {
   for (const [scenario, expected] of Object.entries(scenarios)) {
-    test.concurrent(
-      scenario,
-      async () => {
-        await container.ready;
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), fixture],
-          env: {
-            ...bunEnv,
-            DATABASE_URL: `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`,
-            SCENARIO: scenario,
-            WATCHDOG_MS: String(FIXTURE_WATCHDOG_MS),
-          },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    test.concurrent(scenario, async () => {
+      await container.ready;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), fixture],
+        env: {
+          ...bunEnv,
+          DATABASE_URL: `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`,
+          SCENARIO: scenario,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-        let result: unknown = stdout;
-        try {
-          result = JSON.parse(stdout);
-        } catch {}
-        expect({ result, exitCode, stderr }).toEqual({
-          result: expected,
-          exitCode: 0,
-          // not asserted; included so a panic trace shows up in the diff
-          stderr: expect.any(String),
-        });
-      },
-      FIXTURE_WATCHDOG_MS * 2,
-    );
+      let result: unknown = stdout;
+      try {
+        result = JSON.parse(stdout);
+      } catch {}
+      expect({ result, exitCode, stderr }).toEqual({
+        result: expected,
+        exitCode: 0,
+        // not asserted; included so a panic trace shows up in the diff
+        stderr: expect.any(String),
+      });
+    });
   }
 });

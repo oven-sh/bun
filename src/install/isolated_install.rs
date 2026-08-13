@@ -2170,7 +2170,29 @@ pub(crate) fn install_isolated_packages(
                     // .monotonic is okay because the task isn't running on another thread.
                     entry_steps[entry_id.get() as usize]
                         .store(installer::Step::Done as u32, Ordering::Relaxed);
-                    installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
+
+                    // The lockfile only stores the name, so the `bun link` registration may be
+                    // gone by now. Dependents symlink to it blindly, making this the only place
+                    // a missing target can fail the install (same `openat` as hoisted's
+                    // `install_from_link`).
+                    let mut link_target: AbsPath = AbsPath::init_top_level_dir();
+                    installer.append_store_path(&mut link_target, entry_id);
+                    match sys::openat(
+                        Fd::cwd(),
+                        link_target.slice_z(),
+                        sys::O::RDONLY | sys::O::DIRECTORY,
+                        0,
+                    ) {
+                        Ok(fd) => {
+                            use bun_sys::FdExt as _;
+                            fd.close();
+                            installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
+                        }
+                        Err(err) => {
+                            installer
+                                .on_task_fail(entry_id, &installer::TaskError::LinkPackage(err));
+                        }
+                    }
                     continue;
                 }
                 ResolutionTag::Folder => {

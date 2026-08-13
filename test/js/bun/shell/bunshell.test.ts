@@ -2862,6 +2862,27 @@ describe("subshell", () => {
       .stdout("hello\n")
       .runAsTest("subshell stdin redirect");
 
+    TestBuilder.command /* sh */ `(echo out; echo err 1>&2) 2> err.txt`
+      .stdout("out\n")
+      .fileEquals("err.txt", "err\n")
+      .runAsTest("subshell stderr redirect to file");
+
+    TestBuilder.command /* sh */ `(echo both) &> both.txt`
+      .fileEquals("both.txt", "both\n")
+      .runAsTest("subshell combined redirect to file");
+
+    TestBuilder.command /* sh */ `(echo hi) > {a,b}.txt`
+      .ensureTempDir()
+      .stderr("bun: ambiguous redirect: at `subshell`\n")
+      .exitCode(1)
+      .runAsTest("subshell ambiguous redirect");
+
+    TestBuilder.command /* sh */ `(cat) < missing.txt`
+      .ensureTempDir()
+      .stderr_contains("missing.txt")
+      .exitCode(1)
+      .runAsTest("subshell stdin redirect open failure");
+
     // test_oE 'subshell ending with semicolon'
     TestBuilder.command /* sh */ `
 (echo foo;)

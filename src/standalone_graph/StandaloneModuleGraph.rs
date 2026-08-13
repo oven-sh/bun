@@ -1180,13 +1180,15 @@ impl CompileResult {
 /// every filesystem; see `get_fd_path` on FreeBSD).
 pub(crate) struct Injected {
     pub fd: Fd,
-    #[cfg_attr(windows, allow(dead_code))]
+    /// Windows resolves the path from the handle instead (`get_fd_path`).
+    #[cfg(not(windows))]
     pub temp_path: Box<[u8]>,
 }
 
 /// `zname` as `inject` opened it is relative to the cwd of that moment unless the
 /// tmpdir fallback made it absolute; pin it so a later `chdir` cannot retarget
 /// the rename/unlink.
+#[cfg(not(windows))]
 fn temp_path_absolute(zname: &ZStr) -> Box<[u8]> {
     let name = zname.as_bytes();
     if bun_paths::is_absolute(name) {
@@ -1478,6 +1480,7 @@ pub(crate) fn inject(
             }
             return Some(Injected {
                 fd: cloned_executable_fd,
+                #[cfg(not(windows))]
                 temp_path: temp_path_absolute(zname),
             });
         }
@@ -1542,6 +1545,7 @@ pub(crate) fn inject(
             }
             return Some(Injected {
                 fd: cloned_executable_fd,
+                #[cfg(not(windows))]
                 temp_path: temp_path_absolute(zname),
             });
         }
@@ -1603,6 +1607,7 @@ pub(crate) fn inject(
             }
             return Some(Injected {
                 fd: cloned_executable_fd,
+                #[cfg(not(windows))]
                 temp_path: temp_path_absolute(zname),
             });
         }
@@ -1685,6 +1690,7 @@ pub(crate) fn inject(
 
             return Some(Injected {
                 fd: cloned_executable_fd,
+                #[cfg(not(windows))]
                 temp_path: temp_path_absolute(zname),
             });
         }

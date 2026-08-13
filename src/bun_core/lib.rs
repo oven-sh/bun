@@ -2414,7 +2414,7 @@ pub mod ffi {
     pub fn uname() -> libc::utsname {
         let mut u: libc::utsname = zeroed();
         // SAFETY: `u` is a valid, writable utsname for the duration of the call.
-        let _ = unsafe { libc::uname(&mut u) };
+        let _ = unsafe { libc::uname(&raw mut u) };
         u
     }
 

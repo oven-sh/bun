@@ -390,7 +390,7 @@ impl PostgresSQLConnection {
                 return;
             }
             t.next = bun_core::Timespec::ms_from_now(
-                bun_core::TimespecMockMode::AllowMockedTime,
+                bun_core::TimespecMockMode::ForceRealTime,
                 i64::from(interval),
             );
         });
@@ -500,7 +500,7 @@ impl PostgresSQLConnection {
         }
         self.max_lifetime_timer.with_mut(|t| {
             t.next = bun_core::Timespec::ms_from_now(
-                bun_core::TimespecMockMode::AllowMockedTime,
+                bun_core::TimespecMockMode::ForceRealTime,
                 i64::from(self.max_lifetime_interval_ms),
             );
         });

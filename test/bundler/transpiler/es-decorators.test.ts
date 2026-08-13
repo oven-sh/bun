@@ -1379,6 +1379,41 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("undecorated field, accessor and #-field initializers may read a WeakMap-lowered #-private directly", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v) { return v; }
+        class C {
+          @dec m() {}
+          #a = 1;
+          b = this.#a;
+          accessor c = this.#a + 10;
+          #d = this.#a + 100;
+          readD() { return this.#d; }
+        }
+        const o = new C();
+        console.log(o.b, o.c, o.readD());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 11 101\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("undecorated static #-field initializer may read a WeakMap-lowered static #-private directly", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v) { return v; }
+        class C {
+          @dec m() {}
+          static #a = 1;
+          static #b = C.#a + 1;
+          static readB() { return C.#b; }
+        }
+        console.log(C.readB());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("2\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("WeakMap-lowered #-private does not strip NamedEvaluation or new.target from sibling fields", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         function dec(v) { return v; }

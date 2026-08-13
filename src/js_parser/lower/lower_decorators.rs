@@ -2020,9 +2020,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // ── Phase 5: Rewrite private accesses ────────────
         if !private_lowered_map.is_empty() {
-            for nprop in new_properties.iter_mut() {
+            for nprop in new_properties
+                .iter_mut()
+                .chain(static_private_add_blocks.iter_mut())
+            {
                 if let Some(v) = &mut nprop.value {
                     p.rewrite_private_accesses_in_expr(v, &private_lowered_map);
+                }
+                if let Some(ini) = &mut nprop.initializer {
+                    p.rewrite_private_accesses_in_expr(ini, &private_lowered_map);
                 }
                 if let Some(sb) = nprop.class_static_block_mut() {
                     p.rewrite_private_accesses_in_stmts(sb.stmts.slice_mut(), &private_lowered_map);

@@ -14,7 +14,7 @@ use bun_jsc::{
     self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _,
     StrongOptional, WorkPoolTask,
 };
-use bun_threading::work_pool::WorkPool;
+use bun_threading::{IntrusiveWorkTask, WorkPool};
 use bun_zlib;
 
 bun_output::declare_scope!(zlib, hidden);
@@ -195,7 +195,9 @@ pub(crate) trait CompressionContext {
 // R-2 (host-fn re-entrancy): every JS-exposed mixin method takes `&T`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). Accessors return the
 // cell wrapper so the mixin can `.get()`/`.set()`/`.with_mut()` as needed.
-pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
+pub(crate) trait CompressionStreamImpl:
+    Sized + Taskable + jsc::JsClass + IntrusiveWorkTask + 'static
+{
     type Stream: CompressionContext;
 
     // Field accessors (interior-mutability cells; all `&self`).
@@ -238,27 +240,13 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     fn pending_close(&self) -> &Cell<bool>;
     fn closed(&self) -> &Cell<bool>;
 
-    /// Recover `*mut Self` from the embedded `WorkPoolTask`.
-    /// SAFETY: caller guarantees `task` points at the `task` field of a live `Self`.
-    unsafe fn from_task(task: *mut WorkPoolTask) -> *mut Self;
-
     // Intrusive refcount.
     fn ref_(&self);
-    /// Decrement the intrusive refcount and free `*this` (via `Self::deinit` /
-    /// `heap::take`) when it hits zero.
+    /// Decrement the intrusive refcount; frees `*this` when it hits zero.
     ///
-    /// Raw-pointer receiver so the destroy path keeps the
-    /// allocation's full write provenance (routing through `&self` and casting
-    /// back to `*mut` would be UB under Stacked Borrows when `Box::from_raw`
-    /// reclaims). Every call site that may hit zero (`run_from_js_thread`,
-    /// `finalize`) holds a `*mut T` derived from the original `m_ctx`
-    /// allocation; the bracketed `ref_()`/`deref()` in `write_sync` can never
-    /// hit zero while the JS wrapper's +1 is still live, so its
-    /// `(&T as *const T).cast_mut()` provenance is sufficient (only the
-    /// `Cell<u32>` is touched).
-    ///
-    /// SAFETY: `this` must point to a live `Self` allocated via `heap::alloc`
-    /// in `constructor()`. After this returns, `*this` may have been freed.
+    /// SAFETY: `this` must point to a live `Self` allocated in `constructor()`
+    /// and, unless the call cannot reach zero, be that allocation's own pointer
+    /// (the wrapper's `m_ctx`). After this returns, `*this` may have been freed.
     unsafe fn deref(this: *mut Self);
 
     // Per-class codegen (`T.js.*` cached-property accessors).
@@ -420,6 +408,10 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         let _ = (in_off, in_len, out_off, out_len);
 
         Self::throw_unless_idle(this, global_this)?;
+        // The completion may `deref` this to zero, so it is the wrapper's pointer, not `this` cast.
+        let m_ctx: *mut T =
+            T::from_js(this_value).expect("write: this_value is not this handle's wrapper");
+        debug_assert!(core::ptr::eq(m_ctx.cast_const(), this));
         // Pin both buffers before mutating any state: materializing a
         // FastTypedArray's backing store can fail on OOM, and failing here
         // leaves nothing to unwind.
@@ -469,7 +461,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // The task is a field of this JS-owned stream: counted, so the VM waits
         // for it (see `VmHandle::embedded_work_scheduled`).
         this.loop_handle().embedded_work_scheduled();
-        WorkPool::schedule(this.task().as_ptr());
+        // SAFETY: `m_ctx` is `this`, live for the whole call.
+        WorkPool::schedule(unsafe { T::field_of(m_ctx) });
 
         Ok(JSValue::UNDEFINED)
     }
@@ -477,13 +470,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     // Safe fn: coerces to the `WorkPoolTask.callback` field type at the
     // struct-init site in `write` above.
     fn async_job_run_task(task: *mut WorkPoolTask) {
-        // SAFETY: `task` points to `T.task` — only ever invoked by the thread
-        // pool against a `T` scheduled in `write`, so provenance covers the
-        // full `T` allocation. Recover *mut T via container_of
-        // (`CompressionStreamImpl::from_task`). The task field is a
-        // `JsCell<WorkPoolTask>` — `#[repr(transparent)]` over the value, so
-        // `offset_of!(T, task)` is the value's offset.
-        let this: *mut T = unsafe { T::from_task(task) };
+        // SAFETY: `task` is the `T::field_of(m_ctx)` that `write` scheduled;
+        // the `ref_()` taken there keeps the stream alive.
+        let this: *mut T = unsafe { T::from_task_ptr(task) };
         Self::async_job_run(this);
     }
 
@@ -1028,6 +1017,9 @@ macro_rules! __impl_compression_stream {
             }
         }
 
+        // The field is a `repr(transparent)` `JsCell<WorkPoolTask>`, so its offset is the task's.
+        ::bun_threading::intrusive_work_task!($native, task);
+
         /// `T.js.*` — cached-property accessors emitted by
         /// `generate-classes.ts` for the `values:` list in `zlib.classes.ts`.
         #[allow(unused)]
@@ -1058,14 +1050,6 @@ macro_rules! __impl_compression_stream {
             #[inline] fn write_in_progress(&self) -> &::core::cell::Cell<bool> { &self.write_in_progress }
             #[inline] fn pending_close(&self) -> &::core::cell::Cell<bool> { &self.pending_close }
             #[inline] fn closed(&self) -> &::core::cell::Cell<bool> { &self.closed }
-
-            #[inline]
-            unsafe fn from_task(task: *mut ::bun_jsc::WorkPoolTask) -> *mut Self {
-                // SAFETY: `task` points at the `task` field of a live `Self`;
-                // `from_field_ptr!`
-                // computes the byte offset via `offset_of!(Self, task)`.
-                unsafe { ::bun_core::from_field_ptr!(Self, task, task) }
-            }
 
             // All three `Native*` structs `#[derive(bun_ptr::CellRefCounted)]`
             // with their own `#[ref_count(destroy = …)]` (or the default

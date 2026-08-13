@@ -400,6 +400,14 @@ impl Queue {
 
     pub fn on_poll(&mut self) {
         bun_core::scoped_log!(AsyncModule, "onPoll");
+        if self.map.is_empty() {
+            // The package manager wakes us for every completed task, including
+            // the ones a synchronous auto-install (`enqueue_dependency_to_root`)
+            // is blocked on. That waiter drains them itself and logs failures;
+            // draining them here would hand the failures to the callbacks
+            // below, which have no module to deliver them to and drop them.
+            return;
+        }
         self.run_tasks();
         self.poll_modules();
     }

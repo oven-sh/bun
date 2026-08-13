@@ -4628,21 +4628,16 @@ impl VirtualMachine {
             mode.is_esm(),
             IS_A_FILE_PATH,
         );
-        if let Err(err_) = resolve_result {
-            let err = err_;
+        if let Err(err) = resolve_result {
             let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
-            let msg = log
+            let resolve_msg_index = log
                 .msgs
                 .iter()
-                .find_map(|m| {
-                    if let bun_ast::Metadata::Resolve(_) = &m.metadata {
-                        Some(m.clone())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| {
+                .position(|m| matches!(m.metadata, bun_ast::Metadata::Resolve(_)));
+            let mut msg = match resolve_msg_index {
+                Some(i) => log.msgs[i].clone(),
+                None => {
                     let printed = crate::ResolveMessage::fmt(
                         specifier_utf8.slice(),
                         source_utf8.slice(),
@@ -4658,7 +4653,25 @@ impl VirtualMachine {
                         }),
                         ..Default::default()
                     }
-                });
+                }
+            };
+            // The resolver and the auto-install package manager report the
+            // reason a resolution failed (a `GET <tarball url> - 404`, an
+            // unreadable directory, ...) as ordinary errors/warnings in the
+            // scoped `log`, which dies with this frame. Carry them on the
+            // `ResolveMessage` as notes so they are printed with it.
+            let mut notes = core::mem::take(&mut msg.notes).into_vec();
+            notes.extend(
+                log.msgs
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, m)| {
+                        Some(*i) != resolve_msg_index
+                            && matches!(m.kind, bun_ast::Kind::Err | bun_ast::Kind::Warn)
+                    })
+                    .map(|(_, m)| m.data.clone()),
+            );
+            msg.notes = notes.into_boxed_slice();
             *res = ErrorableString::err(
                 ErrorCode(ErrorCode::JS_ERROR_OBJECT),
                 crate::ResolveMessage::create(global, &msg, source_utf8.slice())?,

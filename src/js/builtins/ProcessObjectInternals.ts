@@ -603,10 +603,7 @@ export function getChannel() {
   const EventEmitter = require("node:events");
   const setRef = $newRustFunction("node_cluster_binding.rs", "setRef", 1);
   const setRefCounted = $newRustFunction("node_cluster_binding.rs", "setRefCounted", 1);
-  // Mirrors node's internal Control. The reference count itself lives in native
-  // code because the "message"/"disconnect" listeners on `process` count towards
-  // it too (node does the same from _forkChild); refCounted()/unrefCounted()
-  // adjust that shared count, while ref()/unref() override it for good.
+  // The count lives in the VM because process's message/disconnect listeners share it.
   return new (class Control extends EventEmitter {
     constructor() {
       super();

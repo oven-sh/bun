@@ -853,11 +853,7 @@ impl Subprocess<'_> {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// `setChannelRef(enabled)`: whether the open IPC channel keeps the event
-    /// loop alive, independently of `ref()`/`unref()` on the process itself
-    /// (node's IPC pipe is its own libuv handle). Only engaged by
-    /// `node:child_process`; `handle_ipc_close` and `finalize` disable it, so
-    /// a closed channel can never hold the loop.
+    /// `$setChannelRef(enabled)`: the open channel's own loop ref, independent of `ref()`/`unref()`.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn set_channel_ref(
         this: &Self,

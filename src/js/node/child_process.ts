@@ -1453,9 +1453,7 @@ class ChildProcess extends EventEmitter {
       if (has_ipc) {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
-        // Like node's IPC pipe handle, the open channel keeps the parent alive
-        // on its own; subprocess.unref() does not release it, channel.unref()
-        // or closing the channel does.
+        // Node's IPC pipe is its own ref'd handle; subprocess.unref() does not release it.
         this.#handle.$setChannelRef(true);
         this.channel = new Control(this.#handle);
         Object.defineProperty(this, "_channel", {
@@ -1850,10 +1848,7 @@ function abortChildProcess(child, killSignal, reason) {
   }
 }
 
-// Same contract as node's internal Control (lib/internal/child_process.js):
-// refCounted()/unrefCounted() are the cooperative form used by libraries such as
-// execa; once ref()/unref() has been called explicitly they stop touching the
-// channel.
+// Node's Control from lib/internal/child_process.js.
 class Control extends EventEmitter {
   #handle;
   #refs = 0;

@@ -287,11 +287,7 @@ pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     Ok(JSValue::UNDEFINED)
 }
 
-/// One `refCounted()` (+1) or `unrefCounted()` (-1) step of node's `Control`:
-/// the channel is ref'd when the count becomes exactly 1 and released when it
-/// returns to exactly 0, and neither happens once `ref()`/`unref()` has been
-/// called explicitly. Returns whether this step released the channel, which is
-/// when node emits `"unref"` on the control object.
+/// Node's `Control#refCounted()` (+1) / `unrefCounted()` (-1); returns whether this step released the channel.
 fn step_channel_ref_count(vm: &mut VirtualMachine, delta: i32) -> bool {
     vm.channel_ref_count = vm.channel_ref_count.saturating_add(delta);
     if vm.channel_ref_overridden {
@@ -310,8 +306,7 @@ fn step_channel_ref_count(vm: &mut VirtualMachine, delta: i32) -> bool {
     }
 }
 
-/// `process.channel.refCounted()` / `.unrefCounted()`. Returns `true` when an
-/// `unrefCounted()` released the channel.
+/// `process.channel.refCounted()` / `.unrefCounted()`; the JS side emits `"unref"` when this returns true.
 #[bun_jsc::host_fn]
 pub(crate) fn set_ref_counted(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let arguments = frame.arguments_as_array::<1>();
@@ -328,11 +323,6 @@ pub(crate) fn set_ref_counted(global: &JSGlobalObject, frame: &CallFrame) -> JsR
     Ok(JSValue::from(released))
 }
 
-/// Called from `process`'s listener hook (`BunProcess.cpp`) with the number of
-/// `message`/`disconnect` listeners that count towards the channel, every time
-/// it changes. Node's `_forkChild` does a `refCounted()`/`unrefCounted()` per
-/// listener; applying the new total as a delta is the same thing and also
-/// covers `removeAllListeners()`, which reports once for any number removed.
 // HOST_EXPORT(Bun__setChannelListenerCount, c)
 pub fn set_channel_listener_count(global: &JSGlobalObject, count: u32) {
     let vm = global.bun_vm().as_mut();
@@ -340,6 +330,7 @@ pub fn set_channel_listener_count(global: &JSGlobalObject, count: u32) {
         vm.channel_listener_refs += 1;
         step_channel_ref_count(vm, 1);
     }
+    // Unlike unrefCounted(), a listener removal that releases the channel emits no "unref".
     while vm.channel_listener_refs > count {
         vm.channel_listener_refs -= 1;
         step_channel_ref_count(vm, -1);

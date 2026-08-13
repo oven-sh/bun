@@ -1520,8 +1520,6 @@ mod _async_tasks {
                 .cp_on_copy(src.as_ref(), dest.as_ref());
         }
 
-        /// A tolerated `EEXIST` is neither a copy nor an error. Success is not
-        /// recorded: `on_subtask_done` resolves `Ok` unless an error was.
         fn record_copy_result(
             &self,
             src: &OSPathSliceZ,

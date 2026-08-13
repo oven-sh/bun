@@ -665,6 +665,31 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(b).toContain("b");
     expect(stdout).toContain("_.._/other/b.js");
   });
+
+  // https://github.com/oven-sh/bun/issues/5206
+  test("transpiles bare entry points in place with --outdir .", async () => {
+    using dir = tempDir("no-bundle-outdir-in-place", {
+      "a.ts": `console.log("hello world!" as string);\n`,
+      "b.ts": `console.log("foo bar baz" as string);\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "a.ts", "b.ts", "--no-bundle", "--outdir", "."],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("a.js");
+    expect(stdout).toContain("b.js");
+    expect(exitCode).toBe(0);
+
+    expect(fs.readdirSync(String(dir)).sort()).toEqual(["a.js", "a.ts", "b.js", "b.ts"]);
+    expect(await Bun.file(path.join(String(dir), "a.js")).text()).toContain('console.log("hello world!")');
+    expect(await Bun.file(path.join(String(dir), "b.js")).text()).toContain('console.log("foo bar baz")');
+  });
 });
 
 describe("CLI argument error messages", () => {

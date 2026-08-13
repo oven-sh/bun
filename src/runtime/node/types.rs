@@ -1128,10 +1128,13 @@ impl PathLikeExt for PathLike {
                     Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => return Err(NameTooLong),
                     Err(e) => panic!("Error while resolving path: {e:?}"),
                 };
-                let normal = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
-                    resolve,
-                    &mut b[..],
-                );
+                // Like the drive-letter branch below, this drops a trailing
+                // separator (as `path.toNamespacedPath` does): Win32 rejects `file\`.
+                let normal = bun_paths::resolve_path::normalize_string_buf::<
+                    true,
+                    bun_paths::platform::Windows,
+                    false,
+                >(resolve, &mut b[..]);
                 if !strings::fits_in_wide_path_buffer(normal) {
                     return Err(NameTooLong);
                 }

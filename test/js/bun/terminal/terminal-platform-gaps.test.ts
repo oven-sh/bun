@@ -189,8 +189,8 @@ describe("Bun.Terminal platform behaviour", () => {
   // tests observe ConPTY, not the agent's process tree.
   const enableCtrlC = isWindows
     ? `import { dlopen } from 'bun:ffi';
-       dlopen('kernel32.dll', { SetConsoleCtrlHandler: { args: ['ptr', 'bool'], returns: 'bool' } })
-         .symbols.SetConsoleCtrlHandler(null, false);`
+       const k32 = dlopen('kernel32.dll', { SetConsoleCtrlHandler: { args: ['ptr', 'bool'], returns: 'bool' } });
+       if (!k32.symbols.SetConsoleCtrlHandler(null, false)) throw new Error('SetConsoleCtrlHandler(NULL, FALSE) failed');`
     : "";
 
   test("SAME: Ctrl+C input interrupts the child", async () => {

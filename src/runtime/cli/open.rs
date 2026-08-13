@@ -13,10 +13,6 @@ use crate::api::bun::process::sync;
 
 #[cfg(target_os = "macos")]
 const OPENER: &[u8] = b"/usr/bin/open";
-#[cfg(windows)]
-const OPENER: &[u8] = b"start";
-#[cfg(not(any(target_os = "macos", windows)))]
-const OPENER: &[u8] = b"xdg-open";
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -177,14 +173,14 @@ impl Editor {
             }};
         }
 
+        // `open <editor> --args ...` gives a terminal editor its own Terminal.app
+        // window. `xdg-open` and `start` accept a single file, so elsewhere
+        // terminal editors are run directly, like every other editor.
+        #[cfg(target_os = "macos")]
         if matches!(self, Editor::Vim | Editor::Emacs | Editor::Neovim) {
             push_arg!(OPENER);
             push_arg!(binary);
-
-            #[cfg(target_os = "macos")]
-            {
-                push_arg!(b"--args");
-            }
+            push_arg!(b"--args");
         }
 
         push_arg!(binary);

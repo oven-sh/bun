@@ -842,6 +842,10 @@ fn prune_scoped_node_modules(parent_dir: Fd, scope: &[u8], expected: Option<&Str
         }
     }
 
+    // Close before removing, as `Dir::delete_tree` requires on Windows.
+    drop(iter);
+    drop(scope_dir);
+
     // Remove the scope directory if it ended up empty.
     if !has_remaining {
         let mut scope_z = Vec::with_capacity(scope.len() + 1);

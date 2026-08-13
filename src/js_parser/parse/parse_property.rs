@@ -463,13 +463,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                     }
                                     PropertyModifierKeyword::PAccessor => {
-                                        // `accessor` is a standalone proposal, not gated on the
-                                        // decorators mode (either legacy or standard is fine).
-                                        //
-                                        // TC39 grammar is `accessor [no LineTerminator here]
-                                        // ClassElementName`, matching `.p_async` above: a newline
-                                        // before the next token means `accessor` is an ordinary
-                                        // field name terminated by ASI, not the modifier keyword.
+                                        // `accessor [no LineTerminator here] ClassElementName`,
+                                        // valid under either decorator mode (TC39 / TS 4.9+).
                                         if opts.is_class
                                             && !p.lexer.has_newline_before
                                             && PropertyModifierKeyword::find(raw)

@@ -263,10 +263,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let has_any_decorators = has_decorators || class_opts.ts_decorators.len() > 0;
 
-        // JSC doesn't parse `accessor` natively, so any class with auto-accessors must go
-        // through the standard-decorator lowering (WeakMap + getter/setter) regardless of
-        // mode. But mixing auto-accessors with legacy TS decorators would silently reroute
-        // those decorators through the standard-proposal runtime — reject that combination.
+        // Auto-accessor classes lower through the standard-decorator path, which
+        // would silently misapply any legacy TS decorators in the same class.
         if has_auto_accessor && !p.options.features.standard_decorators && has_any_decorators {
             p.log().add_error(
                 Some(p.source),

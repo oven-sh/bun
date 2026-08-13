@@ -1266,12 +1266,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
                 pre_eval_stmts.push(p.var_decl(dec_ref, Some(arr), loc));
             }
-            // Hoist computed keys for decorated props AND for undecorated
-            // auto-accessors. An undecorated `accessor [k()] = 1` lowers to a
-            // `get [k()]` / `set [k()]` pair that duplicates `prop.key`; the
-            // runtime would evaluate `k()` twice and install the getter/setter
-            // under different keys (TC39 auto-accessor spec requires exactly
-            // one evaluation).
+            // Auto-accessors duplicate the key across the synthesized get/set
+            // pair, so their computed keys must be hoisted to evaluate once.
             if prop.flags.contains(Flags::Property::IsComputed)
                 && prop.key.is_some()
                 && (prop.ts_decorators.len_u32() > 0 || prop.kind == PropertyKind::AutoAccessor)

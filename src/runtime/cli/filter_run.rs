@@ -30,9 +30,7 @@ struct ScriptConfig {
     // parsed `PackageJSON` (which owns the file bytes) drops.
     deps: Vec<Box<[u8]>>,
 
-    /// This package's `$PATH` (its own `node_modules/.bin` chain) plus the
-    /// `npm_package_*` / `npm_lifecycle_*` vars for this package and script;
-    /// everything else comes from the env shared by the whole run.
+    /// This package's `$PATH` and this script's `npm_*` vars, layered over the run's shared env.
     env: ScriptEnv,
     elide_count: Option<usize>,
 }
@@ -310,11 +308,8 @@ struct State<'a> {
     pretty_output: bool,
     shell_bin: &'static ZStr, // intentionally leaked (process exits)
     aborted: bool,
-    // Raw `*mut` — process-lifetime singleton owned
-    // by Transpiler; ProcessHandle::start mutates `env.map` (per-script
-    // `ScriptEnv` overlay) so a shared borrow won't do, and `&'a mut` would
-    // conflict with the Transpiler's own raw-ptr field. Reborrow `&mut *env`
-    // at use sites.
+    // Process-lifetime loader owned by the Transpiler; `ProcessHandle::start` mutates it per
+    // spawn, so it is reborrowed `&mut` at use sites rather than held as `&'a`/`&'a mut`.
     env: *mut bun_dotenv::Loader,
 }
 
@@ -749,7 +744,7 @@ pub(crate) fn run_scripts_with_filter(
 ) -> crate::Result<core::convert::Infallible> {
     // Never returns normally; Result<Infallible, _> keeps `?` support.
     // Own the slice — `ctx` is reborrowed `&mut` for
-    // `configure_env_for_run` below while `script_name` is still live.
+    // `configure_env_for_multi_script_run` below while `script_name` is still live.
     let script_name_owned: Box<[u8]> = if ctx.positionals.len() > 1 {
         ctx.positionals[1].clone()
     } else if ctx.positionals.len() > 0 {
@@ -801,14 +796,9 @@ pub(crate) fn run_scripts_with_filter(
     // `RunCommand::configure_env_for_run(...) -> Result<Transpiler, _>`; until then
     // pass `&mut MaybeUninit<Transpiler>` (zeroed() is invalid: Transpiler is not #[repr(C)] POD).
     let mut this_transpiler = core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
-    let _ = RunCommand::configure_env_for_run(&mut *ctx, &mut this_transpiler, None, true, false)?;
-    // SAFETY: configure_env_for_run fully initializes the out-param on Ok.
+    RunCommand::configure_env_for_multi_script_run(&mut *ctx, &mut this_transpiler)?;
+    // SAFETY: configure_env_for_multi_script_run fully initializes the out-param on Ok.
     let mut this_transpiler = unsafe { this_transpiler.assume_init() };
-    // Same value `bun run <script>` exports (see `RunCommand::exec`).
-    this_transpiler
-        .env_mut()
-        .map
-        .put(b"npm_command", b"run-script")?;
 
     let mut package_json_iter = FilterArg::PackageFilterIterator::init(&patterns, resolve_root)?;
     // defer package_json_iter.deinit() — handled by Drop

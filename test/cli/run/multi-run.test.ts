@@ -2149,8 +2149,8 @@ describe("workspace integration", () => {
 describe.concurrent("npm_* env per script", () => {
   const printEnv = `${bunExe()} print-env.js`;
   const printEnvJs = `
-    const { npm_package_name, npm_package_version, npm_package_json, npm_lifecycle_event, npm_lifecycle_script, npm_command } = process.env;
-    console.log(JSON.stringify({ npm_package_name, npm_package_version, npm_package_json, npm_lifecycle_event, npm_lifecycle_script, npm_command }));
+    const { npm_package_name, npm_package_version, npm_package_json, npm_package_config_port, npm_lifecycle_event, npm_lifecycle_script, npm_command } = process.env;
+    console.log(JSON.stringify({ npm_package_name, npm_package_version, npm_package_json, npm_package_config_port, npm_lifecycle_event, npm_lifecycle_script, npm_command }));
   `;
   // What the environment looks like when a package.json script invokes
   // `bun run --parallel`; values a script's own package does not define are
@@ -2196,7 +2196,13 @@ describe.concurrent("npm_* env per script", () => {
 
   test("workspace packages each get their own npm_package_* and pre/post npm_lifecycle_event", async () => {
     using dir = tempDir("mr-ws-npm-env", {
-      "package.json": JSON.stringify({ workspaces: ["packages/*"] }),
+      // None of the root's values may show up in the packages' scripts.
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "0.0.1",
+        config: { port: "3000" },
+        workspaces: ["packages/*"],
+      }),
       "packages/a/print-env.js": printEnvJs,
       "packages/a/package.json": JSON.stringify({
         name: "pkg-a",
@@ -2205,8 +2211,8 @@ describe.concurrent("npm_* env per script", () => {
       }),
       "packages/b/print-env.js": printEnvJs,
       "packages/b/package.json": JSON.stringify({ name: "pkg-b", version: "2.0.0", scripts: { build: printEnv } }),
-      // No name or version: those stay inherited (the "packages/noname" label
-      // is only for output), but the script still gets its own package.json.
+      // No name or version: those stay what the run inherited (not the root's, and the
+      // "packages/noname" label is only for output), but the script still gets its own package.json.
       "packages/noname/print-env.js": printEnvJs,
       "packages/noname/package.json": JSON.stringify({ scripts: { build: printEnv } }),
     });

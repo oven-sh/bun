@@ -41,8 +41,7 @@ struct ScriptConfig {
     label: Box<[u8]>,
     command: Box<[u8]>,
     cwd: Box<[u8]>,
-    /// `$PATH` and the `npm_*` vars specific to this script's package and
-    /// (for package.json scripts) to the script itself.
+    /// This package's `$PATH` and this script's `npm_*` vars, layered over the run's shared env.
     env: ScriptEnv,
 }
 
@@ -873,14 +872,9 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     // Out-param init pattern.
     let mut this_transpiler_slot =
         ::core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
-    let _ = RunCommand::configure_env_for_run(ctx, &mut this_transpiler_slot, None, true, false)?;
-    // SAFETY: `configure_env_for_run` fully writes the slot on the success path.
+    RunCommand::configure_env_for_multi_script_run(ctx, &mut this_transpiler_slot)?;
+    // SAFETY: `configure_env_for_multi_script_run` fully writes the slot on the success path.
     let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
-    // Same value `bun run <script>` exports (see `RunCommand::exec`).
-    this_transpiler
-        .env_mut()
-        .map
-        .put(b"npm_command", b"run-script")?;
     let cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
 
     // SAFETY: transpiler.env is a process-lifetime *mut Loader set in init.

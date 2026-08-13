@@ -685,7 +685,13 @@ describe("bun", () => {
           "package.json": JSON.stringify({ name: "pkg-b", version: "2.0.0", scripts: { present: printEnv } }),
         },
       },
-      "package.json": JSON.stringify({ workspaces: ["packages/*"] }),
+      // None of the root's values may show up in the packages' scripts.
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "0.0.1",
+        config: { port: "3000" },
+        workspaces: ["packages/*"],
+      }),
     });
 
     await using proc = Bun.spawn({
@@ -705,7 +711,7 @@ describe("bun", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Output lines look like `pkg-a present: {...}`; the packages run concurrently.
     const envs = stdout
@@ -726,7 +732,7 @@ describe("bun", () => {
       npm_lifecycle_script: printEnv,
       npm_command: "run-script",
     };
-    expect({ envs, exitCode }).toEqual({
+    expect({ envs, stderr, exitCode }).toEqual({
       envs: [
         { ...pkgA, npm_lifecycle_event: "prepresent" },
         { ...pkgA, npm_lifecycle_event: "present" },
@@ -734,12 +740,13 @@ describe("bun", () => {
           npm_package_name: "pkg-b",
           npm_package_version: "2.0.0",
           npm_package_json: packageJson("b"),
-          // pkg-b has no "config", so pkg-a's npm_package_config_port must not reach it.
+          // No "config" here, so neither the root's nor pkg-a's npm_package_config_port may show up.
           npm_lifecycle_event: "present",
           npm_lifecycle_script: printEnv,
           npm_command: "run-script",
         },
       ],
+      stderr: "",
       exitCode: 0,
     });
   });

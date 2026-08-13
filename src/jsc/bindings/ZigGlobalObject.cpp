@@ -761,8 +761,7 @@ static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
     return record->moduleEnvironmentMayBeNull() != nullptr;
 }
 
-// The entry loadModuleSync() loads. registryEntry() would also match the entry an
-// `import ... with { type }` of the same file registers, which that load does not touch.
+// The entry loadModuleSync() loads; registryEntry() would also match one registered by an import with a type attribute.
 static JSC::ModuleRegistryEntry* javaScriptRegistryEntry(JSC::JSModuleLoader* loader, const JSC::Identifier& key)
 {
     return loader->moduleMap().get({ key.impl(), JSC::ScriptFetchParameters::Type::JavaScript }).get();
@@ -841,8 +840,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         }
     }
 
-    // Held across the load: the module's top level may `delete require.cache[key]`,
-    // which unlinks the entry from the registry but not from its record.
+    // Held across the load: the module's top level may `delete require.cache[key]`, which only unlinks the entry from the registry.
     JSC::ModuleRegistryEntry* entry = javaScriptRegistryEntry(loader, key);
 
     JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);

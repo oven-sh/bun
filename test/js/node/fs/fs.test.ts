@@ -1007,16 +1007,13 @@ describe("copyFileSync", () => {
   }
 });
 
-// Windows: CopyFileW reads the code unit before an empty destination string.
-// The async forms convert the destination into a work-pool thread's freshly
-// pooled path buffer, which tends to start a mapping, so they crashed the
-// process instead of failing with ENOENT. Runs in a child (it used to
-// segfault). Each pool thread converts into one buffer of its own, so every
-// thread is one chance to hit the crash: the child raises the pool's thread
-// cap (it defaults to the core count, 4 on the CI shards) and follows each
-// copy with a 1 MiB read so the threads stay busy and the pool keeps spawning
-// while the batch is queued. The directory source checks that the source is
-// still inspected before the destination: its error must come out unchanged.
+// Windows: CopyFileW reads the code unit before an empty destination, and the
+// async forms convert the destination into the work-pool thread's own freshly
+// pooled buffer, which may start a mapping; hence the child process. Each pool
+// thread is one chance to hit that, so the child raises the pool's thread cap
+// (it defaults to the core count) and follows every copy with a 1 MiB read to
+// keep the pool spawning threads while the batch is queued. The directory
+// source checks that source errors still come out ahead of the destination's.
 it.concurrent("copyFile to an empty destination path fails with the copyfile error in every form", async () => {
   using dir = tempDir("fs-copyfile-empty-dest", { "src.txt": "x", "srcdir/.keep": "" });
   const script = `

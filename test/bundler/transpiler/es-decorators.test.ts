@@ -1345,6 +1345,59 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("static accessor with a private-name key round-trips", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class C {
+          static accessor #z = 5;
+          static get z() { return C.#z; }
+          static set z(v) { C.#z = v; }
+        }
+        console.log(C.z);
+        C.z = 50;
+        console.log(C.z);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("5\n50\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("accessor with a non-identifier string key round-trips", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class C {
+          accessor "a-b" = 1;
+          static accessor "c d" = 2;
+        }
+        const c = new C();
+        c["a-b"] = 10;
+        C["c d"] = 20;
+        console.log(c["a-b"], C["c d"]);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("10 20\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("computed accessor key is evaluated once, in source order, and shared by get and set", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const order = [];
+        const k = (name) => (order.push(name), name);
+        class C {
+          [k("m")]() {}
+          accessor [k("a")] = 1;
+          static accessor [k("s")] = 2;
+        }
+        console.log(order.join(","));
+        const c = new C();
+        c.a = 10;
+        C.s = 20;
+        const d = Object.getOwnPropertyDescriptor(C.prototype, "a");
+        console.log(c.a, C.s, typeof d.get, typeof d.set);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("m,a,s\n10 20 function function\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("instance fields run in source order when sibling #-privates are WeakMap-lowered", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         function dec(v) { return v; }

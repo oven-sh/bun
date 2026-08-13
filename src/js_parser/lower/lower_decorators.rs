@@ -1440,12 +1440,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // Every `#`-name already parsed (this class or an enclosing one).
+        // `#`-names a generated private must not shadow: this class's own and
+        // those of every lexically enclosing class.
         let mut class_private_names: HashMap<&'a [u8], ()> = HashMap::default();
-        for sym in p.symbols.iter() {
-            if sym.kind.is_private() {
-                class_private_names.insert(sym.original_name.slice(), ());
+        for cprop in class.properties.slice() {
+            if let Some(k) = cprop.key
+                && let js_ast::ExprData::EPrivateIdentifier(pi) = &k.data
+            {
+                let name: &'a [u8] = p.symbols[pi.ref_.inner_index() as usize]
+                    .original_name
+                    .slice();
+                class_private_names.insert(name, ());
             }
+        }
+        let mut scope = p.current_scope;
+        loop {
+            if scope.kind == js_ast::scope::Kind::ClassBody {
+                for member in scope.members.values() {
+                    let name: &'a [u8] = p.symbols[member.ref_.inner_index() as usize]
+                        .original_name
+                        .slice();
+                    if name.first() == Some(&b'#') {
+                        class_private_names.insert(name, ());
+                    }
+                }
+            }
+            let Some(parent) = scope.parent else { break };
+            scope = parent;
         }
         let mut brand_field_counter: usize = 0;
 
@@ -1673,17 +1694,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ..Default::default()
                     };
 
+                    // A computed key is evaluated once, by the getter's key
+                    // position: `get [_k = expr]() {}` / `set [_k](v) {}`.
+                    let (getter_key, setter_key) = match prop.key {
+                        Some(key) if prop.flags.contains(Flags::Property::IsComputed) => {
+                            let key_ref = p.generate_temp_ref(Some(b"_computedKey"));
+                            let captured = p.assign_to(key_ref, key, key.loc);
+                            (Some(captured), Some(p.use_ref(key_ref, key.loc)))
+                        }
+                        key => (key, key),
+                    };
+
                     let mut getter_flags = prop.flags;
                     getter_flags.insert(Flags::Property::IsMethod);
                     new_properties.push(Property {
-                        key: prop.key,
+                        key: getter_key,
                         value: Some(p.new_expr(E::Function { func: get_fn }, loc)),
                         kind: PropertyKind::Get,
                         flags: getter_flags,
                         ..Default::default()
                     });
                     new_properties.push(Property {
-                        key: prop.key,
+                        key: setter_key,
                         value: Some(p.new_expr(E::Function { func: set_fn }, loc)),
                         kind: PropertyKind::Set,
                         flags: getter_flags,

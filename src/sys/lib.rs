@@ -4024,6 +4024,11 @@ mod windows_impl {
         let utf8 = bun_paths::string_paths::from_w_path(buf, &wbuf[..len as usize]);
         Ok(utf8.len())
     }
+    // The NT-backed `mkdirat`, `renameat` and `unlinkat_with_flags` get their
+    // errors from helpers that report the NT step that failed (`open`,
+    // `NtSetInformationFile`) with no path. Re-tag them into the shape the
+    // POSIX arms return, the operation's own `Tag` plus the caller's path,
+    // which is what callers such as the shell builtins and `bun patch` print.
     pub fn mkdirat(dir: impl AsFd, path: &ZStr, _mode: Mode) -> Maybe<()> {
         let dir = dir.as_fd();
         // Open with `op = OnlyCreate`, then close the resulting handle on
@@ -4039,7 +4044,8 @@ mod windows_impl {
                 op: super::WindowsOpenDirOp::OnlyCreate,
                 ..Default::default()
             },
-        )?;
+        )
+        .map_err(|e| e.with_path_and_syscall(path.as_bytes(), Tag::mkdir))?;
         made.close();
         Ok(())
     }
@@ -4050,9 +4056,6 @@ mod windows_impl {
         let mut wt = WPathBuffer::default();
         let from_w = bun_paths::string_paths::to_nt_path(&mut wf, from.as_bytes());
         let to_w = bun_paths::string_paths::to_nt_path(&mut wt, to.as_bytes());
-        // `rename_at_w` reports the NT step that failed (`open` of the source
-        // or `NtSetInformationFile`) with no path; report the same shape as
-        // the POSIX arm, which callers such as shell `mv` print.
         super::windows::rename_at_w(from_dir, from_w, to_dir, to_w, true)
             .map_err(|e| e.with_path_and_syscall(from.as_bytes(), Tag::rename))
     }
@@ -4086,6 +4089,7 @@ mod windows_impl {
                 remove_dir: (flags & AT_REMOVEDIR) != 0,
             },
         )
+        .map_err(|e| e.with_path_and_syscall(path.as_bytes(), Tag::unlink))
     }
     /// 2-arg form (`flags = 0`).
     #[inline]

@@ -324,7 +324,7 @@ impl<'a> Task<'a> {
                         loaded_manifest,
                         // SAFETY: see `manager` decl — short-lived `&mut` at call
                         // boundary only (callee touches `cache_directory` /
-                        // `temporary_directory` lazily).
+                        // `get_temporary_directory` lazily).
                         unsafe { &mut *manager },
                         is_extended_manifest,
                     ) {

@@ -3527,7 +3527,7 @@ impl<'a> Resolver<'a> {
         .expect("unreachable");
 
         // `dir_path` is a slice into the threadlocal `bufs(.path_in_global_disk_cache)` buffer,
-        // which gets overwritten on the next auto-install resolution. `dirInfoUncached` stores
+        // which gets overwritten on the next auto-install resolution. `dir_info_uncached` stores
         // its `path` argument directly as `DirInfo.abs_path` in the permanent `dir_cache`, so
         // pass the interned copy from `DirEntry.dir` (always backed by `DirnameStore`) instead.
         // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and
@@ -6673,8 +6673,8 @@ impl<'a> Resolver<'a> {
                         // (strings live in dirname_store or default_allocator and outlive the
                         // struct). The heap-allocated TSConfigJSON itself is no longer needed;
                         // without this, every intermediate config in an extends chain leaks on
-                        // each dirInfoUncached() call, which is especially bad under HMR where
-                        // bustDirCache triggers a re-parse of the whole chain on every reload.
+                        // each dir_info_uncached() call, which is especially bad under HMR where
+                        // bust_dir_cache triggers a re-parse of the whole chain on every reload.
                         // SAFETY: parent_config_ptr came from TSConfigJSON::new (heap::alloc)
                         TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config_ptr) });
                     }

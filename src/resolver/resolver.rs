@@ -3896,8 +3896,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Whether `dir/file_name` opens as spelled. Extension probes call this when
-    /// the case-folded `DirEntry::get` hit is spelled differently on disk (#22686).
+    /// Whether `dir/file_name` exists with exactly this spelling.
     fn probed_name_exists(&self, dir: &[u8], file_name: &[u8]) -> bool {
         let parts = [dir, file_name];
         bun_sys::exists(self.fs_ref().abs_buf(&parts, bufs!(index)))

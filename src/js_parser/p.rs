@@ -6917,7 +6917,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         match prop.kind {
-            PropertyKind::Normal | PropertyKind::Abstract => {
+            // typescript emits design:type for decorated `declare`/`abstract` fields just
+            // like for regular fields, even though the fields themselves are erased.
+            PropertyKind::Normal | PropertyKind::Abstract | PropertyKind::Declare => {
                 {
                     // design:type
                     let v = self
@@ -7029,8 +7031,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
             }
-            PropertyKind::Spread | PropertyKind::Declare | PropertyKind::AutoAccessor => {} // not allowed in a class (auto_accessor is standard decorators only)
-            PropertyKind::ClassStaticBlock => {} // not allowed to decorate this
+            // not allowed in a class (auto_accessor is standard decorators only)
+            PropertyKind::Spread | PropertyKind::AutoAccessor => {}
+            // not allowed to decorate this
+            PropertyKind::ClassStaticBlock => {}
         }
     }
 

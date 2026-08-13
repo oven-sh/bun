@@ -56,11 +56,37 @@ const patterns = {
   jsCodegen: {
     paths: ["src/codegen/*.ts"],
   },
-  /** server-rendering runtime bundled into binary */
+  /**
+   * the bundler's runtime helpers (`__reExport`, `__name`, `__using`, ...).
+   * runtime.bun.js re-exports runtime.js, so both are bundled wherever it is
+   * the entry or an import: runtime.out.js, and the bake runtimes via
+   * hmr-module.ts (emitBakeCodegen adds this list to its edge).
+   */
+  bundlerRuntime: {
+    paths: ["src/runtime.js", "src/runtime.bun.js"],
+  },
+  /**
+   * server-rendering runtime bundled into binary. Next to the modules, the
+   * other files whose contents reach bake-codegen.ts's output:
+   * - dev_server/mod.rs: the MessageId/IncomingMessageId enums it turns
+   *   into generated.ts
+   * - package.json: the `#stack-trace` imports map (picked per bundle
+   *   condition) and `sideEffects`
+   * - tsconfig.json + the tsconfig.base.json it extends: how the modules
+   *   are transpiled (class fields, decorators, jsx)
+   * - client/icons/*: inlined as data: URLs when the script bundles
+   *   overlay.css into the client and error runtimes
+   */
   bakeRuntime: {
-    // dev_server/mod.rs is read by bake-codegen.ts to derive the
-    // MessageId/IncomingMessageId const-enums in generated.ts.
-    paths: ["src/runtime/bake/*.ts", "src/runtime/bake/*/*.{ts,css}", "src/runtime/bake/dev_server/mod.rs"],
+    paths: [
+      "src/runtime/bake/*.ts",
+      "src/runtime/bake/*/*.{ts,css}",
+      "src/runtime/bake/client/icons/*",
+      "src/runtime/bake/dev_server/mod.rs",
+      "src/runtime/bake/package.json",
+      "src/runtime/bake/tsconfig.json",
+      "tsconfig.base.json",
+    ],
     exclude: ["src/runtime/bake/generated.ts"],
   },
   /** legacy bindgen input */
@@ -142,35 +168,43 @@ export type Sources = { [K in keyof typeof patterns]: string[] };
  */
 export function globAllSources(): Sources {
   const result = {} as Sources;
+  for (const field of Object.keys(patterns) as (keyof Sources)[]) {
+    result[field] = globSourceList(field);
+  }
+  return result;
+}
 
-  for (const [field, spec] of Object.entries(patterns) as [keyof Sources, SourcePattern][]) {
-    const excludeExact = new Set<string>();
-    const excludePrefix: string[] = [];
-    for (const ex of (spec.exclude ?? []).map(normalize)) {
-      if (ex.endsWith("/**"))
-        excludePrefix.push(ex.slice(0, -2)); // keep trailing '/'
-      else excludeExact.add(ex);
+/**
+ * Glob one source list. Absolute paths, sorted. For callers (tests) that
+ * need a single list: the `src/**` lists take seconds to expand under a
+ * debug build.
+ */
+export function globSourceList(field: keyof Sources): string[] {
+  const spec: SourcePattern = patterns[field];
+  const excludeExact = new Set<string>();
+  const excludePrefix: string[] = [];
+  for (const ex of (spec.exclude ?? []).map(normalize)) {
+    if (ex.endsWith("/**"))
+      excludePrefix.push(ex.slice(0, -2)); // keep trailing '/'
+    else excludeExact.add(ex);
+  }
+  const files: string[] = [];
+  for (const pattern of spec.paths) {
+    for (const rel of globSync(pattern, { cwd: root })) {
+      const normalized = normalize(rel);
+      if (excludeExact.has(normalized)) continue;
+      if (excludePrefix.some(p => normalized.startsWith(p))) continue;
+      files.push(resolve(root, normalized));
     }
-    const files: string[] = [];
-    for (const pattern of spec.paths) {
-      for (const rel of globSync(pattern, { cwd: root })) {
-        const normalized = normalize(rel);
-        if (excludeExact.has(normalized)) continue;
-        if (excludePrefix.some(p => normalized.startsWith(p))) continue;
-        files.push(resolve(root, normalized));
-      }
-    }
-
-    files.sort((a, b) => a.localeCompare(b));
-    assert(files.length > 0, `Source list '${field}' matched nothing`, {
-      file: import.meta.url,
-      hint: `Patterns: ${spec.paths.join(", ")}`,
-    });
-
-    result[field] = files;
   }
 
-  return result;
+  files.sort((a, b) => a.localeCompare(b));
+  assert(files.length > 0, `Source list '${field}' matched nothing`, {
+    file: import.meta.url,
+    hint: `Patterns: ${spec.paths.join(", ")}`,
+  });
+
+  return files;
 }
 
 /** Forward slashes, no leading ./ — for exclude-set comparisons. */

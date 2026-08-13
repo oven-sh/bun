@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { isLinux, isPosix, isWindows, tmpdirSync } from "harness";
 import { execSync } from "node:child_process";
 import fs from "node:fs";
@@ -492,27 +492,41 @@ describe("fs.mkdir - recursive error names the requested path", () => {
     expect(errors).toEqual({ sync: expected, callback: expected, promises: expected });
   });
 
-  // Deny "add subdirectory" / "add file" to Everyone (S-1-1-0); deny entries also bind
-  // administrators, and the entry is removed again before the directory is deleted.
-  it.skipIf(!isWindows)("when a parent cannot be created in a directory whose ACL denies it", async () => {
-    const denied = path.join(tmpdir, nextdir());
-    fs.mkdirSync(denied);
-    execSync(`icacls "${denied}" /deny "*S-1-1-0:(AD,WD)"`);
+  // Windows: a directory whose ACL denies Everyone (S-1-1-0) "add subdirectory" and "add
+  // file". A token with the backup/restore privileges enabled (some elevated agents) is not
+  // bound by that, so enforcement is probed up front and the test skips visibly in that case.
+  let deniedRoot = "";
+  let denied = "";
+  if (isWindows) {
     try {
-      const target = path.join(denied, "missing", "b");
+      deniedRoot = getTmpDir();
+      const dir = path.join(deniedRoot, "denied");
+      fs.mkdirSync(dir);
+      execSync(`icacls "${dir}" /deny "*S-1-1-0:(AD,WD)"`);
+      try {
+        fs.mkdirSync(path.join(dir, "probe"));
+      } catch {
+        denied = dir;
+      }
+    } catch {}
+  }
+  afterAll(() => {
+    if (!deniedRoot) return;
+    try {
+      execSync(`icacls "${path.join(deniedRoot, "denied")}" /remove:d "*S-1-1-0"`);
+    } catch {}
+    fs.rmSync(deniedRoot, { recursive: true, force: true });
+  });
 
-      const errors = await recursiveMkdirErrors(target);
-      const code = errors.sync?.code;
-      expect(["EPERM", "EACCES"]).toContain(code);
-      const expected = {
-        code,
-        syscall: "mkdir",
-        path: target,
-        message: expect.stringContaining(`, mkdir '${target}'`),
-      };
-      expect(errors).toEqual({ sync: expected, callback: expected, promises: expected });
-    } finally {
-      execSync(`icacls "${denied}" /remove:d "*S-1-1-0"`);
-    }
+  it.skipIf(!denied)("when a parent cannot be created in a directory whose ACL denies it", async () => {
+    const target = path.join(denied, "missing", "b");
+    const expected = {
+      code: "EPERM",
+      syscall: "mkdir",
+      path: target,
+      message: `EPERM: operation not permitted, mkdir '${target}'`,
+    };
+
+    expect(await recursiveMkdirErrors(target)).toEqual({ sync: expected, callback: expected, promises: expected });
   });
 });

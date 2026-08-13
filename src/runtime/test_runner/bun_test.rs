@@ -1167,17 +1167,23 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
-        // `BackRef` copy, not `&BunTestRoot`: the callback re-enters the runner.
-        let bun_test_root = this_strong.bun_test_root;
-        // Restored below rather than cleared: the microtask drain inside the call can run the next entry.
-        let previous_on_stack_callback = bun_test_root.on_stack_callback.replace(cfg_callback);
-        let call_result = vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(
-            cfg_callback,
-            global_this,
-            JSValue::UNDEFINED,
-            args_slice,
-        );
-        bun_test_root.on_stack_callback.set(previous_on_stack_callback);
+        // Same gate as `EventLoop::run_callback`: never enter JS with an exception pending.
+        let call_result: JsResult<JSValue> = if global_this.has_exception() {
+            Ok(JSValue::UNDEFINED)
+        } else {
+            // `BackRef` copy, not `&BunTestRoot`: the callback re-enters the runner.
+            let bun_test_root = this_strong.bun_test_root;
+            // Saved/restored like `Execution::on_stack_entry`: a timeout firing inside the callback can start the next entry.
+            let previous_on_stack_callback = bun_test_root.on_stack_callback.replace(cfg_callback);
+            let called = cfg_callback.call(global_this, JSValue::UNDEFINED, args_slice);
+            // Restored before the microtask drain: a continuation that runs there was not called by the runner.
+            bun_test_root.on_stack_callback.set(previous_on_stack_callback);
+            called.and_then(|result| {
+                result.ensure_still_alive();
+                vm.event_loop_mut().drain_microtasks_with_global(global_this, vm.jsc_vm())?;
+                Ok(result)
+            })
+        };
         let result: JSValue = match call_result {
             Ok(v) => v,
             Err(_) => {

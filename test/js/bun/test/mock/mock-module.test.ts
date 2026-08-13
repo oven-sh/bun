@@ -231,24 +231,69 @@ describe("mock.module() tail-called from a callback the runner invokes", () => {
     await expectBunTestToPass(String(dir), 1, "tail.test.ts");
   });
 
+  // Cross-file layout: the code that calls mock.module("./dep") lives in setup/, next to setup/dep.ts.
+  // The dep.ts next to the test file is a decoy: it changes in the assertion if "./dep" gets resolved
+  // against the test file instead of against the file that made the call.
+  const setupFiles = {
+    "setup/dep.ts": dep,
+    "dep.ts": `export const value = "decoy";\n`,
+    "setup/helpers.ts": `
+      import { mock } from "bun:test";
+      export function mockDep() {
+        mock.module("./dep", ${mocked});
+      }
+      export const mockDepLater = () => Promise.resolve().then(() => mock.module("./dep", ${mocked}));
+    `,
+  };
+  const assertWhichDepGotMocked = (setupDep: string) => `
+    import { expect, test } from "bun:test";
+    import { value as setupDep } from "./setup/dep";
+    import { value as decoy } from "./dep";
+    test("which dep got mocked", () => {
+      expect({ setupDep, decoy }).toEqual({ setupDep: ${JSON.stringify(setupDep)}, decoy: "decoy" });
+    });
+  `;
+
   test.concurrent("a hook from --preload resolves against the preload file, not the test file", async () => {
     using dir = tempDir("mock-module-tail-call-preload", {
+      ...setupFiles,
       "setup/preload.ts": `
         import { beforeAll, mock } from "bun:test";
         beforeAll(() => mock.module("./dep", ${mocked}));
       `,
-      "setup/dep.ts": dep,
-      "dep.ts": `export const value = "sibling of the test file";\n`,
-      "app.test.ts": `
-        import { expect, test } from "bun:test";
-        import { value } from "./setup/dep";
-        import { value as sibling } from "./dep";
-        test("./dep meant the preload's neighbor", () => {
-          expect({ value, sibling }).toEqual({ value: "mocked", sibling: "sibling of the test file" });
-        });
-      `,
+      "app.test.ts": assertWhichDepGotMocked("mocked"),
     });
 
     await expectBunTestToPass(String(dir), 1, "--preload", "./setup/preload.ts", "app.test.ts");
+  });
+
+  test.concurrent("a caller that still has a frame wins over the callback the runner invoked", async () => {
+    using dir = tempDir("mock-module-tail-call-frame-wins", {
+      ...setupFiles,
+      "app.test.ts": `
+        import { beforeAll } from "bun:test";
+        import { mockDep } from "./setup/helpers";
+        beforeAll(() => {
+          mockDep();
+        });
+        ${assertWhichDepGotMocked("mocked")}
+      `,
+    });
+
+    await expectBunTestToPass(String(dir), 1, "app.test.ts");
+  });
+
+  test.concurrent("a continuation queued by the callback is not resolved against the callback's file", async () => {
+    using dir = tempDir("mock-module-tail-call-continuation", {
+      ...setupFiles,
+      "app.test.ts": `
+        import { test } from "bun:test";
+        import { mockDepLater } from "./setup/helpers";
+        test("registers from a .then() that runs in the microtask drain after the test body", () => mockDepLater());
+        ${assertWhichDepGotMocked("real")}
+      `,
+    });
+
+    await expectBunTestToPass(String(dir), 2, "app.test.ts");
   });
 });

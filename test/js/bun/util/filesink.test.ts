@@ -735,7 +735,7 @@ it.skipIf(isWindows)("throws on invalid writer options instead of crashing", asy
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
 
-it.skipIf(isWindows)("start() with invalid options throws instead of silently ignoring them", async () => {
+it("start() with invalid options throws instead of silently ignoring them", async () => {
   const dir = tmpdirSync();
   const writer = Bun.file(join(dir, "start-invalid.txt")).writer();
   expect(() => writer.start({ path: 123 } as any)).toThrow(

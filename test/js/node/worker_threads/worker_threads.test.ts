@@ -1418,10 +1418,12 @@ test("off() removes a pending once() listener", () => {
   port2.close();
 });
 
-// node invokes node-style listeners with `this` bound to the port (the same
-// `this` EventTarget hands the on()/once() wrappers). The wrappers used to call
-// the user's function bare, so `this` was undefined. Covers the three ways a
-// wrapper gets invoked: a native MessageEvent, a native close Event, and emit().
+// node invokes node-style listeners with `this` bound to the port. The on()/once()
+// wrappers used to call the user's function bare, so `this` was undefined. Covers
+// every way a wrapper gets invoked: a native MessageEvent, a native close Event
+// (on, once and close(cb), which is once("close", cb)), and emit(). The last
+// listener registered for each event is the one that resolves, so every earlier
+// one has already run by the time the promise settles.
 test("on()/once() listeners are called with `this` bound to the port", async () => {
   const { port1, port2 } = new MessageChannel();
   const calls: unknown[] = [];
@@ -1440,7 +1442,6 @@ test("on()/once() listeners are called with `this` bound to the port", async () 
   });
   port1.once("close", function (this: unknown) {
     calls.push(["once close", this === port1]);
-    onClosed();
   });
   port1.on("custom", function (this: unknown, arg) {
     calls.push(["on custom", this === port1, arg]);
@@ -1452,7 +1453,10 @@ test("on()/once() listeners are called with `this` bound to the port", async () 
   port1.emit("custom", 42);
   port2.postMessage("hi");
   await messaged;
-  port1.close();
+  port1.close(function (this: unknown) {
+    calls.push(["close(cb)", this === port1]);
+    onClosed();
+  });
   await closed;
   port2.close();
 
@@ -1463,6 +1467,7 @@ test("on()/once() listeners are called with `this` bound to the port", async () 
     ["once message", true, "hi"],
     ["on close", true],
     ["once close", true],
+    ["close(cb)", true],
   ]);
 });
 
@@ -1478,6 +1483,65 @@ test("parentPort.on() listeners are called with `this` bound to parentPort", asy
   const [reply] = await once(w, "message");
   await w.terminate();
   expect(reply).toEqual({ data: "ping", thisIsParentPort: true });
+});
+
+// In a plain globalThis.Worker, parentPort is a stand-in object whose
+// addEventListener forwards to the worker's global scope, so EventTarget invokes
+// the wrapper with the global scope as `this`. The listener must still see the
+// object it was registered on.
+test("the stand-in parentPort of a non-node Worker also binds `this` to parentPort", async () => {
+  const url = URL.createObjectURL(
+    new Blob([
+      `const { parentPort } = require("worker_threads");
+       parentPort.on("message", function (data) {
+         self.postMessage({ data, thisIsParentPort: this === parentPort, thisIsGlobal: this === self });
+       });`,
+    ]),
+  );
+  const w = new globalThis.Worker(url);
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    w.onmessage = e => resolve(e.data);
+    w.onerror = e => reject(new Error(e.message));
+    w.postMessage("ping");
+    expect(await promise).toEqual({ data: "ping", thisIsParentPort: true, thisIsGlobal: false });
+  } finally {
+    w.terminate();
+    URL.revokeObjectURL(url);
+  }
+});
+
+// The wrappers hand the listener's return value back to EventTarget, which is
+// how a rejecting async on()/once() listener becomes an uncaughtException, as in
+// node. Spawned because the test runner would otherwise see the exceptions itself.
+test("a rejecting async on()/once() listener is reported as an uncaughtException", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { MessageChannel } = require("worker_threads");
+       const { port1, port2 } = new MessageChannel();
+       const seen = [];
+       process.on("uncaughtException", err => {
+         seen.push(err.message);
+         if (seen.length === 2) {
+           console.log(JSON.stringify(seen));
+           port1.close();
+         }
+       });
+       port1.on("message", async () => { throw new Error("from on"); });
+       port1.once("message", async () => { throw new Error("from once"); });
+       port2.postMessage(1);`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify(["from on", "from once"]),
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test("close(cb) interleaves with other close listeners in registration order", async () => {

@@ -6938,15 +6938,11 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        pub fn on_notify_defer(&mut self) {
-            self.thread_lock.assert_locked();
-            self.graph.deferred_pending += 1;
-            self.decrement_scan_counter();
-        }
-
-        pub fn on_notify_defer_mini(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
+        pub fn on_notify_defer(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
+            this.thread_lock.assert_locked();
             load.deferred = true;
-            this.on_notify_defer();
+            this.graph.deferred_pending += 1;
+            this.decrement_scan_counter();
         }
 
         pub(crate) fn on_parse_task_complete(

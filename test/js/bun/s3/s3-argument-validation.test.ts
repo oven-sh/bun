@@ -67,6 +67,15 @@ describe("S3Client instance method argument validation", () => {
     expect(() => (client as any).unlink({})).toThrow(expected);
   });
 
+  test("write() rejects a Response whose body was already consumed before any request is made", async () => {
+    const expected = expect.objectContaining({ name: "TypeError", code: "ERR_BODY_ALREADY_USED" });
+    const used = new Response("abc");
+    await used.text();
+    expect(() => client.write("some-key", used)).toThrow(expected);
+    expect(() => client.file("some-key").write(used)).toThrow(expected);
+    expect(() => Bun.write(client.file("some-key"), used)).toThrow(expected);
+  });
+
   test("S3 file writer() rejects a non-string type option before any request is made", () => {
     const s3file = client.file("some-key.bin");
     expect(() => s3file.writer({ type: 123 as any })).toThrow(

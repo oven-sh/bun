@@ -8,7 +8,7 @@
 
 import { mkdirSync } from "node:fs";
 import { availableParallelism } from "node:os";
-import { basename, dirname, extname, relative, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
@@ -221,12 +221,43 @@ export interface CompileOpts {
    * before first compile attempts to #include it".
    *
    * Use for codegen headers (declared ninja outputs with restat, so
-   * depfile tracking is exact). Dep outputs (lib*.a) go in
-   * implicitInputs instead — see above.
+   * depfile tracking is exact — provided the depfile spells them the way
+   * the outputs are declared; see includeFlags()). Dep outputs (lib*.a) go
+   * in implicitInputs instead — see above.
    */
   orderOnlyInputs?: string[];
   /** Job pool override. */
   pool?: string;
+}
+
+/**
+ * `-I` flags for `dirs`. Directories inside buildDir are spelled
+ * buildDir-relative, exactly as ninja.ts spells the outputs declared there.
+ *
+ * This is what makes order-only + depfile tracking of codegen headers exact.
+ * The compiler records a header in the depfile as `<-I dir>/<name>`, and ninja
+ * matches depfile entries to declared outputs by string. With `-I<abs>/codegen`
+ * the compile depended on `<abs>/codegen/X.h` — a node no edge produces, which
+ * ninja stats once at startup — so a codegen rerun later in the same run went
+ * unnoticed and was picked up one build late; for the PCH that meant every TU
+ * failing against a PCH built from the old header. With `-Icodegen` the entry
+ * is the codegen edge's own output and the compile is re-dirtied (or
+ * restat-pruned) in the same run. ccache's CCACHE_BASEDIR rewriting happened
+ * to do this for the ccache'd rules, which is why `bun bd` only showed it on
+ * the pch rule; plain `ninja` or a host without ccache showed it on all of them.
+ *
+ * Directories outside buildDir stay as given: the headers found through them
+ * are never declared outputs (dep headers are tracked via depHeaderSignal in
+ * bun.ts), and a relative spelling of the machine-shared cache dir would vary
+ * with the checkout's depth and split the ccache between worktrees.
+ */
+export function includeFlags(n: Ninja, dirs: string[]): string[] {
+  return dirs.map(dir => {
+    const rel = n.rel(dir);
+    if (rel === "") return "-I.";
+    const outside = isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`);
+    return `-I${outside ? dir : rel}`;
+  });
 }
 
 /**
@@ -372,9 +403,13 @@ export function pch(
      */
     implicitInputs?: string[];
     /**
-     * Must exist before PCH compiles; changes don't invalidate it.
-     * Codegen outputs go here — they only change when inputs change,
-     * and inputs don't change mid-build.
+     * Must exist before PCH compiles; changes don't invalidate it directly.
+     * Codegen outputs go here: the depfile names the ones root-pch.h
+     * actually reaches, and because `flags` spells the codegen dir the way
+     * those outputs are declared (includeFlags()), a codegen rerun in the
+     * same ninja run re-dirties the PCH through the depfile. (This is the
+     * opposite situation from implicitInputs above: codegen headers are
+     * declared outputs, dep headers are undeclared side effects.)
      */
     orderOnlyInputs?: string[];
   },

@@ -5,7 +5,7 @@
  *   - emit codegen → generated .cpp/.h/.rs
  *   - emit cargo build → libbun_rust.a
  *   - resolve all deps → lib paths + include dirs
- *   - build PCH from root-pch.h (implicit deps: WebKit libs + all codegen)
+ *   - build PCH from root-pch.h (implicit deps: dep libs; codegen order-only + depfile)
  *   - compile all C/C++ with the PCH
  *   - link everything → bun-debug (or bun-profile, bun-asan, etc.)
  *   - smoke test: run `<exe> --revision` to catch load-time failures
@@ -30,13 +30,13 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "
 import { dirname, relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
-import { ar, cc, cxx, link, pch } from "./compile.ts";
+import { ar, cc, cxx, includeFlags, link, pch } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { assert } from "./error.ts";
-import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.ts";
+import { bunIncludes, computeFlags, extraFlagsFor, linkDepends, type ComputedFlags } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja } from "./ninja.ts";
 import { emitRust, linkerMapPath, rustLibPath, rustLtoLinkInputs } from "./rust.ts";
@@ -116,6 +116,29 @@ function systemLibs(cfg: Config): string[] {
   }
 
   return libs;
+}
+
+/**
+ * The complete flag lists for bun's own compiles (PCH, cxx, cc): the computed
+ * flags, then -I for bun's include dirs + buildDir (the generated versions
+ * header) + every dep's include dirs, then -D.
+ *
+ * The include dirs go through includeFlags(): the codegen headers are only
+ * order-only inputs of these compiles, so the depfiles have to spell them the
+ * way their edges declare them (see includeFlags for the failure otherwise).
+ */
+export function bunCompileFlags(
+  n: Ninja,
+  cfg: Config,
+  flags: ComputedFlags,
+  depIncludes: string[],
+): { cxxflags: string[]; cflags: string[] } {
+  const incFlags = includeFlags(n, [...bunIncludes(cfg), cfg.buildDir, ...depIncludes]);
+  const defineFlags = flags.defines.map(d => `-D${d}`);
+  return {
+    cxxflags: [...flags.cxxflags, ...incFlags, ...defineFlags],
+    cflags: [...flags.cflags, ...incFlags, ...defineFlags],
+  };
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -251,16 +274,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   generateDepVersionsHeader(cfg);
 
   const flags = computeFlags(cfg);
-
-  // Full include set: bun's own + all dep includes + buildDir (for the
-  // generated versions header).
-  const allIncludes = [...bunIncludes(cfg), cfg.buildDir, ...depIncludes];
-  const includeFlags = allIncludes.map(inc => `-I${inc}`);
-  const defineFlags = flags.defines.map(d => `-D${d}`);
-
-  // Final flag arrays for compile.
-  const cxxFlagsFull = [...flags.cxxflags, ...includeFlags, ...defineFlags];
-  const cFlagsFull = [...flags.cflags, ...includeFlags, ...defineFlags];
+  const { cxxflags: cxxFlagsFull, cflags: cFlagsFull } = bunCompileFlags(n, cfg, flags, depIncludes);
 
   // ─── Step 4: PCH ───
   // CI full mode (unused by the pipeline) skips the PCH; cpp-only/archive-link use it.
@@ -277,12 +291,17 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // modified since PCH was built". As implicit inputs, restat sees the .a
     // changed → PCH rebuilds → one-build convergence. See the pch() docstring.
     //
-    // Codegen stays order-only: those outputs only change if inputs change,
-    // and inputs don't change mid-build. cppAll (not all) — bake/.rs outputs
-    // are rust-only; pulling them here would run bake-codegen in cpp-only CI
-    // mode where it fails on the pinned bun version (see cppAll docstring).
-    // Scripts that emit undeclared .h also emit a .cpp/.h in cppAll, so they
-    // still run. cxx transitively waits: cxx → PCH → deps+cppAll.
+    // Codegen stays order-only: the PCH's depfile names the generated headers
+    // root-pch.h reaches as the declared outputs they are (includeFlags()), so
+    // a codegen rerun re-dirties the PCH in the same run without the PCH
+    // depending on every generated file. A header root-pch.h reaches therefore
+    // has to BE a declared output (BunBuiltinNames+extras.h is declared by hand
+    // in emitJsModules), or the PCH lags one build behind it. cppAll (not all)
+    // — bake/.rs outputs are rust-only; pulling them here would run
+    // bake-codegen in cpp-only CI mode where it fails on the pinned bun version
+    // (see cppAll docstring). Scripts that emit undeclared .h also emit a
+    // .cpp/.h in cppAll, so they still run. cxx transitively waits:
+    // cxx → PCH → deps+cppAll.
     pchOut = pch(n, cfg, "src/jsc/bindings/root-pch.h", {
       flags: cxxFlagsFull,
       implicitInputs: depHeaderSignal,
@@ -350,7 +369,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // signal. Cost is negligible: if the libs changed you're relinking anyway.
   //
   // codegen.cppAll stays order-only: those headers ARE declared ninja outputs
-  // with restat, so depfile tracking is exact and doesn't lag.
+  // with restat, and includeFlags() makes the depfiles spell them as declared,
+  // so depfile tracking is exact and doesn't lag.
   //
   // PCH also has implicit deps on depHeaderSignal (see above). When PCH is enabled,
   // cxx inherits the dep transitively via its implicit dep on the PCH, so we

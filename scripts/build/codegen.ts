@@ -23,12 +23,15 @@
  * output, which ninja re-stats after the step ran. A file no edge declares
  * is stat'd once at startup, so a compile that includes it picks up a rerun
  * of the step one build late. That is why emitBindgen/emitBindgenV2 declare
- * the per-file Generated*.h headers and not just the .cpp that gets compiled.
+ * the per-file Generated*.h headers and not just the .cpp that gets compiled,
+ * and why emitJsModules declares BunBuiltinNames+extras.h, which
+ * bundle-functions.ts writes as a side effect and the PCH reaches. "Names a
+ * declared output" is literal: the depfile entry and the declared output
+ * have to be the same string, which is what includeFlags() in compile.ts
+ * arranges for the -I flags.
  *
  * Files nothing compiles may stay undeclared (.d.ts twins, bundle-modules'
- * eval/ dir, JSSink.lut.txt consumed within its own step). The remaining
- * #included exception is BunBuiltinNames+extras.h from bundle-functions.ts,
- * reached through the PCH.
+ * eval/ dir, JSSink.lut.txt consumed within its own step).
  */
 
 import { spawnSync } from "node:child_process";
@@ -700,7 +703,12 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.rustInputs.push(outputRs);
 }
 
-function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
+/**
+ * Exported for test/internal/build-codegen-header-tracking.test.ts, which
+ * pins the hand-declared header below without running the whole of
+ * emitCodegen (emitBindgenV2 spawns bun).
+ */
+export function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bundle-modules.ts");
 
   // InternalModuleRegistry.cpp is read by the script (for a sanity check).
@@ -713,6 +721,10 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const outputs = [
     resolve(cfg.codegenDir, "WebCoreJSBuiltins.cpp"),
     resolve(cfg.codegenDir, "WebCoreJSBuiltins.h"),
+    // Included by BunBuiltinNames.h, which root-pch.h reaches: the PCH can
+    // only follow a rerun of this step through its depfile if the header is
+    // a declared output (see the PCH step in bun.ts).
+    resolve(cfg.codegenDir, "BunBuiltinNames+extras.h"),
     resolve(cfg.codegenDir, "InternalModuleRegistryConstants.h"),
     resolve(cfg.codegenDir, "InternalModuleRegistry+createInternalModuleById.h"),
     resolve(cfg.codegenDir, "InternalModuleRegistry+enum.h"),

@@ -393,8 +393,14 @@ impl PostgresSQLConnection {
                 bun_core::TimespecMockMode::AllowMockedTime,
                 i64::from(interval),
             );
-            self.vm_mut().timer().insert(t);
         });
+        if interval != 0 {
+            // whole-struct provenance: the fire path recovers the container from this pointer.
+            let t = core::ptr::addr_of!(self.timer)
+                .cast::<EventLoopTimer>()
+                .cast_mut();
+            self.vm_mut().timer().insert(t);
+        }
     }
 
     bun_jsc::cached_prop_hostfns! {
@@ -489,16 +495,20 @@ impl PostgresSQLConnection {
         if self.max_lifetime_interval_ms == 0 {
             return;
         }
+        if self.max_lifetime_timer.get().state == EventLoopTimerState::ACTIVE {
+            return;
+        }
         self.max_lifetime_timer.with_mut(|t| {
-            if t.state == EventLoopTimerState::ACTIVE {
-                return;
-            }
             t.next = bun_core::Timespec::ms_from_now(
                 bun_core::TimespecMockMode::AllowMockedTime,
                 i64::from(self.max_lifetime_interval_ms),
             );
-            self.vm_mut().timer().insert(t);
         });
+        // whole-struct provenance: the fire path recovers the container from this pointer.
+        let t = core::ptr::addr_of!(self.max_lifetime_timer)
+            .cast::<EventLoopTimer>()
+            .cast_mut();
+        self.vm_mut().timer().insert(t);
     }
 
     pub fn on_connection_timeout(&self) {
@@ -615,11 +625,6 @@ impl PostgresSQLConnection {
 
         self.status.set(status);
         self.reset_connection_timeout();
-        if self.vm().is_shutting_down() {
-            self.update_has_pending_activity();
-            return;
-        }
-
         match status {
             Status::Connected => {
                 let Some(on_connect) = self.consume_on_connect_callback(self.global()) else {
@@ -777,25 +782,11 @@ impl PostgresSQLConnection {
 
     fn handle_socket_failure(&self, fail: impl FnOnce(&Self)) {
         self.unregister_auto_flusher();
-
-        if self.vm().is_shutting_down() {
-            self.stop_timers();
-            if self.status.get() == Status::Failed {
-                self.update_has_pending_activity();
-                return;
-            }
-
-            self.status.set(Status::Failed);
-            self.clean_up_requests(None);
-            self.update_has_pending_activity();
-        } else {
-            let event_loop = self.event_loop();
-            event_loop.enter();
-            self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
-
-            fail(self);
-            event_loop.exit();
-        }
+        let event_loop = self.event_loop();
+        event_loop.enter();
+        self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+        fail(self);
+        event_loop.exit();
     }
 
     fn send_startup_message(&self) {
@@ -935,10 +926,6 @@ impl PostgresSQLConnection {
 
     fn drain_internal(&self) {
         debug!("drainInternal");
-        if self.vm().is_shutting_down() {
-            return self.close();
-        }
-
         let event_loop = self.event_loop();
         event_loop.enter();
 
@@ -1148,7 +1135,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         (path, b"path"),
     ] {
         let entry = entry.slice();
-        if !entry.is_empty() && entry.contains(&0) {
+        if !entry.is_empty() && strings::contains_char(entry, 0) {
             drop(options_buf);
             // tls_config / secure released by the errdefer above.
             return Err(global_object.throw_invalid_arguments(format_args!(
@@ -1185,11 +1172,9 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             pending_requests: Cell::new(0),
             poll_ref: JsCell::new(KeepAlive::default()),
             global_object: BackRef::new(global_object),
-            // `vm` is the `&mut VirtualMachine` from `bun_vm().as_mut()` above —
-            // the JS-thread singleton with full write provenance. `BackRef::new_mut`
-            // captures the `NonNull` so `vm_mut()` can later route through the same
-            // canonical `VirtualMachine::as_mut()` accessor.
-            vm: BackRef::new_mut(vm),
+            vm: BackRef::from(
+                core::ptr::NonNull::new(VirtualMachine::get_mut_ptr()).expect("vm singleton"),
+            ),
             statements: JsCell::new(PreparedStatementsMap::default()),
             prepared_statement_id: Cell::new(0),
             pending_activity_count: AtomicU32::new(0),
@@ -1307,11 +1292,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
     /// intentionally do NOT route through this — they forward unconditionally.
     #[inline]
     fn guarded(this: &PostgresSQLConnection, f: impl FnOnce(&PostgresSQLConnection)) {
-        if this.vm().is_shutting_down() {
-            bun_core::hint::cold();
-            this.close();
-            return;
-        }
         f(this)
     }
 
@@ -1382,12 +1362,10 @@ impl PostgresSQLConnection {
         // callback fires, pending queries are rejected, and the in-flight
         // socket is torn down instead of completing the handshake after
         // close.
-        if !self.vm().is_shutting_down()
-            && matches!(
-                self.status.get(),
-                Status::Connecting | Status::SentStartupMessage
-            )
-        {
+        if matches!(
+            self.status.get(),
+            Status::Connecting | Status::SentStartupMessage
+        ) {
             self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed);
             // closing an in-flight connect dispatches no socket event, so the
             // poll ref taken at creation is released here rather than in a
@@ -1484,31 +1462,27 @@ impl PostgresSQLConnection {
                         AnyPostgresError::ConnectionClosed,
                     ));
                     stmt.status = StatementStatus::Failed;
-                    if !self.vm().is_shutting_down() {
-                        let global = self.global();
-                        if let Some(reason) = js_reason {
-                            request.on_js_error(reason, global);
-                        } else {
-                            request.on_error(
-                                &StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
-                                global,
-                            );
-                        }
+                    let global = self.global();
+                    if let Some(reason) = js_reason {
+                        request.on_js_error(reason, global);
+                    } else {
+                        request.on_error(
+                            &StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
+                            global,
+                        );
                     }
                 }
                 // in the middle of running
                 QueryStatus::Binding | QueryStatus::Running | QueryStatus::PartialResponse => {
                     self.finish_request(&request);
-                    if !self.vm().is_shutting_down() {
-                        let global = self.global();
-                        if let Some(reason) = js_reason {
-                            request.on_js_error(reason, global);
-                        } else {
-                            request.on_error(
-                                &StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
-                                global,
-                            );
-                        }
+                    let global = self.global();
+                    if let Some(reason) = js_reason {
+                        request.on_js_error(reason, global);
+                    } else {
+                        request.on_error(
+                            &StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
+                            global,
+                        );
                     }
                 }
                 // just ignore success and fail cases
@@ -1866,12 +1840,6 @@ impl PostgresSQLConnection {
         while self.requests.get().readable_length() > offset
             && !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE)
         {
-            if self.vm().is_shutting_down() {
-                self.close();
-                defer_cleanup!(self);
-                return;
-            }
-
             let req_ptr: *mut PostgresSQLQuery = self.requests.get().peek_item(offset);
             // Queue invariant: every stored pointer is non-null and live
             // (refcount ≥ 1 held by the queue). R-2: `ParentRef` yields `&T`
@@ -1974,10 +1942,10 @@ impl PostgresSQLConnection {
                                     };
                                     let binding_value =
                                         postgres_sql_query::js::binding_get_cached(this_value)
-                                            .unwrap_or(JSValue::ZERO);
+                                            .unwrap_or_default();
                                     let columns_value =
                                         postgres_sql_query::js::columns_get_cached(this_value)
-                                            .unwrap_or(JSValue::ZERO);
+                                            .unwrap_or_default();
                                     req.update_flags(|f| f.binary = !statement.fields.is_empty());
 
                                     if self
@@ -2114,7 +2082,7 @@ impl PostgresSQLConnection {
                                         // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
                                         let binding_value =
                                             postgres_sql_query::js::binding_get_cached(this_value)
-                                                .unwrap_or(JSValue::ZERO);
+                                                .unwrap_or_default();
                                         debug!("prepareAndQueryWithSignature");
                                         let global = self.global_object;
                                         if let Err(err) =
@@ -2183,10 +2151,10 @@ impl PostgresSQLConnection {
                                         };
                                         let binding_value =
                                             postgres_sql_query::js::binding_get_cached(this_value)
-                                                .unwrap_or(JSValue::ZERO);
+                                                .unwrap_or_default();
                                         let columns_value =
                                             postgres_sql_query::js::columns_get_cached(this_value)
-                                                .unwrap_or(JSValue::ZERO);
+                                                .unwrap_or_default();
                                         debug!("parseAndBindAndExecute (unnamed, first execution)");
                                         let global = self.global_object;
                                         if let Err(err) =
@@ -2404,7 +2372,7 @@ impl PostgresSQLConnection {
                 // explicit use switch without else so if new modes are added, we don't forget to check for duplicate fields
                 match request_flags.result_mode {
                     SQLQueryResultMode::Objects => {
-                        let owner = self.js_value.get().try_get().unwrap_or(JSValue::ZERO);
+                        let owner = self.js_value.get().try_get().unwrap_or_default();
                         let cs = statement.structure(owner, self.global());
                         structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
                         cached_structure = Some(ParentRef::new(cs));
@@ -2480,7 +2448,7 @@ impl PostgresSQLConnection {
                     return Err(AnyPostgresError::ExpectedRequest);
                 };
                 let pending_value = postgres_sql_query::js::pending_value_get_cached(this_value)
-                    .unwrap_or(JSValue::ZERO);
+                    .unwrap_or_default();
                 pending_value.ensure_still_alive();
                 let result = putter.to_js(
                     self.global(),
@@ -2544,7 +2512,7 @@ impl PostgresSQLConnection {
                         request.on_result(
                             b"",
                             self.global(),
-                            self.js_value.get().try_get().unwrap_or(JSValue::ZERO),
+                            self.js_value.get().try_get().unwrap_or_default(),
                             true,
                         );
                     }
@@ -2567,7 +2535,7 @@ impl PostgresSQLConnection {
                 request.on_result(
                     cmd.command_tag.slice(),
                     self.global(),
-                    self.js_value.get().try_get().unwrap_or(JSValue::ZERO),
+                    self.js_value.get().try_get().unwrap_or_default(),
                     false,
                 );
                 self.update_ref();
@@ -3007,13 +2975,19 @@ impl PostgresSQLConnection {
                         stmt.error_response = Some(
                             crate::postgres::postgres_sql_statement::Error::Protocol(err),
                         );
-                        if self
-                            .statements
-                            .with_mut(|m| m.remove(&stmt.signature.name[..]))
-                            .is_some()
-                        {
-                            // SAFETY: `stmt` is a live `Box`-allocated statement; the
-                            // request still holds its own ref so this cannot drop to 0.
+                        let owned_by_map = self.statements.with_mut(|m| {
+                            let name = &stmt.signature.name[..];
+                            if m.get(name)
+                                .is_some_and(|&p| core::ptr::eq(p, core::ptr::from_ref(&*stmt)))
+                            {
+                                m.remove(name).is_some()
+                            } else {
+                                false
+                            }
+                        });
+                        if owned_by_map {
+                            // SAFETY: the map entry just removed was `stmt` itself, so the map
+                            // held one ref and the request still holds another; cannot drop to 0.
                             unsafe { PostgresSQLStatement::deref(core::ptr::from_mut(stmt)) };
                         }
                     }

@@ -44,6 +44,7 @@ import { writeIfChanged } from "./fs.ts";
 import { generateJsonByteClass } from "./jsonByteClass.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
+import { generateXmlByteClass } from "./xmlByteClass.ts";
 
 // The individual emit functions take these four params. Bundled to keep
 // signatures short.
@@ -290,10 +291,13 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
   o.all.push(jsonByteClass.h, jsonByteClass.rs);
   o.rustInputs.push(jsonByteClass.rs);
   o.cppHeaders.push(jsonByteClass.h);
+  const xmlByteClass = generateXmlByteClass(cfg);
+  o.all.push(xmlByteClass.h, xmlByteClass.rs);
+  o.rustInputs.push(xmlByteClass.rs);
+  o.cppHeaders.push(xmlByteClass.h);
 
   emitBunError(ctx);
   emitStringMaps(ctx);
-  emitFallbackDecoder(ctx);
   emitRuntimeJs(ctx);
   emitNodeFallbacks(ctx);
   emitErrorCode(ctx);
@@ -415,35 +419,6 @@ function emitBunError({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   o.all.push(...outputs);
   o.rustInputs.push(...outputs);
-}
-
-function emitFallbackDecoder({ n, cfg, o, dirStamp }: Ctx): void {
-  const src = resolve(cfg.cwd, "src", "fallback.ts");
-  const out = resolve(cfg.codegenDir, "fallback-decoder.js");
-
-  n.build({
-    outputs: [out],
-    rule: "esbuild",
-    inputs: [src],
-    implicitInputs: [o.rootInstall],
-    orderOnlyInputs: [dirStamp],
-    vars: {
-      cwd: cfg.cwd,
-      desc: "fallback-decoder.js",
-      args: shJoin(cfg, [
-        src,
-        `--outfile=${out}`,
-        "--target=esnext",
-        "--bundle",
-        "--format=iife",
-        "--platform=browser",
-        "--minify",
-      ]),
-    },
-  });
-
-  o.all.push(out);
-  o.rustInputs.push(out);
 }
 
 function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
@@ -648,13 +623,12 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // the two crates so unrelated edits (e.g. src/bundler) don't re-run the
   // scrape. restat=1 + writeIfNotChanged means a no-marker-change edit
   // produces identical output and the cargo step is pruned.
-  const rsInputs = sources.rust.filter(
-    p =>
-      p.endsWith(".rs") &&
-      (p.includes(`${cfg.cwd}/src/runtime/`.replace(/\//g, "/")) ||
-        p.includes(`${cfg.cwd}/src/jsc/`.replace(/\//g, "/"))) &&
-      !p.endsWith("generated_host_exports.rs"),
-  );
+  const slashed = (p: string) => p.replace(/\\/g, "/");
+  const scrapeDirs = [slashed(`${cfg.cwd}/src/runtime/`), slashed(`${cfg.cwd}/src/jsc/`)];
+  const rsInputs = sources.rust.filter(p => {
+    const q = slashed(p);
+    return q.endsWith(".rs") && scrapeDirs.some(d => q.includes(d)) && !q.endsWith("generated_host_exports.rs");
+  });
 
   n.build({
     outputs: [output],

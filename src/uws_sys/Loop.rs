@@ -653,12 +653,14 @@ mod c {
 pub use c::{us_loop_run, us_wakeup_loop};
 
 unsafe extern "C" {
-    // safe: no args; clears the C side's thread-local loop pointer — no preconditions.
-    safe fn bun_clear_loop_at_thread_exit();
+    // safe: no args; frees this thread's lazily-created uws loop if it exists.
+    safe fn bun_free_loop_at_thread_exit();
 }
 
-/// Clears the C side's thread-local loop pointer. Call when a thread that ran
-/// a uws loop (e.g. a Worker thread) exits.
-pub fn on_thread_exit() {
-    bun_clear_loop_at_thread_exit()
+/// Frees this thread's uws loop (its socket groups, timers and — where uSockets
+/// created it — the native loop). Call when a thread that ran a uws loop (a
+/// Worker) exits, after everything registered on the loop is gone. On Windows
+/// the loop borrows the thread's libuv loop; close that afterwards.
+pub fn free_thread_loop() {
+    bun_free_loop_at_thread_exit()
 }

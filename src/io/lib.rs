@@ -321,8 +321,6 @@ bun_dispatch::link_interface! {
         // bearing enum fields. `FilePoll::init` now goes through
         // `file_polls_ptr()` + `Store::get_init` (write-before-read).
         fn increment_pending_unref_counter();
-        fn ref_concurrently();
-        fn unref_concurrently();
         fn after_event_loop_callback() -> Option<OpaqueCallback>;
         fn set_after_event_loop_callback(
             cb: Option<OpaqueCallback>,
@@ -519,6 +517,8 @@ bun_dispatch::link_interface! {
         fn on_reader_error(err: bun_sys::Error);
         fn loop_ptr() -> *mut Loop;
         fn event_loop() -> EventLoopCtx;
+        fn ref_();
+        fn deref();
     }
 }
 
@@ -581,6 +581,8 @@ macro_rules! __impl_buffered_reader_parent_body {
         on_reader_error = |$re_this:ident, $re_err:ident| $re:expr;
         loop_ = |$l_this:ident| $lp:expr;
         event_loop = |$e_this:ident| $ev:expr;
+        $( ref_ = |$rf_this:ident| $rf:expr; )?
+        $( deref = |$dr_this:ident| $dr:expr; )?
     ) => {
         // SAFETY (all generated methods): see `BufferedReaderParent` aliasing
         // contract — `this` is the `*mut Self` registered via `set_parent`; a
@@ -615,6 +617,18 @@ macro_rules! __impl_buffered_reader_parent_body {
             unsafe fn event_loop($e_this: *mut Self) -> $crate::EventLoopHandle {
                 unsafe { $ev }
             }
+            $(
+                #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
+                unsafe fn ref_($rf_this: *mut Self) {
+                    unsafe { $rf }
+                }
+            )?
+            $(
+                #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
+                unsafe fn deref($dr_this: *mut Self) {
+                    unsafe { $dr }
+                }
+            )?
         }
     };
 }
@@ -642,6 +656,10 @@ macro_rules! buffered_reader_parent_link {
                     <$T as $crate::pipe_reader::BufferedReaderParent>::loop_(this),
                 event_loop() =>
                     <$T as $crate::pipe_reader::BufferedReaderParent>::event_loop(this),
+                ref_() =>
+                    <$T as $crate::pipe_reader::BufferedReaderParent>::ref_(this),
+                deref() =>
+                    <$T as $crate::pipe_reader::BufferedReaderParent>::deref(this),
             }
         }
     };
@@ -922,15 +940,16 @@ impl IoRequestLoop {
         request.scheduled = true;
         let request = core::ptr::NonNull::from(request);
         // SAFETY: `ONCE` above established happens-before for `load()`'s
-        // init of `pending`/`waker`. We use `get_unchecked` (no owner assert)
-        // and stay in raw-ptr land via `addr_of_mut!` so we never materialize
-        // a `&mut IoRequestLoop` that would alias the IO thread's `tick()`
-        // borrow. `pending.push` takes `&self` (lock-free MPSC); `waker.wake`
-        // is async-signal-safe by design.
+        // init of `pending`/`waker`. `get_unchecked` (no owner assert) and a
+        // pointer cast of the `repr(transparent)` `MaybeUninit` (not
+        // `as_mut_ptr(&mut self)`) keep this in raw-ptr land: the only
+        // references formed are the `&pending` / `&waker` autorefs, which may
+        // coexist with the IO thread's `&IoRequestLoop` held across `tick()`.
+        // `pending.push` (lock-free MPSC) and `waker.wake` both take `&self`.
         unsafe {
-            let loop_p = (*LOOP.get_unchecked()).as_mut_ptr();
+            let loop_p = LOOP.get_unchecked().cast::<IoRequestLoop>();
             (*core::ptr::addr_of!((*loop_p).pending)).push(request);
-            (*core::ptr::addr_of_mut!((*loop_p).waker)).wake();
+            (*core::ptr::addr_of!((*loop_p).waker)).wake();
         }
     }
 
@@ -1496,7 +1515,7 @@ pub type FlagsSet = enumset::EnumSet<Flags>;
 // registration is not hot enough for the lost monomorphization to matter.
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 #[derive(PartialEq, Eq, Clone, Copy)]
-pub enum ApplyAction {
+enum ApplyAction {
     Readable,
     Writable,
     Cancel,
@@ -2013,8 +2032,8 @@ pub mod waker {
 
     #[cfg(target_os = "macos")]
     pub struct KEventWaker {
-        pub(crate) kq: i32,
-        pub(crate) machport: bun_core::mach_port,
+        kq: i32,
+        machport: bun_core::mach_port,
         pub machport_buf: Box<[u8]>,
     }
 
@@ -2045,7 +2064,7 @@ pub mod waker {
             }
         }
 
-        pub fn wake(&mut self) {
+        pub fn wake(&self) {
             let _ = io_darwin_schedule_wakeup(self.machport);
         }
 
@@ -2159,7 +2178,7 @@ pub mod waker {
             // ever formed.
             // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton,
             // non-null after `init()`.
-            unsafe { bun_uws_sys::loop_::us_loop_run(self.loop_ref().as_ptr()) };
+            unsafe { bun_uws_sys::loop_::us_loop_run(self.loop_ref().as_const_ptr().cast_mut()) };
         }
 
         pub fn wake(&self) {
@@ -2169,7 +2188,9 @@ pub mod waker {
             // thread-safe C wake (`uv_async_send`) instead.
             // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton;
             // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
-            unsafe { bun_uws_sys::loop_::us_wakeup_loop(self.loop_ref().as_ptr()) };
+            unsafe {
+                bun_uws_sys::loop_::us_wakeup_loop(self.loop_ref().as_const_ptr().cast_mut())
+            };
         }
 
         /// Raw libuv `uv_loop_t*` underlying this waker's `WindowsLoop`.

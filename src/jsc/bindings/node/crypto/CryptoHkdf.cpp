@@ -67,19 +67,19 @@ void HkdfJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
     m_result = ByteSource::allocated(dp.release());
 }
 
-extern "C" void Bun__HkdfJobCtx__runFromJS(HkdfJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, EncodedJSValue callback)
+extern "C" void Bun__HkdfJobCtx__runFromJS(HkdfJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSCallbackArgs* out)
 {
-    ctx->runFromJS(lexicalGlobalObject, JSValue::decode(callback));
+    *out = ctx->runFromJS(lexicalGlobalObject);
 }
-void HkdfJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
+JSCallbackArgs HkdfJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!m_result) {
         JSObject* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "hkdf operation failed"_s);
-        Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
-        return;
+        RETURN_IF_EXCEPTION(scope, {});
+        return { err };
     }
 
     auto& result = m_result.value();
@@ -88,17 +88,15 @@ void HkdfJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback
     RefPtr<ArrayBuffer> buf = ArrayBuffer::tryCreateUninitialized(result.size(), 1);
     if (!buf) {
         JSObject* err = createOutOfMemoryError(lexicalGlobalObject);
-        Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
-        return;
+        RETURN_IF_EXCEPTION(scope, {});
+        return { err };
     }
 
     memcpy(buf->data(), result.data(), result.size());
 
-    Bun__EventLoop__runCallback2(lexicalGlobalObject,
-        JSValue::encode(callback),
-        JSValue::encode(jsUndefined()),
-        JSValue::encode(jsNull()),
-        JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), buf.releaseNonNull())));
+    JSValue resultBuffer = JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), buf.releaseNonNull());
+    RETURN_IF_EXCEPTION(scope, {});
+    return { jsNull(), resultBuffer };
 }
 
 extern "C" void Bun__HkdfJobCtx__deinit(HkdfJobCtx* ctx)
@@ -108,19 +106,6 @@ extern "C" void Bun__HkdfJobCtx__deinit(HkdfJobCtx* ctx)
 void HkdfJobCtx::deinit()
 {
     delete this;
-}
-
-extern "C" HkdfJob* Bun__HkdfJob__create(JSGlobalObject* globalObject, HkdfJobCtx* ctx, EncodedJSValue callback);
-HkdfJob* HkdfJob::create(JSGlobalObject* globalObject, HkdfJobCtx&& ctx, JSValue callback)
-{
-    HkdfJobCtx* ctxCopy = new HkdfJobCtx(WTF::move(ctx));
-    return Bun__HkdfJob__create(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
-extern "C" void Bun__HkdfJob__schedule(HkdfJob* job);
-void HkdfJob::schedule()
-{
-    Bun__HkdfJob__schedule(this);
 }
 
 extern "C" void Bun__HkdfJob__createAndSchedule(JSGlobalObject* globalObject, HkdfJobCtx* ctx, EncodedJSValue callback);

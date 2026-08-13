@@ -452,7 +452,7 @@ it("re-saving keeps v1 for a tarball under a writer-only scoped registry", async
   // make the writer consider the entry "v2-clean" and stamp v2.
   using writerDir = tempDir("lockfile-scoped-writer", {
     "package.json": JSON.stringify({ name: "root", dependencies: { "@myorg/foo": "1.0.0" } }),
-    "bunfig.toml": `[install.scopes]\nmyorg = { url = "${scopedRegistryUrl}" }\n`,
+    "bunfig.toml": Bun.TOML.stringify({ install: { scopes: { myorg: { url: scopedRegistryUrl } } } }),
     "bun.lock": v1Lockfile,
   });
 

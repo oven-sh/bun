@@ -104,9 +104,24 @@ impl Clone for OutputFile {
 
 #[derive(Default, Clone, Copy)]
 pub struct BakeExtra {
-    pub(crate) is_route: bool,
-    pub fully_static: bool,
+    pub route: BakeRouteKind,
     pub bake_is_runtime: bool,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum BakeRouteKind {
+    #[default]
+    NotRoute,
+    Route,
+    /// Route with no transitive `"use client"` boundary.
+    FullyStaticRoute,
+}
+
+impl BakeRouteKind {
+    #[inline]
+    pub fn is_fully_static(self) -> bool {
+        matches!(self, Self::FullyStaticRoute)
+    }
 }
 
 pub type Index = bun_core::GenericIndex<u32, OutputFile>;

@@ -939,22 +939,27 @@ impl RepositoryExt for Repository {
                     .open_at(folder_name)
                     .map_err(Error::from)?;
                 let _ = dir.delete_tree(b".git");
+                // Unlinks a `node_modules` link only; directories are kept (bundleDependencies).
+                let _ = dir.delete_file_z(bun_core::zstr!("node_modules"));
 
                 if !resolved.is_empty() {
-                    'insert_tag: {
-                        let Ok(git_tag) = dir.create_file_z(
-                            bun_core::zstr!(".bun-tag"),
-                            bun_sys::CreateFlags {
-                                truncate: true,
-                                ..Default::default()
+                    if bun_sys::File::openat(
+                        dir.fd(),
+                        bun_core::zstr!(".bun-tag"),
+                        bun_sys::O::WRONLY
+                            | bun_sys::O::CREAT
+                            | bun_sys::O::TRUNC
+                            | if cfg!(windows) {
+                                0
+                            } else {
+                                bun_sys::O::NOFOLLOW
                             },
-                        ) else {
-                            break 'insert_tag;
-                        };
-                        if git_tag.write_all(resolved).is_err() {
-                            let _ = dir.delete_file_z(bun_core::zstr!(".bun-tag"));
-                        }
-                        let _ = git_tag.close(); // close error is non-actionable
+                        0o664,
+                    )
+                    .and_then(|f| f.write_all(resolved))
+                    .is_err()
+                    {
+                        let _ = dir.delete_file_z(bun_core::zstr!(".bun-tag"));
                     }
                 }
 

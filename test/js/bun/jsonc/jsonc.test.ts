@@ -125,6 +125,33 @@ test("Bun.JSONC.parse throws on invalid JSON", () => {
   }).toThrow();
 });
 
+test("Bun.JSONC.parse throws a SyntaxError on invalid input", () => {
+  for (const input of ["{ not valid", '{"a": }', "[1, 2", '"abc', "   ", ""]) {
+    let thrown: unknown;
+    try {
+      Bun.JSONC.parse(input);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown, `input: ${JSON.stringify(input)}`).toBeInstanceOf(SyntaxError);
+    expect(thrown, `input: ${JSON.stringify(input)}`).toBeInstanceOf(Error);
+    expect((thrown as Error).name).toBe("SyntaxError");
+    expect((thrown as Error).message).toContain("JSONC Parse error");
+  }
+});
+
+test("Bun.JSONC.parse SyntaxError names the actual error, not a preceding warning", () => {
+  let thrown: unknown;
+  try {
+    Bun.JSONC.parse('{"a":1,"a":2,');
+  } catch (e) {
+    thrown = e;
+  }
+  expect(thrown).toBeInstanceOf(SyntaxError);
+  expect((thrown as Error).message).toMatchInlineSnapshot(`"JSONC Parse error: Expected string but found end of file"`);
+  expect((thrown as Error).message).not.toContain("Duplicate key");
+});
+
 test("Bun.JSONC.parse handles empty object", () => {
   const result = Bun.JSONC.parse("{}");
   expect(result).toEqual({});
@@ -363,6 +390,17 @@ test("Bun.JSONC.parse throws on documents that only parse with error recovery", 
     expect(() => Bun.JSONC.parse(doc), doc).toThrow();
     expect(() => JSON.parse(doc), doc).toThrow();
   }
+});
+
+test("Bun.JSONC.parse builds objects the way JSON.parse does: index keys first, __proto__ own, keys of every kind", () => {
+  const doc = `{"b":1,"0":2,"a":3,"__proto__":{"x":1},"ünï":4,"${"k".repeat(40)}":5,"1":6,"":7,"s":"","t":"x","u":"${"y".repeat(40)}","v":"ünï"}`;
+  const parsed = Bun.JSONC.parse(doc) as any;
+  const reference = JSON.parse(doc);
+  expect(parsed).toEqual(reference);
+  expect(Object.keys(parsed)).toEqual(Object.keys(reference));
+  expect(Object.getPrototypeOf(parsed)).toBe(Object.prototype);
+  expect(Object.hasOwn(parsed, "__proto__")).toBe(true);
+  expect(Bun.JSONC.parse(`[[],[1,"a",{}],[[["deep"]]]]`)).toEqual([[], [1, "a", {}], [[["deep"]]]]);
 });
 
 describe("structural index window seams", () => {

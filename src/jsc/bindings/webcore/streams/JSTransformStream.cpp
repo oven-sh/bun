@@ -282,6 +282,9 @@ void JSTransformStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_controller);
     visitor.appendHidden(thisObject->m_backpressureChangePromise);
     visitor.appendHidden(thisObject->m_pendingWriteChunk);
+    visitor.appendHidden(thisObject->m_nativeSinkCell);
+    visitor.appendHidden(thisObject->m_nativeSinkReadyPromise);
+    visitor.appendHidden(thisObject->m_asyncCodecPromise);
 }
 
 void JSTransformStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -294,6 +297,9 @@ void JSTransformStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_controller, "controller"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_backpressureChangePromise, "backpressureChangePromise"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pendingWriteChunk, "pendingWriteChunk"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_nativeSinkCell, "nativeSinkCell"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_nativeSinkReadyPromise, "nativeSinkReadyPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_asyncCodecPromise, "asyncCodecPromise"_s);
 }
 
 // Prototype host functions
@@ -308,11 +314,23 @@ JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamPrototypeGetter_constructor, (JSGlobal
     return JSValue::encode(JSTransformStream::getConstructor(vm, prototype->globalObject()));
 }
 
+// Web IDL brand check: exact classInfo match, not a chain walk, so the native
+// C++ subclasses (JSCompressionStream etc.) are rejected like Chrome/Node do.
+static ALWAYS_INLINE JSTransformStream* toTransformStreamExact(JSValue thisValue)
+{
+    if (!thisValue.isCell()) [[unlikely]]
+        return nullptr;
+    auto* cell = thisValue.asCell();
+    if (cell->classInfo() != JSTransformStream::info()) [[unlikely]]
+        return nullptr;
+    return static_cast<JSTransformStream*>(cell);
+}
+
 JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamPrototypeGetter_readable, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* stream = dynamicDowncast<JSTransformStream>(JSValue::decode(thisValue));
+    auto* stream = toTransformStreamExact(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TransformStream"_s);
     return JSValue::encode(stream->m_readable.get());
@@ -322,7 +340,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamPrototypeGetter_writable, (JSGlobalObj
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* stream = dynamicDowncast<JSTransformStream>(JSValue::decode(thisValue));
+    auto* stream = toTransformStreamExact(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TransformStream"_s);
     return JSValue::encode(stream->m_writable.get());

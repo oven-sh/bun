@@ -28,7 +28,7 @@
 //!    file for a chunk.
 
 use crate::mal_prelude::*;
-use crate::options::{self, Format, Loader, OutputFile};
+use crate::options::{self, Loader, OutputFile};
 use crate::{Chunk, LinkerContext};
 pub(crate) struct OutputFileList {
     pub(crate) output_files: Vec<options::OutputFile>,
@@ -126,17 +126,13 @@ impl OutputFileList {
             0
         };
 
-        // module_info is generated for ESM bytecode in --compile builds
-        let module_info_count: usize = if c.options.generate_bytecode_cache
-            && c.options.output_format == Format::Esm
-            && c.options.compile
-        {
+        let module_info_count: usize = if c.options.generates_module_info() {
             bytecode_count
         } else {
             0
         };
 
-        let additional_output_files_count: usize = if c.options.compile_to_standalone_html {
+        let additional_output_files_count: usize = if c.options.compile_mode.is_standalone_html() {
             0
         } else {
             parse_graph.additional_output_files.len()

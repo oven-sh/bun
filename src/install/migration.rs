@@ -161,8 +161,6 @@ pub fn detect_and_load_other_lockfile<'a>(
                     | MigratePnpmLockfileError::PnpmLockfileInvalidSnapshot
                     | MigratePnpmLockfileError::PnpmLockfileInvalidDependency
                     | MigratePnpmLockfileError::PnpmLockfileMissingDependencyVersion
-                    | MigratePnpmLockfileError::PnpmLockfileInvalidOverride
-                    | MigratePnpmLockfileError::PnpmLockfileInvalidPatchedDependency
                     | MigratePnpmLockfileError::PnpmLockfileMissingCatalogEntry
                     | MigratePnpmLockfileError::PnpmLockfileUnresolvableDependency => {
                         // These errors are continuable - log the error but don't exit

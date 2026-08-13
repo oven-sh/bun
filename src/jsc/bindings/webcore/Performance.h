@@ -82,7 +82,6 @@ public:
 
     DOMHighResTimeStamp now() const;
     DOMHighResTimeStamp timeOrigin() const;
-    // ReducedResolutionSeconds nowInReducedResolutionSeconds() const;
 
     // PerformanceNavigation* navigation();
     PerformanceTiming* timing();
@@ -114,10 +113,10 @@ public:
 
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
 
-    using RefCounted::deref;
-    using RefCounted::ref;
-
-    // void scheduleNavigationObservationTaskIfNeeded();
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(EventTarget);
 
     // PerformanceNavigationTiming* navigationTiming() { return m_navigationTiming.get(); }
 

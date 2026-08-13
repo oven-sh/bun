@@ -699,6 +699,42 @@ it("unref should exit when no more work pending", async () => {
   expect(await process.exited).toBe(0);
 });
 
+// An unref() applied while lookup is pending must survive the autoSelectFamily handle reinit.
+it("unref survives an autoSelectFamily retry", async () => {
+  // IPv4-only server + injected lookup listing ::1 first forces a refused attempt then a retry; unref() runs mid-lookup.
+  const server = createServer(() => {});
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const lookup = (host, opts, cb) =>
+            setTimeout(() => cb(null, [{ address: "::1", family: 6 }, { address: "127.0.0.1", family: 4 }]), 10);
+          const s = net.connect({ host: "localhost", port: ${server.address().port}, autoSelectFamily: true, lookup });
+          s.on("data", () => {});
+          s.on("error", e => process.stdout.write("error " + e.code + "\\n"));
+          s.on("connect", () => process.stdout.write("connected " + s.remoteAddress + "\\n"));
+          s.unref();
+          // Sentinel keeping the loop alive across the refuse + retry.
+          setTimeout(() => process.stdout.write("timer\\n"), 500);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    // After the sentinel timer only the unref'd socket remains, so the process must exit.
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim().split("\n").sort()).toEqual(["connected 127.0.0.1", "timer"]);
+    expect(exitCode).toBe(0);
+  } finally {
+    server.close();
+  }
+});
+
 it("socket should keep process alive if unref is not called", async () => {
   const process = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "node-ref-default-fixture.js")],
@@ -840,6 +876,67 @@ it("should trigger error when aborted even if connection failed, and the signal 
   expect(err.name).toBe("AbortError");
   expect(err.code).toBe("ABORT_ERR");
   expect(err.cause?.name).toBe("TimeoutError");
+});
+
+// Regression test for #30697: net.connect({ localPort, lookup }) on the
+// happy-eyeballs path must not throw a ReferenceError before the socket
+// is opened.
+describe("net.connect({ localPort }) with multiple lookup addresses #30697", () => {
+  describe.each([
+    {
+      label: "IPv4 first",
+      addresses: [
+        { address: "127.0.0.1", family: 4 },
+        { address: "::1", family: 6 },
+      ],
+    },
+    {
+      label: "IPv6 first",
+      addresses: [
+        { address: "::1", family: 6 },
+        { address: "127.0.0.1", family: 4 },
+      ],
+    },
+  ])("$label", ({ addresses }) => {
+    it("does not throw ReferenceError", async () => {
+      const { promise: listening, resolve: onListen, reject: onListenError } = Promise.withResolvers<Server>();
+      const server = createServer();
+      server.once("error", onListenError);
+      // Listen on 127.0.0.1 only; an IPv6-first attempt fails fast and
+      // happy-eyeballs falls through to the IPv4 address.
+      server.listen(0, "127.0.0.1", () => onListen(server));
+      await using _server = await listening;
+      const { port } = server.address() as { port: number };
+
+      // Non-zero localPort is required to enter the branch that used to
+      // crash, and the local bind is actually applied during connect, so it
+      // must be a free unprivileged port: grab an ephemeral one and release it.
+      const { promise: probing, resolve: onProbe, reject: onProbeError } = Promise.withResolvers<number>();
+      const probe = createServer();
+      probe.once("error", onProbeError);
+      probe.listen(0, "127.0.0.1", () => onProbe((probe.address() as { port: number }).port));
+      const localPort = await probing;
+      await new Promise(resolve => probe.close(resolve));
+
+      const { promise: connected, resolve: onConnect, reject: onError } = Promise.withResolvers<void>();
+      const client = new Socket();
+      client.on("error", onError);
+      client.on("connect", () => onConnect());
+
+      client.connect({
+        port,
+        host: "localhost",
+        localPort,
+        lookup: (_hostname, _opts, cb) => cb(null, addresses),
+      } as any);
+
+      try {
+        await connected;
+      } finally {
+        client.destroy();
+      }
+    });
+  });
 });
 
 it.if(isWindows)(
@@ -1869,4 +1966,115 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
   } finally {
     target.close();
   }
+});
+
+// On Windows the connect-error path receives raw WSA codes (WSAECONNRESET,
+// WSAEADDRINUSE) from getsockopt(SO_ERROR) and the pre-connect bind(); these
+// must be mapped before the errno whitelist, or every failure degrades to
+// ECONNREFUSED. POSIX already reports these correctly.
+describe.skipIf(!isWindows)("connect() error codes on Windows", () => {
+  it("localPort in use reports EADDRINUSE", async () => {
+    const server1 = createServer(() => {});
+    const server2 = createServer(() => {});
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server1.on("error", reject);
+        server1.listen(0, "127.0.0.1", resolve);
+      });
+      await new Promise<void>((resolve, reject) => {
+        server2.on("error", reject);
+        server2.listen(0, "127.0.0.1", resolve);
+      });
+      const port = (server1.address() as import("node:net").AddressInfo).port;
+      const localPort = (server2.address() as import("node:net").AddressInfo).port;
+      const err = await new Promise<NodeJS.ErrnoException>(resolve => {
+        const c = connect({ host: "127.0.0.1", port, localAddress: "127.0.0.1", localPort });
+        c.on("error", resolve);
+        c.on("connect", () => {
+          c.destroy();
+          resolve(Object.assign(new Error("connected"), { code: "CONNECTED" }));
+        });
+      });
+      expect(err.code).toBe("EADDRINUSE");
+    } finally {
+      server1.close();
+      server2.close();
+    }
+  });
+
+  it("server resetAndDestroy() surfaces ECONNRESET on the client", async () => {
+    const server = createServer(c => {
+      c.resetAndDestroy();
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.on("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const err = await new Promise<NodeJS.ErrnoException>(resolve => {
+        const c = connect(port, "127.0.0.1");
+        c.on("error", resolve);
+        c.on("close", hadError => {
+          if (!hadError) resolve(Object.assign(new Error("clean close"), { code: "NOERR" }));
+        });
+      });
+      expect(err.code).toBe("ECONNRESET");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("connect to a path that is not a socket reports ECONNREFUSED/ENOTSOCK, missing path reports ENOENT", async () => {
+    const dir = tmpdirSync();
+    const regular = join(dir, "not-a-socket.txt");
+    fs.writeFileSync(regular, "");
+    const missing = join(dir, "does-not-exist");
+
+    const errFor = (path: string) =>
+      new Promise<NodeJS.ErrnoException>(resolve => {
+        const c = createConnection(path);
+        c.on("error", resolve);
+        c.on("connect", () => {
+          c.destroy();
+          resolve(Object.assign(new Error("connected"), { code: "CONNECTED" }));
+        });
+      });
+
+    const regularErr = await errFor(regular);
+    expect(["ENOTSOCK", "ECONNREFUSED"]).toContain(regularErr.code);
+
+    const missingErr = await errFor(missing);
+    expect(missingErr.code).toBe("ENOENT");
+  });
+});
+
+describe("net.Server.listen({ fd })", () => {
+  // node's createServerHandle only accepts TCP / pipe descriptors and reports anything else as EINVAL;
+  // the raw listen(2) failure for a datagram socket is EOPNOTSUPP.
+  it.skipIf(isWindows)("reports a datagram descriptor as EINVAL, like node", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--no-deprecation", // Socket.prototype._handle (DEP0112) is the only way to get the descriptor
+        "-e",
+        `
+        const dgram = require("dgram"), net = require("net");
+        const u = dgram.createSocket("udp4");
+        u.bind(0, "127.0.0.1", () => {
+          const s = net.createServer();
+          s.on("error", e => { console.log(e.code); u.close(); });
+          s.on("listening", () => { console.log("listening"); s.close(); u.close(); });
+          s.listen({ fd: u._handle.fd });
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "EINVAL", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 });

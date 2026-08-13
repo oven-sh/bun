@@ -127,34 +127,56 @@ impl Default for Result {
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
     pub struct ResultFlags: u8 {
+        // Bits 0..=1 encode [`ExternalKind`]; write via `set_external_kind`.
         const IS_EXTERNAL = 1 << 0;
-        const IS_EXTERNAL_AND_REWRITE_IMPORT_PATH = 1 << 1;
+        const REWRITE_IMPORT_PATH = 1 << 1;
         const IS_STANDALONE_MODULE = 1 << 2;
         // This is true when the package was loaded from within the node_modules directory.
         const IS_FROM_NODE_MODULES = 1 << 3;
         const EMIT_DECORATOR_METADATA = 1 << 5;
         const EXPERIMENTAL_DECORATORS = 1 << 6;
-        // _padding: u1
+        /// tsconfig `"useDefineForClassFields": false` was set explicitly.
+        const SET_SEMANTICS_FOR_CLASS_FIELDS = 1 << 7;
     }
 }
 
-// Convenience accessors with field-style names.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExternalKind {
+    #[default]
+    NotExternal,
+    External,
+    /// External, and the import specifier should be rewritten to the resolved path.
+    ExternalRewritePath,
+}
+
 impl ResultFlags {
     #[inline]
     pub fn is_external(self) -> bool {
         self.contains(Self::IS_EXTERNAL)
     }
     #[inline]
-    pub(crate) fn set_is_external(&mut self, v: bool) {
-        self.set(Self::IS_EXTERNAL, v)
+    pub fn external_kind(self) -> ExternalKind {
+        debug_assert!(
+            !self.contains(Self::REWRITE_IMPORT_PATH) || self.contains(Self::IS_EXTERNAL)
+        );
+        if !self.contains(Self::IS_EXTERNAL) {
+            ExternalKind::NotExternal
+        } else if self.contains(Self::REWRITE_IMPORT_PATH) {
+            ExternalKind::ExternalRewritePath
+        } else {
+            ExternalKind::External
+        }
     }
     #[inline]
-    pub fn is_external_and_rewrite_import_path(self) -> bool {
-        self.contains(Self::IS_EXTERNAL_AND_REWRITE_IMPORT_PATH)
-    }
-    #[inline]
-    pub(crate) fn set_is_external_and_rewrite_import_path(&mut self, v: bool) {
-        self.set(Self::IS_EXTERNAL_AND_REWRITE_IMPORT_PATH, v)
+    pub(crate) fn set_external_kind(&mut self, kind: ExternalKind) {
+        self.set(
+            Self::IS_EXTERNAL,
+            !matches!(kind, ExternalKind::NotExternal),
+        );
+        self.set(
+            Self::REWRITE_IMPORT_PATH,
+            matches!(kind, ExternalKind::ExternalRewritePath),
+        );
     }
     #[inline]
     pub(crate) fn is_standalone_module(self) -> bool {
@@ -183,6 +205,15 @@ impl ResultFlags {
     #[inline]
     pub(crate) fn set_experimental_decorators(&mut self, v: bool) {
         self.set(Self::EXPERIMENTAL_DECORATORS, v)
+    }
+    /// Effective `useDefineForClassFields`; `false` only when tsconfig set it to `false`.
+    #[inline]
+    pub fn use_define_for_class_fields(self) -> bool {
+        !self.contains(Self::SET_SEMANTICS_FOR_CLASS_FIELDS)
+    }
+    #[inline]
+    pub(crate) fn set_use_define_for_class_fields(&mut self, v: bool) {
+        self.set(Self::SET_SEMANTICS_FOR_CLASS_FIELDS, !v)
     }
 }
 
@@ -259,21 +290,6 @@ pub struct DirEntryResolveQueueItem {
     pub(crate) unsafe_path: bun_ptr::RawSlice<u8>,
     pub(crate) safe_path: bun_ptr::RawSlice<u8>,
     pub(crate) fd: FD,
-}
-
-impl Default for DirEntryResolveQueueItem {
-    fn default() -> Self {
-        Self {
-            result: allocators::Result {
-                hash: 0,
-                index: allocators::NOT_FOUND,
-                status: allocators::ItemStatus::Unknown,
-            },
-            unsafe_path: bun_ptr::RawSlice::EMPTY,
-            safe_path: bun_ptr::RawSlice::EMPTY,
-            fd: FD::INVALID,
-        }
-    }
 }
 
 // `bun_alloc::Result` doesn't derive Clone (yet); all its fields are Copy, so

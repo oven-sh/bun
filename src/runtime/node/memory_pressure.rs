@@ -56,8 +56,17 @@ pub(crate) fn emit(global: &JSGlobalObject, lvl: i32) {
     unsafe { Process__emitMemoryPressureEvent(core::ptr::from_ref(global).cast_mut(), lvl) };
 }
 
+/// The queued form of a pressure notification: `Task::ptr` packs the level,
+/// there is no allocation.
+pub(crate) struct MemoryPressureTask;
+impl bun_event_loop::Taskable for MemoryPressureTask {
+    const TAG: bun_event_loop::TaskTag = task_tag::MemoryPressureTask;
+    /// Nothing is owned (`this` is the packed level).
+    unsafe fn release_unrun(_: *mut Self) {}
+}
+
 fn pressure_task(lvl: i32) -> Task {
-    Task::new(task_tag::MemoryPressureTask, lvl as usize as *mut ())
+    Task::init(lvl as usize as *mut MemoryPressureTask)
 }
 
 #[cfg(not(windows))]
@@ -115,7 +124,7 @@ mod posix {
         let mut read = [0u8; 256];
         let n = bun_sys::read(fd, &mut read).unwrap_or(0);
         let _ = bun_sys::close(fd);
-        for line in read[..n].split(|&b| b == b'\n') {
+        for line in bun_core::strings::split(&read[..n], b"\n") {
             let Some(rest) = line.strip_prefix(b"0::") else {
                 continue;
             };
@@ -303,7 +312,7 @@ mod windows {
         vm.rare_data().memory_pressure_watcher_slot()
     }
 
-    fn thread_main(vm_addr: usize, notify: usize, shutdown: usize) {
+    fn thread_main(vm: bun_jsc::VmHandle, notify: usize, shutdown: usize) {
         bun_core::output::Source::configure_named_thread(bun_core::zstr!("MemoryPressure"));
         let handles: [HANDLE; 2] = [shutdown as HANDLE, notify as HANDLE];
         loop {
@@ -313,10 +322,14 @@ mod windows {
                 break;
             }
             let task = ConcurrentTask::create(super::pressure_task(super::level::CRITICAL));
-            // SAFETY: main-thread VM captured at install; process-lifetime.
-            unsafe { &*(vm_addr as *const VirtualMachine) }
-                .event_loop_shared()
-                .enqueue_task_concurrent(task);
+            if let bun_jsc::vm_handle::Posted::Refused(task) =
+                vm.post(bun_jsc::LoopKind::Regular, task)
+            {
+                // VM torn down (uninstall joins us right after): drop the notification.
+                // SAFETY: refused ⇒ we own the task box.
+                unsafe { drop(bun_core::heap::take(task.as_ptr())) };
+                break;
+            }
             // SAFETY: `shutdown` is valid for the thread's lifetime.
             if unsafe { WaitForSingleObject(handles[0], HOLDOFF_MS) } == WAIT_OBJECT_0 {
                 break;
@@ -343,15 +356,15 @@ mod windows {
         }
         let shutdown = OwnedHandle(shutdown);
 
-        let (vm_addr, n, s) = (
-            core::ptr::from_ref(global.bun_vm()) as usize,
+        let (vm, n, s) = (
+            global.bun_vm().handle(),
             notify.0 as usize,
             shutdown.0 as usize,
         );
         let Ok(thread) = std::thread::Builder::new()
             .name("MemoryPressure".into())
             .stack_size(64 * 1024)
-            .spawn(move || thread_main(vm_addr, n, s))
+            .spawn(move || thread_main(vm, n, s))
         else {
             return;
         };

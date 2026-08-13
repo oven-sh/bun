@@ -1091,6 +1091,29 @@ it("reading .listener on a closed client socket does not use-after-free handlers
   expect(exitCode).toBe(0);
 });
 
+it("a socket closed by a nested event loop tick run from its own data callback is not freed under the outer dispatch", async () => {
+  // A callback may spin the event loop (expect().resolves, waitForPromise)
+  // while usockets is still dispatching its socket. Closed sockets are freed
+  // at the end of a tick; the nested ticks must leave that to the outer tick,
+  // or the outer dispatch resumes on freed memory once the callback returns.
+  // epoll/kqueue defer via tick_depth; the libuv backend did not, so on
+  // Windows the fixture's client socket was freed (and reused by the sockets
+  // the fixture opens afterwards) before its own data dispatch finished.
+  // Run in a subprocess so a crash shows up as an exit code rather than
+  // taking down the test runner.
+  await using proc = spawn({
+    cmd: [bunExe(), "test", join(import.meta.dir, "socket-nested-tick-close-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("ok");
+  expect(stderr).toContain(" 1 pass");
+  expect(stderr).toContain(" 0 fail");
+  expect(exitCode).toBe(0);
+});
+
 it("reading fd of a TLS listener should not crash", () => {
   using listener = Bun.listen({
     hostname: "localhost",

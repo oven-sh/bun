@@ -45,6 +45,12 @@ struct us_poll_t {
   uv_poll_t *uv_p;
   LIBUS_SOCKET_DESCRIPTOR fd;
   unsigned char poll_type;
+  /* Both owned by eventing/libuv.c. How many of uv_p's poll callbacks are on
+   * the stack (more than one when a callback re-enters the loop and the same
+   * poll is reported again), and whether us_poll_stop ran inside one of them
+   * and left the uv_close to the outermost callback's return. */
+  unsigned char dispatch_depth;
+  unsigned char close_pending;
 };
 
 #endif // LIBUV_H

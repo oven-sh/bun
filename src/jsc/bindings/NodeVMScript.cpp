@@ -3,6 +3,7 @@
 
 #include "ErrorCode.h"
 
+#include "JavaScriptCore/CodeCache.h"
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JIT.h"
 #include "JavaScriptCore/JSWeakMap.h"
@@ -135,11 +136,12 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     RETURN_IF_EXCEPTION(scope, {});
 
     // Node's vm.Script throws SyntaxError at construction; the REPL's
-    // recoverable-error flow (and user code) relies on that. This is a
-    // double-parse (checkSyntax discards its AST and runInThisContext reparses
-    // via JSC::evaluate); compile-once via m_cachedExecutable is the follow-up.
+    // recoverable-error flow (and user code) relies on that. Compiling through the
+    // CodeCache instead of checkSyntax() leaves the result where the first run
+    // (JSC::evaluate) and produceCachedData look for it, so the source is parsed once.
     JSC::ParserError parseError;
-    if (!JSC::checkSyntax(vm, source, parseError)) {
+    vm.codeCache()->getUnlinkedProgramCodeBlock(vm, JSC::ProgramExecutable::create(globalObject, source), source, globalObject->defaultCodeGenerationMode(), parseError);
+    if (parseError.isValid()) {
         auto exception = parseError.toErrorObject(globalObject, source, -1);
         // Building the error materializes its stack, running a user
         // Error.prepareStackTrace that may throw; Node throws the SyntaxError

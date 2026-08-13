@@ -892,6 +892,76 @@ test("can't use bytecode from a different script", () => {
   expect(secondScript.runInThisContext()).toBe(4);
 });
 
+describe.concurrent("Script parses its source once", () => {
+  // JSC prints one "Parsed ..." line to stderr per parse under reportParseTimes. The
+  // fixture warms up node:vm first so that only the Script under test parses between
+  // the markers; the constructor used to checkSyntax() and then parse again on the
+  // first run (or when producing cached data).
+  async function parsesDuring(body: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { Script, createContext } = require("node:vm");
+          const warmup = new Script("warmup;", { produceCachedData: true });
+          warmup.runInContext(createContext({ warmup: 1 }));
+          if (warmup.cachedData.length === 0) throw new Error("warmup produced no cached data");
+          console.error("@@begin");
+          ${body}
+          console.error("@@end");
+        `,
+      ],
+      env: { ...bunEnv, BUN_JSC_reportParseTimes: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    const begin = stderr.indexOf("@@begin");
+    const end = stderr.indexOf("@@end");
+    expect(begin).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(begin);
+    return stderr
+      .slice(begin, end)
+      .split("\n")
+      .filter(line => line.startsWith("Parsed ")).length;
+  }
+
+  test("constructing and running it in a context", async () => {
+    expect(
+      await parsesDuring(`
+        const script = new Script("var answer = 6 * 7; answer;");
+        if (script.runInContext(createContext({})) !== 42) throw new Error("wrong result");
+      `),
+    ).toBe(1);
+  });
+
+  test("constructing it with produceCachedData", async () => {
+    expect(
+      await parsesDuring(`
+        const script = new Script("var answer = 6 * 7; answer;", { produceCachedData: true });
+        if (!script.cachedDataProduced || script.cachedData.length === 0) throw new Error("no cached data");
+      `),
+    ).toBe(1);
+  });
+
+  test("each context still gets its own global declarations", () => {
+    const script = new Script(
+      "var counter = (typeof counter === 'number' ? counter : 0) + 1; function id() { return tag; } counter;",
+    );
+    const first = createContext({ tag: "first" });
+    const second = createContext({ tag: "second" });
+    expect(script.runInContext(first)).toBe(1);
+    expect(script.runInContext(second)).toBe(1);
+    expect(script.runInContext(first)).toBe(2);
+    expect(runInContext("id()", first)).toBe("first");
+    expect(runInContext("id()", second)).toBe("second");
+    expect(first.counter).toBe(2);
+    expect(second.counter).toBe(1);
+  });
+});
+
 describe("codeGeneration options", () => {
   test("disabling codeGeneration.strings should block eval and Function constructor", () => {
     const context = createContext(

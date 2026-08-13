@@ -1521,15 +1521,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // __privateAdd (once per name)
                         if !emitted_private_adds.contains_key(&npriv_inner) {
                             emitted_private_adds.insert(npriv_inner, ());
+                            let t = p.new_expr(E::This {}, loc);
+                            let s = p.use_ref(ws_ref, loc);
+                            let call = p.call_rt(loc, b"__privateAdd", &[t, s]);
                             if prop.flags.contains(Flags::Property::IsStatic) {
-                                let t = p.new_expr(E::This {}, loc);
-                                let s = p.use_ref(ws_ref, loc);
-                                let call = p.call_rt(loc, b"__privateAdd", &[t, s]);
                                 static_private_add_blocks.push(p.make_static_block(call, loc));
                             } else {
-                                let t = p.new_expr(E::This {}, loc);
-                                let s = p.use_ref(ws_ref, loc);
-                                let call = p.call_rt(loc, b"__privateAdd", &[t, s]);
                                 new_properties.push(p.inline_brand_field(
                                     &mut class_private_names,
                                     &mut brand_field_counter,

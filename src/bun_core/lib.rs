@@ -2413,9 +2413,23 @@ pub mod ffi {
         // (thin non-null pointer to a `#[repr(C)]` struct); the type encodes
         // the only pointer-validity precondition, so `safe fn` discharges the
         // link-time proof and the call needs no `unsafe` block.
+        #[cfg(not(target_os = "freebsd"))]
         unsafe extern "C" {
             #[link_name = "uname"]
             safe fn libc_uname(buf: &mut libc::utsname) -> core::ffi::c_int;
+        }
+        // FreeBSD's exported `uname` symbol is a compat entry that fills
+        // 32-byte fields; `struct utsname` has 256-byte fields and the
+        // header's `uname()` is an inline over `__xuname(SYS_NMLN, buf)`.
+        #[cfg(target_os = "freebsd")]
+        fn libc_uname(buf: &mut libc::utsname) -> core::ffi::c_int {
+            unsafe extern "C" {
+                safe fn __xuname(
+                    nmln: core::ffi::c_int,
+                    buf: &mut libc::utsname,
+                ) -> core::ffi::c_int;
+            }
+            __xuname(256, buf)
         }
         let mut u: libc::utsname = zeroed();
         let _ = libc_uname(&mut u);

@@ -877,8 +877,8 @@ pub type OpenPtyFn = unsafe extern "C" fn(
     winp: *const Winsize,
 ) -> c_int;
 
-/// Dynamic loading of openpty on Linux (it's in libutil which may not be linked)
-#[cfg(any(target_os = "linux", target_os = "android"))]
+/// Dynamic loading of openpty on Linux/FreeBSD (it's in libutil which may not be linked)
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 mod lib_util {
     use super::*;
     use bun_core::ZStr;
@@ -898,11 +898,17 @@ mod lib_util {
         }
         LOADED.store(true, Relaxed);
 
-        // Try libutil.so first (most common), then libutil.so.1
+        // Try libutil.so first (most common), then the versioned soname
+        #[cfg(not(target_os = "freebsd"))]
         const LIB_NAMES: [&ZStr; 3] = [
             bun_core::zstr!("libutil.so"),
             bun_core::zstr!("libutil.so.1"),
             bun_core::zstr!("libc.so.6"),
+        ];
+        #[cfg(target_os = "freebsd")]
+        const LIB_NAMES: [&ZStr; 2] = [
+            bun_core::zstr!("libutil.so.9"),
+            bun_core::zstr!("libutil.so"),
         ];
         for lib_name in LIB_NAMES {
             if let Some(h) = sys::dlopen(lib_name, sys::RTLD::LAZY) {
@@ -940,14 +946,19 @@ fn get_open_pty_fn() -> Option<OpenPtyFn> {
         return Some(openpty);
     }
 
-    // On Linux, openpty is in libutil, which may not be linked
+    // On Linux/FreeBSD, openpty is in libutil, which may not be linked
     // Load it dynamically via dlopen
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     {
         return lib_util::get_open_pty();
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd"
+    )))]
     None
 }
 

@@ -693,7 +693,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         msg.msg_iovlen = 1;
                         msg.msg_name = NULL;
                         msg.msg_namelen = 0;
-                        msg.msg_controllen = CMSG_LEN(sizeof(int));
+                        /* CMSG_SPACE, not CMSG_LEN: FreeBSD sets MSG_CTRUNC and
+                         * discards the descriptor when the buffer can't hold the
+                         * aligned trailing padding (20 vs 24 bytes there). */
+                        msg.msg_controllen = sizeof(cmsg_buf);
                         msg.msg_control = cmsg_buf;
 
                         length = bsd_recvmsg(us_poll_fd(&s->p), &msg, recv_flags);

@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, normalizeBunSnapshot, tempDir } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -64,6 +64,42 @@ describe.concurrent("bun test --isolate", () => {
     const { stderr, exitCode } = await runTests(String(dir), ["--isolate"]);
     expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
     expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  // Each isolate context lazily re-creates process.stderr/stdout over a fresh
+  // dup() of the stdio fd plus an epoll registration; the global swap must end
+  // the outgoing file's sinks or the dups accumulate per file and a stale
+  // registration can later collide with a reused fd number (EEXIST from
+  // epoll_ctl, #37968). Counts fds that share fd 2's pipe via /proc, Linux-only.
+  test.skipIf(!isLinux)("with --isolate, stdio sinks do not leak a dup'd fd per file", async () => {
+    const countFixture = `
+      import { test } from "bun:test";
+      import { readdirSync, readlinkSync } from "node:fs";
+      test("count dups of stderr", () => {
+        process.stderr.write("");
+        process.stdout.write("");
+        const target = readlinkSync("/proc/self/fd/2");
+        let count = 0;
+        for (const fd of readdirSync("/proc/self/fd")) {
+          try {
+            if (readlinkSync("/proc/self/fd/" + fd) === target) count++;
+          } catch {}
+        }
+        console.log("FDCOUNT:" + count);
+      });
+    `;
+    const names = ["a", "b", "c", "d"].map(c => `${c}-stdio-fds.test.ts`);
+    using dir = tempDir("isolate-stdio-fds", Object.fromEntries(names.map(name => [name, countFixture])));
+    const { stdout, stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      names.map(name => `./${name}`),
+    );
+    const counts = [...stdout.matchAll(/FDCOUNT:(\d+)/g)].map(m => Number(m[1]));
+    expect(counts).toHaveLength(4);
+    expect(counts).toEqual(Array(4).fill(counts[0]));
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("4 pass");
     expect(exitCode).toBe(0);
   });
 

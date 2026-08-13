@@ -4069,6 +4069,9 @@ void JSC__JSInternalPromise__resolve(JSC::JSPromise* arg0, JSC::JSGlobalObject* 
     arg0->resolve(arg1, arg1->vm(), JSC::JSValue::decode(JSValue2));
 }
 
+// `JSPromise::resolvedPromise` runs `promiseResolve`, which reads `.constructor`
+// off a promise argument and returns null when that getter throws.
+[[ZIG_EXPORT(check_slow)]]
 JSC::JSPromise* JSC__JSInternalPromise__resolvedPromise(JSC::JSGlobalObject* arg0,
     JSC::EncodedJSValue JSValue1)
 {

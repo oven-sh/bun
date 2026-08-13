@@ -568,6 +568,12 @@ console.log("survived", require("./late.js"));`,
     expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
   });
 
+  // BUN_JSC_validateExceptionChecks=1 makes a debug build abort on the first
+  // JSC call whose exception state is never checked; it is a no-op in release
+  // builds. The runMain override path wraps the override's return value in a
+  // promise natively, so these run under it.
+  const validateExceptions = { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" };
+
   test("Module.runMain", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -576,14 +582,13 @@ console.log("survived", require("./late.js"));`,
         path.join(import.meta.dir, "overwrite-module-run-main-1.cjs"),
         path.join(import.meta.dir, "overwrite-module-run-main-2.cjs"),
       ],
-      env: bunEnv,
-      stderr: "inherit",
+      env: validateExceptions,
+      stderr: "pipe",
       stdout: "pipe",
     });
 
-    const stdout = await proc.stdout.text();
-    expect(stdout.trim()).toBe("pass");
-    expect(await proc.exited).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "pass", stderr: "", exitCode: 0 });
   });
   test("Module.runMain 2", async () => {
     await using proc = Bun.spawn({
@@ -593,14 +598,64 @@ console.log("survived", require("./late.js"));`,
         path.join(import.meta.dir, "overwrite-module-run-main-3.cjs"),
         path.join(import.meta.dir, "overwrite-module-run-main-2.cjs"),
       ],
-      env: bunEnv,
-      stderr: "inherit",
+      env: validateExceptions,
+      stderr: "pipe",
       stdout: "pipe",
     });
 
-    const stdout = await proc.stdout.text();
-    expect(stdout.trim()).toBe("pass");
-    expect(await proc.exited).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "pass", stderr: "", exitCode: 0 });
+  });
+
+  // When an override does not call the original runMain, bun adopts whatever
+  // it returned (Promise.resolve semantics) as the entry point promise.
+  test.each([
+    {
+      name: "a plain value",
+      runMain: `() => { console.log("override ran"); return 42; }`,
+      expected: { stdout: "override ran\n", stderr: "", exitCode: 0 },
+    },
+    {
+      name: "a pending promise that fulfills",
+      runMain: `async () => { await 0; console.log("override resolved"); }`,
+      expected: { stdout: "override resolved\n", stderr: "", exitCode: 0 },
+    },
+    {
+      name: "a thenable that fulfills",
+      runMain: `() => ({ then(resolve) { console.log("thenable adopted"); resolve(); } })`,
+      expected: { stdout: "thenable adopted\n", stderr: "", exitCode: 0 },
+    },
+    {
+      name: "a thenable that rejects",
+      runMain: `() => ({ then(_, reject) { reject(new Error("thenable rejected")); } })`,
+      expected: { stdout: "", stderr: expect.stringContaining("thenable rejected"), exitCode: 1 },
+    },
+    {
+      // Promise.resolve(p) reads p.constructor; the getter throwing is the one
+      // way adopting the return value itself throws.
+      name: "a promise whose constructor getter throws",
+      runMain: `() => {
+        const p = Promise.resolve();
+        Object.defineProperty(p, "constructor", { get() { throw new Error("constructor getter threw"); } });
+        return p;
+      }`,
+      expected: { stdout: "", stderr: expect.stringContaining("Error occurred loading entry point"), exitCode: 1 },
+    },
+  ])("Module.runMain override returning $name", async ({ runMain, expected }) => {
+    using dir = tempDir("run-main-override", {
+      "preload.cjs": `require("module").runMain = ${runMain};`,
+      "main.cjs": `console.log("main ran");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--require", "./preload.cjs", "./main.cjs"],
+      env: validateExceptions,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual(expected);
   });
   test.each(["no args", "--access-early"])("children, %s", async arg => {
     await using proc = Bun.spawn({

@@ -862,10 +862,8 @@ impl<'a> Resolver<'a> {
         Ok(pm.as_ptr())
     }
 
-    /// Uninstall this resolver's `WakeHandler` from the `PackageManager`
-    /// singleton if it is the installed one. Called from `Transpiler::deinit`
-    /// so a dead VM's handler (whose `WakeContext` dies with the VM) is never
-    /// invoked by a later auto-install wave.
+    /// Uninstall this resolver's `WakeHandler` from the singleton (called
+    /// from `Transpiler::deinit`, before the VM's `WakeContext` is freed).
     pub fn clear_package_manager_handler(&mut self) {
         let Some(ctx) = self.on_wake_package_manager.context else {
             return;

@@ -2584,8 +2584,7 @@ static JSC::EncodedJSValue systemErrorToErrorInstance(const SystemError* arg0, J
     auto& names = WebCore::builtinNames(vm);
 
     JSC::JSObject* result = createError(globalObject, errorType, message);
-    // Usually created from an I/O completion callback, with no JS on the stack.
-    Bun::installLazyStackIfFrameless(vm, globalObject, uncheckedDowncast<JSC::ErrorInstance>(result));
+    Bun::installLazyStackIfFrameless(globalObject, result);
 
     auto clientData = WebCore::clientData(vm);
 
@@ -2667,6 +2666,7 @@ JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError
     auto message = makeString("A system error occurred: "_s, syscallString, " returned "_s, codeString, " ("_s, messageString, ")"_s);
 
     JSC::JSObject* result = JSC::ErrorInstance::create(vm, JSC::ErrorInstance::createStructure(vm, globalObject, globalObject->errorPrototype()), message, {});
+    Bun::installLazyStackIfFrameless(globalObject, result);
     JSC::JSObject* info = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
 
     auto clientData = WebCore::clientData(vm);
@@ -3634,14 +3634,18 @@ JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateError(JSC::JSGlobalObjec
 
     JSC::Structure* errorStructure = globalObject->errorStructure(JSC::ErrorType::AggregateError);
 
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::createAggregateError(vm, errorStructure, array, message, cause, nullptr, JSC::TypeNothing, false)));
+    auto* error = JSC::createAggregateError(vm, errorStructure, array, message, cause, nullptr, JSC::TypeNothing, false);
+    Bun::installLazyStackIfFrameless(vm, globalObject, error);
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(error));
 }
 JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateErrorWithArray(JSC::JSGlobalObject* global, JSC::JSArray* array, BunString message, JSValue cause)
 {
     auto& vm = JSC::getVM(global);
     JSC::Structure* errorStructure = global->errorStructure(JSC::ErrorType::AggregateError);
     WTF::String messageString = message.toWTFString();
-    return JSC::JSValue::encode(JSC::createAggregateError(vm, errorStructure, array, messageString, cause, nullptr, JSC::TypeNothing, false));
+    auto* error = JSC::createAggregateError(vm, errorStructure, array, messageString, cause, nullptr, JSC::TypeNothing, false);
+    Bun::installLazyStackIfFrameless(vm, global, error);
+    return JSC::JSValue::encode(error);
 }
 
 JSC::EncodedJSValue ZigString__toAtomicValue(const ZigString* arg0, JSC::JSGlobalObject* arg1)
@@ -3760,27 +3764,27 @@ JSC::EncodedJSValue ZigString__toExternalValueWithCallback(const ZigString* arg0
 
 JSC::EncodedJSValue ZigString__toErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    return JSC::JSValue::encode(Zig::getErrorInstance(str, globalObject));
+    return JSC::JSValue::encode(Bun::installLazyStackIfFrameless(globalObject, Zig::getErrorInstance(str, globalObject)));
 }
 
 JSC::EncodedJSValue ZigString__toTypeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    return JSC::JSValue::encode(Zig::getTypeErrorInstance(str, globalObject));
+    return JSC::JSValue::encode(Bun::installLazyStackIfFrameless(globalObject, Zig::getTypeErrorInstance(str, globalObject)));
 }
 
 JSC::EncodedJSValue ZigString__toDOMExceptionInstance(const ZigString* str, JSC::JSGlobalObject* globalObject, WebCore::ExceptionCode code)
 {
-    return JSValue::encode(createDOMException(globalObject, code, toStringCopy(*str)));
+    return JSValue::encode(Bun::installLazyStackIfFrameless(globalObject, createDOMException(globalObject, code, toStringCopy(*str))));
 }
 
 JSC::EncodedJSValue ZigString__toSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    return JSC::JSValue::encode(Zig::getSyntaxErrorInstance(str, globalObject));
+    return JSC::JSValue::encode(Bun::installLazyStackIfFrameless(globalObject, Zig::getSyntaxErrorInstance(str, globalObject)));
 }
 
 JSC::EncodedJSValue ZigString__toRangeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    return JSC::JSValue::encode(Zig::getRangeErrorInstance(str, globalObject));
+    return JSC::JSValue::encode(Bun::installLazyStackIfFrameless(globalObject, Zig::getRangeErrorInstance(str, globalObject)));
 }
 
 JSC::JSPromise*
@@ -6338,17 +6342,17 @@ CPP_DECL void JSC__VM__performOpportunisticallyScheduledTasks(JSC::VM* vm, doubl
 
 extern "C" EncodedJSValue JSC__createError(JSC::JSGlobalObject* globalObject, const BunString* str)
 {
-    return JSValue::encode(JSC::createError(globalObject, str->toWTFString(BunString::ZeroCopy)));
+    return JSValue::encode(Bun::installLazyStackIfFrameless(globalObject, JSC::createError(globalObject, str->toWTFString(BunString::ZeroCopy))));
 }
 
 extern "C" EncodedJSValue JSC__createTypeError(JSC::JSGlobalObject* globalObject, const BunString* str)
 {
-    return JSValue::encode(JSC::createTypeError(globalObject, str->toWTFString(BunString::ZeroCopy)));
+    return JSValue::encode(Bun::installLazyStackIfFrameless(globalObject, JSC::createTypeError(globalObject, str->toWTFString(BunString::ZeroCopy))));
 }
 
 extern "C" EncodedJSValue JSC__createRangeError(JSC::JSGlobalObject* globalObject, const BunString* str)
 {
-    return JSValue::encode(JSC::createRangeError(globalObject, str->toWTFString(BunString::ZeroCopy)));
+    return JSValue::encode(Bun::installLazyStackIfFrameless(globalObject, JSC::createRangeError(globalObject, str->toWTFString(BunString::ZeroCopy))));
 }
 
 extern "C" EncodedJSValue ExpectMatcherUtils__getSingleton(JSC::JSGlobalObject* globalObject_)

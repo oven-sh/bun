@@ -758,9 +758,8 @@ JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * g
 
 void installLazyStackIfFrameless(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::ErrorInstance* error)
 {
-    // ErrorInstance::materializeErrorInfoIfNeeded does nothing for an empty trace. A null trace
-    // means Error.stackTraceLimit was deleted, which leaves .stack undefined in V8 as well.
     auto* stackTrace = error->stackTrace();
+    // Null means Error.stackTraceLimit was deleted; V8 leaves .stack undefined for that too.
     if (!stackTrace || !stackTrace->isEmpty())
         return;
 
@@ -770,6 +769,13 @@ void installLazyStackIfFrameless(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobal
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     error->putDirectCustomAccessor(vm, vm.propertyNames->stack, globalObject->m_lazyStackCustomGetterSetter.get(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor | 0);
+}
+
+JSC::JSValue installLazyStackIfFrameless(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
+{
+    if (auto* error = dynamicDowncast<JSC::ErrorInstance>(value))
+        installLazyStackIfFrameless(JSC::getVM(globalObject), globalObject, error);
+    return value;
 }
 
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

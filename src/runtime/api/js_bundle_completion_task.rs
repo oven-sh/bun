@@ -279,7 +279,7 @@ impl JSBundleCompletionTask {
                     global_this,
                     BunString::static_(b"Bundle failed"),
                 );
-                return promise.reject(global_this, aggregate_error);
+                return promise.reject_with_async_stack(global_this, aggregate_error);
             } else {
                 return promise.resolve(global_this, build_result);
             }

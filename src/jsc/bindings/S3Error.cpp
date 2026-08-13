@@ -6,6 +6,7 @@
 #include <wtf/Compiler.h>
 #include "ZigGeneratedClasses.h"
 #include "S3Error.h"
+#include "FormatStackTraceForJS.h"
 
 namespace Bun {
 
@@ -38,6 +39,7 @@ SYSV_ABI JSC::EncodedJSValue S3Error__toErrorInstance(const S3Error* arg0,
 
     auto prototype = defaultGlobalObject(globalObject)->m_S3ErrorStructure.getInitializedOnMainThread(globalObject);
     JSC::JSObject* result = JSC::ErrorInstance::create(vm, prototype, message, {});
+    installLazyStackIfFrameless(globalObject, result);
     result->putDirect(vm, vm.propertyNames->name, defaultGlobalObject(globalObject)->commonStrings().s3ErrorString(globalObject), JSC::PropertyAttribute::DontEnum | 0);
     if (err.code.tag != BunStringTag::Empty) {
         JSC::JSValue code = Bun::toJS(globalObject, err.code);

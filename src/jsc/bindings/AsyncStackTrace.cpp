@@ -163,10 +163,12 @@ extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObje
     // would desync m_stackTrace from the cached property.
     if (instance->hasMaterializedErrorInfo())
         return;
-    if (auto* existing = instance->stackTrace(); existing && !existing->isEmpty())
+    // Null: no capture at all (Error.stackTraceLimit deleted) or a stack string is already set (structuredClone, GC finalizer).
+    auto* existing = instance->stackTrace();
+    if (!existing || !existing->isEmpty())
         return;
 
-    size_t limit = globalObject->stackTraceLimit().value_or(10);
+    size_t limit = globalObject->stackTraceLimit().value_or(Bun::DEFAULT_ERROR_STACK_TRACE_LIMIT);
     if (limit) {
         WTF::Vector<JSC::StackFrame> frames;
         collectAsyncStackFramesFromPromise(vm, instance, promise, frames, limit);

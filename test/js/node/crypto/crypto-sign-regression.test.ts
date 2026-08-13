@@ -43,3 +43,20 @@ test("crypto.sign() supports all RSA digest variants", () => {
     expect(signature.length).toBeGreaterThan(0);
   }
 });
+
+test("an error from the sign job is passed to the callback with a .stack", async () => {
+  // A PSS salt longer than the modulus makes the signing itself fail, so the error is
+  // created when the thread pool job completes, with no JS on the stack (as in node).
+  const { promise, resolve } = Promise.withResolvers<Error | null>();
+  sign(
+    "sha256",
+    Buffer.from("test message"),
+    { key: DUMMY_PRIVATE_KEY, padding: constants.RSA_PKCS1_PSS_PADDING, saltLength: 4000 },
+    resolve,
+  );
+  const err = (await promise)!;
+
+  expect(err).toBeInstanceOf(Error);
+  expect(Object.prototype.hasOwnProperty.call(err, "stack")).toBe(true);
+  expect(err.stack).toBe(`Error: ${err.message}`);
+});

@@ -13,6 +13,7 @@
 #include <JavaScriptCore/ArrayBuffer.h>
 #include "CryptoKeyRaw.h"
 #include "JSKeyObject.h"
+#include "FormatStackTraceForJS.h"
 
 namespace Bun {
 
@@ -382,6 +383,7 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
     // Create error object with the message
     JSC::JSObject* errorObject = createError(globalObject, errorMessage);
     RETURN_IF_EXCEPTION(scope, {});
+    installLazyStackIfFrameless(globalObject, errorObject);
 
     PutPropertySlot messageSlot(errorObject, false);
     errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "message"_s), jsString(vm, errorMessage), messageSlot);

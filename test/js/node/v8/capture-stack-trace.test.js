@@ -1201,6 +1201,24 @@ describe("errors created by native code while no JS is running", () => {
     expect(err.stack).toStartWith(`${err.name}: ${err.message}\n    at async requestIt `);
   });
 
+  test("the AggregateError from a failed Bun.build() behaves the same way", async () => {
+    using dir = tempDir("frameless-error", { "entry.ts": `import "./does-not-exist";` });
+    const options = { entrypoints: [join(String(dir), "entry.ts")] };
+    const nothingAwaits = await new Promise(resolve => Bun.build(options).then(resolve, resolve));
+    async function buildIt() {
+      await Bun.build(options);
+    }
+    const awaited = await buildIt().then(
+      () => new Error("unexpected success"),
+      e => e,
+    );
+
+    expect(nothingAwaits).toBeInstanceOf(AggregateError);
+    expect(nothingAwaits.stack).toBe(`AggregateError: ${nothingAwaits.message}`);
+    expect(awaited).toBeInstanceOf(AggregateError);
+    expect(awaited.stack).toStartWith(`AggregateError: ${awaited.message}\n    at async buildIt `);
+  });
+
   test("Error.stackTraceLimit = 0 leaves the 'name: message' line, as in V8", () => {
     using dir = tempDir("frameless-error", {});
     const originalLimit = Error.stackTraceLimit;
@@ -1244,6 +1262,46 @@ describe("errors created by native code while no JS is running", () => {
       Error.stackTraceLimit = originalLimit;
     }
     expect({ code: systemError.code, stack: systemError.stack }).toEqual({ code: "ENOENT", stack: undefined });
+  });
+
+  // Bun.password.verify builds a plain Error once its thread pool job finishes and rejects
+  // through the async stack attach, so these exercise that path by itself.
+  function verifyNothingAwaits() {
+    return new Promise(resolve => Bun.password.verify("pw", "not a hash").then(resolve, resolve));
+  }
+  async function verifyAwaited() {
+    try {
+      await Bun.password.verify("pw", "not a hash");
+    } catch (e) {
+      return e;
+    }
+  }
+  function describeStack(err) {
+    const header = `${err.name}: ${err.message}`;
+    if (err.stack === undefined) return "undefined";
+    if (err.stack === header) return "header";
+    if (err.stack.startsWith(`${header}\n    at async verifyAwaited `)) return "header + async frame";
+    return err.stack;
+  }
+
+  test("Error.stackTraceLimit applies the same way whether or not something awaits a native rejection", async () => {
+    const originalLimit = Error.stackTraceLimit;
+    const results = {};
+    try {
+      Error.stackTraceLimit = 10;
+      results.limit10 = [describeStack(await verifyNothingAwaits()), describeStack(await verifyAwaited())];
+      Error.stackTraceLimit = 0;
+      results.limit0 = [describeStack(await verifyNothingAwaits()), describeStack(await verifyAwaited())];
+      delete Error.stackTraceLimit;
+      results.deleted = [describeStack(await verifyNothingAwaits()), describeStack(await verifyAwaited())];
+    } finally {
+      Error.stackTraceLimit = originalLimit;
+    }
+    expect(results).toEqual({
+      limit10: ["header", "header + async frame"],
+      limit0: ["header", "header"],
+      deleted: ["undefined", "undefined"],
+    });
   });
 
   // node's unhandled rejection warning only prints the rejection value's .stack when the

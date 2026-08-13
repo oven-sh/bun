@@ -857,8 +857,8 @@ describe.concurrent("bun-install", () => {
   // Registries such as Nexus and Artifactory answer manifest and tarball
   // requests with a redirect to the same host on another scheme or port
   // (https://github.com/oven-sh/bun/issues/15516). Like npm, bun keeps the
-  // token across such a redirect and drops it only once the redirect leaves
-  // the registry's hostname.
+  // token across such a redirect; it drops it once the redirect leaves the
+  // registry's hostname, and (unlike npm) when it downgrades https to http.
   describe("registry token across redirects", () => {
     const token = "secret-registry-token";
     const tgz = join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
@@ -866,23 +866,44 @@ describe.concurrent("bun-install", () => {
     const manifestPath = "/no-deps";
     const tarballPath = "/no-deps/-/no-deps-1.0.0.tgz";
 
+    // The registry lives on `registry`://127.0.0.1; `target` is the scheme and
+    // hostname it redirects to (the port always differs). https servers use
+    // the harness certificate, which the install trusts via --cafile.
     it.each([
       {
         name: "keeps the token when only the port changes",
+        registry: "http",
         target: "http://127.0.0.1",
         authorization: `Bearer ${token}`,
       },
       {
-        name: "keeps the token when the scheme and the port change",
+        name: "keeps the token when only the port changes (https registry)",
+        registry: "https",
         target: "https://127.0.0.1",
         authorization: `Bearer ${token}`,
       },
-      // The same machine, but a different hostname than the registry's.
-      { name: "drops the token when the hostname changes", target: "http://localhost", authorization: null },
-    ])("$name", async ({ target, authorization }) => {
-      // `target` (scheme and hostname; the port is whatever it gets) serves
-      // the manifest and the tarball unconditionally and records the
-      // Authorization header each hop arrived with.
+      {
+        name: "keeps the token when the redirect upgrades http to https",
+        registry: "http",
+        target: "https://127.0.0.1",
+        authorization: `Bearer ${token}`,
+      },
+      {
+        name: "drops the token when the redirect downgrades https to http",
+        registry: "https",
+        target: "http://127.0.0.1",
+        authorization: null,
+      },
+      {
+        // The same machine, but a different hostname than the registry's.
+        name: "drops the token when the hostname changes",
+        registry: "http",
+        target: "http://localhost",
+        authorization: null,
+      },
+    ])("$name", async ({ registry: registryScheme, target, authorization }) => {
+      // `target` serves the manifest and the tarball unconditionally and
+      // records the Authorization header each hop arrived with.
       const received: { pathname: string; authorization: string | null }[] = [];
       await using targetServer = Bun.serve({
         port: 0,
@@ -901,7 +922,7 @@ describe.concurrent("bun-install", () => {
                 "1.0.0": {
                   name: "no-deps",
                   version: "1.0.0",
-                  dist: { integrity, tarball: `http://127.0.0.1:${registry.port}${tarballPath}` },
+                  dist: { integrity, tarball: `${registryScheme}://127.0.0.1:${registry.port}${tarballPath}` },
                 },
               },
             });
@@ -915,6 +936,7 @@ describe.concurrent("bun-install", () => {
       await using registry = Bun.serve({
         port: 0,
         hostname: "127.0.0.1",
+        ...(registryScheme === "https" ? tls : {}),
         fetch(req) {
           if (req.headers.get("authorization") !== `Bearer ${token}`) {
             return new Response("unauthorized", { status: 401 });
@@ -926,7 +948,7 @@ describe.concurrent("bun-install", () => {
       using dir = tempDir("token-across-redirects", {
         "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
         ".npmrc": [
-          `registry=http://127.0.0.1:${registry.port}/`,
+          `registry=${registryScheme}://127.0.0.1:${registry.port}/`,
           `//127.0.0.1:${registry.port}/:_authToken=${token}`,
           ``,
         ].join("\n"),

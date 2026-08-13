@@ -391,7 +391,7 @@ if (isDockerEnabled()) {
           });
 
           // A parameterized query goes through COM_STMT_PREPARE before
-          // execute; retirement must wait for the query to finish.
+          // execute; cover that path end to end.
           const result = await sql`select SLEEP(2) as s, ${42} as x`;
           expect(result[0].x).toBe(42);
 

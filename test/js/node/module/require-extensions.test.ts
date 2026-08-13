@@ -275,6 +275,46 @@ ${padding}`,
     expect(exitCode).toBe(0);
   }
 });
+test("custom require extension still applies when the entry is a prebundled module", async () => {
+  // An already-bundled main module (the `// @bun` pragma emitted by
+  // `bun build --target=bun`) takes the same early return as a transpiler
+  // cache hit and used to leave the VM in its pre-load state.
+  using dir = tempDir("extensions-already-bundled", {
+    "c.custom": `module.exports = 'c dot custom';`,
+    "entry.js": `const Module = require("module");
+Module._extensions[".custom"] = function (module, filename) {
+  module._compile("module.exports = 'custom';", filename);
+};
+console.log(require("./c.custom"));
+`,
+  });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.js", "--target=bun", "--format=cjs", "--external=*.custom", "--outfile=out.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [buildStdout, buildStderr, buildExit] = await Promise.all([
+    build.stdout.text(),
+    build.stderr.text(),
+    build.exited,
+  ]);
+  expect(buildStderr).toBe("");
+  expect(buildExit).toBe(0);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "out.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("custom\n");
+  expect(exitCode).toBe(0);
+});
 test("mutating extensions is banned by some files", () => {
   // vercel is not allowed to mutate require.extensions
   const files = ["node_modules/next/dist/build/next-config-ts/index.js", "node_modules/@meteorjs/babel/index.js"];

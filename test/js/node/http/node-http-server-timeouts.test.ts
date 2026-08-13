@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setSystemTime, test } from "bun:test";
 import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
@@ -216,5 +216,91 @@ describe("node:http server timeout enforcement", () => {
       server.closeAllConnections();
       server.close();
     }
+  });
+});
+
+// The server notes when a connection's last response finished and, when the
+// socket timer fires, grants whatever is left of the keep-alive budget from
+// that mark. The mark has to be taken on the clock the timer runs on
+// (monotonic), not on Date.now(): bun:test's setSystemTime() (and
+// jest.useFakeTimers(), which overrides Date.now too) would otherwise decide
+// when, or whether, an idle connection gets closed.
+//
+// Each probe moves Date.now() by an hour once the last response has arrived,
+// then waits for the server to close the connection, timing it with
+// performance.now(), which setSystemTime() leaves alone. Not concurrent:
+// setSystemTime() is process-wide and the tests above time themselves with
+// Date.now().
+describe("keepAliveTimeout idle expiry ignores setSystemTime()", () => {
+  const KEEP_ALIVE_MS = 500;
+  // How long the server sits on the second request before answering it. The
+  // socket timer armed by the first response keeps counting down meanwhile,
+  // so it fires this much into the second response's idle period and the
+  // expiry has to be settled from the recorded mark.
+  const SLOW_RESPONSE_MS = 300;
+  const HOUR_MS = 60 * 60 * 1000;
+
+  async function probeIdleClose(options: { requests: 1 | 2; skewMs: number }) {
+    let requests = 0;
+    const server = http.createServer({ keepAliveTimeoutBuffer: 0 }, (req, res) => {
+      req.resume();
+      if (++requests === 2) {
+        setTimeout(() => res.end("response-body"), SLOW_RESPONSE_MS);
+      } else {
+        res.end("response-body");
+      }
+    });
+    server.keepAliveTimeout = KEEP_ALIVE_MS;
+    const port = await listen(server);
+    const socket = net.connect(port, "127.0.0.1");
+    try {
+      socket.setNoDelay(true);
+      socket.on("error", () => {});
+      const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+      socket.on("close", () => onClosed());
+
+      let received = "";
+      let responsesWanted = 0;
+      let onResponse = () => {};
+      socket.on("data", chunk => {
+        received += chunk.toString("latin1");
+        if (received.split("response-body").length - 1 >= responsesWanted) onResponse();
+      });
+      const request = () => {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        responsesWanted++;
+        onResponse = resolve;
+        socket.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
+        return promise;
+      };
+
+      await once(socket, "connect");
+      await request();
+      if (options.requests === 2) await request();
+      const lastResponseAt = performance.now();
+      setSystemTime(new Date(Date.now() + options.skewMs));
+      await closed;
+      return performance.now() - lastResponseAt;
+    } finally {
+      setSystemTime();
+      socket.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  }
+
+  test("a clock moved forwards does not close the connection before its idle budget is used up", async () => {
+    // Settled against Date.now(), the timer fire 200ms into the second idle
+    // period sees an hour of idle time and closes the connection right there.
+    const idleMs = await probeIdleClose({ requests: 2, skewMs: HOUR_MS });
+    expect(idleMs).toBeGreaterThanOrEqual(KEEP_ALIVE_MS - 150);
+  });
+
+  test("a clock moved backwards does not keep the idle connection open", async () => {
+    // Settled against Date.now(), the timer fire re-arms the connection for
+    // the budget plus the hour the clock went back, and this probe only
+    // returns once the test times out.
+    const idleMs = await probeIdleClose({ requests: 1, skewMs: -HOUR_MS });
+    expect(idleMs).toBeGreaterThanOrEqual(KEEP_ALIVE_MS - 150);
   });
 });

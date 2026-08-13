@@ -4,6 +4,14 @@ const NumberIsFinite = Number.isFinite;
 
 const TIMEOUT_MAX = 2 ** 31 - 1;
 
+/**
+ * Monotonic milliseconds for deadlines the runtime itself measures. Not
+ * `Date.now()` / `performance.now()`: bun:test's `setSystemTime()` and
+ * `useFakeTimers()` override both inside the engine (capturing the function
+ * does not help), which would freeze or skew an internal deadline.
+ */
+const monotonicNowMs = $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.monotonicNowMs", 0);
+
 function getTimerDuration(msecs, name) {
   validateNumber(msecs, name);
   if (msecs < 0 || !NumberIsFinite(msecs)) {
@@ -29,4 +37,5 @@ export default {
   // tests that inspect socket[kTimeout].
   kTimeout: Symbol.for("::buntimeout::"),
   getTimerDuration,
+  monotonicNowMs,
 };

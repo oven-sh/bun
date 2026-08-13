@@ -265,12 +265,28 @@ impl Binding {
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         // /$bunfs/ is in-memory; readdir_inner handles it (recursive included).
-        let is_bunfs = bun_standalone_graph::Graph::get().is_some()
-            && bun_standalone_graph::is_bun_standalone_file_path(rd_args.path.slice());
-        if rd_args.recursive && !is_bunfs {
+        if rd_args.recursive && !is_standalone_path(rd_args.path.slice()) {
             return Ok(AsyncReaddirRecursiveTask::create(global, rd_args, vm));
         }
         Ok(async_::Readdir::create(global, this, rd_args, vm))
+    }
+
+    /// `callAsync(.open)`. On Windows `async_::Open` is a libuv request, and
+    /// libuv cannot see the embedded `/$bunfs/` files, so those go to the
+    /// thread pool where `NodeFS::open` serves them the same way `openSync`
+    /// does. On POSIX `async_::Open` already is the thread-pool task.
+    pub(crate) fn open(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        run_async::<args::Open>(this, global, frame, |global, binding, open_args, vm| {
+            #[cfg(windows)]
+            if is_standalone_path(open_args.path.slice()) {
+                return async_::OpenStandalone::create(global, binding, open_args, vm);
+            }
+            async_::Open::create(global, binding, open_args, vm)
+        })
     }
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go
@@ -391,7 +407,6 @@ node_fs_bindings! {
     lstat_sync        / lstat             => Lstat,             args::Lstat,     ret::Lstat;
     mkdir_sync        / mkdir             => Mkdir,             args::Mkdir,     ret::Mkdir;
     mkdtemp_sync      / mkdtemp           => Mkdtemp,           args::MkdirTemp, ret::Mkdtemp;
-    open_sync         / open              => Open,              args::Open,      ret::Open;
     read_sync         / read              => Read,              args::Read,      ret::Read;
     write_sync        / write             => Write,             args::Write,     ret::Write;
     read_file_sync    / read_file         => ReadFile,          args::ReadFile,  ret::ReadFile;
@@ -414,13 +429,22 @@ node_fs_bindings! {
     fdatasync_sync    / fdatasync         => Fdatasync,         args::FdataSync, ret::Fdatasync;
 }
 
-// `readdirSync` goes through the generic sync path; only the async side is
-// special-cased above.
+// `readdirSync` / `openSync` go through the generic sync path; only their
+// async sides are special-cased above.
 impl Binding {
     pub(crate) const readdir_sync: NodeFSFunction =
         call_sync::<ret::Readdir, args::Readdir, { NodeFSFunctionEnum::Readdir }>();
+    pub(crate) const open_sync: NodeFSFunction =
+        call_sync::<ret::Open, args::Open, { NodeFSFunctionEnum::Open }>();
     // pub const statfs = callAsync(.statfs);
     // pub const statfsSync = callSync(.statfs);
+}
+
+/// Whether `path` is inside a compiled executable's embedded `/$bunfs/` tree,
+/// which `NodeFS` serves from memory instead of the real filesystem.
+fn is_standalone_path(path: &[u8]) -> bool {
+    bun_standalone_graph::Graph::get().is_some()
+        && bun_standalone_graph::is_bun_standalone_file_path(path)
 }
 
 pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {

@@ -318,6 +318,46 @@ fn standalone_module_graph() -> Option<&'static bun_standalone_graph::Graph> {
     bun_standalone_graph::Graph::get_ref()
 }
 
+/// Backs `fs.open()` of an embedded file: copies `contents` into an anonymous
+/// file and returns a descriptor for it with the offset at 0, so `read`,
+/// `pread`, `fstat` and `close` behave as they would on a regular file holding
+/// those bytes. On Linux that is a memfd; elsewhere (or without memfd support) a
+/// temp file that is unlinked before the descriptor is handed out, so closing
+/// the descriptor is all the cleanup there is.
+fn embedded_file_fd(contents: &[u8]) -> Maybe<FD> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if sys::can_use_memfd() {
+        // `memfd_create` latches `can_use_memfd()` off when the kernel or a
+        // seccomp policy refuses it; the temp file below is the fallback.
+        if let Ok(fd) = sys::memfd_create(c"bunfs", sys::MemfdFlags::NonExecutable) {
+            let file = sys::File::from_fd(fd);
+            file.pwrite_all(contents, 0)?;
+            return Ok(file.into_raw());
+        }
+    }
+
+    let mut name_buf = [0u8; 64];
+    let name = paths::fs::FileSystem::tmpname(b"bunfs", &mut name_buf, bun_core::fast_random())
+        .map_err(|_| sys::Error::from_code(E::ENAMETOOLONG, sys::Tag::open))?;
+    let mut path_buf = paths::path_buffer_pool::get();
+    let path = paths::resolve_path::join_abs_string_buf_z::<paths::platform::Auto>(
+        bun_resolver::fs::RealFS::tmpdir_path(),
+        &mut path_buf[..],
+        &[name.as_bytes()],
+    );
+    let file = sys::File::open(
+        path,
+        sys::O::RDWR | sys::O::CREAT | sys::O::EXCL | sys::O::CLOEXEC,
+        0o600,
+    )?;
+    let written = file.pwrite_all(contents, 0);
+    // The name only existed to get a descriptor; if unlinking it fails the
+    // descriptor is still good and the stray temp file is the only casualty.
+    let _ = Syscall::unlink(path);
+    written?;
+    Ok(file.into_raw())
+}
+
 /// Local shim for `Maybe(void)::aborted` (node.rs:302). `bun_sys::Maybe` is
 /// `core::result::Result`, which has no `aborted()` constructor; inline the
 /// sentinel error directly.
@@ -529,6 +569,12 @@ mod _async_tasks {
         pub(crate) type Mkdtemp =
             AsyncFSTask<ret::Mkdtemp, args::MkdirTemp, { NodeFSFunctionEnum::Mkdtemp }>;
         pub(crate) type Open = UVFSRequest<ret::Open, args::Open, { NodeFSFunctionEnum::Open }>;
+        /// `fs.open()` of an embedded `/$bunfs/` path: `NodeFS::open` serves it
+        /// from the thread pool, since `uv_fs_open` cannot see those files.
+        /// On POSIX `Open` already is this type.
+        #[cfg(windows)]
+        pub(crate) type OpenStandalone =
+            AsyncFSTask<ret::Open, args::Open, { NodeFSFunctionEnum::Open }>;
         pub(crate) type Read = UVFSRequest<ret::Read, args::Read, { NodeFSFunctionEnum::Read }>;
         pub(crate) type Readdir =
             AsyncFSTask<ret::Readdir, args::Readdir, { NodeFSFunctionEnum::Readdir }>;
@@ -5957,6 +6003,9 @@ impl NodeFS {
     }
 
     pub(crate) fn open(&mut self, args: &args::Open, _: Flavor) -> Maybe<ret::Open> {
+        if let Some(result) = Self::open_standalone(args) {
+            return result;
+        }
         let path = if cfg!(windows) && args.path.slice() == b"/dev/null" {
             // SAFETY: literal is NUL-terminated; len excludes the sentinel.
             ZStr::from_static(b"\\\\.\\NUL\0")
@@ -5967,6 +6016,33 @@ impl NodeFS {
             Err(err) => Err(err.with_path(args.path.slice())),
             Ok(fd) => Ok(fd),
         }
+    }
+
+    /// `open()` of a path inside a compiled executable's `/$bunfs/` tree.
+    /// `None` when the path is not embedded, so the caller falls through to the
+    /// real filesystem (same as `readFile`/`stat`/`readdir` above).
+    ///
+    /// Embedded files are read-only; a descriptor for one is a private copy of
+    /// its bytes (see [`embedded_file_fd`]), so any flag asking for write access
+    /// is refused up front instead of handing out a copy whose writes vanish.
+    fn open_standalone(args: &args::Open) -> Option<Maybe<ret::Open>> {
+        let graph = standalone_module_graph()?;
+        let path = args.path.slice();
+        let Some(file) = graph.find_ref(path) else {
+            return graph
+                .find_dir(path)
+                .then(|| Err(sys::Error::from_code(E::EISDIR, sys::Tag::open).with_path(path)));
+        };
+        if args.flags.as_int() & (sys::O::WRONLY | sys::O::RDWR | sys::O::TRUNC) != 0 {
+            return Some(Err(
+                sys::Error::from_code(E::EROFS, sys::Tag::open).with_path(path)
+            ));
+        }
+        Some(
+            embedded_file_fd(file.contents.as_bytes()).map_err(|err| {
+                sys::Error::from_code(err.get_errno(), sys::Tag::open).with_path(path)
+            }),
+        )
     }
 
     #[cfg(windows)]

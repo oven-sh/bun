@@ -1,5 +1,6 @@
 // https://github.com/oven-sh/bun/issues/15734
 import { describe, expect, test } from "bun:test";
+import { readdirSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join, sep } from "path";
 
@@ -20,12 +21,12 @@ async function compile(dir: string, extraArgs: string[] = []) {
   if (code !== 0) throw new Error(`compile failed (exit ${code})\n${stdout}\n${stderr}`);
 }
 
-async function run(dir: string) {
+async function run(dir: string, env: Record<string, string> = {}) {
   // cwd outside the build dir so the binary cannot accidentally find real files on disk.
   await using proc = Bun.spawn({
     cmd: [join(dir, "app" + exe)],
     cwd: process.platform === "win32" ? process.env.TEMP || "C:\\Windows\\Temp" : "/tmp",
-    env: bunEnv,
+    env: { ...bunEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -36,7 +37,8 @@ async function run(dir: string) {
 describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
   // One compiled binary exercises every CLI-side /$bunfs/ path we care about:
   // a file-loader asset's parent directory, an --asset directory tree, an
-  // --asset single file, and the ENOENT/ENOTDIR/EISDIR/EACCES error paths.
+  // --asset single file, fs.open()/createReadStream()/FileHandle on embedded
+  // files, and the ENOENT/ENOTDIR/EISDIR/EACCES/EROFS error paths.
   // These used to be four separate `bun build --compile` invocations.
   test(
     "CLI: file-loader asset, --asset dir + file, and /$bunfs/ fs semantics",
@@ -106,7 +108,41 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           readdirCode: errcode(() => fs.readdirSync(cfg)),
         };
 
-        console.log(JSON.stringify({ fileLoader, client, enoent, singleFile }));
+        // fs.open() hands out a real descriptor for an embedded file.
+        // createReadStream and FileHandle are built on open + read + close.
+        const buf = Buffer.alloc(64);
+        const fd = fs.openSync(nestedCss, "r");
+        const empty = fs.openSync(path.join(import.meta.dir, "empty.txt"), "r");
+        const open = {
+          firstRead: buf.subarray(0, fs.readSync(fd, buf, 0, buf.length, null)).toString(),
+          secondReadIsEof: fs.readSync(fd, buf, 0, buf.length, null),
+          pread: buf.subarray(0, fs.readSync(fd, buf, 0, 6, 5)).toString(),
+          fstat: { isFile: fs.fstatSync(fd).isFile(), size: fs.fstatSync(fd).size },
+          emptyRead: fs.readSync(empty, buf, 0, buf.length, null),
+          emptySize: fs.fstatSync(empty).size,
+          // highWaterMark: 4 forces several sequential reads through the descriptor
+          stream: Buffer.concat(await fs.createReadStream(indexHtml, { highWaterMark: 4 }).toArray()).toString(),
+          streamRange: Buffer.concat(await fs.createReadStream(nestedCss, { start: 5, end: 10 }).toArray()).toString(),
+          streamMissing: await new Promise<string>(resolve =>
+            fs.createReadStream(missing).on("error", (e: any) => resolve(e.code)),
+          ),
+          fileHandle: await fs.promises.open(cfg, "r").then(async fh => {
+            try {
+              return { content: await fh.readFile("utf8"), size: (await fh.stat()).size };
+            } finally {
+              await fh.close();
+            }
+          }),
+          writeCode: errcode(() => fs.openSync(nestedCss, "w")),
+          readWriteCode: errcode(() => fs.openSync(nestedCss, "r+")),
+          asyncWriteCode: await fs.promises.open(nestedCss, "w").then(() => "", (e: any) => e.code),
+          dirCode: errcode(() => fs.openSync(root)),
+          missingCode: errcode(() => fs.openSync(missing)),
+        };
+        fs.closeSync(fd);
+        fs.closeSync(empty);
+
+        console.log(JSON.stringify({ fileLoader, client, enoent, singleFile, open }));
       `,
         "data.txt": "hello",
         "client/index.html": "<!doctype html><h1>hi</h1>",
@@ -114,12 +150,11 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         "client/_app/immutable/app.css": "body{margin:0}",
         "client/_app/immutable/chunks/entry.js": "export default 1;",
         "config.json": `{"ok":true}`,
+        "empty.txt": "",
+        "scratch-tmp/.keep": "",
       });
 
-      await compile(String(dir), ["--asset", "./client", "--asset", "./config.json"]);
-      const { stdout, stderr, code } = await run(String(dir));
-      expect(stderr.trim()).toBe("");
-      const r = JSON.parse(stdout.trim());
+      await compile(String(dir), ["--asset", "./client", "--asset", "./config.json", "--asset", "./empty.txt"]);
 
       const expectedRecursive = [
         "_app",
@@ -131,47 +166,85 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         "index.html",
       ].sort();
 
-      expect(r).toEqual({
-        fileLoader: {
-          assetExists: true,
-          dirExists: true,
-          dirExistsTrailingSlash: true,
-          dirStatIsDir: true,
-          dirLstatIsDir: true,
-          accessOk: true,
-          accessWriteErr: "EACCES",
-          // the hashed file-loader name is covered by readdirHasAsset
-          readdir: expect.arrayContaining(["client", "config.json"]),
-          readdirHasAsset: true,
-        },
-        client: {
-          root: expect.stringMatching(/[/\\]root[/\\]client$/),
-          entries: ["_app", "favicon.svg", "index.html"],
-          byName: {
-            _app: { isDir: true, isFile: false },
-            "favicon.svg": { isDir: false, isFile: true },
-            "index.html": { isDir: false, isFile: true },
+      // open() on an embedded file is served from a memfd on Linux and from a
+      // temp file everywhere else (and on Linux without memfd), so the Linux run
+      // is repeated with memfd disabled to cover both. The binary's temp dir is
+      // pointed at scratch-tmp so the temp-file variant can be checked for leftovers.
+      const scratch = join(String(dir), "scratch-tmp");
+      const runs: Record<string, string>[] = [{}];
+      if (process.platform === "linux") runs.push({ BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" });
+      for (const extraEnv of runs) {
+        const { stdout, stderr, code } = await run(String(dir), {
+          TMPDIR: scratch,
+          TMP: scratch,
+          TEMP: scratch,
+          BUN_TMPDIR: scratch,
+          ...extraEnv,
+        });
+        expect(stderr.trim()).toBe("");
+        const r = JSON.parse(stdout.trim());
+
+        expect(r).toEqual({
+          fileLoader: {
+            assetExists: true,
+            dirExists: true,
+            dirExistsTrailingSlash: true,
+            dirStatIsDir: true,
+            dirLstatIsDir: true,
+            accessOk: true,
+            accessWriteErr: "EACCES",
+            // the hashed file-loader name is covered by readdirHasAsset
+            readdir: expect.arrayContaining(["client", "config.json", "empty.txt"]),
+            readdirHasAsset: true,
           },
-          indexHtmlExists: true,
-          indexHtmlSize: "<!doctype html><h1>hi</h1>".length,
-          indexHtmlContent: "<!doctype html><h1>hi</h1>",
-          nestedCssExists: true,
-          nestedCssContent: "body{margin:0}",
-          nestedCssViaReadFile: "body{margin:0}",
-          nestedDirIsDir: true,
-          readFileDirErr: "EISDIR",
-          recursive: expectedRecursive,
-          recursiveAsync: expectedRecursive,
-          embeddedFileCount: expect.any(Number),
-        },
-        enoent: { code: "ENOENT", exists: false },
-        singleFile: { exists: true, content: `{"ok":true}`, readdirCode: "ENOTDIR" },
-      });
-      // recursive uses the platform path separator (same as Node's real-fs recursive readdir)
-      expect(r.client.recursive.join("\n")).not.toContain(sep === "/" ? "\\" : "/");
-      // data.txt + config.json + 4 under client/
-      expect(r.client.embeddedFileCount).toBeGreaterThanOrEqual(6);
-      expect(code).toBe(0);
+          client: {
+            root: expect.stringMatching(/[/\\]root[/\\]client$/),
+            entries: ["_app", "favicon.svg", "index.html"],
+            byName: {
+              _app: { isDir: true, isFile: false },
+              "favicon.svg": { isDir: false, isFile: true },
+              "index.html": { isDir: false, isFile: true },
+            },
+            indexHtmlExists: true,
+            indexHtmlSize: "<!doctype html><h1>hi</h1>".length,
+            indexHtmlContent: "<!doctype html><h1>hi</h1>",
+            nestedCssExists: true,
+            nestedCssContent: "body{margin:0}",
+            nestedCssViaReadFile: "body{margin:0}",
+            nestedDirIsDir: true,
+            readFileDirErr: "EISDIR",
+            recursive: expectedRecursive,
+            recursiveAsync: expectedRecursive,
+            embeddedFileCount: expect.any(Number),
+          },
+          enoent: { code: "ENOENT", exists: false },
+          singleFile: { exists: true, content: `{"ok":true}`, readdirCode: "ENOTDIR" },
+          open: {
+            firstRead: "body{margin:0}",
+            secondReadIsEof: 0,
+            pread: "margin",
+            fstat: { isFile: true, size: "body{margin:0}".length },
+            emptyRead: 0,
+            emptySize: 0,
+            stream: "<!doctype html><h1>hi</h1>",
+            streamRange: "margin",
+            streamMissing: "ENOENT",
+            fileHandle: { content: `{"ok":true}`, size: `{"ok":true}`.length },
+            writeCode: "EROFS",
+            readWriteCode: "EROFS",
+            asyncWriteCode: "EROFS",
+            dirCode: "EISDIR",
+            missingCode: "ENOENT",
+          },
+        });
+        // recursive uses the platform path separator (same as Node's real-fs recursive readdir)
+        expect(r.client.recursive.join("\n")).not.toContain(sep === "/" ? "\\" : "/");
+        // data.txt + config.json + empty.txt + 4 under client/
+        expect(r.client.embeddedFileCount).toBeGreaterThanOrEqual(7);
+        expect(code).toBe(0);
+        // the temp file behind each open() was unlinked before its descriptor was handed out
+        expect(readdirSync(scratch).filter(name => name.endsWith(".bunfs"))).toEqual([]);
+      }
     },
     TIMEOUT,
   );

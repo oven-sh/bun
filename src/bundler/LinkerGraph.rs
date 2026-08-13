@@ -960,9 +960,9 @@ pub struct File {
     /// If "entry_point_kind" is not ".none", this is the index of the
     /// corresponding entry point chunk.
     ///
-    /// This is also initialized for files that are a SCB's generated
-    /// reference, pointing to its destination. This forms a lookup map from
-    /// a Source.Index to its output path inb reakOutputIntoPieces
+    /// The `Scb` unique keys resolve through this as well: a server component
+    /// boundary and its SSR copy are always entry points, and their keys
+    /// print the path of their entry point chunk.
     pub entry_point_chunk_index: u32,
 
     pub line_offset_table: bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc>,

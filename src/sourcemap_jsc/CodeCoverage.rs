@@ -576,9 +576,7 @@ impl ByteRangeMapping {
                     continue;
                 }
 
-                // Mark only the lines the function's code actually lands on as
-                // executable-but-not-executed, so comment and blank lines inside
-                // the body get no line record.
+                // Only lines the code lands on, so blank lines get no record.
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
                         line_starts,
@@ -698,10 +696,8 @@ impl ByteRangeMapping {
                     .expect("int cast");
                 let max: usize = usize::try_from(function.start_offset.max(function.end_offset))
                     .expect("int cast");
-                let mut min_line: u32 = u32::MAX;
-                let mut max_line: u32 = 0;
-
                 let did_fn_execute = function.execution_count > 0 || function.has_executed;
+                let mut has_mapping = false;
 
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
@@ -749,22 +745,21 @@ impl ByteRangeMapping {
                         if line >= line_count {
                             continue;
                         }
-                        min_line = min_line.min(line);
-                        max_line = max_line.max(line);
-
-                        // Mark only lines the function's code actually maps to as
-                        // executable-but-not-executed; functions that have executed
-                        // already have their lines tracked via statement blocks.
-                        if !did_fn_execute {
-                            executable_lines.set(line as usize);
-                            lines_which_have_executed.unset(line as usize);
-                            line_hits_slice[line as usize] = 0;
+                        has_mapping = true;
+                        if did_fn_execute {
+                            // Its lines are already tracked via statement blocks.
+                            break;
                         }
+
+                        // Only mapped lines, so comment and blank lines get no record.
+                        executable_lines.set(line as usize);
+                        lines_which_have_executed.unset(line as usize);
+                        line_hits_slice[line as usize] = 0;
                     }
                 }
 
                 // no sourcemaps? ignore it
-                if min_line == u32::MAX && max_line == 0 {
+                if !has_mapping {
                     continue;
                 }
 

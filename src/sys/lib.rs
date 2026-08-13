@@ -4024,11 +4024,7 @@ mod windows_impl {
         let utf8 = bun_paths::string_paths::from_w_path(buf, &wbuf[..len as usize]);
         Ok(utf8.len())
     }
-    // The NT-backed `mkdirat`, `renameat` and `unlinkat_with_flags` get their
-    // errors from helpers that report the NT step that failed (`open`,
-    // `NtSetInformationFile`) with no path. Re-tag them into the shape the
-    // POSIX arms return, the operation's own `Tag` plus the caller's path,
-    // which is what callers such as the shell builtins and `bun patch` print.
+    // The NT helpers tag errors with the failing step and no path; report the POSIX arms' shape.
     pub fn mkdirat(dir: impl AsFd, path: &ZStr, _mode: Mode) -> Maybe<()> {
         let dir = dir.as_fd();
         // Open with `op = OnlyCreate`, then close the resulting handle on

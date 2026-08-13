@@ -405,6 +405,12 @@ describe.concurrent("bun info", () => {
         config: "env",
       },
       {
+        name: "bun info with an unversioned spec and environment config",
+        args: ["info", "manifestless-latest-pkg", "name"],
+        packageName: "manifestless-latest-pkg",
+        config: "env-latest",
+      },
+      {
         name: "bun info with --registry before the spec",
         args: ["info", "--registry", "$REGISTRY", "manifestless-option-before-pkg@1.0.0", "name"],
         packageName: "manifestless-option-before-pkg",
@@ -532,8 +538,8 @@ describe.concurrent("bun info", () => {
         isolatedRegistryEnv(homeDir, xdgConfigDir),
       );
 
-      expect(code).toBe(1);
       expect(error).toContain("package.json");
+      expect(code).toBe(1);
       expect(requestCount).toBe(0);
       expect(readdirSync(testDir).sort()).toEqual(filesBefore);
       expect(readdirSync(homeDir).sort()).toEqual(homeFilesBefore);

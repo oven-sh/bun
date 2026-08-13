@@ -204,13 +204,10 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         let cli = CommandLineArguments::parse(Subcommand::Pm)?;
         let mut positionals = cli.positionals;
         let subcommand = Self::get_subcommand(&mut positionals);
-        let init_result = if strings::eql_comptime(subcommand, b"view") {
-            PackageManager::init_for_registry_view(
-                &mut *ctx,
-                cli,
-                Subcommand::Pm,
-                positionals.get(1).copied().unwrap_or_default(),
-            )
+        let view_spec = strings::eql_comptime(subcommand, b"view")
+            .then(|| positionals.get(1).copied().unwrap_or_default());
+        let init_result = if let Some(view_spec) = view_spec {
+            PackageManager::init_for_registry_view(&mut *ctx, cli, Subcommand::Pm, view_spec)
         } else {
             PackageManager::init(&mut *ctx, cli, Subcommand::Pm)
         };
@@ -297,13 +294,13 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             } else {
                 None
             };
-            let spec = if pm.options.positionals.len() > 1 {
-                pm.options.positionals[1]
-            } else {
-                b"".as_slice()
-            };
             let json_output = pm.options.json_output;
-            PmViewCommand::view(pm, spec, property_path, json_output)?;
+            PmViewCommand::view(
+                pm,
+                view_spec.unwrap_or_default(),
+                property_path,
+                json_output,
+            )?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"bin") {
             // SAFETY: `FileSystem::instance()` is initialised during

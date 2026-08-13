@@ -802,6 +802,8 @@ impl PackageManager {
         init(ctx, cli, subcommand)
     }
 
+    /// Initializes a registry view, allowing a missing root manifest only when
+    /// `spec` names an npm package; path, URL, and empty specs stay project-bound.
     pub fn init_for_registry_view(
         ctx: Command::Context,
         cli: CommandLineArguments,

@@ -50,9 +50,7 @@ struct State {
     evtloop: EventLoopHandle,
     #[cfg(windows)]
     is_reading: bool,
-    /// Re-entrancy guard for `drain_readers()`. `start()` can be reached from
-    /// inside a drain (via the Yield trampoline) and must not recurse; the
-    /// outer drain loop will pick up any reader appended in the meantime.
+    /// Set while `drain_readers` runs; a nested call returns and the outer loop handles new entries.
     draining: bool,
     /// Weak self-ref so `keepalive()` can bump the strong count from `&self`
     /// without unsafe Arc-pointer reconstruction. Set via `Arc::new_cyclic` in
@@ -233,15 +231,7 @@ impl IOReader {
             if s.is_reading {
                 return Yield::suspended();
             }
-            // A reader's done-handler can start a new command that calls
-            // `add_reader`+`start()` on this same IOReader after the pipe has
-            // reached EOF. On Windows the underlying BufferedReader has
-            // already nulled its `source` by then, so `start_with_current_pipe`
-            // would unwrap a `None`. There is nothing left to read; drain the
-            // newly-registered reader(s) now so they don't hang.
-            // `drain_readers()` is re-entrancy-guarded so calling it from
-            // inside an existing drain (via the Yield trampoline) is a no-op —
-            // the outer loop handles the new entry.
+            // Already at EOF (the source is gone): just notify whoever registered late.
             if self.reader().is_done() {
                 self.drain_readers();
                 return Yield::suspended();
@@ -339,19 +329,7 @@ impl IOReader {
         self.drain_readers();
     }
 
-    /// Notify every registered reader that this IOReader is finished,
-    /// including readers appended while draining.
-    ///
-    /// `run_yield` drives the Yield trampoline which can (a) call
-    /// `add_reader()` on this same IOReader — iterating a snapshot would miss
-    /// those, and leaving already-notified entries in `readers` would let
-    /// `add_reader`'s `contains()` dedup match a freed-then-reused `NodeId` —
-    /// and (b) drop the last external Arc. Pop each reader out via
-    /// `swap_remove(0)` before dispatching so neither hazard applies.
-    ///
-    /// Re-entrant calls (reached via `start()` from inside the trampoline)
-    /// are no-ops; the outermost loop owns the drain and will pick up
-    /// anything appended in the meantime. Keeps `Yield::run` nesting bounded.
+    /// Pops before dispatching: a callback may `add_reader` (must be notified too) or free this entry's node.
     fn drain_readers(&self) {
         let s = self.state();
         if s.draining {
@@ -361,9 +339,6 @@ impl IOReader {
         let interp = s.interp;
         while !self.state().readers.is_empty() {
             let r = self.state().readers.swap_remove(0);
-            // `SystemError` isn't `Clone` yet, so we keep the source
-            // `sys::Error` (which IS `Clone`) and re-derive a fresh
-            // `SystemError` per callee.
             let ee = self
                 .state()
                 .raw_err

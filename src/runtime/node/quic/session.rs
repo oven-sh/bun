@@ -1099,12 +1099,8 @@ impl QuicSession {
                 let last_stream_id = JSValue::from_int64_no_truncate(global, -1)?;
                 if let Some(cb) = callbacks::get(global, "onSessionGoaway") {
                     let vm = global.bun_vm().as_mut();
-                    vm.event_loop_ref().run_callback(
-                        cb,
-                        global,
-                        self.handle(),
-                        &[last_stream_id],
-                    );
+                    vm.event_loop_ref()
+                        .run_callback(cb, global, self.handle(), &[last_stream_id]);
                 }
             }
             SessionEvent::StreamWantsTrailers { stream } => {
@@ -1122,8 +1118,7 @@ impl QuicSession {
                 pairs,
                 kind,
             } => {
-                let Some(stream) = self.live_stream(stream).filter(|s| s.wants_headers())
-                else {
+                let Some(stream) = self.live_stream(stream).filter(|s| s.wants_headers()) else {
                     return Ok(());
                 };
                 let handle = stream.handle();
@@ -1175,12 +1170,8 @@ impl QuicSession {
                 };
                 if let Some(wakeup) = stream.take_wakeup() {
                     let vm = global.bun_vm().as_mut();
-                    vm.event_loop_ref().run_callback(
-                        wakeup.get(),
-                        global,
-                        JSValue::UNDEFINED,
-                        &[],
-                    );
+                    vm.event_loop_ref()
+                        .run_callback(wakeup.get(), global, JSValue::UNDEFINED, &[]);
                 }
             }
             SessionEvent::Datagram { payload, early } => {
@@ -1275,17 +1266,14 @@ impl QuicSession {
                 let requested_arr =
                     JSValue::create_array_from_iter(global, server_versions.into_iter(), |v| {
                         Ok(JSValue::js_number(v as f64))
-                    })
-                    ?;
+                    })?;
                 // Node passes the locally-configured range as
                 // `[min_version, version]` (session.cc
                 // EmitVersionNegotiation).
-                let supported_arr = JSValue::create_array_from_iter(
-                    global,
-                    [min, requested].into_iter(),
-                    |v| Ok(JSValue::js_number(v as f64)),
-                )
-                ?;
+                let supported_arr =
+                    JSValue::create_array_from_iter(global, [min, requested].into_iter(), |v| {
+                        Ok(JSValue::js_number(v as f64))
+                    })?;
                 if let Some(cb) = callbacks::get(global, "onSessionVersionNegotiation") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
@@ -1321,8 +1309,7 @@ impl QuicSession {
                 let array =
                     JSValue::create_array_from_iter(global, ranges.into_iter(), |(o, n)| {
                         bun_core::String::clone_utf8(&payload[o..o + n]).to_js(global)
-                    })
-                    ?;
+                    })?;
                 if let Some(cb) = callbacks::get(global, "onSessionOrigin") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref()
@@ -1519,7 +1506,11 @@ impl QuicSession {
             self.with_state(|s| s.headers_supported = 2);
         }
         let alpn = alpn_bytes
-            .map(|b| bun_core::String::clone_utf8(&b).to_js(global).or_report(global))
+            .map(|b| {
+                bun_core::String::clone_utf8(&b)
+                    .to_js(global)
+                    .or_report(global)
+            })
             .unwrap_or(JSValue::UNDEFINED);
         let cipher_version = bun_core::String::static_(b"TLSv1.3")
             .to_js(global)
@@ -1723,7 +1714,11 @@ impl QuicSession {
         let code_js = JSValue::from_uint64_no_truncate(global, code).or_report(global);
         let reason_js = reason
             .filter(|r| !r.is_empty())
-            .map(|r| bun_core::String::clone_utf8(&r).to_js(global).or_report(global))
+            .map(|r| {
+                bun_core::String::clone_utf8(&r)
+                    .to_js(global)
+                    .or_report(global)
+            })
             .unwrap_or(JSValue::UNDEFINED);
         let endpoint = self.endpoint.get();
         if !endpoint.is_null() {
@@ -2104,7 +2099,9 @@ impl QuicSession {
             return;
         }
         let id_js = JSValue::from_uint64_no_truncate(global, id).or_report(global);
-        let status_js = bun_core::String::static_(b"abandoned").to_js(global).or_report(global);
+        let status_js = bun_core::String::static_(b"abandoned")
+            .to_js(global)
+            .or_report(global);
         if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref()

@@ -362,6 +362,13 @@ interface QueryNormalizationAdapter {
   placeholder(index: number): string;
   /** Pushes a plain bound value and returns its SQL fragment (always consumes one binding index). */
   bindParam(value: unknown, binding_values: unknown[], index: number): string;
+  /**
+   * Prepares the text of a raw (`sql.unsafe`) fragment carrying `count` parameters of its own for being
+   * spliced into a query that already binds `offset` values ahead of it. Positional ("?") placeholders
+   * bind in order of appearance, so the text is returned as-is; numbered ("$N") placeholders must be
+   * shifted by `offset`.
+   */
+  offsetFragmentPlaceholders(fragment: string, offset: number, count: number): string;
   /** Detects the SQL command preceding a helper, throwing if helpers are not allowed there. */
   getHelperCommand(query: string): SQLCommand;
   /** Whether the UPDATE helper should omit the SET keyword (MySQL upsert). */
@@ -422,13 +429,19 @@ function normalizeQuery(
 
         if (value instanceof Query) {
           const q = value as QueryType<any, any>;
-          const [sub_query, sub_values] = normalizeQuery(adapter, q[_strings], q[_values], binding_idx);
+          const sub_strings = q[_strings];
+          let [sub_query, sub_values] = normalizeQuery(adapter, sub_strings, q[_values], binding_idx);
+          const sub_values_count = sub_values.length;
+          if (typeof sub_strings === "string" && sub_values_count > 0) {
+            // sql.unsafe(text, params) numbers its placeholders from $1 as if it ran on its own
+            sub_query = adapter.offsetFragmentPlaceholders(sub_query, binding_idx - 1, sub_values_count);
+          }
 
           query += sub_query;
-          for (let j = 0; j < sub_values.length; j++) {
+          for (let j = 0; j < sub_values_count; j++) {
             binding_values.push(sub_values[j]);
           }
-          binding_idx += sub_values.length;
+          binding_idx += sub_values_count;
         } else if (value instanceof SQLHelper) {
           const command = adapter.getHelperCommand(query);
           const { columns, value: items } = value as SQLHelper<any>;
@@ -965,6 +978,10 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
   bindParam(value: unknown, binding_values: unknown[], index: number): string {
     return pushBindParam(this, value, binding_values, index);
+  }
+
+  offsetFragmentPlaceholders(fragment: string, _offset: number, _count: number): string {
+    return fragment;
   }
 
   isUpsertUpdate(_query: string): boolean {

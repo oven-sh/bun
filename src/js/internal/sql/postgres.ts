@@ -247,6 +247,173 @@ function wrapPostgresError(error: Error | PostgresErrorOptions) {
   return new PostgresError(error.message, error);
 }
 
+// prettier-ignore
+const enum Char {
+  DOUBLE_QUOTE = 34,  // "
+  DOLLAR = 36,        // $
+  SINGLE_QUOTE = 39,  // '
+  ASTERISK = 42,      // *
+  MINUS = 45,         // -
+  FORWARD_SLASH = 47, // /
+  ZERO = 48,          // 0
+  NINE = 57,          // 9
+  UPPER_A = 65,       // A
+  UPPER_E = 69,       // E
+  UPPER_Z = 90,       // Z
+  BACKSLASH = 92,     // \
+  UNDERSCORE = 95,    // _
+  LOWER_A = 97,       // a
+  LOWER_E = 101,      // e
+  LOWER_Z = 122,      // z
+}
+
+// The predicates below get NaN once an index runs past the end of the text, so the scanning loops
+// that call them stop there on their own.
+function isDigit(c: number) {
+  return c >= Char.ZERO && c <= Char.NINE;
+}
+
+// ident_start in the server's lexer: letters, underscore and every non-ASCII character
+function isIdentStart(c: number) {
+  return (
+    (c >= Char.LOWER_A && c <= Char.LOWER_Z) ||
+    (c >= Char.UPPER_A && c <= Char.UPPER_Z) ||
+    c === Char.UNDERSCORE ||
+    c >= 0x80
+  );
+}
+
+// ident_cont additionally allows digits and `$`, which is what makes `col$1` a single identifier
+function isIdentCont(c: number) {
+  return isIdentStart(c) || isDigit(c) || c === Char.DOLLAR;
+}
+
+// The tag of a `$tag$` delimiter is ident_cont minus `$`
+function isDollarQuoteTagChar(c: number) {
+  return isIdentStart(c) || isDigit(c);
+}
+
+/** `i` is the index right after an opening quote; returns the index right after the matching closing quote. */
+function skipQuoted(text: string, i: number, quote: number, backslashEscapes: boolean): number {
+  const len = text.length;
+  while (i < len) {
+    const c = text.charCodeAt(i++);
+    if (c === quote) {
+      if (text.charCodeAt(i) !== quote) {
+        return i;
+      }
+      // a doubled quote is part of the content
+      i++;
+    } else if (backslashEscapes && c === Char.BACKSLASH) {
+      i++;
+    }
+  }
+  return len;
+}
+
+/** `i` is the index right after a comment opener; returns the index right after the closer. Block comments nest. */
+function skipBlockComment(text: string, i: number): number {
+  const len = text.length;
+  let depth = 1;
+  while (i < len && depth > 0) {
+    const c = text.charCodeAt(i);
+    const next = text.charCodeAt(i + 1);
+    if (c === Char.FORWARD_SLASH && next === Char.ASTERISK) {
+      depth++;
+      i += 2;
+    } else if (c === Char.ASTERISK && next === Char.FORWARD_SLASH) {
+      depth--;
+      i += 2;
+    } else {
+      i++;
+    }
+  }
+  return i;
+}
+
+/**
+ * Rewrites every parameter reference `$k` in a `sql.unsafe` fragment to `$(k + offset)`, where `offset` is
+ * the number of values the enclosing query binds ahead of it. Tokenizes the way the server does (with
+ * standard_conforming_strings on, the default) so `$k` inside string literals, E'' strings, dollar-quoted
+ * strings, quoted identifiers, comments and identifiers such as `col$1` stays as written.
+ *
+ * `count` is the number of values the fragment carries. Any `$k` outside 1..count would, once shifted,
+ * silently read one of the enclosing query's values instead, so it is rejected up front.
+ */
+function offsetParameterReferences(fragment: string, offset: number, count: number): string {
+  const len = fragment.length;
+  let out = "";
+  let copied = 0;
+  let i = 0;
+  while (i < len) {
+    const c = fragment.charCodeAt(i);
+    switch (c) {
+      case Char.DOLLAR: {
+        let j = i + 1;
+        if (isDigit(fragment.charCodeAt(j))) {
+          while (isDigit(fragment.charCodeAt(j))) j++;
+          const k = Number(fragment.slice(i + 1, j));
+          if (k < 1 || k > count) {
+            throw new SyntaxError(
+              `Nested sql.unsafe fragment references $${k} but was given ${count} parameter${count === 1 ? "" : "s"}`,
+            );
+          }
+          out += fragment.slice(copied, i + 1) + (k + offset);
+          copied = i = j;
+          break;
+        }
+        if (isIdentStart(fragment.charCodeAt(j))) {
+          j++;
+          while (isDollarQuoteTagChar(fragment.charCodeAt(j))) j++;
+        }
+        if (fragment.charCodeAt(j) === Char.DOLLAR) {
+          // `$$` or `$tag$` opens a string that runs until the same delimiter appears again
+          const delimiter = fragment.slice(i, j + 1);
+          const end = fragment.indexOf(delimiter, j + 1);
+          i = end === -1 ? len : end + delimiter.length;
+        } else {
+          i = j;
+        }
+        break;
+      }
+      case Char.SINGLE_QUOTE:
+      case Char.DOUBLE_QUOTE:
+        i = skipQuoted(fragment, i + 1, c, false);
+        break;
+      case Char.MINUS:
+        if (fragment.charCodeAt(i + 1) === Char.MINUS) {
+          const end = fragment.indexOf("\n", i + 2);
+          i = end === -1 ? len : end + 1;
+        } else {
+          i++;
+        }
+        break;
+      case Char.FORWARD_SLASH:
+        if (fragment.charCodeAt(i + 1) === Char.ASTERISK) {
+          i = skipBlockComment(fragment, i + 2);
+        } else {
+          i++;
+        }
+        break;
+      default: {
+        if (!isIdentStart(c)) {
+          i++;
+          break;
+        }
+        const next = fragment.charCodeAt(i + 1);
+        if ((c === Char.UPPER_E || c === Char.LOWER_E) && next === Char.SINGLE_QUOTE) {
+          // E'...' is the one string form in which a backslash escapes the following character
+          i = skipQuoted(fragment, i + 2, next, true);
+        } else {
+          i++;
+          while (isIdentCont(fragment.charCodeAt(i))) i++;
+        }
+      }
+    }
+  }
+  return copied === 0 ? fragment : out + fragment.slice(copied);
+}
+
 initPostgres(
   function onResolvePostgresQuery(query, result, commandTag, count, queries, is_last) {
     if (is_last) {
@@ -522,6 +689,10 @@ class PostgresAdapter
       return `$${index}::${value.arrayType}[] `;
     }
     return pushBindParam(this, value, binding_values, index);
+  }
+
+  offsetFragmentPlaceholders(fragment: string, offset: number, count: number): string {
+    return offsetParameterReferences(fragment, offset, count);
   }
 
   #listener: ListenConnection | null = null;

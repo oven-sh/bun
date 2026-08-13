@@ -63,6 +63,31 @@ Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
 {
 }
 
+// On Windows, WTF::URL::fileSystemPath handles UNC paths
+// (`file://server/share/etc` -> `\\server\share\etc`), so the host check
+// only runs on posix systems. This matches `Bun.fileURLToPath` and throws
+// Node's `ERR_INVALID_FILE_URL_HOST` when the host is neither empty nor
+// `"localhost"`.
+ExceptionOr<void> validateFileURLHost(JSC::JSGlobalObject* globalObject, const WTF::URL& urlObject)
+{
+#if !OS(WINDOWS)
+    if (urlObject.host().length() > 0 && urlObject.host() != "localhost"_s) [[unlikely]] {
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+#if OS(DARWIN)
+        Bun::ERR::INVALID_FILE_URL_HOST(scope, globalObject, "darwin"_s);
+#else
+        Bun::ERR::INVALID_FILE_URL_HOST(scope, globalObject, "linux"_s);
+#endif
+        return Exception { ExceptionCode::ExistingExceptionError };
+    }
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(urlObject);
+#endif
+    return {};
+}
+
 ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const String& urlInit, WorkerOptions&& options)
 {
     ASSERT(context.isContextThread());
@@ -72,6 +97,9 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         WTF::URL urlObject { url };
         if (!urlObject.isValid())
             return Exception { TypeError, makeString("Invalid file URL: \""_s, urlInit, '"') };
+        auto hostCheck = validateFileURLHost(context.jsGlobalObject(), urlObject);
+        if (hostCheck.hasException())
+            return hostCheck.releaseException();
         url = urlObject.fileSystemPath();
     }
 

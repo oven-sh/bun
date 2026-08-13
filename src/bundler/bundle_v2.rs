@@ -1515,10 +1515,7 @@ pub mod bv2_impl {
         unsafe { (*p).into_static() }
     }
 
-    /// An unresolvable `require()` / `require.resolve()` / `import()` of a package
-    /// that the importer's own package.json marks optional in `peerDependenciesMeta`
-    /// is downgraded to a runtime throw, like a `require()` inside `try/catch`.
-    /// Static `import` cannot be deferred to runtime, so it is not included.
+    /// Only import kinds whose failure can be deferred to a runtime throw qualify.
     fn is_missing_optional_peer(
         resolver: &mut _resolver::Resolver<'_>,
         source_dir: &[u8],

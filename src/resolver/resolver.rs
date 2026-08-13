@@ -3896,20 +3896,18 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Wildcard `exports`/`imports` target isn't a file: probe extensions like `load_as_file` does.
-    ///
-    /// Each probe goes through [`DirInfo::get_entry`] so the map walk happens
-    /// under `entries_mutex`; `dirname_fd` was captured under the caller's
-    /// critical section.
-    /// `DirEntry::get` folds ASCII case, so an extension probe can hit an entry
-    /// spelled differently on disk. Such a hit only stands if the probed
-    /// spelling itself opens (case-insensitive filesystem); otherwise it would
-    /// shadow a later extension that matches exactly (#22686).
+    /// Whether `dir/file_name` opens as spelled. Extension probes call this when
+    /// the case-folded `DirEntry::get` hit is spelled differently on disk (#22686).
     fn probed_name_exists(&self, dir: &[u8], file_name: &[u8]) -> bool {
         let parts = [dir, file_name];
         bun_sys::exists(self.fs_ref().abs_buf(&parts, bufs!(index)))
     }
 
+    /// Wildcard `exports`/`imports` target isn't a file: probe extensions like `load_as_file` does.
+    ///
+    /// Each probe goes through [`DirInfo::get_entry`] so the map walk happens
+    /// under `entries_mutex`; `dirname_fd` was captured under the caller's
+    /// critical section.
     fn probe_wildcard_extensions(
         &mut self,
         resolved_dir_info: DirInfoRef,

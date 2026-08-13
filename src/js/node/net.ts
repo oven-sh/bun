@@ -3042,10 +3042,7 @@ function lookupAndConnectMultiple(self, lookup, host, options, dnsopts, port, lo
   });
 }
 
-// Built per dispatched attempt so a setServername()/setSession() made after
-// tls.connect() returned (even between autoSelectFamily attempts) is what gets
-// dialed. The per-connect() handshake state, onConnectEnd included, is set up
-// once in Socket.prototype.connect.
+// Per attempt, not per connect(): setServername()/setSession() calls made after tls.connect() must reach the dial.
 function clientTLSOptionsForAttempt(self, options, port) {
   const bunTLS = self[bunTlsSymbol];
   if (typeof bunTLS !== "function") return undefined;

@@ -34,6 +34,7 @@ BUN_DECLARE_HOST_FUNCTION(JSMock__jsSetSystemTime);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsRestoreAllMocks);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsClearAllMocks);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsResetAllMocks);
+BUN_DECLARE_HOST_FUNCTION(JSMock__jsResetModules);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsSpyOn);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsMockFn);
 
@@ -1481,6 +1482,18 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsResetAllMocks, (JSC::JSGlobalObject * globalO
 {
     JSMock__resetAllMocks(uncheckedDowncast<Zig::GlobalObject>(globalObject));
     return JSValue::encode(jsUndefined());
+}
+
+BUN_DEFINE_HOST_FUNCTION(JSMock__jsResetModules, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // jest.mock() registrations live in onLoadPlugins and deliberately survive this.
+    defaultGlobalObject(lexicalGlobalObject)->clearModuleRegistryAndRequireCache();
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSValue::encode(callframe->thisValue());
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))

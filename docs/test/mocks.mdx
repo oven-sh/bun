@@ -470,6 +470,35 @@ test("foo, bar, baz", () => {
 
 Call `mock.restore()` in an `afterEach` block, or in your test preload script, instead of repeating cleanup in every test.
 
+### Reset Modules
+
+`jest.resetModules()` (and its `vi.resetModules()` alias) clears the module registry, the same thing `delete require.cache[id]` does for every loaded module at once, so the next `require()` or dynamic `import()` re-evaluates the module from scratch. This is useful when a module keeps top-level state that should not bleed between tests:
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { beforeEach, expect, jest, test } from "bun:test";
+
+beforeEach(() => {
+  jest.resetModules();
+});
+
+test("fresh module state", () => {
+  const counter = require("./counter");
+  counter.increment();
+  expect(counter.get()).toBe(1);
+});
+
+test("state is reset", () => {
+  const counter = require("./counter");
+  expect(counter.get()).toBe(0);
+});
+```
+
+Modules imported with a static `import` at the top of the test file are not affected: those bindings were resolved when the file loaded. Only loads that happen after the reset see a fresh copy.
+
+Module mocks registered with `jest.mock()` / `mock.module()` survive `resetModules()` and continue to intercept subsequent loads. The mock factory is not run again: loads after the reset are built from the object the factory returned the first time, so the mock functions inside it keep their recorded calls. (Jest re-runs the factory after `resetModules()`; Vitest does not.)
+
+As with `delete require.cache[id]` in Node.js, a module evicted by the reset still appears in the `module.children` of the module that `require()`d it, so copies created by repeated resets within one file stay in memory until that file finishes. Modules loaded with `import()` are not linked to their importer this way and are collected once nothing references them.
+
 ## Vitest Compatibility
 
 For added compatibility with tests written for Vitest, Bun provides the `vi` object as an alias for parts of the Jest mocking API:
@@ -491,6 +520,7 @@ test("vitest compatibility", () => {
   // vi.restoreAllMocks
   // vi.resetAllMocks
   // vi.clearAllMocks
+  // vi.resetModules
 });
 ```
 

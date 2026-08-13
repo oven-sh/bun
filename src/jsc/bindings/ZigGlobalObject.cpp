@@ -155,6 +155,7 @@
 #include "streams/JSWritableStreamDefaultController.h"
 #include "streams/JSWritableStreamDefaultWriter.h"
 #include "libusockets.h"
+#include "IsolatedModuleCache.h"
 #include "ModuleLoader.h"
 #include "napi_external.h"
 #include "napi_handle_scope.h"
@@ -3561,16 +3562,27 @@ template void GlobalObject::visitOutputConstraints(JSCell*, SlotVisitor&);
 
 // DEFINE_VISIT_CHILDREN(Zig::GlobalObject);
 
-void GlobalObject::reload()
+void GlobalObject::clearModuleRegistryAndRequireCache()
 {
     auto& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     {
         auto* moduleLoader = this->moduleLoader();
+        // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread under cellLock().
         WTF::Locker locker { moduleLoader->cellLock() };
         moduleLoader->clearAll();
     }
+    // --isolate caches transpiled sources by path in front of the file read; those go too.
+    Bun::IsolatedModuleCache::clear(vm);
     this->requireMap()->clear(this);
+    RETURN_IF_EXCEPTION(scope, );
+}
+
+void GlobalObject::reload()
+{
+    auto& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    this->clearModuleRegistryAndRequireCache();
     RETURN_IF_EXCEPTION(scope, );
 
     // If we run the GC every time, we will never get the SourceProvider cache hit.
@@ -4282,14 +4294,8 @@ void GlobalObject::forbidExecution()
     // Drop the module registry and require() cache so module-level bindings become unreachable
     // for the final collection (their ExternalStringImpl deallocators must run before ~VM).
     {
-        auto* moduleLoader = this->moduleLoader();
-        // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread under cellLock().
-        WTF::Locker locker { moduleLoader->cellLock() };
-        moduleLoader->clearAll();
-    }
-    {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        requireMap()->clear(this);
+        clearModuleRegistryAndRequireCache();
         scope.clearException();
     }
 

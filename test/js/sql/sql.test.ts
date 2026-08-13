@@ -787,30 +787,8 @@ if (isDockerEnabled()) {
       expect(onclose).toHaveBeenCalledTimes(1);
     });
 
-    test("Idle timeout fires only when the connection is truly idle", async () => {
-      const onClosePromise = Promise.withResolvers();
-      const onclose = mock(err => {
-        onClosePromise.resolve(err);
-      });
-      const onconnect = mock();
-      await using sql = postgres({
-        ...options,
-        idle_timeout: 1,
-        onconnect,
-        onclose,
-      });
-      // A query longer than idle_timeout must not be killed by the idle timer (#30646).
-      expect(await sql`select pg_sleep(2)`).toEqual([{ pg_sleep: "" }]);
-      expect(onconnect).toHaveBeenCalled();
-      // The timer must not have fired while the query was in flight.
-      expect(onclose).not.toHaveBeenCalled();
-      // After the query returns, the connection is idle — the timer fires shortly after.
-      const err = await onClosePromise.promise;
-      expect(err).toBeInstanceOf(SQL.SQLError);
-      expect(err).toBeInstanceOf(SQL.PostgresError);
-      expect(err.code).toBe(`ERR_POSTGRES_IDLE_TIMEOUT`);
-      expect(onclose).toHaveBeenCalledTimes(1);
-    });
+    // "Idle timeout does not kill an in-flight query (#30646)" below covers
+    // the in-flight case (the old "Idle timeout works at start" asserted the kill).
 
     test("Idle timeout is reset when a query is run", async () => {
       const onClosePromise = Promise.withResolvers();
@@ -924,8 +902,7 @@ if (isDockerEnabled()) {
       });
 
       // A parameterized query uses a named statement (Parse+Describe+Sync gets
-      // its own ReadyForQuery before Bind+Execute). Retirement must wait for
-      // the query to finish, not fire on the prepare round-trip.
+      // its own ReadyForQuery before Bind+Execute); cover that path end to end.
       const result = await sql`select pg_sleep(2), ${42}::int as x`;
       expect(result[0].x).toBe(42);
 

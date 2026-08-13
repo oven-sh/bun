@@ -669,6 +669,13 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
         return {};
     }
 
+    // Appending a trace to itself would make appendVector copy out of the buffer
+    // it just reallocated (the span overload does not rebase the source
+    // pointer), and the clear() below would then wipe the trace.
+    if (source == destination) {
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
     // Once .stack is materialized the frames are discarded and never read again;
     // installing new ones only trips ASSERT(!m_errorInfoMaterialized) in
     // computeErrorInfo when GC finalizes the error.

@@ -1,7 +1,7 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -993,7 +993,22 @@ test("captureStackTrace does not crash when stackTraceLimit is non-numeric", () 
   }
 });
 
-// Both of these abort the process when they fail, so they run in a child.
+test("Error.appendStackTrace moves the source's frames into the destination", () => {
+  function inner() {
+    try {
+      null();
+    } catch (e) {
+      return e;
+    }
+  }
+  const source = inner();
+  const destination = new Error("destination");
+  Error.appendStackTrace(source, destination);
+  expect(destination.stack).toContain("at inner");
+});
+
+// The rest of these abort the process (or trip ASAN) when they fail, so each
+// runs its scenario in a child.
 test.concurrent("Error.appendStackTrace does not abort when stackTraceLimit is non-numeric or deleted", async () => {
   const src = `
     class Source {
@@ -1008,8 +1023,11 @@ test.concurrent("Error.appendStackTrace does not abort when stackTraceLimit is n
     Error.appendStackTrace(source, destination);
     Error.appendStackTrace(new Error("a"), new Error("b"));
 
-    delete Error.stackTraceLimit;
+    Error.stackTraceLimit = undefined;
     Error.appendStackTrace(new Error("c"), new Error("d"));
+
+    delete Error.stackTraceLimit;
+    Error.appendStackTrace(new Error("e"), new Error("f"));
 
     process.stdout.write(JSON.stringify({ appended: destination.stack.includes("at new Source") }));
   `;
@@ -1045,6 +1063,84 @@ test.concurrent("Error.appendStackTrace is a no-op once the destination's .stack
     exitCode: 0,
   });
 });
+
+test.concurrent(
+  "Error.appendStackTrace onto errors materialized through .sourceURL does not assert when GC finalizes them",
+  async () => {
+    // Reading any of the lazily materialized properties (.stack, .line,
+    // .column, .sourceURL) discards the native frames. The errors are created
+    // inside eval'd functions so that each iteration's frames point at code GC
+    // can reclaim, which is what makes finalizeUnconditionally look at them.
+    const src = `
+      const keep = [];
+      for (let i = 0; i < 200; i++) {
+        eval(\`(function inner\${i}() {
+          const a = new Error();
+          const b = new Error();
+          a.sourceURL;
+          b.sourceURL;
+          Error.appendStackTrace(a, b);
+          keep.push(b);
+          const c = new Error();
+          const d = new Error();
+          d.sourceURL;
+          Error.appendStackTrace(c, d);
+          keep.push(c, d);
+        })();\`);
+      }
+      Bun.gc(true);
+      Bun.gc(true);
+      process.stdout.write("ok");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+  },
+);
+
+test.concurrent(
+  "Error.appendStackTrace with the same error as source and destination leaves its trace alone",
+  async () => {
+    // The trace needs enough frames that appending it to itself reallocates the
+    // vector; the default stackTraceLimit of 10 is plenty once f() has recursed.
+    const src = `
+      function f(n) {
+        if (n > 0) return f(n - 1) + 1;
+        try {
+          null();
+        } catch (e) {
+          Error.appendStackTrace(e, e);
+          // Without the guard the trace ends up empty and .stack is undefined.
+          process.stdout.write(JSON.stringify({ frames: String(e.stack).split("\\n").filter(line => line.includes("at f ")).length }));
+        }
+        return 0;
+      }
+      f(64);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      // WTF allocations normally come from bmalloc, where ASAN cannot see the
+      // freed buffer; Malloc=1 routes them through the system allocator.
+      // detect_leaks=0 keeps LeakSanitizer from reporting JSC's exit-time
+      // allocations under that allocator, and symbolize=0 keeps a failing child
+      // from spending seconds symbolizing the report.
+      env: isASAN
+        ? {
+            ...bunEnv,
+            Malloc: "1",
+            ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0", "symbolize=0"].filter(Boolean).join(":"),
+          }
+        : bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify({ frames: 10 }), stderr: "", exitCode: 0 });
+  },
+);
 
 test("Error.stackTraceLimit default matches the limit captureStackTrace applies", async () => {
   // Run in a fresh process so nothing has written to Error.stackTraceLimit yet.

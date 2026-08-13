@@ -9,7 +9,8 @@ import { join } from "node:path";
 // second request never answered. Such a request is now held until the response
 // ahead of it completes and is dispatched then, so responses stay in request
 // order (RFC 9112 9.3.2); one held behind a Connection: close request is dropped
-// with the connection (RFC 9112 9.6).
+// with the connection (RFC 9112 9.6), and one held behind a request that turns
+// the connection into a WebSocket is dropped with the HTTP state.
 
 type RawResponse = { statusLine: string; headers: Record<string, string>; body: string };
 
@@ -207,52 +208,85 @@ function holdingHandler() {
 // onWritable when the second request head is parsed.
 const BIG_BODY_LENGTH = 16 * 1024 * 1024;
 
+const big = Buffer.alloc(BIG_BODY_LENGTH, "x").toString("latin1");
+
+// The ways a big response body reaches the socket. The handler is synchronous
+// in each case, so the response is complete as far as the app is concerned when
+// the second head is parsed; what is still outstanding is the body transfer:
+// uWS draining a buffered body's tail through onWritable, or the runtime's file
+// pump (sendfile over plain TCP on Linux, read+write chunks elsewhere) for a
+// Bun.file() returned from the handler or served by a file route.
+type BigBody = {
+  name: string;
+  // How /big is served (`dir` holds big.txt). `hits` records every request
+  // that reaches the fetch handler; a route answers /big without it.
+  serve(dir: string, hits: string[]): { fetch(req: Request): Response; routes?: Record<string, Response> };
+  expectedHits: string[];
+};
+const recordingHandler = (hits: string[], bigResponse?: () => Response) => (req: Request) => {
+  const path = new URL(req.url).pathname;
+  hits.push(path);
+  return path === "/big" && bigResponse ? bigResponse() : plainResponse(req);
+};
+const bigBodies: BigBody[] = [
+  {
+    name: "a buffered body",
+    serve: (_dir, hits) => ({ fetch: recordingHandler(hits, () => new Response(big)) }),
+    expectedHits: ["/big", "/small"],
+  },
+  {
+    name: "a Bun.file() body returned from the handler",
+    serve: (dir, hits) => ({ fetch: recordingHandler(hits, () => new Response(Bun.file(join(dir, "big.txt")))) }),
+    expectedHits: ["/big", "/small"],
+  },
+  {
+    name: "a Bun.file() route",
+    serve: (dir, hits) => ({
+      routes: { "/big": new Response(Bun.file(join(dir, "big.txt"))) },
+      fetch: recordingHandler(hits),
+    }),
+    expectedHits: ["/small"],
+  },
+];
+
 describe.each(transports)("$name", transport => {
-  // The response ahead is complete as far as the (sync) handler is concerned;
-  // only uWS's drain of the buffered body's tail is outstanding.
-  it.if(transport.supported)(
-    "a request pipelined behind a buffered body larger than the socket buffer gets the whole body, then its own response",
-    async () => {
-      using dir = tempDir("serve-pipelining", {});
-      const big = Buffer.alloc(BIG_BODY_LENGTH, "x").toString("latin1");
-      const hits: string[] = [];
-      using server = Bun.serve({
-        ...transport.listen(String(dir)),
-        fetch(req) {
-          const path = new URL(req.url).pathname;
-          hits.push(path);
-          return path === "/big" ? new Response(big) : plainResponse(req);
-        },
-      });
-      using client = await RawClient.connect(transport.target(server, String(dir)));
+  describe.each(bigBodies)("$name", bigBody => {
+    it.if(transport.supported)(
+      "larger than the socket buffer is delivered whole to a client that pipelined a request behind it, which is then answered",
+      async () => {
+        using dir = tempDir("serve-pipelining", { "big.txt": big });
+        const hits: string[] = [];
+        using server = Bun.serve({ ...transport.listen(String(dir)), ...bigBody.serve(String(dir), hits) });
+        using client = await RawClient.connect(transport.target(server, String(dir)));
 
-      client.write(request("/big") + request("/small"));
-      await client.until(c => c.responses.length === 2);
+        client.write(request("/big") + request("/small"));
+        await client.until(c => c.responses.length === 2);
 
-      expect({
-        hits,
-        closed: client.closed,
-        responses: client.responses.map(({ statusLine, headers, body }) => ({
-          statusLine,
-          contentLength: headers["content-length"],
-          bodyLength: body.length,
-          bodyIsIntact: body === big || body === "body of /small",
-        })),
-      }).toEqual({
-        hits: ["/big", "/small"],
-        closed: false,
-        responses: [
-          {
-            statusLine: "HTTP/1.1 200 OK",
-            contentLength: String(BIG_BODY_LENGTH),
-            bodyLength: BIG_BODY_LENGTH,
-            bodyIsIntact: true,
-          },
-          { statusLine: "HTTP/1.1 200 OK", contentLength: "14", bodyLength: 14, bodyIsIntact: true },
-        ],
-      });
-    },
-  );
+        expect({
+          hits,
+          closed: client.closed,
+          responses: client.responses.map(({ statusLine, headers, body }) => ({
+            statusLine,
+            contentLength: headers["content-length"],
+            bodyLength: body.length,
+            bodyIsIntact: body === big || body === "body of /small",
+          })),
+        }).toEqual({
+          hits: bigBody.expectedHits,
+          closed: false,
+          responses: [
+            {
+              statusLine: "HTTP/1.1 200 OK",
+              contentLength: String(BIG_BODY_LENGTH),
+              bodyLength: BIG_BODY_LENGTH,
+              bodyIsIntact: true,
+            },
+            { statusLine: "HTTP/1.1 200 OK", contentLength: "14", bodyLength: 14, bodyIsIntact: true },
+          ],
+        });
+      },
+    );
+  });
 
   it.if(transport.supported)(
     "requests pipelined behind an async handler are dispatched one at a time, each after the response ahead of it",
@@ -344,6 +378,60 @@ it("a request pipelined behind a request body that the handler is still consumin
   });
 });
 
+// The held bytes are re-parsed from the top when they are released: a request
+// with a body gets its body back, and whatever is behind it is held again while
+// that request's own response is pending (here until a Connection: close request
+// ends the connection after its response).
+it("a held request with a body is dispatched with its body, and the request behind it waits for that response in turn", async () => {
+  const handler = holdingHandler();
+  const uploads: string[] = [];
+  using server = Bun.serve({
+    ...tcp,
+    async fetch(req) {
+      if (new URL(req.url).pathname !== "/upload") return handler.fetch(req);
+      handler.hits.push("/upload");
+      uploads.push(await req.text());
+      return new Response(`uploaded ${uploads.at(-1)}`);
+    },
+  });
+  using client = await RawClient.connect(tcpOnly.target(server, ""));
+
+  client.write(
+    request("/hold") +
+      "POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello" +
+      request("/last", "Connection: close\r\n"),
+  );
+  await Promise.race([handler.entered("/hold"), client.until(c => c.closed)]);
+  await probe(tcpOnly, server, "");
+  expect({ hits: handler.hits, closed: client.closed }).toEqual({ hits: ["/hold", "/probe"], closed: false });
+
+  handler.release("/hold");
+  await client.until(c => c.closed);
+  expect({ hits: handler.hits, uploads, responses: client.responses.map(summarize) }).toEqual({
+    hits: ["/hold", "/probe", "/upload", "/last"],
+    uploads: ["hello"],
+    responses: [ok("body of /hold"), ok("uploaded hello"), ok("body of /last")],
+  });
+});
+
+it("held bytes that are not a valid request get the error response after the response ahead of them, not instead of it", async () => {
+  const handler = holdingHandler();
+  using server = Bun.serve({ ...tcp, fetch: handler.fetch });
+  using client = await RawClient.connect(tcpOnly.target(server, ""));
+
+  client.write(request("/hold") + "GET /bad HTTP/9.9\r\nHost: x\r\n\r\n");
+  await Promise.race([handler.entered("/hold"), client.until(c => c.closed)]);
+  await probe(tcpOnly, server, "");
+  expect({ hits: handler.hits, closed: client.closed }).toEqual({ hits: ["/hold", "/probe"], closed: false });
+
+  handler.release("/hold");
+  await client.until(c => c.closed);
+  expect({ hits: handler.hits, responses: client.responses.map(summarize) }).toEqual({
+    hits: ["/hold", "/probe"],
+    responses: [ok("body of /hold"), { statusLine: "HTTP/1.1 505 HTTP Version Not Supported", body: "" }],
+  });
+});
+
 describe("a request pipelined behind a Connection: close request", () => {
   // (An HTTP/1.0 request line marks the connection the same way.)
   const closingThenAnother = request("/hold", "Connection: close\r\n") + request("/never");
@@ -388,60 +476,107 @@ describe("a request pipelined behind a Connection: close request", () => {
   });
 });
 
-it("a WebSocket upgrade pipelined behind an async handler is performed once the response ahead of it is out", async () => {
-  const handler = holdingHandler();
-  using server = Bun.serve({
-    ...tcp,
-    fetch(req, server) {
-      if (new URL(req.url).pathname !== "/ws") return handler.fetch(req);
-      handler.hits.push("/ws");
-      return server.upgrade(req) ? undefined : new Response("not upgraded", { status: 400 });
-    },
-    websocket: {
-      message(ws, message) {
-        ws.send(message);
-      },
-    },
-  });
-  using client = await RawClient.connect(tcpOnly.target(server, ""));
-
-  client.write(
-    request("/hold") +
-      request(
-        "/ws",
-        "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
-      ),
+describe("WebSocket upgrade", () => {
+  const upgradeRequest = request(
+    "/ws",
+    "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
   );
-  await Promise.race([handler.entered("/hold"), client.until(c => c.closed)]);
-  await probe(tcpOnly, server, "");
-  expect({ hits: handler.hits, closed: client.closed }).toEqual({ hits: ["/hold", "/probe"], closed: false });
+  // RFC 6455 1.3: the accept value for the sample nonce above.
+  const switching = {
+    statusLine: "HTTP/1.1 101 Switching Protocols",
+    body: "",
+    accept: "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=",
+  };
+  const withAccept = ({ statusLine, headers, body }: RawResponse) => ({
+    statusLine,
+    body,
+    accept: headers["sec-websocket-accept"] as string | undefined,
+  });
+  // A masked text frame "hi" (mask key 1 2 3 4); the server echoes it unmasked.
+  const maskedHiFrame = new Uint8Array([0x81, 0x82, 1, 2, 3, 4, "h".charCodeAt(0) ^ 1, "i".charCodeAt(0) ^ 2]);
+  const echoedHiFrame = [0x81, 0x02, "h".charCodeAt(0), "i".charCodeAt(0)];
 
-  handler.release("/hold");
-  await client.until(c => c.responses.length === 2);
-  expect({
-    hits: handler.hits,
-    closed: client.closed,
-    responses: client.responses.map(({ statusLine, headers, body }) => ({
-      statusLine,
-      body,
-      accept: headers["sec-websocket-accept"],
-    })),
-  }).toEqual({
-    hits: ["/hold", "/probe", "/ws"],
-    closed: false,
-    responses: [
-      { statusLine: "HTTP/1.1 200 OK", body: "body of /hold", accept: undefined },
-      // RFC 6455 1.3: the accept value for the sample nonce above.
-      { statusLine: "HTTP/1.1 101 Switching Protocols", body: "", accept: "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=" },
-    ],
+  // /ws is upgraded from the handler itself, or (held: true) from a continuation
+  // the test releases; every other path is the holding handler's.
+  function serveWithUpgrade(handler: ReturnType<typeof holdingHandler>, { held }: { held: boolean }) {
+    const entered = Promise.withResolvers<void>();
+    const released = Promise.withResolvers<void>();
+    const server = Bun.serve({
+      ...tcp,
+      fetch(req, server) {
+        if (new URL(req.url).pathname !== "/ws") return handler.fetch(req);
+        handler.hits.push("/ws");
+        const upgrade = () => (server.upgrade(req) ? undefined : new Response("not upgraded", { status: 400 }));
+        if (!held) return upgrade();
+        entered.resolve();
+        return released.promise.then(upgrade);
+      },
+      websocket: {
+        message(ws, message) {
+          ws.send(message);
+        },
+      },
+    });
+    return { server, upgradeEntered: entered.promise, releaseUpgrade: released.resolve };
+  }
+
+  async function expectEcho(client: RawClient) {
+    client.write(maskedHiFrame);
+    await client.until(c => c.unparsed.length >= echoedHiFrame.length);
+    expect({ closed: client.closed, frame: [...client.unparsed] }).toEqual({ closed: false, frame: echoedHiFrame });
+  }
+
+  it("pipelined behind an async handler is performed once the response ahead of it is out", async () => {
+    const handler = holdingHandler();
+    using server = serveWithUpgrade(handler, { held: false }).server;
+    using client = await RawClient.connect(tcpOnly.target(server, ""));
+
+    client.write(request("/hold") + upgradeRequest);
+    await Promise.race([handler.entered("/hold"), client.until(c => c.closed)]);
+    await probe(tcpOnly, server, "");
+    expect({ hits: handler.hits, closed: client.closed }).toEqual({ hits: ["/hold", "/probe"], closed: false });
+
+    handler.release("/hold");
+    await client.until(c => c.responses.length === 2);
+    expect({ hits: handler.hits, closed: client.closed, responses: client.responses.map(withAccept) }).toEqual({
+      hits: ["/hold", "/probe", "/ws"],
+      closed: false,
+      responses: [{ statusLine: "HTTP/1.1 200 OK", body: "body of /hold", accept: undefined }, switching],
+    });
+
+    // The connection is the WebSocket now.
+    await expectEcho(client);
   });
 
-  // The connection is the WebSocket now: a masked text frame "hi" (mask key
-  // 1 2 3 4) is echoed back as an unmasked one.
-  client.write(new Uint8Array([0x81, 0x82, 1, 2, 3, 4, "h".charCodeAt(0) ^ 1, "i".charCodeAt(0) ^ 2]));
-  await client.until(c => c.unparsed.length >= 4);
-  expect({ closed: client.closed, frame: [...client.unparsed] }).toEqual({
-    closed: false,
-    frame: [0x81, 0x02, "h".charCodeAt(0), "i".charCodeAt(0)],
+  // The request held behind the handshake is discarded with the HTTP state when
+  // the connection becomes a WebSocket (as bytes trailing a synchronous upgrade
+  // in the same read always were), and holding it must not leave the WebSocket's
+  // reads switched off.
+  it("performed by an async handler with a request pipelined behind it drops that request and reads frames", async () => {
+    const handler = holdingHandler();
+    const { upgradeEntered, releaseUpgrade, ...serving } = serveWithUpgrade(handler, { held: true });
+    using server = serving.server;
+    using client = await RawClient.connect(tcpOnly.target(server, ""));
+
+    client.write(upgradeRequest + request("/never"));
+    await Promise.race([upgradeEntered, client.until(c => c.closed)]);
+    await probe(tcpOnly, server, "");
+    expect({ hits: handler.hits, closed: client.closed }).toEqual({ hits: ["/ws", "/probe"], closed: false });
+
+    releaseUpgrade();
+    await client.until(c => c.responses.length === 1);
+    expect({ closed: client.closed, responses: client.responses.map(withAccept) }).toEqual({
+      closed: false,
+      responses: [switching],
+    });
+
+    await expectEcho(client);
+    // The echo round trip above means the server has long since processed
+    // everything it received before the frame; /never was not part of it.
+    await probe(tcpOnly, server, "");
+    expect({ hits: handler.hits, responses: client.responses.length }).toEqual({
+      hits: ["/ws", "/probe", "/probe"],
+      responses: 1,
+    });
   });
 });

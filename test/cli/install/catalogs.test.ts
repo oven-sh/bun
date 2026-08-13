@@ -497,6 +497,80 @@ describe("update", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Catalog entries written as `npm:` aliases have to keep naming the aliased package when they
+  // are rewritten: the alias keys themselves do not exist in the registry.
+  test.each([
+    {
+      args: [] as string[],
+      expectedCatalog: {
+        "aliased-range": "npm:no-deps@~1.0.1",
+        "aliased-bare": "npm:no-deps@^2.0.0",
+        "aliased-scoped-bare": "npm:@types/no-deps@^2.0.0",
+      },
+      expectedRangeVersion: "1.0.1",
+    },
+    {
+      args: ["--latest"],
+      expectedCatalog: {
+        "aliased-range": "npm:no-deps@~2.0.0",
+        "aliased-bare": "npm:no-deps@^2.0.0",
+        "aliased-scoped-bare": "npm:@types/no-deps@^2.0.0",
+      },
+      expectedRangeVersion: "2.0.0",
+    },
+  ])(
+    "update $args keeps the alias target of npm: aliases in catalogs",
+    async ({ args, expectedCatalog, expectedRangeVersion }) => {
+      const { packageDir } = await registry.createTestDir();
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "catalog-update-aliases",
+            workspaces: {
+              packages: ["packages/*"],
+              catalog: {
+                "aliased-range": "npm:no-deps@~1.0.0",
+                "aliased-bare": "npm:no-deps",
+                "aliased-scoped-bare": "npm:@types/no-deps",
+              },
+            },
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "pkg1", "package.json"),
+          JSON.stringify({
+            name: "pkg1",
+            dependencies: {
+              "aliased-range": "catalog:",
+              "aliased-bare": "catalog:",
+              "aliased-scoped-bare": "catalog:",
+            },
+          }),
+        ),
+      ]);
+      await runBunInstall(bunEnv, packageDir);
+
+      const { err, exitCode } = await runUpdate(packageDir, ...args);
+      expect(err).not.toContain("error:");
+
+      expect((await file(join(packageDir, "package.json")).json()).workspaces.catalog).toEqual(expectedCatalog);
+      expect(await file(join(packageDir, "node_modules", "aliased-range", "package.json")).json()).toEqual({
+        name: "no-deps",
+        version: expectedRangeVersion,
+      });
+      expect(await file(join(packageDir, "node_modules", "aliased-bare", "package.json")).json()).toEqual({
+        name: "no-deps",
+        version: "2.0.0",
+      });
+      expect(await file(join(packageDir, "node_modules", "aliased-scoped-bare", "package.json")).json()).toEqual({
+        name: "@types/no-deps",
+        version: "2.0.0",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test("update <pkg> --latest keeps the catalog reference", async () => {
     const { packageDir } = await registry.createTestDir();
     await createUpdateMonorepo(packageDir, "catalog-update-targeted");

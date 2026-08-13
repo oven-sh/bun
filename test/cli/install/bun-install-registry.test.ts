@@ -5361,6 +5361,163 @@ describe("update", () => {
         version: "1.1.0",
       });
     });
+    // `no-deps` and `@types/no-deps` both have 1.x releases and `latest` = 2.0.0.
+    // Every `npm:` form `bun update` rewrites must keep pointing at the aliased package:
+    // the alias name itself (`aliased-dep`) does not exist in the registry.
+    const aliasUpdateCases: {
+      before: string;
+      installed: string;
+      args: string[];
+      after: string;
+      realName?: string;
+    }[] = [
+      // --latest with a package name used to request `latest` of `aliased-dep` itself (404)
+      {
+        before: "npm:no-deps@^1.0.0",
+        installed: "1.1.0",
+        args: ["aliased-dep", "--latest"],
+        after: "npm:no-deps@^2.0.0",
+      },
+      {
+        before: "npm:no-deps@~1.0.0",
+        installed: "1.0.1",
+        args: ["aliased-dep", "--latest"],
+        after: "npm:no-deps@~2.0.0",
+      },
+      {
+        before: "npm:no-deps@1.0.0",
+        installed: "1.0.0",
+        args: ["aliased-dep", "--latest"],
+        after: "npm:no-deps@2.0.0",
+      },
+      {
+        before: "npm:no-deps@latest",
+        installed: "2.0.0",
+        args: ["aliased-dep", "--latest"],
+        after: "npm:no-deps@^2.0.0",
+      },
+      { before: "npm:no-deps", installed: "2.0.0", args: ["aliased-dep", "--latest"], after: "npm:no-deps@^2.0.0" },
+      {
+        before: "npm:@types/no-deps@~1.0.0",
+        installed: "1.0.0",
+        args: ["aliased-dep", "--latest"],
+        after: "npm:@types/no-deps@~2.0.0",
+        realName: "@types/no-deps",
+      },
+      {
+        before: "npm:@types/no-deps",
+        installed: "2.0.0",
+        args: ["aliased-dep", "--latest"],
+        after: "npm:@types/no-deps@^2.0.0",
+        realName: "@types/no-deps",
+      },
+      // a request spelling out the alias target is still resolved against that target
+      {
+        before: "npm:no-deps@~1.0.0",
+        installed: "1.0.1",
+        args: ["aliased-dep@npm:no-deps", "--latest"],
+        after: "npm:no-deps@~2.0.0",
+      },
+      // without a version after the alias target, the `npm:<name>@` prefix used to be dropped
+      // (`"aliased-dep": "^2.0.0"`, which the next install resolves as a different package)
+      { before: "npm:no-deps", installed: "2.0.0", args: ["aliased-dep"], after: "npm:no-deps@^2.0.0" },
+      { before: "npm:no-deps", installed: "2.0.0", args: [], after: "npm:no-deps@^2.0.0" },
+      { before: "npm:no-deps", installed: "2.0.0", args: ["--latest"], after: "npm:no-deps@^2.0.0" },
+      {
+        before: "npm:@types/no-deps",
+        installed: "2.0.0",
+        args: ["aliased-dep"],
+        after: "npm:@types/no-deps@^2.0.0",
+        realName: "@types/no-deps",
+      },
+      {
+        before: "npm:@types/no-deps",
+        installed: "2.0.0",
+        args: ["--latest"],
+        after: "npm:@types/no-deps@^2.0.0",
+        realName: "@types/no-deps",
+      },
+    ];
+    test.each(aliasUpdateCases)(
+      `"aliased-dep": "$before" + bun update $args -> "$after"`,
+      async ({ before, installed, args, after, realName = "no-deps" }) => {
+        await write(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            dependencies: {
+              "aliased-dep": before,
+            },
+          }),
+        );
+
+        await runBunInstall(env, packageDir);
+        expect(await file(join(packageDir, "node_modules", "aliased-dep", "package.json")).json()).toMatchObject({
+          name: realName,
+          version: installed,
+        });
+
+        await runBunUpdate(env, packageDir, args);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+        expect(await file(packageJson).json()).toEqual({
+          name: "foo",
+          dependencies: {
+            "aliased-dep": after,
+          },
+        });
+        expect(await file(join(packageDir, "node_modules", "aliased-dep", "package.json")).json()).toMatchObject({
+          name: realName,
+          version: "2.0.0",
+        });
+
+        // the rewritten literal still installs (it must not name `aliased-dep` itself)
+        await runBunInstall(env, packageDir, { savesLockfile: false });
+      },
+    );
+    test("update specific aliased package with --latest alongside a regular package", async () => {
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          devDependencies: {
+            "aliased-dep": "npm:no-deps@^1.0.0",
+          },
+          dependencies: {
+            "a-dep": "1.0.1",
+            "no-deps": "~1.0.0",
+          },
+        }),
+      );
+
+      await runBunInstall(env, packageDir);
+
+      await runBunUpdate(env, packageDir, ["aliased-dep", "no-deps", "--latest"]);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+      expect(await file(packageJson).json()).toEqual({
+        name: "foo",
+        devDependencies: {
+          "aliased-dep": "npm:no-deps@^2.0.0",
+        },
+        dependencies: {
+          "a-dep": "1.0.1",
+          "no-deps": "~2.0.0",
+        },
+      });
+      expect(await file(join(packageDir, "node_modules", "aliased-dep", "package.json")).json()).toMatchObject({
+        name: "no-deps",
+        version: "2.0.0",
+      });
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+        name: "no-deps",
+        version: "2.0.0",
+      });
+      expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toMatchObject({
+        name: "a-dep",
+        version: "1.0.1",
+      });
+    });
     test("with pre and build tags", async () => {
       await write(
         packageJson,

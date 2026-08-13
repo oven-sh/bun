@@ -647,7 +647,6 @@ impl WorkspaceFilter {
 #[derive(Default)]
 pub struct PackageUpdateInfo {
     pub(crate) original_version_literal: Box<[u8]>,
-    pub(crate) is_alias: bool,
     pub(crate) original_version_string_buf: Box<[u8]>,
     pub(crate) original_version: Option<Semver::Version>,
 }
@@ -657,7 +656,6 @@ pub struct CatalogUpdateInfo {
     pub catalog_name: Box<[u8]>,
     pub dep_name: Box<[u8]>,
     pub original_version_literal: Box<[u8]>,
-    pub is_alias: bool,
 }
 
 pub struct UpdateTargetWorkspace {

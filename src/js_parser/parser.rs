@@ -219,11 +219,9 @@ pub mod Runtime {
         /// Allow runtime usage of require(), converting `require` into `__require`
         pub auto_polyfill_require: bool,
 
-        /// Whether `typeof require` may be constant-folded to `"function"`
-        /// without bundling. Only sound when the emitted output is known to
-        /// bind `require` (target bun: the printer binds it from
-        /// `import.meta`). When bundling, `Options.bundle` covers this
-        /// instead (the bundler substitutes its own `require` wrapper).
+        /// Fold `typeof require` to `"function"` without bundling. Only sound
+        /// when the output binds `require` (target bun binds it from
+        /// `import.meta`); bundling is covered by `Options.bundle`.
         pub typeof_require_is_function: bool,
 
         pub replace_exports: ReplaceableExportMap,

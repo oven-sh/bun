@@ -1200,11 +1200,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .join_with_comma(e_.value);
                 }
 
-                // `typeof require` folds to "function" only when the output is
-                // known to bind `require`: bundling substitutes a wrapper, and
-                // target bun binds it from `import.meta`. Otherwise (e.g.
-                // Bun.Transpiler with target browser/node) leave the expression
-                // intact so `typeof require !== "undefined"` guards survive.
+                // Fold only when the output will bind `require`, so that
+                // `typeof require !== "undefined"` guards survive when it
+                // won't (e.g. Bun.Transpiler with target browser).
                 if matches!(e_.value.data, Data::ERequireCallTarget)
                     && (p.options.bundle || p.options.features.typeof_require_is_function)
                 {

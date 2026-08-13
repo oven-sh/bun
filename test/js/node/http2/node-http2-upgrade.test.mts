@@ -310,13 +310,15 @@ describe("HTTP/2 upgrade — socket close ordering", () => {
     // Not events.once(): the session emits 'error' on its way to 'close'.
     const sessionClosed = new Promise<void>(resolve => h2Session.once("close", resolve));
 
-    rawSocket!.destroy(new Error("transport failed"));
+    const transportError = new Error("transport failed");
+    rawSocket!.destroy(transportError);
 
     await sessionClosed;
     const { err, session } = await sessionErrored.promise;
+    assert.strictEqual(err, transportError);
     assert.deepStrictEqual(
-      { message: err.message, sameSession: session === h2Session, destroyed: h2Session.destroyed },
-      { message: "transport failed", sameSession: true, destroyed: true },
+      { sameSession: session === h2Session, destroyed: h2Session.destroyed },
+      { sameSession: true, destroyed: true },
     );
 
     client.close();

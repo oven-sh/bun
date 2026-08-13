@@ -41,6 +41,26 @@ pub mod js_bundler {
         }
     }
 
+    /// One value of the `loader` option, accepting the same names as
+    /// `--loader` and bunfig `[loader]`.
+    fn loader_map_value_from_js(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<bun_ast::Loader> {
+        if !value.is_string() {
+            return Err(
+                global_this.throw_invalid_arguments(format_args!("loader must be a string"))
+            );
+        }
+        let name = value.to_slice(global_this)?;
+        bun_ast::Loader::from_string(name.slice()).ok_or_else(|| {
+            global_this.throw_invalid_arguments(format_args!(
+                "loader must be one of {}",
+                bun_core::fmt::enum_tag_list::<bun_ast::Loader, true>()
+            ))
+        })
+    }
+
     /// A map of file paths to their in-memory contents.
     /// LAYERING: the data-only struct (`map: StringHashMap<Box<[u8]>>`) and
     /// `get`/`contains`/`resolve` live in `bun_bundler::bundle_v2` so the
@@ -1122,12 +1142,8 @@ pub mod js_bundler {
                     }
                     drop(prop_slice);
 
-                    loader_values.push(loader_iter.value.to_enum_from_map(
-                        global_this,
-                        "loader",
-                        &options::LOADER_API_NAMES,
-                        "\"js\", \"jsx\", \"ts\", \"tsx\", \"css\", \"file\", \"json\", \"toml\", \"wasm\", \"napi\", \"base64\", \"dataurl\", \"text\", \"html\"",
-                    )?);
+                    loader_values
+                        .push(loader_map_value_from_js(global_this, loader_iter.value)?.to_api());
                     loader_names.push(prop.to_owned_slice().into_boxed_slice());
                 }
 

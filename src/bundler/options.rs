@@ -333,8 +333,6 @@ pub use bun_options_types::WindowsOptions;
 // same nominal type.
 pub(crate) use bun_ast::Loader;
 
-pub use bun_options_types::LOADER_API_NAMES;
-
 /// Bundler-only `Loader` methods. Extension trait per PORTING.md crate-tier
 /// rule — the canonical `Loader` lives in `bun_options_types` (lower tier) and
 /// cannot depend on `bun_http_types::MimeType`. Re-exported through

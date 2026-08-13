@@ -345,7 +345,7 @@ it.concurrent("jsx with circular references does not crash", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toContain("[Circular]");
   expect(stdout).toContain("<div>\n  [Circular]\n</div>");
   expect(stdout).toContain("<span>\n  [Circular]\n  [Circular]\n</span>");
@@ -367,7 +367,7 @@ it.concurrent("jsx with non-object props does not crash", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim()).toBe("<div />");
   expect(exitCode).toBe(0);
 });
@@ -394,7 +394,7 @@ it.concurrent("jsx with circular props in test diff formatter", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("2 pass");
   expect(exitCode).toBe(0);
 });
@@ -423,7 +423,7 @@ it.concurrent("Event in test diff formatter is not spuriously [Circular]", async
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("3 pass");
   expect(exitCode).toBe(0);
 });
@@ -447,7 +447,7 @@ it.concurrent("deeply nested Proxy chain does not crash", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
     "{
       ok: 1,
@@ -480,7 +480,7 @@ it.concurrent("deeply nested non-cyclic jsx does not segfault", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(["RangeError", "ok"]).toContain(stdout.trim());
   expect(proc.signalCode).toBeFalsy();
   expect(exitCode).toBe(0);

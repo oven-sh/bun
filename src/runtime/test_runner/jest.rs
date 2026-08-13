@@ -326,10 +326,12 @@ pub mod Jest {
         let Some(runner) = runner_ptr() else {
             return false;
         };
-        // SAFETY: JS thread only; raw projection rather than `runner()` for the reason given in js_file_generation.
-        let active_file = unsafe { (*runner.as_ptr()).bun_test_root.active_file.as_deref() };
-        match active_file {
-            Some(active_file) => active_file.phase == bun_test::Phase::Collection,
+        // SAFETY: JS thread only; raw projections (see js_file_generation and BunTestCell::as_ptr) since we are re-entered from JS.
+        let phase = unsafe {
+            (*runner.as_ptr()).bun_test_root.active_file.as_ref().map(|file| (*file.as_ptr()).phase)
+        };
+        match phase {
+            Some(phase) => phase == bun_test::Phase::Collection,
             None => true,
         }
     }

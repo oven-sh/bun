@@ -845,8 +845,9 @@ impl WebWorker {
         let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
             Ok(p) => p,
             Err(_) => {
-                // process.exit() may have run during load; don't clobber its code.
-                if !self.exit_called.load(Ordering::Relaxed) {
+                // A process.exit() or an unhandled entry throw during the load
+                // already chose the code (the latter via the 'exit' handlers).
+                if !self.exit_called.load(Ordering::Relaxed) && !vm.entry_point_failure_reported() {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);
@@ -864,8 +865,10 @@ impl WebWorker {
         // loop turn: a rejection (immediate, or a top-level await rejecting
         // later) is the entry's uncaught error at that moment — the worker stops
         // unless a handler took it — and is reported exactly once. The loader
-        // marks this promise handled, so nothing else would report it.
-        let mut entry_rejection_seen = false;
+        // marks this promise handled, so nothing else would report it. A CommonJS
+        // entry's throw was already reported from the throw site (unhandled, it
+        // ended the load above); what is reported here is an ESM rejection.
+        let mut entry_rejection_seen = vm.entry_point_failure_reported();
         let mut observe_entry = |vm: &VirtualMachine| -> EntryOutcome {
             // SAFETY: `promise` is a live JSC heap cell, rooted below for the loop's duration.
             unsafe {
@@ -874,14 +877,10 @@ impl WebWorker {
                     return EntryOutcome::Continue;
                 }
                 entry_rejection_seen = true;
-                // Same rule as the main thread (run_command): a CJS worker
-                // entry's top-level throw is an uncaughtException; only an
-                // ESM entry rejection reports origin "unhandledRejection".
-                let is_rejection = !vm.as_mut().entry_point_result.evaluated_as_cjs;
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
-                    is_rejection,
+                    true,
                 );
                 if handled {
                     EntryOutcome::Continue

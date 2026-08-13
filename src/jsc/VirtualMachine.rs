@@ -68,10 +68,6 @@ pub type ExceptionList = Vec<crate::exception_list::JsException>;
 pub struct EntryPointResult {
     pub value: crate::strong::Optional, // jsc.Strong.Optional
     pub cjs_set_value: bool,
-    /// True when the entry module evaluated as CommonJS: Node reports a CJS
-    /// entry's top-level throw with origin `uncaughtException` but an ESM
-    /// entry rejection with `unhandledRejection`; the run command consults this.
-    pub evaluated_as_cjs: bool,
 }
 
 /// Downstream-compat alias: lib.rs previously exposed `virtual_machine::InitOptions`.
@@ -299,7 +295,8 @@ pub struct VirtualMachine {
     pub(crate) resolved_path_dups: Vec<Box<[u8]>>,
     pub pending_internal_promise: Option<*mut JSInternalPromise>,
     pub pending_internal_promise_is_protected: bool,
-    pub pending_internal_promise_reported_at: u32,
+    /// See [`entry_point_failure_reported`](Self::entry_point_failure_reported).
+    pending_internal_promise_reported_at: u32,
     pub(crate) hot_reload_deferred: bool,
     pub entry_point_result: EntryPointResult,
 
@@ -1527,7 +1524,12 @@ impl VirtualMachine {
             // and exit, like node's fatal-exception path. Main thread only:
             // process_exit() RETURNS on a worker, so the panic would fire; a
             // worker falls through and exits 1 below (e.g. a beforeExit throw).
-            if self.exit_on_uncaught_exception && self.is_main_thread() {
+            // Under --hot/--watch the drain that armed this was not the end of
+            // the run: report below and keep watching.
+            if self.exit_on_uncaught_exception
+                && self.is_main_thread()
+                && !self.is_watcher_enabled()
+            {
                 self.run_error_handler(err, None);
                 // `process_exit` emits `exit`, re-entering here if a listener
                 // throws. No handler is running, so drop the recursion guard or
@@ -3672,6 +3674,17 @@ impl VirtualMachine {
         (self.on_unhandled_rejection)(self, global_object, reason);
     }
 
+    /// Whether this hot-reload generation's entry-point failure was reported
+    /// already: a CommonJS entry's throw is reported from the throw site
+    /// (`Bun__VM__reportEntryPointThrow`) before the entry promise rejects with it.
+    pub fn entry_point_failure_reported(&self) -> bool {
+        self.pending_internal_promise_reported_at == self.hot_reload_counter
+    }
+
+    pub fn mark_entry_point_failure_reported(&mut self) {
+        self.pending_internal_promise_reported_at = self.hot_reload_counter;
+    }
+
     /// After a hot reload, surfaces the entry-point promise's rejection (if any) and re-arms the watcher.
     pub fn report_exception_in_hot_reloaded_module_if_needed(&mut self) {
         let promise = match self.pending_internal_promise {
@@ -3688,8 +3701,8 @@ impl VirtualMachine {
                 return;
             }
             crate::js_promise::Status::Rejected => {
-                if self.pending_internal_promise_reported_at != self.hot_reload_counter {
-                    self.pending_internal_promise_reported_at = self.hot_reload_counter;
+                if !self.entry_point_failure_reported() {
+                    self.mark_entry_point_failure_reported();
                     // `global()` is `&'static`, so it survives the `&mut self`
                     // call below.
                     let global_ref = self.global();
@@ -3795,7 +3808,7 @@ impl VirtualMachine {
                     return;
                 }
                 crate::js_promise::Status::Rejected => {
-                    if self.pending_internal_promise_reported_at != self.hot_reload_counter {
+                    if !self.entry_point_failure_reported() {
                         self.hot_reload_deferred = true;
                         return;
                     }
@@ -5050,7 +5063,6 @@ impl VirtualMachine {
         self.overridden_main.deinit();
         self.entry_point_result.value.deinit();
         self.entry_point_result.cjs_set_value = false;
-        self.entry_point_result.evaluated_as_cjs = false;
         if let Some(promise) = self.pending_internal_promise {
             if self.pending_internal_promise_is_protected {
                 JSValue::from_cell(promise).unprotect();

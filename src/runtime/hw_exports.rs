@@ -146,22 +146,27 @@ pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSVal
     false
 }
 
-/// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
-/// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
-// HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
-pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
-    if this.entry_point_result.evaluated_as_cjs || this.main().is_empty() {
+/// Called by JSCommonJSModule.cpp when a CommonJS entry point threw out of its
+/// top level, before the module loader rejects the entry promise with it (which
+/// the run command and a worker's `spin` would only see after the microtasks the
+/// entry queued have run). Node's synchronous CJS runner reports it right here;
+/// unhandled, the main thread exits as the rejection path would have, and a
+/// worker's `on_unhandled_rejection` has requested its stop.
+// HOST_EXPORT(Bun__VM__reportEntryPointThrow, c)
+pub fn report_entry_point_throw(this: &mut VirtualMachine, error: JSValue) {
+    let is_main_thread = this.worker_ref().is_none();
+    // The test runner reports a test file's throw itself (test_command.rs).
+    if is_main_thread
+        && bun_jsc::virtual_machine::isBunTest.load(core::sync::atomic::Ordering::Relaxed)
+    {
         return;
     }
+    this.mark_entry_point_failure_reported();
     let global = this.global();
-    // A failed conversion just skips the note; must never panic at an FFI
-    // boundary.
-    let Ok(specifier_str) = bun_jsc::bun_string_jsc::from_js(specifier, global) else {
-        return;
-    };
-    let specifier_str = bun_core::OwnedString::new(specifier_str);
-    if specifier_str.eql_utf8(this.main()) {
-        this.entry_point_result.evaluated_as_cjs = true;
+    let handled = this.uncaught_exception(global, error, false);
+    // --hot / --watch keep the process alive on a failed entry and reload it.
+    if !handled && is_main_thread && this.hot_reload == 0 {
+        crate::cli::run_command::exit_with_unhandled_note(this);
     }
 }
 

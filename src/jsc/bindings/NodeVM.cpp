@@ -188,20 +188,14 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
-    // The body starts on the wrapped program's first line (see
-    // stringifyAnonymousFunction), so the program starts at lineOffset itself
-    // and body line N is reported as lineOffset + N. Columns on body line 1 are
-    // physical columns of the wrapped line, so they already include the
-    // wrapper prefix; Node reports columnOffset + column there, so apply only
-    // the part of columnOffset that exceeds the prefix (a SourceCode cannot
-    // start at a negative column).
+    // The body starts on the program's first line (see stringifyAnonymousFunction),
+    // so that line's columns already include the wrapper: only the part of
+    // columnOffset beyond it is applied, as a source cannot start at a negative column.
     int columnOffset = position.m_column.zeroBasedInt();
     TextPosition wrappedPosition(position.m_line, OrdinalNumber::fromZeroBasedInt(columnOffset > wrapperPrefixLength ? columnOffset - wrapperPrefixLength : 0));
 
     Ref<JSC::SourceProvider> provider = JSC::StringSourceProvider::create(code, sourceOrigin, WTF::move(options.filename), sourceTaintOrigin, wrappedPosition, SourceProviderSourceType::Program);
 
-    // Lets handleException map a frame on the first line back to the user's
-    // source when decorating a runtime error with the offending line.
     if (auto* fetcher = sourceOrigin.fetcher(); fetcher && fetcher->fetcherType() == ScriptFetcher::Type::NodeVM)
         static_cast<NodeVMScriptFetcher*>(fetcher)->setWrapper(provider.get(), static_cast<unsigned>(wrapperPrefixLength));
 
@@ -386,15 +380,10 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
     RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(globalObject, thenResult));
 }
 
-// Helper function to create an anonymous function expression with parameters.
-//
-// The body follows `{` on the same line rather than on a line of its own: JSC
-// clamps a SourceCode's first line to 1, so a wrapper line cannot be
-// compensated for when lineOffset is 0 (the default) and every body line would
-// be reported one too high. This way body line N is physical line N of the
-// program. The price is that columns on body line 1 include the wrapper text;
-// *outOffset receives its length. The "\n" before `})` keeps a trailing `//`
-// comment in the body from swallowing the closing of the wrapper.
+// Builds `(function (<params>) {<body>\n})`; *outOffset is the body's offset.
+// The body must start on the wrapper's own line: JSC clamps a SourceCode's first
+// line to 1, so a wrapper line could not be compensated for at lineOffset 0 and
+// every body line would be reported one too high.
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset)
 {
     // How we stringify functions is important for creating anonymous function expressions
@@ -505,8 +494,7 @@ JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::So
 // AppendExceptionLine helpers shared by the runtime (handleException) and
 // compile-time (decorateParseErrorStack) paths — a single implementation of
 // Node's arrow-header format so the two call sites cannot drift.
-// firstLineSkip is the length of compileFunction's wrapper, which shares the
-// first line with the user's source and is not part of it.
+// firstLineSkip: compileFunction's wrapper text in front of the user's first line.
 static String nthSourceLineForArrowHeader(StringView source, int64_t physicalLine1Based, unsigned firstLineSkip = 0)
 {
     if (physicalLine1Based < 1 || physicalLine1Based > static_cast<int64_t>(source.length()) + 1)
@@ -593,10 +581,8 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
         unsigned caretColumn = 0;
         if (JSC::CodeBlock* codeBlock = stack_frame.codeBlock()) {
             if (JSC::SourceProvider* provider = codeBlock->source().provider()) {
-                // In a compileFunction program the user's first line starts after
-                // the wrapper prefix, and JSC's columns on that line count the
-                // prefix too. Zero for every other provider, including eval() code
-                // from inside such a function, which shares the fetcher.
+                // Non-zero only for a compileFunction program, whose first line
+                // (text and columns) starts with the wrapper.
                 unsigned wrapperPrefixLength = 0;
                 if (auto* fetcher = provider->sourceOrigin().fetcher(); fetcher && fetcher->fetcherType() == ScriptFetcher::Type::NodeVM)
                     wrapperPrefixLength = static_cast<NodeVMScriptFetcher*>(fetcher)->wrapperPrefixLength(*provider);

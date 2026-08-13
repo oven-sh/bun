@@ -42,13 +42,9 @@ public:
         });
     }
 
-    // vm.compileFunction compiles `(function (<params>) {<body>` with the body
-    // starting on the same line as the wrapper so that body line N is reported
-    // as line lineOffset + N. Records the provider holding that program and the
-    // length of the wrapper text preceding the user's source on its first line.
-    // Keyed by provider because eval() and new Function() inside the body create
-    // providers that inherit this fetcher through the SourceOrigin but contain
-    // no wrapper; for those, and for vm.Script sources, this returns 0.
+    // The compileFunction program whose first line starts with the `(function (...) {`
+    // wrapper, and the wrapper's length. Keyed by provider: eval() and new Function()
+    // inside the body inherit this fetcher through the SourceOrigin but have no wrapper.
     void setWrapper(JSC::SourceProvider& provider, unsigned prefixLength)
     {
         m_wrapperSourceID = provider.asID();

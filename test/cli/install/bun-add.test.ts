@@ -1,7 +1,16 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  readdirSorted,
+  tempDir,
+  tmpdirSync,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+} from "harness";
 import { join, relative, resolve } from "path";
 import {
   check_npm_auth_type,
@@ -91,6 +100,59 @@ it("should add existing package", async () => {
       2,
     ),
   );
+});
+
+it("should preserve JSON-compatible escapes when rewriting package.json", async () => {
+  using configDir = tempDir("bun-add-json-config", {});
+  const controls = Array.from({ length: 0x20 }, (_, codepoint) => String.fromCharCode(codepoint)).join("");
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "json-escapes",
+      version: "1.0.0",
+      metadata: { [controls]: controls },
+    }),
+  );
+  await writeFile(
+    join(add_dir, "package.json"),
+    JSON.stringify({
+      name: "local-dependency",
+      version: "1.0.0",
+    }),
+  );
+
+  const dependency = `file:${relative(package_dir, add_dir)}`.replace(/\\/g, "\\\\");
+  const proc = spawn({
+    cmd: [bunExe(), "add", dependency, "--ignore-scripts"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: {
+      ...env,
+      HOME: String(configDir),
+      USERPROFILE: String(configDir),
+      XDG_CONFIG_HOME: String(configDir),
+    },
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: expect.stringContaining("1 package installed"),
+    stderr: expect.stringContaining("Saved lockfile"),
+    exitCode: 0,
+  });
+  expect(stderr).not.toContain("error:");
+
+  const rewritten = await file(join(package_dir, "package.json")).text();
+  expect(rewritten).not.toMatch(/\\(?:v|x[0-9A-Fa-f]{2})/);
+  const parsed = JSON.parse(rewritten);
+  expect(parsed).toEqual({
+    name: "json-escapes",
+    version: "1.0.0",
+    metadata: { [controls]: controls },
+    dependencies: { "local-dependency": dependency.replace(/\\\\/g, "/") },
+  });
 });
 
 it("should reject missing package", async () => {

@@ -249,8 +249,12 @@ function wrapPostgresError(error: Error | PostgresErrorOptions) {
 
 // prettier-ignore
 const enum Char {
+  TAB = 9,              // \t
   LINE_FEED = 10,       // \n
+  VERTICAL_TAB = 11,    // \v
+  FORM_FEED = 12,       // \f
   CARRIAGE_RETURN = 13, // \r
+  SPACE = 32,           // ' '
   DOUBLE_QUOTE = 34,    // "
   DOLLAR = 36,          // $
   SINGLE_QUOTE = 39,    // '
@@ -325,6 +329,32 @@ function skipLineComment(text: string, i: number): number {
   return i;
 }
 
+/** `skipQuoted` for a string constant, also covering the parts it may be continued with on the following lines. */
+function skipStringConstant(text: string, i: number, backslashEscapes: boolean): number {
+  for (;;) {
+    i = skipQuoted(text, i, Char.SINGLE_QUOTE, backslashEscapes);
+    // the server joins 'a' newline 'b' into one constant, so an E'' prefix keeps escaping inside the later parts too
+    let j = i;
+    let sawNewline = false;
+    for (;;) {
+      const c = text.charCodeAt(j);
+      if (c === Char.LINE_FEED || c === Char.CARRIAGE_RETURN) {
+        sawNewline = true;
+      } else if (c === Char.MINUS && text.charCodeAt(j + 1) === Char.MINUS) {
+        j = skipLineComment(text, j + 2);
+        continue;
+      } else if (c !== Char.SPACE && c !== Char.TAB && c !== Char.FORM_FEED && c !== Char.VERTICAL_TAB) {
+        break;
+      }
+      j++;
+    }
+    if (!sawNewline || text.charCodeAt(j) !== Char.SINGLE_QUOTE) {
+      return i;
+    }
+    i = j + 1;
+  }
+}
+
 /** `i` is the index right after a comment opener; returns the index right after the closer. Block comments nest. */
 function skipBlockComment(text: string, i: number): number {
   const len = text.length;
@@ -384,6 +414,8 @@ function offsetParameterReferences(fragment: string, offset: number, count: numb
         break;
       }
       case Char.SINGLE_QUOTE:
+        i = skipStringConstant(fragment, i + 1, false);
+        break;
       case Char.DOUBLE_QUOTE:
         i = skipQuoted(fragment, i + 1, c, false);
         break;
@@ -401,20 +433,16 @@ function offsetParameterReferences(fragment: string, offset: number, count: numb
           i++;
         }
         break;
-      default: {
+      default:
         if (!isIdentStart(c)) {
           i++;
-          break;
-        }
-        const next = fragment.charCodeAt(i + 1);
-        if ((c === Char.UPPER_E || c === Char.LOWER_E) && next === Char.SINGLE_QUOTE) {
+        } else if ((c === Char.UPPER_E || c === Char.LOWER_E) && fragment.charCodeAt(i + 1) === Char.SINGLE_QUOTE) {
           // E'...' is the one string form in which a backslash escapes the following character
-          i = skipQuoted(fragment, i + 2, next, true);
+          i = skipStringConstant(fragment, i + 2, true);
         } else {
           i++;
           while (isIdentCont(fragment.charCodeAt(i))) i++;
         }
-      }
     }
   }
   return copied === 0 ? fragment : out + fragment.slice(copied);

@@ -533,11 +533,42 @@ console.log("survived", require("./late.js"));`,
       using dir = tempDir("module-wrapper-eval", {
         "set-wrapper.cjs": setWrapper,
       });
-      // -e code is evaluated as a script, not through the wrapper. The IIFE
-      // makes the source look like wrapped output, so the eval entry point has
-      // to be recognized by identity rather than by shape.
+      // module.exports makes this CommonJS; -e code is evaluated as a script
+      // and used to be wrapped into a function expression that never ran.
       const code = `(function () { module.exports = 1; console.log(JSON.stringify({ ran: true })); })();`;
       expect(await runFixture(dir, ["-r", "./set-wrapper.cjs", "-e", code])).toEqual({ ran: true });
+    });
+
+    test("does not wrap -e code that is shaped like wrapped output", async () => {
+      using dir = tempDir("module-wrapper-eval-shape", {
+        "preload.cjs": /* js */ `
+          globalThis.wrapCount = 0;
+          require("node:module").wrapper = [
+            "globalThis.wrapCount++; (function (exports, require, module, __filename, __dirname) {",
+            "\\n})",
+          ];
+          const dep = require("./dep.cjs");
+          process.on("exit", () =>
+            console.log(JSON.stringify({ dep, wrapCount: globalThis.wrapCount, evalRan: globalThis.evalRan })),
+          );
+        `,
+        "dep.cjs": `module.exports = "dep";`,
+      });
+      // Starts with a function expression and ends with a callback's "});", so
+      // textually it passes for a wrapped module, but -e code is never wrapped
+      // by the transpiler. Swapping wrappers here would run wrapper[0] again and
+      // splice the IIFE body into the user's wrapper function.
+      const code = [
+        "(function () { globalThis.evalRan = true; })();",
+        "process.nextTick(function () {",
+        "  module.exports = 1;",
+        "});",
+      ].join("\n");
+      expect(await runFixture(dir, ["-r", "./preload.cjs", "-e", code])).toEqual({
+        dep: "dep",
+        wrapCount: 1,
+        evalRan: true,
+      });
     });
 
     test("mutating Module.wrapper in place applies to imported CommonJS", async () => {

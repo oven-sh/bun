@@ -370,10 +370,9 @@ impl us_socket_t {
         unreachable!("us_socket_t::write_fd is not implemented on Windows")
     }
 
-    /// Reads and dispatches everything the kernel still holds for this socket,
-    /// then dispatches `on_end` and closes it, as if the peer's EOF had been
-    /// read. For owners that learn out of band that the peer is gone (IPC
-    /// child exit). Re-enters the socket's handlers synchronously.
+    /// Reads and dispatches everything still buffered for this socket, then
+    /// dispatches `on_end` and closes it, as if the peer's EOF had been read.
+    /// Re-enters the socket's handlers synchronously.
     #[cfg(not(windows))]
     pub(crate) fn drain_readable_then_end(&mut self) {
         bun_core::scoped_log!(uws, "us_socket_drain_readable_then_end({:p})", self);

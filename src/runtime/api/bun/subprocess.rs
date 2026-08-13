@@ -1096,9 +1096,8 @@ impl Subprocess<'_> {
             }
         }
 
-        // Like stdout/stderr above, deliver what the child sent over IPC before
-        // it exited (the `ipc` callback runs here, ahead of `exited`/`onExit`,
-        // the order node produces), then close the channel.
+        // Deliver what the child sent over IPC before it exited (the `ipc`
+        // callback runs ahead of `exited`/`onExit`, as in node), then close.
         if let Some(ipc_data) = self.ipc() {
             ipc_data.close_after_peer_exit();
         }

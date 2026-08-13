@@ -1279,14 +1279,11 @@ impl SendQueue {
         self.schedule_deferred();
     }
 
-    /// The peer process has exited. Its exit can reach us ahead of the socket's
-    /// readable event (the waiter thread posts it as a task, which runs before
-    /// the next poll), so messages it sent right before exiting may still be
-    /// unread in the socket; closing now would drop them, whereas node reads the
-    /// channel to EOF. Drain it first: the drain ends in `on_end`, which closes
-    /// the socket and queues the disconnect notification as a peer EOF would.
-    /// A close the user already requested is left alone, as is the Windows
-    /// pipe, which has no synchronous read; those still close next tick.
+    /// Drain messages the peer sent before exiting, then close. The exit
+    /// notification can beat the socket's readable event, and node reads the
+    /// channel to EOF before closing. The drain ends in `on_end`, which closes
+    /// the socket; Windows (no synchronous read) and a user-requested close
+    /// fall through to the next-tick close.
     pub fn close_after_peer_exit(&self) {
         log!("SendQueue#closeAfterPeerExit");
         #[cfg(not(windows))]

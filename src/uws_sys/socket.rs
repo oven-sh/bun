@@ -408,10 +408,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    /// Synchronously reads and dispatches what the peer sent before it went
-    /// away, then ends and closes the socket (see `us_socket_t::drain_readable_then_end`).
-    /// The socket's handlers, including `on_end` and `on_close`, run before
-    /// this returns. POSIX-only, like the IPC socketpair it exists for.
+    /// Synchronously reads out remaining data, then ends and closes the
+    /// socket; handlers (`on_data`, `on_end`, `on_close`) run before this
+    /// returns. See `us_socket_t::drain_readable_then_end`.
     #[cfg(not(windows))]
     pub fn drain_readable_then_end(&self) {
         if let InternalSocket::Connected(s) = self.socket {

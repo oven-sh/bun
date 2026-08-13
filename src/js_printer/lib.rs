@@ -3003,6 +3003,11 @@ pub(crate) mod __gated_printer {
                         bundle_opts::Format::Cjs | bundle_opts::Format::InternalBakeDev => false,
                     };
                     if keep_import_meta_main {
+                        // When inverted this prints a `!` prefix, so parenthesize like one.
+                        let wrap = data.inverted && level.gte(Level::Prefix);
+                        if wrap {
+                            self.print(b"(");
+                        }
                         if data.inverted {
                             self.add_source_mapping(expr.loc);
                             self.print(b"!");
@@ -3014,6 +3019,9 @@ pub(crate) mod __gated_printer {
                             mi.flags.contains_import_meta = true;
                         }
                         self.print(b"import.meta.main");
+                        if wrap {
+                            self.print(b")");
+                        }
                     } else {
                         debug_assert!(
                             self.options.module_type != bundle_opts::Format::InternalBakeDev

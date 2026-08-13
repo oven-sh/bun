@@ -2261,6 +2261,27 @@ describe("bundler", () => {
     },
     run: [{ stdout: "true entry sibling" }, { runtime: "node", stdout: "true entry sibling" }],
   });
+  // A kept inverted import.meta.main prints a `!` prefix, so as a member
+  // expression target it needs parentheses: `(!import.meta.main).toString()`,
+  // not `!import.meta.main.toString()`.
+  const importMetaMainInvertedMemberFiles = {
+    "/entry.ts": /* js */ `
+      globalThis['ca' + 'pture'] = x => x;
+      console.log(capture((require.main !== module).toString().length));
+    `,
+  };
+  itBundled("edgecase/ImportMetaMainInvertedMemberTarget", {
+    files: importMetaMainInvertedMemberFiles,
+    capture: ["(!import.meta.main).toString().length"],
+    run: { stdout: "5" },
+  });
+  itBundled("edgecase/ImportMetaMainInvertedMemberTargetIIFEBun", {
+    files: importMetaMainInvertedMemberFiles,
+    format: "iife",
+    target: "bun",
+    capture: ["(!import.meta.main).toString().length"],
+    run: { stdout: "5" },
+  });
   itBundled("edgecase/IdentifierInEnum#13081", {
     files: {
       "/entry.ts": `

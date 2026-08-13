@@ -518,8 +518,7 @@ public:
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleResolveFilenameFunction)                           \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_moduleRunMainFunction)                               \
-    /* Last value assigned to `require("module").runMain`; empty while it is the original function. */       \
-    /* Holds non-callables too (Node's is a plain data property): callability is checked at call time. */    \
+    /* Last value assigned to `Module.runMain` (may be non-callable); empty while original. */               \
     V(public, WriteBarrier<JSC::Unknown>, m_moduleRunMainOverride)                                           \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_modulePrototypeUnderscoreCompileFunction)            \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_commonJSRequireESMFromHijackedExtensionFunction)     \

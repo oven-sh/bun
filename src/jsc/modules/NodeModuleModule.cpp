@@ -826,8 +826,7 @@ JSC_DEFINE_CUSTOM_GETTER(moduleRunMain,
 extern "C" void Bun__VirtualMachine__setOverrideModuleRunMain(void* bunVM, bool isPatched);
 
 // Called by VirtualMachine::reload_entry_point when a preload replaced
-// `Module.runMain`. Throws (returns zero) if the replacement is not callable or
-// throws; Rust reports that as the entry point's failure.
+// `Module.runMain`. Returns zero if the replacement is not callable or throws.
 extern "C" JSC::EncodedJSValue NodeModuleModule__callOverriddenRunMain(Zig::GlobalObject* global, JSC::EncodedJSValue encodedArgv1)
 {
     auto& vm = JSC::getVM(global);

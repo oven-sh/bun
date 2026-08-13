@@ -68,10 +68,9 @@ pub type ExceptionList = Vec<crate::exception_list::JsException>;
 pub struct EntryPointResult {
     pub value: crate::strong::Optional, // jsc.Strong.Optional
     pub cjs_set_value: bool,
-    /// True when the entry module evaluated as CommonJS (or a preload's
-    /// `Module.runMain` override threw synchronously): Node reports those with
-    /// origin `uncaughtException` but an ESM entry rejection with
-    /// `unhandledRejection`; the run command consults this.
+    /// The run command reports the entry's failure with Node's origin
+    /// `uncaughtException` when set (CJS entry, or a throwing `Module.runMain`
+    /// override), `unhandledRejection` otherwise (ESM).
     pub evaluated_as_cjs: bool,
 }
 
@@ -2313,8 +2312,7 @@ unsafe extern "C" {
         ctx: *mut c_void,
         callback: extern "C" fn(ctx: *mut c_void),
     );
-    /// `[[ZIG_EXPORT(zero_is_throw)]]` shape: returns zero iff it threw (the
-    /// override is not callable, or threw itself).
+    /// Returns zero iff it threw (override not callable, or threw).
     safe fn NodeModuleModule__callOverriddenRunMain(
         global: &JSGlobalObject,
         argv1: JSValue,
@@ -2710,20 +2708,18 @@ impl VirtualMachine {
                     });
                     let promise: *mut JSInternalPromise = match result {
                         Ok(ret) => {
-                            // If the override stored a promise itself (by calling the
-                            // original runMain), use that; otherwise wrap its return value.
+                            // Calling the original runMain stores a promise; otherwise
+                            // wrap the override's return value.
                             if let Some(stored) = self.pending_internal_promise {
                                 return Ok(stored);
                             }
                             JSC__JSInternalPromise__resolvedPromise(global_ref, ret)
                         }
                         Err(err) => {
-                            // Not callable, or threw: hand the exception back as the entry
-                            // point's rejection so the caller reports it like an entry module
-                            // that throws. Marked handled up front, like the module loader's
-                            // own promises, so the caller is the only one reporting it. Node
-                            // throws this synchronously from its bootstrap, hence the
-                            // `uncaughtException` origin of a CJS entry.
+                            // Hand the exception back as the entry point's rejection,
+                            // marked handled so only the caller reports it, with a CJS
+                            // entry's `uncaughtException` origin (Node throws this
+                            // synchronously from its bootstrap).
                             self.entry_point_result.evaluated_as_cjs = true;
                             let promise = crate::JSPromise::create(global_ref);
                             promise.set_handled();

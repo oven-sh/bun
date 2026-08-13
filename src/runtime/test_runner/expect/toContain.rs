@@ -9,7 +9,7 @@ use super::throw;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_contain(
+    pub(crate) fn to_contain(
         &self,
         global: &JSGlobalObject,
         frame: &CallFrame,

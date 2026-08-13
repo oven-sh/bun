@@ -19,9 +19,39 @@ use super::command_line_arguments::CommandLineArguments;
 use super::package_json_editor as PackageJSONEditor;
 use super::update_request::Array as UpdateRequestArray;
 use super::{
-    Command, PackageManager, PatchCommitResult, Subcommand, UpdateRequest,
+    Command, PackageManager, PatchCommitResult, Subcommand, UpdateRequest, WorkspaceFilter,
     attempt_to_create_package_json, install_with_manager, patch_package,
 };
+
+fn print_package_json_into_cache_entry(entry: &mut MapEntry, root: bun_ast::Expr) {
+    let preserve_trailing_newline = entry.source.contents.last() == Some(&b'\n');
+    let mut buffer_writer = js_printer::BufferWriter::init();
+    buffer_writer
+        .buffer
+        .list
+        .reserve((entry.source.contents.len() + 1).saturating_sub(buffer_writer.buffer.list.len()));
+    buffer_writer.append_newline = preserve_trailing_newline;
+    let mut writer = js_printer::BufferPrinter::init(buffer_writer);
+
+    if let Err(e) = js_printer::print_json(
+        &mut writer,
+        root,
+        &entry.source,
+        js_printer::PrintJsonOptions {
+            indent: entry.indentation,
+            mangled_props: None,
+            ..Default::default()
+        },
+    ) {
+        bun_core::pretty_errorln!("package.json failed to write due to error {}", e.name(),);
+        Global::crash();
+    }
+    let old = core::mem::replace(
+        &mut entry.source.contents,
+        Cow::Owned(writer.ctx.written_without_trailing_zero().to_vec()),
+    );
+    entry.stale_contents.push(old);
+}
 
 pub fn update_package_json_and_install_with_manager(
     manager: &mut PackageManager,
@@ -122,6 +152,58 @@ fn update_package_json_and_install_with_manager_with_updates(
         Global::crash();
     }
 
+    if subcommand == Subcommand::Update
+        && updates.is_empty()
+        && (manager.options.do_.recursive() || !manager.options.filter_patterns.is_empty())
+        && manager.options.do_.load_lockfile()
+    {
+        match manager.load_lockfile_from_cwd::<true>() {
+            crate::lockfile::LoadResult::Ok(_) => {}
+            crate::lockfile::LoadResult::NotFound => {
+                if log_level != LogLevel::Silent {
+                    Output::err_generic("missing lockfile, nothing to update", ());
+                }
+                Global::crash();
+            }
+            crate::lockfile::LoadResult::Err(cause) => {
+                if log_level != LogLevel::Silent {
+                    let what: &str = match cause.step {
+                        crate::lockfile::LoadStep::OpenFile => "open",
+                        crate::lockfile::LoadStep::ReadFile => "read",
+                        crate::lockfile::LoadStep::ParseFile => "parse",
+                        crate::lockfile::LoadStep::Migrating => "migrate",
+                    };
+                    Output::err_generic("failed to {s} lockfile: {s}", (what, cause.value.name()));
+                    if manager.log_mut().has_errors() {
+                        let _ = manager
+                            .log_mut()
+                            .print(std::ptr::from_mut(Output::error_writer()));
+                    }
+                }
+                Global::crash();
+            }
+        }
+        let selected = WorkspaceFilter::select_workspaces(
+            &manager.lockfile,
+            manager.options.filter_patterns,
+            original_cwd,
+        );
+        let name_hashes = manager.lockfile.packages.items_name_hash();
+        let names = manager.lockfile.packages.items_name();
+        let resolutions = manager.lockfile.packages.items_resolution();
+        let sbuf = manager.lockfile.buffers.string_bytes.as_slice();
+        manager.update_target_workspaces = Some(
+            selected
+                .iter()
+                .map(|&id| super::UpdateTargetWorkspace {
+                    is_root: resolutions[id as usize].tag == crate::resolution::Tag::Root,
+                    name_hash: name_hashes[id as usize],
+                    name: Box::from(names[id as usize].slice(sbuf)),
+                })
+                .collect(),
+        );
+    }
+
     // reshaped for borrowck — `get_with_path` returns `&mut MapEntry`
     // borrowed from `manager.workspace_package_json_cache`, but we then need
     // `&mut *manager` for `PackageJSONEditor::edit` / `do_patch_commit` while still
@@ -216,15 +298,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         }
     }
 
-    let dependency_list: &'static [u8] = if manager.options.update.development {
-        b"devDependencies"
-    } else if manager.options.update.optional {
-        b"optionalDependencies"
-    } else if manager.options.update.peer {
-        b"peerDependencies"
-    } else {
-        b"dependencies"
-    };
+    let dependency_list: &'static [u8] = manager.options.update.prop;
     let mut any_changes = false;
 
     let mut not_in_workspace_root: Option<PatchCommitResult> = None;
@@ -322,7 +396,8 @@ fn update_package_json_and_install_with_manager_with_updates(
                 // `edit` may shrink the slice.
                 let new_len = updates_slice.len();
                 updates.truncate(new_len);
-            } else if subcommand == Subcommand::Update {
+            } else if subcommand == Subcommand::Update && manager.update_target_workspaces.is_none()
+            {
                 PackageJSONEditor::edit_update_no_args(
                     manager,
                     &mut current_package_json_root,
@@ -415,6 +490,8 @@ fn update_package_json_and_install_with_manager_with_updates(
         bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name(),);
         Global::crash();
     }
+
+    let mut editing_catalogs = false;
 
     // may or may not be the package json we are editing
     let top_level_dir_without_trailing_slash =
@@ -514,6 +591,33 @@ fn update_package_json_and_install_with_manager_with_updates(
             );
         }
 
+        let root_is_targeted = manager
+            .update_target_workspaces
+            .as_deref()
+            .is_none_or(|t| t.iter().any(|w| w.is_root));
+
+        if subcommand == Subcommand::Update
+            && manager.update_requests.is_empty()
+            && root_is_targeted
+        {
+            let root_package_json_root: bun_ast::Expr = root_package_json.root;
+            if PackageJSONEditor::edit_catalogs_before_update(manager, &root_package_json_root)? {
+                editing_catalogs = true;
+
+                if manager.options.do_.contains(Do::UPDATE_TO_LATEST) {
+                    // entries now hold a temporary `latest`; refresh the cache so install resolves those.
+                    print_package_json_into_cache_entry(root_package_json, root_package_json_root);
+                    if let Err(err) = root_package_json.reparse_root(manager.log_mut()) {
+                        bun_core::pretty_errorln!(
+                            "package.json failed to parse due to error {}",
+                            err.name(),
+                        );
+                        Global::crash();
+                    }
+                }
+            }
+        }
+
         // SAFETY: root_package_json_path_buf[root_package_json_path_len] == 0 written above
         break 'root_package_json_path ZStr::from_buf(
             &root_package_json_path_buf[..],
@@ -557,14 +661,31 @@ fn update_package_json_and_install_with_manager_with_updates(
             };
 
         if updates.is_empty() {
-            PackageJSONEditor::edit_update_no_args(
-                manager,
-                &mut new_package_json,
-                EditOptions {
-                    exact_versions: manager.options.enable.exact_versions(),
-                    ..Default::default()
-                },
-            )?;
+            if manager.update_target_workspaces.is_none() {
+                PackageJSONEditor::edit_update_no_args(
+                    manager,
+                    &mut new_package_json,
+                    EditOptions {
+                        exact_versions: manager.options.enable.exact_versions(),
+                        ..Default::default()
+                    },
+                )?;
+            }
+
+            if editing_catalogs
+                && manager.workspace_name_hash.is_none()
+                && manager.update_target_workspaces.is_none()
+            {
+                // running from root: catalogs live in this file.
+                let _ = PackageJSONEditor::edit_catalogs_after_update(
+                    manager,
+                    &new_package_json,
+                    EditOptions {
+                        exact_versions: manager.options.enable.exact_versions(),
+                        ..Default::default()
+                    },
+                )?;
+            }
         } else {
             let mut updates_slice: &mut [UpdateRequest] = &mut updates[..];
             PackageJSONEditor::edit(
@@ -612,7 +733,82 @@ fn update_package_json_and_install_with_manager_with_updates(
             .to_vec();
     }
 
+    if editing_catalogs
+        && (manager.workspace_name_hash.is_some() || manager.update_target_workspaces.is_some())
+        && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
+    {
+        // running from a workspace, or with -r/--filter: catalogs live in the root package.json.
+        let root_package_json_ptr: *mut MapEntry =
+            match manager.workspace_package_json_cache.get_with_path(
+                manager.log_mut(),
+                root_package_json_path.as_bytes(),
+                GetJSONOptions {
+                    guess_indentation: true,
+                    ..Default::default()
+                },
+            ) {
+                GetResult::ParseErr(err) => {
+                    let _ = manager
+                        .log_mut()
+                        .print(std::ptr::from_mut(Output::error_writer()));
+                    Output::err_generic(
+                        "failed to parse package.json \"{s}\": {s}",
+                        (BStr::new(root_package_json_path.as_bytes()), err.name()),
+                    );
+                    Global::crash();
+                }
+                GetResult::ReadErr(err) => {
+                    Output::err_generic(
+                        "failed to read package.json \"{s}\": {s}",
+                        (BStr::new(root_package_json_path.as_bytes()), err.name()),
+                    );
+                    Global::crash();
+                }
+                GetResult::Entry(entry) => core::ptr::from_mut(entry),
+            };
+        // SAFETY: pointer into `manager.workspace_package_json_cache`, valid until
+        // the next `get_with_path`. `edit_catalogs_after_update` touches only
+        // disjoint manager fields.
+        let root_package_json: &mut MapEntry = unsafe { &mut *root_package_json_ptr };
+        let root_package_json_root: bun_ast::Expr = root_package_json.root;
+
+        let root_catalogs_changed = PackageJSONEditor::edit_catalogs_after_update(
+            manager,
+            &root_package_json_root,
+            EditOptions {
+                exact_versions: manager.options.enable.exact_versions(),
+                ..Default::default()
+            },
+        )?;
+
+        if root_catalogs_changed {
+            print_package_json_into_cache_entry(root_package_json, root_package_json_root);
+
+            // the targets loop below writes root (with deps + catalogs) in one pass.
+            if manager.update_target_workspaces.is_none() {
+                let root_package_json_file =
+                    File::openat(Fd::cwd(), root_package_json_path, bun_sys::O::RDWR, 0)
+                        .map_err(Error::from)?;
+                root_package_json_file
+                    .pwrite_all(&root_package_json.source.contents, 0)
+                    .map_err(Error::from)?;
+                let _ = bun_sys::ftruncate(
+                    root_package_json_file.handle,
+                    root_package_json.source.contents.len() as i64,
+                );
+                let _ = root_package_json_file.close(); // close error is non-actionable
+            }
+        }
+    }
+
     let _ = written;
+
+    if let Some(targets) = manager.update_target_workspaces.take() {
+        if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
+            write_resolved_versions_to_targets(manager, &targets)?;
+        }
+        return Ok(());
+    }
 
     if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
         let (source, path): (&[u8], &ZStr) =
@@ -740,6 +936,106 @@ fn update_package_json_and_install_with_manager_with_updates(
         }
     }
 
+    Ok(())
+}
+
+fn write_resolved_versions_to_targets(
+    manager: &mut PackageManager,
+    targets: &[super::UpdateTargetWorkspace],
+) -> Result<(), Error> {
+    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let update_to_latest = manager.options.do_.contains(Do::UPDATE_TO_LATEST);
+    let exact_versions = manager.options.enable.exact_versions();
+    let log = manager.log_mut();
+    let mut any_failed = false;
+
+    let packages = manager.lockfile.packages.slice();
+    let pkg_resolutions = packages.items_resolution();
+    let pkg_name_hashes = packages.items_name_hash();
+    let pkg_names = packages.items_name();
+    for pkg_id in 0..packages.len() {
+        let res = pkg_resolutions[pkg_id];
+        let is_root = res.tag == crate::resolution::Tag::Root;
+        let (ws_name_hash, rel): (Option<crate::PackageNameHash>, &[u8]) = match res.tag {
+            crate::resolution::Tag::Root => (None, b""),
+            crate::resolution::Tag::Workspace => (
+                Some(pkg_name_hashes[pkg_id]),
+                res.workspace()
+                    .slice(manager.lockfile.buffers.string_bytes.as_slice()),
+            ),
+            _ => continue,
+        };
+        let hash = pkg_name_hashes[pkg_id];
+        let name = pkg_names[pkg_id].slice(manager.lockfile.buffers.string_bytes.as_slice());
+        if !targets.iter().any(|t| t.matches(is_root, hash, name)) {
+            continue;
+        }
+        let mut path_buf = PathBuffer::uninit();
+        let path: &[u8] = bun_paths::resolve_path::join_abs_string_buf::<
+            bun_paths::resolve_path::platform::Auto,
+        >(top_level, &mut path_buf.0, &[rel, b"package.json"]);
+
+        let entry = match manager.workspace_package_json_cache.get_with_path(
+            log,
+            path,
+            GetJSONOptions {
+                guess_indentation: true,
+                ..Default::default()
+            },
+        ) {
+            GetResult::Entry(e) => e,
+            GetResult::ParseErr(err) | GetResult::ReadErr(err) => {
+                Output::err_generic(
+                    "failed to read/parse package.json for workspace '{s}': {s}",
+                    (bstr::BStr::new(name), err.name()),
+                );
+                any_failed = true;
+                continue;
+            }
+        };
+
+        let mut ast = entry.root;
+        let mut updating = bun_collections::StringArrayHashMap::default();
+        PackageJSONEditor::edit_update_no_args_in(
+            &manager.lockfile,
+            &manager.ast_arena,
+            &mut updating,
+            ws_name_hash,
+            update_to_latest,
+            &mut ast,
+            EditOptions {
+                exact_versions: true,
+                before_install: true,
+                ..Default::default()
+            },
+        )?;
+        PackageJSONEditor::edit_update_no_args_in(
+            &manager.lockfile,
+            &manager.ast_arena,
+            &mut updating,
+            ws_name_hash,
+            update_to_latest,
+            &mut ast,
+            EditOptions {
+                exact_versions,
+                ..Default::default()
+            },
+        )?;
+
+        print_package_json_into_cache_entry(entry, ast);
+        let mut path_zbuf = PathBuffer::uninit();
+        let path_z = bun_paths::resolve_path::z(path, &mut path_zbuf);
+        if let Err(err) = File::write_file(Fd::cwd(), path_z, &entry.source.contents) {
+            Output::err_generic(
+                "failed to write package.json for workspace '{s}': {s}",
+                (bstr::BStr::new(name), bstr::BStr::new(err.name())),
+            );
+            any_failed = true;
+        }
+    }
+    if any_failed {
+        Global::exit(1);
+    }
     Ok(())
 }
 

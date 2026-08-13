@@ -9,7 +9,7 @@ use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub struct Touch {
-    pub state: State,
+    pub(crate) state: State,
 }
 
 #[derive(Default)]
@@ -22,18 +22,18 @@ pub enum State {
 }
 
 pub struct ExecState {
-    pub started: bool,
-    pub tasks_count: usize,
-    pub tasks_done: usize,
-    pub output_done: usize,
-    pub output_waiting: usize,
+    pub(crate) started: bool,
+    pub(crate) tasks_count: usize,
+    pub(crate) tasks_done: usize,
+    pub(crate) output_done: usize,
+    pub(crate) output_waiting: usize,
     /// Index into argv where filepath args start.
-    pub args_start: usize,
-    pub err: Option<bun_sys::Error>,
+    pub(crate) args_start: usize,
+    pub(crate) err: Option<bun_sys::Error>,
     /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
     /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
     /// directly — see mkdir.rs `Exec::output_queue` for rationale.
-    pub output_queue: std::collections::VecDeque<*mut OutputTask<Touch>>,
+    pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Touch>>,
 }
 
 impl Touch {
@@ -72,7 +72,7 @@ impl Touch {
         Self::next(interp, cmd)
     }
 
-    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         enum Action {
             Done(ExitCode),
             Schedule(usize),
@@ -147,11 +147,7 @@ impl Touch {
     /// # Safety
     /// `task` must be a live heap allocation produced by
     /// [`ShellTouchTask::create`]; ownership is reclaimed here.
-    pub(crate) fn on_shell_touch_task_done(
-        interp: &Interpreter,
-        cmd: NodeId,
-        task: *mut ShellTouchTask,
-    ) {
+    fn on_shell_touch_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellTouchTask) {
         // SAFETY: task was heap-allocated in create(); reclaim.
         let mut task = unsafe { bun_core::heap::take(task) };
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -238,15 +234,15 @@ impl OutputTaskVTable for Touch {
 
 /// utimes() the path (creating it on ENOENT) on a worker thread.
 pub struct ShellTouchTask {
-    pub cmd: NodeId,
-    pub filepath: Vec<u8>,
-    pub cwd_path: Vec<u8>,
-    pub err: Option<bun_sys::Error>,
+    pub(crate) cmd: NodeId,
+    pub(crate) filepath: Vec<u8>,
+    pub(crate) cwd_path: Vec<u8>,
+    pub(crate) err: Option<bun_sys::Error>,
     pub task: ShellTask,
 }
 
 impl ShellTouchTask {
-    pub fn create(
+    pub(crate) fn create(
         cmd: NodeId,
         filepath: Vec<u8>,
         cwd_path: Vec<u8>,
@@ -266,7 +262,7 @@ impl ShellTouchTask {
 
     /// utimes() the path; on ENOENT
     /// fall back to `open(O_CREAT|O_WRONLY, 0o664)`.
-    pub fn run_from_thread_pool(this: &mut ShellTouchTask) {
+    pub(crate) fn run_from_thread_pool(this: &mut ShellTouchTask) {
         use bun_paths::resolve_path::{self, Platform, platform};
         use bun_sys::FdExt as _;
         // We have to give an absolute path.
@@ -315,7 +311,7 @@ impl ShellTouchTask {
     /// # Safety
     /// `this` must be a live heap allocation produced by [`Self::create`];
     /// ownership is consumed via [`Touch::on_shell_touch_task_done`].
-    pub(crate) fn run_from_main_thread(this: *mut ShellTouchTask, interp: &Interpreter) {
+    fn run_from_main_thread(this: *mut ShellTouchTask, interp: &Interpreter) {
         // SAFETY: `this` is a live heap-allocated task.
         let cmd = unsafe { (*this).cmd };
         // SAFETY: forwarded from caller's contract.
@@ -325,6 +321,15 @@ impl ShellTouchTask {
 
 impl bun_event_loop::Taskable for ShellTouchTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellTouchTask;
+    /// A pool completion that will not run: drop the keep-alive and the box
+    /// (nothing else frees an unrun one).
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box the builtin scheduled.
+        unsafe {
+            (*this).task.unref_unrun();
+            drop(bun_core::heap::take(this));
+        }
+    }
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellTouchTask {

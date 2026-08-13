@@ -22,6 +22,15 @@ bun_opaque::opaque_ffi! {
     pub struct CppWebSocket;
 }
 
+/// Matches `WebCore::WebSocket::HandshakeRawHeader` (WebSocket.h).
+#[repr(C)]
+pub struct RawHeader {
+    pub name_ptr: *const u8,
+    pub name_len: usize,
+    pub value_ptr: *const u8,
+    pub value_len: usize,
+}
+
 // FFI surface for `WebCore::WebSocket` (src/jsc/bindings/webcore/WebSocket.cpp).
 // Kept private to this module — the safe wrappers below are the only callers.
 //
@@ -45,6 +54,16 @@ unsafe extern "C" {
         deflate_params: *const websocket_deflate::Params,
     );
     safe fn WebSocket__didAbruptClose(websocket_context: &CppWebSocket, reason: ErrorCode);
+    fn WebSocket__didReceiveHandshakeResponse(
+        websocket_context: &CppWebSocket,
+        status_code: u16,
+        status_message: *const u8,
+        status_message_len: usize,
+        headers: *const RawHeader,
+        headers_len: usize,
+        body: *const u8,
+        body_len: usize,
+    );
     fn WebSocket__didClose(websocket_context: &CppWebSocket, code: u16, reason: *const BunString);
     fn WebSocket__didReceiveText(
         websocket_context: &CppWebSocket,
@@ -58,8 +77,8 @@ unsafe extern "C" {
         opcode: u8,
     );
     safe fn WebSocket__rejectUnauthorized(websocket_context: &CppWebSocket) -> bool;
-    safe fn WebSocket__incrementPendingActivity(websocket_context: &CppWebSocket);
-    safe fn WebSocket__decrementPendingActivity(websocket_context: &CppWebSocket);
+    safe fn WebSocket__holdPendingActivityForClient(websocket_context: &CppWebSocket);
+    safe fn WebSocket__releasePendingActivityForClient(websocket_context: &CppWebSocket);
     fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: *mut BunString);
 }
 
@@ -75,6 +94,34 @@ impl CppWebSocket {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
         WebSocket__didAbruptClose(self, reason);
+        event_loop.exit();
+    }
+
+    /// Dispatch the native `'handshake'` event; C++ copies all slices synchronously.
+    pub(crate) fn did_receive_handshake_response(
+        &self,
+        status_code: u16,
+        status_message: &[u8],
+        headers: &[RawHeader],
+        body: &[u8],
+    ) {
+        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
+        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
+        let event_loop = VirtualMachine::get().event_loop_mut();
+        event_loop.enter();
+        // SAFETY: self is a valid C++ WebCore::WebSocket; the slices outlive the call.
+        unsafe {
+            WebSocket__didReceiveHandshakeResponse(
+                self,
+                status_code,
+                status_message.as_ptr(),
+                status_message.len(),
+                headers.as_ptr(),
+                headers.len(),
+                body.as_ptr(),
+                body.len(),
+            )
+        };
         event_loop.exit();
     }
 
@@ -176,14 +223,14 @@ impl CppWebSocket {
 }
 
 impl CppWebSocket {
-    pub(crate) fn r#ref(&self) {
+    fn r#ref(&self) {
         bun_jsc::mark_binding!();
-        WebSocket__incrementPendingActivity(self);
+        WebSocket__holdPendingActivityForClient(self);
     }
 
-    pub(crate) fn unref(&self) {
+    fn unref(&self) {
         bun_jsc::mark_binding!();
-        WebSocket__decrementPendingActivity(self);
+        WebSocket__releasePendingActivityForClient(self);
     }
 
     pub(crate) fn set_protocol(&self, protocol: &mut BunString) {

@@ -27,10 +27,8 @@ use bun_options_types::schema::api;
 use bun_options_types::command_tag::Tag as CommandTag;
 use bun_options_types::context::ContextData;
 
-pub use bun_options_types::offline_mode::OfflineMode;
-
 // TODO: replace api.TransformOptions with Bunfig
-pub struct Bunfig;
+pub(crate) struct Bunfig;
 
 /// Owned clone of an `EString` payload (transcoding UTF-16 → UTF-8 if needed).
 #[inline]
@@ -141,7 +139,7 @@ fn num_to_u32(n: f64) -> u32 {
 // Parser
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct Parser<'a> {
+struct Parser<'a> {
     json: Expr,
     source: &'a bun_ast::Source,
     log: &'a mut bun_ast::Log,
@@ -185,7 +183,7 @@ impl<'a> Parser<'a> {
         Err(crate::Error::InvalidBunfig)
     }
 
-    pub(crate) fn expect_string(&mut self, expr: &Expr) -> crate::Result<()> {
+    fn expect_string(&mut self, expr: &Expr) -> crate::Result<()> {
         match &expr.data {
             ExprData::EString(_) => Ok(()),
             _ => self.add_error_format(
@@ -213,7 +211,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    pub(crate) fn expect(&mut self, expr: &Expr, token: ExprTag) -> crate::Result<()> {
+    fn expect(&mut self, expr: &Expr, token: ExprTag) -> crate::Result<()> {
         if expr.data.tag() != token {
             return self.add_error_format(
                 expr.loc,
@@ -348,7 +346,7 @@ impl<'a> Parser<'a> {
     // already derives `enum_map::Enum`, which conflicts). Monomorphising over
     // `cmd` would only dead-code-eliminate untaken arms; the
     // runtime branches below are equivalent and the few hot fields are tiny.
-    pub(crate) fn parse(&mut self, cmd: CommandTag) -> crate::Result<()> {
+    fn parse(&mut self, cmd: CommandTag) -> crate::Result<()> {
         bun_analytics::features::bunfig.fetch_add(1, Ordering::Relaxed);
 
         let json = self.json;
@@ -1097,7 +1095,7 @@ impl<'a> Parser<'a> {
 }
 
 impl Bunfig {
-    pub fn parse(
+    pub(crate) fn parse(
         cmd: CommandTag,
         source: &bun_ast::Source,
         ctx: &mut ContextData,
@@ -1548,6 +1546,9 @@ impl<'a> Parser<'a> {
                     .map_err(remap)?,
             );
         }
+        if let Some(v) = install_obj.get(b"hoist").and_then(|e| e.as_bool()) {
+            install.hoist = Some(v);
+        }
 
         Ok(())
     }
@@ -1610,6 +1611,33 @@ impl<'a> Parser<'a> {
                 }
             } else {
                 self.add_error(minify.loc, b"Expected minify to be boolean or object")?;
+            }
+        }
+
+        if let Some(sourcemap) = serve_obj.get(b"sourcemap") {
+            if let Some(v) = sourcemap.as_bool() {
+                self.ctx.args.serve_sourcemap = Some(if v {
+                    api::SourceMapMode::Linked
+                } else {
+                    api::SourceMapMode::None
+                });
+            } else if let Some(s) = sourcemap.as_string(self.bump) {
+                match s {
+                    b"none" => self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::None),
+                    b"linked" => self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::Linked),
+                    b"inline" => self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::Inline),
+                    b"external" => {
+                        self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::External)
+                    }
+                    _ => {
+                        self.add_error(
+                            sourcemap.loc,
+                            b"Expected sourcemap to be one of 'none', 'linked', 'inline', or 'external'",
+                        )?;
+                    }
+                }
+            } else {
+                self.add_error(sourcemap.loc, b"Expected sourcemap to be boolean or string")?;
             }
         }
 

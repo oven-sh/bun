@@ -26,9 +26,9 @@ pub use crate::lockfile::PatchedDep;
 bun_output::declare_scope!(InstallPatch, visible);
 
 /// Length of the hex representation of `u64::MAX` (i.e. 16).
-pub(crate) const MAX_HEX_HASH_LEN: usize = const_format::formatcp!("{:x}", u64::MAX).len();
-pub(crate) const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + bun_hash_tag.len() + 1;
-pub(crate) type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
+const MAX_HEX_HASH_LEN: usize = const_format::formatcp!("{:x}", u64::MAX).len();
+const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + bun_hash_tag.len() + 1;
+type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 
 // The directory handles on `PatchTask`/`ApplyPatch` are *borrowed views* of the
 // `PackageManager`-owned cache/temp directory descriptors. Store the raw `Fd`
@@ -43,14 +43,14 @@ pub struct PatchTask {
     /// Constructed via `BackRef::new_mut` so the underlying pointer carries
     /// write provenance for `PackageManager::wake_raw(*mut Self)`, which
     /// writes the event-loop wake flag.
-    pub manager: bun_ptr::BackRef<PackageManager>,
+    pub(crate) manager: bun_ptr::BackRef<PackageManager, bun_ptr::Mut>,
     /// Borrowed view of the manager's temp directory fd (see comment at top of file).
-    pub tempdir: Fd,
-    pub project_dir: &'static [u8],
-    pub callback: Callback,
-    pub task: ThreadPoolTask,
-    pub pre: bool,
-    pub next: bun_threading::Link<PatchTask>,
+    pub(crate) tempdir: Fd,
+    pub(crate) project_dir: &'static [u8],
+    pub(crate) callback: Callback,
+    pub(crate) task: ThreadPoolTask,
+    pub(crate) pre: bool,
+    pub(crate) next: bun_threading::Link<PatchTask>,
 }
 
 bun_threading::intrusive_work_task!(PatchTask, task);
@@ -96,72 +96,54 @@ impl Callback {
 }
 
 pub struct CalcPatchHash {
-    pub patchfile_path: Box<[u8]>,
-    pub name_and_version_hash: u64,
+    pub(crate) patchfile_path: Box<[u8]>,
+    pub(crate) name_and_version_hash: u64,
 
-    pub state: Option<EnqueueAfterState>,
+    pub(crate) state: Option<EnqueueAfterState>,
 
-    pub result: Option<u64>,
+    pub(crate) result: Option<u64>,
 
-    pub logger: Log,
+    pub(crate) logger: Log,
 }
 
 pub struct EnqueueAfterState {
-    pub pkg_id: PackageID,
-    pub dependency_id: DependencyID,
-    pub url: Box<[u8]>,
+    pub(crate) pkg_id: PackageID,
+    pub(crate) dependency_id: DependencyID,
+    pub(crate) url: Box<[u8]>,
 }
 
 pub struct ApplyPatch {
-    pub pkg_id: PackageID,
-    pub patch_hash: u64,
-    pub name_and_version_hash: u64,
+    pub(crate) pkg_id: PackageID,
+    pub(crate) patch_hash: u64,
 
-    pub patchfilepath: Box<[u8]>,
-    pub pkgname: SemverString,
+    pub(crate) patchfilepath: Box<[u8]>,
+    pub(crate) pkgname: SemverString,
 
     /// Borrowed view of the manager's cache directory fd (see comment at top of file).
-    pub cache_dir: Fd,
-    pub cache_dir_subpath: ZBox,
-    pub cache_dir_subpath_without_patch_hash: ZBox,
+    pub(crate) cache_dir: Fd,
+    pub(crate) cache_dir_subpath: ZBox,
+    pub(crate) cache_dir_subpath_without_patch_hash: ZBox,
 
     /// this is non-null if this was called before a Task, for example extracting
-    pub task_id: Option<TaskId>,
-    pub install_context: Option<InstallContext>,
+    pub(crate) task_id: Option<TaskId>,
+    pub(crate) install_context: Option<InstallContext>,
     // dependency_id: ?struct = null,
-    pub logger: Log,
+    pub(crate) logger: Log,
 }
 
 pub struct InstallContext {
-    pub dependency_id: DependencyID,
-    pub tree_id: crate::lockfile::tree::Id,
-    pub path: Vec<u8>,
+    pub(crate) dependency_id: DependencyID,
+    pub(crate) tree_id: crate::lockfile::tree::Id,
+    pub(crate) path: Vec<u8>,
 }
 
 impl PatchTask {
-    /// Destroy a heap-allocated `PatchTask` previously created by
-    /// `new_calc_patch_hash` / `new_apply_patch_hash`.
-    ///
-    /// The owned fields (`Box<[u8]>`, `Vec<u8>`, `Log`, `Option<...>`) drop automatically, so no
-    /// `impl Drop` body is needed. Because `PatchTask` is held via raw pointer through the
-    /// intrusive `next`/thread-pool queue, the named reclaim point is `unsafe fn destroy`.
-    ///
-    /// # Safety
-    /// `this` must have been produced by `heap::alloc` in the `new_*` constructors below and
-    /// ownership must be returned here exactly once.
-    pub unsafe fn destroy(this: *mut Self) {
-        // TODO: how to deinit `this.callback.calc_hash.network_task`
-        // SAFETY: caller contract — `this` was produced by `heap::into_raw` in
-        // `new_calc_patch_hash`/`new_apply_patch_hash` and is reclaimed exactly once.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
-
     /// # Safety
     /// Only invoked by `ThreadPool` via the `callback` fn-pointer registered in
     /// `new_calc_patch_hash` / `new_apply_patch_hash`. `task` must be live and
     /// point at the `task` field of a heap-allocated `PatchTask`, with the pool
     /// granting exclusive access for the duration of the call.
-    pub unsafe fn run_from_thread_pool(task: *mut ThreadPoolTask) {
+    pub(crate) unsafe fn run_from_thread_pool(task: *mut ThreadPoolTask) {
         // SAFETY: thread-pool callback contract — `task` points to the `task`
         // field of a live `PatchTask` (set at construction); the pool runs
         // each task at most once with exclusive access for the call.
@@ -169,7 +151,7 @@ impl PatchTask {
         patch_task.run_from_thread_pool_impl();
     }
 
-    pub fn run_from_thread_pool_impl(&mut self) {
+    pub(crate) fn run_from_thread_pool_impl(&mut self) {
         bun_output::scoped_log!(
             InstallPatch,
             "runFromThreadPoolImpl {}",
@@ -204,7 +186,7 @@ impl PatchTask {
         }
     }
 
-    pub fn run_from_main_thread(
+    pub(crate) fn run_from_main_thread(
         &mut self,
         manager: &mut PackageManager,
         log_level: LogLevel,
@@ -237,7 +219,7 @@ impl PatchTask {
         Ok(())
     }
 
-    pub fn run_from_main_thread_apply(&mut self, manager: &mut PackageManager) {
+    pub(crate) fn run_from_main_thread_apply(&mut self, manager: &mut PackageManager) {
         let _ = manager; // autofix
         let Callback::Apply(apply) = &mut self.callback else {
             unreachable!()
@@ -386,9 +368,7 @@ impl PatchTask {
                     );
                     if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::ApplyPatch {
                         manager.set_preinstall_state(pkg_meta_id, PreinstallState::ApplyingPatch);
-                        // SAFETY: `patch_task` is a fresh `heap::alloc` from
-                        // `new_apply_patch_hash`; ownership transfers to the fifo.
-                        unsafe { package_manager::enqueue_patch_task(manager, patch_task) };
+                        package_manager::enqueue_patch_task(manager, patch_task);
                     }
                 }
                 _ => {}
@@ -403,7 +383,7 @@ impl PatchTask {
     // 4. Apply patches to pkg in temp dir
     // 5. Add bun tag for patch hash
     // 6. rename() newly patched pkg to cache
-    pub fn apply(&mut self) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn apply(&mut self) -> Result<(), bun_alloc::AllocError> {
         let Callback::Apply(patch) = &mut self.callback else {
             unreachable!()
         };
@@ -507,7 +487,6 @@ impl PatchTask {
             progress: None,
             package_name: pkg_name,
             package_version: &resolution_label,
-            file_count: 0,
             // dummy value
             node_modules: &dummy_node_modules,
             lockfile,
@@ -621,7 +600,7 @@ impl PatchTask {
         Ok(())
     }
 
-    pub fn calc_hash(&mut self) -> Option<u64> {
+    pub(crate) fn calc_hash(&mut self) -> Option<u64> {
         let Callback::CalcHash(calc_hash) = &mut self.callback else {
             unreachable!()
         };
@@ -728,15 +707,15 @@ impl PatchTask {
         Some(hasher.final_())
     }
 
-    pub fn schedule(&mut self, batch: &mut Batch) {
+    pub(crate) fn schedule(&mut self, batch: &mut Batch) {
         batch.push(Batch::from(&raw mut self.task));
     }
 
-    pub fn new_calc_patch_hash(
+    pub(crate) fn new_calc_patch_hash(
         manager: &mut PackageManager,
         name_and_version_hash: u64,
         state: Option<EnqueueAfterState>,
-    ) -> *mut PatchTask {
+    ) -> Box<PatchTask> {
         let patchdep = manager
             .lockfile
             .patched_dependencies
@@ -748,7 +727,7 @@ impl PatchTask {
         // log formatting), so no trailing NUL is needed.
 
         let tempdir = manager.get_temporary_directory().handle.fd();
-        let pt = Box::new(PatchTask {
+        Box::new(PatchTask {
             tempdir,
             callback: Callback::CalcHash(CalcPatchHash {
                 state,
@@ -765,17 +744,15 @@ impl PatchTask {
             },
             pre: false,
             next: bun_threading::Link::new(),
-        });
-
-        bun_core::heap::into_raw(pt)
+        })
     }
 
-    pub fn new_apply_patch_hash(
+    pub(crate) fn new_apply_patch_hash(
         pkg_manager: &mut PackageManager,
         pkg_id: PackageID,
         patch_hash: u64,
         name_and_version_hash: u64,
-    ) -> *mut PatchTask {
+    ) -> Box<PatchTask> {
         let pkg_name = pkg_manager.lockfile.packages.items_name()[pkg_id as usize];
 
         // Borrowck — `compute_cache_dir_and_subpath` borrows `&mut PackageManager`
@@ -820,12 +797,11 @@ impl PatchTask {
         let cache_dir = stuff.cache_dir;
 
         let tempdir = pkg_manager.get_temporary_directory().handle.fd();
-        let pt = Box::new(PatchTask {
+        Box::new(PatchTask {
             tempdir,
             callback: Callback::Apply(ApplyPatch {
                 pkg_id,
                 patch_hash,
-                name_and_version_hash,
                 cache_dir,
                 patchfilepath,
                 pkgname: pkg_name,
@@ -843,9 +819,7 @@ impl PatchTask {
             },
             pre: false,
             next: bun_threading::Link::new(),
-        });
-
-        bun_core::heap::into_raw(pt)
+        })
     }
 }
 

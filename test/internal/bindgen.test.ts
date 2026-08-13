@@ -68,3 +68,21 @@ it("custom enforceRange boundaries", () => {
   expect(bindgen.requiredAndOptionalArg(false, 0, 100)).toBe(100);
   expect(bindgen.requiredAndOptionalArg(false, 0, 0)).toBe(0);
 });
+
+it("unsigned integer dictionary fields reject negative values", () => {
+  const listen = (tls: Record<string, number>) =>
+    Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { data() {} } });
+
+  for (const field of ["secureOptions", "clientRenegotiationLimit", "clientRenegotiationWindow"] as const) {
+    let caught: any = undefined;
+    try {
+      using listener = listen({ [field]: -1 });
+      void listener;
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(RangeError);
+    expect(caught.code).toBe("ERR_OUT_OF_RANGE");
+    expect(caught.message).toBe(`TLSOptions.${field} must be in the range [0, 4294967295] (received -1)`);
+  }
+});

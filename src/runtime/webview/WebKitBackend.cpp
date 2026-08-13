@@ -44,7 +44,7 @@ extern "C" int32_t Bun__WebViewHost__ensure(Zig::GlobalObject*, bool stdoutInher
 extern "C" void* Blob__fromMmapWithType(JSC::JSGlobalObject*, uint8_t* ptr, size_t len, const char* mime);
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
 extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject*, void* ptr, size_t length);
-extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
+extern "C" void Bun__VmHandle__refKeepAlive(const ::BunVmHandleRef*, int delta);
 // Bracket the whole onData batch. exit() drains microtasks when outermost,
 // so all the promise reactions from this batch run before we return to usockets.
 extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
@@ -123,8 +123,8 @@ void HostClient::updateKeepAlive()
     bool want = !viewsById.empty();
     if (want == sockRefd || !global) return;
     sockRefd = want;
-    Bun__eventLoop__incrementRefConcurrently(
-        WebCore::clientData(global->vm())->bunVM, want ? 1 : -1);
+    Bun__VmHandle__refKeepAlive(
+        WebCore::clientData(global->vm())->vmHandle, want ? 1 : -1);
 }
 
 bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool stderrInherit)
@@ -160,7 +160,7 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool 
     // READABLE|WRITABLE. ipc=0 — we're not doing SCM_RIGHTS fd passing.
     // us_poll_start_rc doesn't touch loop.active; updateKeepAlive is the
     // sole ref manager. kind=1 (.dynamic) → dispatch via s_hostVTable.
-    sock = us_socket_from_fd(&s_hostGroup, BUN_SOCKET_KIND_DYNAMIC, nullptr, sizeof(void*), fd, 0);
+    sock = us_socket_from_fd(&s_hostGroup, BUN_SOCKET_KIND_DYNAMIC, nullptr, sizeof(void*), fd, 0, 0);
     if (!sock) {
         // us_socket_from_fd calls us_poll_free on failure but doesn't close
         // the fd (ownership was ours). Leak it and the child stays alive

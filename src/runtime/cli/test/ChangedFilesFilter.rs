@@ -43,20 +43,20 @@ use crate::api::bun_process::sync as spawn_sync;
 
 // `core::result::Result` is fully qualified throughout this file to avoid the
 // shadow.
-pub struct Result<'a> {
+pub(crate) struct Result<'a> {
     /// The filtered list of test files. Slice of the original `test_files`
     /// allocation, owned by the caller.
-    pub test_files: &'a mut [Interned],
+    pub(crate) test_files: &'a mut [Interned],
     /// Number of files git reported as changed.
-    pub changed_count: usize,
+    pub(crate) changed_count: usize,
     /// Number of test files before filtering.
-    pub total_tests: usize,
+    pub(crate) total_tests: usize,
     /// Absolute paths of every local source file that participates in the
     /// module graph (test entry points and everything they transitively
     /// import, excluding node_modules). Used by `--changed --watch` to watch
     /// files that would not otherwise be loaded when a subset of tests runs.
     /// Owned by the caller; each element is individually allocated.
-    pub module_graph_files: Vec<Box<[u8]>>,
+    pub(crate) module_graph_files: Vec<Box<[u8]>>,
 }
 
 /// Filter `test_files` in place to only the entries whose module graph
@@ -340,22 +340,18 @@ pub(crate) fn init_watch_trigger() {
         let path: ZBox = if let Some(existing) = getenv_z(TRIGGER_FILE_ENV_VAR_Z) {
             ZBox::from_bytes(existing)
         } else {
-            // SAFETY: getpid is always safe.
-            let seed: u64 =
-                bun_core::time::milli_timestamp() as u64 ^ unsafe { libc::getpid() } as u64;
-            // wyhash of a time^pid seed; only used to make a unique temp
-            // trigger-file name.
-            let rand: u64 = bun_wyhash::hash(&seed.to_ne_bytes());
+            let mut rand = [0u8; 16];
+            bun_boringssl_sys::rand_bytes(&mut rand);
             let tmpdir = RealFS::tmpdir_path();
             let mut fresh: Vec<u8> = Vec::new();
             {
                 use std::io::Write as _;
                 write!(
                     &mut fresh,
-                    "{}{}.bun-test-changed-{:x}.trigger",
+                    "{}{}.bun-test-changed-{}.trigger",
                     BStr::new(strings::without_trailing_slash(tmpdir)),
                     SEP as char,
-                    rand,
+                    bun_fmt::hex_lower(&rand),
                 )
                 .expect("unreachable");
             }
@@ -418,13 +414,7 @@ fn consume_watch_trigger() -> Option<StringSet> {
         let _ = sys::unlink(&trigger_path);
 
         let mut set = StringSet::new();
-        for path in contents
-            .split(|b| *b == b'\r' || *b == b'\n')
-            .filter(|s| !s.is_empty())
-        {
-            if path.is_empty() {
-                continue;
-            }
+        for path in strings::tokenize_any(&contents, b"\r\n") {
             // The watcher may see a file disappear (delete/rename). A path
             // that no longer exists cannot appear in the module graph this
             // run, so drop it; its importers will still be picked up if the
@@ -476,23 +466,22 @@ fn get_changed_files(
     // Find the git repository root so we can make the paths git prints
     // absolute (git prints paths relative to the repo toplevel with these
     // commands).
-    let git_root: Box<[u8]> = 'blk: {
-        let result = run_git(git_path, top_level_dir, &[b"rev-parse", b"--show-toplevel"]);
-        if !result.ok {
-            if result.spawn_failed {
-                // run_git already printed the spawn error.
-            } else if !result.stderr.is_empty() {
-                Output::err_generic(
-                    "--changed: {s}",
-                    (BStr::new(strings::trim(&result.stderr, b" \r\n\t")),),
-                );
-            } else {
-                Output::err_generic("--changed requires running inside a git repository", ());
+    let git_root: Box<[u8]> =
+        match run_git(git_path, top_level_dir, &[b"rev-parse", b"--show-toplevel"]) {
+            GitResult::SpawnFailed => return Err(GitError::GitFailed),
+            GitResult::ExitError { stderr } => {
+                if !stderr.is_empty() {
+                    Output::err_generic(
+                        "--changed: {s}",
+                        (BStr::new(strings::trim(&stderr, b" \r\n\t")),),
+                    );
+                } else {
+                    Output::err_generic("--changed requires running inside a git repository", ());
+                }
+                return Err(GitError::GitFailed);
             }
-            return Err(GitError::GitFailed);
-        }
-        break 'blk Box::<[u8]>::from(strings::trim(&result.stdout, b" \r\n\t"));
-    };
+            GitResult::Ok { stdout } => Box::<[u8]>::from(strings::trim(&stdout, b" \r\n\t")),
+        };
 
     let mut set = StringSet::new();
 
@@ -500,60 +489,54 @@ fn get_changed_files(
         // Uncommitted (unstaged + staged). `git diff HEAD` covers both.
         // On a repo with no commits, `HEAD` is unresolved; fall back to just
         // `git diff` (unstaged) + staged.
-        let diff = run_git(
+        match run_git(
             git_path,
             top_level_dir,
             &[b"diff", b"--name-only", b"HEAD", b"--"],
-        );
-        if diff.spawn_failed {
-            return Err(GitError::GitFailed);
-        }
-        if diff.ok {
-            append_paths(&mut set, &git_root, &diff.stdout);
-        } else {
-            let unstaged = run_git(git_path, top_level_dir, &[b"diff", b"--name-only", b"--"]);
-            if unstaged.spawn_failed {
-                return Err(GitError::GitFailed);
-            }
-            if unstaged.ok {
-                append_paths(&mut set, &git_root, &unstaged.stdout);
-            }
+        ) {
+            GitResult::SpawnFailed => return Err(GitError::GitFailed),
+            GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
+            GitResult::ExitError { .. } => {
+                match run_git(git_path, top_level_dir, &[b"diff", b"--name-only", b"--"]) {
+                    GitResult::SpawnFailed => return Err(GitError::GitFailed),
+                    GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
+                    GitResult::ExitError { .. } => {}
+                }
 
-            let staged = run_git(
-                git_path,
-                top_level_dir,
-                &[b"diff", b"--name-only", b"--cached", b"--"],
-            );
-            if staged.spawn_failed {
-                return Err(GitError::GitFailed);
-            }
-            if staged.ok {
-                append_paths(&mut set, &git_root, &staged.stdout);
+                match run_git(
+                    git_path,
+                    top_level_dir,
+                    &[b"diff", b"--name-only", b"--cached", b"--"],
+                ) {
+                    GitResult::SpawnFailed => return Err(GitError::GitFailed),
+                    GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
+                    GitResult::ExitError { .. } => {}
+                }
             }
         }
     } else {
-        let diff = run_git(
+        match run_git(
             git_path,
             top_level_dir,
             &[b"diff", b"--name-only", since, b"--"],
-        );
-        if !diff.ok {
-            if diff.spawn_failed {
-                // run_git already printed the spawn error.
-            } else if !diff.stderr.is_empty() {
-                Output::err_generic(
-                    "--changed: {s}",
-                    (BStr::new(strings::trim(&diff.stderr, b" \r\n\t")),),
-                );
-            } else {
-                Output::err_generic(
-                    "--changed: git diff against {f} failed",
-                    (bun_fmt::quote(since),),
-                );
+        ) {
+            GitResult::SpawnFailed => return Err(GitError::GitFailed),
+            GitResult::ExitError { stderr } => {
+                if !stderr.is_empty() {
+                    Output::err_generic(
+                        "--changed: {s}",
+                        (BStr::new(strings::trim(&stderr, b" \r\n\t")),),
+                    );
+                } else {
+                    Output::err_generic(
+                        "--changed: git diff against {f} failed",
+                        (bun_fmt::quote(since),),
+                    );
+                }
+                return Err(GitError::GitFailed);
             }
-            return Err(GitError::GitFailed);
+            GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
         }
-        append_paths(&mut set, &git_root, &diff.stdout);
     }
 
     // Untracked files are always considered changed — a brand-new file
@@ -562,37 +545,33 @@ fn get_changed_files(
     // supplement with ls-files in both branches above. `--full-name`
     // forces repo-root-relative output regardless of our cwd, matching
     // `git diff --name-only`.
-    {
-        let untracked = run_git(
-            git_path,
-            top_level_dir,
-            &[
-                b"ls-files",
-                b"--others",
-                b"--exclude-standard",
-                b"--full-name",
-            ],
-        );
-        if untracked.spawn_failed {
-            return Err(GitError::GitFailed);
-        }
-        if untracked.ok {
-            append_paths(&mut set, &git_root, &untracked.stdout);
-        }
+    match run_git(
+        git_path,
+        top_level_dir,
+        &[
+            b"ls-files",
+            b"--others",
+            b"--exclude-standard",
+            b"--full-name",
+        ],
+    ) {
+        GitResult::SpawnFailed => return Err(GitError::GitFailed),
+        GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
+        GitResult::ExitError { .. } => {}
     }
 
     Ok(set)
 }
 
-#[derive(Default)]
-pub(crate) struct GitResult {
-    pub ok: bool,
-    /// Set when the git process could not be spawned at all. The failure
-    /// has already been reported; callers should not print a second
-    /// "not a git repo" style message.
-    pub spawn_failed: bool,
-    pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>,
+pub(crate) enum GitResult {
+    /// `run_git` has already reported the spawn error.
+    SpawnFailed,
+    ExitError {
+        stderr: Vec<u8>,
+    },
+    Ok {
+        stdout: Vec<u8>,
+    },
 }
 
 fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
@@ -626,12 +605,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
         Ok(p) => p,
         Err(err) => {
             Output::err_generic("--changed: failed to spawn git: {s}", (err.name(),));
-            return GitResult {
-                ok: false,
-                spawn_failed: true,
-                stdout: Vec::new(),
-                stderr: Vec::new(),
-            };
+            return GitResult::SpawnFailed;
         }
     };
 
@@ -641,19 +615,19 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
                 "--changed: failed to spawn git: {f}",
                 format_args!("{}", err),
             );
-            GitResult {
-                ok: false,
-                spawn_failed: true,
-                stdout: Vec::new(),
-                stderr: Vec::new(),
+            GitResult::SpawnFailed
+        }
+        sys::Result::Ok(result) => {
+            if result.is_ok() {
+                GitResult::Ok {
+                    stdout: result.stdout,
+                }
+            } else {
+                GitResult::ExitError {
+                    stderr: result.stderr,
+                }
             }
         }
-        sys::Result::Ok(result) => GitResult {
-            ok: result.is_ok(),
-            spawn_failed: false,
-            stdout: result.stdout,
-            stderr: result.stderr,
-        },
     }
 }
 
@@ -661,10 +635,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
 /// with the repository root, and insert existing files into `set`.
 fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
     let mut buf = PathBuffer::uninit();
-    for line in stdout
-        .split(|b| *b == b'\r' || *b == b'\n')
-        .filter(|s| !s.is_empty())
-    {
+    for line in strings::tokenize_any(stdout, b"\r\n") {
         let rel = strings::trim(line, b" \t");
         if rel.is_empty() {
             continue;

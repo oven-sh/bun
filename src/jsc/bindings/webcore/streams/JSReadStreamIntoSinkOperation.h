@@ -24,7 +24,7 @@ public:
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit ALL FOUR barriers: m_stream, m_reader, m_sink, m_result.
+    // visitChildrenImpl MUST visit every WriteBarrier field below.
     DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
@@ -45,9 +45,17 @@ public:
     JSC::WriteBarrier<JSC::JSObject> m_sink;
     // the JSPromise readStreamIntoSink returned (what Rust's Signal protocol awaits).
     JSC::WriteBarrier<JSC::JSPromise> m_result;
+    // Nullable: the unwritten batch tail stashed on sink backpressure; drained on m_onPull.
+    JSC::WriteBarrier<JSC::JSObject> m_pendingBatch;
+    // Nullable: the byte-producing JSTransformStream subclass whose transform arms
+    // write output straight to this sink. Set at attach; onReady flips its
+    // m_backpressure back to false, onClose/finally detaches it.
+    JSC::WriteBarrier<JSTransformStream> m_nativeTransform;
     bool m_didThrow : 1 { false };
     bool m_didClose : 1 { false };
     bool m_started : 1 { false };
+    // Set when rsisWriteChunk suspends on sink backpressure; cleared when m_onPull resumes.
+    bool m_waitingOnSink : 1 { false };
 
 private:
     JSReadStreamIntoSinkOperation(JSC::VM&, JSC::Structure*);

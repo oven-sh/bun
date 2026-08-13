@@ -1412,10 +1412,27 @@ for (const { body: bodyType, fn } of bodyTypes) {
     test("an explicit Content-Type header wins over the body Blob's type", async () => {
       const blob = await fn(new Blob(["x"], { type: "a/a" }), { "content-type": "b/b" }).blob();
       expect(blob.type).toBe("b/b");
-      // It wins even when it extracts to nothing: the body Blob's type must
-      // not leak through, whether Bun stores it interned (text/plain) or not.
-      expect((await fn(new Blob(["x"], { type: "text/plain" }), { "content-type": "*/*" }).blob()).type).toBe("");
-      expect((await fn(new Blob(["x"], { type: "a/a" }), { "content-type": "*/*" }).blob()).type).toBe("");
+      // It wins even when it extracts to nothing: the body's type must not leak
+      // through from any of the places Bun keeps it (interned, owned, or on the
+      // byte store, as a URLSearchParams body's used to be).
+      const form = new FormData();
+      form.set("a", "b");
+      expect({
+        interned: (await fn(new Blob(["x"], { type: "text/plain" }), { "content-type": "*/*" }).blob()).type,
+        owned: (await fn(new Blob(["x"], { type: "a/a" }), { "content-type": "*/*" }).blob()).type,
+        urlSearchParams: (await fn(new URLSearchParams("a=b"), { "content-type": "*/*" }).blob()).type,
+        urlSearchParamsInvalid: (await fn(new URLSearchParams("a=b"), { "content-type": "invalid" }).blob()).type,
+        formData: (await fn(form, { "content-type": "*/*" }).blob()).type,
+        // Blob.prototype.slice() without a contentType has an empty type too.
+        urlSearchParamsSlice: (await fn(new URLSearchParams("a=b")).blob()).slice(0, 1).type,
+      }).toEqual({
+        interned: "",
+        owned: "",
+        urlSearchParams: "",
+        urlSearchParamsInvalid: "",
+        formData: "",
+        urlSearchParamsSlice: "",
+      });
     });
 
     test("does not mutate the body source Blob's type", async () => {

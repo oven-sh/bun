@@ -871,22 +871,10 @@ impl BlobExt for Blob {
     ) -> Blob {
         let mut converter = URLSearchParamsConverter { buf: Vec::new() };
         search_params.to_string(&mut converter, URLSearchParamsConverter::convert);
-        let store = Store::init(converter.buf);
-        // SAFETY: `store` is the sole +1 on this freshly-allocated Store.
-        unsafe {
-            (*store.as_ptr()).mime_type = bun_http_types::MimeType::Compact::from(
-                // The bare tag, *without* `;charset=UTF-8` (charset promotion is
-                // Compact::to_mime_type's job, applied when read).
-                bun_http_types::MimeType::Table::from_mime_literal(
-                    "application/x-www-form-urlencoded",
-                ),
-            )
-            .to_mime_type();
-        }
-        let content_type = BlobContentType::from_mime(&store.mime_type);
-
-        let blob = Blob::init_with_store(store, global_this);
-        blob.content_type.set(content_type);
+        let blob = Blob::init_with_store(Store::init(converter.buf), global_this);
+        blob.content_type.set(BlobContentType::Static(
+            b"application/x-www-form-urlencoded;charset=UTF-8",
+        ));
         blob.content_type_was_set.set(true);
         blob
     }

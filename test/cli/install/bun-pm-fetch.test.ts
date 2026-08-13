@@ -196,6 +196,27 @@ it("should not migrate bun.lockb to bun.lock even when saveTextLockfile is set",
   expect(await projectFiles()).toEqual(before);
 }, 30_000);
 
+it("should ignore --lockfile-only", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeProject();
+  const before = await projectFiles();
+
+  const { stdout, stderr, exitCode } = await fetchIntoCache(cacheDir(), ["--lockfile-only"]);
+  expect(stdout).toMatchInlineSnapshot(`
+    "bun pm fetch <version> (<revision>)
+
+    Fetched 1 package into cache
+    Cache: <cache>"
+  `);
+  expect(stderr).not.toContain("Saved lockfile");
+  expect(exitCode).toBe(0);
+
+  expect(urls).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(await cachedPackages(cacheDir())).toBe(1);
+  expect(await projectFiles()).toEqual(before);
+}, 30_000);
+
 it("should report when all packages are already cached", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

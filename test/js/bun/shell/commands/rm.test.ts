@@ -145,6 +145,30 @@ foo/
     }
   });
 
+  // An empty operand names nothing. On Windows it used to resolve to the
+  // shell's cwd itself, and `rm -r ""` deleted the cwd's contents.
+  TestBuilder.command`rm -r ${""}`
+    .ensureTempDir()
+    .file("keep.txt", "keep")
+    .directory("sub")
+    .file("sub/inner.txt", "keep")
+    .stderr("rm: No such file or directory\n")
+    .exitCode(1)
+    .fileEquals("keep.txt", "keep")
+    .fileEquals("sub/inner.txt", "keep")
+    .runAsTest("empty operand");
+
+  TestBuilder.command`rm -rf ${""}`
+    .ensureTempDir()
+    .file("keep.txt", "keep")
+    .directory("sub")
+    .file("sub/inner.txt", "keep")
+    .stderr("")
+    .exitCode(0)
+    .fileEquals("keep.txt", "keep")
+    .fileEquals("sub/inner.txt", "keep")
+    .runAsTest("empty operand with -f");
+
   // The DirTask parent/child hand-off had a lost-wakeup window between
   // `subtask_count.load() > 1` and `need_to_wait.store(true)`: the last
   // child could decrement and read `need_to_wait == false` in between,

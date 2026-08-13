@@ -5810,8 +5810,10 @@ static void JSC__JSValue__forEachOwnPropertyImpl(JSC::EncodedJSValue JSValue0, J
         ZigString key = toZigString(name);
 
         JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
-        // TODO: properly propagate exception upwards
         iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), property.isPrivateName());
+        // Propagate exceptions from callbacks; the next iteration's
+        // tryClearException() would otherwise swallow them.
+        RETURN_IF_EXCEPTION(scope, void());
     }
     properties.releaseData();
 }

@@ -928,3 +928,36 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("an inspect.custom hook that throws while a property is being formatted", () => {
+  const boom = {
+    [Bun.inspect.custom]() {
+      throw new Error("boom");
+    },
+  };
+  function* gen() {
+    yield 1;
+  }
+  // Each object has a property after the throwing one: the walk has to stop at
+  // `a` rather than move on to `b` and lose the error.
+
+  it("propagates from a plain object", () => {
+    expect(() => Bun.inspect({ a: boom, b: 2 })).toThrow("boom");
+  });
+
+  it("propagates with sorted: true", () => {
+    expect(() => Bun.inspect({ a: boom, b: 2 }, { sorted: true })).toThrow("boom");
+  });
+
+  it("propagates from own properties of generator and iterator objects", () => {
+    const g = gen();
+    g.a = boom;
+    g.b = 2;
+    expect(() => Bun.inspect(g)).toThrow("boom");
+
+    const iterator = [1][Symbol.iterator]();
+    iterator.a = boom;
+    iterator.b = 2;
+    expect(() => Bun.inspect(iterator)).toThrow("boom");
+  });
+});

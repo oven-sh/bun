@@ -172,21 +172,21 @@ impl DirWatcher {
         if self.is_dead() {
             return;
         }
-        // Copy the handle before publishing `dead`: once the store lands, a
-        // transpiler thread may reuse this slot and overwrite `dir_handle`.
+        // Every field read happens before publishing `dead`: once the store
+        // lands, a transpiler thread may reuse this slot and rewrite the box.
         let handle = self.dir_handle;
-        self.state.dead.store(true);
-        // SAFETY: `handle` is the handle `add_root` opened; `stop()` skips
-        // dead roots, so this is the only close.
-        unsafe {
-            let _ = w::CloseHandle(handle);
-        }
         bun_core::scoped_log!(
             watcher,
             "stopped watching {} ({})",
             bstr::BStr::new(&self.state.path),
             bstr::BStr::new(cause.name())
         );
+        self.state.dead.store(true);
+        // SAFETY: `handle` is the handle `add_root` opened; `stop()` skips
+        // dead roots, so this is the only close.
+        unsafe {
+            let _ = w::CloseHandle(handle);
+        }
     }
 }
 
@@ -587,17 +587,18 @@ pub(crate) fn pick_watch_root(dir: &[u8]) -> &[u8] {
     }
 
     // Nearest enclosing package.json.
+    const PKG: &[u8] = b"package.json";
     let mut probe = bun_paths::path_buffer_pool::get();
     let mut end = dir.len(); // index one past a separator
     for _ in 0..64 {
-        if end <= 3 || end + NM.len() + 1 >= probe.len() {
+        if end <= 3 || end + PKG.len() + 1 >= probe.len() {
             break;
         }
         probe[..end].copy_from_slice(&dir[..end]);
-        probe[end..end + 12].copy_from_slice(b"package.json");
-        probe[end + 12] = 0;
-        // SAFETY: the NUL at [end + 12] was written above.
-        let candidate = unsafe { bun_core::ZStr::from_raw(probe.as_ptr(), end + 12) };
+        probe[end..end + PKG.len()].copy_from_slice(PKG);
+        probe[end + PKG.len()] = 0;
+        // SAFETY: the NUL at [end + PKG.len()] was written above.
+        let candidate = unsafe { bun_core::ZStr::from_raw(probe.as_ptr(), end + PKG.len()) };
         if bun_sys::exists_z(candidate) {
             return &dir[..end];
         }

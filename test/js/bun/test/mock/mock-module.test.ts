@@ -654,6 +654,39 @@ test("jest.requireMock with a relative specifier doesn't break later ESM imports
   expect(exitCode).toBe(0);
 });
 
+test("Bun.plugin.clearAll() after jest.mock doesn't break later ESM imports", async () => {
+  // Regression guard: clearAll() deletes virtualModules, so it must also
+  // clear `mustDoExpensiveRelativeLookup` or the module loader's assert on
+  // the flag-without-map state fires on the next ESM import. Fresh process
+  // so virtualModules starts null.
+  using dir = tempDir("clearall-esm", {
+    "real.ts": `export const value = 42;`,
+    "fixture.test.ts": `
+      import { test, expect, jest } from "bun:test";
+      test("jest.mock then clearAll then import", async () => {
+        jest.mock("file:./real.ts");
+        Bun.plugin.clearAll();
+        const mod = await import("./real.ts");
+        expect(mod.value).toBe(42);
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "fixture.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("1 pass");
+  expect(stderr).not.toContain("0 pass");
+  expect(exitCode).toBe(0);
+});
+
 test("a failing jest.mock() with a relative specifier doesn't break later ESM imports", async () => {
   // Regression guard: a jest.mock() whose internal require() throws (typo'd
   // path) must not leave the module loader's `!mustDoExpensiveRelativeLookup`

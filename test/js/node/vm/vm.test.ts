@@ -578,6 +578,14 @@ describe("negative lineOffset and columnOffset", () => {
     const code = "      new Error('x')";
     const [[, baseColumn]] = callSites(code, { filename: "cc.js" });
     expect(callSites(code, { filename: "cc.js", columnOffset: -3 })).toEqual([[1, baseColumn - 3]]);
+
+    // Call sites of a `new` expression are reported at the `new` keyword. JSC's
+    // own position for this one is on line 2, so the column offset has to be
+    // applied after the position has been moved back onto the first line.
+    const wrapped = "      new\nError('x')";
+    const [[wrappedLine, wrappedColumn]] = callSites(wrapped, { filename: "nl.js" });
+    expect(wrappedLine).toBe(1);
+    expect(callSites(wrapped, { filename: "nl.js", columnOffset: -3 })).toEqual([[1, wrappedColumn - 3]]);
   });
 
   test("Bun.inspect() prints the offset line numbers", () => {

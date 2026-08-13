@@ -91,7 +91,6 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
         .column_zero_based = OrdinalNumber::fromOneBasedInt(expr.lineColumn.column).zeroBasedInt(),
         .byte_position = (int)expr.divot,
     };
-    applyNegativeSourceStart(code, pos.line_zero_based, pos.column_zero_based);
 
     auto inst = code->instructionAt(bc);
 
@@ -116,6 +115,9 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
         break;
     }
 
+    // Last, so that the walk above runs on the coordinates JSC reported (it recounts the column
+    // from the source when it crosses a line) and the first-line test sees the line it ended on.
+    applyNegativeSourceStart(code, pos.line_zero_based, pos.column_zero_based);
     return pos;
 }
 

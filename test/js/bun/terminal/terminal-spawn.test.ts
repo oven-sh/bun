@@ -518,15 +518,16 @@ describe("Bun.Terminal subprocess integration", () => {
   });
 
   // Regression test for a Windows-only use-after-free: cancelling a stdin
-  // stream while a cooked-mode console read is parked used to free the
+  // stream while a cooked-mode console read was parked used to free the
   // reader's buffer immediately (finish() shrink / Drop). libuv's line reads
   // block a worker thread in ReadConsoleW and convert the result into the
   // alloc_cb buffer from that thread; uv_read_stop cancels asynchronously by
-  // injecting a VK_RETURN, so the worker still writes "\r\n" through the
-  // stale pointer. The late write corrupted whatever mimalloc handed the
-  // freed 8 KiB block to next (seen in production as full-GC crashes in
-  // Heap::sweepArrayBuffers on clobbered ArrayBuffers). The child adopts the
-  // just-freed block with same-size ArrayBuffer probes and reports any
+  // injecting a VK_RETURN, so the worker still wrote "\r\n" through the
+  // stale pointer, corrupting whatever mimalloc handed the freed 8 KiB
+  // block to next (a plausible mechanism for production reports of full-GC
+  // crashes on clobbered ArrayBuffers). Fixed by serving tty reads from the
+  // handle-owned uv::Tty::read_scratch. The child adopts the
+  // previously-freed size class with ArrayBuffer probes and reports any
   // mutation.
   test.skipIf(!isWindows)("cancelling a parked console stdin read does not corrupt the heap", async () => {
     using dir = tempDir("conpty-stdin-read-cancel", {
@@ -540,8 +541,8 @@ describe("Bun.Terminal subprocess integration", () => {
         console.log("CHILD-READY");
         await warmup;
         // Arm the read under test; no more input arrives, so the libuv
-        // worker parks in ReadConsoleW with a pointer into the pipe
-        // reader's 8 KiB spare capacity.
+        // worker parks in ReadConsoleW holding the read buffer (pre-fix:
+        // the reader's spare capacity; post-fix: the tty-owned scratch).
         reader.read().catch(() => {});
         // The park itself is unobservable from JS; there is no condition to
         // await. With the machinery proven warm above, a short delay makes

@@ -711,6 +711,9 @@ interface TLSOptions {
   /** Server certificate */
   cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile>;
 
+  /** PEM formatted certificate revocation lists */
+  crl?: string | Buffer | BunFile | Array<string | Buffer | BunFile>;
+
   /** Path to DH parameters file */
   dhParamsFile?: string;
 

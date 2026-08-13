@@ -4223,6 +4223,12 @@ declare module "bun" {
      */
     ca?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
+     * PEM formatted CRLs (Certificate Revocation Lists). A peer certificate
+     * listed in one of them fails verification: a client certificate when a
+     * server sets `requestCert`, or the server certificate when connecting.
+     */
+    crl?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
+    /**
      *  Cert chains in PEM format. One cert chain should be provided per
      *  private key. Each cert chain should consist of the PEM formatted
      *  certificate for a provided private key, followed by the PEM

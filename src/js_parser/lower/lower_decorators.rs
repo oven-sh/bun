@@ -1440,8 +1440,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // `#`-names a generated private must not shadow: this class's own and
-        // those of every lexically enclosing class.
+        // `#`-names in scope here, which a generated private must not shadow.
         let mut class_private_names: HashMap<&'a [u8], ()> = HashMap::default();
         for cprop in class.properties.slice() {
             if let Some(k) = cprop.key
@@ -1694,8 +1693,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ..Default::default()
                     };
 
-                    // A computed key is evaluated once, by the getter's key
-                    // position: `get [_k = expr]() {}` / `set [_k](v) {}`.
+                    // `get [_k = expr]()` / `set [_k](v)`: the key runs once.
                     let (getter_key, setter_key) = match prop.key {
                         Some(key) if prop.flags.contains(Flags::Property::IsComputed) => {
                             let key_ref = p.generate_temp_ref(Some(b"_computedKey"));

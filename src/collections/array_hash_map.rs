@@ -1118,6 +1118,11 @@ pub struct OccupiedEntry<'a, K, V, C, A: MapAllocator = Global> {
 }
 
 impl<'a, K, V, C, A: MapAllocator> OccupiedEntry<'a, K, V, C, A> {
+    /// Position of the entry in `keys()` / `values()` (indexmap parity).
+    #[inline]
+    pub fn index(&self) -> usize {
+        self.idx
+    }
     #[inline]
     pub fn get(&self) -> &V {
         &self.map.values[self.idx]
@@ -1139,6 +1144,11 @@ pub struct VacantEntry<'a, K, V, C, A: MapAllocator = Global> {
 }
 
 impl<'a, K, V, C, A: MapAllocator> VacantEntry<'a, K, V, C, A> {
+    /// Position [`insert`](Self::insert) will append the entry at (indexmap parity).
+    #[inline]
+    pub fn index(&self) -> usize {
+        self.map.keys.len()
+    }
     pub fn insert(self, value: V) -> &'a mut V {
         let i = self.map.push_entry(self.key, value, self.hash);
         &mut self.map.values[i]
@@ -1455,9 +1465,9 @@ pub struct StringHashMap<V, A: Allocator + HashbrownAllocator + Clone + Default 
     inner: hashbrown::HashMap<StringHashMapKey<A>, V, bun_wyhash::BuildHasher, A>,
 }
 
-/// Public alias for the underlying `hashbrown` map so downstream signatures
+/// Alias for the underlying `hashbrown` map so in-crate signatures
 /// (and `Deref::Target`) don't repeat the four-argument spelling.
-pub type StringHashMapInner<V, A = DefaultAlloc> =
+type StringHashMapInner<V, A = DefaultAlloc> =
     hashbrown::HashMap<StringHashMapKey<A>, V, bun_wyhash::BuildHasher, A>;
 
 /// Key stored in `StringHashMap`. Either an owned heap copy (`Owned`, the
@@ -2098,6 +2108,28 @@ mod index_tests {
         let gop = m.get_or_put(2654435761).unwrap();
         assert!(gop.found_existing);
         assert_eq!(*gop.value_ptr, 1);
+    }
+
+    #[test]
+    fn entry_index_matches_entry_position() {
+        let mut m: ArrayHashMap<u64, u64> = ArrayHashMap::new();
+        // Past INDEX_THRESHOLD so both the linear and the indexed lookup run.
+        for i in 0..32u64 {
+            let MapEntry::Vacant(v) = m.entry(i * 7) else {
+                panic!("fresh key must be vacant");
+            };
+            assert_eq!(v.index(), i as usize);
+            v.insert(i);
+            assert_eq!(m.keys()[i as usize], i * 7);
+        }
+        for i in 0..32u64 {
+            let MapEntry::Occupied(o) = m.entry(i * 7) else {
+                panic!("inserted key must be occupied");
+            };
+            assert_eq!(o.index(), i as usize);
+            assert_eq!(m.values()[i as usize], i);
+        }
+        assert!(matches!(m.entry(1), MapEntry::Vacant(v) if v.index() == 32));
     }
 
     #[test]

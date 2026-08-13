@@ -48,9 +48,6 @@ impl PackageManager {
         name_hash: PackageNameHash,
         resolution: &Resolution,
     ) -> Option<semver::version::Formatter<'_, u64>> {
-        // The `.load_from_memory` arm never reads scope; keep the param for
-        // signature parity.
-        let _ = package_name;
         match resolution.tag {
             ResolutionTag::Npm => {
                 let npm_version = resolution.npm().version;
@@ -66,7 +63,9 @@ impl PackageManager {
                 // nothing on `PackageManager` besides the map, so use the
                 // disjoint-borrow helper and read `self.options` / `self.lockfile`
                 // alongside the held `&mut self.manifests` field borrow.
-                let manifest = self.manifests.by_name_hash_in_memory(name_hash)?;
+                let manifest = self
+                    .manifests
+                    .by_name_hash_in_memory(package_name, name_hash)?;
 
                 if let Some(latest_version) = manifest
                     .find_by_dist_tag_with_filter(

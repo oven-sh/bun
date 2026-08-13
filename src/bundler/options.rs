@@ -1,8 +1,8 @@
-//! This file is mostly the API schema but with all the options normalized.
-//! Normalization is necessary because most fields in the API schema are optional
+//! `TransformOptions` (CLI/bunfig input, mostly optional fields) normalized
+//! into the concrete `BundleOptions` the bundler and runtime consume.
 
 use bun_analytics as analytics;
-use bun_collections::{MultiArrayList, StringArrayHashMap, StringHashMap};
+use bun_collections::{StringArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_dotenv as DotEnv;
@@ -21,6 +21,7 @@ pub use defines::Define;
 // traits into scope so the associated-fn call syntax below resolves.
 use crate::defines::{DefineDataExt as _, DefineExt as _};
 pub use bun_options_types::global_cache::GlobalCache;
+pub use bun_options_types::offline_mode::OfflineMode;
 
 // Canonical alias lives in the resolver.
 pub use bun_resolver::package_json::ConditionsMap;
@@ -358,9 +359,12 @@ impl LoaderExt for Loader {
         match self {
             Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx => MimeType::JAVASCRIPT,
             Loader::Css => MimeType::CSS,
-            Loader::Toml | Loader::Yaml | Loader::Json | Loader::Jsonc | Loader::Json5 => {
-                MimeType::JSON
-            }
+            Loader::Toml
+            | Loader::Yaml
+            | Loader::Json
+            | Loader::Jsonc
+            | Loader::Json5
+            | Loader::Xml => MimeType::JSON,
             Loader::Wasm => MimeType::WASM,
             Loader::Html | Loader::Md => MimeType::HTML,
             _ => {
@@ -599,6 +603,7 @@ const DEFAULT_LOADERS_POSIX: &[(&[u8], Loader)] = &[
     (b".html", Loader::Html),
     (b".jsonc", Loader::Jsonc),
     (b".json5", Loader::Json5),
+    (b".xml", Loader::Xml),
     (b".md", Loader::Md),
     (b".markdown", Loader::Md),
 ];
@@ -610,7 +615,7 @@ const DEFAULT_LOADERS_WIN32_EXTRA: &[(&[u8], Loader)] = &[(b".sh", Loader::Bunsh
 ///
 /// PERF: deliberately not a hashed map (the old `phf::Map` SipHash-ed the full
 /// key, probed a displacement table, and finished with a memcmp on every
-/// lookup). With only 22 keys bucketing into 5 distinct lengths
+/// lookup). With only 23 keys bucketing into 5 distinct lengths
 /// (3/4/5/6/9, all `.`-prefixed), a length-gated `match` is cheaper: one
 /// `usize` compare rejects every wrong-length probe, and within each bucket
 /// rustc lowers the fixed-width byte-slice arms to single u32/u64 compares (no
@@ -650,6 +655,7 @@ impl DefaultLoaders {
                 b".cts" => Some(&Loader::Ts),
                 b".css" => Some(&Loader::Css),
                 b".yml" => Some(&Loader::Yaml),
+                b".xml" => Some(&Loader::Xml),
                 b".txt" => Some(&Loader::Text),
                 _ => None,
             },
@@ -869,18 +875,9 @@ pub(crate) fn defines_from_transform_options(
             break 'load_env;
         }
 
-        // flatten `api::StringMap` into parallel borrowed slices.
-        // `api::DotEnvBehavior` is the same type as `DotEnv::DotEnvBehavior`
-        // (re-export), so no conversion needed.
-        let api_defaults = framework.to_api().defaults;
-        let default_keys: Vec<&[u8]> = api_defaults.keys.iter().map(|k| k.as_ref()).collect();
-        let default_values: Vec<&[u8]> = api_defaults.values.iter().map(|v| v.as_ref()).collect();
         defines::copy_env_for_define(
             env,
-            &mut user_defines,
             &mut environment_defines,
-            &default_keys,
-            &default_values,
             behavior,
             &framework.prefix,
             bump,
@@ -1116,6 +1113,26 @@ bun_core::comptime_string_map! {
     };
 }
 
+/// What `--compile` resolved to for this bundle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CompileMode {
+    #[default]
+    None,
+    Executable,
+    StandaloneHtml,
+}
+
+impl CompileMode {
+    #[inline]
+    pub const fn is_executable(self) -> bool {
+        matches!(self, CompileMode::Executable)
+    }
+    #[inline]
+    pub const fn is_standalone_html(self) -> bool {
+        matches!(self, CompileMode::StandaloneHtml)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PackagesOption {
     Bundle,
@@ -1146,7 +1163,6 @@ bun_core::comptime_string_map! {
     };
 }
 
-/// BundleOptions is used when ResolveMode is not set to "disable".
 /// BundleOptions is effectively webpack + babel
 pub struct BundleOptions<'a> {
     pub footer: Cow<'static, [u8]>,
@@ -1163,6 +1179,7 @@ pub struct BundleOptions<'a> {
     pub jsx: jsx::Pragma,
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
+    pub use_define_for_class_fields: bool,
     pub auto_import_jsx: bool,
     pub allow_runtime: bool,
 
@@ -1215,11 +1232,11 @@ pub struct BundleOptions<'a> {
     pub import_path_format: ImportPathFormat,
     pub(crate) defines_loaded: bool,
     pub env: Env,
-    /// The raw API struct as passed to `from_api`. Kept around because a
+    /// The raw `TransformOptions` as passed to `from_api`. Kept around because a
     /// handful of places (jsx auto-detect, resolver `main_fields_is_default`,
     /// `configure_defines`, runtime VM/server config) re-read the original
     /// user-supplied flags after projection. `Arc` so `for_worker` is a
-    /// pointer-clone instead of a deep clone of the (large) peechy struct —
+    /// pointer-clone instead of a deep clone of the (large) struct —
     /// workers never mutate it.
     pub transform_options: std::sync::Arc<api::TransformOptions>,
     pub(crate) polyfill_node_globals: bool,
@@ -1242,8 +1259,7 @@ pub struct BundleOptions<'a> {
     pub disable_transpilation: bool,
 
     pub global_cache: GlobalCache,
-    pub prefer_offline_install: bool,
-    pub prefer_latest_install: bool,
+    pub install_preference: OfflineMode,
     /// Stored as a raw
     /// `NonNull` (not `Option<&'a _>`) because every CLI caller borrows the
     /// process-lifetime `ctx.install: Box<BunInstall>` whose lifetime is
@@ -1273,8 +1289,7 @@ pub struct BundleOptions<'a> {
     pub code_coverage: bool,
     pub debugger: bool,
 
-    pub compile: bool,
-    pub compile_to_standalone_html: bool,
+    pub compile_mode: CompileMode,
     pub metafile: bool,
     /// Path to write JSON metafile (for Bun.build API)
     pub metafile_json_path: Box<[u8]>,
@@ -1358,7 +1373,7 @@ impl<'a> BundleOptions<'a> {
     pub(crate) fn for_worker(&self) -> BundleOptions<'a> {
         debug_assert!(
             self.defines_loaded,
-            "BundleOptions::for_worker requires configure_defines() to have run on the parent (env.defaults is not cloned)",
+            "BundleOptions::for_worker requires configure_defines() to have run on the parent",
         );
         BundleOptions {
             footer: self.footer.clone(),
@@ -1377,6 +1392,7 @@ impl<'a> BundleOptions<'a> {
             jsx: self.jsx.clone(),
             emit_decorator_metadata: self.emit_decorator_metadata,
             experimental_decorators: self.experimental_decorators,
+            use_define_for_class_fields: self.use_define_for_class_fields,
             auto_import_jsx: self.auto_import_jsx,
             allow_runtime: self.allow_runtime,
             trim_unused_imports: self.trim_unused_imports,
@@ -1415,16 +1431,7 @@ impl<'a> BundleOptions<'a> {
             out_extensions: self.out_extensions.clone(),
             import_path_format: self.import_path_format,
             defines_loaded: self.defines_loaded,
-            // `Env.defaults: MultiArrayList` has no `Clone`; workers never read
-            // it (`configure_defines` early-returns on `defines_loaded`), so
-            // carry the scalars + an empty list.
-            env: Env {
-                behavior: self.env.behavior,
-                prefix: self.env.prefix.clone(),
-                defaults: Default::default(),
-                files: self.env.files.clone(),
-                disable_default_env_files: self.env.disable_default_env_files,
-            },
+            env: self.env.clone(),
             transform_options: std::sync::Arc::clone(&self.transform_options),
             polyfill_node_globals: self.polyfill_node_globals,
             transform_only: self.transform_only,
@@ -1446,8 +1453,7 @@ impl<'a> BundleOptions<'a> {
             packages: self.packages,
             disable_transpilation: self.disable_transpilation,
             global_cache: self.global_cache,
-            prefer_offline_install: self.prefer_offline_install,
-            prefer_latest_install: self.prefer_latest_install,
+            install_preference: self.install_preference,
             install: self.install,
             inlining: self.inlining,
             inline_entrypoint_import_meta_main: self.inline_entrypoint_import_meta_main,
@@ -1463,8 +1469,7 @@ impl<'a> BundleOptions<'a> {
             bytecode: self.bytecode,
             code_coverage: self.code_coverage,
             debugger: self.debugger,
-            compile: self.compile,
-            compile_to_standalone_html: self.compile_to_standalone_html,
+            compile_mode: self.compile_mode,
             metafile: self.metafile,
             metafile_json_path: self.metafile_json_path.clone(),
             metafile_markdown_path: self.metafile_markdown_path.clone(),
@@ -1528,14 +1533,6 @@ impl<'a> BundleOptions<'a> {
         b"react-server",
         b"react-refresh",
     ];
-
-    #[inline]
-    pub(crate) fn css_import_behavior(&self) -> api::CssInJsBehavior {
-        match self.target {
-            Target::Browser => api::CssInJsBehavior::AutoOnimportcss,
-            _ => api::CssInJsBehavior::Facade,
-        }
-    }
 
     pub(crate) fn load_defines(
         &mut self,
@@ -1642,7 +1639,7 @@ impl<'a> BundleOptions<'a> {
             external: ExternalModules::default(), // filled below
             entry_points: transform.entry_points.clone().into_boxed_slice(),
             out_extensions: StringHashMap::default(), // filled below
-            env: Env::init(),
+            env: Env::default(),
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
             drop: transform.drop.clone().into_boxed_slice(),
@@ -1651,6 +1648,7 @@ impl<'a> BundleOptions<'a> {
             jsx: jsx::Pragma::default(),
             emit_decorator_metadata: false,
             experimental_decorators: false,
+            use_define_for_class_fields: true,
             auto_import_jsx: true,
             allow_runtime: true,
             trim_unused_imports: None,
@@ -1700,8 +1698,7 @@ impl<'a> BundleOptions<'a> {
             packages: PackagesOption::Bundle,
             disable_transpilation: false,
             global_cache: GlobalCache::disable,
-            prefer_offline_install: false,
-            prefer_latest_install: false,
+            install_preference: OfflineMode::Online,
             install: None,
             inlining: false,
             inline_entrypoint_import_meta_main: false,
@@ -1716,8 +1713,7 @@ impl<'a> BundleOptions<'a> {
             bytecode: false,
             code_coverage: false,
             debugger: false,
-            compile: false,
-            compile_to_standalone_html: false,
+            compile_mode: CompileMode::None,
             metafile: false,
             metafile_json_path: Box::default(),
             metafile_markdown_path: Box::default(),
@@ -1999,20 +1995,10 @@ impl TransformResult {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct EnvEntry {
-    pub key: Box<[u8]>,
-    pub value: Box<[u8]>,
-}
-
-type EnvList = MultiArrayList<EnvEntry>;
-
-// `Debug` derive dropped — `MultiArrayList<T>` is not `Debug`.
+#[derive(Clone, Debug)]
 pub struct Env {
     pub behavior: api::DotEnvBehavior,
     pub prefix: Box<[u8]>,
-    pub(crate) defaults: EnvList,
-    // arena: dropped (global mimalloc)
     /// List of explicit env files to load (e..g specified by --env-file args)
     pub(crate) files: Box<[Box<[u8]>]>,
 
@@ -2025,34 +2011,8 @@ impl Default for Env {
         Env {
             behavior: api::DotEnvBehavior::disable,
             prefix: Box::default(),
-            defaults: EnvList::default(),
             files: Box::default(),
             disable_default_env_files: false,
-        }
-    }
-}
-
-impl Env {
-    pub(crate) fn init() -> Env {
-        Env {
-            defaults: EnvList::default(),
-            prefix: Box::default(),
-            behavior: api::DotEnvBehavior::disable,
-            files: Box::default(),
-            disable_default_env_files: false,
-        }
-    }
-
-    pub(crate) fn to_api(&self) -> api::LoadedEnvConfig {
-        let slice = self.defaults.slice();
-
-        api::LoadedEnvConfig {
-            dotenv: self.behavior,
-            prefix: self.prefix.clone(),
-            defaults: api::StringMap {
-                keys: slice.items::<"key", Box<[u8]>>().to_vec(),
-                values: slice.items::<"value", Box<[u8]>>().to_vec(),
-            },
         }
     }
 }

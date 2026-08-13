@@ -548,11 +548,13 @@ pub mod js_bundler {
                         if let Some(promise) = plugin_result.as_any_promise() {
                             promise.set_handled(global_this.vm());
                             // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
-                            global_this.bun_vm().as_mut().wait_for_promise(promise);
+                            global_this.bun_vm().as_mut().wait_for_promise(promise)?;
                             match promise
                                 .unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled)
                             {
-                                jsc::PromiseResult::Pending => unreachable!(),
+                                jsc::PromiseResult::Pending => {
+                                    unreachable!("wait_for_promise returned Ok")
+                                }
                                 jsc::PromiseResult::Fulfilled(val) => {
                                     plugin_result = val;
                                 }
@@ -1364,8 +1366,6 @@ pub mod js_bundler {
         let mut plugins: Option<*mut Plugin> = None;
         let config = Config::from_js(global_this, arguments[0], &mut plugins)?;
 
-        let event_loop = vm.event_loop();
-
         // `BundleV2.generateFromJavaScript` — the completion-task struct lives in
         // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
         // fields name `Config`/`Plugin`/`HTMLBundle::Route`; lower-tier crates
@@ -1375,7 +1375,6 @@ pub mod js_bundler {
                 config,
                 plugins.and_then(core::ptr::NonNull::new),
                 global_this,
-                event_loop,
             )
             .map_err(|_| JsError::OutOfMemory)?;
         // SAFETY: `completion` is the freshly-boxed allocation returned above;
@@ -1521,11 +1520,17 @@ pub mod js_bundler {
                     .r#loop()
                     .expect("BundleV2.linker.loop must be set before plugins run");
                 match &mut *any_loop.as_ptr() {
-                    bun_event_loop::AnyEventLoop::Js { owner } => {
-                        owner.enqueue_task_concurrent(ConcurrentTask::from_callback(
-                            ctx.as_mut_ptr(),
-                            on_notify_defer_raw,
-                        ));
+                    bun_event_loop::AnyEventLoop::Js { .. } => {
+                        let ct =
+                            ConcurrentTask::from_callback(ctx.as_mut_ptr(), on_notify_defer_raw);
+                        let poster = (*ctx.as_mut_ptr())
+                            .js_poster
+                            .as_ref()
+                            .expect("JS-owned bundle has a poster");
+                        if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
+                            // Owning JS VM torn down mid-bundle: the notify never runs.
+                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
+                        }
                     }
                     bun_event_loop::AnyEventLoop::Mini(mini) => {
                         // `mini.enqueueTaskConcurrentWithExtraCtx(
@@ -1678,6 +1683,9 @@ pub mod js_bundler {
         /// `this` must be a live handle previously returned by `Plugin::create`;
         /// non-null is checked via `Plugin::opaque_ref` (panics on null).
         fn destroy(this: *mut Plugin);
+        /// From here the plugin object swallows whatever its JS side still
+        /// delivers (onLoad/onResolve answers, defer, addError). JS thread.
+        fn tombstone(&self);
         fn global_object(&self) -> &JSGlobalObject;
         fn append_defer_promise(&mut self) -> JSValue;
         fn add_plugin(
@@ -1735,6 +1743,10 @@ pub mod js_bundler {
             );
             scope.return_if_exception()?;
             Ok(value)
+        }
+
+        fn tombstone(&self) {
+            JSBundlerPlugin__tombstone(self);
         }
 
         fn destroy(this: *mut Plugin) {

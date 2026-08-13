@@ -658,7 +658,7 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
         };
 
         // Parse: line 1 = port, line 2 = path.
-        let mut lines = contents.split(|b| *b == b'\n');
+        let mut lines = strings::split(&contents, b"\n");
         let port_str = match lines.next() {
             Some(s) => strings::trim(s, b" \r\t"),
             None => continue,

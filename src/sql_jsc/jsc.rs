@@ -375,9 +375,9 @@ pub use bun_event_loop::EventLoopTimer::{
 // [`SqlRuntimeHooks`] vtable.
 bun_opaque::opaque_ffi! { pub struct TimerHeap; }
 impl TimerHeap {
-    pub(crate) fn insert(&mut self, t: &mut EventLoopTimer) {
+    pub(crate) fn insert(&mut self, t: *mut EventLoopTimer) {
         // SAFETY: `self` is `&mut runtime_state().timer`; `t` is a live
-        // intrusive heap node owned by the caller.
+        // intrusive heap node whose provenance covers its container.
         unsafe { (hooks().timer_insert)(self._p.get().cast::<c_void>(), t) }
     }
     pub(crate) fn remove(&mut self, t: &mut EventLoopTimer) {

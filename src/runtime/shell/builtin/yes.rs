@@ -200,6 +200,9 @@ pub struct YesTask {
 
 impl Taskable for YesTask {
     const TAG: TaskTag = task_tag::ShellYesTask;
+    /// Lives inside the builtin's `Box<Yes>` (freed with the interpreter) and
+    /// took nothing for the bounce; nothing to do.
+    unsafe fn release_unrun(_: *mut Self) {}
 }
 
 impl YesTask {
@@ -220,7 +223,8 @@ impl YesTask {
                         EventLoopTask::Js(ct) => ct.from(this, AutoDeinit::ManualDeinit),
                         EventLoopTask::Mini(_) => unreachable!(),
                     });
-                    owner.enqueue_task_concurrent(ct);
+                    // Same-thread bounce on the loop's own thread: always accepted.
+                    let _ = owner.js_poster().post(ct);
                 }
                 EventLoopHandle::Mini(mut mini) => {
                     (*mini.loop_).tick();

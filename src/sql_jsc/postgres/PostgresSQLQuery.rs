@@ -491,7 +491,7 @@ impl PostgresSQLQuery {
         }
 
         let this_value = callframe.this();
-        let binding_value = js::binding_get_cached(this_value).unwrap_or(JSValue::ZERO);
+        let binding_value = js::binding_get_cached(this_value).unwrap_or_default();
         let query_str = this.query.to_utf8();
         // query_str: Utf8Slice<'_> — Drop frees.
         let writer = connection.writer();

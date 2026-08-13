@@ -32,8 +32,6 @@
 #include "BunString.h"
 #include "BunProcess.h"
 
-extern "C" bool Bun__Node__ProcessNoDeprecation;
-
 namespace Bun {
 
 using namespace Bun;
@@ -46,7 +44,7 @@ using namespace WebCore;
 static void emitCryptoKeyDeprecationWarning(JSGlobalObject* globalObject)
 {
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    if (zigGlobalObject->hasWarnedCryptoKeyDeprecation || Bun__Node__ProcessNoDeprecation)
+    if (zigGlobalObject->hasWarnedCryptoKeyDeprecation)
         return;
     zigGlobalObject->hasWarnedCryptoKeyDeprecation = true;
     auto& vm = globalObject->vm();
@@ -1119,25 +1117,6 @@ KeyObject KeyObject::create(CryptoKeyType type, ncrypto::EVPKeyPointer&& asymmet
 {
     RefPtr<KeyObjectData> data = KeyObjectData::create(WTF::move(asymmetricKey));
     return KeyObject(type, WTF::move(data));
-}
-
-void KeyObject::getKeyObjectFromHandle(JSGlobalObject* globalObject, ThrowScope& scope, JSValue keyValue, const KeyObject& handle, PrepareAsymmetricKeyMode mode)
-{
-    if (mode == PrepareAsymmetricKeyMode::CreatePrivate) {
-        ERR::INVALID_ARG_TYPE(scope, globalObject, "key"_s, "string, ArrayBuffer, Buffer, TypedArray, or DataView"_s, keyValue);
-        return;
-    }
-
-    if (handle.type() != CryptoKeyType::Private) {
-        if (mode == PrepareAsymmetricKeyMode::ConsumePrivate || mode == PrepareAsymmetricKeyMode::CreatePublic) {
-            ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, handle.type(), "private"_s);
-            return;
-        }
-        if (handle.type() != CryptoKeyType::Public) {
-            ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, handle.type(), "private or public"_s);
-            return;
-        }
-    }
 }
 
 JSArrayBufferView* decodeJwkString(JSGlobalObject* globalObject, ThrowScope& scope, GCOwnedDataScope<WTF::StringView> strView, ASCIILiteral keyName)

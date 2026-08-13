@@ -496,7 +496,7 @@ database:
       });
     });
 
-    test.todo("handles circular references with anchors and aliases", () => {
+    test("handles circular references with anchors and aliases", () => {
       const yaml = `
 parent: &ref
   name: parent
@@ -508,6 +508,168 @@ parent: &ref
       expect(result.parent.name).toBe("parent");
       expect(result.parent.child.name).toBe("child");
       expect(result.parent.child.parent).toBe(result.parent);
+    });
+
+    describe("cyclic aliases", () => {
+      test("block mapping referencing itself", () => {
+        const root = YAML.parse("&a\nname: root\nself: *a\n");
+        expect(root.name).toBe("root");
+        expect(root.self).toBe(root);
+      });
+
+      test("block sequence referencing itself", () => {
+        const seq = YAML.parse("&a\n- 1\n- *a\n- 3\n");
+        expect(seq[0]).toBe(1);
+        expect(seq[1]).toBe(seq);
+        expect(seq[2]).toBe(3);
+      });
+
+      test("flow collections with the anchor on the same line", () => {
+        const map = YAML.parse("&a { name: root, self: *a }");
+        expect(map.self).toBe(map);
+        const seq = YAML.parse("&a [1, *a]");
+        expect(seq[1]).toBe(seq);
+        // nested inside a block collection
+        const doc = YAML.parse("outer:\n  - &a [x, *a]\n  - &b { self: *b }\n");
+        expect(doc.outer[0][1]).toBe(doc.outer[0]);
+        expect(doc.outer[1].self).toBe(doc.outer[1]);
+      });
+
+      test("explicit key mapping whose key and value reference it", () => {
+        const map = YAML.parse("&a\n? key\n: *a\n");
+        expect(map.key).toBe(map);
+        // The mapping node exists before its first key is parsed. A mapping used
+        // as its own key is stringified like any other non-scalar key.
+        expect(YAML.parse("&a\n? *a\n: v\n")).toEqual({ "[object Object]": "v" });
+      });
+
+      test("anchor on the line before an implicit key belongs to the mapping", () => {
+        // [200] the anchor is the block mapping's, so the value may alias it...
+        const map = YAML.parse("&a\n[x]: *a\n");
+        expect(map.x).toBe(map);
+        const map2 = YAML.parse("&a\n{k: v}:\n  nested: *a\n");
+        expect(map2["[object Object]"].nested).toBe(map2);
+        const map3 = YAML.parse("k: &k 1\nsub:\n  &a\n  *k : *a\n");
+        expect(map3.sub["1"]).toBe(map3.sub);
+        // ...and without a `:` it is the flow collection's.
+        expect(YAML.parse("&a\n[x]\n")).toEqual(["x"]);
+        expect(YAML.parse("- &a\n  {k: v}\n- *a\n")).toEqual([{ k: "v" }, { k: "v" }]);
+        // Which of the two is unknown until the closing bracket, so inside the
+        // flow collection the anchor is not visible yet (unchanged).
+        expect(() => YAML.parse("&a\n[*a]\n")).toThrow("Unresolved alias");
+        expect(() => YAML.parse("&a\n{ x: *a }\n")).toThrow("Unresolved alias");
+        expect(() => YAML.parse("key:\n  &a\n  [1, *a]\n")).toThrow("Unresolved alias");
+      });
+
+      test("anchor on the same line as a flow collection implicit key belongs to the key", () => {
+        const seqKey = YAML.parse("x:\n  &k [a]: v\ny: *k\n");
+        expect(seqKey.y).toEqual(["a"]);
+        const mapKey = YAML.parse("x:\n  &k {a: 1}: v\ny: *k\n");
+        expect(mapKey.y).toEqual({ a: 1 });
+        // so the key can refer to itself, while the mapping's own anchor goes
+        // on the line before
+        const both = YAML.parse("&m\n&k {a: 1, self: *k}: *m\nz: *k\n");
+        expect(both["[object Object]"]).toBe(both);
+        expect(both.z.self).toBe(both.z);
+        expect(both.z.a).toBe(1);
+      });
+
+      test("deeply nested back-references", () => {
+        const doc = YAML.parse(`
+root: &root
+  level1:
+    level2:
+      - name: leaf
+        top: *root
+        siblings: &sibs
+          - *root
+          - *sibs
+`);
+        expect(doc.root.level1.level2[0].top).toBe(doc.root);
+        expect(doc.root.level1.level2[0].siblings[0]).toBe(doc.root);
+        expect(doc.root.level1.level2[0].siblings[1]).toBe(doc.root.level1.level2[0].siblings);
+      });
+
+      test("later aliases to a cyclic node are not charged as infinite expansion", () => {
+        const lines = ["a: &a { self: *a, items: &i [*a, *i] }"];
+        for (let i = 0; i < 200; i++) lines.push(`k${i}: [*a, *i]`);
+        const doc = YAML.parse(lines.join("\n"));
+        expect(doc.a.self).toBe(doc.a);
+        expect(doc.k199[0]).toBe(doc.a);
+        expect(doc.k199[1]).toBe(doc.a.items);
+        expect(doc.a.items[1]).toBe(doc.a.items);
+      });
+
+      test("aliases that already resolved are unaffected by an enclosing anchor of the same name", () => {
+        // An enclosing collection is only consulted for aliases that would
+        // otherwise be unresolved; everything else resolves as it always has.
+        const redefinedInside = YAML.parse("- &a [&a 1, *a]\n- *a\n");
+        expect(redefinedInside).toEqual([
+          [1, 1],
+          [1, 1],
+        ]);
+        expect(redefinedInside[1]).toBe(redefinedInside[0]);
+        expect(YAML.parse("- &a 1\n- &a\n  k: *a\n")).toEqual([1, { k: 1 }]);
+        expect(YAML.parse("- &a 1\n- &a\n  [*a]\n")).toEqual([1, [1]]);
+        expect(YAML.parse("x: &a 1\ny: &a\n  z: *a\nw: *a\n")).toEqual({ x: 1, y: { z: 1 }, w: { z: 1 } });
+
+        const doc = YAML.parse("- &a\n  first: *a\n  again: &a 2\n  last: *a\n- *a\n");
+        expect(doc[0].first).toBe(doc[0]);
+        expect(doc[0].last).toBe(2);
+        expect(doc[1]).toBe(doc[0]);
+      });
+
+      test("merge key cannot pull in a mapping that is still being defined", () => {
+        expect(() => YAML.parse("&a\nx: 1\n<<: *a\n")).toThrow("Merge key cannot reference an enclosing node");
+        expect(() => YAML.parse("&a\nx: 1\nchild:\n  <<: *a\n  y: 2\n")).toThrow(
+          "Merge key cannot reference an enclosing node",
+        );
+        expect(() => YAML.parse("&a\nx: 1\nchild:\n  <<: [ { y: 2 }, *a ]\n")).toThrow(
+          "Merge key cannot reference an enclosing node",
+        );
+        // a completed cyclic mapping merges fine
+        const doc = YAML.parse("base: &b\n  self: *b\n  x: 1\nderived:\n  <<: *b\n  y: 2\n");
+        expect(doc.derived).toEqual({ self: doc.base, x: 1, y: 2 });
+        expect(doc.derived.self).toBe(doc.base);
+      });
+
+      test("each document has its own anchors", () => {
+        const docs = YAML.parse("--- &a\n- *a\n--- &a\nk: *a\n");
+        expect(docs).toHaveLength(2);
+        expect(docs[0][0]).toBe(docs[0]);
+        expect(docs[1].k).toBe(docs[1]);
+        expect(() => YAML.parse("--- &a\n- *a\n---\n- *a\n")).toThrow("Unresolved alias");
+      });
+
+      test("importing a cyclic document as a module is rejected", async () => {
+        using dir = tempDir("yaml-cyclic-import", {
+          "cyclic.yaml": "&root\nname: root\nself: *root\n",
+          "shared.yaml": "a: &x { b: 1 }\nc: *x\n",
+          "index.ts": `
+            import shared from "./shared.yaml";
+            console.log(JSON.stringify(shared));
+            try {
+              await import("./cyclic.yaml");
+              console.log("imported");
+            } catch (e) {
+              console.log(e.message);
+            }
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "index.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: '{"a":{"b":1},"c":{"b":1}}\n' + "Cyclic aliases are only supported by Bun.YAML.parse\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      });
     });
 
     test("handles multiple documents", () => {
@@ -3001,16 +3163,19 @@ config:
         expect(parsed.shared.host).toBe("localhost");
       });
 
-      test.todo("handles self-referencing objects", () => {
-        // Skipping as this causes build issues with circular references
-        const obj = { name: "root" };
+      test("handles self-referencing objects and arrays", () => {
+        const obj = { name: "root", list: [] };
         obj.self = obj;
+        obj.list.push(obj, obj.list, { back: obj.list });
 
-        const yaml = YAML.stringify(obj);
-        const parsed = YAML.parse(yaml);
-
-        expect(parsed.self).toBe(parsed);
-        expect(parsed.name).toBe("root");
+        for (const space of [undefined, 2, 10]) {
+          const parsed = YAML.parse(YAML.stringify(obj, null, space));
+          expect(parsed.name).toBe("root");
+          expect(parsed.self).toBe(parsed);
+          expect(parsed.list[0]).toBe(parsed);
+          expect(parsed.list[1]).toBe(parsed.list);
+          expect(parsed.list[2].back).toBe(parsed.list);
+        }
       });
 
       test("generates unique anchor names for different objects", () => {
@@ -4018,7 +4183,7 @@ refs:
         expect(parsed.level2.nested.deep.data.id).toBe(4);
       });
 
-      test.todo("handles root level anchors correctly", () => {
+      test("handles root level anchors correctly", () => {
         // When the root itself is referenced
         const obj = { name: "root" };
         obj.self = obj;
@@ -4271,6 +4436,37 @@ refs:
         };
 
         expect(YAML.stringify(obj, null, 2)).toBe("normal: value");
+      });
+
+      // Unwrapping a String/Number wrapper re-enters JS via Symbol.toPrimitive,
+      // which can throw; debug builds abort if that exception is dropped, so
+      // this must run in a subprocess.
+      test("boxed primitive whose Symbol.toPrimitive throws propagates the error", async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const s = new String();
+             s[Symbol.toPrimitive] = () => String;
+             try { Bun.YAML.stringify(s); } catch (e) { console.log("string:", e.message); }
+             const n = new Number(1);
+             n[Symbol.toPrimitive] = () => Number;
+             try { Bun.YAML.stringify({ a: n }); } catch (e) { console.log("number:", e.message); }
+             try { Bun.YAML.stringify({ a: 1 }, null, s); } catch (e) { console.log("space:", e.message); }`,
+          ],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect(stdout).toBe(
+          "string: Symbol.toPrimitive returned an object\n" +
+            "number: Symbol.toPrimitive returned an object\n" +
+            "space: Symbol.toPrimitive returned an object\n",
+        );
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
       });
 
       test("handles Intl objects", () => {

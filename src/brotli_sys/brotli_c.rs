@@ -4,14 +4,14 @@
 
 use core::ffi::{c_char, c_int, c_uint, c_void};
 
-pub type brotli_alloc_func =
+type brotli_alloc_func =
     Option<unsafe extern "C" fn(opaque: *mut c_void, size: usize) -> *mut c_void>;
-pub type brotli_free_func = Option<unsafe extern "C" fn(opaque: *mut c_void, address: *mut c_void)>;
+type brotli_free_func = Option<unsafe extern "C" fn(opaque: *mut c_void, address: *mut c_void)>;
 
 bun_opaque::opaque_ffi! { pub struct struct_BrotliSharedDictionaryStruct; }
 
 pub const BROTLI_SHARED_DICTIONARY_RAW: c_int = 0;
-pub type enum_BrotliSharedDictionaryType = c_uint;
+type enum_BrotliSharedDictionaryType = c_uint;
 pub type BrotliSharedDictionaryType = enum_BrotliSharedDictionaryType;
 
 // Not bound: BrotliSharedDictionaryCreateInstance, BrotliSharedDictionaryDestroyInstance,
@@ -36,12 +36,6 @@ unsafe extern "C" {
         opaque: *mut c_void,
     ) -> *mut BrotliDecoder;
     pub fn BrotliDecoderDestroyInstance(state: *mut BrotliDecoder);
-    pub fn BrotliDecoderDecompress(
-        encoded_size: usize,
-        encoded_buffer: *const u8,
-        decoded_size: *mut usize,
-        decoded_buffer: *mut u8,
-    ) -> BrotliDecoderResult;
     pub fn BrotliDecoderDecompressStream(
         state: *mut BrotliDecoder,
         available_in: *mut usize,
@@ -52,13 +46,10 @@ unsafe extern "C" {
     ) -> BrotliDecoderResult;
     // Query fns: opaque handle by reference + scalars only — `BrotliDecoder` is
     // `!Freeze` (UnsafeCell) so internal C mutation through `&` is sound.
-    pub safe fn BrotliDecoderHasMoreOutput(state: &BrotliDecoder) -> c_int;
-    pub safe fn BrotliDecoderTakeOutput(state: &mut BrotliDecoder, size: &mut usize) -> *const u8;
-    pub safe fn BrotliDecoderIsUsed(state: &BrotliDecoder) -> c_int;
-    pub safe fn BrotliDecoderIsFinished(state: &BrotliDecoder) -> c_int;
+    safe fn BrotliDecoderIsFinished(state: &BrotliDecoder) -> c_int;
     pub safe fn BrotliDecoderGetErrorCode(state: &BrotliDecoder) -> BrotliDecoderErrorCode2;
     pub safe fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) -> *const c_char;
-    pub safe fn BrotliDecoderVersion() -> u32;
+    safe fn BrotliDecoderVersion() -> u32;
 }
 
 bun_opaque::opaque_ffi! {
@@ -146,7 +137,7 @@ pub enum BrotliDecoderResult {
 // NOTE: the duplicate error-code tables the upstream brotli headers define are
 // intentionally collapsed into the single enum below; `BrotliDecoderErrorCode`
 // is kept as an alias so FFI signatures keep their upstream names.
-pub type BrotliDecoderErrorCode = BrotliDecoderErrorCode2;
+type BrotliDecoderErrorCode = BrotliDecoderErrorCode2;
 
 #[repr(i32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -201,22 +192,6 @@ pub enum BrotliEncoderMode {
     font = 2,
 }
 
-#[repr(u32)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum BrotliEncoderParameter {
-    mode = 0,
-    quality = 1,
-    lgwin = 2,
-    lgblock = 3,
-    disable_literal_context_modeling = 4,
-    size_hint = 5,
-    large_window = 6,
-    npostfix = 7,
-    ndirect = 8,
-    stream_offset = 9,
-    // update kMaxBrotliParam in src/js/node/zlib.ts if this list changes
-}
-
 unsafe extern "C" {
     // Opaque handle by reference + scalars only.
     pub safe fn BrotliEncoderSetParameter(
@@ -263,16 +238,6 @@ unsafe extern "C" {
         next_out: *mut *mut u8,
         total_out: *mut usize,
     ) -> c_int;
-    // Query fns: opaque handle by reference + scalars only.
-    pub safe fn BrotliEncoderEstimatePeakMemoryUsage(
-        quality: c_int,
-        lgwin: c_int,
-        input_size: usize,
-    ) -> usize;
-    pub fn BrotliEncoderGetPreparedDictionarySize(
-        dictionary: *const BrotliEncoderPreparedDictionary,
-    ) -> usize;
-    pub safe fn BrotliEncoderVersion() -> u32;
 }
 
 bun_opaque::opaque_ffi! {

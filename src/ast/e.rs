@@ -135,7 +135,7 @@ pub struct Unary {
 }
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
     #[repr(transparent)]
     pub struct UnaryFlags: u8 {
         /// The expression "typeof (0, x)" must not become "typeof x" if "x"
@@ -840,15 +840,17 @@ impl BigInt {
 // Compact, read-only object/array nodes: the JSON parser's native output.
 // Children are `PropertyJSON` rows / inline `JsonValue`s in the document's `JsonTape`.
 
-/// A JSON value inside an `ObjectJSON` / `ArrayJSON`.
+/// A JSON value inside an `ObjectJSON` / `ArrayJSON`. The layout is read
+/// from C++ (`JSONRowsToJS.cpp`).
 #[derive(Clone, Copy)]
+#[repr(C, u32)]
 pub enum JsonValue {
-    Null,
-    Boolean(bool),
-    Number(Number),
-    String(Str),
-    Object(StoreRef<ObjectJSON>),
-    Array(StoreRef<ArrayJSON>),
+    Null = 0,
+    Boolean(bool) = 1,
+    Number(Number) = 2,
+    String(Str) = 3,
+    Object(StoreRef<ObjectJSON>) = 4,
+    Array(StoreRef<ArrayJSON>) = 5,
 }
 
 const _: () = assert!(core::mem::size_of::<JsonValue>() == 16);
@@ -912,8 +914,9 @@ impl JsonValue {
     }
 }
 
-/// One `"key": value` row of an [`ObjectJSON`].
+/// One `"key": value` row of an [`ObjectJSON`]. Layout read from C++.
 #[derive(Clone, Copy)]
+#[repr(C)]
 pub struct PropertyJSON {
     pub key: Str,
     pub key_loc: crate::Loc,
@@ -921,6 +924,10 @@ pub struct PropertyJSON {
 }
 
 const _: () = assert!(core::mem::size_of::<PropertyJSON>() == 32);
+// Read from C++ (JSONRowsToJS.cpp), which asserts the same offsets.
+const _: () = assert!(core::mem::offset_of!(PropertyJSON, key) == 0);
+const _: () = assert!(core::mem::offset_of!(PropertyJSON, key_loc) == 12);
+const _: () = assert!(core::mem::offset_of!(PropertyJSON, value) == 16);
 
 /// Where a [`JsonTape`]'s buffers (and, in arena mode, the tape itself) live.
 #[derive(Clone, Copy)]
@@ -966,6 +973,17 @@ unsafe impl core::alloc::Allocator for TapeAlloc {
     }
 }
 
+/// How the bytes behind every [`Str`] on one tape are encoded. JSON tapes are
+/// UTF-8 (WTF-8 where an escape named a lone surrogate); the XML parser also
+/// produces Latin-1 tapes when its input was a Latin-1 string.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum StrEncoding {
+    Utf8 = 0,
+    Latin1 = 1,
+    Utf16 = 2,
+}
+
 /// Everything one parsed JSON document allocates that does not borrow the source.
 pub struct JsonTape {
     props: Vec<PropertyJSON, TapeAlloc>,
@@ -974,6 +992,7 @@ pub struct JsonTape {
     item_locs: Vec<crate::Loc, TapeAlloc>,
     str_chunks: Vec<Vec<u8, TapeAlloc>, TapeAlloc>,
     str_used: usize,
+    pub encoding: StrEncoding,
 }
 
 // SAFETY: only the parsing thread writes it; shared use afterwards is read-only.
@@ -996,7 +1015,16 @@ impl JsonTape {
             item_locs: Vec::new_in(alloc),
             str_chunks: Vec::new_in(alloc),
             str_used: 0,
+            encoding: StrEncoding::Utf8,
         }
+    }
+
+    /// Pre-size the row buffers (a growth step copies the whole tape).
+    pub fn reserve(&mut self, props: usize, items: usize) {
+        self.props.reserve(props);
+        self.prop_value_locs.reserve(props);
+        self.items.reserve(items);
+        self.item_locs.reserve(items);
     }
 
     /// The tape allocation's own pointer, for [`ObjectJSON::new`] /
@@ -1035,22 +1063,41 @@ impl JsonTape {
 
     /// Copy decoded string bytes into the tape; chunks never move once handed out.
     pub fn alloc_str(&mut self, bytes: &[u8]) -> Str {
+        self.alloc_str_join(bytes, b"")
+    }
+
+    /// [`alloc_str`](Self::alloc_str) of the concatenation `a ++ b`.
+    pub fn alloc_str_join(&mut self, a: &[u8], b: &[u8]) -> Str {
+        let len = a.len() + b.len();
         let fits = self
             .str_chunks
             .last()
-            .is_some_and(|c| c.len() - self.str_used >= bytes.len());
+            .is_some_and(|c| c.len() - self.str_used >= len);
         if !fits {
-            let cap = bytes.len().max(Self::STR_CHUNK);
+            let cap = len.max(Self::STR_CHUNK);
             let mut chunk: Vec<u8, TapeAlloc> = Vec::with_capacity_in(cap, self.alloc());
             chunk.resize(cap, 0);
             self.str_chunks.push(chunk);
             self.str_used = 0;
         }
         let chunk = self.str_chunks.last_mut().expect("chunk pushed above");
-        let out = &mut chunk[self.str_used..self.str_used + bytes.len()];
-        out.copy_from_slice(bytes);
-        self.str_used += bytes.len();
+        let out = &mut chunk[self.str_used..self.str_used + len];
+        if len <= 32 {
+            for (o, &c) in out.iter_mut().zip(a.iter().chain(b)) {
+                *o = c;
+            }
+        } else {
+            out[..a.len()].copy_from_slice(a);
+            out[a.len()..].copy_from_slice(b);
+        }
+        self.str_used += len;
         Str::new(out)
+    }
+
+    /// The row buffers, for a reader that resolves spans itself.
+    #[inline]
+    pub fn raw_rows(&self) -> (*const PropertyJSON, *const JsonValue) {
+        (self.props.as_ptr(), self.items.as_ptr())
     }
 
     #[inline]
@@ -1077,6 +1124,7 @@ impl JsonTape {
 }
 
 /// `Data::EObjectJSON`: a `(first, count)` span of the document's property-row tape.
+#[repr(C)]
 pub struct ObjectJSON {
     tape: core::ptr::NonNull<JsonTape>,
     first: u32,
@@ -1084,6 +1132,11 @@ pub struct ObjectJSON {
     pub close_brace_loc: crate::Loc,
     pub is_single_line: bool,
 }
+
+const _: () = assert!(core::mem::offset_of!(ObjectJSON, first) == 8);
+const _: () = assert!(core::mem::offset_of!(ObjectJSON, count) == 12);
+const _: () = assert!(core::mem::offset_of!(ArrayJSON, first) == 8);
+const _: () = assert!(core::mem::offset_of!(ArrayJSON, count) == 12);
 
 // SAFETY: the tape outlives the AST (`StoreRef`'s contract) and is read-only once parsing returns.
 unsafe impl Send for ObjectJSON {}
@@ -1117,6 +1170,13 @@ impl ObjectJSON {
         }
     }
 
+    /// The tape this node's rows live on.
+    #[inline]
+    pub fn tape(&self) -> &JsonTape {
+        // SAFETY: per the constructor's contract the tape outlives this node.
+        unsafe { self.tape.as_ref() }
+    }
+
     #[inline]
     pub fn properties(&self) -> &[PropertyJSON] {
         if self.count == 0 {
@@ -1146,6 +1206,7 @@ impl ObjectJSON {
 }
 
 /// `Data::EArrayJSON`: a `(first, count)` span of the document's item tape.
+#[repr(C)]
 pub struct ArrayJSON {
     tape: core::ptr::NonNull<JsonTape>,
     first: u32,
@@ -1179,6 +1240,13 @@ impl ArrayJSON {
             close_bracket_loc,
             is_single_line,
         }
+    }
+
+    /// The tape this node's rows live on.
+    #[inline]
+    pub fn tape(&self) -> &JsonTape {
+        // SAFETY: see `ObjectJSON::properties`.
+        unsafe { self.tape.as_ref() }
     }
 
     #[inline]

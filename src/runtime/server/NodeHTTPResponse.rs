@@ -57,6 +57,10 @@ pub struct NodeHTTPResponse {
     /// body finishes (still inside the parser), because a pipelined request's
     /// parse would otherwise overwrite it before this request's JS reads it.
     pub(crate) request_trailers: JsCell<Vec<u8>>,
+    /// The JS wrapper whose `ondata` slot was armed for THIS request body. `get_this_value()`
+    /// resolves through the socket's current response, which under pipelining is a different
+    /// one; delivering through it loses the body. Kept alive by req[kHandle]; cleared on finalize.
+    pub(crate) armed_this_value: Cell<JSValue>,
     /// node:http: this request's header section captured at dispatch as
     /// [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /
     /// req.headers materialize lazily (takeRawHeaders) instead of paying
@@ -193,10 +197,15 @@ unsafe extern "C" {
     safe fn Bun__getNodeHTTPResponseThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
     safe fn Bun__getNodeHTTPServerSocketThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
 
-    // Moves the connection's captured node:http request-trailer section out.
-    // `*out` points into a C++ thread-local that stays valid until the next
-    // call on this thread; the caller copies it immediately. Returns 0 when
-    // there is nothing captured or the socket is closed.
+    // node:http flood prevention (JSNodeHTTPServerSocket.cpp): onReadsPaused marks the socket
+    // paused and tells the uWS request loop to park pipelined requests at the next boundary;
+    // onReadsResumable replays what was parked, in order, before resuming reads.
+    safe fn Bun__NodeHTTP__onReadsPaused(ssl: core::ffi::c_int, socket: *mut c_void);
+    safe fn Bun__NodeHTTP__onReadsResumable(ssl: core::ffi::c_int, socket: *mut c_void);
+
+    // Moves the connection's captured node:http request-trailer section out. `*out` points into
+    // a C++ thread-local valid until the next call on this thread; caller copies immediately.
+    // Returns 0 when nothing captured or socket closed.
     safe fn Bun__NodeHTTP__takeRequestTrailerBytes(
         is_ssl: bool,
         socket: *mut c_void,
@@ -480,6 +489,32 @@ impl NodeHTTPResponse {
         raw.pause();
     }
 
+    /* Pipelined flood prevention pauses READS on the connection, legal after the in-flight
+     * response has ended — so this intentionally skips doPause's ENDED/REQUEST_HAS_COMPLETED
+     * guards (those exist for request-body flow control). */
+    pub(crate) fn pause_socket_reads(
+        &self,
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let flags = self.flags.get();
+        let Some(raw) = self.raw_response.get() else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        if flags.contains(Flags::SOCKET_CLOSED)
+            || flags.contains(Flags::UPGRADED)
+            || raw.is_connect_request()
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+        raw.pause();
+        Bun__NodeHTTP__onReadsPaused(
+            any_response_is_ssl(&raw) as core::ffi::c_int,
+            raw.socket().cast(),
+        );
+        Ok(JSValue::UNDEFINED)
+    }
+
     fn resume_socket(&self) {
         scoped_log!(NodeHTTPResponse, "resumeSocket");
         let flags = self.flags.get();
@@ -492,7 +527,12 @@ impl NodeHTTPResponse {
         {
             return;
         }
-        raw.resume();
+        // Not a bare resume: parked pipelined requests replay first so the
+        // stream cannot reorder around them.
+        Bun__NodeHTTP__onReadsResumable(
+            any_response_is_ssl(&raw) as core::ffi::c_int,
+            raw.socket().cast(),
+        );
     }
 
     pub(crate) fn upgrade(
@@ -1378,14 +1418,14 @@ impl NodeHTTPResponse {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         Ok(self
-            .drain_buffered_request_body_from_pause(global_object)
+            .drain_buffered_request_body_from_pause(global_object)?
             .unwrap_or(JSValue::UNDEFINED))
     }
 
     fn drain_buffered_request_body_from_pause(
         &self,
         global_object: &JSGlobalObject,
-    ) -> Option<JSValue> {
+    ) -> JsResult<Option<JSValue>> {
         scoped_log!(
             NodeHTTPResponse,
             "drainBufferedRequestBodyFromPause {}",
@@ -1400,15 +1440,17 @@ impl NodeHTTPResponse {
             let bytes = self
                 .buffered_request_body_data_during_pause
                 .replace(Vec::new());
-            return Some(JSValue::create_buffer_from_box(
-                global_object,
-                bytes.into_boxed_slice(),
-            ));
+            return JSValue::create_buffer_from_box(global_object, bytes.into_boxed_slice())
+                .map(Some);
         }
-        None
+        Ok(None)
     }
 
-    pub(crate) fn do_resume(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
+    pub(crate) fn do_resume(
+        &self,
+        global_object: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         scoped_log!(NodeHTTPResponse, "doResume");
         // Re-arm the poll first, unconditionally: a paused socket that received
         // the peer's FIN has that EOF deferred (loop.c) until it is resumed, so
@@ -1417,14 +1459,17 @@ impl NodeHTTPResponse {
         self.resume_socket();
         let flags = self.flags.get();
         let Some(raw) = self.raw_response.get() else {
-            return JSValue::FALSE;
+            return Ok(JSValue::FALSE);
         };
         if flags.contains(Flags::REQUEST_HAS_COMPLETED)
             || flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::ENDED)
             || flags.contains(Flags::UPGRADED)
+            // A CONNECT tunnel's bytes reach JS via onSocketData; arming inStream
+            // here would deliver them twice (and park them in the body buffer).
+            || raw.is_connect_request()
         {
-            return JSValue::FALSE;
+            return Ok(JSValue::FALSE);
         }
         // Body already delivered: re-arming onData/onTimeout would overwrite a
         // pipelined request's userData on the shared HttpResponseData. The drain
@@ -1436,12 +1481,9 @@ impl NodeHTTPResponse {
             raw.on_data(on_data_shim, self.as_ctx_ptr());
         }
         self.update_flags(|f| f.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
-        let mut result: JSValue = JSValue::TRUE;
-
-        if let Some(buffered_data) = self.drain_buffered_request_body_from_pause(global_object) {
-            result = buffered_data;
-        }
-        result
+        Ok(self
+            .drain_buffered_request_body_from_pause(global_object)?
+            .unwrap_or(JSValue::TRUE))
     }
 
     pub(crate) fn on_request_complete(&self) {
@@ -1630,21 +1672,22 @@ impl NodeHTTPResponse {
                 };
             }
 
-            if let Some(buffered_data) = self.drain_buffered_request_body_from_pause(global_this) {
-                break 'brk buffered_data;
-            }
-
-            if !chunk.is_empty() {
-                break 'brk match jsc::ArrayBuffer::create_buffer(global_this, chunk) {
-                    Ok(b) => b,
-                    Err(err) => {
-                        let exc = global_this.take_exception(err);
-                        let _ = bun_vm_mut(global_this).uncaught_exception(global_this, exc, false);
-                        return JSValue::UNDEFINED;
-                    }
-                };
-            }
-            break 'brk JSValue::UNDEFINED;
+            let created = match self.drain_buffered_request_body_from_pause(global_this) {
+                Ok(Some(buffered_data)) => Ok(buffered_data),
+                Ok(None) if !chunk.is_empty() => {
+                    jsc::ArrayBuffer::create_buffer(global_this, chunk)
+                }
+                Ok(None) => Ok(JSValue::UNDEFINED),
+                Err(err) => Err(err),
+            };
+            break 'brk match created {
+                Ok(b) => b,
+                Err(err) => {
+                    let exc = global_this.take_exception(err);
+                    let _ = bun_vm_mut(global_this).uncaught_exception(global_this, exc, false);
+                    return JSValue::UNDEFINED;
+                }
+            };
         };
         bytes
     }
@@ -1656,6 +1699,7 @@ impl NodeHTTPResponse {
             chunk.len(),
             last
         );
+        let body_was_pending = self.body_read_state.get() == BodyReadState::Pending;
         if last {
             self.ref_();
             self.body_read_state.set(BodyReadState::Done);
@@ -1663,7 +1707,23 @@ impl NodeHTTPResponse {
 
         // defer { if last { ... } } — moved to tail.
 
-        if let Some(callback) = js::on_data_get_cached(this_value) {
+        // "Armed" means a callable is cached — the slot holds an explicit
+        // `undefined` between the dispatch reset and the reader's _read() arming
+        // it, and a body arriving in that window used to be dropped outright.
+        let on_data_armed = js::on_data_get_cached(this_value).is_some_and(|cb| cb.is_cell());
+        if !on_data_armed && body_was_pending && event == AbortEvent::None {
+            // No reader armed yet: pipelined request whose body arrived in the same parse burst
+            // as its headers, before JS ran _read() to install ondata. Park it where pause parks;
+            // the reader-arm drain picks it up. (Dumped requests move to Done first, never here.)
+            self.buffered_request_body_data_during_pause
+                .with_mut(|b| b.append_slice(chunk));
+            self.update_flags(|f| {
+                f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE);
+                if last {
+                    f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST);
+                }
+            });
+        } else if let Some(callback) = js::on_data_get_cached(this_value) {
             if callback.is_cell() {
                 let vm = vm_get();
                 let global_this = vm.global();
@@ -1705,7 +1765,18 @@ impl NodeHTTPResponse {
         if last {
             self.capture_request_trailers();
         }
-        self.on_data_or_aborted(chunk, last, AbortEvent::None, self.get_this_value());
+        // Deliver through the wrapper that armed ondata for THIS response's
+        // request; the socket-current wrapper is a different (already-finished)
+        // response while requests are pipelined.
+        let this_value = {
+            let armed = self.armed_this_value.get();
+            if armed.is_empty() {
+                self.get_this_value()
+            } else {
+                armed
+            }
+        };
+        self.on_data_or_aborted(chunk, last, AbortEvent::None, this_value);
     }
 
     /// Release the pin + GC root + byte owner taken by a zero-copy write.
@@ -2211,6 +2282,10 @@ impl NodeHTTPResponse {
 
     fn clear_on_data_callback(&self, this_value: JSValue, global_object: &JSGlobalObject) {
         scoped_log!(NodeHTTPResponse, "clearOnDataCallback");
+        // Clear on the wrapper that armed ondata (see on_data): the parameter may
+        // be the socket-current wrapper, which is a different pipelined response.
+        let armed = self.armed_this_value.replace(JSValue::ZERO);
+        let this_value = if armed.is_empty() { this_value } else { armed };
         if self.body_read_state.get() != BodyReadState::None {
             if !this_value.is_empty() {
                 js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
@@ -2246,6 +2321,7 @@ impl NodeHTTPResponse {
             || flags.contains(Flags::UPGRADED)
         {
             js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
+            self.armed_this_value.set(JSValue::ZERO);
             // defer { if body_read_ref.has { unref } } — moved to tail of this branch.
             match self.body_read_state.get() {
                 BodyReadState::Pending | BodyReadState::Done => {
@@ -2274,6 +2350,7 @@ impl NodeHTTPResponse {
             global_object,
             value.with_async_context_if_needed(global_object),
         );
+        self.armed_this_value.set(this_value);
         self.update_flags(|f| f.insert(Flags::HAS_CUSTOM_ON_DATA));
         if let Some(raw_response) = self.raw_response.get() {
             raw_response.on_data(on_data_shim, self.as_ctx_ptr());
@@ -2534,6 +2611,9 @@ impl NodeHTTPResponse {
     }
 
     pub(crate) fn finalize(self: Box<Self>) {
+        // The JS wrapper is being collected; drop the raw backref so a late
+        // body delivery cannot read through a dead cell.
+        self.armed_this_value.set(JSValue::ZERO);
         bun_ptr::finalize_js_box_noop(self);
     }
 
@@ -2705,6 +2785,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         promise: JsCell::new(StrongOptional::empty()),
         buffered_request_body_data_during_pause: JsCell::new(Vec::new()),
         request_trailers: JsCell::new(Vec::new()),
+        armed_this_value: Cell::new(JSValue::ZERO),
         raw_request_headers: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
         pending_pinned_write: Cell::new(PendingPinnedWrite::default()),

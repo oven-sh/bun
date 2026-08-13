@@ -93,9 +93,7 @@ pub mod external_slice {
     };
 }
 pub mod versioned_url {
-    pub use bun_install_types::resolver_hooks::{
-        OldV2VersionedURL, VersionedURL, VersionedURLType,
-    };
+    pub use bun_install_types::resolver_hooks::{VersionedURL, VersionedURLType};
 }
 
 pub mod extract_tarball;
@@ -229,10 +227,8 @@ pub(crate) mod install {
 /// `.bunx` shim encoder consumed by
 /// `bin::Linker` (Windows only at runtime, but the encoder types are
 /// referenced unconditionally so the module must exist on all targets).
-// `#[path]` inside an inline `mod {}` resolves relative to the
-// synthetic `windows_shim/` directory, which doesn't exist on disk. Hoist the
-// file-backed module to crate level with an absolute-ish path and re-export
-// through the inline mod so `windows_shim::bin_linking_shim` keeps resolving.
+// Crate-level because `#[path]` inside an inline `mod {}` resolves against a
+// synthetic `windows_shim/` directory that doesn't exist on disk.
 #[cfg(windows)]
 #[path = "windows-shim/BinLinkingShim.rs"]
 pub mod _bin_linking_shim;
@@ -247,7 +243,7 @@ pub mod _bin_linking_shim;
 pub mod _bun_shim_impl;
 pub mod windows_shim {
     #[cfg(windows)]
-    pub use crate::_bin_linking_shim as bin_linking_shim;
+    use crate::_bin_linking_shim as bin_linking_shim;
     #[cfg(windows)]
     pub use crate::_bun_shim_impl as bun_shim_impl;
     #[cfg(windows)]

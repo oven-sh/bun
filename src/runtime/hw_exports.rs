@@ -146,14 +146,33 @@ pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSVal
     false
 }
 
+/// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
+/// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
+// HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
+pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
+    if this.entry_point_result.evaluated_as_cjs || this.main().is_empty() {
+        return;
+    }
+    let global = this.global();
+    // A failed conversion just skips the note; must never panic at an FFI
+    // boundary.
+    let Ok(specifier_str) = bun_jsc::bun_string_jsc::from_js(specifier, global) else {
+        return;
+    };
+    let specifier_str = bun_core::OwnedString::new(specifier_str);
+    if specifier_str.eql_utf8(this.main()) {
+        this.entry_point_result.evaluated_as_cjs = true;
+    }
+}
+
 /// `export fn Bun__closeChildIPC(global)` — defers the actual socket close to
 /// the next tick on the event loop.
 // HOST_EXPORT(Bun__closeChildIPC, c)
 pub fn close_child_ipc(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
-    if let Some(current_ipc) = vm.get_ipc_instance() {
+    if let Some(current_ipc) = crate::ipc_host::get_ipc_instance(vm) {
         // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance`.
-        unsafe { (*current_ipc).data.close_socket_next_tick(true) };
+        unsafe { (*current_ipc).data().disconnect() };
     }
 }
 

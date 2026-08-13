@@ -14,7 +14,5 @@ enum SinkID : uint8_t {
     FetchRequestBodySink = 8,
 
 };
-static constexpr unsigned numberOfSinkIDs
-    = 9;
 
 }

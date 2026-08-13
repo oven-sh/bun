@@ -1028,6 +1028,10 @@ pub(crate) fn install_isolated_packages(
             let new_entry_parents: Vec<store::entry::Id> = vec![entry.entry_parent_id];
 
             let hoisted = 'hoisted: {
+                if !manager.options.hoist {
+                    break 'hoisted false;
+                }
+
                 if new_entry_dep_id == invalid_dependency_id {
                     break 'hoisted false;
                 }
@@ -1166,7 +1170,6 @@ pub(crate) fn install_isolated_packages(
 
             let pkgs = lockfile.packages.slice();
             let pkg_names = pkgs.items_name();
-            let pkg_name_hashes = pkgs.items_name_hash();
             let pkg_resolutions = pkgs.items_resolution();
             let pkg_metas = pkgs.items_meta();
 
@@ -1265,24 +1268,16 @@ pub(crate) fn install_isolated_packages(
                                 // Over-excludes the rare "trusted but actually no
                                 // scripts" case in exchange for not needing a
                                 // lockfile-format change.
-                                let (dep_name, dep_name_hash) = if dep_id != invalid_dependency_id {
-                                    (
-                                        dependencies[dep_id as usize].name.slice(string_buf),
-                                        dependencies[dep_id as usize].name_hash,
-                                    )
+                                let dep_name = if dep_id != invalid_dependency_id {
+                                    dependencies[dep_id as usize].name.slice(string_buf)
                                 } else {
-                                    (
-                                        pkg_names[pkg_id as usize].slice(string_buf),
-                                        pkg_name_hashes[pkg_id as usize],
-                                    )
+                                    pkg_names[pkg_id as usize].slice(string_buf)
                                 };
                                 if lockfile.has_trusted_dependency(
                                     dep_name,
                                     pkg_names[pkg_id as usize].slice(string_buf),
                                     pkg_res,
-                                ) || trusted_from_update
-                                    .get(&(dep_name_hash as crate::TruncatedPackageNameHash))
-                                    .is_some_and(|n| **n == *dep_name)
+                                ) || trusted_from_update.contains(&pkg_id)
                                 {
                                     break 'eligible false;
                                 }
@@ -1915,6 +1910,22 @@ pub(crate) fn install_isolated_packages(
 
         break 'is_new_bun_modules true;
     };
+
+    // Remove the fallback a previous install with hoisting on left behind.
+    // `delete_tree` succeeds on a missing tree, so any error here is real.
+    if !manager.options.hoist && !is_new_bun_modules {
+        use bun_sys::FdExt as _;
+        if let Err(err) =
+            Fd::cwd().delete_tree(paths::path_literal!("node_modules/.bun/node_modules"))
+        {
+            Output::err(
+                err,
+                "hoist is disabled, but the existing './node_modules/.bun/node_modules' could not be removed",
+                format_args!(""),
+            );
+            Global::exit(1);
+        }
+    }
 
     {
         // Conditionally initialized (only when progress is shown); definite-

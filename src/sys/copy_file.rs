@@ -20,9 +20,9 @@ static debug: bun_core::output::ScopedLogger =
     bun_core::output::ScopedLogger::new("copy_file", bun_core::output::Visibility::Hidden);
 
 #[cfg(windows)]
-pub type InputType<'a> = &'a bun_core::WStr; // bun.OSPathSliceZ == [:0]const u16
+type InputType<'a> = &'a bun_core::WStr; // bun.OSPathSliceZ == [:0]const u16
 #[cfg(not(windows))]
-pub type InputType<'a> = Fd;
+type InputType<'a> = Fd;
 // lifetime param is unused on posix (Fd is Copy); kept so callers
 // can write `InputType<'_>` uniformly across platforms.
 
@@ -463,12 +463,10 @@ pub(crate) fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> cra
     }
 }
 
-/// `Platform.kernelVersion().orderWithoutTag(.{ major, minor }).compare(.gte)`.
-/// `bun_analytics::generate_header::Platform` (T6) is the canonical
-/// source; T1 routes through `bun_core::linux_kernel_version()` (TYPE_ONLY
-/// move-down) so this crate stays leaf. Compare is
-/// lexicographic on major→minor→patch,
-/// with patch defaulting to 0 in the comparand.
+/// Same probe as `bun_analytics::generate_header::generate_platform::kernel_version()`,
+/// routed through `bun_core::linux_kernel_version()` so this crate stays leaf.
+/// Compare is lexicographic on major→minor→patch, with patch defaulting to 0
+/// in the comparand.
 #[inline]
 fn kernel_at_least(major: u32, minor: u32) -> bool {
     let v = bun_core::linux_kernel_version();

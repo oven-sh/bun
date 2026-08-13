@@ -318,6 +318,17 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("can recover the value from a weak ref", async () => {
       await checkSameOutput("test_napi_ref", []);
     });
+    it("napi_reference_ref returns 0 after the referent is collected", async () => {
+      const output = await checkSameOutput("test_reference_ref_after_collect_driver", []);
+      expect(output).toContain("get_reference_value is undefined=1 reference_ref count=0");
+      expect(output).toContain("second reference_ref count=0");
+    });
+    it("napi_get_buffer_info rejects a bare ArrayBuffer", async () => {
+      const output = await checkSameOutput("test_napi_get_buffer_info_gate", []);
+      expect(output).toContain("get_buffer_info(ArrayBuffer): status=1 pending=0");
+      expect(output).toContain("get_buffer_info(Uint8Array): status=0 pending=0");
+      expect(output).toContain("get_buffer_info(DataView): status=0 pending=0");
+    });
     it("allows creating a handle scope in the finalizer", async () => {
       await checkSameOutput("test_napi_handle_scope_finalizer", []);
     });
@@ -336,6 +347,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("external utf16 empty: status=0 copied=0 finalized=1");
       expect(result).toContain("external utf16 empty: length=0");
       expect(result).toContain("external utf16 nonempty: copied=0");
+    });
+
+    it("accepts (NULL, 0) and rejects length > INT_MAX", async () => {
+      const output = await checkSameOutput("test_napi_external_string_args", []);
+      expect(output).toContain("ext_string_latin1(NULL,0): status=0 pending=0");
+      expect(output).toContain("ext_string_latin1(ptr,INT_MAX+1): status=1 pending=0");
+      expect(output).toContain("ext_string_utf16(ptr,INT_MAX+1): status=1 pending=0");
     });
   });
 
@@ -435,6 +453,64 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("status code alignment with Node.js", () => {
+    it("matches Node for symbol description, empty named key, result-on-exception ordering, and module filename", async () => {
+      const output = await checkSameOutput("test_napi_symbol_key_result_ordering", []);
+      expect(output).toContain('set_named_property(""): status=0 pending=0');
+      expect(output).toContain('obj[""]=1');
+      expect(output).toContain("create_symbol(undefined): status=3 pending=0");
+      expect(output).toContain("create_symbol(null): status=3 pending=0");
+      expect(output).toContain('create_symbol(""): status=0 pending=0');
+      expect(output).toContain('create_symbol("") description: type=4 len=0');
+      expect(output).toContain("new_instance(throws): status=10 result_written=0");
+      expect(output).toContain("get_named_property(throws): status=10 result_written=0");
+      expect(output).toContain("has_named_property(throws): status=10 result_written=0");
+      expect(output).toContain("module_file_name: status=0 is_null=0");
+    });
+
+    it("returns the same napi_status as Node.js for invalid inputs", async () => {
+      const result = await checkSameOutput("test_napi_status_codes_node26", []);
+
+      // napi_wrap/unwrap/remove_wrap/add_finalizer on primitive -> napi_invalid_arg (1)
+      for (const fn of ["napi_wrap", "napi_unwrap", "napi_remove_wrap", "napi_add_finalizer"]) {
+        expect(result).toContain(`${fn}(number): status=1 pending=0`);
+      }
+
+      // napi_coerce_to_*: type-specific status, exception stays pending
+      expect(result).toContain("napi_coerce_to_number(Symbol): status=6 pending=1");
+      expect(result).toContain("napi_coerce_to_string(Symbol): status=3 pending=1");
+      expect(result).toContain("napi_coerce_to_object(null): status=2 pending=1");
+
+      // napi_run_script: napi_generic_failure (9), exception stays pending
+      expect(result).toContain("napi_run_script(throw): status=9 pending=1");
+      expect(result).toContain("napi_run_script(syntax): status=9 pending=1");
+
+      // napi_create_bigint_words > INT_MAX: napi_invalid_arg, no throw
+      expect(result).toContain("napi_create_bigint_words(INT_MAX+1): status=1 pending=0");
+
+      // napi_create_buffer / napi_create_buffer_copy: napi_generic_failure (9) on alloc failure
+      expect(result).toContain("napi_create_buffer(SIZE_MAX): status=9 pending=1");
+      expect(result).toContain("napi_create_buffer_copy(SIZE_MAX): status=9 pending=1");
+
+      // second napi_throw_error: napi_pending_exception, first message kept
+      expect(result).toContain("napi_throw_error(2nd): status=10");
+      expect(result).toContain("napi_throw_error(2nd): kept=first");
+
+      // node_api_post_finalizer(NULL): napi_ok
+      expect(result).toContain("node_api_post_finalizer(NULL): status=0 pending=0");
+
+      // napi_make_callback validation -> napi_invalid_arg
+      for (const which of ["recv=NULL", "argc>0,argv=NULL", "func=number"]) {
+        expect(result).toContain(`napi_make_callback(${which}): status=1 pending=0`);
+      }
+
+      // napi_ref/unref_threadsafe_function: env ignored, last_error untouched
+      expect(result).toContain("napi_ref_threadsafe_function(env=NULL): status=0");
+      expect(result).toContain("napi_unref_threadsafe_function(env=NULL): status=0");
+      expect(result).toContain("napi_ref_threadsafe_function: last_error_preserved=1");
+    });
+  });
+
   describe("napi_async_work", () => {
     it("null checks execute callbacks", async () => {
       const output = await checkSameOutput("test_napi_async_work_execute_null_check", []);
@@ -477,6 +553,11 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   });
 
   describe("napi_threadsafe_function", () => {
+    it("passes NULL js_callback to call_js when created without a func", async () => {
+      const output = await checkSameOutput("test_tsfn_null_js_callback_driver", []);
+      expect(output).toContain("js_callback == NULL: 1");
+    });
+
     it("keeps the event loop alive without async_work", async () => {
       const result = await checkSameOutput("test_promise_with_threadsafe_function", []);
       expect(result).toContain("tsfn_callback");
@@ -529,12 +610,32 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("worker exited with 0\nfinalized=2 call=16 release=0");
     });
 
+    // A finalizer running while a worker's env drains its finalizers can
+    // register another (here: an external buffer with a finalize_cb). Bun runs
+    // that one in the same cleanup rather than leaving it behind the walk. Bun-
+    // only rather than same-output: node hands an external buffer's finalizer to
+    // the BackingStore deleter, not to the env's tracked references, so a buffer
+    // created during teardown dies with the isolate and node prints late=0.
+    it("runs a finalizer that another finalizer registered during env cleanup", async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), join(__dirname, "napi-app/main.js"), "test_finalizer_registered_during_env_cleanup", "[]"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toContain("worker exited with 0\nlate=1");
+      expect(exitCode).toBe(0);
+    });
+
     // A call that reports napi_closing consumes the calling thread's reference
     // (node's ThreadSafeFunction::Push), so on an orphaned threadsafe function
     // it can drop the last one -- and then it must free it, or every worker that
     // leaves one behind leaks. An addon that uses the handle after napi_closing
     // (a release, say) therefore touches freed memory, in node as well: the docs
     // say to make no further use of it. Bun-only: reads bun's live tsfn count.
+    // The spawned run takes >10s under a debug+ASAN bun, so the 5s default
+    // times out on slow machines.
     it("frees an orphaned threadsafe function whose last reference a call consumed", async () => {
       await using proc = spawn({
         cmd: [bunExe(), join(__dirname, "napi-app/main.js"), "test_threadsafe_function_orphan_leak", "[]"],
@@ -564,7 +665,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         exitCode: 0,
         signalCode: null,
       });
-    });
+    }, 30_000);
 
     // napi_create_threadsafe_function once the env has torn its threadsafe
     // functions down (here: from a cleanup hook that a threadsafe function's
@@ -816,6 +917,49 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       );
     });
 
+    // Small typed arrays use JSC's "fast" mode, whose GC-heap storage is
+    // abandoned when the backing ArrayBuffer is materialized. The data pointer
+    // NAPI hands out must point at the storage that survives, or native writes
+    // are silently dropped (see issue #37151).
+    it("returns a data pointer whose writes are visible through small typed arrays", async () => {
+      // 999/1000 straddle JSC's fastSizeLimit; 2048 is always wasteful mode.
+      await Promise.all(
+        [16, 999, 1000, 2048].map(async size => {
+          const output = await checkSameOutput("test_typedarray_info_write_visibility", `[new Uint8Array(${size})]`);
+          expect(output).toBe(`length=${size} first=42 last=42`);
+        }),
+      );
+    });
+
+    it("returns a data pointer at the reported byte offset for small typed arrays", async () => {
+      await Promise.all(
+        [
+          "new Uint8Array(0)",
+          "new Uint8Array(64)",
+          "new Int32Array(8)",
+          // offset view derived from a small array
+          "new Uint8Array(64).subarray(16)",
+        ].map(async expr => {
+          const output = await checkSameOutput("test_typedarray_info_byte_offset", `[${expr}]`);
+          expect(output).toEndWith("data_is_arraybuffer_data_plus_byte_offset=true");
+        }),
+      );
+    });
+
+    it("napi_get_buffer_info pointer stays valid after the backing ArrayBuffer is materialized", async () => {
+      await Promise.all(
+        ["Buffer.alloc(32)", "new Uint8Array(32)"].map(async expr => {
+          const output = await checkSameOutput("test_buffer_info_pointer_stability", `[${expr}]`);
+          expect(output).toBe("length=32 first=43 last=43");
+        }),
+      );
+    });
+
+    it("napi_create_buffer and napi_create_buffer_copy pointers stay valid after the backing ArrayBuffer is materialized", async () => {
+      const output = await checkSameOutput("test_create_buffer_pointer_stability", []);
+      expect(output.split(/\r?\n/)).toEqual(["create_buffer last=44", "create_buffer_copy last=45"]);
+    });
+
     it("reports the view's byte offset into its backing buffer", async () => {
       const output = await checkSameOutput(
         "test_typedarray_info_byte_offset",
@@ -887,24 +1031,28 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
 
     it("has the right lifetime", async () => {
-      await checkSameOutput("test_wrap_lifetime_without_ref", []);
-      await checkSameOutput("test_wrap_lifetime_with_weak_ref", []);
-      await checkSameOutput("test_wrap_lifetime_with_strong_ref", []);
-      await checkSameOutput("test_remove_wrap_lifetime_with_weak_ref", []);
-      await checkSameOutput("test_remove_wrap_lifetime_with_strong_ref", []);
-      // check that napi finalizers also run at VM exit, even if they didn't get run by GC
-      await checkSameOutput("test_ref_deleted_in_cleanup", []);
-      // check that calling napi_delete_ref in the ref's finalizer is not use-after-free
-      await checkSameOutput("test_ref_deleted_in_async_finalize", []);
+      await Promise.all([
+        checkSameOutput("test_wrap_lifetime_without_ref", []),
+        checkSameOutput("test_wrap_lifetime_with_weak_ref", []),
+        checkSameOutput("test_wrap_lifetime_with_strong_ref", []),
+        checkSameOutput("test_remove_wrap_lifetime_with_weak_ref", []),
+        checkSameOutput("test_remove_wrap_lifetime_with_strong_ref", []),
+        // napi finalizers also run at VM exit, even if they didn't get run by GC
+        checkSameOutput("test_ref_deleted_in_cleanup", []),
+        // calling napi_delete_ref in the ref's finalizer is not use-after-free
+        checkSameOutput("test_ref_deleted_in_async_finalize", []),
+      ]);
     });
   });
 
   describe("napi_define_class", () => {
     it("handles edge cases in the constructor", async () => {
-      await checkSameOutput("test_napi_class", []);
-      await checkSameOutput("test_subclass_napi_class", []);
-      await checkSameOutput("test_napi_class_non_constructor_call", []);
-      await checkSameOutput("test_reflect_construct_napi_class", []);
+      await Promise.all([
+        checkSameOutput("test_napi_class", []),
+        checkSameOutput("test_subclass_napi_class", []),
+        checkSameOutput("test_napi_class_non_constructor_call", []),
+        checkSameOutput("test_reflect_construct_napi_class", []),
+      ]);
     });
 
     it("does not crash with Reflect.construct when newTarget has no prototype", async () => {
@@ -949,6 +1097,28 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   describe("napi_get_last_error_info", () => {
     it("returns information from the most recent call", async () => {
       await checkSameOutput("test_extended_error_messages", []);
+    });
+
+    it("returns a non-null message for napi_cannot_run_js", async () => {
+      // A v10 addon calling napi_throw inside a teardown finalizer gets
+      // napi_cannot_run_js. napi_get_last_error_info must then report a
+      // non-null message (previously the error_messages table stopped at
+      // napi_would_deadlock, so error_message was left as nullptr).
+      const code = `globalThis.keep = require(${JSON.stringify(
+        join(__dirname, "napi-app/build/Debug/test_last_error_cannot_run_js.node"),
+      )});`;
+      const run = async (exe: string) => {
+        await using proc = spawn({ cmd: [exe, "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout: stdout.trim(), stderr, exitCode };
+      };
+      const [bun, node] = await Promise.all([run(bunExe()), run(await nodeExeMatchingAbi())]);
+      expect(bun).toEqual(node);
+      expect(bun).toEqual({
+        stdout: "napi_throw status=23 error_code=23 error_message=Cannot run JavaScript",
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 
@@ -1443,6 +1613,15 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       expect(output).toContain("napi_get_array_length(NULL) -> 1");
       expect(output).toContain("napi_get_dataview_info(NULL) -> 1");
     });
+
+    it("returns napi_invalid_arg for NULL env / NULL out-param instead of crashing", async () => {
+      const output = await checkSameOutput("test_napi_null_env_and_result", []);
+      expect(output).toContain("napi_typeof(NULL env) -> 1");
+      expect(output).toContain("napi_is_exception_pending(NULL env) -> 1");
+      expect(output).toContain("napi_call_function(NULL env) -> 1");
+      expect(output).toContain("napi_is_error(NULL result) -> 1");
+      expect(output).toContain("napi_async_init(NULL result) -> 1");
+    });
   });
 
   describe("napi_typeof", () => {
@@ -1525,6 +1704,22 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       expect(output).toContain("keep_numbers key0 typeof=number");
       expect(output).toContain("numbers_to_strings key0 typeof=string");
     });
+
+    it("coerces primitives for define_properties/freeze/seal/type_tag/set_prototype", async () => {
+      const output = await checkSameOutput("test_napi_toobject_coercion_node26", []);
+      expect(output).toContain("define_properties(number): status=0 pending=0");
+      expect(output).toContain("define_properties(null): status=2 pending=1");
+      expect(output).toContain("object_freeze(number): status=0 pending=0");
+      expect(output).toContain("object_freeze(null): status=2 pending=1");
+      expect(output).toContain("object_seal(number): status=0 pending=0");
+      expect(output).toContain("object_seal(undefined): status=2 pending=1");
+      expect(output).toContain("type_tag_object(number): status=0 pending=0");
+      expect(output).toContain("type_tag_object(null): status=10 pending=1");
+      expect(output).toContain("check_object_type_tag(number): status=0 pending=0");
+      expect(output).toContain("check_object_type_tag(null): status=10 pending=1");
+      expect(output).toContain("node_api_set_prototype(number): status=0 pending=0");
+      expect(output).toContain("node_api_set_prototype(null): status=2 pending=1");
+    });
   });
 
   describe("napi_object_freeze and napi_object_seal", () => {
@@ -1587,6 +1782,22 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     it("removing non-existent async cleanup hook should not crash", async () => {
       // Test that removing non-existent async hooks doesn't crash
       await checkSameOutput("test_async_cleanup_hook_remove_nonexistent", []);
+    });
+
+    it("hook handle stays valid until the addon removes it (#37201)", async () => {
+      // An async cleanup hook releases a threadsafe function whose finalizer
+      // then calls napi_remove_async_cleanup_hook; the handle must not be
+      // freed when the hook returns.
+      const output = await checkSameOutput("test_async_cleanup_hook_tsfn_release", []);
+      // Pin the successful lifecycle, so matching Node on a shared failure
+      // (non-zero status in both) cannot pass. printf() via the Windows CRT
+      // emits \r\n, so split on either ending.
+      expect(output.split(/\r?\n/).slice(-4)).toEqual([
+        "async cleanup hook fired",
+        "released tsfn: status=0",
+        "tsfn finalize: removing async cleanup hook",
+        "async cleanup hook removed: status=0",
+      ]);
     });
   });
 

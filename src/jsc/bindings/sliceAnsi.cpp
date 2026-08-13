@@ -417,14 +417,6 @@ enum class TokenType {
     Control,
 };
 
-struct HyperlinkInfo {
-    bool isOpen = false;
-    // closePrefix: the prefix to use when closing this hyperlink
-    // terminator: the terminator character/sequence
-    String closePrefix;
-    String terminator;
-};
-
 // Parse CSI sequence: returns end pointer, or nullptr if not a valid CSI
 template<typename Char>
 static const Char* parseCsi(const Char* start, const Char* end, bool& isSgr, bool& isCanonicalSgr)

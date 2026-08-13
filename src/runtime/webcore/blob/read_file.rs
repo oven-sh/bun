@@ -529,18 +529,14 @@ impl ReadFile {
                         }
                         _ => {
                             self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-                            self.system_error = Some(err.to_system_error().into());
-                            if self.system_error.as_ref().unwrap().path.is_empty() {
-                                self.system_error.as_mut().unwrap().path =
-                                    if self.file_store.pathlike.is_path() {
-                                        BunString::clone_utf8(
-                                            self.file_store.pathlike.path().slice(),
-                                        )
-                                        .into()
-                                    } else {
-                                        BunString::EMPTY.into()
-                                    };
+                            let mut system_error = err.to_system_error();
+                            if system_error.path.is_none() && self.file_store.pathlike.is_path() {
+                                system_error.path = Some(
+                                    BunString::clone_utf8(self.file_store.pathlike.path().slice())
+                                        .into(),
+                                );
                             }
+                            self.system_error = Some(system_error.into());
                             return false;
                         }
                     }

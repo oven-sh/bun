@@ -14,14 +14,6 @@ fn fd_unwrap_valid(fd: Fd) -> Option<Fd> {
     if fd == Fd::INVALID { None } else { Some(fd) }
 }
 
-/// `String::EMPTY` is "no operand" to `SystemError__toErrorInstance`; a real "" needs another tag.
-fn operand_string(operand: &[u8]) -> BunString {
-    if operand.is_empty() {
-        return BunString::static_(b"");
-    }
-    BunString::clone_utf8(operand)
-}
-
 #[cfg(windows)]
 const RETRY_ERRNO: Int = E::EINTR as Int;
 #[cfg(not(windows))]
@@ -376,6 +368,14 @@ impl Error {
         let mut err = SystemError {
             errno: js_errno,
             syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()).into(),
+            path: self
+                .path
+                .as_deref()
+                .map(|path| BunString::clone_utf8(path).into()),
+            dest: self
+                .dest
+                .as_deref()
+                .map(|dest| BunString::clone_utf8(dest).into()),
             ..Default::default()
         };
 
@@ -384,14 +384,6 @@ impl Error {
             err.code = BunString::static_(code.as_bytes()).into();
             (code, map[system_errno])
         });
-
-        if let Some(path) = self.path.as_deref() {
-            err.path = operand_string(path).into();
-        }
-
-        if let Some(dest) = self.dest.as_deref() {
-            err.dest = operand_string(dest).into();
-        }
 
         if let Some(valid) = fd_unwrap_valid(self.fd) {
             // When the FD is a windows handle, there is no sane way to report this.
@@ -502,12 +494,15 @@ impl fmt::Display for Error {
         // because we're intending to pass them to writer.print()
         // which will convert them back into UTF*.
         let mut that = self.without_path().to_shell_system_error();
-        debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
-        debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
-        that.path = BunString::borrow_utf8(self.path.as_deref().unwrap_or_default()).into();
-        that.dest = BunString::borrow_utf8(self.dest.as_deref().unwrap_or_default()).into();
-        debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
-        debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
+        debug_assert!(that.path.is_none() && that.dest.is_none());
+        that.path = self
+            .path
+            .as_deref()
+            .map(|path| BunString::borrow_utf8(path).into());
+        that.dest = self
+            .dest
+            .as_deref()
+            .map(|dest| BunString::borrow_utf8(dest).into());
 
         fmt::Display::fmt(&that, f)
     }

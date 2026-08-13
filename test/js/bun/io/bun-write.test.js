@@ -137,6 +137,51 @@ const IS_UV_FS_COPYFILE_DISABLED =
     }
   });
 
+  // Like node:fs, an operand that is the empty string is still an operand: it is
+  // quoted in the message and set as err.path.
+  describe("an empty path operand is reported in the error", () => {
+    const rejectionOf = promise =>
+      promise.then(
+        () => undefined,
+        err => err,
+      );
+    const shapeOf = err => err && { code: err.code, syscall: err.syscall, message: err.message, path: err.path };
+    const enoentOpen = {
+      code: "ENOENT",
+      syscall: "open",
+      message: "ENOENT: no such file or directory, open ''",
+      path: "",
+    };
+
+    it("Bun.file('').text()", async () => {
+      expect(shapeOf(await rejectionOf(Bun.file("").text()))).toEqual(enoentOpen);
+    });
+
+    it("Bun.write('', string)", async () => {
+      expect(shapeOf(await rejectionOf(Bun.write("", "data")))).toEqual(enoentOpen);
+    });
+
+    it("Bun.write(Bun.file(''), string)", async () => {
+      expect(shapeOf(await rejectionOf(Bun.write(Bun.file(""), "data")))).toEqual(enoentOpen);
+    });
+
+    // File to file copies take a different route on Windows (uv_fs_copyfile),
+    // whose errors name the source; these are the shapes of the POSIX copy.
+    describe.skipIf(isWindows)("Bun.write(file, Bun.file(file))", () => {
+      it("empty destination is reported, not the source", async () => {
+        using dir = tempDir("bun-write-empty-dest", { "src.txt": "data" });
+        const err = await rejectionOf(Bun.write("", Bun.file(join(String(dir), "src.txt"))));
+        expect(shapeOf(err)).toEqual(enoentOpen);
+      });
+
+      it("empty source", async () => {
+        using dir = tempDir("bun-write-empty-src", {});
+        const err = await rejectionOf(Bun.write(join(String(dir), "out.txt"), Bun.file("")));
+        expect(shapeOf(err)).toEqual(enoentOpen);
+      });
+    });
+  });
+
   describe.each(["plain-ascii-missing.txt", "surro-\ud800-gate.txt"])(
     "Bun.write(dest, Bun.file(missing source)) rejects with ENOENT (%s)",
     basename => {

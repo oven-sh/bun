@@ -137,10 +137,11 @@ impl CopyFile {
         if matches!(
             self.source_file_store.pathlike,
             PathOrFileDescriptor::Path(_)
-        ) && system_error.path.is_empty()
+        ) && system_error.path.is_none()
         {
-            system_error.path =
-                bun_core::String::clone_utf8(self.source_file_store.pathlike.path().slice()).into();
+            system_error.path = Some(
+                bun_core::String::clone_utf8(self.source_file_store.pathlike.path().slice()).into(),
+            );
         }
 
         if system_error.message.is_empty() {

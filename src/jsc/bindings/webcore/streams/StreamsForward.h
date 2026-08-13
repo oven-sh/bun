@@ -113,8 +113,7 @@ enum class SourceKind : uint8_t {
     TeeBranch, // a ReadableStreamDefaultTee branch      (context = the JSStreamTeeState)
     ByteTeeBranch, // a ReadableByteStreamTee branch     (context = the JSStreamTeeState)
     FromIterable, // ReadableStream.from(asyncIterable)  (context = JSStreamFromIterableContext)
-    CrossRealm, // receiving end of a postMessage transfer (never constructed: transferable
-                // streams are not implemented)
+    CrossRealm, // receiving end of a postMessage transfer (not implemented)
     Native, // Bun: lazily-materialized native source on a DEFAULT controller
             // (context = JSNativeStreamSourceAdapter)
     TextDecode, // Body.textStream() reading from an existing byte stream
@@ -128,8 +127,7 @@ enum class SinkKind : uint8_t {
     JavaScript, // user underlyingSink
     Nothing, // new WritableStream() with no sink
     Transform, // the writable half of a TransformStream (context = the JSTransformStream)
-    CrossRealm, // SetUpCrossRealmTransformWritable (never constructed: transferable streams
-                // are not implemented)
+    CrossRealm, // SetUpCrossRealmTransformWritable (not implemented)
 };
 
 // Which arm runs a transform controller's transform/flush/cancel algorithms.

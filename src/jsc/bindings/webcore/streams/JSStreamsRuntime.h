@@ -147,8 +147,7 @@ namespace WebCore {
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_TS_CONTROLLER(V) \
     V(onTSPerformTransformRejected)
 
-// owner: CrossRealmTransform.cpp (transferable streams are not implemented; the handler is
-// never registered and asserts not reached).
+// owner: CrossRealmTransform.cpp (transferable streams are not implemented).
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_CROSS_REALM(V) \
     V(onCrossRealmWritableBackpressureFulfilled)
 

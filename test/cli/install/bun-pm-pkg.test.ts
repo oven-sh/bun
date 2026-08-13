@@ -431,10 +431,22 @@ describe.concurrent("bun pm pkg", () => {
           "contributors[0].name.first=x",
           'error: "contributors[0].name.first": "contributors[0].name" already exists and is not an object or array\n',
         ],
+        [
+          "nested.matrix[0][9]=x",
+          'error: "nested.matrix[0][9]": index 9 is out of range for "nested.matrix[0]" (length 1)\n' +
+            "note: nested.matrix[0][] appends to the end of the array\n",
+        ],
+        // an empty part between dots is skipped but still counts towards the name
+        [
+          "nested..matrix[0].foo=x",
+          'error: "nested..matrix[0].foo": "nested..matrix[0]" is an array, so "foo" must be an index or []\n',
+        ],
       ] as const;
 
       it.each(rejected)("should reject %s without touching package.json", async (arg, expectedError) => {
-        using dir = tempDir("pm-pkg-reject", { "package.json": createTestPackageJson({ matrix: [["a", "b"]] }) });
+        using dir = tempDir("pm-pkg-reject", {
+          "package.json": createTestPackageJson({ matrix: [["a", "b"]], nested: { matrix: [["a"]] } }),
+        });
         const before = await readRaw(dir);
         const { output, error, code } = await runPmPkg(["set", arg], dir, false);
         expect({ output, error, code }).toEqual({ output: "", error: expectedError, code: 1 });

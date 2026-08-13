@@ -624,14 +624,12 @@ impl PmPkgCommand {
                     Some(index) if index <= len => index,
                     Some(index) => {
                         Output::err_generic(
-                            "{s}: index {s} is out of range for {s} (length {s})\n<blue>note<r><d>:<r> {s}[] appends to the end of the array",
-                            (
-                                quote(key),
-                                index,
-                                quote(container_name),
-                                len,
-                                bstr::BStr::new(container_name),
-                            ),
+                            "{s}: index {s} is out of range for {s} (length {s})",
+                            (quote(key), index, quote(container_name), len),
+                        );
+                        bun_core::note!(
+                            "{}[] appends to the end of the array",
+                            bstr::BStr::new(container_name)
                         );
                         Global::exit(1);
                     }

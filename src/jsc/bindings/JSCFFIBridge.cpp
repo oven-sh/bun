@@ -125,18 +125,14 @@ extern "C" void Bun__JSCFFICallbackClose(JSC::EncodedJSValue callbackValue)
         callback->close();
 }
 
-// JSVALUE_TO_SLOT_SLOW for the wrappers cc() compiles (src/runtime/ffi/FFI.h): the conversion a
-// dlopen()'d symbol's argument of the same type gets, for the values the wrapper does not decode
-// inline. `abiType` is an ABIType discriminant, which is also the engine's tag (static_asserts
-// above). A rejected value leaves the engine's TypeError pending and reports it through `threw`.
-// No string arena is passed: nothing would free a transcoded string once the native call is over,
-// so a type that would need one (`cstring` given a JS string) throws instead.
+// JSVALUE_TO_SLOT_SLOW in src/runtime/ffi/FFI.h: the dlopen() argument conversion for cc() wrappers.
 extern "C" uint64_t Bun__FFI__jsValueToSlotSlow(JSC::JSGlobalObject* globalObject, int32_t abiType, bool* threw, JSC::EncodedJSValue encodedValue)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     uint64_t slot = 0;
+    // No string arena: nothing could free a transcoded `cstring` after the call, so JS strings throw.
     JSC::FFI::writeSlotFromJSValue(globalObject, globalObject->ffiContext(), static_cast<JSC::FFI::Type>(abiType), JSC::JSValue::decode(encodedValue), slot, nullptr);
     if (scope.exception()) [[unlikely]] {
         *threw = true;

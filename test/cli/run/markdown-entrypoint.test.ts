@@ -417,12 +417,12 @@ describe("bun <file.md>", () => {
   );
 });
 
-// The prefetch only runs when stdout is a TTY (hence the pty, which is
-// POSIX-only) and the terminal looks like Kitty. It stages whatever bytes it
-// receives without inspecting them, so each server below answers with its own
+// The prefetch only runs when stdout is a TTY (hence the `terminal` option)
+// and the terminal looks like Kitty. It stages whatever bytes it receives
+// without inspecting them, so each server below answers with its own
 // recognizable body and the tests assert which one got staged, next to what
 // each server saw.
-describe.concurrent.skipIf(!isPosix)("bun <file.md> remote image prefetch honors the proxy and TLS env", () => {
+describe.concurrent("bun <file.md> remote image prefetch honors the proxy and TLS env", () => {
   const ORIGIN_BODY = "image bytes served by the origin";
   const PROXY_BODY = "image bytes served by the proxy";
 

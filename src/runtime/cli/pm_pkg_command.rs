@@ -53,25 +53,20 @@ struct PackageJson {
 #[derive(Clone, Copy)]
 struct Segment<'a> {
     kind: SegmentKind<'a>,
-    /// Offset just past this segment in the key it was parsed from, so
-    /// `&key[..end]` is the path down to it (`contributors[0]` for the second
-    /// segment of `contributors[0].name`). Error messages name values this way.
+    /// Offset just past this segment in the key; errors name a value by `&key[..end]`.
     end: usize,
 }
 
 #[derive(Clone, Copy)]
 enum SegmentKind<'a> {
-    /// `b` in `a.b` or `a[b]`. Applied to an existing array it is an index,
-    /// applied to an object it is a property name.
+    /// `b` in `a.b` or `a[b]`: an index when applied to an array, otherwise a property name.
     Key { name: &'a [u8], bracketed: bool },
     /// `[]`: the slot after the last element of an array.
     Append,
 }
 
 impl Segment<'_> {
-    /// Whether `set` creates an array (rather than an object) for this segment
-    /// to land in when nothing exists yet: `files[0]=x` and `files[]=x` create
-    /// an array, `config.0=x` creates an object with the property `"0"`.
+    /// `files[0]=x` and `files[]=x` create an array; `config.0=x` creates an object keyed `"0"`.
     fn creates_array(self) -> bool {
         match self.kind {
             SegmentKind::Key {
@@ -548,11 +543,7 @@ impl PmPkgCommand {
         Ok(current)
     }
 
-    /// Splits `a.b[0][c][]` into `[Key("a"), Key("b"), Key("0"), Key("c"), Append]`.
-    /// Names are sub-slices of `key`: `E::Object::put` stores keys by
-    /// reference (no copy into the AST arena), so they must outlive the `Expr`
-    /// tree, which `key` (an argv slice) does. Returning owned buffers here
-    /// would leave dangling keys.
+    /// Names are sub-slices of `key`; `E::Object::put` stores them by reference (#33186).
     fn parse_key_path(key: &[u8]) -> Result<Vec<Segment<'_>>, Error> {
         let mut segments: Vec<Segment<'_>> = Vec::new();
 
@@ -612,13 +603,7 @@ impl PmPkgCommand {
         Self::set_in_container(root, b"package.json", key, &path, expr)
     }
 
-    /// `container` is the object or array that `container_name` (a prefix of
-    /// `key`, or `package.json` for the root) refers to; `path` is the
-    /// remaining, non-empty part of `key` below it.
-    ///
-    /// Like `npm pkg set`, only the final segment ever replaces a value: a
-    /// scalar or an array standing in the way of an earlier segment is an
-    /// error, not something to overwrite.
+    /// As in npm, only the final segment may replace a value; anything else in the way is an error.
     fn set_in_container(
         container: &mut Expr,
         container_name: &[u8],
@@ -691,9 +676,7 @@ impl PmPkgCommand {
         Self::set_in_container(&mut child, slot_name, key, rest, value)
     }
 
-    /// The object or array `set` descends into at a slot currently holding
-    /// `existing`; an empty (missing or `null`) slot gets a new container
-    /// shaped for `next`.
+    /// A missing or `null` slot gets a new container shaped for `next`.
     fn child_container(
         existing: Option<Expr>,
         next: Segment<'_>,
@@ -756,9 +739,7 @@ impl PmPkgCommand {
         Self::delete_in_container(root, &Self::parse_key_path(key)?)
     }
 
-    /// Removes the value `path` addresses below `container` (an array element
-    /// is spliced out, an object property is dropped). Returns whether
-    /// anything was removed; a path that leads nowhere removes nothing.
+    /// Splices out an array element or removes a property; returns whether anything was removed.
     fn delete_in_container(container: &mut Expr, path: &[Segment<'_>]) -> Result<bool, Error> {
         let [segment, rest @ ..] = path else {
             return Ok(false);

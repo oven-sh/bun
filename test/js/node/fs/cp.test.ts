@@ -146,6 +146,29 @@ for (const [name, copy] of impls) {
       assertContent(basename + "/result/a.txt", "win");
     });
 
+    // The destination's missing parent is created on demand. When the parent's
+    // name is held by a dangling symlink that mkdir fails with EEXIST, which
+    // used to be taken for "dest already exists" and reported as success with
+    // nothing copied. node reports ENOENT. Over 128 KB macOS copies with
+    // copyfile() instead of open()+write(), which creates the parent separately.
+    for (const [size, content] of [
+      ["small", "a"],
+      ["over 128 KB", Buffer.alloc(256 * 1024, "x").toString()],
+    ] as const) {
+      test(`${size} file into a dangling symlink parent fails with ENOENT`, async () => {
+        await using basename = tempDir("cp", {
+          "from/a.txt": content,
+        });
+        fs.symlinkSync("missing", basename + "/dangling");
+
+        const e = await copyShouldThrow(basename + "/from/a.txt", basename + "/dangling/a.txt");
+        expect(e.code).toBe("ENOENT");
+
+        // Neither the link's target nor anything else was created.
+        expect(fs.readdirSync(String(basename)).sort()).toEqual(["dangling", "from"]);
+      });
+    }
+
     test("symlinks - single file", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",

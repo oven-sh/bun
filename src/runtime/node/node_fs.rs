@@ -9141,40 +9141,43 @@ impl NodeFS {
     /// Shared `dest_fd:` block from the mac/linux/freebsd branches of
     /// `copy_single_file_sync`.
     /// Tries `open(dest, flags, mode)`; on ENOENT creates the
-    /// parent directory and retries once. Any other error is annotated with
-    /// `dest` copied into `sync_error_buf`.
+    /// parent directory and retries once. Errors about `dest` are annotated
+    /// with `dest` copied into `sync_error_buf`. An EEXIST from here always
+    /// means `dest` itself exists: the `cp` callers skip the file on it.
     #[cfg_attr(windows, allow(dead_code))]
     fn cp_open_dest_with_mkdir(&mut self, dest: &ZStr, flags: i32, mode: Mode) -> Maybe<FD> {
         // PORT: extracted from the mac/linux/freebsd arms of `copy_single_file_sync`
         // only — there `OSPathSliceZ == ZStr`. Taking `&ZStr` keeps the body
         // monomorphic (and lets it type-check on Windows where it's dead code).
-        match Syscall::open(dest, flags, mode) {
-            Ok(result) => Ok(result),
-            Err(err) => {
-                if err.get_errno() == E::ENOENT {
-                    // Create the parent directory if it doesn't exist
-                    let bytes = dest.as_bytes();
-                    let mut len = bytes.len();
-                    while len > 0 && bytes[len - 1] != paths::SEP {
-                        len -= 1;
-                    }
-                    let mkdir_result = self.mkdir_recursive(&args::Mkdir {
-                        path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                            &bytes[..len],
-                            false,
-                        )),
-                        recursive: true,
-                        ..Default::default()
-                    });
-                    mkdir_result?;
+        let err = match Syscall::open(dest, flags, mode) {
+            Ok(result) => return Ok(result),
+            Err(err) => err,
+        };
+        if err.get_errno() == E::ENOENT {
+            // No trailing separator on the parent: with one, mkdir(2) on the BSD
+            // kernels follows a symlink at that name (Linux says EEXIST either
+            // way), so a dangling link there would get its target created.
+            let parent = paths::resolve_path::dirname::<paths::platform::Auto>(dest.as_bytes());
+            let mkdir_result = self.mkdir_recursive(&args::Mkdir {
+                path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(parent, false)),
+                recursive: true,
+                ..Default::default()
+            });
+            match mkdir_result {
+                Ok(_) => {
                     if let Ok(result) = Syscall::open(dest, flags, mode) {
                         return Ok(result);
                     }
                 }
-                self.sync_error_buf[..dest.len()].copy_from_slice(dest.as_bytes());
-                Err(err.with_path(&self.sync_error_buf[..dest.len()]))
+                // The parent's name is held by a non-directory (a dangling
+                // symlink, as open() found nothing there). This EEXIST is about
+                // the parent, not `dest`, so report the open() failure instead.
+                Err(mkdir_err) if mkdir_err.get_errno() == E::EEXIST => {}
+                Err(mkdir_err) => return Err(mkdir_err),
             }
         }
+        self.sync_error_buf[..dest.len()].copy_from_slice(dest.as_bytes());
+        Err(err.with_path(&self.sync_error_buf[..dest.len()]))
     }
 
     /// Const-generic dispatch from `NodeFSFunctionEnum` to the matching

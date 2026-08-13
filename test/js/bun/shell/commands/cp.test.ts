@@ -1,7 +1,9 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, tempDir, tempDirWithFiles } from "harness";
+import { readdirSync, symlinkSync } from "node:fs";
+import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -171,6 +173,37 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
   });
+});
+
+// The builtin copies through the node:fs cp engine, which used to report a copy
+// whose destination parent is a dangling symlink as done without copying
+// anything (the engine's mkdir of the parent fails with EEXIST, which was taken
+// for "destination exists"). On POSIX the builtin is enabled by an env var read
+// once at startup, so the command runs in a child bun.
+test("bunshell cp into a dangling symlink parent fails", async () => {
+  using dir = tempDir("shell-cp-dangling-parent", { "a.txt": "A\n" });
+  symlinkSync("missing", join(String(dir), "dangling"));
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const r = await Bun.$\`cp a.txt dangling/out.txt\`.nothrow().quiet();
+       console.log(JSON.stringify({ exitCode: r.exitCode, stderr: r.stderr.toString() }));`,
+    ],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    exitCode: 1,
+    stderr: `cp: No such file or directory: ${join(String(dir), "dangling", "out.txt")}\n`,
+  });
+  expect(exitCode).toBe(0);
+  // Neither the link's target nor anything else was created.
+  expect(readdirSync(String(dir)).sort()).toEqual(["a.txt", "dangling"]);
 });
 
 function expectSortedOutput(expected: string) {

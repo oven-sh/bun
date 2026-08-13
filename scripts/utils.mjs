@@ -1899,24 +1899,28 @@ let cloudInstanceType;
  * The instance type the cloud provider actually launched for this machine,
  * e.g. "r7i.2xlarge" on EC2 or "Standard_D8s_v5" on Azure. CI asks for one
  * type per lane (.buildkite/ci.mjs), but under capacity pressure the
- * machine may be a different, slower type, and nothing else in a job log
- * records which one it was. Looked up once per process.
+ * machine may be a different, slower type. scripts/agent.mjs records the
+ * launched type as the agent's `launched-instance-type` tag, which Buildkite
+ * exposes to the job as an environment variable. Looked up once per process.
  * @returns {string | undefined}
  */
 export function getCloudInstanceType() {
   if (typeof cloudInstanceType !== "string") {
-    cloudInstanceType = fetchCloudInstanceType() || "";
+    cloudInstanceType =
+      getEnv("BUILDKITE_AGENT_META_DATA_LAUNCHED_INSTANCE_TYPE", false) || fetchCloudInstanceType() || "";
   }
   return cloudInstanceType || undefined;
 }
 
 /**
+ * Images baked before agent.mjs set the tag only have the `cloud` tag, so
+ * ask the metadata service directly. Synchronous and bounded, since this
+ * runs while printing a log header.
  * @returns {string | undefined}
  */
 function fetchCloudInstanceType() {
-  // The `cloud` tag scripts/agent.mjs puts on the agents we launch ourselves.
-  // Anything without it (the darwin fleet, GitHub Actions) is not a machine
-  // whose type we chose, so there is nothing to compare against and no request.
+  // Without a `cloud` tag (the darwin fleet, GitHub Actions) this is not a
+  // machine whose type we chose, so there is nothing to compare against.
   const cloud = getEnv("BUILDKITE_AGENT_META_DATA_CLOUD", false);
   let request;
   if (cloud === "aws") {
@@ -2341,6 +2345,34 @@ export async function getCloudMetadataTag(tag, cloud) {
   };
 
   return getCloudMetadata(metadata, cloud);
+}
+
+/**
+ * The instance type this machine was launched as, e.g. "r7i.2xlarge" or
+ * "Standard_D8s_v5". agent.mjs tags the agent with it at start; jobs read it
+ * back through getCloudInstanceType().
+ * @param {Cloud} [cloud]
+ * @returns {Promise<string | undefined>}
+ */
+export async function getCloudLaunchedInstanceType(cloud) {
+  cloud ??= await getCloud();
+
+  if (cloud === "azure") {
+    const body = await getCloudMetadata("", cloud);
+    if (!body) return;
+    try {
+      return JSON.parse(body)?.compute?.vmSize || undefined;
+    } catch {}
+    return;
+  }
+
+  const metadata = {
+    "aws": "instance-type",
+    // "projects/<number>/machineTypes/<type>"
+    "google": "machine-type",
+  };
+
+  return (await getCloudMetadata(metadata, cloud))?.split("/").pop() || undefined;
 }
 
 /**

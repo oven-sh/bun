@@ -136,4 +136,47 @@ describe("self.postMessage transfer list", () => {
       URL.revokeObjectURL(url);
     }
   });
+
+  // Transferring a port closes the sender's object (node fires 'close' on it, asynchronously).
+  // Worker#postMessage and the worker-side self.postMessage each disentangle the port
+  // themselves, so both directions are checked.
+  test("a port transferred with postMessage fires 'close' on the sender's object, in both directions", async () => {
+    const url = URL.createObjectURL(
+      new Blob([
+        `
+          const { port1 } = new MessageChannel();
+          const events = [];
+          port1.addEventListener("close", () => events.push("close"));
+          self.postMessage(port1, [port1]);
+          events.push("postMessage returned");
+          setImmediate(() => setImmediate(() => self.postMessage(events)));
+        `,
+      ]),
+    );
+    const worker = new Worker(url);
+    try {
+      const messages: any[] = [];
+      const workerEvents = new Promise<string[]>((resolve, reject) => {
+        worker.onerror = e => reject(e.error ?? e.message ?? e);
+        worker.onmessage = e => {
+          messages.push(e.data);
+          if (Array.isArray(e.data)) resolve(e.data);
+        };
+      });
+
+      const { port1 } = new MessageChannel();
+      const events: string[] = [];
+      port1.addEventListener("close", () => events.push("close"));
+      worker.postMessage(port1, [port1]);
+      events.push("postMessage returned");
+      await new Promise(r => setImmediate(() => setImmediate(r)));
+      expect(events).toEqual(["postMessage returned", "close"]);
+
+      expect(await workerEvents).toEqual(["postMessage returned", "close"]);
+      expect(messages[0]).toBeInstanceOf(MessagePort);
+    } finally {
+      worker.terminate();
+      URL.revokeObjectURL(url);
+    }
+  });
 });

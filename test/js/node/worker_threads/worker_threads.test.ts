@@ -1223,6 +1223,113 @@ test("dropping a transferred port notifies its peer", async () => {
   port1.close();
 });
 
+// Transferring a port closes the sender's object (node closes its handle), so that object
+// fires 'close' once, asynchronously. The channel itself moves to the receiver: the peer
+// sees nothing, and the channel's eventual close goes to the received port.
+describe("a port transferred away fires 'close' on the sender's object", () => {
+  test("postMessage to a local port", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const carrier = new MessageChannel();
+    const events: string[] = [];
+    port1.on("close", () => events.push("port1 close (listener added before the transfer)"));
+    port2.on("close", () => events.push("port2 close"));
+    carrier.port1.postMessage(port1, [port1]);
+    port1.on("close", () => events.push("port1 close (listener added after the transfer)"));
+    events.push("postMessage returned");
+    for (let i = 0; i < 2; i++) await new Promise(r => setImmediate(r));
+    expect(events).toEqual([
+      "postMessage returned",
+      "port1 close (listener added before the transfer)",
+      "port1 close (listener added after the transfer)",
+    ]);
+
+    // The channel is intact: the received port is entangled with port2.
+    const received = await new Promise<MessagePort>(resolve => carrier.port2.once("message", resolve));
+    received.postMessage("via the received port");
+    expect(await new Promise(resolve => port2.once("message", resolve))).toBe("via the received port");
+
+    // Closing the channel now closes port2 and the received port; the object that was
+    // transferred away does not fire a second time.
+    received.on("message", () => {});
+    const receivedClosed = new Promise<void>(resolve => received.once("close", () => resolve()));
+    port2.close();
+    await receivedClosed;
+    for (let i = 0; i < 2; i++) await new Promise(r => setImmediate(r));
+    expect(events).toEqual([
+      "postMessage returned",
+      "port1 close (listener added before the transfer)",
+      "port1 close (listener added after the transfer)",
+      "port2 close",
+    ]);
+    carrier.port1.close();
+    carrier.port2.close();
+  });
+
+  // The transfer is the last thing the script does: the event still fires, and the
+  // pending event does not keep the process alive afterwards.
+  test("the event fires before the process exits and does not keep it alive", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { MessageChannel } = require("worker_threads");
+         const { port1 } = new MessageChannel();
+         const carrier = new MessageChannel();
+         port1.on("close", () => console.log("port1 close"));
+         carrier.port1.postMessage(port1, [port1]);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "port1 close",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // Ports transferred through the Worker constructor's transferList, through
+  // worker.postMessage(), and from the worker through parentPort.postMessage().
+  test("transfers to and from a Worker", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker, MessageChannel } = require("worker_threads");
+         const viaConstructor = new MessageChannel();
+         const viaPostMessage = new MessageChannel();
+         viaConstructor.port2.on("close", () => console.log("transferList: close"));
+         viaPostMessage.port2.on("close", () => console.log("worker.postMessage: close"));
+         const w = new Worker(
+           \`const { parentPort, workerData, MessageChannel } = require("worker_threads");
+            const { port1 } = new MessageChannel();
+            port1.on("close", () => parentPort.postMessage("parentPort.postMessage: close"));
+            parentPort.postMessage(port1, [port1]);\`,
+           { eval: true, workerData: viaConstructor.port2, transferList: [viaConstructor.port2] },
+         );
+         w.postMessage(viaPostMessage.port2, [viaPostMessage.port2]);
+         w.on("message", m => {
+           if (typeof m === "string") {
+             console.log(m);
+             w.unref();
+           }
+         });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ lines: stdout.trim().split("\n").sort(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      lines: ["parentPort.postMessage: close", "transferList: close", "worker.postMessage: close"],
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 // close() outside a dispatch drops whatever is queued; close() from inside a
 // 'message' handler lets the in-flight drain finish. Both are node's behaviour.
 test("close() drops queued messages unless it runs inside a dispatch", async () => {

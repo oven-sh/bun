@@ -1663,6 +1663,13 @@ impl VirtualMachine {
             };
             for hook in hooks {
                 (hook.func)(hook.ctx);
+                // A hook's C signature returns nothing, so one that entered JS
+                // (an addon finalizer) leaves what it threw pending: fold it here,
+                // this loop being its dispatcher.
+                let global = self.global();
+                if global.has_exception() {
+                    let _ = crate::task::report_error_or_terminate(global, crate::JsError::Thrown);
+                }
             }
         }
         // `mem::take` above leaves an empty `Vec` (capacity already freed by drop).

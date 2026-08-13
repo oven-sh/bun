@@ -734,10 +734,27 @@ impl EventLoop {
             // again: release the task now, as `release_queued_tasks` would have
             // — the queue owns refusal, like `VmHandle::post` does off-thread.
             // SAFETY: JS thread, JSC heap alive (teardown phase B/C).
-            unsafe { __bun_release_task_unrun(task) };
+            unsafe { self.release_task_unrun(task) };
             return;
         }
         let _ = self.tasks.write_item(task);
+    }
+
+    /// Release one task that will never run, folding what its release left
+    /// pending (a few releases run an addon callback that can enter JS).
+    ///
+    /// # Safety
+    /// JS thread, JSC heap alive; `task` just left (or was refused by) the queue.
+    unsafe fn release_task_unrun(&mut self, task: Task) {
+        // SAFETY: fn contract.
+        unsafe { __bun_release_task_unrun(task) };
+        if let Some(global) = self.global {
+            // SAFETY: set at VM init; live for the loop's lifetime.
+            let global = unsafe { global.as_ref() };
+            if global.has_exception() {
+                let _ = crate::task::report_error_or_terminate(global, crate::JsError::Thrown);
+            }
+        }
     }
 
     /// Move whatever other threads posted (`concurrent_tasks`) into
@@ -777,7 +794,7 @@ impl EventLoop {
         let _ = self.promote_yield_tasks();
         while let Some(task) = self.tasks.read_item() {
             // SAFETY: JS thread, heap alive; `task` just left the queue.
-            unsafe { __bun_release_task_unrun(task) };
+            unsafe { self.release_task_unrun(task) };
         }
         // Pending immediates likewise: cancelling one drops its keep-alive on
         // this thread's loop, so it happens now, not after the loop is gone.

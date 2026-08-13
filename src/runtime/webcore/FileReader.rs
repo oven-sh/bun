@@ -898,7 +898,9 @@ impl FileReader {
             let parent = self.parent();
             // SAFETY: see `parent()`.
             unsafe { (*parent).increment_count() };
-            self.pending.with_mut(|p| p.run());
+            let settled = self.pending.with_mut(|p| p.run());
+            // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
+            bun_jsc::JsResultExt::report_unhandled(settled, &self.parent_global());
             close_if_needed!();
             // Re-entrant cancel (sets `done`) or a nested on_pull that read to
             // EOF (sets IS_DONE via on_reader_done but not `self.done`) closed
@@ -1150,7 +1152,9 @@ impl FileReader {
                     self.pending.with_mut(|p| p.result = streams::Result::Done);
                 }
                 self.buffered.set(Vec::new());
-                self.pending.with_mut(|p| p.run());
+                let settled = self.pending.with_mut(|p| p.run());
+                // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
+                bun_jsc::JsResultExt::report_unhandled(settled, &self.parent_global());
             }
             // Don't handle buffered data here - it will be returned on the next onPull
             // This ensures proper ordering of chunks
@@ -1201,7 +1205,9 @@ impl FileReader {
         let parent = self.parent();
         // SAFETY: see `parent()`.
         unsafe { (*parent).increment_count() };
-        self.pending.with_mut(|p| p.run());
+        let settled = self.pending.with_mut(|p| p.run());
+        // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
+        bun_jsc::JsResultExt::report_unhandled(settled, &self.parent_global());
 
         if self.waiting_for_on_reader_done.get() && !self.done.get() {
             self.waiting_for_on_reader_done.set(false);

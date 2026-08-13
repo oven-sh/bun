@@ -258,11 +258,12 @@ impl FetchRequestBodySink {
     }
 
     /// HTTP-thread drain ack: resolves the pending write/flush promise and wakes source.ready().
-    pub fn on_drain(&mut self, _global_this: &JSGlobalObject) {
+    pub fn on_drain(&mut self, _global_this: &JSGlobalObject) -> bun_jsc::JsResult<()> {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "onDrain");
         self.pending_bytes = 0;
-        self.pending.run();
+        self.pending.run()?;
         self.source.ready(None, None);
+        Ok(())
     }
 
     pub fn memory_cost(&self) -> usize {

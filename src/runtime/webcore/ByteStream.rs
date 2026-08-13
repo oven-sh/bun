@@ -464,7 +464,7 @@ impl ByteStream {
             // `with_mut` borrow is `UnsafeCell`-backed so `noalias` is
             // suppressed on `&self`, which is the load-bearing fix vs the old
             // `&mut self` form.
-            self.pending.with_mut(|p| p.run());
+            self.pending.with_mut(|p| p.run())?;
 
             return Ok(());
         }
@@ -622,16 +622,19 @@ impl ByteStream {
                 p.result.release();
                 p.result = streams::Result::Done;
             });
-            self.pending.with_mut(|p| p.run());
+            let settled = self.pending.with_mut(|p| p.run());
+            // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
+            bun_jsc::JsResultExt::report_unhandled(settled, self.parent_const().global_this());
         }
 
         if let Some(mut action) = self.buffer_action.replace(None) {
             let global = self.parent_const().global_this();
-            // TODO: properly propagate exception upwards
-            let _ = action.reject(
+            let rejected = action.reject(
                 global,
                 &streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort),
             );
+            // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
+            bun_jsc::JsResultExt::report_unhandled(rejected, global);
             self.buffer_action.set(None);
         }
     }
@@ -673,7 +676,11 @@ impl ByteStream {
                 // We must never run JavaScript inside of a GC finalizer.
                 self.pending.with_mut(|p| p.run_on_next_tick());
             } else {
-                self.pending.with_mut(|p| p.run());
+                // A `Handler` future is a native continuation, not script:
+                // nothing to settle, so nothing can be left pending.
+                let Ok(()) = self.pending.with_mut(|p| p.run()) else {
+                    unreachable!("GC finalizer settled a promise")
+                };
             }
         }
         if let Some(action) = self.buffer_action.replace(None) {

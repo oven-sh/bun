@@ -675,7 +675,7 @@ impl S3UploadStreamWrapper {
         match &result {
             S3UploadResult::Success => {
                 if let Some(sink) = self_.sink_mut() {
-                    sink.pending.run();
+                    sink.pending.run()?;
                     if sink.flush_promise.has_value() {
                         sink.flush_promise
                             .resolve(&global, JSValue::js_number(0.0))?;
@@ -719,7 +719,13 @@ impl S3UploadStreamWrapper {
                     sink.ended = true;
                     sink.done = true;
                     sink.pending.result = crate::webcore::streams::Writable::Done;
-                    sink.pending.run();
+                    let settled = sink.pending.run();
+                    // Close the source before propagating so a failed settle
+                    // does not leave the upstream pump running.
+                    if settled.is_err() {
+                        sink.source.close(None);
+                    }
+                    settled?;
                     if sink.flush_promise.has_value() {
                         sink.flush_promise.reject(&global, Ok(js_err))?;
                     }

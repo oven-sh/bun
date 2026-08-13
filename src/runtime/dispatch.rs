@@ -670,8 +670,7 @@ mod run_impls {
     impl RunTask for NapiFinalizerTask {
         #[inline]
         unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            Self::run_on_js_thread(this);
-            Ok(())
+            Self::run_on_js_thread(this)
         }
     }
 
@@ -861,8 +860,7 @@ mod run_impls {
         #[inline]
         unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
             // The heap-allocated task; sole owner.
-            Self::run_from_js_thread(this);
-            Ok(())
+            Self::run_from_js_thread(this)
         }
     }
 }

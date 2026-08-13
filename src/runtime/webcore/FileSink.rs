@@ -369,12 +369,19 @@ impl FileSink {
             // SAFETY(JsCell): `WritablePending::run` resolves a JSPromise which may
             // re-enter JS, but no other path holds a borrow of `self.pending` for
             // the duration (host-fns gate on `pending.state != Pending` first).
-            (*this).pending.get_mut().run();
+            let settled = (*this).pending.get_mut().run();
 
             // Release the JS wrapper reference now that the pending operation is complete.
             // This was held to prevent GC from collecting the wrapper while the async
             // operation was in progress.
             (*this).js_sink_ref.with_mut(|r| r.deinit());
+            // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
+            if let Err(err) = settled {
+                // Only a JS-loop sink parks a promise (a Mini-loop sink's future
+                // is a native handler), so the global is the JS VM's.
+                let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
+                bun_jsc::JsResultExt::report_unhandled(Err::<(), _>(err), global);
+            }
         }
     }
 

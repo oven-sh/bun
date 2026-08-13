@@ -445,9 +445,11 @@ pub struct WritableHandler {
 type WritableHandlerFn = fn(ctx: *mut c_void, result: Writable);
 
 impl WritablePending {
-    pub(crate) fn run(&mut self) {
+    /// Settle the parked write. `Err` is the exception settling the promise
+    /// left pending; the pending itself is consumed either way.
+    pub(crate) fn run(&mut self) -> JsResult<()> {
         if self.state != PendingState::Pending {
-            return;
+            return Ok(());
         }
         self.state = PendingState::Used;
         // `consumed` belongs to the operation being settled here; the next one
@@ -455,13 +457,11 @@ impl WritablePending {
         self.consumed = 0;
 
         match core::mem::replace(&mut self.future, WritableFuture::None) {
-            WritableFuture::Promise { mut strong, global } => {
-                Writable::fulfill_promise(
-                    core::mem::replace(&mut self.result, Writable::Done),
-                    strong.swap(),
-                    &global,
-                );
-            }
+            WritableFuture::Promise { mut strong, global } => Writable::fulfill_promise(
+                core::mem::replace(&mut self.result, Writable::Done),
+                strong.swap(),
+                &global,
+            ),
             WritableFuture::Handler(h) => {
                 self.future = WritableFuture::Handler(WritableHandler {
                     ctx: h.ctx,
@@ -470,8 +470,9 @@ impl WritablePending {
                 // Reset self.result to Done here —
                 // verify no caller reads it after run().
                 (h.handler)(h.ctx, core::mem::replace(&mut self.result, Writable::Done));
+                Ok(())
             }
-            WritableFuture::None => {}
+            WritableFuture::None => Ok(()),
         }
     }
 }
@@ -481,22 +482,15 @@ impl Writable {
         result: Writable,
         promise: &mut JSPromise,
         global_this: &JSGlobalObject,
-    ) {
+    ) -> JsResult<()> {
         // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
         let _guard = jsc::js_value::Protected::adopt(promise.to_js());
         match result {
             Writable::Err(err) => {
-                let _ = promise.reject_with_async_stack(global_this, Ok(err.to_js(global_this)));
-                // TODO: properly propagate exception upwards
+                promise.reject_with_async_stack(global_this, Ok(err.to_js(global_this)))
             }
-            Writable::Done => {
-                let _ = promise.resolve(global_this, JSValue::FALSE);
-                // TODO: properly propagate exception upwards
-            }
-            other => {
-                let _ = promise.resolve(global_this, other.to_js(global_this));
-                // TODO: properly propagate exception upwards
-            }
+            Writable::Done => promise.resolve(global_this, JSValue::FALSE),
+            other => promise.resolve(global_this, other.to_js(global_this)),
         }
     }
 
@@ -602,11 +596,10 @@ impl Pending {
     // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
     // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn run_from_js_thread(this: *mut Pending) {
+    pub(crate) fn run_from_js_thread(this: *mut Pending) -> JsResult<()> {
         // SAFETY: this was heap-allocated in run_on_next_tick
         let mut boxed = unsafe { bun_core::heap::take(this) };
-        boxed.run();
-        drop(boxed);
+        boxed.run()
     }
 
     /// The loop refused the deferred fulfilment (VM teardown): nobody awaits
@@ -663,18 +656,18 @@ pub enum PendingState {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl Pending {
-    pub(crate) fn run(&mut self) {
+    /// Settle the parked read. `Err` is the exception settling the promise
+    /// left pending; the pending itself is consumed either way.
+    pub(crate) fn run(&mut self) -> JsResult<()> {
         if self.state != PendingState::Pending {
-            return;
+            return Ok(());
         }
         self.state = PendingState::Used;
         match &self.future {
             PendingFuture::Promise {
                 promise,
                 global_this,
-            } => {
-                StreamResult::fulfill_promise(&mut self.result, *promise, global_this);
-            }
+            } => StreamResult::fulfill_promise(&mut self.result, *promise, global_this),
             PendingFuture::Handler(h) => {
                 // Reset self.result to Done here —
                 // verify no caller reads it after run().
@@ -682,6 +675,7 @@ impl Pending {
                     h.ctx,
                     core::mem::replace(&mut self.result, StreamResult::Done),
                 );
+                Ok(())
             }
         }
     }
@@ -703,7 +697,7 @@ impl StreamResult {
         result: &mut StreamResult,
         promise: *mut JSPromise,
         global_this: &JSGlobalObject,
-    ) {
+    ) -> JsResult<()> {
         // dropped (only used for read-only `event_loop()`) before any re-entrant call.
         let vm = global_this.bun_vm();
         // A long-lived `&mut EventLoop` / `&mut JSPromise` held across
@@ -720,51 +714,36 @@ impl StreamResult {
         if !vm.script_allowed() {
             result.release();
             *result = StreamResult::Temporary(RawSlice::EMPTY);
-            return;
+            return Ok(());
         }
 
-        vm.event_loop_ref().enter();
-        // cannot capture &mut event_loop in scopeguard while also using
-        // `promise` (borrowck); call exit() explicitly on each path instead.
+        let _exit = vm.enter_event_loop_scope();
 
+        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
+        // Each settle forms a fresh temp `&mut`, the sole borrow across that
+        // re-entrant call (no long-lived `&mut JSPromise` held).
         match result {
             StreamResult::Err(err) => {
                 let value = err.to_js(global_this);
                 value.ensure_still_alive();
                 *result = StreamResult::Temporary(RawSlice::EMPTY);
-                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut`
-                // deref. Fresh temp `&mut` is the sole borrow across this
-                // re-entrant call (no long-lived `&mut JSPromise` held).
-                let _ =
-                    JSPromise::opaque_mut(promise).reject_with_async_stack(global_this, Ok(value));
-                // TODO: properly propagate exception upwards
+                JSPromise::opaque_mut(promise).reject_with_async_stack(global_this, Ok(value))
             }
             StreamResult::Done => {
-                // S008: see reject_with_async_stack above; fresh temp `&mut`.
-                let _ = JSPromise::opaque_mut(promise).resolve(global_this, JSValue::FALSE);
-                // TODO: properly propagate exception upwards
+                JSPromise::opaque_mut(promise).resolve(global_this, JSValue::FALSE)
             }
             _ => {
-                let value = match result.to_js(global_this) {
-                    Ok(v) => v,
-                    Err(err) => {
-                        *result = StreamResult::Temporary(RawSlice::EMPTY);
-                        // S008: see reject_with_async_stack above; fresh temp `&mut`.
-                        let _ = JSPromise::opaque_mut(promise).reject(global_this, Err(err));
-                        // TODO: properly propagate exception upwards
-                        vm.event_loop_ref().exit();
-                        return;
-                    }
-                };
-                value.ensure_still_alive();
-
+                let value = result.to_js(global_this);
                 *result = StreamResult::Temporary(RawSlice::EMPTY);
-                // S008: see reject_with_async_stack above; fresh temp `&mut`.
-                let _ = JSPromise::opaque_mut(promise).resolve(global_this, value);
-                // TODO: properly propagate exception upwards
+                match value {
+                    Ok(value) => {
+                        value.ensure_still_alive();
+                        JSPromise::opaque_mut(promise).resolve(global_this, value)
+                    }
+                    Err(err) => JSPromise::opaque_mut(promise).reject(global_this, Err(err)),
+                }
             }
         }
-        vm.event_loop_ref().exit();
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
@@ -1989,14 +1968,18 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // flushPromise() (e.g. handleResolveStream / handleRejectStream).
         // Drop the GC root so the promise can be collected.
         this.pending.result = Writable::Done;
-        this.pending.run();
+        let settled = this.pending.run();
         if let Some(prom) = this.pending_flush.take() {
             // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
             JSPromise::opaque_ref(prom).to_js().unprotect();
         }
         this.buffer.clear_and_free();
         this.unregister_auto_flusher();
+        let global = this.global_this() as *const JSGlobalObject;
         drop(this);
+        // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
+        // SAFETY: the VM's global outlives the sink.
+        bun_jsc::JsResultExt::report_unhandled(settled, unsafe { &*global });
     }
 
     /// This can be called _many_ times for the same instance
@@ -2064,7 +2047,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     pub(crate) fn flush_promise(&mut self) -> JsResult<()> {
         // Settle any `write()` → `Pending` promise first so a parked JS writer
         // wakes on every drain/teardown path that reaches here.
-        self.pending.run();
+        self.pending.run()?;
         if let Some(prom) = self.pending_flush.take() {
             bun_core::scoped_log!(HTTPServerWritableLog, "flushPromise()");
 
@@ -2270,7 +2253,7 @@ impl NetworkSink {
                     .flush_promise
                     .resolve(&global, JSValue::js_number(flushed as f64))?;
             }
-            (*this).pending.run();
+            (*this).pending.run()?;
             (*this).source
         };
         // Wake the upstream source (JS controller onPull or native ByteStream
@@ -2311,9 +2294,12 @@ impl NetworkSink {
         self.ended = true;
         self.done = true;
         self.pending.result = Writable::Done;
-        self.pending.run();
+        let settled = self.pending.run();
         self.source.close(None);
+        let global = self.global_this.expect("global_this set at construction");
         self.finalize();
+        // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
+        bun_jsc::JsResultExt::report_unhandled(settled, &global);
     }
 
     /// The upload queue is full. Native ByteStream/FileReader pumps match on
@@ -2409,7 +2395,12 @@ impl NetworkSink {
         // send EOF
         self.ended = true;
         self.pending.result = Writable::Done;
-        self.pending.run();
+        let settled = self.pending.run();
+        // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
+        bun_jsc::JsResultExt::report_unhandled(
+            settled,
+            &self.global_this.expect("global_this set at construction"),
+        );
         // flush everything and send EOF
         if let Some(task) = self.task_ref() {
             let _ = task.write_bytes(b"", true);

@@ -1345,10 +1345,12 @@ impl RewriterPipe {
         );
         self.phase.set(RewritePhase::Done);
         self.done.set(true);
-        self.pending.with_mut(|p| {
+        let settled = self.pending.with_mut(|p| {
             p.result = Writable::Done;
-            p.run();
+            p.run()
         });
+        // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
+        bun_jsc::JsResultExt::report_unhandled(settled, &self.global);
     }
 
     /// Run one lol-html `write`/`end_mut`/`resume` call under the
@@ -1452,7 +1454,9 @@ impl RewriterPipe {
         let mut src = self.input_source.get();
         src.ready(None, None);
         // Wake a JS pump's pending `write()`/`flush(true)` promise.
-        self.pending.with_mut(|p| p.run());
+        let settled = self.pending.with_mut(|p| p.run());
+        // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
+        bun_jsc::JsResultExt::report_unhandled(settled, &self.global);
     }
 
     /// A content handler's promise resolved: continue the rewrite from
@@ -1577,10 +1581,12 @@ impl RewriterPipe {
         // Settle any `flush(true)`/`write()` promise a direct-stream `pull()`
         // is parked on so the pump promise can settle (mirrors
         // `cancel_from_output`).
-        self.pending.with_mut(|p| {
+        let settled = self.pending.with_mut(|p| {
             p.result = Writable::Done;
-            p.run();
+            p.run()
         });
+        // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
+        bun_jsc::JsResultExt::report_unhandled(settled, &self.global);
 
         if let Some(out) = self.output.get() {
             let mut err = err;

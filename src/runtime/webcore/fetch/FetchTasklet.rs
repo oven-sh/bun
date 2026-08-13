@@ -2161,21 +2161,21 @@ impl FetchTasklet {
     fn resume_request_data_stream(this: *mut FetchTasklet) -> ElJsResult<()> {
         let this_ref = Self::from_raw_mut(this);
         bun_output::scoped_log!(FetchTasklet, "resumeRequestDataStream");
-        let result = (|| {
+        let drained = (|| {
             if this_ref.signal_aborted() {
                 // already aborted; nothing to drain
-                return;
+                return Ok(());
             }
             let global_this = this_ref.global_this;
-            if let Some(sink) = this_ref.sink_mut() {
-                sink.on_drain(&global_this);
+            match this_ref.sink_mut() {
+                Some(sink) => sink.on_drain(&global_this),
+                None => Ok(()),
             }
         })();
         // deref when done because we ref inside onWriteRequestDataDrain
         // SAFETY: `this` is the live heap tasklet; we hold a ref.
         FetchTasklet::deref(this);
-        let () = result;
-        Ok(())
+        drained.map_err(Into::into)
     }
 
     /// Whether the request body should skip chunked transfer encoding framing.
@@ -2338,13 +2338,16 @@ impl FetchTasklet {
         }
         self.abort_task();
         // Re-borrow after the `&mut self` calls above.
+        let global_this = self.global_this;
         if let Some(sink) = self.sink_mut() {
             sink.pending.result = Writable::Done;
-            sink.pending.run();
+            let settled = sink.pending.run();
             sink.source.close(None);
             if is_native {
                 sink.task = None;
             }
+            // TODO(one-fold): interim fold; this frame returns JsResult once its dispatcher does.
+            bun_jsc::JsResultExt::report_unhandled(settled, &global_this);
         }
         if is_native {
             // No pump promise exists to balance the `+1` from

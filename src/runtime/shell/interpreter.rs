@@ -1205,9 +1205,13 @@ impl Interpreter {
                     self.keep_alive.with_mut(|k| k.disable());
                     self.deref_root_shell_and_io_if_needed(true);
                     let _entered = loop_.entered();
-                    let called = buffers.and_then(|(buffered_stdout, buffered_stderr)| {
-                        resolve
-                            .call(
+                    // The shell state machine (`Yield`) has no exception channel,
+                    // so the resolver runs as its own top-level callback: what
+                    // it throws is reported here, and the interpreter finishes.
+                    match buffers {
+                        Ok((buffered_stdout, buffered_stderr)) => {
+                            global_this.bun_vm().event_loop_mut().run_callback(
+                                resolve,
                                 global_this,
                                 JSValue::UNDEFINED,
                                 &[
@@ -1215,11 +1219,13 @@ impl Interpreter {
                                     buffered_stdout,
                                     buffered_stderr,
                                 ],
-                            )
-                            .map(|_| ())
-                    });
-                    if let Err(err) = called {
-                        global_this.report_active_exception_as_unhandled(err);
+                            );
+                        }
+                        Err(err) => {
+                            // TODO(one-fold): buffer conversion threw before the
+                            // callback ran; reported here for the same reason.
+                            bun_jsc::JsResultExt::report_unhandled(Err::<(), _>(err), global_this);
+                        }
                     }
                     JSShellInterpreter::resolve_set_cached(
                         this_jsvalue,

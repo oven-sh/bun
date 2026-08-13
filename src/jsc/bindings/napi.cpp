@@ -3381,6 +3381,12 @@ extern "C" bool NapiEnv__hasPendingException(napi_env env)
     return scope.exception() != nullptr;
 }
 
+extern "C" bool NapiEnv__hasVMException(napi_env env)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(env->vm());
+    return scope.exception() != nullptr;
+}
+
 extern "C" uint32_t napi_internal_get_version(napi_env env)
 {
     return env->napiModule().nm_version;

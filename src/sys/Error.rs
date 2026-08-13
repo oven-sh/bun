@@ -125,7 +125,7 @@ impl Error {
     /// `from_libuv` left at default `false`.
     #[cfg(windows)]
     #[inline]
-    pub fn from_uv_rc64(
+    pub(crate) fn from_uv_rc64(
         rc: crate::windows::libuv::ReturnCodeI64,
         syscall_tag: Tag,
     ) -> Option<Error> {
@@ -243,8 +243,9 @@ impl Error {
     /// preserves every other field — chained on a libuv-sourced error
     /// (`from_libuv=true`, errno in the 4000-range) it must keep `from_libuv`
     /// so `name()`/`msg()` still route through the uv→errno mapper.
+    #[cfg(windows)]
     #[inline]
-    pub fn with_dest(&self, dest: &[u8]) -> Error {
+    pub(crate) fn with_dest(&self, dest: &[u8]) -> Error {
         Error {
             errno: self.errno,
             syscall: self.syscall,
@@ -331,6 +332,13 @@ impl Error {
         Some((<&'static str>::from(e), e))
     }
 
+    /// (code, uv_strerror label) pair, e.g. `("ENOENT", "no such file or
+    /// directory")` — the pieces of Node's `UVException` message.
+    pub fn uv_code_label(&self) -> Option<(&'static str, &'static str)> {
+        let (code, system_errno) = self.get_error_code_tag_name()?;
+        Some((code, libuv_error_map::LIBUV_ERROR_MAP[system_errno]))
+    }
+
     pub fn msg(&self) -> Option<&'static [u8]> {
         let (_code, system_errno) = self.get_error_code_tag_name()?;
         // Both error maps are total (`initFull("unknown error")`), so the
@@ -346,36 +354,47 @@ impl Error {
         &self,
         map: &enum_map::EnumMap<SystemErrno, &'static str>,
     ) -> (SystemError, Option<(&'static str, &'static str)>) {
+        // Node reports libuv's codes in `err.errno` on every platform. On POSIX
+        // that is just the negated host errno. On Windows `self.errno` may be
+        // either an `E` discriminant or a raw libuv magnitude regardless of
+        // `from_libuv` (callers are inconsistent), so always try the
+        // discriminant→UV table first; a raw magnitude falls through to plain
+        // negation and lands on the same value.
+        #[cfg(windows)]
+        let js_errno = crate::windows::libuv::e_discriminant_to_uv(self.errno)
+            .unwrap_or_else(|| c_int::from(self.errno).wrapping_neg());
+        #[cfg(not(windows))]
+        let js_errno = c_int::from(self.errno).wrapping_neg();
+
         let mut err = SystemError {
-            errno: c_int::from(self.errno).wrapping_neg(),
-            syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()),
-            message: BunString::empty(),
+            errno: js_errno,
+            syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()).into(),
             ..Default::default()
         };
 
         // both maps are total (`initFull("unknown error")`).
         let looked_up = self.get_error_code_tag_name().map(|(code, system_errno)| {
-            err.code = BunString::static_(code.as_bytes());
+            err.code = BunString::static_(code.as_bytes()).into();
             (code, map[system_errno])
         });
 
         if !self.path.is_empty() {
-            err.path = BunString::clone_utf8(&self.path);
+            err.path = BunString::clone_utf8(&self.path).into();
         }
 
         if !self.dest.is_empty() {
-            err.dest = BunString::clone_utf8(&self.dest);
+            err.dest = BunString::clone_utf8(&self.dest).into();
         }
 
         if let Some(valid) = fd_unwrap_valid(self.fd) {
             // When the FD is a windows handle, there is no sane way to report this.
             #[cfg(windows)]
             if valid.kind() == crate::FdKind::Uv {
-                err.fd = valid.uv();
+                err.fd = Some(valid.uv());
             }
             #[cfg(not(windows))]
             {
-                err.fd = valid.uv();
+                err.fd = Some(valid.uv());
             }
         }
 
@@ -387,7 +406,7 @@ impl Error {
         let (mut err, looked_up) =
             self.fill_system_error_common(&coreutils_error_map::COREUTILS_ERROR_MAP);
         if let Some((_, label)) = looked_up {
-            err.message = BunString::static_(label.as_bytes());
+            err.message = BunString::static_(label.as_bytes()).into();
         }
         err
     }
@@ -451,7 +470,7 @@ impl Error {
             }
             usize::try_from(cursor.position()).expect("int cast")
         };
-        err.message = BunString::clone_utf8(&message_buf[..pos]);
+        err.message = BunString::clone_utf8(&message_buf[..pos]).into();
 
         err
     }
@@ -478,8 +497,8 @@ impl fmt::Display for Error {
         let mut that = self.without_path().to_shell_system_error();
         debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
         debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
-        that.path = BunString::borrow_utf8(&self.path);
-        that.dest = BunString::borrow_utf8(&self.dest);
+        that.path = BunString::borrow_utf8(&self.path).into();
+        that.dest = BunString::borrow_utf8(&self.dest).into();
         debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
         debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
 

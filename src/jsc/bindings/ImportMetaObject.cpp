@@ -4,7 +4,6 @@
 
 #include "ImportMetaObject.h"
 #include "ZigGlobalObject.h"
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
@@ -57,82 +56,6 @@ namespace Zig {
 using namespace JSC;
 using namespace WebCore;
 
-static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const WTF::String& fromStr)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    switch (callFrame->argumentCount()) {
-    case 0: {
-        // not "requires" because "require" could be confusing
-        JSC::throwTypeError(globalObject, scope, "require.resolve needs 1 argument (a string)"_s);
-        scope.release();
-        return {};
-    }
-    default: {
-        JSC::JSValue moduleName = callFrame->argument(0);
-
-        auto doIt = [&](const WTF::String& fromStr) -> JSC::EncodedJSValue {
-            Zig::GlobalObject* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-            if (zigGlobalObject->onLoadPlugins.hasVirtualModules()) {
-                if (auto result = zigGlobalObject->onLoadPlugins.resolveVirtualModule(fromStr, String())) {
-                    if (fromStr == result.value())
-                        return JSC::JSValue::encode(moduleName);
-
-                    return JSC::JSValue::encode(jsString(vm, result.value()));
-                }
-            }
-
-            BunString from = Bun::toString(fromStr);
-            auto result = Bun__resolveSyncWithSource(globalObject, JSC::JSValue::encode(moduleName), &from, false, true);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            if (!JSC::JSValue::decode(result).isString()) {
-                JSC::throwException(globalObject, scope, JSC::JSValue::decode(result));
-                return JSC::JSValue::encode(JSValue {});
-            }
-
-            scope.release();
-            return result;
-        };
-
-        if (moduleName.isUndefinedOrNull()) {
-            JSC::throwTypeError(globalObject, scope, "require.resolve expects a string"_s);
-            scope.release();
-            return {};
-        }
-
-        if (callFrame->argumentCount() > 1) {
-            JSC::JSValue fromValue = callFrame->argument(1);
-
-            // require.resolve also supports a paths array
-            // we only support a single path
-            if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
-                auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
-                RETURN_IF_EXCEPTION(scope, {});
-                if (pathsObject) {
-                    if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
-                        auto pathsArray = uncheckedDowncast<JSC::JSArray>(pathsObject);
-                        if (pathsArray->length() > 0) {
-                            fromValue = pathsArray->getIndex(globalObject, 0);
-                            RETURN_IF_EXCEPTION(scope, {});
-                        }
-                    }
-                }
-            }
-
-            if (fromValue.isString()) {
-                WTF::String str = fromValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, {});
-                return doIt(str);
-            }
-        }
-
-        return doIt(fromStr);
-    }
-    }
-}
-
 ImportMetaObject* ImportMetaObject::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url)
 {
     ImportMetaObject* ptr = new (NotNull, JSC::allocateCell<ImportMetaObject>(vm)) ImportMetaObject(vm, structure, url);
@@ -177,19 +100,6 @@ ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* glo
         url = URL::fileURLWithFileSystemPath(specifier);
     }
     return create(globalObject, url.string());
-}
-
-JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireResolve);
-JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireResolve, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSValue thisValue = callFrame->thisValue();
-    WTF::String fromStr;
-
-    if (thisValue.isString()) {
-        fromStr = thisValue.toWTFString(globalObject);
-    }
-
-    return functionRequireResolve(globalObject, callFrame, fromStr);
 }
 
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
@@ -360,10 +270,20 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
             }
         }
 
+        // node resolves builtin ids before validating `paths`, so `require.resolve("node:fs",
+        // { paths: [0] })` must not throw. Only real builtins bypass; "node:nope" still validates.
+        // https://github.com/nodejs/node/blob/main/lib/internal/modules/cjs/loader.js
+        if (!userPathList.isUndefinedOrNull() && moduleName.isString()) {
+            auto builtinCheckStr = moduleName.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (Bun::isBuiltinModule(builtinCheckStr))
+                userPathList = jsUndefined();
+        }
+
         if (!userPathList.isUndefinedOrNull()) {
             if (JSArray* userPathListArray = dynamicDowncast<JSArray>(userPathList)) {
                 if (!moduleName.isString()) {
-                    Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "id"_s, "string"_s, moduleName);
+                    Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "request"_s, "string"_s, moduleName);
                     scope.release();
                     return {};
                 }
@@ -372,6 +292,12 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 WTF::Vector<BunString> paths;
                 for (size_t i = 0; i < userPathListArray->length(); ++i) {
                     JSValue path = userPathListArray->getIndex(globalObject, i);
+                    if (scope.exception()) [[unlikely]]
+                        goto cleanup;
+                    if (!path.isString()) {
+                        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, makeString("paths["_s, i, "]"_s), "string"_s, path);
+                        goto cleanup;
+                    }
                     WTF::String pathStr = path.toWTFString(globalObject);
                     if (scope.exception()) [[unlikely]]
                         goto cleanup;
@@ -394,7 +320,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 }
                 RELEASE_AND_RETURN(scope, result);
             } else {
-                Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "option.paths"_s, userPathList);
+                Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.paths"_s, userPathList);
                 scope.release();
                 return {};
             }

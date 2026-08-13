@@ -33,7 +33,7 @@ impl Default for Integrity {
 
 const EMPTY_DIGEST_BUF: [u8; DIGEST_BUF_LEN] = [0u8; DIGEST_BUF_LEN];
 
-pub(crate) const DIGEST_BUF_LEN: usize = {
+const DIGEST_BUF_LEN: usize = {
     let mut m = SHA1_DIGEST_LEN;
     if SHA512_DIGEST_LEN > m {
         m = SHA512_DIGEST_LEN;
@@ -48,7 +48,7 @@ pub(crate) const DIGEST_BUF_LEN: usize = {
 };
 
 impl Integrity {
-    pub fn parse_sha_sum(buf: &[u8]) -> crate::Result<Integrity> {
+    pub(crate) fn parse_sha_sum(buf: &[u8]) -> crate::Result<Integrity> {
         if buf.is_empty() {
             return Ok(Integrity {
                 tag: Tag::UNKNOWN,
@@ -89,7 +89,7 @@ impl Integrity {
         Ok(integrity)
     }
 
-    pub fn parse(buf: &[u8]) -> Integrity {
+    pub(crate) fn parse(buf: &[u8]) -> Integrity {
         let mut strongest = Integrity::default();
         for entry in buf.split(|c: &u8| c.is_ascii_whitespace()) {
             let parsed = Self::parse_entry(entry);
@@ -167,12 +167,12 @@ impl Integrity {
         Integrity { value: out, tag }
     }
 
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         &self.value[0..self.tag.digest_len()]
     }
 
     /// Compute a sha512 integrity hash from raw bytes (e.g. a downloaded tarball).
-    pub fn for_bytes(bytes: &[u8]) -> Integrity {
+    pub(crate) fn for_bytes(bytes: &[u8]) -> Integrity {
         const LEN: usize = SHA512_DIGEST_LEN;
         let mut value: [u8; DIGEST_BUF_LEN] = EMPTY_DIGEST_BUF;
         // SAFETY: engine is null (default).
@@ -196,7 +196,7 @@ impl Integrity {
         Self::verify_by_tag(self.tag, bytes, &self.value)
     }
 
-    pub fn verify_by_tag(tag: Tag, bytes: &[u8], sum: &[u8]) -> bool {
+    pub(crate) fn verify_by_tag(tag: Tag, bytes: &[u8], sum: &[u8]) -> bool {
         let mut digest: [u8; DIGEST_BUF_LEN] = [0u8; DIGEST_BUF_LEN];
 
         match tag {
@@ -278,22 +278,22 @@ pub struct Tag(pub u8);
 unsafe impl bytemuck::NoUninit for Tag {}
 
 impl Tag {
-    pub const UNKNOWN: Tag = Tag(0);
+    pub(crate) const UNKNOWN: Tag = Tag(0);
     /// "shasum" in the metadata
-    pub const SHA1: Tag = Tag(1);
+    pub(crate) const SHA1: Tag = Tag(1);
     /// The value is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value
     pub const SHA256: Tag = Tag(2);
     /// The value is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value
-    pub const SHA384: Tag = Tag(3);
+    pub(crate) const SHA384: Tag = Tag(3);
     /// The value is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value
-    pub const SHA512: Tag = Tag(4);
+    pub(crate) const SHA512: Tag = Tag(4);
 
     #[inline]
     pub fn is_supported(self) -> bool {
         self.0 >= Tag::SHA1.0 && self.0 <= Tag::SHA512.0
     }
 
-    pub fn parse(buf: &[u8]) -> (Tag, usize) {
+    pub(crate) fn parse(buf: &[u8]) -> (Tag, usize) {
         let Some(i) = strings::index_of_char(&buf[0..buf.len().min(7)], b'-') else {
             return (Tag::UNKNOWN, 0);
         };
@@ -313,7 +313,7 @@ impl Tag {
     }
 
     #[inline]
-    pub fn digest_len(self) -> usize {
+    pub(crate) fn digest_len(self) -> usize {
         match self {
             Tag::SHA1 => SHA1_DIGEST_LEN,
             Tag::SHA512 => SHA512_DIGEST_LEN,

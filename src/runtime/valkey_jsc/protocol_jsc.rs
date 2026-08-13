@@ -11,7 +11,7 @@ use bun_valkey::valkey_protocol::{RESPValue, RedisError};
 /// All callers always provide a message, so the parameter
 /// is `impl AsRef<[u8]>` to accept `&str`, `&[u8]`, `&[u8; N]`, `&Box<[u8]>`
 /// uniformly without forcing `Some(..)` at every call site.
-pub fn valkey_error_to_js(
+pub(crate) fn valkey_error_to_js(
     global: &JSGlobalObject,
     message: impl AsRef<[u8]>,
     err: RedisError,
@@ -61,13 +61,13 @@ pub fn valkey_error_to_js(
     )
 }
 
-pub fn resp_value_to_js(this: &mut RESPValue, global: &JSGlobalObject) -> JsResult<JSValue> {
+pub(crate) fn resp_value_to_js(this: &mut RESPValue, global: &JSGlobalObject) -> JsResult<JSValue> {
     resp_value_to_js_with_options(this, global, ToJSOptions::default())
 }
 
 #[derive(Clone, Copy, Default)]
 pub struct ToJSOptions {
-    pub return_as_buffer: bool,
+    pub(crate) return_as_buffer: bool,
 }
 
 fn valkey_str_to_js_value(
@@ -79,16 +79,13 @@ fn valkey_str_to_js_value(
         // The parser's payload is an owned allocation that is only converted
         // once; adopt it as the Buffer backing store instead of copying it
         // into a fresh ArrayBuffer.
-        Ok(JSValue::create_buffer_from_box(
-            global,
-            core::mem::take(str),
-        ))
+        JSValue::create_buffer_from_box(global, core::mem::take(str))
     } else {
         bun_string_jsc::create_utf8_for_js(global, str)
     }
 }
 
-pub fn resp_value_to_js_with_options(
+pub(crate) fn resp_value_to_js_with_options(
     this: &mut RESPValue,
     global: &JSGlobalObject,
     options: ToJSOptions,

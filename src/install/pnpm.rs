@@ -116,22 +116,14 @@ pub enum MigratePnpmLockfileError {
     PnpmLockfileMissingVersion,
     #[error("PnpmLockfileMissingImporters")]
     PnpmLockfileMissingImporters,
-    #[error("PnpmLockfileInvalidImporter")]
-    PnpmLockfileInvalidImporter,
     #[error("PnpmLockfileMissingRootPackage")]
     PnpmLockfileMissingRootPackage,
     #[error("PnpmLockfileInvalidSnapshot")]
     PnpmLockfileInvalidSnapshot,
-    #[error("PnpmLockfileInvalidPackage")]
-    PnpmLockfileInvalidPackage,
     #[error("PnpmLockfileMissingDependencyVersion")]
     PnpmLockfileMissingDependencyVersion,
     #[error("PnpmLockfileInvalidDependency")]
     PnpmLockfileInvalidDependency,
-    #[error("PnpmLockfileInvalidOverride")]
-    PnpmLockfileInvalidOverride,
-    #[error("PnpmLockfileInvalidPatchedDependency")]
-    PnpmLockfileInvalidPatchedDependency,
     #[error("PnpmLockfileMissingCatalogEntry")]
     PnpmLockfileMissingCatalogEntry,
     #[error("PnpmLockfileUnresolvableDependency")]
@@ -243,7 +235,12 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     // lives for the whole function) so `root` survives those resets.
     let yaml_source = bun_ast::Source::init_path_string(b"pnpm-lock.yaml", data);
     let yaml_arena = bun_alloc::Arena::new();
-    let _root: Expr = match bun_parsers::yaml::YAML::parse(&yaml_source, log, &yaml_arena) {
+    let _root: Expr = match bun_parsers::yaml::YAML::parse(
+        &yaml_source,
+        log,
+        &yaml_arena,
+        bun_parsers::yaml::CyclicAliases::Reject,
+    ) {
         Ok(r) => r,
         Err(_) => return Err(MigratePnpmLockfileError::YamlParseError),
     };
@@ -1154,7 +1151,6 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile,
-        loaded_from_binary_lockfile: false,
         migrated: lockfile::Migrated::Pnpm,
         serializer_result: Default::default(),
         format: lockfile::Format::Text,
@@ -1793,7 +1789,12 @@ fn update_package_json_after_migration(
             let contents: &'static [u8] = js_ast::data_store_dupe_str(&contents);
             let yaml_source = bun_ast::Source::init_path_string(b"pnpm-workspace.yaml", contents);
             let arena = bun_alloc::Arena::new();
-            let Ok(ws_root) = bun_parsers::yaml::YAML::parse(&yaml_source, log, &arena) else {
+            let Ok(ws_root) = bun_parsers::yaml::YAML::parse(
+                &yaml_source,
+                log,
+                &arena,
+                bun_parsers::yaml::CyclicAliases::Reject,
+            ) else {
                 break 'read_pnpm_workspace_yaml;
             };
 

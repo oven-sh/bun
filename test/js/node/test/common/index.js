@@ -57,6 +57,13 @@ const noop = () => {};
 const hasCrypto = Boolean(process.versions.openssl) &&
                   !process.env.NODE_SKIP_CRYPTO;
 
+const hasSQLite = Boolean(process.versions.sqlite);
+
+// Node gates these on build variables (v8_enable_temporal_support and
+// --localstorage-file). Bun has no equivalent knobs, so feature-detect.
+const hasTemporal = typeof globalThis.Temporal === 'object' && globalThis.Temporal !== null;
+const hasLocalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')?.enumerable === true;
+
 // Synthesize OPENSSL_VERSION_NUMBER format with the layout 0xMNN00PPSL
 const opensslVersionNumber = (major = 0, minor = 0, patch = 0) => {
   assert(major >= 0 && major <= 0xf);
@@ -79,10 +86,10 @@ const hasOpenSSL = (major = 0, minor = 0, patch = 0) => {
   return OPENSSL_VERSION_NUMBER >= opensslVersionNumber(major, minor, patch);
 };
 
-const hasQuic = hasCrypto && !!process.config.variables.openssl_quic;
+const hasQuic = hasCrypto && !!process.features.quic;
 
-function parseTestFlags(filename = process.argv[1]) {
-  // The copyright notice is relatively big and the flags could come afterwards.
+function parseTestMetadata(filename = process.argv[1]) {
+  // The copyright notice is relatively big and the metadata could come afterwards.
   const bytesToRead = 1500;
   const buffer = Buffer.allocUnsafe(bytesToRead);
   const fd = fs.openSync(filename, 'r');
@@ -90,28 +97,40 @@ function parseTestFlags(filename = process.argv[1]) {
   fs.closeSync(fd);
   const source = buffer.toString('utf8', 0, bytesRead);
 
-  const flags = [];
   const flagStart = source.search(/\/\/ Flags:\s+--/) + 10;
-
-  const isNodeTest = source.includes('node:test');
-  if (isNodeTest) {
-    flags.push('test');
+  let flags = [];
+  if (flagStart !== 9) {
+    let flagEnd = source.indexOf('\n', flagStart);
+    // Normalize different EOL.
+    if (source[flagEnd - 1] === '\r') {
+      flagEnd--;
+    }
+    flags = source
+      .substring(flagStart, flagEnd)
+      .split(/\s+/)
+      .filter(Boolean);
   }
 
-  if (flagStart === 9) {
-    return flags;
-  }
-  let flagEnd = source.indexOf('\n', flagStart);
-  // Normalize different EOL.
-  if (source[flagEnd - 1] === '\r') {
-    flagEnd--;
+  // Bun: node:test files re-spawn as `bun test <file>` when a flag needs it.
+  if (source.includes('node:test')) {
+    flags = flags.concat('test');
   }
 
-  return source
-    .substring(flagStart, flagEnd)
-    .split(/\s+/)
-    .filter(Boolean)
-    .concat(flags);
+  const envStart = source.search(/\/\/ Env:\s+/) + 8;
+  let envs = {};
+  if (envStart !== 7) {
+    let envEnd = source.indexOf('\n', envStart);
+    if (source[envEnd - 1] === '\r') {
+      envEnd--;
+    }
+    const envArray = source
+      .substring(envStart, envEnd)
+      .split(/\s+/)
+      .filter(Boolean);
+    envs = Object.fromEntries(envArray.map((env) => env.split('=')));
+  }
+
+  return { flags, envs };
 }
 
 // Check for flags. Skip this for workers (both, the `cluster` module and
@@ -124,14 +143,42 @@ if (process.argv.length === 2 &&
     hasCrypto &&
     require('cluster').isPrimary &&
     fs.existsSync(process.argv[1])) {
-  const flags = parseTestFlags();
+  const { flags, envs } = parseTestMetadata();
+  if (process.versions.bun && process.execArgv.includes("--expose-internals")) {
+    installBunExposeInternalsRequireInterceptor();
+  }
+  const envsTriggerSpawn = Object.keys(envs).some((key) => process.env[key] !== envs[key]);
+  let flagsTriggerSpawn = false;
   for (const flag of flags) {
+    if (flag === "--expose-internals" && process.versions.bun) {
+      // Bun accepts the flag but it does not expose internals, so install the
+      // shim even in a re-spawned child that already has it in execArgv. Keep
+      // scanning so a later --expose-gc on the same Flags line still applies.
+      process.env.SKIP_FLAG_CHECK = "1";
+      installBunExposeInternalsRequireInterceptor();
+      continue;
+    }
     if (!process.execArgv.includes(flag) &&
         // If the binary is build without `intl` the inspect option is
         // invalid. The test itself should handle this case.
         (process.features.inspector || !flag.startsWith('--inspect'))) {
+      if (flag === "--no-warnings" && process.versions.bun) {
+        // Keep scanning so a later --expose-internals / --expose-gc in the
+        // same Flags line still installs its shim in-process. This runs before
+        // the test registers any listener, so dropping the bootstrap printer
+        // plus seeding the alias is exactly the state --no-warnings produces.
+        process.noProcessWarnings = true;
+        process.removeAllListeners('warning');
+        continue;
+      }
       if ((flag === "--expose-gc" || flag === "--expose_gc") && process.versions.bun) {
-        globalThis.gc ??= () => Bun.gc(true);
+        // onGCSweepSync (common/gc.js) clears [[KeptAlive]] then collects and
+        // checks onGC()'s WeakRefs synchronously, so ongc() fires before gc()
+        // returns and upstream onGC's one-setImmediate contract holds
+        // regardless of FinalizationRegistry-vs-setImmediate task ordering.
+        const { onGCSweepSync } = require('./gc');
+        const { releaseWeakRefs } = require('bun:jsc');
+        globalThis.gc ??= () => { Bun.gc(true); onGCSweepSync(releaseWeakRefs, Bun.gc); };
         break;
       }
       if ((flag === "--expose-externalize-string" || flag === "--expose_externalize_string") && process.versions.bun) {
@@ -150,50 +197,109 @@ if (process.argv.length === 2 &&
         };
         break;
       }
-      if (flag === "--expose-internals" && process.versions.bun) {
-        process.env.SKIP_FLAG_CHECK = "1";
-        // Serve require("internal/*") from bun's internal module registry
-        // (via bun:internal-for-testing, which is expose-internals-gated:
-        // always available in debug builds, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
-        // for release). Unknown internal/* specifiers fall through to the
-        // original require and fail exactly as before.
-        const BunModule = require('module');
-        const originalRequire = BunModule.prototype.require;
-        let exposedInternals;
-        BunModule.prototype.require = function require(id) {
-          if (typeof id === 'string' && id.startsWith('internal/')) {
-            exposedInternals ??= originalRequire.call(this, 'bun:internal-for-testing').exposedInternals;
-            if (exposedInternals[id] !== undefined) {
-              return exposedInternals[id];
-            }
-          }
-          return originalRequire.apply(this, arguments);
-        };
-        // http2-specific internal modules (internal/http2/util, …) are
-        // served separately via Bun.plugin module shims backed by the
-        // node:http2 implementation's own internals.
-        installBunExposeInternalsShim();
-        break;
+      if ((flag === "--experimental-sqlite" || flag === "--no-experimental-sqlite") && process.versions.bun) {
+        // node:sqlite is always available in Bun; the Node experimental gate
+        // does not exist, so don't re-spawn just to pass the flag through.
+        continue;
       }
       if (flag === "test") {
         process.env.SKIP_FLAG_CHECK = "1";
         break;
       }
-      console.log(
-        'NOTE: The test started as a child_process using these flags:',
-        inspect(flags),
-        'Use NODE_SKIP_FLAG_CHECK to run the test with the original flags.',
-      );
-      const args = [...flags, ...process.execArgv, ...process.argv.slice(1)];
-      const options = { encoding: 'utf8', stdio: 'inherit' };
-      const result = spawnSync(process.execPath, args, options);
-      if (result.signal) {
-        process.kill(process.pid, result.signal);
-      } else {
-        process.exit(result.status);
-      }
+      flagsTriggerSpawn = true;
+      break;
     }
   }
+
+  if (flagsTriggerSpawn || envsTriggerSpawn) {
+    console.log(
+      'NOTE: The test started as a child_process using these flags:',
+      inspect(flags),
+      'And these environment variables:',
+      inspect(envs),
+      'Use NODE_SKIP_FLAG_CHECK to run the test with the original flags.',
+    );
+    const args = [...flags, ...process.execArgv, ...process.argv.slice(1)];
+    const options = {
+      encoding: 'utf8',
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        ...envs,
+      },
+    };
+    const result = spawnSync(process.execPath, args, options);
+    if (result.signal) {
+      process.kill(process.pid, result.signal);
+    } else {
+      process.exit(result.status);
+    }
+  }
+}
+
+// Bun: cluster workers re-run the test file but skip the flag-check block
+// above (it is gated on cluster.isPrimary), so tests gated on
+// `// Flags: --expose-internals` would lose access to internal/* in the
+// worker. Install the same require interceptor for workers.
+if (process.versions.bun &&
+    process.argv.length === 2 &&
+    isMainThread &&
+    !require('cluster').isPrimary &&
+    fs.existsSync(process.argv[1]) &&
+    parseTestMetadata().flags.includes('--expose-internals')) {
+  installBunExposeInternalsRequireInterceptor();
+}
+
+// Serve require("internal/*") from bun's internal module registry
+// (via bun:internal-for-testing, which is expose-internals-gated:
+// always available in debug builds, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
+// for release). Unknown internal/* specifiers fall through to the
+// original require and fail exactly as before.
+function installBunExposeInternalsRequireInterceptor() {
+  if (installBunExposeInternalsRequireInterceptor.installed) return;
+  installBunExposeInternalsRequireInterceptor.installed = true;
+  const BunModule = require('module');
+  const originalRequire = BunModule.prototype.require;
+  let exposedInternals;
+  let requireVendoredNodeInternal;
+  const mergedInternals = { __proto__: null };
+  BunModule.prototype.require = function require(id) {
+    if (typeof id === 'string' && id.startsWith('internal/')) {
+      exposedInternals ??= originalRequire.call(this, 'bun:internal-for-testing').exposedInternals;
+      // Pure-JS node internals vendored under common/nodeinternals/ (webidl,
+      // socket_list, fs/utils, webcrypto helpers). undefined = not vendored.
+      requireVendoredNodeInternal ??= originalRequire.call(this, path.join(__dirname, 'nodeinternals.js')).requireVendoredNodeInternal;
+      const exposed = exposedInternals[id];
+      if (exposed !== undefined) {
+        // A native entry may cover only part of the module's surface; fill
+        // the gaps from the vendored port, with the real implementations
+        // winning key-for-key (internal/fs/utils: native stringToFlags /
+        // validateRmOptionsSync + vendored getDirents/getDirent). Cached so
+        // repeated requires return the same module object, like node.
+        if (typeof exposed === 'object' && exposed !== null && !Array.isArray(exposed)) {
+          const cached = mergedInternals[id];
+          if (cached !== undefined) {
+            return cached;
+          }
+          const vendored = requireVendoredNodeInternal(id);
+          if (vendored !== undefined && typeof vendored === 'object' && vendored !== null) {
+            return (mergedInternals[id] = { ...vendored, ...exposed });
+          }
+          return (mergedInternals[id] = exposed);
+        }
+        return exposed;
+      }
+      const vendored = requireVendoredNodeInternal(id);
+      if (vendored !== undefined) {
+        return vendored;
+      }
+    }
+    return originalRequire.apply(this, arguments);
+  };
+  // http2-specific internal modules (internal/http2/util, …) are
+  // served separately via Bun.plugin module shims backed by the
+  // node:http2 implementation's own internals.
+  installBunExposeInternalsShim();
 }
 
 const isWindows = process.platform === 'win32';
@@ -205,7 +311,7 @@ const isMacOS = process.platform === 'darwin';
 const isASan = process.config.variables.asan === 1;
 const isRiscv64 = process.arch === 'riscv64';
 const isDebug = process.features.debug;
-const isPi = (() => {
+function isPi() {
   try {
     // Normal Raspberry Pi detection is to find the `Raspberry Pi` string in
     // the contents of `/sys/firmware/devicetree/base/model` but that doesn't
@@ -217,7 +323,7 @@ const isPi = (() => {
   } catch {
     return false;
   }
-})();
+}
 
 const isDumbTerminal = process.env.TERM === 'dumb';
 
@@ -345,7 +451,7 @@ function platformTimeout(ms) {
   if (exports.isAIX || exports.isIBMi)
     return multipliers.two * ms; // Default localhost speed is slower on AIX
 
-  if (isPi)
+  if (isPi())
     return multipliers.two * ms;  // Raspberry Pi devices
 
   if (isRiscv64) {
@@ -810,8 +916,10 @@ function expectsError(validator, exact) {
   }, exact);
 }
 
+const hasInspector = Boolean(process.features.inspector);
+
 function skipIfInspectorDisabled() {
-  if (!process.features.inspector) {
+  if (!hasInspector) {
     skip('V8 inspector is disabled');
   }
 }
@@ -825,6 +933,12 @@ function skipIf32Bits() {
 function skipIfWorker() {
   if (!isMainThread) {
     skip('This test only works on a main thread');
+  }
+}
+
+function skipIfSQLiteMissing() {
+  if (!hasSQLite) {
+    skip('missing SQLite');
   }
 }
 
@@ -1076,6 +1190,12 @@ function expectRequiredModule(mod, expectation, checkESModule = true) {
   assert.deepStrictEqual(clone, { ...expectation });
 }
 
+function sleepSync(ms) {
+  const sab = new SharedArrayBuffer(4);
+  const i32 = new Int32Array(sab);
+  Atomics.wait(i32, 0, 0, ms);
+}
+
 const common = {
   allowGlobals,
   buildType,
@@ -1097,6 +1217,9 @@ const common = {
   hasCrypto,
   hasOpenSSL,
   hasQuic,
+  hasSQLite,
+  hasTemporal,
+  hasLocalStorage,
   hasMultiLocalhost,
   invalidArgTypeHelper,
   isAlive,
@@ -1120,18 +1243,21 @@ const common = {
   nodeProcessAborted,
   openSSLIsBoringSSL,
   PIPE,
-  parseTestFlags,
+  parseTestMetadata,
   platformTimeout,
   printSkipMessage,
   pwdCommand,
   requireNoPackageJSONAbove,
+  hasInspector,
   runWithInvalidFD,
   skip,
   skipIf32Bits,
   skipIfDumbTerminal,
   skipIfEslintMissing,
   skipIfInspectorDisabled,
+  skipIfSQLiteMissing,
   skipIfWorker,
+  sleepSync,
   spawnPromisified,
 
   get enoughTestMem() {
@@ -1292,6 +1418,29 @@ function installBunExposeInternalsShim() {
       this.code = "ERR_HTTP2_ERROR";
     }
   }
+
+  // Webstreams tests read Node's `stream[kState].state` / `.storedError` and
+  // use isPromisePending from internal/webstreams/util. Bun's web streams keep
+  // that state in private fields; surface it through the same kState shape via
+  // bun:internal-for-testing.
+  const kWebStreamState = Symbol('kState');
+  let getWebStreamState;
+  try {
+    ({ getWebStreamState } = require('bun:internal-for-testing'));
+  } catch {
+    // bun:internal-for-testing is gated; without it the kState lookups below
+    // return undefined and the test fails on the assertion rather than here.
+  }
+  if (typeof getWebStreamState === 'function') {
+    for (const ctor of [ReadableStream, WritableStream]) {
+      Object.defineProperty(ctor.prototype, kWebStreamState, {
+        __proto__: null,
+        configurable: true,
+        get() { return getWebStreamState(this); },
+      });
+    }
+  }
+
   Bun.plugin({
     name: "node-test-expose-internals",
     setup(build) {
@@ -1310,7 +1459,69 @@ function installBunExposeInternalsShim() {
       }));
       build.module("internal/timers", () => ({
         loader: "object",
-        exports: { kTimeout: Symbol.for("::buntimeout::") },
+        // TIMEOUT_MAX mirrors Node's internal/timers (2 ** 31 - 1) so vendored
+        // tests exercising the > TIMEOUT_MAX clamp use the real threshold.
+        exports: { kTimeout: Symbol.for("::buntimeout::"), TIMEOUT_MAX: 2 ** 31 - 1 },
+      }));
+      build.module("internal/webstreams/util", () => ({
+        loader: "object",
+        exports: {
+          kState: kWebStreamState,
+          isPromisePending: promise => Bun.peek.status(promise) === "pending",
+        },
+      }));
+      // node's internal/http: serve the very same symbols Bun's _http_outgoing
+      // attaches to OutgoingMessage instances, so tests poke at real state.
+      build.module("internal/http", () => {
+        const { kOutHeaders, kHighWaterMark } = require("node:_http_outgoing");
+        return {
+          loader: "object",
+          exports: { kOutHeaders, kHighWaterMark },
+        };
+      });
+      // node's internal/streams/state: getDefaultHighWaterMark is also part of
+      // the public node:stream API, so reuse that (same function in Bun).
+      build.module("internal/streams/state", () => ({
+        loader: "object",
+        exports: { getDefaultHighWaterMark: require("node:stream").getDefaultHighWaterMark },
+      }));
+      // node's internal/net: normalizedArgsSymbol is a module-private symbol in
+      // Bun's node:net. Recover the real one from a real _normalizeArgs result
+      // rather than minting a look-alike.
+      build.module("internal/net", () => {
+        const net = require("node:net");
+        const probe = net._normalizeArgs([]);
+        const normalizedArgsSymbol = Object.getOwnPropertySymbols(probe).find(
+          s => s.description === "normalizedArgs",
+        );
+        return { loader: "object", exports: { normalizedArgsSymbol } };
+      });
+      // node's internal/options: map the few CLI options vendored http tests ask
+      // about onto the equivalent runtime values. Unknown options return undefined.
+      build.module("internal/options", () => ({
+        loader: "object",
+        exports: {
+          getOptionValue(name) {
+            switch (name) {
+              case "--expose-internals":
+                // This shim is only installed for tests whose Flags line
+                // carries --expose-internals, so the answer is always true.
+                return true;
+              case "--max-http-header-size":
+                return require("node:http").maxHeaderSize;
+              case "--insecure-http-parser":
+                return process.execArgv.includes("--insecure-http-parser");
+              case "--test-isolation": {
+                // Present in execArgv when a `// Flags:` respawn passed it
+                // through; node's default is "process".
+                const arg = process.execArgv.find(a => a.startsWith("--test-isolation="));
+                return arg ? arg.slice("--test-isolation=".length) : "process";
+              }
+              default:
+                return undefined;
+            }
+          },
+        },
       }));
     },
   });

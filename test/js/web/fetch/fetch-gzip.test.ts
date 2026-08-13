@@ -19,7 +19,7 @@ it("fetch() with a buffered gzip response works (one chunk)", async () => {
     port: 0,
 
     async fetch(req) {
-      gcTick(true);
+      gcTick();
       return new Response(require("fs").readFileSync(gzipped), {
         headers: {
           "Content-Encoding": "gzip",
@@ -28,19 +28,19 @@ it("fetch() with a buffered gzip response works (one chunk)", async () => {
       });
     },
   });
-  gcTick(true);
+  gcTick();
 
   const res = await fetch(server.url, { verbose: true });
-  gcTick(true);
+  gcTick();
   const arrayBuffer = await res.arrayBuffer();
   const clone = new Buffer(arrayBuffer);
-  gcTick(true);
+  gcTick();
   await (async function () {
     const second = Buffer.from(htmlText);
-    gcTick(true);
+    gcTick();
     expect(second.equals(clone)).toBe(true);
   })();
-  gcTick(true);
+  gcTick();
 });
 
 it("fetch() with a redirect that returns a buffered gzip response works (one chunk)", async () => {
@@ -153,6 +153,9 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
     ["zstd", "zstd"],
     ["ZSTD", "zstd"],
     ["Zstd", "zstd"],
+    ["identity, gzip", "gzip"],
+    ["gzip , identity", "gzip"],
+    ["identity,br,identity", "br"],
   ];
 
   it.each(cases)("Content-Encoding: %s", async (enc, kind) => {
@@ -252,6 +255,58 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
       const res = await fetch(`http://127.0.0.1:${port}/`);
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("plain-text-body");
+    } finally {
+      server.close();
+    }
+  });
+
+  // We can only strip one coding; a stacked Content-Encoding is passed through raw with the header intact.
+  it.each(["gzip, br", "deflate, gzip"])("stacked Content-Encoding: %s passes through untouched", async enc => {
+    const body = brotliCompressSync(gzipSync(payload));
+    const server = createServer((req, res) => {
+      res.setHeader("Content-Encoding", enc);
+      res.end(body);
+    });
+    await once(server.listen(0), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      expect(res.headers.get("content-encoding")).toBe(enc);
+      expect(Buffer.from(await res.arrayBuffer())).toEqual(body);
+    } finally {
+      server.close();
+    }
+  });
+
+  // RFC 9112 §6.1: `Transfer-Encoding: gzip, chunked` is chunked framing.
+  it.each(["gzip, chunked", "identity,chunked", "Chunked"])("Transfer-Encoding: %s is chunked framing", async te => {
+    const server = createNetServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        socket.write(`HTTP/1.1 200 OK\r\nTransfer-Encoding: ${te}\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n`);
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      expect(await res.text()).toBe("hello world");
+    } finally {
+      server.close();
+    }
+  });
+
+  it.each(["chunked, gzip", "foobar"])("Transfer-Encoding: %s is rejected", async te => {
+    const server = createNetServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        socket.end(`HTTP/1.1 200 OK\r\nTransfer-Encoding: ${te}\r\nConnection: close\r\n\r\n0\r\n\r\n`);
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      expect(async () => await fetch(`http://127.0.0.1:${port}/`)).toThrow("UnsupportedTransferEncoding");
     } finally {
       server.close();
     }
@@ -538,6 +593,102 @@ describe("corrupt compressed responses", () => {
     }
   });
 
+  describe("close-delimited (FIN) framing", () => {
+    const FULL = 50000;
+    const plain = Buffer.alloc(FULL, "A");
+    const truncate = (b: Buffer) => b.subarray(0, b.length >> 1);
+    const codecs: Record<string, [Buffer, string]> = {
+      gzip: [truncate(gzipSync(plain)), "ZlibError"],
+      deflate: [truncate(deflateSync(plain)), "ZlibError"],
+      br: [truncate(brotliCompressSync(plain)), "BrotliDecompressionError"],
+      zstd: [truncate(zstdCompressSync(plain)), "ZstdDecompressionError"],
+    };
+
+    for (const [encoding, [half, errorCode]] of Object.entries(codecs)) {
+      it(`${encoding}: truncated stream rejects the body read`, async () => {
+        const srv = createNetServer(sock => {
+          sock.on("error", () => {});
+          sock.once("data", () => {
+            sock.write(`HTTP/1.1 200 OK\r\nContent-Encoding: ${encoding}\r\nConnection: close\r\n\r\n`);
+            sock.end(half);
+          });
+        });
+        const port = await listen(srv);
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/`);
+          expect(res.status).toBe(200);
+          const bodyErr = await res.arrayBuffer().then(
+            ab => ({ resolved: ab.byteLength }),
+            e => e,
+          );
+          expect(bodyErr).toBeInstanceOf(Error);
+          expect((bodyErr as { code?: string }).code).toBe(errorCode);
+
+          const res2 = await fetch(`http://127.0.0.1:${port}/`);
+          const reader = res2.body!.getReader();
+          let streamErr: unknown = null;
+          try {
+            while (!(await reader.read()).done) {}
+          } catch (e) {
+            streamErr = e;
+          }
+          expect(streamErr).toBeInstanceOf(Error);
+          expect((streamErr as { code?: string }).code).toBe(errorCode);
+        } finally {
+          srv.close();
+        }
+      });
+    }
+
+    for (const [encoding, compress] of [
+      ["gzip", gzipSync],
+      ["deflate", deflateSync],
+      ["br", brotliCompressSync],
+      ["zstd", zstdCompressSync],
+    ] as const) {
+      it(`${encoding}: complete stream resolves with the full body`, async () => {
+        const body = compress(plain);
+        const srv = createNetServer(sock => {
+          sock.on("error", () => {});
+          sock.once("data", () => {
+            sock.write(`HTTP/1.1 200 OK\r\nContent-Encoding: ${encoding}\r\nConnection: close\r\n\r\n`);
+            sock.end(body);
+          });
+        });
+        const port = await listen(srv);
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/`);
+          const buf = Buffer.from(await res.arrayBuffer());
+          expect({ status: res.status, len: buf.length, ok: buf.equals(plain) }).toEqual({
+            status: 200,
+            len: FULL,
+            ok: true,
+          });
+        } finally {
+          srv.close();
+        }
+      });
+    }
+
+    it("identity: uncompressed close-delimited body is delivered intact", async () => {
+      const body = Buffer.alloc(4096, "x");
+      const srv = createNetServer(sock => {
+        sock.on("error", () => {});
+        sock.once("data", () => {
+          sock.write("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+          sock.end(body);
+        });
+      });
+      const port = await listen(srv);
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/`);
+        expect(Buffer.from(await res.arrayBuffer()).equals(body)).toBe(true);
+      } finally {
+        srv.close();
+      }
+    });
+  });
+
   it("redirect loop with a non-empty body rejects with TooManyRedirects", async () => {
     // Real-world 302s carry an HTML body, which routes the intermediate
     // head through clone_metadata(); hitting the redirect limit must still
@@ -793,6 +944,7 @@ describe("empty compressed responses", () => {
   for (const [name, write] of Object.entries({
     "chunked": `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n`,
     "content-length-0": `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 0\r\n\r\n`,
+    "close-delimited": `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nConnection: close\r\n\r\n`,
   })) {
     it(`empty gzip body via ${name} resolves as empty`, async () => {
       // end() rather than write(): FIN the connection after the response so

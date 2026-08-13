@@ -26,22 +26,9 @@ extern "C" void Bun__RsaKeyPairJobCtx__runTask(RsaKeyPairJobCtx* ctx, JSGlobalOb
     ctx->runTask(globalObject, keyCtx);
 }
 
-extern "C" void Bun__RsaKeyPairJobCtx__runFromJS(RsaKeyPairJobCtx* ctx, JSGlobalObject* globalObject, EncodedJSValue callback)
+extern "C" void Bun__RsaKeyPairJobCtx__runFromJS(RsaKeyPairJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
 {
-    ctx->runFromJS(globalObject, JSValue::decode(callback));
-}
-
-extern "C" RsaKeyPairJob* Bun__RsaKeyPairJob__create(JSGlobalObject* globalObject, RsaKeyPairJobCtx* ctx, EncodedJSValue callback);
-RsaKeyPairJob* RsaKeyPairJob::create(JSGlobalObject* globalObject, RsaKeyPairJobCtx&& ctx, JSValue callback)
-{
-    RsaKeyPairJobCtx* ctxCopy = new RsaKeyPairJobCtx(WTF::move(ctx));
-    return Bun__RsaKeyPairJob__create(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
-extern "C" void Bun__RsaKeyPairJob__schedule(RsaKeyPairJob* job);
-void RsaKeyPairJob::schedule()
-{
-    Bun__RsaKeyPairJob__schedule(this);
+    *out = ctx->runFromJS(globalObject);
 }
 
 extern "C" void Bun__RsaKeyPairJob__createAndSchedule(JSGlobalObject* globalObject, RsaKeyPairJobCtx* ctx, EncodedJSValue callback);
@@ -116,6 +103,14 @@ std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* gl
     if (!publicExponentValue.isUndefinedOrNull()) {
         V::validateUint32(scope, globalObject, publicExponentValue, "options.publicExponent"_s, jsUndefined(), &publicExponent);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
+    }
+
+    // BoringSSL hangs on e=1 and only reports a misleading error for other invalid exponents
+    // after the full keygen loop, so reject them up-front exactly like Node's BoringSSL branch.
+    // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_rsa.cc#L138-L148
+    if (publicExponent < 3 || (publicExponent & 1) == 0) {
+        ERR::OUT_OF_RANGE(scope, globalObject, "publicExponent is invalid"_s);
+        return std::nullopt;
     }
 
     if (typeView == "rsa"_s) {

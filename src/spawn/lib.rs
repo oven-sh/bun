@@ -119,9 +119,6 @@ pub use bun_sys as spawn_sys;
 pub use process::{PosixSpawnOptions, PosixSpawnResult, PosixStdio as Stdio, WaitPidResult};
 #[cfg(unix)]
 pub type SpawnResult = process::PosixSpawnResult;
-/// Alias for the per-extra-fd Stdio entry passed in `SpawnOptions::extra_fds`.
-#[cfg(unix)]
-pub type ExtraFd = process::PosixStdio;
 
 #[cfg(windows)]
 pub use process::{
@@ -130,8 +127,6 @@ pub use process::{
 };
 #[cfg(windows)]
 pub type SpawnResult = process::WindowsSpawnResult;
-#[cfg(windows)]
-pub type ExtraFd = process::WindowsStdio;
 #[cfg(windows)]
 pub mod windows {
     /// `bun.windows.libuv.Pipe` raw pointer payload of `Stdio::Buffer` /
@@ -145,8 +140,6 @@ pub mod sync {
     #[cfg(windows)]
     pub use crate::process::WindowsOptions;
     pub use crate::process::sync::{Options, Result, SyncStdio as Stdio, spawn, spawn_with_argv};
-    #[cfg(not(windows))]
-    pub type WindowsOptions = ();
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -161,6 +154,7 @@ pub mod sync {
 // crate naming `bun_jsc`/`bun_runtime`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod subprocess {
+    #[cfg(not(windows))]
     use bun_sys::Fd;
 
     pub use crate::process::StdioKind;
@@ -176,11 +170,6 @@ pub mod subprocess {
     #[inline]
     pub fn stdio_result_from_fd(fd: Fd) -> StdioResult {
         Some(fd)
-    }
-    #[cfg(windows)]
-    #[inline]
-    pub fn stdio_result_from_fd(fd: Fd) -> StdioResult {
-        crate::process::WindowsStdioResult::BufferFd(fd)
     }
 
     /// The in-memory payload that a
@@ -214,7 +203,7 @@ pub mod subprocess {
             Self::OwnedBytes(bytes)
         }
 
-        pub fn slice(&self) -> &[u8] {
+        pub(crate) fn slice(&self) -> &[u8] {
             match self {
                 Source::OwnedBytes(b) => b,
                 Source::Any(s) => s.slice(),
@@ -232,7 +221,7 @@ pub mod subprocess {
             *self = Source::Detached;
         }
 
-        pub fn memory_cost(&self) -> usize {
+        pub(crate) fn memory_cost(&self) -> usize {
             match self {
                 Source::OwnedBytes(b) => b.len(),
                 Source::Any(s) => s.memory_cost(),
@@ -346,11 +335,11 @@ pub fn run(opts: RunOptions<'_>) -> crate::Result<RunResult> {
             break 'argv0;
         };
         // Only PATH-search bare names (no separator present).
-        if first.contains(&b'/') {
+        if bun_core::strings::contains_char(first, b'/') {
             break 'argv0;
         }
         #[cfg(windows)]
-        if first.iter().any(|&b| b == b'\\') {
+        if bun_core::strings::contains_char(first, b'\\') {
             break 'argv0;
         }
         let path = opts

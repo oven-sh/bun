@@ -33,13 +33,13 @@ void CheckPrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
     m_result = res != 0;
 }
 
-extern "C" void Bun__CheckPrimeJobCtx__runFromJS(CheckPrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, EncodedJSValue callback)
+extern "C" void Bun__CheckPrimeJobCtx__runFromJS(CheckPrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSCallbackArgs* out)
 {
-    ctx->runFromJS(lexicalGlobalObject, JSValue::decode(callback));
+    *out = ctx->runFromJS(lexicalGlobalObject);
 }
-void CheckPrimeJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
+JSCallbackArgs CheckPrimeJobCtx::runFromJS(JSGlobalObject*)
 {
-    Bun__EventLoop__runCallback2(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(jsUndefined()), JSValue::encode(jsBoolean(m_result)));
+    return { jsUndefined(), jsBoolean(m_result) };
 }
 
 extern "C" void Bun__CheckPrimeJobCtx__deinit(CheckPrimeJobCtx* ctx)
@@ -49,19 +49,6 @@ extern "C" void Bun__CheckPrimeJobCtx__deinit(CheckPrimeJobCtx* ctx)
 void CheckPrimeJobCtx::deinit()
 {
     delete this;
-}
-
-extern "C" CheckPrimeJob* Bun__CheckPrimeJob__create(JSGlobalObject*, CheckPrimeJobCtx*, EncodedJSValue callback);
-CheckPrimeJob* CheckPrimeJob::create(JSGlobalObject* globalObject, ncrypto::BignumPointer candidate, int32_t checks, JSValue callback)
-{
-    CheckPrimeJobCtx* ctx = new CheckPrimeJobCtx(WTF::move(candidate), checks);
-    return Bun__CheckPrimeJob__create(globalObject, ctx, JSValue::encode(callback));
-}
-
-extern "C" void Bun__CheckPrimeJob__schedule(CheckPrimeJob*);
-void CheckPrimeJob::schedule()
-{
-    Bun__CheckPrimeJob__schedule(this);
 }
 
 extern "C" void Bun__CheckPrimeJob__createAndSchedule(JSGlobalObject*, CheckPrimeJobCtx*, EncodedJSValue callback);
@@ -196,11 +183,11 @@ void GeneratePrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
     });
 }
 
-extern "C" void Bun__GeneratePrimeJobCtx__runFromJS(GeneratePrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, EncodedJSValue callback)
+extern "C" void Bun__GeneratePrimeJobCtx__runFromJS(GeneratePrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSCallbackArgs* out)
 {
-    ctx->runFromJS(lexicalGlobalObject, JSValue::decode(callback));
+    *out = ctx->runFromJS(lexicalGlobalObject);
 }
-void GeneratePrimeJobCtx::runFromJS(JSGlobalObject* globalObject, JSValue callback)
+JSCallbackArgs GeneratePrimeJobCtx::runFromJS(JSGlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -208,23 +195,13 @@ void GeneratePrimeJobCtx::runFromJS(JSGlobalObject* globalObject, JSValue callba
     JSValue result = GeneratePrimeJob::result(globalObject, scope, m_prime, m_bigint);
     EXCEPTION_ASSERT(result.isEmpty() == !!scope.exception());
     if (scope.exception()) [[unlikely]] {
-        auto* err = scope.exception();
+        // The thrown Error, not the Exception cell (node parity).
+        JSValue err = scope.exception()->value();
         (void)scope.tryClearException();
-        Bun__EventLoop__runCallback1(
-            globalObject,
-            JSValue::encode(callback),
-            JSValue::encode(jsUndefined()),
-            JSValue::encode(err));
-        return;
+        return { err };
     }
 
-    Bun__EventLoop__runCallback2(
-        globalObject,
-        JSValue::encode(callback),
-        JSValue::encode(jsUndefined()),
-        JSValue::encode(jsUndefined()),
-        JSValue::encode(result));
-    return;
+    return { jsUndefined(), result };
 }
 
 extern "C" void Bun__GeneratePrimeJobCtx__deinit(GeneratePrimeJobCtx* ctx)
@@ -234,19 +211,6 @@ extern "C" void Bun__GeneratePrimeJobCtx__deinit(GeneratePrimeJobCtx* ctx)
 void GeneratePrimeJobCtx::deinit()
 {
     delete this;
-}
-
-extern "C" GeneratePrimeJob* Bun__GeneratePrimeJob__create(JSGlobalObject*, GeneratePrimeJobCtx*, EncodedJSValue callback);
-GeneratePrimeJob* GeneratePrimeJob::create(JSGlobalObject* globalObject, int32_t size, bool safe, ncrypto::BignumPointer prime, ncrypto::BignumPointer add, ncrypto::BignumPointer rem, bool bigint, JSValue callback)
-{
-    GeneratePrimeJobCtx* ctx = new GeneratePrimeJobCtx(size, safe, WTF::move(prime), WTF::move(add), WTF::move(rem), bigint);
-    return Bun__GeneratePrimeJob__create(globalObject, ctx, JSValue::encode(callback));
-}
-
-extern "C" void Bun__GeneratePrimeJob__schedule(GeneratePrimeJob*);
-void GeneratePrimeJob::schedule()
-{
-    Bun__GeneratePrimeJob__schedule(this);
 }
 
 extern "C" void Bun__GeneratePrimeJob__createAndSchedule(JSGlobalObject*, GeneratePrimeJobCtx*, EncodedJSValue callback);

@@ -456,6 +456,7 @@ void us_loop_run(struct us_loop_t *loop) {
 
         us_internal_dispatch_ready_polls(loop);
         us_internal_drain_ready_polls(loop);
+        us_internal_accept_rearm_if_due(loop);
         us_internal_sweep_if_due(loop);
 
         /* Emit post callback */
@@ -541,6 +542,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     us_internal_dispatch_ready_polls(loop);
     us_internal_drain_ready_polls(loop);
+    us_internal_accept_rearm_if_due(loop);
     us_internal_sweep_if_due(loop);
 
     /* Emit post callback */

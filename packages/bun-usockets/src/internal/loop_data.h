@@ -43,6 +43,13 @@ struct us_internal_loop_data_t {
     /* Absolute monotonic ns of the next sweep, or -1. Folded into the poll
      * timeout — no timerfd, no EVFILT_TIMER. */
     long long sweep_next_tick_ns;
+    /* Absolute monotonic ns at which to re-arm listeners paused on EMFILE, or
+     * -1. Folded into the poll timeout like sweep_next_tick_ns. */
+    long long accept_rearm_next_tick_ns;
+    /* Spare fd (open("/dev/null")) the accept path borrows under EMFILE: close,
+     * accept()+close() to drain the backlog so the level-triggered readable
+     * clears, reopen. -1 if the open failed or the reopen lost the race. */
+    int accept_reserve_fd;
 #endif
     int sweep_timer_count;
 #ifdef LIBUS_USE_LIBUV

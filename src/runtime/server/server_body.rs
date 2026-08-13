@@ -3763,6 +3763,33 @@ bun_jsc::impl_js_class_via_generated!(DebugHTTPServer => crate::generated_classe
 bun_jsc::impl_js_class_via_generated!(DebugHTTPSServer => crate::generated_classes::js_DebugHTTPSServer, no_constructor);
 
 // ─── Exported fns ────────────────────────────────────────────────────────────
+
+/// One-shot stderr warning from bun-usockets `us_internal_accept_emfile`.
+#[unsafe(no_mangle)]
+pub(super) extern "C" fn Bun__warnAcceptEMFILE(err: c_int) {
+    static WARNED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    if WARNED.swap(true, core::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    if crate::cli::Command::get().debug.silent {
+        return;
+    }
+    let name = bun_errno::SystemErrno::init(i64::from(err))
+        .map(<&'static str>::from)
+        .unwrap_or("EMFILE");
+    #[cfg(not(windows))]
+    bun_core::pretty_errorln!(
+        "<r><yellow>warn<r><d>:<r> accept() failed with <b>{}<r>; out of file descriptors, refusing queued connections. Raise <d><cyan>`ulimit -n`<r> if this is unexpected.",
+        name,
+    );
+    #[cfg(windows)]
+    bun_core::pretty_errorln!(
+        "<r><yellow>warn<r><d>:<r> accept() failed with <b>{}<r>; out of socket handles, refusing queued connections.",
+        name,
+    );
+    Output::flush();
+}
+
 #[unsafe(no_mangle)]
 extern "C" fn Server__setIdleTimeout(server: JSValue, seconds: JSValue, global: &JSGlobalObject) {
     match server_set_idle_timeout(server, seconds, global) {

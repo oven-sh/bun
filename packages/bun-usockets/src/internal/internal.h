@@ -161,7 +161,9 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop);
 uint64_t us_internal_monotonic_ns(void);
 long long us_internal_sweep_timeout_ns(struct us_loop_t *loop);
 void us_internal_sweep_if_due(struct us_loop_t *loop);
+void us_internal_accept_rearm_if_due(struct us_loop_t *loop);
 #endif
+void us_internal_accept_emfile(struct us_listen_socket_t *ls, struct us_loop_t *loop);
 void us_internal_free_closed_sockets(us_loop_r loop);
 void us_internal_loop_link_group(struct us_loop_t *loop, struct us_socket_group_t *group);
 void us_internal_loop_unlink_group(struct us_loop_t *loop, struct us_socket_group_t *group);
@@ -477,6 +479,10 @@ struct us_listen_socket_t {
   unsigned char accept_kind;
   /* Set when TCP_DEFER_ACCEPT/SO_ACCEPTFILTER was successfully applied. */
   unsigned char deferred_accept;
+  /* accept() hit EMFILE/ENFILE and the reserve-fd drain could not clear the
+   * backlog: the listener poll is watching no events (a level-triggered
+   * readable would spin the loop). Cleared when the backoff re-arms it. */
+  unsigned char emfile_paused;
 };
 
 void us_internal_socket_group_link_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);

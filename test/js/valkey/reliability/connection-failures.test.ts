@@ -516,7 +516,7 @@ describe("Valkey: Recovering After fail()", () => {
     const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
     try {
       const secondConnect = connectFromOnclose(client);
-      await expect(client.connect()).rejects.toThrow();
+      await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
       expect(await secondConnect).toBe("rejected: Connection closed");
     } finally {
       client.close();
@@ -534,7 +534,7 @@ describe("Valkey: Recovering After fail()", () => {
     const client = new RedisClient(`redis://127.0.0.1:${port}/1`, { autoReconnect: false });
     try {
       const secondConnect = connectFromOnclose(client);
-      await expect(client.connect()).rejects.toThrow();
+      await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
       expect(await secondConnect).toBe("connected");
       expect(await client.ping()).toBe("PONG");
       expect(fake.connections).toBe(2);
@@ -560,7 +560,7 @@ describe("Valkey: Recovering After fail()", () => {
     const client = new RedisClient(`rediss://127.0.0.1:${port}`, { autoReconnect: false });
     try {
       const secondConnect = connectFromOnclose(client);
-      await expect(client.connect()).rejects.toThrow();
+      await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
       expect({ secondConnect: await secondConnect, handshakes }).toEqual({
         secondConnect: "rejected: Connection closed",
         handshakes: 2,

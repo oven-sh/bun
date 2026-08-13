@@ -78,6 +78,7 @@
 #include "wtf/NakedPtr.h"
 #include "wtf/URL.h"
 #include "wtf/text/StringImpl.h"
+#include <wtf/text/StringBuilder.h>
 #include "JSCommonJSExtensions.h"
 
 #include "ErrorCode.h"
@@ -1448,15 +1449,89 @@ void JSCommonJSModule::evaluate(
     evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get());
 }
 
+// The source code of a CommonJS module arrives here as a function expression that
+// evaluateCommonJSModuleOnce() calls. Two producers emit it:
+//
+//   the transpiler (js_parser, WrapMode::BunCommonjs):
+//     (function(exports, require, module, __filename, __dirname) {\n...\n});\n
+//     followed by "//# sourceMappingURL=" and "//# sourceURL=" lines when the inspector is attached;
+//     an empty .cjs file is the synthetic "(function(){})"
+//
+//   `bun build --target=bun --format=cjs` (postProcessJSChunk), loaded verbatim because of the pragma:
+//     [#!...\n]// @bun [@bytecode ]@bun-cjs\n(function(exports, require, module, __filename, __dirname) {...})\n
+//     followed by "//# debugId=" and "//# sourceMappingURL=" lines with --sourcemap; --minify leaves
+//     the last statement directly in front of the "})"
+//
+// Returns the source with the wrapper removed: every line in front of the wrapper is replaced
+// by an empty line so the body keeps the line numbers of the source text, and the comment lines
+// after the wrapper are kept. Returns nullopt when the source is not shaped like the above, for
+// example `bun build --footer` with code after the wrapper.
+static std::optional<WTF::String> commonJSSourceWithoutWrapper(const WTF::String& source)
+{
+    StringView text { source };
+
+    unsigned linesBeforeWrapper = 0;
+    unsigned wrapperStart = 0;
+    while (text.hasInfixStartingAt("//"_s, wrapperStart) || text.hasInfixStartingAt("#!"_s, wrapperStart)) {
+        size_t lineEnd = text.find('\n', wrapperStart);
+        if (lineEnd == WTF::notFound)
+            return std::nullopt;
+        wrapperStart = lineEnd + 1;
+        linesBeforeWrapper++;
+    }
+    if (!text.hasInfixStartingAt("(function("_s, wrapperStart))
+        return std::nullopt;
+    size_t openingBrace = text.find('{', wrapperStart);
+    if (openingBrace == WTF::notFound)
+        return std::nullopt;
+    unsigned bodyStart = openingBrace + 1;
+
+    // Walk back over what may follow the closing "})": whitespace, line comments and the ";"
+    // the transpiler prints after the expression statement.
+    unsigned end = text.length();
+    while (true) {
+        while (end > bodyStart && isASCIIWhitespace(text[end - 1]))
+            end--;
+        if (end <= bodyStart)
+            break;
+        size_t previousNewline = text.reverseFind('\n', end - 1);
+        unsigned lineStart = previousNewline == WTF::notFound ? 0 : previousNewline + 1;
+        if (lineStart < bodyStart || !text.hasInfixStartingAt("//"_s, lineStart))
+            break;
+        end = lineStart;
+    }
+    if (end > bodyStart && text[end - 1] == ';')
+        end--;
+    if (end < bodyStart + 2 || text[end - 2] != '}' || text[end - 1] != ')')
+        return std::nullopt;
+    unsigned bodyEnd = end - 2;
+
+    StringView afterWrapper = text.substring(bodyEnd + 2);
+    if (afterWrapper.startsWith(';'))
+        afterWrapper = afterWrapper.substring(1);
+    if (afterWrapper.containsOnly<isASCIIWhitespace>())
+        afterWrapper = {};
+
+    if (!linesBeforeWrapper && afterWrapper.isEmpty())
+        return source.substring(bodyStart, bodyEnd - bodyStart);
+
+    StringBuilder result;
+    for (unsigned i = 0; i < linesBeforeWrapper; i++)
+        result.append('\n');
+    result.append(text.substring(bodyStart, bodyEnd - bodyStart));
+    result.append(afterWrapper);
+    return result.toString();
+}
+
 void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     Zig::GlobalObject* globalObject,
     const WTF::String& key,
     JSValue keyJSString,
     ResolvedSource& source)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue compileFunction = this->m_overriddenCompile.get()) {
-        auto& vm = globalObject->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
         if (!compileFunction) {
             throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
             return;
@@ -1467,32 +1542,24 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
             return;
         }
         WTF::String sourceString = source.source_code.toWTFString(BunString::ZeroCopy);
-        RETURN_IF_EXCEPTION(scope, );
-        if (source.needsDeref) {
-            source.needsDeref = false;
-            source.source_code.deref();
-        }
-        // Remove the wrapper from the source string, since the transpiler has added it.
-        auto trimStart = sourceString.find('\n');
-        WTF::String sourceStringWithoutWrapper;
-        if (trimStart != WTF::notFound) {
-            auto wrapperStart = globalObject->m_moduleWrapperStart;
-            auto wrapperEnd = globalObject->m_moduleWrapperEnd;
-            sourceStringWithoutWrapper = sourceString.substring(trimStart, sourceString.length() - trimStart - 4);
-        } else {
-            sourceStringWithoutWrapper = sourceString;
-        }
-        RETURN_IF_EXCEPTION(scope, );
+        // module._compile(code, filename) receives the module body, which Module.prototype._compile
+        // wraps again. Without a recognizable wrapper there is no body to hand over, so such a
+        // module is evaluated as-is below.
+        if (auto body = commonJSSourceWithoutWrapper(sourceString)) {
+            if (source.needsDeref) {
+                source.needsDeref = false;
+                source.source_code.deref();
+            }
 
-        // _compile(source, filename)
-        MarkedArgumentBuffer arguments;
-        arguments.append(jsString(vm, sourceStringWithoutWrapper));
-        arguments.append(keyJSString);
-        JSC::profiledCall(globalObject, ProfilingReason::API, compileFunction, callData, this, arguments);
-        RETURN_IF_EXCEPTION(scope, );
-        return;
+            MarkedArgumentBuffer arguments;
+            arguments.append(jsString(vm, WTF::move(*body)));
+            arguments.append(keyJSString);
+            JSC::profiledCall(globalObject, ProfilingReason::API, compileFunction, callData, this, arguments);
+            RETURN_IF_EXCEPTION(scope, );
+            return;
+        }
     }
-    this->evaluate(globalObject, key, source, false);
+    RELEASE_AND_RETURN(scope, this->evaluate(globalObject, key, source, false));
 }
 
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL);

@@ -1225,6 +1225,19 @@ describe("Bun REPL (Terminal) Ctrl+C", () => {
     });
   });
 
+  test("input typed while an evaluation is running is evaluated afterwards", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      // The first line reports that it is running, then keeps the REPL away
+      // from stdin long enough for the second line to be queued by the
+      // terminal (on Windows: while the evaluation-time console mode is set).
+      send('console.log("BU" + "SY"); for (const t = Date.now(); Date.now() - t < 200; ); "first" + "-done"\n');
+      await waitFor("BUSY");
+      send('"second" + "-done"\n');
+      await waitFor('"second-done"');
+      expect(allOutput()).toMatch(/"first-done"[\s\S]*"second-done"/);
+    });
+  });
+
   // The REPL does not read stdin while JavaScript runs, so a Ctrl+C typed then
   // would sit in the console input buffer until the next prompt. On Windows the
   // REPL sets ENABLE_PROCESSED_INPUT for the duration of an evaluation, so
@@ -1232,7 +1245,7 @@ describe("Bun REPL (Terminal) Ctrl+C", () => {
   // The flag is observed from inside the evaluation rather than by sending
   // Ctrl+C during one: CI job trees run with Ctrl+C ignored (an inherited
   // per-process flag), and a process that ignores Ctrl+C never sees the event.
-  test.skipIf(!isWindows)("evaluation runs with ENABLE_PROCESSED_INPUT set, the prompt without", async () => {
+  test.skipIf(!isWindows)("evaluations run with ENABLE_PROCESSED_INPUT set, the prompt without", async () => {
     const ENABLE_PROCESSED_INPUT = 0x1;
     using dir = tempDir("repl-console-mode", {
       "mode.js": `
@@ -1241,17 +1254,30 @@ describe("Bun REPL (Terminal) Ctrl+C", () => {
           GetStdHandle: { args: ["i32"], returns: "ptr" },
           GetConsoleMode: { args: ["ptr", "ptr"], returns: "i32" },
         });
-        const mode = new Uint32Array(1);
-        const STD_INPUT_HANDLE = -10;
-        kernel32.symbols.GetConsoleMode(kernel32.symbols.GetStdHandle(STD_INPUT_HANDLE), ffi.ptr(mode));
-        "conmode=" + mode[0].toString(16);
+        function stdinMode() {
+          const mode = new Uint32Array(1);
+          const STD_INPUT_HANDLE = -10;
+          kernel32.symbols.GetConsoleMode(kernel32.symbols.GetStdHandle(STD_INPUT_HANDLE), ffi.ptr(mode));
+          return mode[0].toString(16);
+        }
+        "loadmode=" + stdinMode();
       `,
     });
+    const modeIn = (output: string, label: string) =>
+      parseInt(output.match(new RegExp(`${label}=([0-9a-f]+)`))![1], 16);
     await withTerminalRepl(async ({ send, waitFor }) => {
+      // Each wait also requires the prompt that follows the output: the REPL
+      // prints it only after the evaluation (and the mode guard) is gone, so
+      // the Ctrl+C below is sent once the line editor's mode is back.
+      // `.load` evaluates through evaluate_and_print, `.copy <code>` through
+      // evaluate_and_copy; the typed `.copy` line echoes `copymode="`, which
+      // the patterns' hex digits exclude.
       send(`.load ${path.join(String(dir), "mode.js")}\n`);
-      const output = await waitFor(/conmode=[0-9a-f]+/);
-      const mode = parseInt(output.match(/conmode=([0-9a-f]+)/)![1], 16);
-      expect(mode & ENABLE_PROCESSED_INPUT).toBe(ENABLE_PROCESSED_INPUT);
+      const loaded = await waitFor(/loadmode=[0-9a-f]+[\s\S]*>/);
+      expect(modeIn(loaded, "loadmode") & ENABLE_PROCESSED_INPUT).toBe(ENABLE_PROCESSED_INPUT);
+      send('.copy console.log("copymode=" + stdinMode())\n');
+      const copied = await waitFor(/copymode=[0-9a-f]+[\s\S]*>/);
+      expect(modeIn(copied, "copymode") & ENABLE_PROCESSED_INPUT).toBe(ENABLE_PROCESSED_INPUT);
       // Back at the prompt the flag is off again, so Ctrl+C arrives as a key.
       send("\x03");
       await waitFor("press Ctrl+C again to exit");

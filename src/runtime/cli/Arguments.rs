@@ -2588,9 +2588,7 @@ fn parse_build_command_options(
                 Global::crash();
             }
         }
-        // Server-components mode serves browser-target requests from a client
-        // transpiler that, outside Bake, only HTML reached from a server-side
-        // build creates; with the browser default every entry point would need it.
+        // Needs a server-side main target: the CLI only creates a client transpiler for HTML.
         opts.target = Some(api::Target::Bun);
     }
 

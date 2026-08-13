@@ -7183,9 +7183,7 @@ pub mod bv2_impl {
                     // `result.ast` is moved into `graph.ast` and `result.source` was
                     // swapped earlier, so snapshot the data the use-directive block
                     // needs *before* the move. Only paid for files that hit the SCB gate.
-                    // A directive only survives parsing when the framework configures
-                    // server components (`directive_without_framework` in ParseTask),
-                    // which the unwraps here and below rely on.
+                    // ParseTask rejects directives without a framework, so the unwraps hold.
                     let named_exports_for_scb = if result.use_directive != crate::UseDirective::None
                         && {
                             let separate = this

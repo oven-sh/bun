@@ -172,13 +172,14 @@ pub(crate) fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> crate:
                 }
                 last = i + 1;
             }
-            0xef if matches!(str_[i..], [_, 0xbf, 0xbe | 0xbf, ..]) => {
-                // UTF-8 for U+FFFE / U+FFFF, which XML 1.0 excludes from Char like the
-                // controls above (no escaped form exists), so the sequence is dropped.
+            0xef if str_[i..].starts_with("\u{FFFE}".as_bytes())
+                || str_[i..].starts_with("\u{FFFF}".as_bytes()) =>
+            {
+                // XML 1.0 excludes these two code points from Char as well.
                 if i > last {
                     writer.write_all(&str_[last..i])?;
                 }
-                i += 3;
+                i += "\u{FFFE}".len();
                 last = i;
                 continue;
             }

@@ -1,7 +1,9 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, tempDir, tempDirWithFiles } from "harness";
+import { chmodSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -9,6 +11,7 @@ const { builtinDisabled } = shellInternals;
 const TestBuilder = createTestBuilder(import.meta.path);
 
 const p = process.platform === "win32" ? (s: string) => s.replaceAll("/", "\\") : (s: string) => s;
+const isRoot = process.getuid?.() === 0;
 
 $.nothrow();
 
@@ -170,6 +173,64 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .fileEquals(TEST_COPY_TO_FOLDER_NEW_FILE, "Hello, World!")
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
+  });
+});
+
+// The builtin is only the default on Windows; on POSIX it is switched on by an
+// env var that is read once per process, so each cp runs in a child bun.
+describe.concurrent("bunshell cp -v only reports copies that happened", () => {
+  const builtinEnv = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
+
+  /** Runs `command` through the shell builtin with `cwd` as the shell's cwd; returns what cp exited with and printed. */
+  async function cp(cwd: string, command: string): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        "const r = await Bun.$`${{ raw: process.argv[1] }}`.cwd(process.argv[2]).nothrow().quiet();" +
+          "console.log(JSON.stringify({ exitCode: r.exitCode, stdout: r.stdout.toString(), stderr: r.stderr.toString() }));",
+        command,
+        cwd,
+      ],
+      cwd,
+      env: builtinEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  const failed = { exitCode: 1, stdout: "", stderr: expect.stringMatching(/^cp: /) };
+
+  test("file -> dir whose entry of that name is a directory", async () => {
+    using dir = tempDir("shell-cp-v-failed", { "b.txt": "b\n", "d": { "b.txt": {} } });
+
+    expect(await cp(String(dir), "cp -v b.txt d")).toEqual(failed);
+  });
+
+  test("file+ -> dir reports only the file that was copied", async () => {
+    using dir = tempDir("shell-cp-v-mixed", { "a.txt": "a\n", "b.txt": "b\n", "d": { "b.txt": {} } });
+    const cwd = String(dir);
+
+    expect(await cp(cwd, "cp -v a.txt b.txt d")).toEqual({
+      ...failed,
+      stdout: `${join(cwd, "a.txt")} -> ${join(cwd, "d", "a.txt")}\n`,
+    });
+    expect(readFileSync(join(cwd, "d", "a.txt"), "utf8")).toBe("a\n");
+  });
+
+  test.skipIf(isRoot)("file -> read-only file", async () => {
+    using dir = tempDir("shell-cp-v-readonly", { "a.txt": "a\n", "ro.txt": "keep\n" });
+    const ro = join(String(dir), "ro.txt");
+    chmodSync(ro, 0o444);
+    try {
+      expect(await cp(String(dir), "cp -v a.txt ro.txt")).toEqual(failed);
+      expect(readFileSync(ro, "utf8")).toBe("keep\n");
+    } finally {
+      chmodSync(ro, 0o644);
+    }
   });
 });
 

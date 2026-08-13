@@ -1532,6 +1532,27 @@ mod _async_tasks {
                 .cp_on_copy(src.as_ref(), dest.as_ref());
         }
 
+        /// Delivers the result of a `cp` whose source is a single file. Like
+        /// `CpSingleTask` in the directory walk, `on_copy` is only recorded for
+        /// a copy that happened: not for a failed one, and not for a
+        /// destination left alone because it already existed.
+        fn finish_single_file(
+            &self,
+            src: &OSPathSliceZ,
+            dest: &OSPathSliceZ,
+            result: Maybe<ret::CopyFile>,
+        ) {
+            let result = match result {
+                Ok(()) => {
+                    self.on_copy(src, dest);
+                    Ok(())
+                }
+                Err(e) if e.get_errno() == E::EEXIST && !self.args.flags.error_on_exist => Ok(()),
+                Err(e) => Err(e),
+            };
+            self.finish_concurrently(result);
+        }
+
         /// `fs.cp` / `fs.promises.cp` (JS thread): a promise, an async-stack
         /// tracker, and this VM's loop.
         pub(crate) fn create(
@@ -1852,14 +1873,7 @@ mod _async_tasks {
                         Some(attributes),
                         &this.args,
                     );
-                    if let Err(e) = &r {
-                        if e.errno == E::EEXIST as _ && !args.flags.error_on_exist {
-                            this.finish_concurrently(Ok(()));
-                            return;
-                        }
-                    }
-                    this.on_copy(src, dest);
-                    this.finish_concurrently(r);
+                    this.finish_single_file(src, dest, r);
                     return;
                 }
             }
@@ -1891,15 +1905,7 @@ mod _async_tasks {
                         Some(&stat_),
                         &this.args,
                     );
-                    if let Err(e) = &r {
-                        if e.errno == E::EEXIST as _ && !args.flags.error_on_exist {
-                            this.on_copy(src, dest);
-                            this.finish_concurrently(Ok(()));
-                            return;
-                        }
-                    }
-                    this.on_copy(src, dest);
-                    this.finish_concurrently(r);
+                    this.finish_single_file(src, dest, r);
                     return;
                 }
             }

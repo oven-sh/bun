@@ -191,6 +191,38 @@ fn read_package_json(dir: &[u8]) -> PackageJson {
     PackageJson::Workspaces(patterns)
 }
 
+/// Leading `!`s toggle negation; `./` prefixes and trailing slashes are
+/// ignored, as in install's path-based workspace resolution.
+fn workspace_pattern(p: &[u8]) -> (bool, &[u8]) {
+    let mut negated = false;
+    let mut pat = p;
+    while pat.first() == Some(&b'!') {
+        negated = !negated;
+        pat = &pat[1..];
+    }
+    while let Some(rest) = pat.strip_prefix(b"./".as_slice()) {
+        pat = rest;
+    }
+    while pat.len() > 1 && pat.last() == Some(&b'/') {
+        pat = &pat[..pat.len() - 1];
+    }
+    (negated, pat)
+}
+
+/// Positive patterns claim `rel`; a matching negated pattern vetoes the claim
+/// (same two-phase filter as WorkspaceMap's workspace resolution).
+fn workspaces_claim(patterns: &[Box<[u8]>], rel: &[u8]) -> bool {
+    let claimed = patterns.iter().any(|p| {
+        let (negated, pat) = workspace_pattern(p);
+        !negated && bun_glob::r#match(pat, rel).matches()
+    });
+    claimed
+        && !patterns.iter().any(|p| {
+            let (negated, pat) = workspace_pattern(p);
+            negated && bun_glob::r#match(pat, rel).matches()
+        })
+}
+
 /// Prefix length of `cwd` naming the last directory the walk may check: the
 /// project root as `--filter` finds it (filter_arg.rs). `None` when no
 /// package.json exists up the tree.
@@ -226,9 +258,7 @@ fn walk_root_bound(cwd: &[u8]) -> Option<usize> {
                     }
                 }
             }
-            let member = patterns
-                .iter()
-                .any(|p| bun_glob::r#match(p, &rel).matches());
+            let member = workspaces_claim(&patterns, &rel);
             return Some(if member { anc.len() } else { nearest.len() });
         }
         if matches!(anc.last(), Some(&c) if bun_paths::is_sep_any(c)) {

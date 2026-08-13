@@ -530,14 +530,13 @@ impl<'a> Parser<'a> {
 
                 if let Some(expr) = test.get(b"coverageDir") {
                     self.expect_string(&expr)?;
-                    let raw = estring_to_owned(
+                    self.ctx.test_options.coverage.reports_directory = estring_to_owned(
                         expr.data
                             .e_string()
                             .expect("infallible: variant checked")
                             .get(),
                         self.bump,
                     );
-                    self.ctx.test_options.coverage.reports_directory = raw;
                 }
 
                 if let Some(expr) = test.get(b"coverageThreshold") {
@@ -907,14 +906,13 @@ impl<'a> Parser<'a> {
             {
                 if let Some(dir) = _bun.get(b"outdir") {
                     self.expect_string(&dir)?;
-                    let raw = estring_to_owned(
+                    self.ctx.args.output_dir = Some(estring_to_owned(
                         dir.data
                             .e_string()
                             .expect("infallible: variant checked")
                             .get(),
                         self.bump,
-                    );
-                    self.ctx.args.output_dir = Some(raw);
+                    ));
                 }
             }
 
@@ -933,14 +931,13 @@ impl<'a> Parser<'a> {
                     let mut names: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
                     for item in items {
                         self.expect_string(item)?;
-                        let raw = estring_to_owned(
+                        names.push(estring_to_owned(
                             item.data
                                 .e_string()
                                 .expect("infallible: variant checked")
                                 .get(),
                             self.bump,
-                        );
-                        names.push(raw);
+                        ));
                     }
                     self.ctx.args.entry_points = names;
                 }

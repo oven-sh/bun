@@ -108,8 +108,7 @@ WTF::String constructorNameOf(JSGlobalObject* lexicalGlobalObject, JSValue thisV
 void installInspectCustom(VM& vm, JSObject* prototype, NativeFunction nativeFunction)
 {
     auto* globalObject = prototype->globalObject();
-    // Node defines this property as { writable: true, enumerable: false, configurable: true }.
-    // It must stay writable so strict-mode code can shadow it with an instance property.
+    // Matches Node: { writable: true, enumerable: false, configurable: true }.
     prototype->putDirectNativeFunction(vm, globalObject, WebCore::builtinNames(vm).inspectCustomPublicName(), 2,
         nativeFunction, ImplementationVisibility::Public, NoIntrinsic,
         static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));

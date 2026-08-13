@@ -5,7 +5,7 @@ description: "File types and loaders supported by Bun's bundler and runtime"
 
 The Bun bundler implements a set of default loaders. As a rule of thumb, the bundler and the runtime support the same set of file types.
 
-`.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` `.jsx` `.css` `.json` `.jsonc` `.json5` `.toml` `.yaml` `.yml` `.xml` `.txt` `.wasm` `.node` `.html` `.sh`
+`.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` `.jsx` `.css` `.json` `.jsonc` `.json5` `.toml` `.yaml` `.yml` `.xml` `.txt` `.md` `.wasm` `.node` `.html` `.sh`
 
 Bun uses the file extension to pick the built-in _loader_ that parses the file. Every loader has a name, such as `js`, `tsx`, or `json`. These names are used when building [plugins](/bundler/plugins) that extend Bun with custom loaders.
 
@@ -327,6 +327,46 @@ Hello, world!
 
 ```ts Output
 export default "Hello, world!";
+```
+
+</CodeGroup>
+
+### `md`
+
+**Markdown loader**. Default for `.md` and `.markdown`.
+
+Markdown files can be directly imported. Bun renders them to HTML with [`Bun.markdown`](/runtime/markdown), and the import resolves to the rendered HTML as a string.
+
+```ts
+import html from "./README.md";
+console.log(html); // => "<h1>My project</h1>\n..."
+
+// via import attribute:
+import notes from "./notes.txt" with { type: "md" };
+```
+
+During bundling, the rendered HTML is inlined into the bundle as a string.
+
+```ts
+var README_default = `<h1>My project</h1>
+<p>Some <strong>bold</strong> text.</p>
+`;
+```
+
+If a `.md` file is passed as an entrypoint, it is converted to a `.js` module that `export default`s the rendered HTML.
+
+<CodeGroup>
+
+```md Input
+# Hello
+
+Some **bold** text.
+```
+
+```ts Output
+export default `<h1>Hello</h1>
+<p>Some <strong>bold</strong> text.</p>
+`;
 ```
 
 </CodeGroup>

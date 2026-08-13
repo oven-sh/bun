@@ -437,7 +437,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     MarkedArgumentBuffer callSites;
 
     // Create the call sites (one per frame)
-    Zig::createCallSitesFromFrames(globalObject, lexicalGlobalObject, stackTrace, callSites);
+    Zig::createCallSitesFromFrames(lexicalGlobalObject, stackTrace, callSites);
     RETURN_IF_EXCEPTION(scope, {});
 
     // We need to sourcemap it if it's a GlobalObject.
@@ -509,10 +509,6 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
         }
     }
 
-    // Allocate the sites array in the lexical (error's) realm. When running
-    // inside node:vm, lexicalGlobalObject is the vm's NodeVMGlobalObject, not
-    // the host Zig::GlobalObject — using the host here would leak host-realm
-    // Array/Function into the sandbox via sites.constructor.
     JSArray* callSitesArray = JSC::constructArray(lexicalGlobalObject, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), callSites);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -826,24 +822,19 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
 
 namespace Zig {
 
-void createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, MarkedArgumentBuffer& callSites)
+void createCallSitesFromFrames(JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, MarkedArgumentBuffer& callSites)
 {
     /* From v8's "Stack Trace API" (https://github.com/v8/v8/wiki/Stack-Trace-API):
      * "To maintain restrictions imposed on strict mode functions, frames that have a
      * strict mode function and all frames below (its caller etc.) are not allow to access
      * their receiver and function objects. For those frames, getFunction() and getThis()
      * will return undefined."." */
-    auto& vm = JSC::getVM(globalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool encounteredStrictFrame = false;
 
-    // Use the lexical (error's) realm for the CallSite structure so that
-    // inside node:vm the prototype chain terminates at the vm's
-    // Object.prototype, not the host's. Both Zig::GlobalObject and
-    // NodeVMGlobalObject derive from Bun::GlobalScope, which owns the
-    // per-realm CallSite structure.
-    auto* lexicalScope = dynamicDowncast<Bun::GlobalScope>(lexicalGlobalObject);
-    JSC::Structure* callSiteStructure = lexicalScope ? lexicalScope->callSiteStructure() : globalObject->callSiteStructure();
+    // Per-realm structure: inside node:vm the CallSite prototype chain must end at the vm's Object.prototype.
+    JSC::Structure* callSiteStructure = uncheckedDowncast<Bun::GlobalScope>(lexicalGlobalObject)->callSiteStructure();
     size_t framesCount = stackTrace.size();
 
     for (size_t i = 0; i < framesCount; i++) {

@@ -8489,20 +8489,17 @@ impl NodeFS {
         result
     }
 
-    /// A link, unlike a regular file, cannot be copied over an existing entry,
-    /// so an overwriting copy removes the entry first. unlink (`uv_fs_unlink`
-    /// on Windows) also removes directory links and junctions; a directory is
-    /// left in place and its EISDIR/EPERM becomes the copy's error, as with `cp`.
-    /// When the entry is the link being copied (`cp -R link .`), removing it
-    /// would lose the link, so that is refused like the same-inode check in the
-    /// FreeBSD arm of `copy_single_file_sync`.
+    /// A link cannot be created over an existing entry, so an overwriting copy
+    /// removes the entry first. A directory is left alone: unlink's error is the
+    /// copy's error, as with `cp` (`uv_fs_unlink` does remove directory links).
     fn cp_unlink_dest_for_link(src: &ZStr, dest: &ZStr) -> Maybe<()> {
         let dest_stat = match Syscall::lstat(dest) {
             Ok(stat) => stat,
             Err(err) if err.get_errno() == E::ENOENT => return Ok(()),
             Err(err) => return Err(err),
         };
-        // Filesystems without stable file ids report 0, which identifies nothing.
+        // `cp -R link .`: the entry is the link being copied. Inode 0 means the
+        // filesystem has no file ids.
         let is_src = dest_stat.st_ino != 0
             && Syscall::lstat(src)
                 .is_ok_and(|s| s.st_dev == dest_stat.st_dev && s.st_ino == dest_stat.st_ino);
@@ -8625,9 +8622,8 @@ impl NodeFS {
                     if mode.shouldnt_overwrite() {
                         mode_ |= bun_sys::c::COPYFILE_EXCL;
                     } else {
-                        // Without COPYFILE_EXCL, copyfile(3) ignores the EEXIST
-                        // from recreating the link and reports success with the
-                        // old destination still in place.
+                        // copyfile(3) without COPYFILE_EXCL keeps an existing dest
+                        // when the source is a link (its EEXIST is ignored).
                         Self::cp_unlink_dest_for_link(src, dest)?;
                     }
                     return Maybe::<ret::CopyFile>::errno_sys_p(

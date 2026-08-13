@@ -578,12 +578,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     core::ptr::null(),
                 ]
             } else {
-                // `envp` already carries whatever `.env*` files `bun install`
-                // loaded; without `--no-env-file` the `bun exec` intermediary
-                // would load the script cwd's default `.env*` files on top.
                 [
                     bun_core::self_exe_path()?.as_ptr().cast::<c_char>(),
                     c"exec".as_ptr(),
+                    // envp already holds the .env* values bun install loaded.
                     c"--no-env-file".as_ptr(),
                     combined_script.as_ptr().cast::<c_char>(),
                     core::ptr::null(),

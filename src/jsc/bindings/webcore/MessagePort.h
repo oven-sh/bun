@@ -84,8 +84,7 @@ public:
     void peerClosed();
     void dispatchCloseEvent();
 
-    // Transfer machinery. Like node, disentangle() closes the local object: it
-    // fires 'close' on it (its pipe side is not closed, the receiver takes it over).
+    // Transfer machinery. disentangle() also queues 'close' on the transferred-away object, as node does.
     static ExceptionOr<Vector<TransferredMessagePort>> disentanglePorts(Vector<RefPtr<MessagePort>>&&);
     static Vector<RefPtr<MessagePort>> entanglePorts(ScriptExecutionContext&, Vector<TransferredMessagePort>&&);
     static Ref<MessagePort> entangle(ScriptExecutionContext&, TransferredMessagePort&&);

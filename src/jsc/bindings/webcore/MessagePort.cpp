@@ -249,7 +249,6 @@ void MessagePort::queueCloseEvent()
     // Defer 'close' to a task (node fires it at uv close-callback timing, i.e.
     // after sync code and microtasks), so a listener added after close() or the
     // transfer still observes it and close(cb) interleaves with other listeners.
-    // Listeners stay registered until then; the task drops them once it has fired.
     if (isContextStopped()) {
         removeAllEventListeners();
         return;
@@ -301,15 +300,11 @@ TransferredMessagePort MessagePort::disentangle()
 {
     ASSERT(isEntangled());
 
-    // Nothing is dispatched to this object after the transfer except the 'close'
-    // queued below; its listeners are dropped by that task.
+    // The listeners themselves are dropped by the close task queued below.
     m_hasMessageEventListener = false;
 
-    // Release the self-reference taken by jsRef() on the sending side. After
-    // transfer this object is inert (the receiving side gets a fresh
-    // MessagePort for the same pipe endpoint) and close() no-ops on it once
-    // m_isDetached is set, so nothing else will ever release a ref taken here.
-    // The caller (disentanglePorts) holds a RefPtr, so deref() is safe.
+    // Release the self-reference taken by jsRef(): close() no-ops on a detached port,
+    // so nothing else would. The caller (disentanglePorts) holds a RefPtr, so deref() is safe.
     if (m_hasRef) {
         m_hasRef = false;
         if (auto* context = scriptExecutionContext())
@@ -333,11 +328,10 @@ TransferredMessagePort MessagePort::disentangle()
     m_isDetached = true;
     m_started = false;
 
-    // Node closes the transferred-away object's handle, so it fires 'close' like a
-    // close()d port while the channel lives on in the receiver's new port (the peer
-    // is not told): https://github.com/nodejs/node/blob/v26.3.0/src/node_messaging.cc#L921-L924
-    // The task dispatches through our context, and only pins the wrapper while we are
-    // attached to one, so this object stays attached until collected, like a closed port.
+    // Node closes the transferred-away object (the channel itself lives on in the receiver's
+    // port): https://github.com/nodejs/node/blob/v26.3.0/src/node_messaging.cc#L921-L924
+    // Like a close()d port, stay attached to the context: the task dispatches through it,
+    // and a pending activity only pins the wrapper of an object that still has one.
     queueCloseEvent();
 
     return TransferredMessagePort { m_pipe.copyRef(), m_side };

@@ -1947,9 +1947,7 @@ mod _async_tasks {
             // `cp_task` pointers stored in subtasks retain mutable provenance for
             // `on_subtask_done`'s eventual `&mut` promotion.
             let this_ref = unsafe { &*this };
-            // The NUL at `[len]` was written by `PathLikeExt::os_path` (top-level call
-            // from `cp_async`) or by the `Directory` arm below (recursion); `from_buf`
-            // debug-asserts it.
+            // NUL at `[len]` written by `os_path` (top level) or the `Directory` arm below.
             let src = OSPathSliceZ::from_buf(&src_buf[..], src_dir_len as usize);
             let dest = OSPathSliceZ::from_buf(&dest_buf[..], dest_dir_len as usize);
 

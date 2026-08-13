@@ -48,8 +48,7 @@ pub(crate) mod js_bundler {
         }
     }
 
-    /// One value of the `loader` option, accepting the same names as
-    /// `--loader` and bunfig `[loader]`.
+    /// Accepts the same loader names as `--loader` and bunfig `[loader]`.
     fn loader_map_value_from_js(
         global_this: &JSGlobalObject,
         value: JSValue,

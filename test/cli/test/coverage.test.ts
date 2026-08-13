@@ -57,6 +57,212 @@ export class Y {
   );
 });
 
+/** Runs `bun test --coverage` in `dir` and returns the text table row for `file` plus the lcov `DA:` records for it. */
+async function coverageOf(dir: string, file: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "--coverage-dir=cov"],
+    cwd: dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(exitCode).toBe(0);
+
+  const row = stderr
+    .split("\n")
+    .find(line => line.startsWith(` ${file} `))!
+    .trimEnd();
+
+  const record = readFileSync(path.join(dir, "cov", "lcov.info"), "utf-8")
+    .split("end_of_record")
+    .find(record => record.includes(`SF:${file}\n`))!;
+  const hits: Record<number, number> = {};
+  for (const [, line, count] of record.matchAll(/^DA:(\d+),(\d+)$/gm)) {
+    hits[Number(line)] = Number(count);
+  }
+  /** Per source line (1-based): hit, missed, or not an executable line at all. */
+  const status = (lineCount: number) =>
+    Object.fromEntries(
+      Array.from({ length: lineCount }, (_, i) => {
+        const line = i + 1;
+        return [line, !(line in hits) ? "-" : hits[line] > 0 ? "hit" : "MISSED"];
+      }),
+    );
+  return { row, record, status };
+}
+
+const skipTestFiles = `[test]\ncoverageSkipTestFiles = true\n`;
+
+test.concurrent("coverage blames the statements that never ran, not the braces around them", async () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": skipTestFiles,
+    "lib.js": `export function earlyReturn(a) {
+  if (a > 0) {
+    return a;
+  }
+  return -a;
+}
+export function untakenElse(a) {
+  if (a) {
+    return 1;
+  } else {
+    return 2;
+  }
+}
+export function guarded(f) {
+  try {
+    return f();
+  } catch (e) {
+    return e;
+  }
+}
+export function make() {
+  return {
+    get(n) {
+      if (n !== undefined) {
+        return n;
+      }
+      return -1;
+    },
+  };
+}
+export function neverCalled(a) {
+  // a comment inside a function that never runs
+  const b = a + 1;
+
+  return b * 2;
+}
+export function neverCalledOneLiner() { return 1; }
+`,
+    "lib.test.js": `import { test, expect } from "bun:test";
+import { earlyReturn, untakenElse, guarded, make } from "./lib.js";
+test("only the happy paths", () => {
+  expect(earlyReturn(2)).toBe(2);
+  expect(untakenElse(true)).toBe(1);
+  expect(guarded(() => 3)).toBe(3);
+  expect(make().get(4)).toBe(4);
+});
+`,
+  });
+
+  const { row, status } = await coverageOf(String(dir), "lib.js");
+  expect(row).toBe(" lib.js    |   71.43 |   60.00 | 5,10-11,17-18,27,31,33,35,37");
+  expect(status(37)).toEqual({
+    1: "hit",
+    2: "hit",
+    3: "hit",
+    4: "-", // `}` closing the if block: the dead block after `return a` starts here
+    5: "MISSED",
+    6: "-",
+    7: "hit",
+    8: "hit",
+    9: "hit",
+    10: "MISSED", // `} else {`
+    11: "MISSED",
+    12: "-",
+    13: "-",
+    14: "hit",
+    15: "hit",
+    16: "hit",
+    17: "MISSED", // `} catch (e) {`
+    18: "MISSED",
+    19: "-",
+    20: "-",
+    21: "hit",
+    22: "hit",
+    23: "hit",
+    24: "hit",
+    25: "hit",
+    26: "-",
+    27: "MISSED", // `return -1`: the executed `},` after it must not count as this line
+    28: "-",
+    29: "hit", // `};` ends the executed return statement
+    30: "-",
+    31: "MISSED", // uncalled function: its declaration line...
+    32: "-", // ...but not the comment
+    33: "MISSED",
+    34: "-", // ...nor the blank line
+    35: "MISSED", // ...and its last statement
+    36: "-",
+    37: "MISSED", // uncalled function written on one line
+  });
+});
+
+// JSC gives the initializer it synthesizes for class fields a range spanning the whole file and
+// cuts it out of the module's top-level block, which then comes back as inverted ranges like
+// `[file_length, 0]`. Those used to be walked as `0..file_length`, marking every line of any
+// file declaring a class field as executed.
+test.concurrent("coverage of a file with class fields still reports its unexecuted lines", async () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": skipTestFiles,
+    "lib.js": `export class WithField {
+  count = 0;
+}
+export function pick(a) {
+  if (a) {
+    return 1;
+  }
+  return 2;
+}
+`,
+    "lib.test.js": `import { test, expect } from "bun:test";
+import { WithField, pick } from "./lib.js";
+test("pick", () => {
+  expect(new WithField().count).toBe(0);
+  expect(pick(true)).toBe(1);
+});
+`,
+  });
+
+  const { row, record, status } = await coverageOf(String(dir), "lib.js");
+  expect(row).toBe(" lib.js    |  100.00 |   85.71 | 8");
+  expect(status(9)).toEqual({
+    1: "hit",
+    2: "hit",
+    3: "hit",
+    4: "hit",
+    5: "hit",
+    6: "hit",
+    7: "-",
+    8: "MISSED",
+    9: "-",
+  });
+  // `pick` is the only function: the constructor JSC synthesizes for `WithField` is not one.
+  expect(record).toContain("\nFNF:1\nFNH:1\n");
+});
+
+test.concurrent("coverageIgnoreSourcemaps reports the line of the dead statement itself", async () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": `${skipTestFiles}coverageIgnoreSourcemaps = true\n`,
+    // Transpiles to itself line for line, so the generated line numbers are the source's.
+    "lib.js": `export function earlyReturn(a) {
+  if (a > 0) {
+    return a;
+  }
+  return -a;
+}
+`,
+    "lib.test.js": `import { test, expect } from "bun:test";
+import { earlyReturn } from "./lib.js";
+test("positive", () => {
+  expect(earlyReturn(2)).toBe(2);
+});
+`,
+  });
+
+  const { row, status } = await coverageOf(String(dir), "lib.js");
+  expect(row).toBe(" lib.js    |  100.00 |   75.00 | 5");
+  expect(status(6)).toEqual({
+    1: "hit",
+    2: "hit",
+    3: "hit",
+    4: "-",
+    5: "MISSED",
+    6: "-",
+  });
+});
+
 test("coverage excludes node_modules directory", () => {
   using dir = tempDir("cov", {
     "node_modules/pi/index.js": `
@@ -192,8 +398,8 @@ test("should call only some functions", () => {
 ---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
-All files      |   75.00 |   83.33 |
- include-me.ts |   50.00 |   66.67 | 6
+All files      |   75.00 |   75.00 |
+ include-me.ts |   50.00 |   50.00 | 6-7
  test.test.ts  |  100.00 |  100.00 | 
 ---------------|---------|---------|-------------------
 
@@ -385,7 +591,7 @@ test("should call both functions", () => {
 SF:include-me.ts
 FNF:1
 FNH:1
-DA:2,11
+DA:2,10
 DA:3,17
 LF:2
 LH:2
@@ -397,9 +603,9 @@ FNH:1
 DA:2,40
 DA:3,41
 DA:4,39
-DA:6,42
-DA:7,39
-DA:8,36
+DA:6,41
+DA:7,37
+DA:8,35
 DA:9,2
 LF:7
 LH:7

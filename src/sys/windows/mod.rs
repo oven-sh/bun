@@ -557,14 +557,11 @@ pub use bun_windows_sys::externs::{
     FILE_ATTRIBUTE_TAG_INFORMATION, IO_REPARSE_TAG_APPEXECLINK, is_reparse_tag_name_surrogate,
 };
 
-/// Attributes and reparse tag of the entry at `path` itself. A reparse point is
-/// opened rather than followed, so this works whatever its tag is, and the
-/// path goes through the same Win32 parsing as `GetFileAttributesW` /
-/// `CopyFileW` (a trailing separator is fine, unlike with `FindFirstFileW`).
-/// `None` when the entry cannot be opened.
+/// Attributes and reparse tag of the entry at `path` itself (not followed), or
+/// `None` if it cannot be opened. Unlike `FindFirstFileW`, this accepts every
+/// path `GetFileAttributesW` does, trailing separator included.
 pub fn query_attribute_tag(path: &bun_core::WStr) -> Option<FILE_ATTRIBUTE_TAG_INFORMATION> {
-    // Zero access: attribute queries need none, and a handle without access
-    // bits is exempt from other openers' share modes.
+    // Zero access: enough for attribute queries, and immune to share modes.
     // SAFETY: `path` is NUL-terminated (`WStr` invariant); null security
     // attributes and template handle are allowed.
     let handle = unsafe {

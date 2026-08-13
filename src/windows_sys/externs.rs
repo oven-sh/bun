@@ -342,8 +342,8 @@ pub const FILE_FLAG_OVERLAPPED: DWORD = 0x4000_0000;
 pub const fn is_reparse_tag_name_surrogate(tag: DWORD) -> bool {
     (tag & 0x2000_0000) != 0
 }
-/// Store app execution alias (`%LOCALAPPDATA%\Microsoft\WindowsApps\*.exe`):
-/// not a name surrogate, but libuv's `readlink`/`lstat` decode it as a link.
+/// Store app execution alias; not a name surrogate, but libuv's `readlink`
+/// and `lstat` treat it as a link.
 pub const IO_REPARSE_TAG_APPEXECLINK: DWORD = 0x8000_001B;
 
 // `CreateNamedPipeW` dwOpenMode / dwPipeMode (`winbase.h`).
@@ -368,9 +368,8 @@ pub struct FILE_BASIC_INFORMATION {
     pub FileAttributes: ULONG,
 }
 
-/// `FILE_ATTRIBUTE_TAG_INFORMATION` (`ntifs.h`), the output of
-/// `NtQueryInformationFile(FileAttributeTagInformation)`. `ReparseTag` is 0
-/// unless `FileAttributes` has `FILE_ATTRIBUTE_REPARSE_POINT`.
+/// `FILE_ATTRIBUTE_TAG_INFORMATION` (`ntifs.h`), output of
+/// `NtQueryInformationFile(FileAttributeTagInformation)`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct FILE_ATTRIBUTE_TAG_INFORMATION {

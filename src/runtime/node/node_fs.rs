@@ -2064,8 +2064,7 @@ mod _async_tasks {
                     return false;
                 }
 
-                // The iterator reports every reparse point as `SymLink`; a
-                // non-link reparse directory (see `CpEntryKind`) is walked.
+                // Non-link reparse directories come back as `SymLink` too.
                 #[cfg(windows)]
                 let kind = match current.kind {
                     crate::node::dirent::Kind::SymLink => {
@@ -4595,14 +4594,10 @@ pub mod ret {
     pub(crate) type Writev = Write;
 }
 
-/// What the Windows `cp` paths (`cp_sync_inner`, `NewAsyncCpTask`,
-/// `copy_single_file_sync`) are copying. `FILE_ATTRIBUTE_REPARSE_POINT` alone
-/// does not make an entry a link: an entry is a link when `lstat` would report
-/// one, i.e. its reparse tag is a name surrogate (symlink, junction) or an
-/// app-exec link. Every other reparse point (cloud-file placeholder,
-/// deduplicated or projected file, ...) is an ordinary file or directory whose
-/// filter driver serves its contents through a normal open, so `CopyFileW`
-/// copies it and a directory walk descends into it.
+/// What the Windows `cp` paths are copying. Only the reparse points `lstat`
+/// reports as links (name surrogates such as symlinks and junctions, plus
+/// app-exec links) are `Link`; cloud placeholders, dedup stubs and other
+/// reparse points read like plain entries, so they are `File` or `Directory`.
 #[cfg(windows)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CpEntryKind {
@@ -4627,9 +4622,8 @@ impl CpEntryKind {
         }
     }
 
-    /// `attributes` is the `GetFileAttributesW` result for `src`. Only a
-    /// reparse point needs the extra lookup of its tag; one that cannot even be
-    /// opened for that stays a link, so the link branch reports the error.
+    /// `attributes` comes from `GetFileAttributesW`; only a reparse point needs
+    /// its tag looked up. One that cannot be opened for that stays a `Link`.
     pub(crate) fn classify(src: &OSPathSliceZ, attributes: windows::DWORD) -> Self {
         if attributes & sys::c::FILE_ATTRIBUTE_REPARSE_POINT == 0 {
             return Self::from_attribute_tag(attributes, 0);
@@ -4642,9 +4636,8 @@ impl CpEntryKind {
         }
     }
 
-    /// For an entry the directory iterator reported as `SymLink`, which on
-    /// Windows only means the reparse-point attribute is set: does the copy
-    /// have to descend into it instead of copying it as a single entry?
+    /// Whether an entry the iterator reported as `SymLink` (on Windows: "has
+    /// the reparse attribute") is really a directory to descend into.
     pub(crate) fn reparse_entry_is_directory(src: &OSPathSliceZ) -> bool {
         windows::query_attribute_tag(src).is_some_and(|info| {
             Self::from_attribute_tag(info.FileAttributes, info.ReparseTag) == Self::Directory
@@ -8491,8 +8484,7 @@ impl NodeFS {
             dest_buf[dd] = paths::SEP as OSPathChar;
             dest_buf[dd + 1 + name_slice.len()] = 0;
 
-            // The iterator reports every reparse point as `SymLink`; a non-link
-            // reparse directory (see `CpEntryKind`) is walked.
+            // Non-link reparse directories come back as `SymLink` too.
             #[cfg(windows)]
             let kind = if current.kind == sys::FileKind::SymLink
                 && CpEntryKind::reparse_entry_is_directory(OSPathSliceZ::from_buf(

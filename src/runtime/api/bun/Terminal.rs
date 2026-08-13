@@ -10,7 +10,6 @@
 //! - Callbacks are stored via `values` in classes.ts, accessed via js.gc
 
 use core::cell::Cell;
-#[cfg(unix)]
 use core::ffi::{c_int, c_void};
 #[cfg(windows)]
 use core::sync::atomic::{AtomicU32, Ordering};

@@ -94,9 +94,8 @@ pub struct Options<'a> {
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
 
-    /// Set when bundling for `--compile`. Affects how `__dirname`, `__filename`,
-    /// and inlined `import.meta.*` paths are emitted so that the build machine's
-    /// absolute file paths are not embedded in the standalone executable.
+    /// Bundling into a standalone executable: `__dirname` / `__filename` resolve
+    /// to the virtual `/$bunfs/` path at runtime instead of being inlined.
     pub compile: bool,
 
     /// When using react fast refresh or server components, the framework is
@@ -1135,18 +1134,9 @@ impl<'a> Parser<'a> {
         //    var __dirname = "foo/bar"
         //    var __filename = "foo/bar/baz.js"
         //
-        // For `--compile`, we do not want to embed the build machine's absolute
-        // file path into the standalone executable. Instead we defer to
-        // `import.meta.dir` / `import.meta.path` which at runtime resolve to the
-        // virtual `/$bunfs/root/...` path of the containing chunk (matching the
-        // behavior of `import.meta.url`).
-        //
-        // For `--compile --format=cjs` we cannot use `import.meta` (the chunk is
-        // wrapped in a function expression and evaluated as a Script, where
-        // `import.meta` is a syntax error), so we skip emitting the declaration
-        // and let references fall through to the `__filename` / `__dirname`
-        // parameters of the outer wrapper, which Bun's runtime populates with the
-        // virtual path.
+        // except for `--compile`, where the values come from `import.meta` (ESM) or,
+        // since `import.meta` is a syntax error inside the CJS wrapper, from the
+        // wrapper's own `__filename` / `__dirname` parameters (no declaration at all).
         if p.options.compile && p.options.output_format == options::Format::Cjs {
             uses_dirname = false;
             uses_filename = false;

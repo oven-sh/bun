@@ -515,13 +515,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         || (p.options.bundle
                             && p.options.output_format == js_parser::options::Format::Cjs)
                     {
-                        // For `--compile`, avoid embedding the build machine's absolute
-                        // file path into the standalone executable. The CJS entry chunk
-                        // is wrapped in `(function(exports, require, module, __filename,
-                        // __dirname) {...})`, and those parameters are populated at
-                        // runtime with the virtual `/$bunfs/root/...` path, so rewrite
-                        // `import.meta.dir` / `.dirname` / `.path` / `.filename` to
-                        // reference them instead of inlining a string literal.
+                        // Compiled CJS chunks take the virtual path from the wrapper's
+                        // `__dirname` / `__filename` parameters, so point these there.
                         if p.options.compile {
                             if name == b"dir" || name == b"dirname" {
                                 p.record_usage(p.dirname_ref);

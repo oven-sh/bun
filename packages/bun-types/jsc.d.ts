@@ -34,7 +34,7 @@ declare module "bun:jsc" {
    * Call it before `func` runs for the first time.
    */
   function noFTL(func: (...args: any[]) => any): void;
-  function noOSRExitFuzzing(func: (...args: any[]) => any): (...args: any[]) => any;
+  function noOSRExitFuzzing(func: (...args: any[]) => any): void;
   function optimizeNextInvocation(func: (...args: any[]) => any): void;
   function numberOfDFGCompiles(func: (...args: any[]) => any): number;
   function releaseWeakRefs(): void;

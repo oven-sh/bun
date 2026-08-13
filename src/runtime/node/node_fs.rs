@@ -8547,6 +8547,135 @@ impl NodeFS {
         Syscall::symlink(ZStr::from_buf(&resolved_buf[..], resolved_len), dest)
     }
 
+    /// Recreates the reparse point `src` (a symlink or junction) at `dest`, pointing at
+    /// the path `src` resolves to.
+    #[cfg(windows)]
+    fn cp_symlink_windows(
+        &mut self,
+        src: &OSPathSliceZ,
+        dest: &OSPathSliceZ,
+        attributes: windows::DWORD,
+    ) -> Maybe<ret::CopyFile> {
+        let handle = match sys::openat_windows(FD::INVALID, src, sys::O::RDONLY, 0) {
+            Err(err) => return Err(err),
+            Ok(fd) => fd,
+        };
+        let _close = scopeguard::guard(handle, |fd| fd.close());
+        let mut wbuf = paths::os_path_buffer_pool::get();
+        let len = unsafe {
+            windows::GetFinalPathNameByHandleW(
+                handle.native(),
+                wbuf.as_mut_ptr(),
+                wbuf.len() as u32,
+                0,
+            )
+        } as usize;
+        if len == 0 || len >= wbuf.len() {
+            let p = self.os_path_into_sync_error_buf(dest.as_slice());
+            if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, p) {
+                return err;
+            }
+            return Maybe::<ret::CopyFile>::init_err_with_p(
+                SystemErrno::ENOENT,
+                sys::Tag::copyfile,
+                p,
+            );
+        }
+        wbuf[len] = 0;
+        // `GetFinalPathNameByHandleW(VOLUME_NAME_DOS)` spells network
+        // targets as `\\?\UNC\server\share\…`; rewrite in place to the
+        // absolute `\\server\share\…` form (libuv `fs__realpath_handle`).
+        let is_unc = strings::has_prefix_comptime_utf16(&wbuf[..len], b"\\\\?\\UNC\\");
+        let target = if is_unc {
+            let skip = b"\\\\?\\UN".len();
+            wbuf[skip] = u16::from(b'\\');
+            bun_core::WStr::from_buf(&wbuf[skip..], len - skip)
+        } else {
+            bun_core::WStr::from_buf(&wbuf[..], len)
+        };
+        let is_dir = attributes & windows::FILE_ATTRIBUTE_DIRECTORY != 0;
+        // `symlink_w`/`symlink_or_junction` (not raw `CreateSymbolicLinkW`)
+        // so unprivileged creation is requested. UNC targets skip the junction
+        // fallback: libuv's `fs__create_junction` only accepts drive-letter targets.
+        let link_result = if is_dir && !is_unc {
+            let mut dest8 = paths::path_buffer_pool::get();
+            let mut target8 = paths::path_buffer_pool::get();
+            sys::symlink_or_junction(
+                strings::from_wpath(&mut dest8[..], dest.as_slice()),
+                strings::from_wpath(&mut target8[..], target.as_slice()),
+                None,
+            )
+        } else {
+            sys::symlink_w(
+                dest,
+                target,
+                sys::WindowsSymlinkOptions { directory: is_dir },
+            )
+        };
+        if let Err(err) = link_result {
+            let p = self.os_path_into_sync_error_buf(dest.as_slice());
+            return Err(err.with_path(p));
+        }
+        Ok(())
+    }
+
+    /// Runs `create_link`, which recreates the link `src` at `dest` and fails with EEXIST
+    /// when something is already there (`symlink(2)`, `CreateSymbolicLinkW` and
+    /// `copyfile(3)` with `COPYFILE_EXCL` never replace an existing path). Unless the
+    /// copy asked not to overwrite, whatever is there is removed and the link created
+    /// again, so a link source overwrites like a file source does; the callers take an
+    /// EEXIST returned from here as the no-overwrite skip.
+    fn cp_link_replacing_dest(
+        &mut self,
+        src: &OSPathSliceZ,
+        dest: &OSPathSliceZ,
+        mode: constants::Copyfile,
+        mut create_link: impl FnMut(&mut Self) -> Maybe<ret::CopyFile>,
+    ) -> Maybe<ret::CopyFile> {
+        let result = create_link(self);
+        if mode.shouldnt_overwrite() || result.get_errno() != E::EEXIST {
+            return result;
+        }
+        Self::cp_unlink_dest(src, dest)?;
+        create_link(self)
+    }
+
+    /// Removes `dest` so the copy of the link `src` can take its place. Refuses when
+    /// `dest` is `src` itself (`cp -R lnk .`): unlinking it would destroy the link being
+    /// copied. A directory stays as well: `unlink` fails on one (EISDIR or EPERM by
+    /// platform) and that is the error reported, as cp never replaces a directory with
+    /// a non-directory.
+    fn cp_unlink_dest(src: &OSPathSliceZ, dest: &OSPathSliceZ) -> Maybe<()> {
+        #[cfg(windows)]
+        let (mut src8, mut dest8) = (
+            paths::path_buffer_pool::get(),
+            paths::path_buffer_pool::get(),
+        );
+        #[cfg(windows)]
+        let (src, dest) = (
+            strings::from_wpath(&mut src8[..], src.as_slice()),
+            strings::from_wpath(&mut dest8[..], dest.as_slice()),
+        );
+
+        let dest_stat = match Syscall::lstat(dest) {
+            Ok(stat_) => stat_,
+            Err(err) if err.get_errno() == E::ENOENT => return Ok(()),
+            Err(err) => return Err(err),
+        };
+        let src_stat = Syscall::lstat(src)?;
+        if src_stat.st_dev == dest_stat.st_dev && src_stat.st_ino == dest_stat.st_ino {
+            return Maybe::<()>::init_err_with_p(
+                SystemErrno::EINVAL,
+                sys::Tag::copyfile,
+                dest.as_bytes(),
+            );
+        }
+        match Syscall::unlink(dest) {
+            Err(err) if err.get_errno() != E::ENOENT => Err(err),
+            _ => Ok(()),
+        }
+    }
+
     /// This is `copyFile`, but it copies symlinks as-is
     pub(crate) fn copy_single_file_sync(
         &mut self,
@@ -8585,18 +8714,21 @@ impl NodeFS {
 
             if !sys::S::ISREG(stat_.st_mode as u32) {
                 if sys::S::ISLNK(stat_.st_mode as u32) {
-                    let mut mode_: u32 = bun_sys::c::COPYFILE_ACL
+                    // COPYFILE_EXCL regardless of `mode`: without it copyfile(3) reports
+                    // success for a link source whose destination exists, leaving the
+                    // destination as it was. `cp_link_replacing_dest` handles the EEXIST.
+                    let mode_: u32 = bun_sys::c::COPYFILE_ACL
                         | bun_sys::c::COPYFILE_DATA
-                        | bun_sys::c::COPYFILE_NOFOLLOW_SRC;
-                    if mode.shouldnt_overwrite() {
-                        mode_ |= bun_sys::c::COPYFILE_EXCL;
-                    }
-                    return Maybe::<ret::CopyFile>::errno_sys_p(
-                        bun_sys::c::copyfile_rc(src, dest, mode_),
-                        sys::Tag::copyfile,
-                        src.as_bytes(),
-                    )
-                    .unwrap_or(Ok(()));
+                        | bun_sys::c::COPYFILE_NOFOLLOW_SRC
+                        | bun_sys::c::COPYFILE_EXCL;
+                    return self.cp_link_replacing_dest(src, dest, mode, |_| {
+                        Maybe::<ret::CopyFile>::errno_sys_p(
+                            bun_sys::c::copyfile_rc(src, dest, mode_),
+                            sys::Tag::copyfile,
+                            src.as_bytes(),
+                        )
+                        .unwrap_or(Ok(()))
+                    });
                 }
                 self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
                 return Err(sys::Error {
@@ -8708,7 +8840,9 @@ impl NodeFS {
                     if err.get_errno() == E::ELOOP {
                         // ELOOP is returned when you open a symlink with NOFOLLOW.
                         // as in, it does not actually let you open it.
-                        return self.cp_symlink(src, dest);
+                        return self.cp_link_replacing_dest(src, dest, mode, |this| {
+                            this.cp_symlink(src, dest)
+                        });
                     }
                     return Err(err);
                 }
@@ -8880,7 +9014,9 @@ impl NodeFS {
                     // open(2) returns EMLINK for this case, though POSIX
                     // specifies ELOOP; accept either.
                     if matches!(err.get_errno(), E::EMLINK | E::ELOOP) {
-                        return self.cp_symlink(src, dest);
+                        return self.cp_link_replacing_dest(src, dest, mode, |this| {
+                            this.cp_symlink(src, dest)
+                        });
                     }
                     return Err(err);
                 }
@@ -9002,19 +9138,14 @@ impl NodeFS {
                     ..Default::default()
                 });
             }
-            // Precompute both ENOENT fallbacks once,
-            // before any branch. Re-deriving them inline inside `unwrap_or_else`
+            // Precompute the ENOENT fallback once,
+            // before any branch. Re-deriving it inline inside `unwrap_or_else`
             // double-borrows `&mut self` (the outer `errno_sys_p` arg already holds
             // a borrow into `sync_error_buf`).
             let src_enoent_maybe = Maybe::<ret::CopyFile>::init_err_with_p(
                 SystemErrno::ENOENT,
                 sys::Tag::copyfile,
                 self.os_path_into_sync_error_buf(src.as_slice()),
-            );
-            let dst_enoent_maybe = Maybe::<ret::CopyFile>::init_err_with_p(
-                SystemErrno::ENOENT,
-                sys::Tag::copyfile,
-                self.os_path_into_sync_error_buf(dest.as_slice()),
             );
             let stat_ = match reuse_stat {
                 Some(a) => a,
@@ -9074,63 +9205,10 @@ impl NodeFS {
                     return Self::should_ignore_ebusy(&args.src, &args.dest, result);
                 }
                 return Ok(());
-            } else {
-                let handle = match sys::openat_windows(FD::INVALID, src, sys::O::RDONLY, 0) {
-                    Err(err) => return Err(err),
-                    Ok(fd) => fd,
-                };
-                let _close = scopeguard::guard(handle, |fd| fd.close());
-                let mut wbuf = paths::os_path_buffer_pool::get();
-                let len = unsafe {
-                    windows::GetFinalPathNameByHandleW(
-                        handle.native(),
-                        wbuf.as_mut_ptr(),
-                        wbuf.len() as u32,
-                        0,
-                    )
-                } as usize;
-                if len == 0 || len >= wbuf.len() {
-                    let p = self.os_path_into_sync_error_buf(dest.as_slice());
-                    return Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, p)
-                        .unwrap_or(dst_enoent_maybe);
-                }
-                wbuf[len] = 0;
-                // `GetFinalPathNameByHandleW(VOLUME_NAME_DOS)` spells network
-                // targets as `\\?\UNC\server\share\…`; rewrite in place to the
-                // absolute `\\server\share\…` form (libuv `fs__realpath_handle`).
-                let is_unc = strings::has_prefix_comptime_utf16(&wbuf[..len], b"\\\\?\\UNC\\");
-                let target = if is_unc {
-                    let skip = b"\\\\?\\UN".len();
-                    wbuf[skip] = u16::from(b'\\');
-                    bun_core::WStr::from_buf(&wbuf[skip..], len - skip)
-                } else {
-                    bun_core::WStr::from_buf(&wbuf[..], len)
-                };
-                let is_dir = stat_ & windows::FILE_ATTRIBUTE_DIRECTORY != 0;
-                // `symlink_w`/`symlink_or_junction` (not raw `CreateSymbolicLinkW`)
-                // so unprivileged creation is requested. UNC targets skip the junction
-                // fallback: libuv's `fs__create_junction` only accepts drive-letter targets.
-                let link_result = if is_dir && !is_unc {
-                    let mut dest8 = paths::path_buffer_pool::get();
-                    let mut target8 = paths::path_buffer_pool::get();
-                    sys::symlink_or_junction(
-                        strings::from_wpath(&mut dest8[..], dest.as_slice()),
-                        strings::from_wpath(&mut target8[..], target.as_slice()),
-                        None,
-                    )
-                } else {
-                    sys::symlink_w(
-                        dest,
-                        target,
-                        sys::WindowsSymlinkOptions { directory: is_dir },
-                    )
-                };
-                if let Err(err) = link_result {
-                    let p = self.os_path_into_sync_error_buf(dest.as_slice());
-                    return Err(err.with_path(p));
-                }
-                return Ok(());
             }
+            return self.cp_link_replacing_dest(src, dest, mode, |this| {
+                this.cp_symlink_windows(src, dest, stat_)
+            });
         }
 
         #[cfg(not(any(

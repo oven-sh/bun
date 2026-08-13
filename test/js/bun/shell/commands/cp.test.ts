@@ -1,7 +1,9 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, tempDir, tempDirWithFiles } from "harness";
+import { lstatSync, readFileSync, statSync, symlinkSync } from "node:fs";
+import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -170,6 +172,127 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .fileEquals(TEST_COPY_TO_FOLDER_NEW_FILE, "Hello, World!")
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
+  });
+});
+
+// The builtin is only the default on Windows; on POSIX it is switched on by an
+// env var that is read once per process, so each cp here runs in a child bun.
+//
+// The operands are copied with -R: cp copies a link operand itself under -R,
+// while without it cp(1) copies the file the link points at.
+describe.concurrent("bunshell cp with a symlink source replaces an existing destination", () => {
+  const builtinEnv = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
+
+  /** Runs `command` through the shell builtin with `cwd` as the shell's cwd; returns what cp exited with and printed. */
+  async function cp(cwd: string, command: string): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        "const r = await Bun.$`${{ raw: process.argv[1] }}`.cwd(process.argv[2]).nothrow().quiet();" +
+          "console.log(JSON.stringify({ exitCode: r.exitCode, stdout: r.stdout.toString(), stderr: r.stderr.toString() }));",
+        command,
+        cwd,
+      ],
+      cwd,
+      env: builtinEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  /**
+   * What is at `path`. A link is described by what it resolves to: depending on
+   * the platform the copy spells the target as written or as an absolute path.
+   */
+  function entry(path: string): string {
+    if (lstatSync(path).isSymbolicLink()) {
+      return statSync(path).isDirectory() ? "link -> directory" : `link -> ${readFileSync(path, "utf8")}`;
+    }
+    return lstatSync(path).isDirectory() ? "directory" : `file: ${readFileSync(path, "utf8")}`;
+  }
+
+  const copied = { exitCode: 0, stdout: "", stderr: "" };
+
+  test("link -> existing file", async () => {
+    using dir = tempDir("shell-cp-link-over-file", { "target.txt": "target", "existing.txt": "keep" });
+    const cwd = String(dir);
+    symlinkSync("target.txt", join(cwd, "lnk"));
+
+    expect(await cp(cwd, "cp -R -v lnk existing.txt")).toEqual({
+      ...copied,
+      stdout: `${join(cwd, "lnk")} -> ${join(cwd, "existing.txt")}\n`,
+    });
+    expect(entry(join(cwd, "existing.txt"))).toBe("link -> target");
+    expect(entry(join(cwd, "target.txt"))).toBe("file: target");
+  });
+
+  test("link -> existing link to another file", async () => {
+    using dir = tempDir("shell-cp-link-over-link", { "target.txt": "target", "other.txt": "other" });
+    const cwd = String(dir);
+    symlinkSync("target.txt", join(cwd, "lnk"));
+    symlinkSync("other.txt", join(cwd, "existing"));
+
+    expect(await cp(cwd, "cp -R lnk existing")).toEqual(copied);
+    expect(entry(join(cwd, "existing"))).toBe("link -> target");
+    expect(entry(join(cwd, "other.txt"))).toBe("file: other");
+  });
+
+  test("-R dir: link inside the tree -> existing file of that name", async () => {
+    using dir = tempDir("shell-cp-tree-link-over-file", {
+      "src": { "target.txt": "target" },
+      "dest": { "src": { "lnk": "stale" } },
+    });
+    const cwd = String(dir);
+    symlinkSync("target.txt", join(cwd, "src", "lnk"));
+
+    expect(await cp(cwd, "cp -R src dest")).toEqual(copied);
+    expect(entry(join(cwd, "dest", "src", "lnk"))).toBe("link -> target");
+  });
+
+  test("-R dir: link inside the tree -> existing link to a directory of that name", async () => {
+    using dir = tempDir("shell-cp-tree-link-over-dir-link", {
+      "src": { "target.txt": "target" },
+      "dest": { "src": {} },
+      "pointed-at": { "keep.txt": "keep" },
+    });
+    const cwd = String(dir);
+    symlinkSync("target.txt", join(cwd, "src", "lnk"));
+    // A junction on Windows (a directory link that needs no privilege), a plain symlink elsewhere.
+    symlinkSync(join(cwd, "pointed-at"), join(cwd, "dest", "src", "lnk"), "junction");
+
+    expect(await cp(cwd, "cp -R src dest")).toEqual(copied);
+    expect(entry(join(cwd, "dest", "src", "lnk"))).toBe("link -> target");
+    expect(entry(join(cwd, "pointed-at", "keep.txt"))).toBe("file: keep");
+  });
+
+  test("-R dir: link inside the tree -> existing directory of that name is an error", async () => {
+    using dir = tempDir("shell-cp-tree-link-over-dir", {
+      "src": { "target.txt": "target" },
+      "dest": { "src": { "lnk": {} } },
+    });
+    const cwd = String(dir);
+    symlinkSync("target.txt", join(cwd, "src", "lnk"));
+
+    const result = await cp(cwd, "cp -R src dest");
+    expect(result.stderr).toStartWith("cp: ");
+    expect(result.stderr).toContain(join(cwd, "dest", "src", "lnk"));
+    expect(result.exitCode).toBe(1);
+    expect(entry(join(cwd, "dest", "src", "lnk"))).toBe("directory");
+  });
+
+  test("link -> the directory holding it is refused and the link is kept", async () => {
+    using dir = tempDir("shell-cp-link-onto-itself", { "target.txt": "target" });
+    const cwd = String(dir);
+    symlinkSync("target.txt", join(cwd, "lnk"));
+
+    const result = await cp(cwd, "cp -R lnk .");
+    expect(result.stderr).toStartWith("cp: ");
+    expect(result.exitCode).toBe(1);
+    expect(entry(join(cwd, "lnk"))).toBe("link -> target");
   });
 });
 

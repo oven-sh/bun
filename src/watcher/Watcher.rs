@@ -760,8 +760,8 @@ impl Watcher {
             Err(err) => {
                 return Err(err.with_path(file_path));
             }
-            // Not appended (e.g. outside the project root on Windows); the
-            // caller keeps the descriptor.
+            // Not appended (on Windows: its watch root could not be opened);
+            // the caller keeps the descriptor.
             Ok(FdOwnership::Caller) => return Ok(FdOwnership::Caller),
             Ok(FdOwnership::Watcher) => {}
         }
@@ -1117,9 +1117,9 @@ pub enum FdOwnership {
     /// close it. The caller must not use or close it afterwards.
     Watcher,
     /// The watchlist did not take the descriptor: the file was already
-    /// watched with a valid stored one, or the path is not watchable (e.g.
-    /// outside the project root on Windows). The caller still owns `fd` and
-    /// must close it (or keep using it).
+    /// watched with a valid stored one, or (on Windows) its watch root could
+    /// not be opened. The caller still owns `fd` and must close it (or keep
+    /// using it).
     Caller,
 }
 

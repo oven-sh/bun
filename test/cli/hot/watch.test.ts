@@ -145,6 +145,7 @@ test.concurrent.skipIf(!isWindows)("--hot survives a linked package being delete
   //    [app] 3 2  edit the app again (cwd root must still fire); the
   //               recreated package is re-imported on this reload
   // 5. [app] 3 4  edit only the recreated package (fresh root must fire)
+  // 6.            done
   let phase = 1;
   for await (const line of iter) {
     if (phase === 1 && line === "[app] 1 1") {
@@ -164,6 +165,7 @@ test.concurrent.skipIf(!isWindows)("--hot survives a linked package being delete
     } else if (phase === 4 && line === "[app] 3 2") {
       phase = 5;
     } else if (phase === 5 && line === "[app] 3 4") {
+      phase = 6;
       break;
     }
 
@@ -182,6 +184,6 @@ test.concurrent.skipIf(!isWindows)("--hot survives a linked package being delete
         break;
     }
   }
-  expect(phase).toBe(5);
+  expect(phase).toBe(6);
   expect(stderr).not.toContain("is not in the project directory");
 });

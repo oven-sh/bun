@@ -507,6 +507,21 @@ describe("nested dynamic routes do not leak params from a probed route", () => {
       params: { businessId: "6679fbe17b41431a977163fd" },
     },
     {
+      // https://github.com/oven-sh/bun/issues/12206, with the intermediate routes
+      // spelled as directories with index files instead of leaf files.
+      label: "sibling routes under a shared dynamic segment, using index files",
+      files: [
+        "admin/[businessId]/index.tsx",
+        "admin/[businessId]/providers/index.tsx",
+        "admin/[businessId]/providers/create.tsx",
+        "admin/[businessId]/providers/[providerId]/edit.tsx",
+        "admin/[businessId]/providers/[providerId]/delete.tsx",
+      ],
+      pathname: "/admin/6679fbe17b41431a977163fd/providers/create",
+      name: "/admin/[businessId]/providers/create",
+      params: { businessId: "6679fbe17b41431a977163fd" },
+    },
+    {
       // https://github.com/oven-sh/bun/issues/15554
       label: "a dynamic leaf next to its own index route",
       files: ["[a]/index.tsx", "[a]/test/index.tsx", "[a]/test/[b].tsx"],

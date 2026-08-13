@@ -581,10 +581,8 @@ impl ShellCpTask {
         }
     }
 
-    /// Would copying `src` (not a directory) to `tgt`, the path the copy
-    /// writes to, copy a file onto itself? True when the two entries are one
-    /// inode (one file under two spellings or names) or, through symlinks,
-    /// when the files behind them are; cp(1) refuses both as the same file.
+    /// Same entry (`cp d/f d`, hard links), or the same file behind a symlink
+    /// on either side (`cp f link-to-f`): what cp(1) refuses as the same file.
     fn is_same_file(src: &bun_core::ZStr, tgt: &bun_core::ZStr) -> bool {
         fn same_inode(a: &bun_sys::Stat, b: &bun_sys::Stat) -> bool {
             // An inode number of 0 means the filesystem reports no identity.
@@ -603,7 +601,7 @@ impl ShellCpTask {
         if !bun_sys::S::ISLNK(src_stat.st_mode as _) && !bun_sys::S::ISLNK(tgt_stat.st_mode as _) {
             return false;
         }
-        // A dangling link has no file behind it; the links themselves differed above.
+        // `stat` fails on a dangling link: nothing behind it to compare.
         let (Ok(src_file), Ok(tgt_file)) = (bun_sys::stat(src), bun_sys::stat(tgt)) else {
             return false;
         };
@@ -720,8 +718,7 @@ impl ShellCpTask {
         }
 
         if !src_is_dir && Self::is_same_file(src, tgt) {
-            // Named the way cp(1) names it: the operand as given, plus the
-            // basename when the copy would have landed inside it.
+            // As cp(1) prints it: the operand as given, plus the appended basename.
             let mut shown_tgt = self.tgt.clone();
             if let Some(basename) = appended_basename {
                 while shown_tgt.len() > 1 && Self::has_trailing_sep(&shown_tgt) {

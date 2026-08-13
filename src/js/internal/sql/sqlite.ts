@@ -15,6 +15,11 @@ const { SQLResultArray, normalizeQuery, pushBindParam } = require("internal/sql/
 const { SQLQueryResultMode } = require("internal/sql/query");
 const { SQLiteError } = require("internal/sql/errors");
 
+/** Errors thrown by bun:sqlite itself, as opposed to plain Errors from its JS wrapper. */
+function isSQLiteError(err: unknown): err is object & { name: "SQLiteError" } {
+  return err !== null && typeof err === "object" && "name" in err && err.name === "SQLiteError";
+}
+
 let lazySQLiteModule: typeof BunSQLiteModule;
 function getSQLiteModule() {
   if (!lazySQLiteModule) {
@@ -188,10 +193,8 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
       try {
         stmt = db.prepare(sql);
       } catch (err) {
-        // SQLite itself refused the statement (syntax error, missing table, SQLITE_BUSY, ...):
-        // report that. Empty or comment-only SQL yields no statement and is a plain Error;
-        // db.run() below reports it with a clearer message.
-        if (err && typeof err === "object" && "name" in err && err.name === "SQLiteError") throw err;
+        if (isSQLiteError(err)) throw err;
+        // Otherwise the SQL compiled to no statement (empty or comment-only); db.run() reports that.
       }
 
       if (stmt && stmt.native.columnsCount > 0) {
@@ -229,7 +232,7 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
       }
     } catch (err) {
       // Convert bun:sqlite errors to SQLiteError
-      if (err && typeof err === "object" && "name" in err && err.name === "SQLiteError") {
+      if (isSQLiteError(err)) {
         // Extract SQLite error properties
         const code = "code" in err ? String(err.code) : "SQLITE_ERROR";
         const errno = "errno" in err ? Number(err.errno) : 1;
@@ -287,7 +290,7 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
       } catch {}
     } catch (err) {
       // Convert bun:sqlite initialization errors to SQLiteError
-      if (err && typeof err === "object" && "name" in err && err.name === "SQLiteError") {
+      if (isSQLiteError(err)) {
         const code = "code" in err ? String(err.code) : "SQLITE_ERROR";
         const errno = "errno" in err ? Number(err.errno) : 1;
         const byteOffset = "byteOffset" in err ? Number(err.byteOffset) : undefined;

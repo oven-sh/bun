@@ -203,12 +203,12 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);
 
-    // node: a callable handler starts the port and keeps the loop alive; assigning anything else
-    // clears the handler and lets the loop exit again.
+    // node: a callable handler starts the port and keeps the loop alive. Assigning anything
+    // else just removes the handler; MessagePort::onDidChangeListenerImpl releases the refs
+    // only if that removed the last 'message' listener (so `onmessage = null` with nothing
+    // set, or with other listeners still attached, changes nothing, as in node).
     if (value.isCallable())
         thisObject.wrapped().jsRef(&lexicalGlobalObject);
-    else
-        thisObject.wrapped().jsUnref(&lexicalGlobalObject);
 
     return true;
 }
@@ -354,7 +354,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_closeBody(JSC::
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    impl.jsUnref(lexicalGlobalObject);
+    impl.jsUnref();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.close(); })));
 }
 
@@ -385,7 +385,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_unrefBody(JSC::
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.jsUnref(lexicalGlobalObject); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.jsUnref(); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_unref, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

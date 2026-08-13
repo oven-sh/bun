@@ -997,6 +997,202 @@ test("hasRef() survives collection of the unreferenced peer", () => {
   port1.close();
 });
 
+// port1.hasRef() after running `scenario` on a fresh channel. port2 stays reachable
+// until the end so that collecting it cannot close port1 underneath the scenario.
+async function hasRefAfter(scenario: (port1: MessagePort, port2: MessagePort) => void | Promise<void>) {
+  const { port1, port2 } = new MessageChannel();
+  try {
+    await scenario(port1, port2);
+    return port1.hasRef();
+  } finally {
+    port1.close();
+    port2.close();
+  }
+}
+
+// node's setupPortReferencing (lib/internal/worker/io.js) unref()s a port when its
+// last 'message' listener is removed, whether or not ref() was called on it before.
+test("removing the last 'message' listener releases an explicit ref() as well", async () => {
+  const f = () => {};
+  const g = () => {};
+  const results = {
+    refThenListenerRemoved: await hasRefAfter(p => {
+      p.ref();
+      p.on("message", f);
+      p.off("message", f);
+    }),
+    listenerThenRefThenRemoved: await hasRefAfter(p => {
+      p.on("message", f);
+      p.ref();
+      p.off("message", f);
+    }),
+    viaRemoveEventListener: await hasRefAfter(p => {
+      p.ref();
+      p.addEventListener("message", f);
+      p.removeEventListener("message", f);
+    }),
+    viaOnceListenerFiring: await hasRefAfter(async (p, peer) => {
+      p.ref();
+      const fired = new Promise<void>(resolve => p.once("message", () => resolve()));
+      peer.postMessage(1);
+      await fired;
+    }),
+    // None of these remove the last 'message' listener, so nothing is released.
+    oneOfTwoRemoved: await hasRefAfter(p => {
+      p.ref();
+      p.on("message", f);
+      p.on("message", g);
+      p.off("message", f);
+    }),
+    neverAddedListenerRemoved: await hasRefAfter(p => {
+      p.ref();
+      p.off("message", f);
+    }),
+    closeListenerRemoved: await hasRefAfter(p => {
+      p.ref();
+      p.on("close", f);
+      p.off("close", f);
+    }),
+    // The release is not sticky: a later listener or ref() refs the port again.
+    listenerAddedAgain: await hasRefAfter(p => {
+      p.ref();
+      p.on("message", f);
+      p.off("message", f);
+      p.on("message", g);
+    }),
+    refCalledAgain: await hasRefAfter(p => {
+      p.ref();
+      p.on("message", f);
+      p.off("message", f);
+      p.ref();
+    }),
+  };
+  expect(results).toEqual({
+    refThenListenerRemoved: false,
+    listenerThenRefThenRemoved: false,
+    viaRemoveEventListener: false,
+    viaOnceListenerFiring: false,
+    oneOfTwoRemoved: true,
+    neverAddedListenerRemoved: true,
+    closeListenerRemoved: true,
+    listenerAddedAgain: true,
+    refCalledAgain: true,
+  });
+});
+
+// bun's removeAllListeners() removes the listeners one by one, so it releases the port
+// exactly like off() on each of them would. (node's NodeEventTarget#removeAllListeners
+// bypasses its listener hooks and leaves a port with no listeners ref'd; bun does not
+// keep the listener-count ref there either, and the explicit ref follows the same rule.)
+test("removeAllListeners() releases an explicit ref() like off() does", async () => {
+  const f = () => {};
+  const results = {
+    byType: await hasRefAfter(p => {
+      p.ref();
+      p.on("message", f);
+      p.removeAllListeners("message");
+    }),
+    all: await hasRefAfter(p => {
+      p.ref();
+      p.on("message", f);
+      p.removeAllListeners();
+    }),
+    unrelatedType: await hasRefAfter(p => {
+      p.ref();
+      p.on("message", f);
+      p.removeAllListeners("close");
+    }),
+  };
+  expect(results).toEqual({ byType: false, all: false, unrelatedType: true });
+});
+
+// node: assigning a non-function to onmessage removes the handler, and the port is
+// unref()'d only if that removed its last 'message' listener. Clearing a handler that
+// was never set, or while on() listeners remain, leaves the ref state alone.
+test("onmessage = null releases the port only when it removed the last 'message' listener", async () => {
+  const f = () => {};
+  const g = () => {};
+  const results = {
+    handlerCleared: await hasRefAfter(p => {
+      p.onmessage = f;
+      p.onmessage = null;
+    }),
+    refdHandlerCleared: await hasRefAfter(p => {
+      p.ref();
+      p.onmessage = f;
+      p.onmessage = null;
+    }),
+    nothingToClear: await hasRefAfter(p => {
+      p.ref();
+      p.onmessage = null;
+    }),
+    onListenerRemains: await hasRefAfter(p => {
+      p.on("message", f);
+      p.onmessage = g;
+      p.onmessage = null;
+    }),
+    onListenerOnly: await hasRefAfter(p => {
+      p.on("message", f);
+      p.onmessage = null;
+    }),
+  };
+  expect(results).toEqual({
+    handlerCleared: false,
+    refdHandlerCleared: false,
+    nothingToClear: true,
+    onListenerRemains: true,
+    onListenerOnly: true,
+  });
+});
+
+// End to end: once the listener is gone nothing about the port may hold the process open.
+test.concurrent("a ref()'d port whose last 'message' listener was removed lets the process exit", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { MessageChannel } = require("worker_threads");
+       const { port1, port2 } = new MessageChannel();
+       // Keep the peer reachable: collecting it would close port1 (and release its refs) by itself.
+       globalThis.keep = port2;
+       const f = () => {};
+       port1.ref();
+       port1.on("message", f);
+       port1.off("message", f);
+       console.log("hasRef=" + port1.hasRef());
+       // Never fires when the port released the loop; bounds the failure mode (a process
+       // that stays alive) instead of letting the test run into its timeout.
+       setTimeout(() => { console.log("still alive"); process.exit(1); }, 2_000).unref();`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("hasRef=false\n");
+  expect(exitCode).toBe(0);
+});
+
+// Same rule for parentPort: node's worker exits once the listeners are gone even if
+// the script ref()'d the port explicitly.
+test("a ref()'d parentPort whose last 'message' listener was removed lets the worker exit", async () => {
+  const w = new Worker(
+    `const { parentPort } = require("worker_threads");
+     const f = () => {};
+     parentPort.ref();
+     parentPort.on("message", f);
+     parentPort.off("message", f);
+     parentPort.postMessage(parentPort.hasRef());
+     // Never fires when the port released the loop; bounds the failure mode (a worker
+     // that stays alive) with a distinctive exit code.
+     setTimeout(() => process.exit(7), 2_000).unref();`,
+    { eval: true },
+  );
+  const hasRef = once(w, "message");
+  const exited = once(w, "exit");
+  expect({ hasRef: (await hasRef)[0], exitCode: (await exited)[0] }).toEqual({ hasRef: false, exitCode: 0 });
+});
+
 // markAsUncloneable blocks *cloning*, not transfer: a marked port in the transfer
 // list is moved, so node lets it through and it still works on the far side.
 test("markAsUncloneable blocks cloning a port but not transferring it", async () => {

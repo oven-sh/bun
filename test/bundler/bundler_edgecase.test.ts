@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isBroken, isWindows, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
 
 // A public path composes with the referenced file's path relative to the output
@@ -3304,6 +3305,49 @@ describe("bundler", () => {
     },
     run: { stdout: importMetaCjsStdout },
   });
+  // The inlined values are those of the source file being parsed, like
+  // `__dirname`: a file in a subdirectory gets its own directory, and `url` is
+  // the source file's URL rather than the bundle's.
+  const importMetaPathsFiles = {
+    "/entry.js": /* js */ `
+      import { dep } from "./lib/dep.js";
+      console.log(
+        JSON.stringify([
+          import.meta.dir,
+          import.meta.dirname,
+          import.meta.file,
+          import.meta.path,
+          import.meta.filename,
+          import.meta.url,
+          dep,
+        ]),
+      );
+    `,
+    "/lib/dep.js": /* js */ `
+      export const dep = [import.meta.dir, import.meta.file, import.meta.path, import.meta.url];
+    `,
+  };
+  const importMetaPathsStdout = (root: string) =>
+    JSON.stringify([
+      root,
+      root,
+      "entry.js",
+      join(root, "entry.js"),
+      join(root, "entry.js"),
+      pathToFileURL(join(root, "entry.js")).href,
+      [join(root, "lib"), "dep.js", join(root, "lib", "dep.js"), pathToFileURL(join(root, "lib", "dep.js")).href],
+    ]);
+  itBundled("edgecase/ImportMetaCjsPathsAreInlinedPerFile", ({ root }) => ({
+    files: importMetaPathsFiles,
+    format: "cjs",
+    target: "node",
+    outfile: "out.cjs",
+    onAfterBundle(api) {
+      api.expectFile("out.cjs").not.toContain("import.meta");
+      api.expectFile("out.cjs").not.toContain("import_meta");
+    },
+    run: { runtime: "node", stdout: importMetaPathsStdout(root) },
+  }));
   itBundled("edgecase/ImportMetaCjsExpressionShapes", {
     files: {
       "/entry.js": /* js */ `
@@ -3444,10 +3488,32 @@ describe("bundler", () => {
     },
     run: { runtime: "node", stdout: "{} undefined true entry.js" },
   });
-  itBundled("edgecase/ImportMetaIifeTargetBunKeepsImportMeta", {
+  itBundled("edgecase/ImportMetaIifePathsAreInlinedPerFile", ({ root }) => ({
+    files: importMetaPathsFiles,
+    format: "iife",
+    target: "browser",
+    outfile: "out.cjs",
+    onAfterBundle(api) {
+      api.expectFile("out.cjs").not.toContain("import.meta");
+      api.expectFile("out.cjs").not.toContain("import_meta");
+    },
+    run: { runtime: "node", stdout: importMetaPathsStdout(root) },
+  }));
+  itBundled("edgecase/ImportMetaIifePathsAreInlinedPerFileTargetNode", ({ root }) => ({
+    files: importMetaPathsFiles,
+    format: "iife",
+    target: "node",
+    outfile: "out.cjs",
+    onAfterBundle(api) {
+      api.expectFile("out.cjs").not.toContain("import.meta");
+      api.expectFile("out.cjs").not.toContain("import_meta");
+    },
+    run: { runtime: "node", stdout: importMetaPathsStdout(root) },
+  }));
+  itBundled("edgecase/ImportMetaIifeTargetBunKeepsImportMeta", ({ root }) => ({
     files: {
       "/entry.js": /* js */ `
-        console.log(typeof import.meta.resolve, typeof import.meta.require, import.meta.url.startsWith("file:///"));
+        console.log(typeof import.meta.resolve, typeof import.meta.require, import.meta.url);
       `,
     },
     format: "iife",
@@ -3458,8 +3524,9 @@ describe("bundler", () => {
       expect(code).toContain("import.meta.url");
       expect(code).not.toContain("import_meta");
     },
-    run: { stdout: "function function true" },
-  });
+    // The bundle's own `import.meta`, not entry.js's inlined one.
+    run: { stdout: `function function ${pathToFileURL(join(root, "out.js")).href}` },
+  }));
   itBundled("edgecase/ImportMetaEsmKeepsImportMeta", {
     files: {
       "/entry.js": /* js */ `

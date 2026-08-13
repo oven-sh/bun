@@ -311,17 +311,19 @@ impl JSMySQLConnection {
             return;
         }
 
-        // Don't kill a healthy in-flight query (#30646): retry once idle.
+        // Don't kill a healthy in-flight query (#30646): flag the connection
+        // and retire at the next queue-drain boundary instead.
         if self.connection.get().status == my_sql_connection::Status::Connected
             && !self.connection.get().is_idle()
         {
-            self.max_lifetime_timer.with_mut(|t| {
-                t.next = timespec::ms_from_now(TimespecMockMode::AllowMockedTime, 1000);
-                self.vm_mut().timer().insert(t);
-            });
+            self.connection_mut().set_lifetime_exceeded();
             return;
         }
 
+        self.fail_lifetime_timeout();
+    }
+
+    fn fail_lifetime_timeout(&self) {
         use bun_core::fmt::{ConnTimeoutKind, fmt_conn_timeout};
         self.fail_fmt(
             AnyMySQLErrorT::LifetimeTimeout,
@@ -334,6 +336,18 @@ impl JSMySQLConnection {
                 )
             ),
         );
+    }
+
+    /// Retires a connection whose maxLifetime expired mid-query, once the
+    /// queue has nothing in flight. Returns true when it failed the connection.
+    pub(crate) fn retire_if_lifetime_exceeded(&self) -> bool {
+        if self.connection.get().status != my_sql_connection::Status::Connected
+            || !self.connection.get().is_lifetime_exceeded()
+        {
+            return false;
+        }
+        self.fail_lifetime_timeout();
+        true
     }
 
     fn setup_max_lifetime_timer_if_necessary(&self) {

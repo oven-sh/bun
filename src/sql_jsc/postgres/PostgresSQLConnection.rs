@@ -2492,12 +2492,19 @@ impl PostgresSQLConnection {
                     }
                 }
 
-                // maxLifetime expired mid-query; the query is done, so retire
-                // before advance() dispatches more work.
+                // maxLifetime expired mid-query: retire before advance() dispatches
+                // more work, but only once the head request is finished. A named
+                // statement's Parse+Describe+Sync gets its own ReadyForQuery first.
                 if self
                     .flags
                     .get()
                     .contains(ConnectionFlags::LIFETIME_EXCEEDED)
+                    && self.current().is_none_or(|request| {
+                        matches!(
+                            request.status.get(),
+                            QueryStatus::Success | QueryStatus::Fail
+                        )
+                    })
                 {
                     self.fail_lifetime_timeout();
                     self.update_ref();

@@ -365,10 +365,8 @@ if (isDockerEnabled()) {
           // Before the fix this rejected with ERR_MYSQL_LIFETIME_TIMEOUT.
           const result = await sql`select SLEEP(3) as s, 42 as x`;
           expect(result[0].x).toBe(42);
-          // The lifetime timer must not have killed the query mid-flight.
-          expect(onclose).not.toHaveBeenCalled();
 
-          // Once idle, the rescheduled timer retires the connection with the
+          // The connection is then retired at the drain boundary with the
           // documented error code, and the pool reconnects.
           const err = await onClosePromise.promise;
           expect(err).toBeInstanceOf(SQL.SQLError);

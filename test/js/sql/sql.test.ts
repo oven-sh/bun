@@ -911,6 +911,29 @@ if (isDockerEnabled()) {
       expect(pidAfter).not.toBe(pidBefore);
     }, 30_000);
 
+    test("Max lifetime does not kill an in-flight parameterized query (#30646)", async () => {
+      const onClosePromise = Promise.withResolvers();
+      const onclose = mock(err => {
+        onClosePromise.resolve(err);
+      });
+      await using sql = postgres({
+        ...options,
+        max_lifetime: 1,
+        onclose,
+        max: 1,
+      });
+
+      // A parameterized query uses a named statement (Parse+Describe+Sync gets
+      // its own ReadyForQuery before Bind+Execute). Retirement must wait for
+      // the query to finish, not fire on the prepare round-trip.
+      const result = await sql`select pg_sleep(2), ${42}::int as x`;
+      expect(result[0].x).toBe(42);
+
+      const err = await onClosePromise.promise;
+      expect(err).toBeInstanceOf(SQL.PostgresError);
+      expect(err.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
+    }, 30_000);
+
     test("Idle timeout does not kill an in-flight query (#30646)", async () => {
       const onClosePromise = Promise.withResolvers();
       const onclose = mock(err => {

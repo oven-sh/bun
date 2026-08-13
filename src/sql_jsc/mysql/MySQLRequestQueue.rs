@@ -122,6 +122,16 @@ impl MySQLRequestQueue {
         // momentary `Deref` lifetime. All queue mutation below goes through
         // `Cell`/`JsCell` interior mutability — `&Self` is sufficient.
         let queue_ref: ParentRef<Self> = ParentRef::new(&conn_ref.connection.get().queue);
+
+        // maxLifetime expired mid-query (#30646): retire at the drain boundary,
+        // before dispatching more work, instead of killing the in-flight query.
+        if queue_ref.pipelined_requests.get() == 0
+            && queue_ref.nonpipelinable_requests.get() == 0
+            && conn_ref.retire_if_lifetime_exceeded()
+        {
+            return;
+        }
+
         // reshaped for borrowck — the cleanup that must run at function exit
         // became a post-block pass; early returns become
         // `break 'advance` so cleanup always runs at function exit.

@@ -545,8 +545,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse, (JSC::JSGlobalObj
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterFd, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
 {
-    // No DOMAttribute on this CustomAccessor, so JSC may pass an arbitrary
-    // receiver: dynamicDowncast, not uncheckedDowncast, and -1 for foreign receivers.
     auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsNumber(-1));
@@ -556,7 +554,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterFd, (JSC::JSGlobalObject * 
         return JSValue::encode(JSC::jsNumber(-1));
     }
 #if OS(WINDOWS)
-    // SOCKET is UINT_PTR; widen via double so FFI callers get the full value.
     return JSValue::encode(JSC::jsNumber(static_cast<double>(us_socket_get_fd(socket))));
 #else
     return JSValue::encode(JSC::jsNumber(us_socket_get_fd(socket)));

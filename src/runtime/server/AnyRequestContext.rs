@@ -180,7 +180,7 @@ impl AnyRequestContext {
         dispatch!(self, None, |_T, ctx| ctx.get_remote_socket_info())
     }
 
-    pub fn get_fd(self) -> Option<bun_core::Fd> {
+    pub(crate) fn get_fd(self) -> Option<bun_core::Fd> {
         dispatch!(self, None, |T, ctx| {
             // HTTP/3 multiplexes streams over one UDP socket — no per-request fd.
             if T::IS_H3 {

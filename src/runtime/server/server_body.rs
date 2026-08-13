@@ -1573,7 +1573,7 @@ where
 
     /// `pub const doRequestFD = host_fn.wrapInstanceMethod(ThisServer, "requestFD", false)`
     #[bun_jsc::host_fn(method)]
-    pub fn do_request_fd(
+    pub(crate) fn do_request_fd(
         &mut self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1633,7 +1633,7 @@ where
         )
     }
 
-    pub fn request_fd(&self, request: &Request) -> JsResult<JSValue> {
+    pub(crate) fn request_fd(&self, request: &Request) -> JsResult<JSValue> {
         use bun_sys_jsc::FdJsc as _;
         let Some(fd) = request.request_context.get_fd() else {
             return Ok(JSValue::NULL);

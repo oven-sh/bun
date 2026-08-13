@@ -352,8 +352,7 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
-    /// Real OS fd (Windows: SOCKET) via `us_socket_get_fd`, unlike
-    /// `get_native_handle`, which returns the `SSL*` pointer for TLS.
+    /// Real OS fd via `us_socket_get_fd`, unlike `get_native_handle` (SSL* for TLS).
     pub fn get_fd(&mut self) -> Fd {
         // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
         us_socket_t::opaque_mut(self.downcast_socket()).get_fd()

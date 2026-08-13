@@ -852,9 +852,31 @@ describe.concurrent("--env-file", () => {
       expect(exitCode).toBe(1);
     });
 
+    // A pipe opens fine but cannot be read the way a file is (pread), so this is
+    // a read failure outside the set a default .env file tolerates. It used to
+    // exit 1 without printing anything. A shell pipeline is used because
+    // Bun.spawn's stdin: "pipe" hands the child a socket, which fails at open.
+    test.skipIf(isWindows)("a pipe (opens, then fails to read with an errno defaults never see)", async () => {
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", 'echo BUNTEST_P=1 | exec "$0" --env-file=/dev/stdin "$1"', bunExe(), `${dir}/index.ts`],
+        cwd: dir,
+        env: { ...bunEnv, NODE_ENV: undefined },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "",
+        stderr: 'error: ESPIPE loading env file "/dev/stdin"\n',
+        exitCode: 1,
+      });
+    });
+
     test("a worker inherits the values instead of re-reading the file", async () => {
       using workerDir = tempDir("dotenv-worker", {
         ".env.w": "BUNTEST_W=1",
+        // --env-file turned default discovery off in the parent; the worker must not turn it back on.
+        ".env": "BUNTEST_DOTENV=1",
         "index.ts": `
           import { unlinkSync } from "fs";
           unlinkSync(".env.w");
@@ -864,10 +886,10 @@ describe.concurrent("--env-file", () => {
             worker.terminate();
           };
         `,
-        "worker.ts": `postMessage(process.env.BUNTEST_W);`,
+        "worker.ts": `postMessage(JSON.stringify({ w: process.env.BUNTEST_W, dotenv: process.env.BUNTEST_DOTENV }));`,
       });
       expect(await spawnEnvFile(["--env-file=.env.w", "index.ts"], String(workerDir))).toEqual({
-        stdout: "1\n",
+        stdout: '{"w":"1"}\n',
         stderr: "",
         exitCode: 0,
       });

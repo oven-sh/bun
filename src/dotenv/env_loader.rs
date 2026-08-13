@@ -861,15 +861,11 @@ impl Loader {
             Err(err) => return Err(explicit_env_file_failed(file_path, err.name())),
         };
 
-        match read_env_file_contents(&file)? {
-            ReadEnvFile::Empty => {}
-            ReadEnvFile::ReadErr(err) => {
-                return Err(explicit_env_file_failed(file_path, err.name()));
-            }
-            ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
-            }
-        }
+        let buf = match file.read_to_end() {
+            Ok(buf) => buf,
+            Err(err) => return Err(explicit_env_file_failed(file_path, err.name())),
+        };
+        Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
 
         self.custom_files_loaded.insert(file_path)?;
         Ok(())
@@ -886,15 +882,12 @@ fn explicit_env_file_failed(file_path: &[u8], errno_name: &[u8]) -> crate::Error
     crate::Error::EnvFileLoadFailed
 }
 
-/// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`:
-/// `File::read_to_end` (fstat-presized) with the recoverable-errno filter.
-/// The two callers differ in their open path, open-error handling, and the
-/// memo slot they write — those stay in the callers. Only the shared read
-/// tail is factored here.
+/// Read tail of `load_env_file`: `read_to_end` plus the errnos that merely skip a default file.
 enum ReadEnvFile {
     /// Zero-length — caller marks the slot and returns.
     Empty,
-    /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR); defaults skip it, explicit files fail.
+    /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — caller prints
+    /// (unless `quiet`), marks the slot, and returns.
     ReadErr(bun_sys::Error),
     /// File contents; `buf.len()` is the amount read.
     Bytes(Vec<u8>),

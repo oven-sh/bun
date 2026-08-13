@@ -1924,10 +1924,9 @@ impl BlobExt for Blob {
                     opts.input_path = input_path;
                 }
                 _ => {
-                    stream_start = streams::Start::FileSink(streams::FileSinkOptions {
-                        input_path,
-                        ..Default::default()
-                    });
+                    unreachable!(
+                        "from_js_with_tag::<FileSink> returns only FileSink or Err for an object"
+                    )
                 }
             }
 

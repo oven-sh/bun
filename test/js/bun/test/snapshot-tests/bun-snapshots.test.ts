@@ -143,6 +143,33 @@ test("snapshot records the matchers that were checked", () => {
   expect(headers).toMatchSnapshot({ append: expect.any(Function) });
   expect(Object.hasOwn(headers, "append")).toBe(false);
   expect(headers.get("x-a")).toBe("1");
+
+  const event = new Event("x");
+  expect(event).toMatchSnapshot({ timeStamp: expect.any(Number) });
+  expect(Object.hasOwn(event, "timeStamp")).toBe(false);
+  expect(typeof event.timeStamp).toBe("number");
+
+  // Events with a dedicated rendering (message/error) fall back to the
+  // by-properties rendering once a matcher is recorded on them.
+  const message = new MessageEvent("message", { data: "hi" });
+  expect(message).toMatchSnapshot({ data: expect.any(String) });
+  expect(message.data).toBe("hi");
+});
+
+test("a matcher checked through a getter is recorded under the getter and on the object behind it", () => {
+  class Wrapper {
+    _user: { name: string };
+    constructor() {
+      this._user = { name: "alice" };
+    }
+    get user() {
+      return this._user;
+    }
+  }
+  const wrapper = new Wrapper();
+  expect(wrapper).toMatchSnapshot({ user: { name: expect.any(String) } });
+  expect(wrapper._user.name).toBe("alice");
+  expect(Object.hasOwn(wrapper, "user")).toBe(false);
 });
 
 describe("toMatchSnapshot errors", () => {

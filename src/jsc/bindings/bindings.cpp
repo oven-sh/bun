@@ -2318,8 +2318,7 @@ struct AsymmetricMatcherSubstitution {
     JSGlobalObject* globalObject;
     ThrowScope& throwScope;
     MarkedArgumentBuffer& gcBuffer;
-    // One clone per received object, so shared objects and back-references
-    // (the formatter's [Circular] is identity-based) render as they did.
+    // One clone per received object (see redirectToClones).
     std::unordered_map<EncodedJSValue, JSObject*> clones;
     // deepMatch's seen sets.
     std::set<EncodedJSValue> receivedPath;
@@ -2343,7 +2342,7 @@ struct AsymmetricMatcherSubstitution {
             clone = JSC::constructEmptyArray(globalObject, nullptr, received->getArrayLength());
         } else {
             JSC::JSType type = received->type();
-            bool rendersOwnProperties = type == JSC::FinalObjectType || type == JSC::ObjectType || type == JSC::JSType(JSDOMWrapperType);
+            bool rendersOwnProperties = type == JSC::FinalObjectType || type == JSC::ObjectType || type == JSC::JSType(JSDOMWrapperType) || type == JSC::JSType(JSEventType);
             if (!rendersOwnProperties && type != JSC::ErrorInstanceType) return nullptr;
 
             // The formatter takes the class name (or Error name) from the prototype.
@@ -2380,10 +2379,6 @@ struct AsymmetricMatcherSubstitution {
             JSValue v = slot.getValue(globalObject, name);
             RETURN_IF_EXCEPTION(throwScope, nullptr);
             if (v.isEmpty()) continue;
-            if (v.isCell()) {
-                auto cloned = clones.find(JSValue::encode(v));
-                if (cloned != clones.end()) v = cloned->second;
-            }
             unsigned attributes = slot.attributes() & PropertyAttribute::DontEnum;
             if (std::optional<uint32_t> index = parseIndex(name))
                 clone->putDirectIndex(globalObject, index.value(), v, attributes, PutDirectIndexLikePutDirect);
@@ -2392,6 +2387,45 @@ struct AsymmetricMatcherSubstitution {
             RETURN_IF_EXCEPTION(throwScope, nullptr);
         }
         return clone;
+    }
+
+    // The copies above still point at the originals of objects that were
+    // cloned later in the walk (a back-reference, a shared object, the field
+    // behind a getter). Point them at the clones so each object renders one way.
+    void redirectToClones()
+    {
+        auto& vm = globalObject->vm();
+        for (const auto& [original, clone] : clones) {
+            PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+            clone->methodTable()->getOwnPropertyNames(clone, globalObject, names, DontEnumPropertiesMode::Include);
+            RETURN_IF_EXCEPTION(throwScope, );
+            for (const auto& name : names) {
+                JSC::PropertySlot slot(clone, PropertySlot::InternalMethodType::Get);
+                bool hasProperty = clone->methodTable()->getOwnPropertySlot(clone, globalObject, name, slot);
+                RETURN_IF_EXCEPTION(throwScope, );
+                if (!hasProperty || slot.isAccessor()) continue;
+                JSValue v = slot.getValue(globalObject, name);
+                RETURN_IF_EXCEPTION(throwScope, );
+                if (!v.isCell()) continue;
+                auto target = clones.find(JSValue::encode(v));
+                if (target == clones.end()) continue;
+                unsigned attributes = slot.attributes() & PropertyAttribute::DontEnum;
+                if (std::optional<uint32_t> index = parseIndex(name))
+                    clone->putDirectIndex(globalObject, index.value(), target->second, attributes, PutDirectIndexLikePutDirect);
+                else
+                    clone->putDirect(vm, name, target->second, attributes);
+                RETURN_IF_EXCEPTION(throwScope, );
+            }
+        }
+    }
+
+    JSValue run(JSObject* received, JSObject* matchers)
+    {
+        JSValue result = substitute(received, matchers);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        redirectToClones();
+        RETURN_IF_EXCEPTION(throwScope, {});
+        return result;
     }
 
     // Returns what to serialize in place of `received`.
@@ -3472,7 +3506,7 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__substituteAsymmetricMatchers(JSC::E
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
     MarkedArgumentBuffer gcBuffer;
     AsymmetricMatcherSubstitution substitution { globalObject, scope, gcBuffer };
-    JSValue result = substitution.substitute(received, matchers);
+    JSValue result = substitution.run(received, matchers);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(result);
 }

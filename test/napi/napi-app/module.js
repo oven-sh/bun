@@ -360,23 +360,34 @@ nativeTests.test_get_all_property_names_throwing_proxy_traps = () => {
     ),
   );
 
-  const throwingPrototype = new Proxy(
-    { a: 1 },
+};
+
+nativeTests.test_get_all_property_names_get_prototype_throws_in_descriptor_walk = () => {
+  const napi_key_include_prototypes = 0;
+  const napi_key_enumerable = 1 << 1;
+  const napi_key_keep_numbers = 0;
+
+  // Key collection asks the proxy for its prototype once and must succeed so
+  // the descriptor walk is reached; the walk asks again (the target does not
+  // own "a") and that second call throws.
+  let calls = 0;
+  const proxy = new Proxy(
+    {},
     {
+      ownKeys: () => ["a"],
       getPrototypeOf() {
-        throw new Error("getPrototypeOf trap");
+        if (calls++ > 0) throw new Error("getPrototypeOf trap");
+        return null;
       },
     },
   );
-  show(
-    "include_prototypes getPrototypeOf throws:",
-    nativeTests.get_all_property_names(
-      Object.create(throwingPrototype),
-      napi_key_include_prototypes,
-      napi_key_enumerable,
-      napi_key_keep_numbers,
-    ),
+  const { status, keys, exception } = nativeTests.get_all_property_names(
+    Object.create(proxy),
+    napi_key_include_prototypes,
+    napi_key_enumerable,
+    napi_key_keep_numbers,
   );
+  console.log(`status=${status} keys=${JSON.stringify(keys)} exception=${exception?.message} calls=${calls}`);
 };
 
 nativeTests.test_set_property = () => {

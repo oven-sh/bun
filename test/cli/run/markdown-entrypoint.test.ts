@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, rmSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isPosix, tempDir, tls } from "harness";
-import { once } from "node:events";
-import net from "node:net";
 import { join } from "path";
 
 // The remote-image prefetch reads the proxy and TLS variables from the
@@ -428,9 +426,12 @@ describe.concurrent.skipIf(!isPosix)("bun <file.md> remote image prefetch honors
   const ORIGIN_BODY = "image bytes served by the origin";
   const PROXY_BODY = "image bytes served by the proxy";
 
-  // An HTTP proxy receives the target as an absolute URL, so `req.url` here is
-  // the image URL the child asked for. Answering in the origin's place (rather
-  // than forwarding) lets the staged bytes show whose answer was used.
+  // Serves as the origin or as the proxy. A proxy is asked for an http target
+  // as `GET <absolute image URL>` and for an https target as `CONNECT
+  // host:port`; `req.url` carries that target either way. Answering in the
+  // origin's place (rather than forwarding) lets the staged bytes show whose
+  // answer was used, and refusing the tunnel is enough since these tests are
+  // only about where the request went.
   function recordingServer(body: string, options: { tls?: typeof tls } = {}) {
     const log: string[] = [];
     const server = Bun.serve({
@@ -439,6 +440,7 @@ describe.concurrent.skipIf(!isPosix)("bun <file.md> remote image prefetch honors
       tls: options.tls,
       fetch(req) {
         log.push(`${req.method} ${req.url}`);
+        if (req.method === "CONNECT") return new Response(null, { status: 403 });
         return new Response(body, { headers: { "content-type": "image/png" } });
       },
     });
@@ -447,39 +449,6 @@ describe.concurrent.skipIf(!isPosix)("bun <file.md> remote image prefetch honors
       port: server.port,
       [Symbol.dispose]() {
         server.stop(true);
-      },
-    };
-  }
-
-  // https targets reach a proxy as `CONNECT host:port`. Bun.serve does not
-  // take CONNECT, so record the request line on a raw socket and refuse the
-  // tunnel: routing is all these tests are about.
-  async function connectRecorder() {
-    const log: string[] = [];
-    const sockets = new Set<net.Socket>();
-    const server = net.createServer(socket => {
-      sockets.add(socket);
-      socket.on("error", () => {});
-      socket.on("close", () => sockets.delete(socket));
-      let head = "";
-      socket.on("data", chunk => {
-        if (head.includes("\r\n")) return;
-        head += chunk.toString("latin1");
-        const eol = head.indexOf("\r\n");
-        if (eol === -1) return;
-        log.push(head.slice(0, eol));
-        socket.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
-      });
-    });
-    server.listen(0, "127.0.0.1");
-    await once(server, "listening");
-    return {
-      log,
-      port: (server.address() as net.AddressInfo).port,
-      async [Symbol.asyncDispose]() {
-        for (const socket of sockets) socket.destroy();
-        server.close();
-        await once(server, "close");
       },
     };
   }
@@ -533,13 +502,13 @@ describe.concurrent.skipIf(!isPosix)("bun <file.md> remote image prefetch honors
 
   test("https image asks https_proxy for a CONNECT tunnel", async () => {
     using origin = recordingServer(ORIGIN_BODY, { tls });
-    await using proxy = await connectRecorder();
+    using proxy = recordingServer(PROXY_BODY);
     const imageUrl = `https://127.0.0.1:${origin.port}/img.png`;
 
     const { exitCode, staged } = await prefetch(imageUrl, { https_proxy: `http://127.0.0.1:${proxy.port}` });
 
     expect({ proxy: proxy.log, origin: origin.log, staged }).toEqual({
-      proxy: [`CONNECT 127.0.0.1:${origin.port} HTTP/1.1`],
+      proxy: [`CONNECT 127.0.0.1:${origin.port}`],
       origin: [],
       staged: [],
     });

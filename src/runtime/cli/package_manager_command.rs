@@ -202,7 +202,19 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             .is_some_and(|arg| strings::eql_comptime(arg.as_bytes(), b"whoami"));
 
         let cli = CommandLineArguments::parse(Subcommand::Pm)?;
-        let (pm, cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Pm) {
+        let mut positionals = cli.positionals;
+        let subcommand = Self::get_subcommand(&mut positionals);
+        let init_result = if strings::eql_comptime(subcommand, b"view") {
+            PackageManager::init_for_registry_view(
+                &mut *ctx,
+                cli,
+                Subcommand::Pm,
+                positionals.get(1).copied().unwrap_or_default(),
+            )
+        } else {
+            PackageManager::init(&mut *ctx, cli, Subcommand::Pm)
+        };
+        let (pm, cwd) = match init_result {
             Ok(v) => v,
             Err(err) => {
                 if err == bun_install::Error::MissingPackageJSON {

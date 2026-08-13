@@ -1938,29 +1938,18 @@ To create a project with the official Next.js scaffolding tool, run\n\
         // Parse arguments manually since the standard flow doesn't work for standalone commands
         let cli = CommandLineArguments::parse(PmSubcommand::Info)?;
         let json_output = cli.json_output;
+
+        // `positionals[0]` is the `info` keyword itself.
+        let positionals = match cli.positionals {
+            [b"info", rest @ ..] => rest,
+            rest => rest,
+        };
+        let package_name: &[u8] = positionals.first().copied().unwrap_or_default();
+        let property_path: Option<&[u8]> = positionals.get(1).copied();
+
         let ctx = init(Tag::InfoCommand, log)?;
-        let (pm, _) = PackageManager::init(ctx, cli, Subcommand::Info)?;
-
-        // Handle arguments correctly for standalone info command
-        let mut package_name: &[u8] = b"";
-        let mut property_path: Option<&[u8]> = None;
-
-        // Find non-flag arguments starting from argv[2] (after "bun info").
-        let mut found_package = false;
-        let argv = bun::argv();
-        for arg in argv.iter().skip(2) {
-            // Skip flags
-            if !arg.is_empty() && arg[0] == b'-' {
-                continue;
-            }
-            if !found_package {
-                package_name = arg;
-                found_package = true;
-            } else {
-                property_path = Some(arg);
-                break;
-            }
-        }
+        let (pm, _) =
+            PackageManager::init_for_registry_view(ctx, cli, Subcommand::Info, package_name)?;
 
         super::pm_view_command::view(pm, package_name, property_path, json_output)
     }

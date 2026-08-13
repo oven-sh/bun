@@ -2686,10 +2686,7 @@ impl PostgresSQLConnection {
                         }
 
                         let iteration_count = cont.iteration_count()?;
-                        // RFC 5802 §5.1 only requires i to be a positive integer
-                        // (RFC 7677's 4096 is advice to servers; PostgreSQL 16+
-                        // `scram_iterations` may be as low as 1 and libpq accepts
-                        // any i >= 1), so 0 is the only malformed value.
+                        // PostgreSQL 16+ scram_iterations may be as low as 1; only 0 is malformed.
                         if iteration_count == 0 {
                             debug!("SASLContinue iteration count is zero");
                             return Err(AnyPostgresError::InvalidMessage);

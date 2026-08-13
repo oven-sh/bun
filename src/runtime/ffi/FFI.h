@@ -142,6 +142,7 @@ static bool JSVALUE_IS_CELL(EncodedJSValue val) __attribute__((__always_inline__
 static bool JSVALUE_IS_INT32(EncodedJSValue val) __attribute__((__always_inline__)); 
 static bool JSVALUE_IS_NUMBER(EncodedJSValue val) __attribute__((__always_inline__));
 
+static uint64_t DOUBLE_JSVALUE_TO_INT64_BITS(EncodedJSValue value) __attribute__((__always_inline__));
 static uint64_t JSVALUE_TO_UINT64(EncodedJSValue value) __attribute__((__always_inline__));
 static int64_t  JSVALUE_TO_INT64(EncodedJSValue value) __attribute__((__always_inline__));
 uint64_t JSVALUE_TO_UINT64_SLOW(EncodedJSValue value);
@@ -311,13 +312,33 @@ static bool JSVALUE_TO_BOOL(EncodedJSValue val) {
 }
 
 
+// ToInt64 / ToUint64 of a double-encoded number, i.e. JSC's toIntImpl<int64_t> (runtime/MathCommon.h),
+// which the engine applies to i64/u64 arguments: truncate, keep the low 64 bits, NaN/Infinity -> 0.
+// Not a C cast, which is undefined for the negative and >= 2^64 values this has to wrap.
+static uint64_t DOUBLE_JSVALUE_TO_INT64_BITS(EncodedJSValue value) {
+  uint64_t bits = (uint64_t)(value.asInt64 - DoubleEncodeOffset);
+  int32_t exp = (int32_t)((bits >> 52) & 0x7ff) - 0x3ff;
+  // |value| < 1, or no mantissa bit reaches the low 64 bits (this includes NaN and Infinity, exp 1024).
+  if (exp < 0 || exp > 63 + 52) {
+    return 0;
+  }
+  uint64_t result = exp > 52 ? bits << (exp - 52) : bits >> (52 - exp);
+  if (exp < 64) {
+    // Mask off the shifted-along sign and exponent bits, then reinsert the implicit leading 1.
+    uint64_t implicit_one = (uint64_t)1 << exp;
+    result &= implicit_one - 1;
+    result += implicit_one;
+  }
+  return (bits >> 63) ? (uint64_t)0 - result : result;
+}
+
 static uint64_t JSVALUE_TO_UINT64(EncodedJSValue value) {
   if (JSVALUE_IS_INT32(value)) {
     return (uint64_t)JSVALUE_TO_INT32(value);
   }
 
   if (JSVALUE_IS_NUMBER(value)) {
-    return (uint64_t)JSVALUE_TO_DOUBLE(value);
+    return DOUBLE_JSVALUE_TO_INT64_BITS(value);
   }
 
   if (JSCELL_IS_TYPED_ARRAY(value)) {
@@ -332,7 +353,7 @@ static int64_t JSVALUE_TO_INT64(EncodedJSValue value) {
   }
 
   if (JSVALUE_IS_NUMBER(value)) {
-    return (int64_t)JSVALUE_TO_DOUBLE(value);
+    return (int64_t)DOUBLE_JSVALUE_TO_INT64_BITS(value);
   }
 
   return JSVALUE_TO_INT64_SLOW(value);

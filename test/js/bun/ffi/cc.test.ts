@@ -934,6 +934,165 @@ describe("double <-> JSValue conversions", () => {
     });
   });
 
+  // A 64-bit integer parameter takes a JS number modulo 2^64 (truncate, keep
+  // the low 64 bits; NaN and the infinities become 0), which is what the
+  // int32-encoded and BigInt paths always did. Whether an integral number is
+  // int32-encoded or double-encoded is the engine's choice (reads from an
+  // array of doubles, JIT double speculation, Math.* results), so the double
+  // path has to agree with the int32 path: cc()'s JSVALUE_TO_UINT64 (FFI.h)
+  // converted double-encoded numbers with a C cast that TinyCC compiles into a
+  // sign-ignoring helper (-1 reached C as 1), and the engine converter behind
+  // dlopen/linkSymbols/CFunction/JSCallback used the CPU's signed truncation,
+  // which folds every u64 in [2^63, 2^64) into 2^63. Both paths run the same
+  // inputs through the same C functions here and are held to the same table.
+  it("i64/u64 arguments take double-encoded numbers modulo 2^64, identically through cc() and the engine", async () => {
+    using dir = tempDir("bun-ffi-int64-args", {
+      "int64.c": /* c */ `
+        unsigned long long echo_u64(unsigned long long x) { return x; }
+        unsigned long long echo_u64_fast(unsigned long long x) { return x; }
+        long long echo_i64(long long x) { return x; }
+        long long echo_i64_fast(long long x) { return x; }
+        void* addr_echo_u64(void) { return (void*)&echo_u64; }
+        void* addr_echo_i64(void) { return (void*)&echo_i64; }
+        typedef unsigned long long (*u64_callback)(void);
+        typedef long long (*i64_callback)(void);
+        unsigned long long call_u64_callback(u64_callback callback) { return callback(); }
+        long long call_i64_callback(i64_callback callback) { return callback(); }
+      `,
+      "fixture.js": /* js */ `
+        import { cc, CFunction, JSCallback } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "int64.c"),
+          symbols: {
+            echo_u64: { args: ["u64"], returns: "u64" },
+            echo_u64_fast: { args: ["u64_fast"], returns: "u64" },
+            echo_i64: { args: ["i64"], returns: "i64" },
+            echo_i64_fast: { args: ["i64_fast"], returns: "i64" },
+            addr_echo_u64: { args: [], returns: "ptr" },
+            addr_echo_i64: { args: [], returns: "ptr" },
+            call_u64_callback: { args: ["function"], returns: "u64" },
+            call_i64_callback: { args: ["function"], returns: "i64" },
+          },
+        });
+        const u64Address = symbols.addr_echo_u64();
+        const i64Address = symbols.addr_echo_i64();
+        const engine = {
+          u64: new CFunction({ ptr: u64Address, args: ["u64"], returns: "u64" }),
+          u64_fast: new CFunction({ ptr: u64Address, args: ["u64_fast"], returns: "u64" }),
+          i64: new CFunction({ ptr: i64Address, args: ["i64"], returns: "i64" }),
+          i64_fast: new CFunction({ ptr: i64Address, args: ["i64_fast"], returns: "i64" }),
+        };
+
+        // The literal contains a fraction, so the array has double storage and both
+        // elements read back as double-encoded numbers, the integral -1 included.
+        // (Every other number below is fractional, non-finite, or outside the int32
+        // range, so it can only be double-encoded.)
+        const doubleStorage = [-1, -7.5];
+        const inputs = {
+          "-1": doubleStorage[0],
+          "-7.5": doubleStorage[1],
+          "-(2^32+1)": -4294967297,
+          "-2^53": -(2 ** 53),
+          "2^53": 2 ** 53,
+          "2^63": 2 ** 63,
+          "2^63+2^62": 2 ** 63 + 2 ** 62,
+          "2^64-2048": 2 ** 64 - 2048,
+          "2^64": 2 ** 64,
+          "2^64+4096": 2 ** 64 + 4096,
+          "NaN": NaN,
+          "Infinity": Infinity,
+          "-Infinity": -Infinity,
+          // Controls that were always right: the int32 encoding and BigInts.
+          "int32 -1": -1,
+          "-1n": -1n,
+          "2n^63+2n^62": 2n ** 63n + 2n ** 62n,
+          "2n^64+7n": 2n ** 64n + 7n,
+        };
+        const convert = fn => Object.fromEntries(Object.entries(inputs).map(([label, value]) => [label, String(fn(value))]));
+
+        const results = {};
+        for (const type of ["u64", "u64_fast", "i64", "i64_fast"]) {
+          results[type] = { cc: convert(symbols["echo_" + type]), engine: convert(engine[type]) };
+        }
+
+        // JSCallback return values go through the engine's converter as well.
+        const callbackReturns = {};
+        for (const [label, value] of Object.entries(inputs)) {
+          const asU64 = new JSCallback(() => value, { args: [], returns: "u64" });
+          const asI64 = new JSCallback(() => value, { args: [], returns: "i64" });
+          callbackReturns[label] = [String(symbols.call_u64_callback(asU64.ptr)), String(symbols.call_i64_callback(asI64.ptr))];
+          asU64.close();
+          asI64.close();
+        }
+        results.callbackReturns = callbackReturns;
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const u64 = {
+      "-1": "18446744073709551615",
+      "-7.5": "18446744073709551609",
+      "-(2^32+1)": "18446744069414584319",
+      "-2^53": "18437736874454810624",
+      "2^53": "9007199254740992",
+      "2^63": "9223372036854775808",
+      "2^63+2^62": "13835058055282163712",
+      "2^64-2048": "18446744073709549568",
+      "2^64": "0",
+      "2^64+4096": "4096",
+      "NaN": "0",
+      "Infinity": "0",
+      "-Infinity": "0",
+      "int32 -1": "18446744073709551615",
+      "-1n": "18446744073709551615",
+      "2n^63+2n^62": "13835058055282163712",
+      "2n^64+7n": "7",
+    };
+    // The same bits read as int64_t.
+    const i64 = {
+      "-1": "-1",
+      "-7.5": "-7",
+      "-(2^32+1)": "-4294967297",
+      "-2^53": "-9007199254740992",
+      "2^53": "9007199254740992",
+      "2^63": "-9223372036854775808",
+      "2^63+2^62": "-4611686018427387904",
+      "2^64-2048": "-2048",
+      "2^64": "0",
+      "2^64+4096": "4096",
+      "NaN": "0",
+      "Infinity": "0",
+      "-Infinity": "0",
+      "int32 -1": "-1",
+      "-1n": "-1",
+      "2n^63+2n^62": "-4611686018427387904",
+      "2n^64+7n": "7",
+    };
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toEqual({
+      results: {
+        u64: { cc: u64, engine: u64 },
+        u64_fast: { cc: u64, engine: u64 },
+        i64: { cc: i64, engine: i64 },
+        i64_fast: { cc: i64, engine: i64 },
+        callbackReturns: Object.fromEntries(Object.keys(u64).map(label => [label, [u64[label], i64[label]]])),
+      },
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
   // JSVALUE_TO_INT32 must decode double-encoded JSValues: whether a JS number
   // is int32-tagged or double-encoded is the engine's choice (JIT tier, double
   // speculation, Math.* provenance), so an int-typed JSCallback return that

@@ -228,6 +228,13 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     return JSC::ErrorInstance::create(vm, structure, messageString, cause, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
 }
 
+static JSObject* createErrorWithoutCache(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
+{
+    const auto& data = errors[static_cast<size_t>(code)];
+    auto* structure = createErrorStructure(vm, globalObject, data.type, data.name, data.code);
+    return JSC::ErrorInstance::create(vm, structure, message, JSValue(), nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
+}
+
 JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
 {
     return errorCache(globalObject)->createError(vm, globalObject, code, jsString(vm, message), jsUndefined());
@@ -240,7 +247,10 @@ JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const Str
 
 JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
 {
-    return createError(vm, defaultGlobalObject(globalObject), code, message);
+    if (auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject))
+        return createError(vm, zigGlobalObject, code, message);
+
+    return createErrorWithoutCache(vm, globalObject, code, message);
 }
 
 JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, JSValue message)
@@ -248,12 +258,11 @@ JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code,
     if (auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject))
         return createError(vm, zigGlobalObject, code, message, jsUndefined());
 
-    auto* structure = createErrorStructure(vm, globalObject, errors[static_cast<size_t>(code)].type, errors[static_cast<size_t>(code)].name, errors[static_cast<size_t>(code)].code);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     String messageString = message.isUndefined() ? String() : message.toWTFString(globalObject);
     if (scope.exception() && !vm.hasPendingTerminationException())
         (void)scope.tryClearException();
-    return JSC::ErrorInstance::create(vm, structure, messageString, JSValue(), nullptr, JSC::RuntimeType::TypeNothing, errors[static_cast<size_t>(code)].type, true);
+    return createErrorWithoutCache(vm, globalObject, code, messageString);
 }
 
 JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)

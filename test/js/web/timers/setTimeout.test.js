@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, isASAN, isDebug, isLinux, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, isLinux, isWindows, tempDirWithFiles } from "harness";
 import path from "node:path";
 
 it("setTimeout", async () => {
@@ -510,25 +510,24 @@ it.concurrent("setTimeout canceling with unref, close, _idleTimeout, and _onTime
   expect(await bunRun([path.join(import.meta.dir, "timers-fixture-unref.js"), "setTimeout"])).toSpawn("");
 });
 
-// RSS is only a usable leak signal on a release build: under ASAN the freed blocks stay resident
-// in the quarantine, so 200k timers grow RSS by the same ~140 MB whether or not the TimeoutObjects
-// get freed, and a debug build needs ~40s to churn through that many timers anyway. Those builds
-// run one batch per mode and rely on LeakSanitizer instead: a TimeoutObject still allocated when
-// the child exits is reported on stderr and fails the exit code. The CI runner sets the same
-// variables for the whole ASAN lane (scripts/runner.node.mjs; the only ASAN lane is Linux, hence
-// the isLinux guard); setting them here as well makes a plain `bun bd test` catch the leak too.
-// BUN_DESTRUCT_VM_ON_EXIT frees the JS heap before the scan, which is what CI does and what keeps
-// the scan at ~0.1s rather than ~3s.
-const leakFixtureMeasuresRss = !isASAN && !isDebug;
-const leakFixtureBatches = leakFixtureMeasuresRss ? 100 : 1;
-const leakFixtureEnv =
-  isASAN && isLinux
-    ? {
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-        LSAN_OPTIONS: bunEnv.LSAN_OPTIONS ?? `suppressions=${path.join(import.meta.dir, "../../../leaksan.supp")}`,
-        BUN_DESTRUCT_VM_ON_EXIT: "1",
-      }
-    : {};
+// On builds without ASAN (release, and debug builds on Windows and x64 macOS) RSS is the leak
+// signal: over the fixture's 100 batches the delta is 0-2 MB when the TimeoutObjects are freed and
+// ~20 MB or more when they leak (see the fixture), at ~0.3s per mode on release and ~8-10s on a
+// debug build. Under ASAN the freed blocks stay resident in the quarantine, so 200k timers grow RSS
+// by the same ~140 MB whether or not they are freed. ASAN builds therefore run a single batch and
+// rely on LeakSanitizer instead: a TimeoutObject still allocated when the child exits is reported
+// on stderr and fails the exit code. The CI runner sets the same three variables for the whole ASAN
+// lane (scripts/runner.node.mjs); setting them here as well makes a plain `bun bd test` catch the
+// leak too. BUN_DESTRUCT_VM_ON_EXIT frees the JS heap before the scan, as CI does, which keeps the
+// scan at ~0.1s instead of ~3s.
+const leakFixtureBatches = isASAN ? 1 : 100;
+const leakFixtureEnv = isASAN
+  ? {
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+      LSAN_OPTIONS: bunEnv.LSAN_OPTIONS ?? `suppressions=${path.join(import.meta.dir, "../../../leaksan.supp")}`,
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+    }
+  : {};
 for (const mode of ["clear", "refresh", "repeat"]) {
   it.concurrent(
     `setTimeout doesn't leak when ${mode} is called inside its own callback`,
@@ -543,13 +542,12 @@ for (const mode of ["clear", "refresh", "repeat"]) {
       // A few wrappers survive the final GC via conservative stack scanning (2-4 observed);
       // retaining the fired timers would leave thousands.
       expect(liveTimeouts).toBeLessThan(100);
-      // Each leaked TimeoutObject is ~100 bytes, so 100 leaking batches grow RSS by ~20 MB;
-      // without a leak the delta is 0-1 MB.
-      if (leakFixtureMeasuresRss) expect(rssDeltaMB).toBeLessThan(10);
+      if (!isASAN) expect(rssDeltaMB).toBeLessThan(10);
     },
-    // Passes in ~1.3s on debug+ASAN; when it does leak, symbolizing the LeakSanitizer report
-    // against a debug binary takes another ~5s, and that report is the useful failure output.
-    30_000,
+    // ~1.5s on debug+ASAN, 8-10s on a debug build without ASAN. When the fixture does leak under
+    // ASAN, symbolizing the LeakSanitizer report against a debug binary takes another ~5s, and that
+    // report is the failure output worth waiting for.
+    60_000,
   );
 }
 

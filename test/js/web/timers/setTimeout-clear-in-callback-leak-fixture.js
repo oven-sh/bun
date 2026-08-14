@@ -8,8 +8,9 @@
 //
 // Runs `batches` batches of BATCH timers after warming up, then prints one JSON line:
 //   timers             timers created in the measured batches
-//   rssDeltaMB         RSS growth over the measured batches (~0 when nothing leaks; each
-//                      leaked TimeoutObject is ~100 bytes, so 100 batches leak ~20 MB)
+//   rssDeltaMB         RSS growth over the measured batches: 0-2 MB over 100 batches when nothing
+//                      leaks; with the leak above, ~20 MB on a release build (~100 bytes per
+//                      TimeoutObject) and ~100 MB on a debug build without ASAN
 //   liveTimeouts       Timeout wrappers still on the JS heap after a full GC
 //   protectedTimeouts  Timeout wrappers still pinned by the native side
 // setTimeout.test.js asserts the report.

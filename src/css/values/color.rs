@@ -2127,9 +2127,7 @@ impl RelativeComponentParser {
             return Ok(NumberOrPercentage::Percentage { unit_value: value });
         }
 
-        // A channel keyword is a <number>, so `calc(r * 50%)` is a <percentage>.
-        // Wrapping it in a Percentage here would make that a percentage times a
-        // percentage, which calc() rejects.
+        // The keyword is a <number>: `r * 50%` is a number times a percentage.
         if let Ok(value) = input.try_parse(|i| {
             match Calc::<Percentage>::parse_with(i, this, |ctx, ident| {
                 let v = ctx.get_ident(ident, allowed)?;

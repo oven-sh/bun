@@ -236,6 +236,9 @@ typedef struct ZigException {
     ZigStackTrace stack;
     void* exception;
     bool remapped;
+    // `stack` holds the wrapping JSC::Exception's throw site (the error had no
+    // frames or `.stack` of its own), so source lines come from there too.
+    bool frames_are_throw_site;
     int fd;
 } ZigException;
 

@@ -43,6 +43,7 @@ pub struct ZigException {
     pub exception: *mut c_void,
 
     pub remapped: bool,
+    pub frames_are_throw_site: bool,
 
     pub fd: i32,
 
@@ -178,6 +179,7 @@ impl Holder {
                 system_code: String::EMPTY,
                 path: String::EMPTY,
                 remapped: false,
+                frames_are_throw_site: false,
                 fd: -1,
                 browser_url: String::EMPTY,
             });

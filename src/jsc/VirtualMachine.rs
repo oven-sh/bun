@@ -5235,7 +5235,15 @@ impl VirtualMachine {
             };
         }
 
-        if value.js_type() == jsc::JSType::DOMWrapper {
+        // A thrown (rather than rejected) diagnostic arrives wrapped in its
+        // JSC::Exception; look through it so it still prints as a diagnostic.
+        let thrown = match value.as_exception(self.jsc_vm) {
+            // SAFETY: `as_exception` proved `value` is a live `JSC::Exception` cell.
+            Some(exception) => unsafe { &*exception }.thrown_value(),
+            None => value,
+        };
+        if thrown.js_type() == jsc::JSType::DOMWrapper {
+            let value = thrown;
             // `as_class_ref` is the audited `as_::<T>() → &T` backref-deref;
             // R-2: shared borrow — `logged` is `Cell<bool>`.
             if let Some(build_error) = value.as_class_ref::<crate::BuildMessage>() {
@@ -5543,7 +5551,12 @@ impl VirtualMachine {
             f.source_url.eql_comptime("bun:wrap") || f.function_name.eql_comptime("::bunternal::")
         }
         fn is_unknown_source(url: &bun_core::String) -> bool {
-            url.is_empty() || url.eql_comptime("[unknown]") || url.has_prefix_comptime(b"[source:")
+            url.is_empty()
+                || url.eql_comptime("[unknown]")
+                // FormatStackTraceForJS spells them this way in `.stack` strings.
+                || url.eql_comptime("unknown")
+                || url.eql_comptime("native")
+                || url.has_prefix_comptime(b"[source:")
         }
 
         let mut frames_len = exception.stack.frames_len as usize;
@@ -5775,7 +5788,7 @@ impl VirtualMachine {
 
         if frames.len() > 1 {
             for i in 0..frames.len() {
-                if i == top || frames[i].position.is_invalid() {
+                if i == top || frames[i].position.is_invalid() || frames[i].remapped {
                     continue;
                 }
                 let source_url = frames[i].source_url.to_utf8();

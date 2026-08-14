@@ -306,6 +306,7 @@ impl ErrorReportRequest {
             stack: ZigStackTrace::from_frames(&mut frames),
             exception: core::ptr::null_mut(),
             remapped: false,
+            frames_are_throw_site: false,
             browser_url: BunString::init(browser_url),
             errno: 0,
             syscall: BunString::EMPTY,

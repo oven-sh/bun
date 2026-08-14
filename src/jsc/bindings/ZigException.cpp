@@ -245,8 +245,8 @@ public:
     public:
         StringView functionName {};
         StringView sourceURL {};
-        WTF::OrdinalNumber lineNumber = WTF::OrdinalNumber::fromZeroBasedInt(0);
-        WTF::OrdinalNumber columnNumber = WTF::OrdinalNumber::fromZeroBasedInt(0);
+        WTF::OrdinalNumber lineNumber = WTF::OrdinalNumber::beforeFirst();
+        WTF::OrdinalNumber columnNumber = WTF::OrdinalNumber::beforeFirst();
 
         bool isConstructor = false;
         bool isGlobalCode = false;
@@ -296,21 +296,20 @@ public:
         if (openingParentheses > closingParentheses)
             openingParentheses = WTF::notFound;
 
+        StringView functionName;
+        StringView lineInner;
         if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
-            // Special case: "unknown" frames don't have parentheses but are valid
-            // These appear in stack traces from certain error paths
-            if (line == "unknown"_s) {
-                frame.sourceURL = line;
-                frame.functionName = StringView();
-                return true;
+            // `at <url>:<line>:<column>` — anonymous and top-level frames carry
+            // no name and no parentheses (V8 and Bun both print them this way).
+            lineInner = line;
+            if (lineInner.startsWith("async "_s)) {
+                frame.isAsync = true;
+                lineInner = lineInner.substring(6);
             }
-
-            // For any other frame without parentheses, terminate parsing as before
-            offset = stack.length();
-            return false;
+        } else {
+            lineInner = StringView_slice(line, openingParentheses + 1, closingParentheses);
+            functionName = line.substring(0, openingParentheses - 1);
         }
-
-        auto lineInner = StringView_slice(line, openingParentheses + 1, closingParentheses);
 
         {
             auto marker1 = 0;
@@ -383,8 +382,6 @@ public:
         }
     done_block:
 
-        StringView functionName = line.substring(0, openingParentheses - 1);
-
         if (functionName == "global code"_s) {
             functionName = StringView();
             frame.isGlobalCode = true;
@@ -398,10 +395,6 @@ public:
         if (functionName.startsWith("new "_s)) {
             frame.isConstructor = true;
             functionName = functionName.substring(4);
-        }
-
-        if (functionName == "<anonymous>"_s) {
-            functionName = StringView();
         }
 
         frame.functionName = functionName;
@@ -479,13 +472,15 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
+    // An Error is described by where it was created: its own captured frames,
+    // or — once those have been materialized into a `.stack` string, or were
+    // only ever supplied as one (structured clone, Error.captureStackTrace) —
+    // that string. `stackTrace`, the wrapping JSC::Exception's throw site, is
+    // the fallback for errors carrying neither, so a rethrown or cross-thread
+    // error points at its origin rather than at `throw err`.
     bool getFromSourceURL = false;
-    if (stackTrace != nullptr && stackTrace->size() > 0) {
-        populateStackTrace(vm, *stackTrace, except.stack, global, flags);
-
-    } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
+    if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
         populateStackTrace(vm, *err->stackTrace(), except.stack, global, flags, FinalizerSafety::MustNotTriggerGC);
-
     } else {
         getFromSourceURL = true;
     }
@@ -602,10 +597,13 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
 
                     iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
                         ASSERT(except.stack.frames_len < frame_count);
+                        // populateStackTrace skips native frames; these are how they print.
+                        if (frame.lineNumber.zeroBasedInt() < 0 && (frame.sourceURL.isEmpty() || frame.sourceURL == "unknown"_s || frame.sourceURL == "native"_s))
+                            return;
                         auto& current = except.stack.frames_ptr[except.stack.frames_len];
                         current = {};
 
-                        String functionName = frame.functionName.toString();
+                        String functionName = frame.functionName == "<anonymous>"_s ? String() : frame.functionName.toString();
                         String sourceURL = frame.sourceURL.toString();
                         current.function_name = Bun::toStringRef(functionName);
                         current.source_url = Bun::toStringRef(sourceURL);
@@ -619,6 +617,8 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
                             current.code_type = ZigStackFrameCodeConstructor;
                         } else if (frame.isGlobalCode) {
                             current.code_type = ZigStackFrameCodeGlobal;
+                        } else if (!frame.functionName.isEmpty()) {
+                            current.code_type = ZigStackFrameCodeFunction;
                         }
 
                         except.stack.frames_len += 1;
@@ -634,6 +634,16 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
             }
         }
     }
+
+    bool framesAreThrowSite = false;
+    if (except.stack.frames_len == 0 && stackTrace != nullptr && stackTrace->size() > 0) {
+        populateStackTrace(vm, *stackTrace, except.stack, global, flags);
+        if (except.stack.frames_len > 0) {
+            getFromSourceURL = false;
+            framesAreThrowSite = true;
+        }
+    }
+    except.frames_are_throw_site = framesAreThrowSite;
 
     if (except.stack.frames_len == 0 && getFromSourceURL) {
         JSC::JSValue sourceURL = getNonObservable(vm, global, obj, vm.propertyNames->sourceURL);
@@ -877,12 +887,16 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
         auto* jscException = uncheckedDowncast<JSC::Exception>(value);
         JSValue unwrapped = jscException->value();
 
-        if (jscException->stack().size() > 0) {
-            populateStackTrace(global->vm(), jscException->stack(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines);
+        // Revisit whichever frames JSC__JSValue__toZigException populated: the
+        // error's own unless it had none and fell back to the throw site.
+        if (dynamicDowncast<JSC::ErrorInstance>(unwrapped) && !exception->frames_are_throw_site) {
+            value = unwrapped;
+        } else {
+            if (jscException->stack().size() > 0) {
+                populateStackTrace(global->vm(), jscException->stack(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines);
+            }
+            return;
         }
-
-        exceptionFromString(*exception, unwrapped, global);
-        return;
     }
 
     if (JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(value)) {

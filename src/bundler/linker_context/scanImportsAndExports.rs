@@ -1413,8 +1413,6 @@ mod __css_validation {
                 for name in compose.names.slice() {
                     let name_v = name.v();
                     if !other_css_ast.local_scope.contains(name_v) {
-                        // `compose.loc` points into this file's `composes`
-                        // declaration; only the message names the other file.
                         // Split-borrow — see `LinkerContext::log_disjoint`.
                         this.log_disjoint().add_error_fmt(
                             source,

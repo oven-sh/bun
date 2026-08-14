@@ -146,9 +146,6 @@ pub(crate) fn generate_code_for_lazy_export(
                     }
                 }
 
-                /// `css_ref` is defined in `ast` (file `definition_idx`); the
-                /// `composes` declaration naming it is at `compose_loc` in file
-                /// `composing_idx`, which differs for `composes: x from "./other.css"`.
                 fn warn_non_single_class_composes(
                     &mut self,
                     ast: &BundlerStyleSheet,

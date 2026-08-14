@@ -1015,7 +1015,7 @@ impl RepositoryExt for Repository {
                 let _ = dir.delete_file_z(bun_core::zstr!("node_modules"));
 
                 // `.bun-tag` is the cache-hit marker, so anything the repository checked in under that name is replaced.
-                let _ = dir.delete_file_z(bun_core::zstr!(".bun-tag"));
+                let _ = dir.delete_tree(b".bun-tag");
                 let tagged = bun_sys::File::openat(
                     dir.fd(),
                     bun_core::zstr!(".bun-tag"),

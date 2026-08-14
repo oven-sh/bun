@@ -5393,6 +5393,43 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  it("replaces a .bun-tag directory checked into a git dependency with the tag", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      using dir = tempDir("git-dep-bun-tag-dir", {
+        "work/package.json": JSON.stringify({ name: "has-bun-tag-dir", version: "1.0.0" }),
+        "work/.bun-tag/nested.txt": "checked in\n",
+      });
+      const sha = await createDumbHttpGitRepo(String(dir), {});
+      using server = serveDirectory(String(dir));
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: { "has-bun-tag-dir": `git+http://localhost:${server.port}/repo.git` },
+        }),
+      );
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).toContain("Saved lockfile");
+      expect(out).toContain("1 package installed");
+      const cacheFolder = join(ctx.package_dir, "node_modules", ".cache", `@G@${sha}`);
+      expect(await readdirSorted(cacheFolder)).toEqual([".bun-tag", "package.json"]);
+      expect(await file(join(cacheFolder, ".bun-tag")).text()).toBe(sha);
+      expect(urls).toBeEmpty();
+      expect(exitCode).toBe(0);
+    });
+  });
+
   it("git checkout cache folders appear only once complete and are hit only when tagged", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];

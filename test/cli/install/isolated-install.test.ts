@@ -752,7 +752,17 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
   ] as const;
   for (const [step, [manifest, expectPatched]] of steps.entries()) {
     await write(packageJson, JSON.stringify(manifest));
-    await runBunInstall(bunEnv, packageDir);
+    // hardlink (the Linux default) installs into the store entry in place; clonefile replaces it.
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--backend", "hardlink"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
     expect({ step, patched: existsSync(patchedFile) }).toEqual({ step, patched: expectPatched });
   }
 });

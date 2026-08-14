@@ -58,8 +58,7 @@ impl ListenSocket {
 
     /// `ssl_ctx` is `SSL_CTX_up_ref`'d for the SNI node; the listener drops
     /// that ref on close / `remove_server_name`. `user` is the per-domain handle
-    /// `find_server_name_userdata` recovers (uWS uses an `HttpRouter*`; Bun.listen
-    /// passes null).
+    /// `find_server_name_userdata` recovers (both uWS and Bun.listen pass null).
     ///
     /// `ssl_ctx` is taken as a raw `*mut SslCtx` (not `&mut SslCtx`) because
     /// `SSL_CTX` is a refcounted shared object — C `SSL_CTX_up_ref`s it and

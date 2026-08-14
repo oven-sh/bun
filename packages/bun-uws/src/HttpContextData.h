@@ -65,9 +65,6 @@ private:
         HttpRequest *httpRequest;
     };
 
-    /* This is the currently browsed-to router when using SNI */
-    HttpRouter<RouterData> *currentRouter = &router;
-
     /* The socket onData is currently parsing, nullptr outside a parse. The
      * close gates in internalEnd need the per-socket identity: a DIFFERENT
      * socket's response can complete inside this window (a microtask drained
@@ -90,7 +87,6 @@ private:
 
     void clearRoutes() {
         this->router = HttpRouter<RouterData>{};
-        this->currentRouter = &router;
         /* Not filterHandlers: filters are per-context open/close hooks, not
          * routes. server.reload() never re-registers them, so wiping them here
          * leaves Bun's active_connection_count (and node:http's 'connection'

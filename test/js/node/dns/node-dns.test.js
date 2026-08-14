@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isAndroid, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
@@ -491,9 +491,7 @@ test.skipIf(!isLinux)("dns.lookup uses getaddrinfo, not the c-ares resolver", as
   expect(exitCode).toBe(0);
 });
 
-// Android's platform resolver does not expose its (per-network) servers, so
-// getServers() reports [] until setServers() hands the resolver explicit ones.
-test.skipIf(isAndroid)("dns.getServers", () => {
+test("dns.getServers", () => {
   function parseResolvConf() {
     const servers = [];
     if (isWindows) {
@@ -546,113 +544,6 @@ describe("dns.reverse", () => {
     });
     return promise;
   });
-});
-
-// reverse()/lookupService() consult the hosts file before DNS on every platform
-// (c-ares reads it first; Android goes through bionic/netd, which does too), so
-// whatever they report for 127.0.0.1 must come from the hosts file's loopback
-// entries (reverse() reports the entry's aliases, which may be none).
-function hostsNamesFor(address) {
-  const hostsPath = isWindows
-    ? `${process.env.SystemRoot ?? "C:\\Windows"}\\System32\\drivers\\etc\\hosts`
-    : isAndroid
-      ? "/system/etc/hosts"
-      : "/etc/hosts";
-  try {
-    return fs
-      .readFileSync(hostsPath, "utf8")
-      .split("\n")
-      .map(line => line.replace(/#.*/, "").trim().split(/\s+/))
-      .filter(parts => parts[0] === address)
-      .flatMap(parts => parts.slice(1));
-  } catch (err) {
-    if (err?.code === "ENOENT") return [];
-    throw err;
-  }
-}
-// c-ares merges hosts entries by name, so 127.0.0.1's "localhost" entry may
-// report ::1's aliases too; both loopback lines are acceptable answers.
-const loopbackNames = [...hostsNamesFor("127.0.0.1"), ...hostsNamesFor("::1")];
-test.skipIf(!hostsNamesFor("127.0.0.1").includes("localhost"))(
-  "dns.reverse of loopback comes from the hosts file",
-  async () => {
-    for (const name of await dns.promises.reverse("127.0.0.1")) {
-      expect(loopbackNames).toContain(name);
-    }
-    const { hostname } = await dns.promises.lookupService("127.0.0.1", 22);
-    expect(loopbackNames).toContain(hostname);
-  },
-);
-
-// Answers every A query with 127.0.0.2, so a resolve4 that lands here proves
-// which servers the resolver is using without any outbound DNS.
-async function localDnsServer() {
-  return await Bun.udpSocket({
-    hostname: "127.0.0.1",
-    port: 0,
-    socket: {
-      data(sock, query, port, addr) {
-        let end = 12;
-        while (end < query.length && query[end] !== 0) end += query[end] + 1;
-        end += 5; // root label + QTYPE + QCLASS
-        if (end > query.length) return;
-        const answer = Buffer.concat([
-          query.subarray(0, end),
-          Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 127, 0, 0, 2]),
-        ]);
-        answer[2] = 0x81; // QR + RD
-        answer[3] = 0x80; // RA
-        answer.writeUInt16BE(1, 6); // ANCOUNT
-        answer.writeUInt16BE(0, 8);
-        answer.writeUInt16BE(0, 10);
-        sock.send(answer, port, addr);
-      },
-    },
-  });
-}
-
-// A resolver with no explicit servers uses the platform resolver on Android 10+;
-// setServers([...]) switches it to those servers, setServers([]) switches back.
-test("Resolver getServers/setServers round-trip", async () => {
-  const server = await localDnsServer();
-  try {
-    const resolver = new dns.promises.Resolver();
-    // On Android 10+ a fresh resolver is on the platform resolver, which reports
-    // no server list; before that (API 28) it is plain c-ares like everywhere else.
-    const usesPlatformResolver = isAndroid && resolver.getServers().length === 0;
-    resolver.setServers([`127.0.0.1:${server.port}`]);
-    expect(resolver.getServers()).toEqual([`127.0.0.1:${server.port}`]);
-    expect(await resolver.resolve4("example.com")).toEqual(["127.0.0.2"]);
-    resolver.setServers([]);
-    expect(resolver.getServers()).toEqual([]);
-    if (usesPlatformResolver) {
-      // back on the platform resolver: whatever it answers (or fails with), it
-      // is not the local responder's 127.0.0.2
-      expect(await resolver.resolve4("example.com").catch(e => [e.code])).not.toEqual(["127.0.0.2"]);
-    }
-  } finally {
-    server.close();
-  }
-});
-
-test("Resolver#cancel rejects in-flight queries with ECANCELLED", async () => {
-  const resolver = new dns.promises.Resolver();
-  const pending = resolver.resolveTxt("example.com").then(
-    () => "resolved",
-    e => e.code,
-  );
-  resolver.cancel();
-  expect(await pending).toBe("ECANCELLED");
-});
-
-test("Resolver#setServers throws while that resolver has queries in flight", async () => {
-  const resolver = new dns.promises.Resolver();
-  const pending = resolver.resolveMx("example.com").catch(e => e.code);
-  expect(() => resolver.setServers(["1.1.1.1"])).toThrow(
-    expect.objectContaining({ code: "ERR_DNS_SET_SERVERS_FAILED" }),
-  );
-  resolver.cancel();
-  await pending;
 });
 
 test("dns.promises.reverse", async () => {

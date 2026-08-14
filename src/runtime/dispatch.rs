@@ -743,16 +743,6 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             // SAFETY: `poll` outlives this call (caller contract).
             resolver.on_dns_poll(unsafe { &mut *poll });
         }
-        poll_tag::DNS_NETD_QUERY => {
-            #[cfg(target_os = "android")]
-            {
-                crate::dns_jsc::netd::Query::on_poll(owner.ptr.cast());
-            }
-            #[cfg(not(target_os = "android"))]
-            {
-                debug_assert!(false, "netd query poll off Android");
-            }
-        }
         poll_tag::GET_ADDR_INFO_REQUEST => {
             #[cfg(target_os = "macos")]
             {

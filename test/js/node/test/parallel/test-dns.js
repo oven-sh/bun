@@ -29,8 +29,7 @@ const dnsPromises = dns.promises;
 const dgram = require('dgram');
 
 const existing = dns.getServers();
-// Android's platform resolver exposes no server list; [] is expected there.
-assert(existing.length > 0 || process.platform === 'android');
+assert(existing.length > 0);
 
 // Verify that setServers() handles arrays with holes and other oddities
 {

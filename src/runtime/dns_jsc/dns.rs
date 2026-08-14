@@ -121,10 +121,6 @@ const IANA_DNS_PORT: i32 = 53;
 #[path = "dns_sd.rs"]
 pub(crate) mod dns_sd;
 
-#[cfg(target_os = "android")]
-#[path = "netd.rs"]
-pub(crate) mod netd;
-
 // ──────────────────────────────────────────────────────────────────────────
 // LibC (blocking getaddrinfo on a worker thread; non-Windows)
 // ──────────────────────────────────────────────────────────────────────────
@@ -2053,18 +2049,8 @@ impl Resolver {
         // inside `ares_destroy`; hold one so it outlives its own channel close.
         // SAFETY: fn contract.
         unsafe { (*this).ref_() };
-        #[cfg(target_os = "android")]
-        let had_platform_queries = {
-            // SAFETY: alive under the ref just taken.
-            let this = unsafe { &*this };
-            let had = netd::has_pending(this);
-            netd::cancel_all(this, c_ares::ARES_EDESTRUCTION);
-            had
-        };
-        #[cfg(not(target_os = "android"))]
-        let had_platform_queries = false;
         // SAFETY: alive under the ref just taken.
-        let result = if unsafe { (*this).destroy_channel() } || had_platform_queries {
+        let result = if unsafe { (*this).destroy_channel() } {
             SweepResult::Stopped
         } else {
             SweepResult::Idle
@@ -3646,17 +3632,6 @@ pub struct Resolver {
 
     pub(crate) event_loop_timer: JsCell<EventLoopTimer>,
 
-    /// Record queries in flight through the platform resolver (`netd.rs`).
-    #[cfg(target_os = "android")]
-    pub(crate) netd_queries: JsCell<Vec<*mut netd::Query>>,
-    /// reverse()/lookupService() lookups running on the pool (`netd.rs`).
-    #[cfg(target_os = "android")]
-    pub(crate) netd_name_jobs: JsCell<Vec<*mut netd::NameJob>>,
-    /// `setServers()` was given a non-empty list: the user chose the servers,
-    /// so this resolver uses c-ares to reach them rather than the platform.
-    #[cfg(target_os = "android")]
-    pub(crate) servers_explicit: Cell<bool>,
-    active_handle_registered: Cell<bool>,
     pub(crate) pending_host_cache_cares: JsCell<PendingCache>,
     pub(crate) pending_host_cache_native: JsCell<PendingCache>,
     pub(crate) pending_srv_cache_cares: JsCell<SrvPendingCache>,
@@ -3998,13 +3973,6 @@ impl Resolver {
             vm: bun_ptr::BackRef::new(vm),
             polls: JsCell::new(PollsMap::new()),
             options: Cell::new(c_ares::ChannelOptions::default()),
-            #[cfg(target_os = "android")]
-            netd_queries: JsCell::new(Vec::new()),
-            #[cfg(target_os = "android")]
-            netd_name_jobs: JsCell::new(Vec::new()),
-            #[cfg(target_os = "android")]
-            servers_explicit: Cell::new(false),
-            active_handle_registered: Cell::new(false),
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::DNSResolver,
             )),
@@ -4091,9 +4059,7 @@ impl Resolver {
         self.event_loop_timer
             .with_mut(|t| t.state = EventLoopTimerState::PENDING);
 
-        #[cfg(target_os = "android")]
-        netd::check_deadlines(self, &now);
-        if let Some(channel) = self.channel.get() {
+        if let Ok(channel) = self.get_channel_or_error(vm.global()) {
             if self.any_requests_pending() {
                 // SAFETY: `channel` is the live c-ares channel owned by `self`.
                 c_ares::ares_process_fd(
@@ -4101,13 +4067,13 @@ impl Resolver {
                     c_ares::ARES_SOCKET_BAD,
                     c_ares::ARES_SOCKET_BAD,
                 );
+                // See `on_dns_poll` — c-ares detaches post-callback, so re-check.
+                if self.any_requests_pending() {
+                    let _ = self.add_timer(Some(&now));
+                } else {
+                    self.remove_timer();
+                }
             }
-        }
-        // See `on_dns_poll` — c-ares detaches post-callback, so re-check.
-        if self.any_requests_pending() {
-            let _ = self.add_timer(Some(&now));
-        } else {
-            self.remove_timer();
         }
     }
 
@@ -4133,10 +4099,6 @@ impl Resolver {
             pending_addr_cache_cares,
             pending_nameinfo_cache_cares
         );
-        #[cfg(target_os = "android")]
-        if netd::has_deadlines(self) {
-            return true;
-        }
         // The 32-slot caches overflow to `LookupCacheHit::Disabled`; c-ares' own
         // queue length covers those too. Its channel lock is recursive, so this
         // is safe from inside a completion callback.
@@ -4735,35 +4697,6 @@ impl Resolver {
         ChannelResult::Result(unsafe { &mut *self.channel.get().unwrap() })
     }
 
-    /// Where this resolver's queries go. On Android that is the platform
-    /// resolver unless the user handed this resolver explicit servers; record
-    /// queries additionally need `android_res_nquery` (API 29+) to exist.
-    fn transport(&self, kind: TransportKind) -> Result<Transport, c_ares::Error> {
-        #[cfg(target_os = "android")]
-        if !self.servers_explicit.get() {
-            match (kind, netd::api()) {
-                (TransportKind::Record, Some(api)) => return Ok(Transport::PlatformRecord(api)),
-                (TransportKind::Name, _) => return Ok(Transport::PlatformName),
-                _ => {}
-            }
-        }
-        let _ = kind;
-        match self.get_channel() {
-            ChannelResult::Result(channel) => Ok(Transport::CAres(channel)),
-            ChannelResult::Err(err) => Err(err),
-        }
-    }
-
-    /// Whether record queries currently go through the platform resolver rather
-    /// than the c-ares channel (`getServers()` has no list to report then: the
-    /// platform's servers are per network and not exposed).
-    fn uses_platform_resolver(&self) -> bool {
-        #[cfg(target_os = "android")]
-        return !self.servers_explicit.get() && netd::api().is_some();
-        #[cfg(not(target_os = "android"))]
-        false
-    }
-
     fn get_channel_from_vm(global_this: &JSGlobalObject) -> JsResult<*mut c_ares::Channel> {
         global_resolver(global_this).get_channel_or_error(global_this)
     }
@@ -5152,9 +5085,9 @@ impl Resolver {
 
         let ip_slice = ip_str.to_slice_clone(global_this)?;
         let ip = ip_slice.slice();
-        let transport = match self.transport(TransportKind::Name) {
-            Ok(transport) => transport,
-            Err(err) => {
+        let channel: *mut c_ares::Channel = match self.get_channel() {
+            ChannelResult::Result(res) => res,
+            ChannelResult::Err(err) => {
                 return Err(global_this.throw_value(
                     super::cares_jsc::error_to_js_with_syscall_and_hostname(
                         err,
@@ -5184,20 +5117,14 @@ impl Resolver {
 
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
-
-        match transport {
-            Transport::CAres(channel) => {
-                // SAFETY: `request` is the heap-allocated GetHostByAddrInfoRequest; channel
-                // stores it as the c-ares ctx and calls back via HostentHandler::on_hostent.
-                unsafe { (*channel).get_host_by_addr(ip, &mut *request) };
-                // SAFETY: `bun_vm()` returns the live VM back-ptr.
-                self.request_sent(global_this.bun_vm());
-            }
-            #[cfg(target_os = "android")]
-            Transport::PlatformName | Transport::PlatformRecord(_) => {
-                netd::get_host_by_addr(self, global_this, ip, request);
-            }
+        // SAFETY: `request` is the heap-allocated GetHostByAddrInfoRequest; channel
+        // stores it as the c-ares ctx and calls back via HostentHandler::on_hostent.
+        unsafe {
+            (*channel).get_host_by_addr(ip, &mut *request);
         }
+
+        // SAFETY: `bun_vm()` returns the live VM back-ptr.
+        self.request_sent(global_this.bun_vm());
         Ok(promise)
     }
 
@@ -5380,7 +5307,11 @@ impl c_ares::ChannelContainer for Resolver {
     #[inline]
     fn set_channel(&self, channel: *mut c_ares::Channel) {
         self.channel.set(Some(channel));
-        self.sync_active_handle();
+        // A live channel has sockets, timers and queries in flight whose
+        // callbacks need this VM: the stop phase closes it (any resolver, not
+        // just the VM-global one) if nobody did before. Unregistered in
+        // `destroy_channel`.
+        crate::jsc_hooks::ActiveHandle::DnsResolver(core::ptr::NonNull::from(self)).register();
     }
 }
 
@@ -5393,65 +5324,11 @@ impl Resolver {
         let Some(channel) = self.channel.take() else {
             return false;
         };
-        self.sync_active_handle();
+        crate::jsc_hooks::ActiveHandle::DnsResolver(core::ptr::NonNull::from(self)).unregister();
         // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
         unsafe { c_ares::Channel::destroy(channel) };
         true
     }
-
-    /// A live channel (sockets, timers, queries in flight) or platform queries
-    /// in flight have callbacks that need this VM: stay registered with the
-    /// stop phase — which closes/fails them if nobody did before — exactly
-    /// while either exists.
-    pub(crate) fn sync_active_handle(&self) {
-        let needed = self.channel.get().is_some() || self.has_platform_queries();
-        if needed == self.active_handle_registered.get() {
-            return;
-        }
-        self.active_handle_registered.set(needed);
-        let handle = crate::jsc_hooks::ActiveHandle::DnsResolver(core::ptr::NonNull::from(self));
-        if needed {
-            handle.register();
-        } else {
-            handle.unregister();
-        }
-    }
-
-    fn has_platform_queries(&self) -> bool {
-        #[cfg(target_os = "android")]
-        return netd::has_pending(self);
-        #[cfg(not(target_os = "android"))]
-        false
-    }
-
-    /// `Resolver#setServers` refuses while this resolver has queries in flight.
-    fn has_pending_queries(&self, channel: *mut c_ares::Channel) -> bool {
-        // SAFETY: `channel` is a live handle returned by `ares_init_options`.
-        self.has_platform_queries() || c_ares::ares_queue_active_queries(unsafe { &*channel }) != 0
-    }
-
-    fn set_servers_explicit(&self, explicit: bool) {
-        #[cfg(target_os = "android")]
-        self.servers_explicit.set(explicit);
-        #[cfg(not(target_os = "android"))]
-        let _ = explicit;
-    }
-}
-
-#[derive(Clone, Copy)]
-enum TransportKind {
-    /// `resolve*()`
-    Record,
-    /// `reverse()` / `lookupService()`
-    Name,
-}
-
-enum Transport {
-    CAres(*mut c_ares::Channel),
-    #[cfg(target_os = "android")]
-    PlatformRecord(&'static netd::Api),
-    #[cfg(target_os = "android")]
-    PlatformName,
 }
 
 impl Resolver {
@@ -5525,9 +5402,9 @@ impl Resolver {
         name: &[u8],
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        let transport = match self.transport(TransportKind::Record) {
-            Ok(transport) => transport,
-            Err(err) => {
+        let channel: *mut c_ares::Channel = match self.get_channel() {
+            ChannelResult::Result(res) => res,
+            ChannelResult::Err(err) => {
                 // syscall = "query" + ucfirst(TYPE_NAME) — precomputed per record type.
                 return Err(
                     global_this.throw_value(super::cares_jsc::error_to_js_with_syscall(
@@ -5564,21 +5441,14 @@ impl Resolver {
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
 
-        match transport {
-            Transport::CAres(channel) => {
-                // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
-                // is the freshly heap-allocated ResolveInfoRequest. c-ares stores the ctx
-                // pointer and calls `T::RAW_CALLBACK` (→ `on_cares_complete`) which
-                // consumes the request, so the `&mut` borrow is not held past this call.
-                unsafe { (*channel).resolve(name, &mut *request) };
-                // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
-                self.request_sent(global_this.bun_vm());
-            }
-            #[cfg(target_os = "android")]
-            Transport::PlatformRecord(api) => netd::resolve::<T>(api, self, name, request),
-            #[cfg(target_os = "android")]
-            Transport::PlatformName => unreachable!(),
-        }
+        // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
+        // is the freshly heap-allocated ResolveInfoRequest. c-ares stores the ctx
+        // pointer and calls `T::RAW_CALLBACK` (→ `on_cares_complete`) which
+        // consumes the request, so the `&mut` borrow is not held past this call.
+        unsafe { (*channel).resolve(name, &mut *request) };
+
+        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
+        self.request_sent(global_this.bun_vm());
         Ok(promise)
     }
 
@@ -5752,9 +5622,6 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if global_resolver(global_this).uses_platform_resolver() {
-            return JSValue::create_empty_array(global_this, 0);
-        }
         Self::get_channel_servers(
             Self::get_channel_from_vm(global_this)?,
             global_this,
@@ -5768,9 +5635,6 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if self.uses_platform_resolver() {
-            return JSValue::create_empty_array(global_this, 0);
-        }
         Self::get_channel_servers(
             self.get_channel_or_error(global_this)?,
             global_this,
@@ -5875,13 +5739,15 @@ impl Resolver {
     }
 
     fn set_channel_servers(
-        &self,
         channel: *mut c_ares::Channel,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         // It's okay to call dns.setServers with active queries, but not dns.Resolver.setServers
-        if channel != Self::get_channel_from_vm(global_this)? && self.has_pending_queries(channel) {
+        if channel != Self::get_channel_from_vm(global_this)?
+            // SAFETY: `channel` is a live handle returned by `ares_init_options`.
+            && c_ares::ares_queue_active_queries(unsafe { &*channel }) != 0
+        {
             return Err(global_this
                 .err(
                     jsc::Error::DNS_SET_SERVERS_FAILED,
@@ -5911,7 +5777,6 @@ impl Resolver {
                     format_args!("ares_set_servers_ports error: {}", err.label()),
                 )));
             }
-            self.set_servers_explicit(false);
             return Ok(JSValue::UNDEFINED);
         }
 
@@ -6000,7 +5865,6 @@ impl Resolver {
                 ))),
             );
         }
-        self.set_servers_explicit(true);
 
         Ok(JSValue::UNDEFINED)
     }
@@ -6010,7 +5874,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        global_resolver(global_this).set_channel_servers(
+        Self::set_channel_servers(
             Self::get_channel_from_vm(global_this)?,
             global_this,
             callframe,
@@ -6023,7 +5887,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.set_channel_servers(
+        Self::set_channel_servers(
             self.get_channel_or_error(global_this)?,
             global_this,
             callframe,
@@ -6065,13 +5929,9 @@ impl Resolver {
         global_this: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let _ = global_this;
-        #[cfg(target_os = "android")]
-        netd::cancel_all(self, c_ares::Error::ECANCELLED as c_int);
-        if let Some(channel) = self.channel.get() {
-            // SAFETY: `channel` is a live handle returned by `ares_init_options`.
-            c_ares::ares_cancel(unsafe { &mut *channel });
-        }
+        let channel = self.get_channel_or_error(global_this)?;
+        // SAFETY: `channel` is a live handle returned by `ares_init_options`.
+        c_ares::ares_cancel(unsafe { &mut *channel });
         Ok(JSValue::UNDEFINED)
     }
 
@@ -6126,18 +5986,7 @@ impl Resolver {
         }
 
         let resolver = global_resolver(global_this);
-        let transport = match resolver.transport(TransportKind::Name) {
-            Ok(transport) => transport,
-            Err(err) => {
-                return Err(
-                    global_this.throw_value(super::cares_jsc::error_to_js_with_syscall(
-                        err,
-                        global_this,
-                        b"getnameinfo",
-                    )?),
-                );
-            }
-        };
+        let channel = resolver.get_channel_or_error(global_this)?;
 
         // This string will be freed in `CAresNameInfo.deinit`
         let mut cache_name = Vec::new();
@@ -6172,28 +6021,20 @@ impl Resolver {
 
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
-
-        match transport {
-            Transport::CAres(channel) => {
-                // SAFETY: `channel` is the live c-ares channel; `sa` is a valid
-                // sockaddr_storage reborrowed as sockaddr; `request` was just
-                // `heap::alloc`'d and is owned by c-ares until the callback fires.
-                unsafe {
-                    (*channel).get_name_info(
-                        // See `get_sockaddr` call above — inferred `sockaddr` type is
-                        // platform-dependent and unnameable on Windows from this crate.
-                        &mut *(&raw mut sa).cast(),
-                        &mut *request,
-                    );
-                }
-                // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
-                resolver.request_sent(global_this.bun_vm());
-            }
-            #[cfg(target_os = "android")]
-            Transport::PlatformName | Transport::PlatformRecord(_) => {
-                netd::get_name_info(resolver, global_this, &sa, request);
-            }
+        // SAFETY: `channel` is the live c-ares channel; `sa` is a valid
+        // sockaddr_storage reborrowed as sockaddr; `request` was just
+        // `heap::alloc`'d and is owned by c-ares until the callback fires.
+        unsafe {
+            (*channel).get_name_info(
+                // See `get_sockaddr` call above — inferred `sockaddr` type is
+                // platform-dependent and unnameable on Windows from this crate.
+                &mut *(&raw mut sa).cast(),
+                &mut *request,
+            );
         }
+
+        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
+        resolver.request_sent(global_this.bun_vm());
         Ok(promise)
     }
 

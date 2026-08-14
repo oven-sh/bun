@@ -29,8 +29,6 @@ pub mod options_jsc; // GetAddrInfo.Options ↔ JSValue
 
 #[cfg(target_os = "macos")]
 pub(crate) use dns_body::dns_sd;
-#[cfg(target_os = "android")]
-pub(crate) use dns_body::netd;
 pub use dns_body::{
     CacheConfig, CacheHit, GetAddrInfoRequest, GlobalData, InternalDNSRequest, Order, PendingCache,
     PendingCacheField, RecordType, Resolver, internal,

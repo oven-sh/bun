@@ -826,9 +826,7 @@ pub(crate) mod default_user_defines {
     }
 }
 
-/// Builds the `Define` table. Also returns `BundleOptions::user_defines_hash`
-/// for it, taken from the same resolved `--define` map and `--drop` list the
-/// table is built from.
+/// Returns the `Define` table and `BundleOptions::user_defines_hash` for it.
 pub(crate) fn defines_from_transform_options(
     log: &mut bun_ast::Log,
     // PERF: borrowed, not owned — the caller (`load_defines`) holds
@@ -856,8 +854,7 @@ pub(crate) fn defines_from_transform_options(
     for (i, key) in input_keys.iter().enumerate() {
         user_defines.insert(key.as_ref(), input_values[i].clone());
     }
-    // Covers exactly what the user passed; the env-derived defaults added to
-    // the map further down are not part of it.
+    // Before the env-derived defaults below join the map.
     let user_defines_hash = user_defines_hash(&user_defines, drop);
 
     let mut environment_defines = defines::UserDefinesArray::default();
@@ -961,11 +958,9 @@ pub(crate) fn defines_from_transform_options(
     Ok((define, user_defines_hash))
 }
 
-/// `user_defines` is a map, so a key given more than once is already down to
-/// the value that wins; both it and `drop` are sorted here so the order the
-/// flags were given in does not matter either. Every string is length-prefixed
-/// and the define count comes first, so different inputs never serialize to
-/// the same byte stream. `None` when the user gave neither.
+/// Order-independent: `user_defines` is a map (a repeated key is already down to
+/// the value that wins) and both inputs are sorted. Length-prefixed, so distinct
+/// inputs never serialize alike. `None` when the user gave neither.
 fn user_defines_hash(user_defines: &defines::RawDefines, drop: &[&[u8]]) -> Option<u64> {
     if user_defines.is_empty() && drop.is_empty() {
         return None;
@@ -1211,9 +1206,8 @@ pub struct BundleOptions<'a> {
     pub banner: Cow<'static, [u8]>,
     pub define: Box<defines::Define>,
     pub drop: Box<[Box<[u8]>]>,
-    /// Identifies the user-supplied (`--define` / bunfig `define` / `--drop`)
-    /// part of `define`, for the runtime transpiler cache's features hash.
-    /// Set by `load_defines`; `None` when the user supplied neither.
+    /// Hash of the `--define` / bunfig `define` / `--drop` input behind `define`,
+    /// for the runtime transpiler cache. Set by `load_defines`; `None` if no input.
     pub user_defines_hash: Option<u64>,
     /// Set of enabled feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
     /// Initialized once from the CLI --feature flags.

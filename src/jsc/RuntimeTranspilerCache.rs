@@ -52,10 +52,8 @@ bun_core::declare_scope!(cache, visible);
 /// so ImportEntry/ExportEntry/StarExportEntry moduleRequestType matches JSC's
 /// after WebKit 90b2ecf79ae3 keyed m_loadedModules on (specifier, type).
 /// Version 26: `--define` / bunfig `define` / `--drop` participate in the features
-/// hash. Until now only `bun run` turned the cache off for `--define`; every other
-/// path (`bun test`, bunfig, `--drop`) stored output with the substitutions baked
-/// in under the features hash a plain run looks up, so existing entries cannot be
-/// trusted.
+/// hash. Older entries written by `bun test` or with `--drop` carry those
+/// substitutions under the plain hash.
 const EXPECTED_VERSION: u32 = 26;
 
 /// Source files smaller than this are not written to / read from the on-disk

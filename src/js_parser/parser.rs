@@ -264,12 +264,8 @@ pub mod Runtime {
         /// in watch/dev-server mode.
         pub bundler_feature_flags: Option<Box<StringSet>>,
 
-        /// Hash of the user-supplied `--define` map and `--drop` list the
-        /// `Define` table handed to this parse was built from
-        /// (`BundleOptions::user_defines_hash`). Both rewrite the transpiled
-        /// output, so the runtime transpiler cache has to key on them.
-        ///
-        /// `None` ≡ neither was given (contributes nothing to the hash).
+        /// `BundleOptions::user_defines_hash`: the `--define` / `--drop` input behind
+        /// the `Define` table of this parse. `None` ≡ none (contributes nothing to the hash).
         pub user_defines_hash: Option<u64>,
 
         /// REPL mode: transforms code for interactive evaluation
@@ -408,8 +404,7 @@ pub mod Runtime {
                 }
             }
 
-            // --define / --drop substitute into the output the same way. As
-            // with --feature, the default (none given) adds nothing.
+            // --define / --drop, likewise adding nothing when not given.
             if let Some(user_defines_hash) = self.user_defines_hash {
                 hasher.update(&user_defines_hash.to_le_bytes());
             }

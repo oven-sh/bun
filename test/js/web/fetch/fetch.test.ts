@@ -2105,9 +2105,10 @@ it.concurrent("should allow very long redirect URLS", async () => {
       });
     },
   });
-  // Sequential iterations reuse the pooled keep-alive connections, so a redirect body left
-  // undrained (#8874) surfaces as Malformed_HTTP_Response on a following request.
-  for (let i = 0; i < 20; i++) {
+  // Twice: the second round's /redirect rides the connection pooled by the first round's
+  // final response. (The 302's own connection is closed because it carries a body; which
+  // redirect responses get pooled is pinned by connection count in fetch-keepalive.test.ts.)
+  for (let i = 0; i < 2; i++) {
     const response = await fetch(`${server.url.origin}/redirect`);
     expect(response.url).toBe(`${server.url.origin}${Location}`);
     expect(response.redirected).toBe(true);

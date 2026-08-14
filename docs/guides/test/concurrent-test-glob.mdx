@@ -131,8 +131,8 @@ To migrate existing tests to concurrent execution:
 ```toml title="bunfig.toml" icon="settings"
 [test]
 concurrentTestGlob = [
-  "**/integration/*.test.ts",
-  "**/e2e/*.test.ts",
+  "**/integration/**/*.test.ts",
+  "**/e2e/**/*.test.ts",
   "**/concurrent-*.test.ts"
 ]
 ```

@@ -321,6 +321,65 @@ nativeTests.test_get_all_property_names_proxy_and_string_wrapper = () => {
   show("frozen writable:", apn(Object.freeze({ a: 1, b: 2 }), napi_key_writable));
 };
 
+// Applying an attribute filter looks up the descriptor of every collected key,
+// which runs Proxy traps. A trap that throws must surface as the pending
+// exception rather than being ignored.
+nativeTests.test_get_all_property_names_throwing_traps = () => {
+  const napi_key_include_prototypes = 0;
+  const napi_key_own_only = 1;
+  const napi_key_enumerable = 1 << 1;
+  const napi_key_keep_numbers = 0;
+
+  const apn = (label, obj, mode) => {
+    try {
+      const { status } = nativeTests.get_all_property_names(obj, mode, napi_key_enumerable, napi_key_keep_numbers);
+      console.log(label, "status=" + status);
+    } catch (e) {
+      console.log(label, "threw:", e.message);
+    }
+  };
+
+  const throwingDescriptors = {
+    getOwnPropertyDescriptor() {
+      throw new Error("getOwnPropertyDescriptor trap");
+    },
+  };
+  apn("own_only:", new Proxy({ x: 1 }, throwingDescriptors), napi_key_own_only);
+  apn("include_prototypes:", Object.create(new Proxy({ x: 1 }, throwingDescriptors)), napi_key_include_prototypes);
+};
+
+// Bun looks up the prototype chain a second time while filtering, so a
+// getPrototypeOf trap that only throws after key collection is reached there.
+// Node only invokes the trap once and returns the keys, so this is not
+// compared against Node.
+nativeTests.test_get_all_property_names_get_prototype_of_throws_while_filtering = () => {
+  const napi_key_include_prototypes = 0;
+  const napi_key_enumerable = 1 << 1;
+  const napi_key_keep_numbers = 0;
+
+  let calls = 0;
+  const proxy = new Proxy(
+    {},
+    {
+      getPrototypeOf(target) {
+        if (calls++ > 0) throw new Error("getPrototypeOf trap");
+        return Reflect.getPrototypeOf(target);
+      },
+    },
+  );
+  try {
+    const { status } = nativeTests.get_all_property_names(
+      Object.create(proxy),
+      napi_key_include_prototypes,
+      napi_key_enumerable,
+      napi_key_keep_numbers,
+    );
+    console.log("status=" + status);
+  } catch (e) {
+    console.log("threw:", e.message);
+  }
+};
+
 nativeTests.test_set_property = () => {
   const objects = [
     {},

@@ -213,10 +213,10 @@ pub mod feature_flag {
     // Run the full VM teardown when the main thread exits (workers always do).
     // The CI runner turns it on for LeakSanitizer-validated files on ASAN.
     new_feature_flag!(pub BUN_DESTRUCT_VM_ON_EXIT, "BUN_DESTRUCT_VM_ON_EXIT", {});
-    // Test suite only, builds with debug assertions: a worker VM's handle makes
-    // cross-thread completions wait for its close, so each producer's "refused"
-    // release path runs deterministically (bun_jsc::vm_handle::refusal_gate).
-    new_feature_flag!(pub BUN_DEBUG_TEST_WORKER_REFUSAL_GATE, "BUN_DEBUG_TEST_WORKER_REFUSAL_GATE", {});
+    // Test suite only, builds with debug assertions: a worker VM holds every
+    // cross-thread completion until its teardown is waiting, so the "arrived
+    // during teardown" paths run deterministically (bun_jsc::vm_handle::test_gate).
+    new_feature_flag!(pub BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE, "BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE", {});
 
     // Disable "nativeDependencies"
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER, "BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER", {});

@@ -1184,9 +1184,8 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
     match task.tag {
         task_tag::AnyTaskJob => {
             // The one erased tag: every payload is a `Job<C>` reached through its header.
-            let js = VirtualMachine::get().global().js_thread();
             // SAFETY: as `release!`.
-            unsafe { bun_jsc::job::release_unrun_erased(task.ptr, &js) }
+            unsafe { bun_jsc::job::release_unrun_erased(task.ptr) }
         }
         task_tag::AsyncModule => release!(bun_jsc::async_module::AsyncModule),
         task_tag::BakeHotReloadEvent => release!(BakeHotReloadEvent),

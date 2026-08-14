@@ -1,6 +1,5 @@
 [bun_bundler]
 "pub_invariant_fields:src/bundler/options.rs" = 3
-"stored_projection:src/bundler/ParseTask.rs" = 1
 
 [bun_core]
 "pub_invariant_fields:src/bun_core/string/mod.rs" = 1

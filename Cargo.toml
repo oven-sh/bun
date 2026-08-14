@@ -115,7 +115,7 @@ exclude = ["vendor"]
 # (see its rust-toolchain), which must still be able to compile this workspace.
 [workspace.metadata.dylint]
 libraries = [
-    { git = "https://github.com/scarletindustries/mordant", rev = "fc46d7f86c2e5a1e5b7719a75abc2edf704a54e1" },
+    { git = "https://github.com/scarletindustries/mordant", rev = "18a573447ab447acc0f52796188c601b9726b1bc" },
 ]
 
 [workspace.package]

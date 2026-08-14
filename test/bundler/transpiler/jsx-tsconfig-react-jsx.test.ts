@@ -154,4 +154,61 @@ describe("tsconfig compilerOptions.jsx", () => {
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "prod jsx", exitCode: 0 });
   });
+
+  // A jsx field the nearest tsconfig leaves unset is filled from the same base
+  // pragma `bun build` seeds its per-file settings from (today: the cwd's
+  // tsconfig folded into the process-wide options). Only agreement between the
+  // two is asserted, so the base itself can change without touching this test.
+  test("a jsx field the nearest tsconfig leaves unset resolves like bun build", async () => {
+    const jsxRuntimePackage = (name: string) => ({
+      [`node_modules/${name}/package.json`]: JSON.stringify({
+        name,
+        version: "1.0.0",
+        type: "module",
+        exports: { "./jsx-runtime": "./rt.js", "./jsx-dev-runtime": "./rt.js" },
+      }),
+      [`node_modules/${name}/rt.js`]: `
+        export const Fragment = Symbol.for("F");
+        export const jsx = () => (console.log(${JSON.stringify(name)}), {});
+        export const jsxs = jsx;
+        export const jsxDEV = jsx;
+      `,
+    });
+    using dir = tempDir("jsx-tsconfig-merge-base", {
+      ...jsxRuntimePackage("react"),
+      ...jsxRuntimePackage("root-runtime"),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: "root-runtime" } }),
+      // Sets jsx but not jsxImportSource, and does not extend the root.
+      "app/tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx" } }),
+      "app/m.jsx": `export const el = <div />;`,
+    });
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), "run", "app/m.jsx"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "app/m.jsx", "--external", "react/*", "--external", "root-runtime/*"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [runStdout, runExitCode, buildStdout, buildExitCode] = await Promise.all([
+      run.stdout.text(),
+      run.exited,
+      build.stdout.text(),
+      build.exited,
+    ]);
+    const buildImportSource = buildStdout.match(/from "([^"]+)\/jsx(?:-dev)?-runtime"/)?.[1];
+    expect(["react", "root-runtime"]).toContain(buildImportSource);
+    expect({ runtimeImportSource: runStdout.trim(), runExitCode, buildExitCode }).toEqual({
+      runtimeImportSource: buildImportSource!,
+      runExitCode: 0,
+      buildExitCode: 0,
+    });
+  });
 });

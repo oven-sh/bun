@@ -514,9 +514,8 @@ impl WriteFile {
         // SAFETY: only reached via `WorkPoolTask::callback` with `task` = `&mut self.task`
         // (intrusive) registered in `on_writable`/`init`; recover parent.
         let this = unsafe { WriteFile::from_task_ptr(task) };
-        // On macOS, we use one-shot mode, so we don't need to unregister.
-        #[cfg(target_os = "macos")]
-        {
+        // On kqueue platforms we use one-shot mode, so we don't need to unregister.
+        if bun_core::Environment::IS_KQUEUE {
             // SAFETY: `this` is the live parent (see above); scoped access.
             unsafe { (*this).close_after_io = false };
         }

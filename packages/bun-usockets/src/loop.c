@@ -23,7 +23,9 @@
 #include <string.h>
 #include <time.h>
 #ifndef WIN32
+#include <fcntl.h>
 #include <sys/ioctl.h>
+#include <unistd.h>
 #endif
 #ifdef __linux__
 #include <netinet/in.h>
@@ -693,16 +695,41 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         msg.msg_iovlen = 1;
                         msg.msg_name = NULL;
                         msg.msg_namelen = 0;
-                        msg.msg_controllen = CMSG_LEN(sizeof(int));
+                        /* CMSG_SPACE (the full aligned buffer), or FreeBSD truncates and drops the fd. */
+                        msg.msg_controllen = sizeof(cmsg_buf);
                         msg.msg_control = cmsg_buf;
 
+                        // Received descriptors must not leak into children we spawn.
+                        #ifdef MSG_CMSG_CLOEXEC
+                        length = bsd_recvmsg(us_poll_fd(&s->p), &msg, recv_flags | MSG_CMSG_CLOEXEC);
+                        #else
                         length = bsd_recvmsg(us_poll_fd(&s->p), &msg, recv_flags);
+                        #endif
 
-                        // Extract file descriptor if present
+                        // Extract the file descriptor if present. One per message is the
+                        // protocol; close anything else a peer packed into the buffer.
                         if (length > 0 && msg.msg_controllen > 0) {
-                            struct cmsghdr *cmsg_ptr = CMSG_FIRSTHDR(&msg);
-                            if (cmsg_ptr && cmsg_ptr->cmsg_level == SOL_SOCKET && cmsg_ptr->cmsg_type == SCM_RIGHTS) {
-                                int fd = *(int *)CMSG_DATA(cmsg_ptr);
+                            int fd = -1;
+                            for (struct cmsghdr *cmsg_ptr = CMSG_FIRSTHDR(&msg); cmsg_ptr; cmsg_ptr = CMSG_NXTHDR(&msg, cmsg_ptr)) {
+                                if (cmsg_ptr->cmsg_level != SOL_SOCKET || cmsg_ptr->cmsg_type != SCM_RIGHTS || cmsg_ptr->cmsg_len < CMSG_LEN(0)) {
+                                    continue;
+                                }
+                                unsigned char *fds = CMSG_DATA(cmsg_ptr);
+                                size_t nfds = (cmsg_ptr->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+                                for (size_t i = 0; i < nfds; i++) {
+                                    int received;
+                                    memcpy(&received, fds + i * sizeof(int), sizeof(int));
+                                    #ifndef MSG_CMSG_CLOEXEC
+                                    fcntl(received, F_SETFD, FD_CLOEXEC);
+                                    #endif
+                                    if (fd == -1) {
+                                        fd = received;
+                                    } else {
+                                        close(received);
+                                    }
+                                }
+                            }
+                            if (fd != -1) {
                                 s = us_dispatch_fd(s, fd);
                                 if (!s || us_socket_is_closed(s)) {
                                     break;

@@ -17,7 +17,7 @@
 // release paths are also checked for use-after-free and leaks. Builds with
 // debug assertions only (debug, ASAN): the gate does not exist in release.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isAndroid, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -199,7 +199,8 @@ const ROWS: Row[] = [
     weak: "ProcessWaiterThreadTask",
     // The waiter thread is a POSIX fallback path, opted into here the way the runtime's own tests do.
     env: { BUN_GARBAGE_COLLECTOR_LEVEL: "0", BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
-    skip: isWindows,
+    // The flag is honoured on Linux/Android only (kqueue platforms always have EVFILT_PROC).
+    skip: !isLinux && !isAndroid,
   },
   {
     name: "BroadcastChannel message from another thread",

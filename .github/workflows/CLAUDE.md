@@ -113,3 +113,13 @@ export LLVM_VERSION_MAJOR=19
 - The script defaults to **format** mode (modifies files)
 - Always test locally before pushing workflow changes
 - Keep the exclusion list updated as new third-party code is added
+
+## mordant.yml Workflow
+
+Runs the [mordant](https://github.com/scarletindustries/mordant) lint pack over the Rust workspace via `bun run rust:mordant` (`scripts/rust-mordant.ts`). Advisory for now (`continue-on-error`).
+
+- The pack is pinned by commit in `Cargo.toml` under `[workspace.metadata.dylint]`. It builds and lints with its own nightly (its `rust-toolchain`), not ours, so a bump can also fail if this workspace stops compiling on that nightly.
+- Findings are errors. `mordant-baseline.toml` holds per-(lint, file) counts of the findings that predate the job, so only newly added findings fail a run. Fixing baselined findings needs no baseline update; regenerating it (`MORDANT_BASELINE_WRITE=1 bun run rust:mordant`) keeps the file honest and belongs in a bump PR.
+- Lints this repo has switched off, with reasons, are listed in `scripts/rust-mordant.ts`.
+
+To bump mordant: change the `rev` in `Cargo.toml`, run `bun run rust:mordant`, fix or baseline whatever the new revision reports, and put the triage in the PR description.

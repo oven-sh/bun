@@ -2395,7 +2395,10 @@ where
             server_config::FromJSOptions {
                 allow_bake_config: false,
                 is_fetch_required: true,
-                has_user_routes: !self.user_routes.is_empty(),
+                previous_fetch: !self.config.on_request.is_empty_or_undefined_or_null()
+                    || !self.config.on_node_http_request.is_empty(),
+                previous_routes: !self.user_routes.is_empty()
+                    || !self.config.static_routes.is_empty(),
             },
         )?;
         if global.has_exception() {

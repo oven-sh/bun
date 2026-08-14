@@ -618,6 +618,39 @@ describe("route reloading", () => {
   });
 });
 
+describe("reload() keeps the server able to answer", () => {
+  it("rejects routes: {} on a routes-only server, and keeps serving the old routes", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: { "/": () => new Response("routes") },
+    });
+    // The routes are the only handler; taking them away without adding a fetch
+    // would leave nothing to answer requests, which is what the same check
+    // refuses at Bun.serve() time.
+    expect(() => server.reload({ routes: {} } as ServeOptions)).toThrow("Bun.serve() needs either:");
+    expect(await (await fetch(server.url)).text()).toBe("routes");
+  });
+
+  it("allows routes: {} when the server keeps its fetch handler", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("fetch"),
+      routes: { "/": () => new Response("routes") },
+    });
+    server.reload({ routes: {} } as ServeOptions);
+    expect(await (await fetch(server.url)).text()).toBe("fetch");
+  });
+
+  it("allows a reload that names no handler at all on a routes-only server", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: { "/": () => new Response("routes") },
+    });
+    server.reload({ development: false } as ServeOptions);
+    expect(await (await fetch(server.url)).text()).toBe("routes");
+  });
+});
+
 describe("many route params", () => {
   let server: Server;
 

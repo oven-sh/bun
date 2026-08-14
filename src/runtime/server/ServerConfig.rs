@@ -1370,8 +1370,9 @@ impl ServerConfig {
             args.on_request = on_request_;
         } else if args.bake.is_none()
             && !args.is_node_http_server
-            && ((args.static_routes.len() + args.user_routes_to_build.len()) == 0
-                && !opts.has_user_routes)
+            && (args.static_routes.len() + args.user_routes_to_build.len()) == 0
+            && !opts.previous_fetch
+            && !(opts.previous_routes && !args.had_routes_object)
             && opts.is_fetch_required
         {
             if global.has_exception() {
@@ -1649,7 +1650,13 @@ impl ServerConfig {
 pub struct FromJSOptions {
     pub(crate) allow_bake_config: bool,
     pub(crate) is_fetch_required: bool,
-    pub(crate) has_user_routes: bool,
+    /// `reload()` keeps the running server's `fetch` (or node handler) when
+    /// the new config omits it, and its routes when the new config has no
+    /// `routes` object at all; a `routes` object replaces them. So a reload
+    /// that names no handler is fine on the strength of these, except
+    /// `routes: {}` on a server whose only handler was its routes.
+    pub(crate) previous_fetch: bool,
+    pub(crate) previous_routes: bool,
 }
 
 impl Default for FromJSOptions {
@@ -1657,7 +1664,8 @@ impl Default for FromJSOptions {
         Self {
             allow_bake_config: true,
             is_fetch_required: true,
-            has_user_routes: false,
+            previous_fetch: false,
+            previous_routes: false,
         }
     }
 }

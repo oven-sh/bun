@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 // Every operand, absolute or not, was joined into a fixed-size path buffer, so
@@ -13,8 +12,8 @@ test("operands longer than the path buffer are reported, not a crash", async () 
     import { $ } from "bun";
     import { existsSync } from "node:fs";
     $.nothrow();
+    const dir = process.argv[1];
     const long = Buffer.alloc(5000, "a").toString();
-    const absolute = process.argv[1] + "/" + long;
     // Past the path buffer on every platform, Windows included.
     const huge = Buffer.alloc(100_000, "h").toString();
     // Longer than the buffer as written, but normalizes down to one component.
@@ -26,10 +25,10 @@ test("operands longer than the path buffer are reported, not a crash", async () 
     console.log(JSON.stringify({
       cwd: process.cwd(),
       relative: await run(long),
-      absolute: await run(absolute),
+      absolute: await run(dir + "/" + long),
       huge: await run(huge),
-      mixed: { ...(await run(long, "short")), shortCreated: existsSync("short") },
-      dotSlashes: { ...(await run(dotSlashes)), created: existsSync("normalized") },
+      mixed: { ...(await run(long, "short")), shortCreated: existsSync(dir + "/short") },
+      dotSlashes: { ...(await run(dotSlashes)), created: existsSync(dir + "/normalized") },
     }));
   `;
   await using proc = Bun.spawn({
@@ -60,7 +59,5 @@ test("operands longer than the path buffer are reported, not a crash", async () 
     mixed: { ...failed(join(cwd, long)), shortCreated: true },
     dotSlashes: { exitCode: 0, stderr: "", created: true },
   });
-  expect(existsSync(join(String(dir), "short"))).toBe(true);
-  expect(existsSync(join(String(dir), "normalized"))).toBe(true);
   expect(exitCode).toBe(0);
 });

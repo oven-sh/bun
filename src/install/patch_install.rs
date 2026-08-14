@@ -483,7 +483,6 @@ impl PatchTask {
             destination_dir_subpath: tempdir_name,
             destination_dir_subpath_buf: &mut dest_subpath_buf[..],
             patch: None,
-            progress: None,
             package_name: pkg_name,
             package_version: &resolution_label,
             // dummy value

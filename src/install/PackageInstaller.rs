@@ -1407,11 +1407,6 @@ impl<'a> PackageInstaller<'a> {
         // `installer` is alive (see `PackageInstaller` field docs).
         let node_modules_ref = bun_ptr::ParentRef::<NodeModulesFolder>::new(&self.node_modules);
         let mut installer = PackageInstall {
-            progress: if self.manager().options.log_level.show_progress() {
-                Some(self.progress_mut())
-            } else {
-                None
-            },
             cache_dir: Fd::INVALID, // assigned below
             destination_dir_subpath,
             // SAFETY: `subpath_buf_ptr` = `&raw mut self.destination_dir_subpath_buf`; the

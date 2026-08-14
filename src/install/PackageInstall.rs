@@ -1,8 +1,7 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_collections::{ArrayHashMap, DynamicBitSet};
-use bun_core::Progress::Progress;
-use bun_core::{Global, Output};
+use bun_core::Output;
 use bun_core::{MutableString, ZStr};
 use bun_paths::strings;
 use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer, SEP, SEP_STR};
@@ -33,8 +32,6 @@ pub struct PackageInstall<'a> {
     // borrowck will reject simultaneous &ZStr + &mut [u8]. Consider storing only the len.
     pub(crate) destination_dir_subpath: &'a ZStr,
     pub(crate) destination_dir_subpath_buf: &'a mut [u8],
-
-    pub(crate) progress: Option<&'a mut Progress>,
 
     pub(crate) package_name: SemverString,
     pub(crate) package_version: &'a [u8],
@@ -278,6 +275,7 @@ struct InstallDirState {
     cached_package_dir: Dir,
     // `Walker` has no `Default`; wrap in Option.
     walker: Option<Walker>,
+    /// POSIX only; on Windows it stays invalid and the walkers use the absolute paths in `buf`/`buf2`.
     subdir: Dir,
     // A by-value `WPathBuffer` here would
     // memset+move ~128 KB through `Default::default()` per package. Use the
@@ -337,8 +335,7 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
         Ok(()) => return Ok(()),
         Err(err) => match err.get_errno() {
             // `mkpath_np` on macOS also checks EISDIR; on Windows EEXIST suffices.
-            // NodeFS additionally probes `directoryExistsAt`; the package-install
-            // call sites discard the result (`_ =`) so a bare Ok matches behaviour.
+            // An existing entry counts as success, like `make_path`.
             E::EISDIR | E::EEXIST => return Ok(()),
             E::ENOENT => {
                 if len == 0 {
@@ -421,6 +418,15 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
             _ => Err(err),
         },
     }
+}
+
+/// [`mkdir_recursive_os_path`] for `path[..len]`, the parent directory of the entry `path` names.
+#[cfg(windows)]
+fn mkdir_recursive_os_path_prefix(path: &[u16], len: usize) -> sys::Maybe<()> {
+    let mut buf = bun_paths::w_path_buffer_pool::get();
+    buf[..len].copy_from_slice(&path[..len]);
+    buf[len] = 0;
+    mkdir_recursive_os_path(bun_core::WStr::from_buf(&buf[..], len))
 }
 
 /// Open a directory handle relative to `dir`.
@@ -1044,11 +1050,19 @@ impl<'a> PackageInstall<'a> {
             while let Some(entry) = walker.next()? {
                 match entry.kind {
                     EntryKind::Directory => {
-                        let _ = sys::mkdirat(destination_dir_, entry.path, 0o755);
+                        // EEXIST: this is also the fallback for an existing destination.
+                        match sys::mkdirat(destination_dir_, entry.path, 0o755) {
+                            Ok(()) => {}
+                            Err(e) if e.get_errno() == sys::Errno::EEXIST => {}
+                            Err(e) => return Err(e.into()),
+                        }
                     }
                     EntryKind::File => {
                         let path_len = entry.path.len();
                         let base_len = entry.basename.len();
+                        if path_len >= stackpath.len() {
+                            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                        }
                         stackpath[..path_len].copy_from_slice(entry.path.as_bytes());
                         stackpath[path_len] = 0;
                         // `stackpath[path_len] == 0` written above; both views are
@@ -1324,7 +1338,6 @@ impl<'a> PackageInstall<'a> {
         fn copy(
             destination_dir_: &Dir,
             walker: &mut Walker,
-            mut progress_: Option<&mut Progress>,
             to_copy_into1_offset: WinOffset,
             head1: WinSlice<'_>,
             to_copy_into2_offset: WinOffset,
@@ -1334,18 +1347,21 @@ impl<'a> PackageInstall<'a> {
             let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
             #[cfg(not(windows))]
             let _ = (to_copy_into1_offset, head1, to_copy_into2_offset, head2);
+            #[cfg(windows)]
+            let _ = destination_dir_;
 
             while let Some(entry) = walker.next()? {
                 #[cfg(windows)]
                 {
-                    use bun_sys::windows::{self, Win32ErrorExt as _};
+                    use bun_sys::windows;
                     match entry.kind {
                         EntryKind::Directory | EntryKind::File => {}
                         _ => continue,
                     }
 
-                    if entry.path.len() > head1.len() - to_copy_into1_offset
-                        || entry.path.len() > head2.len() - to_copy_into2_offset
+                    // One unit of each buffer is reserved for the NUL terminator.
+                    if entry.path.len() >= head1.len() - to_copy_into1_offset
+                        || entry.path.len() >= head2.len() - to_copy_into2_offset
                     {
                         return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                     }
@@ -1372,10 +1388,7 @@ impl<'a> PackageInstall<'a> {
                                 )
                             } == 0
                             {
-                                let _ = bun_sys::MakePath::make_path_u16(
-                                    destination_dir_,
-                                    entry.path.as_slice(),
-                                );
+                                mkdir_recursive_os_path(dest)?;
                             }
                         }
                         EntryKind::File => {
@@ -1384,9 +1397,9 @@ impl<'a> PackageInstall<'a> {
                                 if let Some(entry_dirname) =
                                     bun_paths::Dirname::dirname_u16(entry.path.as_slice())
                                 {
-                                    let _ = bun_sys::MakePath::make_path_u16(
-                                        destination_dir_,
-                                        entry_dirname,
+                                    let _ = mkdir_recursive_os_path_prefix(
+                                        dest.as_slice(),
+                                        to_copy_into1_offset + entry_dirname.len(),
                                     );
                                     // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
                                     if unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) }
@@ -1396,31 +1409,16 @@ impl<'a> PackageInstall<'a> {
                                     }
                                 }
 
-                                if let Some(progress) = progress_.as_deref_mut() {
-                                    progress.root.end();
-                                    progress.refresh();
-                                }
-
-                                if let Some(err) = windows::Win32Error::get().to_system_errno() {
-                                    bun_core::pretty_errorln!(
-                                        "<r><red>{}<r>: copying file {}",
-                                        <&'static str>::from(err),
-                                        bun_core::fmt::fmt_os_path(
-                                            entry.path.as_slice(),
-                                            Default::default()
-                                        )
-                                    );
-                                } else {
-                                    bun_core::pretty_errorln!(
-                                        "<r><red>error<r> copying file {}",
-                                        bun_core::fmt::fmt_os_path(
-                                            entry.path.as_slice(),
-                                            Default::default()
-                                        )
-                                    );
-                                }
-
-                                Global::crash();
+                                let err = windows::get_last_error();
+                                bun_core::pretty_errorln!(
+                                    "<r><red>{}<r>: copying file {}",
+                                    <&'static str>::from(err),
+                                    bun_core::fmt::fmt_os_path(
+                                        entry.path.as_slice(),
+                                        Default::default()
+                                    )
+                                );
+                                return Err(err.into());
                             }
                         }
                         _ => unreachable!(), // handled above
@@ -1465,11 +1463,6 @@ impl<'a> PackageInstall<'a> {
                             match create(entry.path) {
                                 Ok(f) => break 'brk f,
                                 Err(err) => {
-                                    if let Some(progress) = progress_ {
-                                        progress.root.end();
-                                        progress.refresh();
-                                    }
-
                                     bun_core::pretty_errorln!(
                                         "<r><red>{}<r>: copying file {}",
                                         bstr::BStr::new(err.name()),
@@ -1478,7 +1471,7 @@ impl<'a> PackageInstall<'a> {
                                             Default::default()
                                         )
                                     );
-                                    Global::crash();
+                                    return Err(err.into());
                                 }
                             }
                         }
@@ -1487,12 +1480,8 @@ impl<'a> PackageInstall<'a> {
 
                     #[cfg(unix)]
                     {
-                        let Ok(stat) = sys::fstat(in_file) else {
-                            continue;
-                        };
-                        // `sys::fchmod` is the safe by-value-fd wrapper (kernel
-                        // validates the fd; no memory-safety preconditions).
-                        // Result intentionally ignored.
+                        let stat = sys::fstat(in_file)?;
+                        // Best effort: filesystems without permission bits reject fchmod.
                         let _ = sys::fchmod(outfile, stat.st_mode as bun_sys::Mode);
                     }
 
@@ -1501,17 +1490,12 @@ impl<'a> PackageInstall<'a> {
                         outfile,
                         &mut copy_file_state,
                     ) {
-                        if let Some(progress) = progress_.as_deref_mut() {
-                            progress.root.end();
-                            progress.refresh();
-                        }
-
                         bun_core::pretty_errorln!(
                             "<r><red>{}<r>: copying file {}",
                             bstr::BStr::new(err.name()),
                             bun_core::fmt::fmt_os_path(entry.path.as_bytes(), Default::default())
                         );
-                        Global::crash();
+                        return Err(err.into());
                     }
                 }
             }
@@ -1523,7 +1507,6 @@ impl<'a> PackageInstall<'a> {
         let result = copy(
             &state.subdir,
             state.walker.as_mut().unwrap(),
-            self.progress.as_deref_mut(),
             state.to_copy_buf_off,
             &mut state.buf[..],
             state.to_copy_buf2_off,
@@ -1535,7 +1518,6 @@ impl<'a> PackageInstall<'a> {
             // Field-projected `&mut` so the `&state.subdir` borrow above stays disjoint
             // (`state.walker()` would reborrow `&mut state` and conflict).
             state.walker.as_mut().unwrap(),
-            self.progress.as_deref_mut(),
             (),
             (),
             (),
@@ -1607,10 +1589,10 @@ impl<'a> PackageInstall<'a> {
                 {
                     match entry.kind {
                         EntryKind::Directory => {
-                            let _ = bun_sys::MakePath::make_path::<OSPathChar>(
+                            bun_sys::MakePath::make_path::<OSPathChar>(
                                 destination_dir,
                                 entry.path.as_bytes(),
-                            );
+                            )?;
                         }
                         EntryKind::File => {
                             // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
@@ -1656,8 +1638,9 @@ impl<'a> PackageInstall<'a> {
                         _ => continue,
                     }
 
-                    if entry.path.len() > head1.len() - to_copy_into1_offset
-                        || entry.path.len() > head2.len() - to_copy_into2_offset
+                    // One unit of each buffer is reserved for the NUL terminator.
+                    if entry.path.len() >= head1.len() - to_copy_into1_offset
+                        || entry.path.len() >= head2.len() - to_copy_into2_offset
                     {
                         loop_err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         break;
@@ -1795,17 +1778,25 @@ impl<'a> PackageInstall<'a> {
         ) -> crate::Result<()> {
             #[cfg(not(windows))]
             let _ = (to_copy_into1_offset, head1);
+            #[cfg(windows)]
+            let _ = destination_dir;
             while let Some(entry) = walker.next()? {
                 #[cfg(unix)]
                 {
                     match entry.kind {
                         EntryKind::Directory => {
-                            let _ = bun_sys::MakePath::make_path::<OSPathChar>(
+                            bun_sys::MakePath::make_path::<OSPathChar>(
                                 destination_dir,
                                 entry.path.as_bytes(),
-                            );
+                            )?;
                         }
                         EntryKind::File => {
+                            // One byte is reserved for the NUL terminator.
+                            if entry.path.len() >= head2.len() - to_copy_into2_offset {
+                                return Err(crate::Error::Sys(
+                                    bun_errno::SystemErrno::ENAMETOOLONG,
+                                ));
+                            }
                             let target_len = to_copy_into2_offset + entry.path.len();
                             head2[to_copy_into2_offset..target_len]
                                 .copy_from_slice(entry.path.as_bytes());
@@ -1821,7 +1812,7 @@ impl<'a> PackageInstall<'a> {
                                 }
 
                                 let _ = sys::unlinkat(destination_dir, entry.path);
-                                sys::symlinkat(entry.basename, destination_dir.fd(), entry.path)?;
+                                sys::symlinkat(target, destination_dir.fd(), entry.path)?;
                             }
                         }
                         _ => {}
@@ -1835,8 +1826,9 @@ impl<'a> PackageInstall<'a> {
                         _ => continue,
                     }
 
-                    if entry.path.len() > head1.len() - to_copy_into1_offset
-                        || entry.path.len() > head2.len() - to_copy_into2_offset
+                    // One unit of each buffer is reserved for the NUL terminator.
+                    if entry.path.len() >= head1.len() - to_copy_into1_offset
+                        || entry.path.len() >= head2.len() - to_copy_into2_offset
                     {
                         return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                     }
@@ -1863,10 +1855,7 @@ impl<'a> PackageInstall<'a> {
                                 )
                             } == 0
                             {
-                                let _ = bun_sys::MakePath::make_path_u16(
-                                    destination_dir,
-                                    entry.path.as_slice(),
-                                );
+                                mkdir_recursive_os_path(dest)?;
                             }
                         }
                         EntryKind::File => match sys::symlink_w(dest, src, Default::default()) {
@@ -1874,9 +1863,9 @@ impl<'a> PackageInstall<'a> {
                                 if let Some(entry_dirname) =
                                     bun_paths::Dirname::dirname_u16(entry.path.as_slice())
                                 {
-                                    let _ = bun_sys::MakePath::make_path_u16(
-                                        destination_dir,
-                                        entry_dirname,
+                                    let _ = mkdir_recursive_os_path_prefix(
+                                        dest.as_slice(),
+                                        to_copy_into1_offset + entry_dirname.len(),
                                     );
                                     if sys::symlink_w(dest, src, Default::default()).is_ok() {
                                         continue;

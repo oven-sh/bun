@@ -629,8 +629,6 @@ JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject
     return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, "must be one of: "_s, value, oneOf);
 }
 
-// `name` is whatever ERR::INVALID_ARG_TYPE accepts (JSValue, ASCIILiteral or
-// WTF::String); it is only converted on the error path.
 template<typename Name>
 static JSC::EncodedJSValue validateObjectImpl(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, const Name& name)
 {

@@ -437,8 +437,6 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
     )?;
 
     // Get final output with all chunk references resolved.
-    // `code_for_metafile()` takes the dummy chunk and the full slice as `&`, so
-    // passing `&chunks[0]` directly is fine (overlapping shared borrows).
     let code_result = intermediate.code_for_metafile(parse_graph, &c.graph, &chunks[0], chunks)?;
 
     Ok(code_result.buffer)

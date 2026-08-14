@@ -660,9 +660,8 @@ impl IntermediateOutput {
         }
     }
 
-    /// `code()` for the metafile, whose placeholders sit inside JSON strings.
-    /// `chunk` only supplies the directory paths are made relative to; the
-    /// metafile is not a chunk of its own.
+    /// `code()` for the metafile, whose placeholders sit inside JSON strings;
+    /// `chunk` only supplies the directory that paths are made relative to.
     pub(crate) fn code_for_metafile(
         &mut self,
         parse_graph: &Graph,

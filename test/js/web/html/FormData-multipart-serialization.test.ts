@@ -1,3 +1,4 @@
+import { S3Client } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
 
@@ -210,5 +211,95 @@ describe("multipart serialization (new Response(formData))", () => {
     // An extra copy of the blob bytes would put this at ~2x the blob size.
     expect(deltaMB).toBeLessThan(blobSizeMB * 1.5);
     expect(exitCode).toBe(0);
+  });
+});
+
+// The serializer is synchronous and an S3 object's bytes can only be fetched
+// asynchronously, so an S3-backed entry cannot be serialized. It used to be
+// written out as the part headers followed by an empty body: no error, no S3
+// request, and the receiver stored an empty file.
+describe("multipart serialization of S3-backed entries", () => {
+  // Nothing below performs an S3 request, so the endpoint only has to parse.
+  const s3 = new S3Client({
+    endpoint: "http://127.0.0.1:1",
+    bucket: "bucket",
+    accessKeyId: "access-key",
+    secretAccessKey: "secret-key",
+  });
+
+  const expectedMessage =
+    'FormData entry "report" is an S3 file, which cannot be read while serializing the body. ' +
+    "Read it first: formData.append(name, new Blob([await s3file.bytes()]), filename)";
+
+  function formDataWith(entry: Blob): FormData {
+    const formData = new FormData();
+    formData.append("before", "first");
+    formData.append("report", entry, "reports/2026.csv");
+    formData.append("after", "last");
+    return formData;
+  }
+
+  function thrownBy(fn: () => unknown): unknown {
+    try {
+      fn();
+    } catch (error) {
+      return error;
+    }
+    throw new Error("did not throw");
+  }
+
+  test.each([
+    ["S3Client.file()", () => s3.file("reports/2026.csv", { type: "text/csv" })],
+    ['Bun.file("s3://...")', () => Bun.file("s3://bucket/reports/2026.csv")],
+    ["a slice of an S3 file", () => s3.file("reports/2026.csv").slice(0, 16)],
+  ])("new Response(formData) throws for %s", (_label, makeEntry) => {
+    const formData = formDataWith(makeEntry());
+
+    const error = thrownBy(() => new Response(formData));
+    expect(error).toBeInstanceOf(TypeError);
+    expect((error as TypeError).message).toBe(expectedMessage);
+  });
+
+  // Serializing used to resolve the entry's size as well, which for an S3 blob
+  // turns the "unknown" NaN into 0.
+  test("serializing leaves the entry's unknown size alone", () => {
+    const formData = formDataWith(s3.file("reports/2026.csv"));
+    expect((formData.get("report") as Blob).size).toBeNaN();
+
+    try {
+      new Response(formData);
+    } catch {}
+
+    expect((formData.get("report") as Blob).size).toBeNaN();
+  });
+
+  test("new Request() throws", () => {
+    const formData = formDataWith(s3.file("reports/2026.csv"));
+
+    const error = thrownBy(() => new Request("http://localhost/upload", { method: "POST", body: formData }));
+    expect(error).toBeInstanceOf(TypeError);
+    expect((error as TypeError).message).toBe(expectedMessage);
+  });
+
+  test("fetch() rejects without sending a request", async () => {
+    const receivedBodies: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        receivedBodies.push(await request.text());
+        return new Response("stored");
+      },
+    });
+    const formData = formDataWith(s3.file("reports/2026.csv"));
+
+    const error = await fetch(server.url, { method: "POST", body: formData }).then(
+      response => {
+        throw new Error(`fetch() resolved with status ${response.status}`);
+      },
+      rejection => rejection,
+    );
+    expect(error).toBeInstanceOf(TypeError);
+    expect((error as TypeError).message).toBe(expectedMessage);
+    expect(receivedBodies).toEqual([]);
   });
 });

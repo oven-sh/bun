@@ -3939,7 +3939,9 @@ impl FormDataContext<'_> {
                 joiner.push_static(b"\r\n\r\n");
 
                 if blob.store.get().is_some() {
-                    if blob.size.get() == MAX_SIZE {
+                    // `resolve_size` zeroes an S3 blob's size; the S3 arm below
+                    // rejects the entry, so leave it untouched.
+                    if blob.size.get() == MAX_SIZE && !blob.is_s3() {
                         blob.resolve_size();
                     }
                     let store = blob
@@ -3949,8 +3951,13 @@ impl FormDataContext<'_> {
                         .expect("infallible: store present");
                     match &store.data {
                         store::Data::S3(_) => {
-                            // TODO: s3
-                            // we need to make this async and use download/downloadSlice
+                            // This serializer is synchronous and S3 objects can
+                            // only be fetched asynchronously. Emitting the part
+                            // with an empty body would silently upload nothing.
+                            self.failed = true;
+                            let _ = global_this.throw_type_error(format_args!(
+                                "FormData entry \"{name}\" is an S3 file, which cannot be read while serializing the body. Read it first: formData.append(name, new Blob([await s3file.bytes()]), filename)"
+                            ));
                         }
                         store::Data::File(file) => {
                             // TODO: make this async + lazy

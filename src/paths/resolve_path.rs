@@ -667,33 +667,28 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     )
 }
 
-/// Bytes [`relative_platform_in`] may write into a scratch buffer while
-/// normalizing `path`: the normalized path (one byte longer than the input at
-/// most, see [`normalize_string_spill`]) behind a leading separator, or, for a
-/// relative input, the path joined onto `top_level_dir` ([`JoinScratch::init`]'s
-/// bound). Each input is normalized into either scratch buffer, so both are
-/// sized to the larger input.
+/// Scratch [`relative_platform_in`] needs for one input: a leading separator
+/// plus the input normalized (which can grow by a byte, see
+/// [`normalize_string_spill`]), or that joined onto the cwd when it is relative.
 fn relative_scratch_needed<P: PlatformT>(path: &[u8]) -> usize {
     if P::P.is_absolute(path) {
         path.len() + 2
     } else {
-        Fs::FileSystem::instance().top_level_dir().len() + path.len() + 4
+        join_abs_needed(Fs::FileSystem::instance().top_level_dir().len(), &[path]) + 1
     }
 }
 
-/// Bytes the result of [`relative_to_common_path`] can occupy when both
-/// normalized inputs fit in `scratch` bytes: every component of `from` (two
-/// bytes at least, separator included) becomes at most a three-byte `/..`,
-/// followed by one separator and the tail of `to`.
+/// Result bound of [`relative_to_common_path`]: each component of `from` (two
+/// bytes or more) becomes at most a three-byte `/..`, then a separator and `to`.
 fn relative_out_needed(scratch: usize) -> usize {
     (scratch + scratch / 2) + 1 + scratch
 }
 
-/// [`relative`] for inputs of any length. The thread-local buffers are
-/// `PathBuffer`s, which bounds not only `from` and `to` but also the result (a
-/// deep `from` becomes a long `../` chain); when any of the three might not
-/// fit, the work happens in heap buffers sized to the inputs instead.
+/// [`relative`] for inputs of any length: the thread-local `PathBuffer`s bound
+/// `from`, `to` and the `../` chain alike, so when any of the three might not
+/// fit, the same code runs in heap buffers sized to the inputs.
 pub fn relative_alloc(from: &[u8], to: &[u8]) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+    // Either input may be normalized into either scratch buffer.
     let scratch = relative_scratch_needed::<platform::Auto>(from)
         .max(relative_scratch_needed::<platform::Auto>(to));
     let out_needed = relative_out_needed(scratch);
@@ -1674,11 +1669,9 @@ enum JoinScratch {
     Heap(Vec<u8>),
 }
 
-/// Bytes `_join_abs_string_buf` can write for a `base`-byte cwd and `parts`:
-/// the concatenation (one separator per part, plus the one Windows inserts
-/// after a bare share root) and the byte Windows normalization can add to it
-/// (see [`normalize_string_spill`]); normalizing otherwise only removes bytes,
-/// so this bounds the output buffer as well as the scratch one.
+/// Bound on what `_join_abs_string_buf` writes, scratch or output: the
+/// concatenation, the separator Windows adds after a bare share root, and the
+/// byte normalizing can add (see [`normalize_string_spill`]).
 #[inline]
 fn join_abs_needed(base: usize, parts: &[&[u8]]) -> usize {
     parts.iter().map(|p| p.len() + 1).sum::<usize>() + base + 2
@@ -1743,10 +1736,8 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     Some(&buf[..len])
 }
 
-/// [`join_abs_string_buf`] into `buf` when the result is known to fit,
-/// otherwise into `spill` (grown as needed); the [`join_z_buf_spill`] of the
-/// `path.resolve` family, for when the result is wanted whatever its length.
-/// `spill` is untouched in the common case.
+/// [`join_abs_string_buf`] into `buf` when the result fits, otherwise into
+/// `spill` (grown as needed, untouched in the common case); cf. [`join_z_buf_spill`].
 pub fn join_abs_string_buf_spill<'a, P: PlatformT>(
     cwd: &'a [u8],
     buf: &'a mut [u8],
@@ -2787,8 +2778,6 @@ mod tests {
 
     #[test]
     fn join_abs_string_buf_spill_uses_the_buffer_up_to_its_bound() {
-        // The longest input the bound lets into `buf` must still be joined
-        // there, and the same input one byte longer must spill.
         let mut buf = [0u8; 64];
         let cwd = b"/c";
         let part = vec![b'q'; buf.len() - join_abs_needed(cwd.len(), &[b""])];
@@ -2808,9 +2797,7 @@ mod tests {
 
     #[test]
     fn join_abs_string_buf_spill_accounts_for_windows_results_that_grow() {
-        // A cwd that is a bare share root gains a separator before the parts
-        // are appended; with a buffer sized exactly to the bound it must not
-        // overflow.
+        // A bare share root gains a separator; `buf` is sized exactly to the bound.
         let cwd = b"\\\\server\\share";
         let parts: [&[u8]; 1] = [b"x"];
         let mut buf = vec![0u8; join_abs_needed(cwd.len(), &parts)];
@@ -2851,8 +2838,7 @@ mod tests {
         while from.len() + 2 < MAX_PATH_BYTES {
             from.extend_from_slice(b"/d");
         }
-        // Two bytes, not one: the Windows arm drops a one-byte root-level
-        // target (pre-existing), which would hide what this test is about.
+        // Two bytes: the Windows arm drops one-byte root-level targets (pre-existing).
         let rel = relative_alloc(&from, b"/tt").unwrap();
 
         let components = from.len() / 2;

@@ -610,8 +610,7 @@ impl Linker {
         origin: &URL<'_>,
         import_path_format: ImportPathFormat,
     ) -> crate::Result<PFs::Path<'static>> {
-        // `source_path` may come straight from an `onResolve` plugin, so it is
-        // not bounded by a path buffer the way the thread-local `relative` requires.
+        // `source_path` may be an unbounded `onResolve` result: no thread-local `relative`.
         match import_path_format {
             ImportPathFormat::AbsolutePath => {
                 if namespace == b"node" {

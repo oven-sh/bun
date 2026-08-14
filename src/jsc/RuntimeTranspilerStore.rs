@@ -982,7 +982,7 @@ impl TranspilerJob {
             let bytecode_cache =
                 crate::resolved_source::Bytecode::owned(already_bundled.into_bytecode());
             self.resolved_source = ResolvedSource {
-                source_code: String::clone_latin1(&parse_result.source.contents),
+                source_code: String::clone_utf8(&parse_result.source.contents),
                 already_bundled: true,
                 bytecode_cache,
                 is_commonjs_module,

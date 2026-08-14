@@ -1865,6 +1865,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let accessor_name: &'a [u8] = 'brk: {
                     if let js_ast::ExprData::EString(s) = &key_expr.data
                         && s.is_utf8()
+                        && js_lexer::is_identifier(&s.data)
                     {
                         break 'brk p.bump_name2(b"_", &s.data);
                     }

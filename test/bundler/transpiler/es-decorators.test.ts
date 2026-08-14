@@ -1377,6 +1377,24 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("decorated accessor with a non-identifier string key round-trips", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const seen = [];
+        function dec(target, ctx) { seen.push(ctx.name); }
+        class C {
+          @dec accessor "a-b" = 1;
+          @dec static accessor "c d" = 2;
+        }
+        const c = new C();
+        c["a-b"] = 10;
+        C["c d"] = 20;
+        console.log(seen.sort().join(","), c["a-b"], C["c d"]);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a-b,c d 10 20\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("computed accessor key is evaluated once, in source order, and shared by get and set", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         const order = [];

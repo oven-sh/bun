@@ -9688,7 +9688,14 @@ test("npm manifest cache entries are only reused for the package name they were 
   expect(npmPackages.map(pkg => pkg.name)).toEqual(["no-deps"]);
   expect(npmPackages[0].resolution.resolved).toBe(`http://localhost:${port}/no-deps/-/no-deps-1.0.0.tgz`);
 
-  expect(parseManifest(byName["no-deps"], registryUrl()).name).toBe("no-deps");
+  // The rejected entry is deleted as soon as it is read; its replacement is written by a
+  // thread pool task that `bun install` does not wait for (#37203). The first install above
+  // still had tarballs to download while its manifests were being written, but this one has
+  // everything cached and exits while the write is still in flight (always, with a Windows
+  // debug build). So the file is either gone or holds no-deps; it must never still be basic-1's.
+  if (await exists(byName["no-deps"])) {
+    expect(parseManifest(byName["no-deps"], registryUrl()).name).toBe("no-deps");
+  }
   expect(exitCode).toBe(0);
 });
 

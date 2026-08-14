@@ -873,49 +873,91 @@ pub mod bv2_impl {
             /// The bundler only ever reads `.slice()`, so the moved-down map
             /// stores raw bytes.
             /// `bun_runtime`'s `from_js` parses JS values via `BlobOrStringOrBuffer`
-            /// in async (owning-copy) mode and inserts the extracted bytes here.
+            /// in async (owning-copy) mode and inserts the extracted bytes via
+            /// [`FileMap::put`].
+            ///
+            /// Keys are stored in the form [`FileMap::canonical`] produces, and
+            /// every lookup canonicalizes its input the same way, so a key and a
+            /// path can only ever be compared in one spelling.
             #[derive(Default)]
             pub struct FileMap {
                 pub map: bun_collections::StringHashMap<Box<[u8]>>,
             }
             impl FileMap {
-                pub(crate) fn get(&self, specifier: &[u8]) -> Option<&[u8]> {
+                /// Fails with [`bun_paths::Error::MaxPathExceeded`] when the
+                /// resolved `path` does not fit in a path buffer.
+                pub fn put(&mut self, path: &[u8], contents: Box<[u8]>) -> bun_paths::Result<()> {
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let key = Self::canonical(path, &mut **buf)
+                        .ok_or(bun_paths::Error::MaxPathExceeded)?;
+                    self.map.put_assume_capacity(key, contents);
+                    Ok(())
+                }
+
+                /// The one spelling of a path that keys are stored under: `/`
+                /// separators (plus an uppercase drive letter on Windows), and a
+                /// non-absolute path resolved against the cwd, which is also what
+                /// a non-absolute entry point is resolved against. An absolute
+                /// path keeps its text, so it is also the `Path.text` an
+                /// in-memory source ends up with. `None` if the result does not
+                /// fit in `buf`.
+                fn canonical<'b>(path: &[u8], buf: &'b mut [u8]) -> Option<&'b [u8]> {
+                    let mut scratch = bun_paths::path_buffer_pool::get();
+                    let posix = scratch.get_mut(..path.len())?;
+                    posix.copy_from_slice(path);
+                    bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
+                        posix,
+                    );
+                    if bun_paths::is_absolute(posix) {
+                        let out = buf.get_mut(..posix.len())?;
+                        out.copy_from_slice(posix);
+                        return Some(out);
+                    }
+                    let len = bun_paths::resolve_path::join_abs_string_buf_checked::<
+                        bun_paths::platform::Auto,
+                    >(
+                        bun_resolver::fs::FileSystem::get().top_level_dir,
+                        buf,
+                        &[posix],
+                    )?
+                    .len();
+                    let out = &mut buf[..len];
+                    bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(out);
+                    Some(out)
+                }
+
+                /// Map-owned key and contents for an already canonical path.
+                fn entry(&self, canonical: &[u8]) -> Option<(&[u8], &[u8])> {
+                    self.map
+                        .get_key_value(canonical)
+                        .map(|(key, contents)| (key.as_ref(), contents.as_ref()))
+                }
+
+                /// `path` is an entry point or a source path, i.e. a path that
+                /// stands on its own (relative to the cwd), not an import
+                /// specifier.
+                fn lookup(&self, path: &[u8]) -> Option<(&[u8], &[u8])> {
                     if self.map.is_empty() {
                         return None;
                     }
-                    #[cfg(not(windows))]
-                    {
-                        self.map.get(specifier).map(|b| b.as_ref())
-                    }
-                    #[cfg(windows)]
-                    {
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        let normalized =
-                            bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
-                        self.map.get(normalized).map(|b| b.as_ref())
-                    }
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    self.entry(Self::canonical(path, &mut **buf)?)
                 }
+
+                pub(crate) fn get(&self, path: &[u8]) -> Option<&[u8]> {
+                    self.lookup(path).map(|(_, contents)| contents)
+                }
+
                 #[inline]
-                pub fn contains(&self, specifier: &[u8]) -> bool {
-                    if self.map.is_empty() {
-                        return false;
-                    }
-                    #[cfg(not(windows))]
-                    {
-                        self.map.contains_key(specifier)
-                    }
-                    #[cfg(windows)]
-                    {
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        let normalized =
-                            bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
-                        self.map.contains_key(normalized)
-                    }
+                pub fn contains(&self, path: &[u8]) -> bool {
+                    self.lookup(path).is_some()
                 }
+
                 /// Returns a `resolver::Result` for a file in the map, or `None` if
-                /// not found. Handles direct key matches and relative specifiers
-                /// joined against `dirname(source_file)` (with Windows
-                /// drive-letter / separator normalization).
+                /// not found. `specifier` is looked up as a path of its own when it
+                /// is absolute or an entry point (`source_file` is empty), and
+                /// otherwise joined against `dirname(source_file)` like the
+                /// resolver would.
                 ///
                 /// `arena` is the build's bump arena (`BundleV2::arena()`);
                 /// the matched key is copied into it so the returned
@@ -928,117 +970,87 @@ pub mod bv2_impl {
                     source_file: &[u8],
                     specifier: &[u8],
                 ) -> Option<bun_resolver::Result> {
-                    if self.map.is_empty() {
+                    if self.map.is_empty() || specifier.is_empty() {
                         return None;
                     }
+
+                    let (key, _) =
+                        if source_file.is_empty() || bun_paths::is_absolute_loose(specifier) {
+                            self.lookup(specifier)?
+                        } else {
+                            self.lookup_import(source_file, specifier)?
+                        };
 
                     // SAFETY: ARENA — `arena` is the build-pass bump arena
                     // (never freed before the `Result` is consumed); detaching the
                     // borrow lifetime matches the established `Path<'static>`
                     // convention used throughout `bun_resolver` (PORTING.md
                     // §Lifetimes: ARENA → `&'bump T`).
-                    let dupe = |key: &[u8]| -> &'static [u8] {
-                        // SAFETY: see ARENA note above — bytes live in the build-pass arena.
-                        unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(key)) }
-                    };
-
-                    // Direct key match (must use `getKey` to return the map-owned
-                    // key, not the parameter).
-                    #[cfg(not(windows))]
-                    if let Some((key, _)) = self.map.get_key_value(specifier) {
-                        return Some(Self::result_for_key(dupe(key.as_ref())));
-                    }
-                    #[cfg(windows)]
-                    {
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        let normalized =
-                            bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
-                        if let Some((key, _)) = self.map.get_key_value(normalized) {
-                            return Some(Self::result_for_key(dupe(key.as_ref())));
-                        }
-                    }
-
-                    // Also try joining a relative specifier against the importer's
-                    // directory. Relative = not posix-absolute and not Windows
-                    // drive-absolute (e.g. `C:/`).
-                    if !specifier.is_empty() && !bun_paths::is_absolute_loose(specifier) {
-                        // `source_file` may itself be relative (e.g. on Windows
-                        // when the bundler stores paths relative to cwd).
-                        let mut abs_source_buf = bun_paths::path_buffer_pool::get();
-                        let abs_source_file: &[u8] = if bun_paths::is_absolute_loose(source_file) {
-                            source_file
-                        } else {
-                            bun_resolver::fs::FileSystem::instance()
-                                .abs_buf(&[source_file], &mut *abs_source_buf)
-                        };
-
-                        // Normalize `source_file` to forward slashes (Windows paths
-                        // from the real filesystem may use backslashes).
-                        let mut source_file_buf = bun_paths::path_buffer_pool::get();
-                        let normalized_source_file = bun_paths::resolve_path::path_to_posix_buf::<u8>(
-                            abs_source_file,
-                            &mut **source_file_buf,
-                        );
-
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        let source_dir = bun_paths::resolve_path::dirname::<
-                            bun_paths::platform::Posix,
-                        >(normalized_source_file);
-                        // If `dirname` returns empty but the path has a drive
-                        // letter, use the drive root.
-                        let effective_source_dir: &[u8] = if source_dir.is_empty() {
-                            if normalized_source_file.len() >= 3
-                                && normalized_source_file[1] == b':'
-                                && normalized_source_file[2] == b'/'
-                            {
-                                &normalized_source_file[0..3] // "C:/"
-                            } else if !normalized_source_file.is_empty()
-                                && normalized_source_file[0] == b'/'
-                            {
-                                b"/"
-                            } else {
-                                bun_resolver::fs::FileSystem::instance().top_level_dir
-                            }
-                        } else {
-                            source_dir
-                        };
-                        // `.loose` preserves Windows drive letters; normalize
-                        // separators in-place on Windows afterwards.
-                        let joined_len = bun_paths::resolve_path::join_abs_string_buf::<
-                            bun_paths::platform::Loose,
-                        >(
-                            effective_source_dir, &mut **buf, &[specifier]
-                        )
-                        .len();
-                        if cfg!(windows) {
-                            bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
-                                &mut buf[0..joined_len],
-                            );
-                        }
-                        let joined = &buf[0..joined_len];
-                        if let Some((key, _)) = self.map.get_key_value(joined) {
-                            return Some(Self::result_for_key(dupe(key.as_ref())));
-                        }
-                    }
-
-                    None
-                }
-
-                /// Build a `bun_resolver::Result` for a matched key. `key` must
-                /// already satisfy `'static` — see [`resolve`], which copies the
-                /// map-owned key into the build's bump arena before calling here so
-                /// the resulting `Path<'static>` borrows arena memory rather than
-                /// forging a `'static` from a map borrow.
-                #[inline]
-                fn result_for_key(key: &'static [u8]) -> bun_resolver::Result {
-                    bun_resolver::Result {
+                    let key: &'static [u8] =
+                        unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(key)) };
+                    Some(bun_resolver::Result {
                         path_pair: bun_resolver::PathPair {
                             primary: crate::bun_fs::Path::init_with_namespace(key, b"file"),
                             ..Default::default()
                         },
                         module_type: crate::options::ModuleType::Unknown,
                         ..Default::default()
-                    }
+                    })
+                }
+
+                /// A relative (or bare) `specifier` imported by `source_file`.
+                fn lookup_import(
+                    &self,
+                    source_file: &[u8],
+                    specifier: &[u8],
+                ) -> Option<(&[u8], &[u8])> {
+                    // `source_file` may itself be relative (e.g. on Windows
+                    // when the bundler stores paths relative to cwd).
+                    let mut abs_source_buf = bun_paths::path_buffer_pool::get();
+                    let abs_source_file: &[u8] = if bun_paths::is_absolute_loose(source_file) {
+                        source_file
+                    } else {
+                        bun_resolver::fs::FileSystem::get()
+                            .abs_buf(&[source_file], &mut *abs_source_buf)
+                    };
+
+                    // Normalize `source_file` to forward slashes (Windows paths
+                    // from the real filesystem may use backslashes).
+                    let mut source_file_buf = bun_paths::path_buffer_pool::get();
+                    let normalized_source_file = bun_paths::resolve_path::path_to_posix_buf::<u8>(
+                        abs_source_file,
+                        &mut **source_file_buf,
+                    );
+
+                    let source_dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(
+                        normalized_source_file,
+                    );
+                    // If `dirname` returns empty but the path has a drive
+                    // letter, use the drive root.
+                    let effective_source_dir: &[u8] = if source_dir.is_empty() {
+                        if normalized_source_file.len() >= 3
+                            && normalized_source_file[1] == b':'
+                            && normalized_source_file[2] == b'/'
+                        {
+                            &normalized_source_file[0..3] // "C:/"
+                        } else if !normalized_source_file.is_empty()
+                            && normalized_source_file[0] == b'/'
+                        {
+                            b"/"
+                        } else {
+                            bun_resolver::fs::FileSystem::get().top_level_dir
+                        }
+                    } else {
+                        source_dir
+                    };
+                    // `.loose` preserves Windows drive letters. A specifier too
+                    // long to join is not in the map; the resolver reports it.
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let joined =
+                        bun_paths::resolve_path::join_abs_string_buf_checked::<
+                            bun_paths::platform::Loose,
+                        >(effective_source_dir, &mut **buf, &[specifier])?;
+                    self.lookup(joined)
                 }
             }
 

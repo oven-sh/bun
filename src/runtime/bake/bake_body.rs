@@ -1136,8 +1136,6 @@ impl Framework {
         )
     }
 
-    /// On `Err`, a transpiler that was already constructed stays in `out`,
-    /// which drops it.
     pub(crate) fn init_transpiler_with_options<'a, 'slot>(
         &self,
         arena: &'a Arena,
@@ -1289,9 +1287,7 @@ impl Framework {
     }
 }
 
-/// Owns a `Transpiler` built in place (a configured one points into its own
-/// fields, see `configure_linker`, so it cannot be returned by value) and
-/// drops it.
+/// Owns a `Transpiler` built in place: a configured one points into its own fields (`configure_linker`).
 pub(crate) struct TranspilerSlot<'a> {
     transpiler: MaybeUninit<bun_bundler::Transpiler<'a>>,
     initialized: bool,

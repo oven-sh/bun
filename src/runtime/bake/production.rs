@@ -586,8 +586,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         framework_router::InsertionContext::wrap(&mut entry_points),
     )?;
 
-    // `framework_view` predates `resolve()` (which ran on the transpilers it
-    // configured), so the bundle gets a fresh projection with the resolved paths.
+    // Projected again so the bundle sees the paths `resolve()` filled in.
     let bundler_framework = framework.as_bundler_view();
 
     let bundled_outputs_list: Vec<OutputFile> = {

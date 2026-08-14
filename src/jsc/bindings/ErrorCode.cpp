@@ -428,10 +428,8 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         return;
     }
     if (cell->isCallable()) {
-        // Node renders `function ${value.name}`, i.e. an ordinary [[Get]]: a callable
-        // Proxy yields its target's (or trap's) name, a bound function "bound f", and a
-        // throwing getter/trap propagates. Zig::functionName() is the stack-trace
-        // heuristic (returns "" for proxies, never runs user code) and does not match.
+        // Node: `function ${value.name}`. Not Zig::functionName(), which is the
+        // stack-trace heuristic and returns "" for a callable Proxy.
         auto name = value.get(globalObject, vm.propertyNames->name);
         RETURN_IF_EXCEPTION(scope, void());
         auto* nameString = name.toString(globalObject);

@@ -805,7 +805,7 @@ mod windows_impl {
             let this: *mut WriteFileWindows = unsafe { WriteFileWindows::from_uv_fs(req) };
             debug_assert!(core::ptr::eq(
                 this,
-                // SAFETY: req == &(*this).io_request; data was set to `this` in create_with_ctx/open.
+                // SAFETY: req == &(*this).io_request; data was set to `this` in create/open.
                 unsafe { (*req).data }.cast::<WriteFileWindows>()
             ));
             // SAFETY: `this` is live (libuv invokes us with the req we registered).

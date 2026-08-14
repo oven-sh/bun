@@ -115,11 +115,9 @@ function runInNewContext(code, context, options) {
   return createScript(code, options).runInNewContext(context, options);
 }
 
-// Node's getContextOptions(): runInNewContext() takes the context options under
-// context-prefixed names, createContext() under the plain ones. The context
-// created from these is the one Script#runInNewContext() then runs in. The
-// options are validated here under the caller's names and copied key by key,
-// so createContext() never reports them as options.codeGeneration.*.
+// Node's getContextOptions(): runInNewContext() spells these options with a
+// context- prefix, createContext() without. Validated here so errors name the
+// option the caller passed.
 function getContextOptions(options) {
   if (!$isObject(options)) {
     return undefined;

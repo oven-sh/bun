@@ -41,9 +41,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
 JSPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters> parameters, const SourceOrigin& sourceOrigin);
 bool isContext(JSC::JSGlobalObject* globalObject, JSValue);
 bool getContextArg(JSC::JSGlobalObject* globalObject, JSValue& contextArg);
-// Creates and registers the realm behind `sandbox` (Node's makeContext). Callers
-// first check whether the sandbox is a context already: createContext() and
-// Script#runInNewContext() reuse that realm rather than make a second one.
+// Creates and registers the realm behind `sandbox`; callers reuse an existing one first (Node's makeContext).
 NodeVMGlobalObject* makeContext(JSC::JSGlobalObject* globalObject, JSObject* sandbox, const NodeVMContextOptions& contextOptions, JSValue importer);
 bool isUseMainContextDefaultLoaderConstant(JSC::JSGlobalObject* globalObject, JSValue value);
 

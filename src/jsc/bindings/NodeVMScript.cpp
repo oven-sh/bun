@@ -642,14 +642,11 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     NodeVMContextOptions contextOptions {};
     JSValue importer;
 
-    // Node validates the context options even when the sandbox turns out to be
-    // a context already (lib/vm.js getContextOptions runs before createContext).
+    // Validated even for an existing context, like Node's getContextOptions().
     getNodeVMContextOptions(globalObject, vm, scope, optionsArg, contextOptions, "contextCodeGeneration", &importer);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Like Node's createContext(), a sandbox that is already a context (or a
-    // context's global) keeps its realm: top-level let/const/class bindings and
-    // intrinsics must be shared with every other run against the same sandbox.
+    // createContext() semantics: an object that is already a context keeps its realm.
     JSObject* sandbox = asObject(contextObjectValue);
     NodeVMGlobalObject* context = getGlobalObjectFromContext(globalObject, sandbox, false);
     RETURN_IF_EXCEPTION(scope, {});

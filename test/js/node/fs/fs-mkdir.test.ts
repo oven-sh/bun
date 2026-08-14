@@ -515,7 +515,11 @@ describe("fs.mkdir - recursive error names the requested path", () => {
     try {
       execSync(`icacls "${path.join(deniedRoot, "denied")}" /remove:d "*S-1-1-0"`);
     } catch {}
-    fs.rmSync(deniedRoot, { recursive: true, force: true });
+    try {
+      fs.rmSync(deniedRoot, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
   });
 
   it.skipIf(!denied)("when a parent cannot be created in a directory whose ACL denies it", async () => {

@@ -5749,7 +5749,7 @@ impl NodeFS {
                 let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
                 match mkdir_os_path(parent, mode) {
                     Err(err) => {
-                        // Each arm restores the SEP itself; the EEXIST arm still reads `parent`.
+                        // The SEP is restored per arm: the EEXIST arm still reads `parent` first.
                         match err.get_errno() {
                             E::EEXIST => {
                                 // On Windows, this may happen if trying to mkdir replacing a file
@@ -5784,7 +5784,7 @@ impl NodeFS {
                                 i -= 1;
                                 continue;
                             }
-                            // Names the requested path, like the other error arms.
+                            // Names the requested path, like the other arms and node's mkdirSync.
                             _ => {
                                 // SAFETY: neither `working_mem` nor `parent` (which points into
                                 // it) is used after this return; the re-derived &mut PathBuffer

@@ -378,14 +378,12 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let rm_path: &[u8] = &cache_dir.path;
 
                 match bun_sys::delete_tree_absolute(rm_path) {
-                    Ok(()) => {}
-                    Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
-                    Err(err) => {
+                    Err(err) if err.get_errno() != bun_sys::E::ENOENT => {
                         Output::err(err, "Could not delete {s}", (bstr::BStr::new(rm_path),));
                         had_err = true;
                     }
+                    _ => bun_core::prettyln!("Cleared 'bun install' cache"),
                 }
-                bun_core::prettyln!("Cleared 'bun install' cache");
 
                 'bunx: {
                     let tmp = Fs::RealFS::platform_temp_dir();

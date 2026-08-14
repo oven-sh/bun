@@ -191,6 +191,52 @@ describe("css tests", () => {
     ); // ideally -400% - 8vh + 3ic
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
   });
+  describe("min() and max() with a single remaining argument", () => {
+    // min(x) and max(x) evaluate to x. When x does not fold to a single value it
+    // is a sum or a product, which is only valid CSS inside a math function, so
+    // it has to come out wrapped in calc() rather than bare.
+    minify_test(`a { width: min(1px + 10%) }`, `a{width:calc(1px + 10%)}`);
+    minify_test(`a { width: max(1px + 10%) }`, `a{width:calc(1px + 10%)}`);
+    minify_test(`a { width: min(-1px - 10%) }`, `a{width:calc(-1px - 10%)}`);
+    minify_test(`a { width: min(2 * min(1px, 1em)) }`, `a{width:calc(2*min(1px,1em))}`);
+    minify_test(`a { width: max(max(1px, 1em) / 2) }`, `a{width:calc(max(1px,1em)/2)}`);
+    minify_test(`a { width: max(2 * (1px + 10%)) }`, `a{width:calc(2px + 20%)}`);
+    minify_test(`a { margin: min(1px + 10%) auto }`, `a{margin:calc(1px + 10%) auto}`);
+    minify_test(`a { inset: max(1px + 10%) }`, `a{inset:calc(1px + 10%)}`);
+    // A nested calc() or one-argument min()/max() is unwrapped while parsing the
+    // outer function's argument; the outer function has to wrap the result again.
+    minify_test(`a { width: min(calc(1px + 10%)) }`, `a{width:calc(1px + 10%)}`);
+    minify_test(`a { width: min(max(1px + 10%)) }`, `a{width:calc(1px + 10%)}`);
+    // <length> (border-spacing) and <angle-percentage> (conic-gradient color stop)
+    // store an unevaluated expression the same way <length-percentage> does.
+    minify_test(`a { border-spacing: max(1px + 1em) }`, `a{border-spacing:calc(1px + 1em)}`);
+    minify_test(`a { border-spacing: min(2 * max(1px, 1em)) }`, `a{border-spacing:calc(2*max(1px,1em))}`);
+    minify_test(
+      `a { background: conic-gradient(red min(10deg + 10%), blue) }`,
+      `a{background:conic-gradient(red calc(10deg + 10%),#00f)}`,
+    );
+    minify_test(
+      `a { background: conic-gradient(red max(2 * max(10deg, 10%)), blue) }`,
+      `a{background:conic-gradient(red calc(2*max(10deg,10%)),#00f)}`,
+    );
+    // An argument that folds to a value, or is itself a math function, is returned as is.
+    minify_test(`a { width: min(5px) }`, `a{width:5px}`);
+    minify_test(`a { width: min(1px + 2px) }`, `a{width:3px}`);
+    minify_test(`a { width: max(10% + 5%) }`, `a{width:15%}`);
+    minify_test(`a { width: min(3px, 5px) }`, `a{width:3px}`);
+    minify_test(`a { width: max(3px, 5px) }`, `a{width:5px}`);
+    minify_test(`a { width: max(min(1px, 1em)) }`, `a{width:min(1px,1em)}`);
+    minify_test(`a { line-height: min(1 + 2) }`, `a{line-height:3}`);
+    minify_test(`a { opacity: max(10% + 20%) }`, `a{opacity:.3}`);
+    minify_test(`a { transition-duration: min(1s + 500ms) }`, `a{transition-duration:1.5s}`);
+    minify_test(`a { rotate: max(90deg + 0.25turn) }`, `a{rotate:180deg}`);
+    // With more than one argument left, or nested inside another expression, nothing changes.
+    minify_test(`a { width: min(1px + 10%, 1em + 5%) }`, `a{width:min(1px + 10%,1em + 5%)}`);
+    minify_test(`a { width: max(3px, 1px + 10%) }`, `a{width:max(3px,1px + 10%)}`);
+    minify_test(`a { width: min(max(1px + 10%), 1em) }`, `a{width:min(1px + 10%,1em)}`);
+    minify_test(`a { width: calc(min(1px + 10%) * 2) }`, `a{width:calc(2px + 20%)}`);
+    minify_test(`a { width: calc(min(1px + 10%) + 5px) }`, `a{width:calc(6px + 10%)}`);
+  });
   describe("border_spacing", () => {
     minify_test(
       `

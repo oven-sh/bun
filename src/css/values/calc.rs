@@ -351,28 +351,15 @@ impl<V: CalcValue> Calc<V> {
                 Ok(Calc::Function(Box::new(MathFunction::Calc(calc))))
             }
             CalcUnit::Min => {
-                let mut reduced = input.parse_nested_block(|i| {
-                    i.parse_comma_separated(|i| Self::parse_sum(i, ctx, parse_ident))
-                })?;
-                // PERF(alloc): i don't like this additional allocation
-                // can we use stack fallback here if the common case is that there will be 1 argument?
-                Self::reduce_args(&mut reduced, Ordering::Less);
-                if reduced.len() == 1 {
-                    return Ok(reduced.swap_remove(0));
-                }
-                Ok(Calc::Function(Box::new(MathFunction::Min(reduced))))
+                Self::parse_min_max(input, Ordering::Less, MathFunction::Min, ctx, parse_ident)
             }
-            CalcUnit::Max => {
-                let mut reduced = input.parse_nested_block(|i| {
-                    i.parse_comma_separated(|i| Self::parse_sum(i, ctx, parse_ident))
-                })?;
-                // PERF: i don't like this additional allocation
-                Self::reduce_args(&mut reduced, Ordering::Greater);
-                if reduced.len() == 1 {
-                    return Ok(reduced.remove(0));
-                }
-                Ok(Calc::Function(Box::new(MathFunction::Max(reduced))))
-            }
+            CalcUnit::Max => Self::parse_min_max(
+                input,
+                Ordering::Greater,
+                MathFunction::Max,
+                ctx,
+                parse_ident,
+            ),
             CalcUnit::Clamp => {
                 let (mut min, mut center, mut max) = input.parse_nested_block(|i| {
                     let min = Self::parse_sum(i, ctx, parse_ident)?;
@@ -544,6 +531,27 @@ impl<V: CalcValue> Calc<V> {
                 Ok(Calc::Function(Box::new(MathFunction::Sign(v))))
             }),
         }
+    }
+
+    fn parse_min_max<C: Copy>(
+        input: &mut css::Parser,
+        order: Ordering,
+        function: fn(Vec<Self>) -> MathFunction<V>,
+        ctx: C,
+        parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
+    ) -> CssResult<Self> {
+        let mut args = input.parse_nested_block(|i| {
+            i.parse_comma_separated(|i| Self::parse_sum(i, ctx, parse_ident))
+        })?;
+        Self::reduce_args(&mut args, order);
+        if args.len() == 1 {
+            // min(x) and max(x) are x, but a bare sum or product is only valid inside a math function.
+            return Ok(match args.swap_remove(0) {
+                arg @ (Calc::Value(_) | Calc::Number(_) | Calc::Function(_)) => arg,
+                arg => Calc::Function(Box::new(MathFunction::Calc(arg))),
+            });
+        }
+        Ok(Calc::Function(Box::new(function(args))))
     }
 
     pub(crate) fn parse_numeric_fn<C: Copy>(

@@ -562,7 +562,13 @@ impl VmHandle {
             sites.len()
         );
         for run in sites.chunk_by(|a, b| a == b) {
-            let _ = writeln!(w, "[vm]   {}× taken at {}:{}", run.len(), run[0].0, run[0].1);
+            let _ = writeln!(
+                w,
+                "[vm]   {}× taken at {}:{}",
+                run.len(),
+                run[0].0,
+                run[0].1
+            );
         }
         let _ = w.flush();
     }

@@ -703,7 +703,10 @@ const _: () = {
     // Fails to compile ("multiple applicable items") if `VirtualMachine` is
     // `Send` or `Sync`.
     let _ = <VirtualMachine as AmbiguousIfImpl<_>>::some_item;
-    let _ = (core::mem::size_of::<IfSend>(), core::mem::size_of::<IfSync>());
+    let _ = (
+        core::mem::size_of::<IfSend>(),
+        core::mem::size_of::<IfSync>(),
+    );
     assert_not_send_sync::<VirtualMachine>();
 };
 

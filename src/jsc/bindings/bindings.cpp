@@ -6621,6 +6621,20 @@ extern "C" double Bun__JSC__operationMathPow(double x, double y)
     return operationMathPow(x, y);
 }
 
+// A stopped worker's TerminationException is kept pending after the JS entry it unwound has
+// returned, until teardown clears or re-arms it (Bun__GlobalObject__clearExceptionsForExit /
+// Zig__GlobalObject__forbidExecution). JSC resets its "termination in progress" flag when the
+// outermost VMEntryScope exits and expects the two to agree while the exception is pending
+// (VMTraps::deferTerminationSlow, VM::setException); its own clients never keep the exception past
+// that point without also ceasing to touch the VM. Called where an entry has just come back with an
+// exception: keep the flag for as long as we keep the exception.
+extern "C" void Bun__VM__keepTerminationRequestWithPendingException(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    if (vm.hasPendingTerminationException() && !vm.hasTerminationRequest()) [[unlikely]]
+        vm.setHasTerminationRequest();
+}
+
 #if !ENABLE(EXCEPTION_SCOPE_VERIFICATION)
 extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((__always_inline__)) bool Bun__RETURN_IF_EXCEPTION(JSC::JSGlobalObject* globalObject)
 {

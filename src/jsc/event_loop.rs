@@ -1045,16 +1045,6 @@ impl EventLoop {
         }
     }
 
-    /// JS thread: an erased ticket on this loop's VM (see `bun_jsc::Ticket`).
-    #[track_caller]
-    pub fn js_ticket(&self) -> bun_event_loop::JsTicket {
-        debug_assert!(
-            self.isolated_poster.is_none(),
-            "ticket on a spawnSync isolated loop"
-        );
-        self.vm_ref().ticket().to_js_ticket()
-    }
-
     /// JS thread: count one more thing keeping this loop alive (the same
     /// counter a `VmHandle::ref_keep_alive` from another thread adjusts).
     pub fn ref_keep_alive(&self) {
@@ -1378,7 +1368,6 @@ bun_event_loop::link_impl_JsEventLoop! {
         enqueue_task(task) => (*this).enqueue_task(task),
         enqueue_task_concurrent_same_thread(task) => (*this).enqueue_task_concurrent_same_thread(task),
         js_poster() => (*this).js_poster(),
-        js_ticket() => (*this).js_ticket(),
         env() => (*this).vm_ref().transpiler.env,
         top_level_dir() => core::ptr::from_ref::<[u8]>((*this).vm_ref().top_level_dir()),
         create_null_delimited_env_map() =>

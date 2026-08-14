@@ -37,8 +37,7 @@ pub use DeferredTaskQueue as deferred_task_queue;
 
 pub use MiniEventLoop::PipeReadBuffer;
 pub use any_event_loop::{
-    AnyEventLoop, EventLoopHandle, EventLoopTask, JsPoster, JsPosterVTable, JsTicket,
-    JsTicketVTable, Posted,
+    AnyEventLoop, EventLoopHandle, EventLoopTask, JsPoster, JsPosterVTable, Posted,
 };
 
 // JS-event-loop arm of `AnyEventLoop` / `EventLoopHandle`. `bun_event_loop` is
@@ -64,7 +63,6 @@ bun_dispatch::link_interface! {
         fn enqueue_task(task: Task);
         fn enqueue_task_concurrent_same_thread(task: core::ptr::NonNull<ConcurrentTask::ConcurrentTask>);
         fn js_poster() -> any_event_loop::JsPoster;
-        fn js_ticket() -> any_event_loop::JsTicket;
         fn env() -> *mut bun_dotenv::Loader;
         fn top_level_dir() -> *const [u8];
         fn create_null_delimited_env_map() -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError>;

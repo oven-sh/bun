@@ -197,7 +197,7 @@ pub trait JobContext: Sized + 'static {
     /// result still has a consumer. `off` and `vm` borrow the job, which the JS
     /// thread may free the moment [`Completion::finish`] queues it: touch
     /// neither after finishing (work that continues past `run` reaches its
-    /// state through [`Completion::off_thread`] / [`Completion::ticket`]).
+    /// state through [`Completion::off_thread`]).
     fn run(
         off: &mut Self::OffThread,
         vm: &Ticket,
@@ -336,11 +336,6 @@ impl<C: JobContext> Completion<C> {
     pub unsafe fn off_thread(&self) -> *mut C::OffThread {
         // SAFETY: live job.
         unsafe { &raw mut (*self.0.as_ptr()).off }
-    }
-    /// The job's ticket (its VM is alive while this is held).
-    pub fn ticket(&self) -> &Ticket {
-        // SAFETY: live job; the ticket field is never mutated after `schedule`.
-        unsafe { &(*self.0.as_ptr()).ticket }
     }
 }
 impl<C: JobContext> Drop for Completion<C> {

@@ -20,8 +20,7 @@
 //! VM from elsewhere holds (another context's message queue, a JSC helper
 //! thread, the process-wide child waiter, a file-watcher thread). It cannot
 //! reach the VM; it can post to it — deliver-or-refuse, WebKit's
-//! `postTaskTo(identifier)` — and it can ask for a ticket, which fails once
-//! the VM has begun draining. Long-lived holders (a JS-owned object, a struct
+//! `postTaskTo(identifier)`. Long-lived holders (a JS-owned object, a struct
 //! the VM frees) hold this and never a ticket: a ticket freed only *after* the
 //! wait would deadlock it, and the debug build's wait names any such holder.
 //!
@@ -58,7 +57,7 @@ enum State {
     Stopping = 1,
     /// Teardown is waiting for outstanding tickets. Ticket holders post as
     /// before (their completions are released on the JS thread as they
-    /// arrive); a [`VmHandle`] can no longer be upgraded to a ticket, but its
+    /// arrive); no new ticket is issued to another thread; a [`VmHandle`]'s
     /// posts are still delivered (and released).
     Draining = 2,
     /// No ticket is outstanding and none can be created: nothing off-thread
@@ -235,14 +234,6 @@ impl Ticket {
         self.shared.deliver(self.kind, task);
     }
 
-    /// Queue a C++ `EventLoopTask`.
-    ///
-    /// # Safety
-    /// `task` is a live heap `WebCore::EventLoopTask` the caller hands over.
-    pub unsafe fn post_cpp_task(&self, task: *mut crate::cpp_task::CppTask) {
-        self.post(ConcurrentTaskItem::create(bun_event_loop::Task::init(task)));
-    }
-
     /// Keep the VM's loop alive (any thread).
     pub fn ref_keep_alive(&self) {
         let el = self.shared.loop_of(self.kind);
@@ -262,28 +253,6 @@ impl Ticket {
     #[inline]
     pub fn script_allowed(&self) -> bool {
         self.shared.state() == State::Open
-    }
-
-    #[inline]
-    pub fn kind(&self) -> LoopKind {
-        self.kind
-    }
-
-    /// The uncounted handle of the same VM.
-    pub fn handle(&self) -> VmHandle {
-        VmHandle(Arc::clone(&self.shared))
-    }
-
-    /// Whether `self` is a ticket for the VM `handle` refers to.
-    pub fn is_for(&self, handle: &VmHandle) -> bool {
-        Arc::ptr_eq(&self.shared, &handle.0)
-    }
-
-    /// An erased clone of this ticket, for code that cannot name `bun_jsc`.
-    pub fn to_js_ticket(&self) -> bun_event_loop::JsTicket {
-        let data = Arc::into_raw(Arc::new(self.clone())).cast::<()>();
-        // SAFETY: data/vtable pair per `JsTicket::from_raw`.
-        unsafe { bun_event_loop::JsTicket::from_raw(data, &TICKET_VTABLE) }
     }
 }
 
@@ -357,22 +326,6 @@ impl VmHandle {
     }
 
     // ── any-thread API ─────────────────────────────────────────────────────
-
-    /// A ticket for this VM, or `None` if it has begun draining (the caller
-    /// does not start the work). Any thread. On the JS thread prefer
-    /// [`VirtualMachine::ticket`], which cannot fail.
-    #[track_caller]
-    pub fn try_ticket(&self, kind: LoopKind) -> Option<Ticket> {
-        // Count first, then look: the wait publishes `Draining` and then reads
-        // the count (SeqCst both sides), so either it sees this ticket or we
-        // see `Draining` and give it back.
-        let t = Ticket::issue(&self.0, kind);
-        if self.0.state() >= State::Draining {
-            drop(t);
-            return None;
-        }
-        Some(t)
-    }
 
     /// Queue `task` on the VM's `kind` loop and wake it, or hand it back if
     /// the VM is closed. For posters that hold no ticket (their payload is
@@ -880,7 +833,7 @@ impl ConcurrentPoster {
     }
 }
 
-// ── Erased forms for crates below bun_jsc (spawn, bundler) ────────────────
+// ── Erased form for crates below bun_jsc (spawn, bundler) ─────────────────
 
 struct PosterData {
     handle: VmHandle,
@@ -905,30 +858,6 @@ static POSTER_VTABLE: bun_event_loop::JsPosterVTable = bun_event_loop::JsPosterV
     post: poster_post,
     clone: poster_clone,
     drop: poster_drop,
-};
-
-unsafe fn ticket_post(data: *const (), task: NonNull<ConcurrentTaskItem>) {
-    // SAFETY: `data` is a leaked `Arc<Ticket>` (see `Ticket::to_js_ticket`).
-    unsafe { &*data.cast::<Ticket>() }.post(task)
-}
-unsafe fn ticket_clone(data: *const ()) -> *const () {
-    // SAFETY: as above.
-    unsafe { Arc::increment_strong_count(data.cast::<Ticket>()) };
-    data
-}
-unsafe fn ticket_drop(data: *const ()) {
-    // SAFETY: as above.
-    unsafe { drop(Arc::from_raw(data.cast::<Ticket>())) };
-}
-unsafe fn ticket_script_allowed(data: *const ()) -> bool {
-    // SAFETY: as above.
-    unsafe { &*data.cast::<Ticket>() }.script_allowed()
-}
-static TICKET_VTABLE: bun_event_loop::JsTicketVTable = bun_event_loop::JsTicketVTable {
-    post: ticket_post,
-    script_allowed: ticket_script_allowed,
-    clone: ticket_clone,
-    drop: ticket_drop,
 };
 
 impl VmHandle {

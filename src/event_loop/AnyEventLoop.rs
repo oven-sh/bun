@@ -76,16 +76,6 @@ impl AnyEventLoop {
         }
     }
 
-    /// Owning thread: a ticket on this loop's VM for work about to leave the
-    /// thread; `None` for a mini loop (owned by, and outliving the work of,
-    /// its thread).
-    pub fn js_ticket(&self) -> Option<JsTicket> {
-        match self {
-            AnyEventLoop::Js { owner } => Some(owner.js_ticket()),
-            AnyEventLoop::Mini(_) => None,
-        }
-    }
-
     pub fn iteration_number(&self) -> u64 {
         match self {
             AnyEventLoop::Js { owner } => owner.iteration_number(),
@@ -453,14 +443,6 @@ impl EventLoopHandle {
         }
     }
 
-    /// Owning thread: a ticket on this handle's VM; `None` for a mini loop.
-    pub fn js_ticket(&self) -> Option<JsTicket> {
-        match self {
-            EventLoopHandle::Js { owner } => Some(owner.js_ticket()),
-            EventLoopHandle::Mini(_) => None,
-        }
-    }
-
     pub fn r#loop(self) -> *mut UwsLoop {
         match self {
             EventLoopHandle::Js { owner } => owner.uws_loop(),
@@ -541,20 +523,15 @@ impl EventLoopHandle {
     }
 }
 
-// ─────────────────────── JsPoster / JsTicket ─────────────────────────────────
+// ─────────────────────────── JsPoster ──────────────────────────────────────
 //
-// How code below `bun_jsc` reaches a JS VM from another thread. Both are erased
-// `bun_jsc::vm_handle` types; `bun_jsc` fills the vtables.
-//
-// `JsPoster` is the *uncounted* form (an erased `VmHandle`): what something
-// that merely refers to a VM holds (spawn's process-wide waiter thread). Its
-// `post` is deliver-or-refuse: once the VM has closed, the task comes back and
-// the caller releases it — its own payload — on its own thread.
-//
-// `JsTicket` is the *counted* form (an erased `Ticket`): what work running on
-// another thread on behalf of a VM holds (the bundler's JS-loop hops for a
-// `Bun.build`). The VM's teardown waits for every ticket, so its `post` cannot
-// fail. Hold it in the in-flight operation and drop it when done.
+// How code below `bun_jsc` reaches a JS VM from another thread: an erased,
+// *uncounted* `bun_jsc::VmHandle` (`bun_jsc` fills the vtable) — what something
+// that merely refers to a VM holds (spawn's process-wide waiter thread, a
+// bundle owned by a JS loop). Its `post` is deliver-or-refuse: once the VM has
+// closed, the task comes back and the caller releases it — its own payload —
+// on its own thread. Work that a VM must *wait* for holds a `bun_jsc::Ticket`
+// instead (a `Bun.build`'s completion task carries one for the bundle thread).
 
 /// Result of a weak post to a JS loop from another thread: it was queued, or
 /// the loop's VM is closed and the caller has the task back to release on this
@@ -597,64 +574,6 @@ impl JsPoster {
     pub fn post(&self, task: NonNull<ConcurrentTask>) -> Posted {
         // SAFETY: vtable contract.
         unsafe { (self.vtable.post)(self.data, task) }
-    }
-}
-
-pub struct JsTicketVTable {
-    pub post: unsafe fn(data: *const (), task: NonNull<ConcurrentTask>),
-    pub script_allowed: unsafe fn(data: *const ()) -> bool,
-    pub clone: unsafe fn(data: *const ()) -> *const (),
-    pub drop: unsafe fn(data: *const ()),
-}
-
-/// See the section note. Cloning shares the one underlying ticket.
-pub struct JsTicket {
-    data: *const (),
-    vtable: &'static JsTicketVTable,
-}
-
-// SAFETY: `data` is an erased `Arc<bun_jsc::Ticket>`, itself `Send + Sync`.
-unsafe impl Send for JsTicket {}
-// SAFETY: as above.
-unsafe impl Sync for JsTicket {}
-
-impl JsTicket {
-    /// # Safety
-    /// `data`/`vtable` come from `bun_jsc::Ticket::to_js_ticket`.
-    #[inline]
-    pub unsafe fn from_raw(data: *const (), vtable: &'static JsTicketVTable) -> Self {
-        Self { data, vtable }
-    }
-
-    /// Queue `task` on the VM this ticket is for and wake it.
-    #[inline]
-    pub fn post(&self, task: NonNull<ConcurrentTask>) {
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.post)(self.data, task) }
-    }
-
-    /// Whether the VM is still running script (not stopping).
-    #[inline]
-    pub fn script_allowed(&self) -> bool {
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.script_allowed)(self.data) }
-    }
-}
-
-impl Clone for JsTicket {
-    fn clone(&self) -> Self {
-        Self {
-            // SAFETY: vtable contract.
-            data: unsafe { (self.vtable.clone)(self.data) },
-            vtable: self.vtable,
-        }
-    }
-}
-
-impl Drop for JsTicket {
-    fn drop(&mut self) {
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.drop)(self.data) }
     }
 }
 

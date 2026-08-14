@@ -1,12 +1,10 @@
 {
   "src/event_loop/AnyEventLoop.rs": {
     "unsafe impl Send": [
-      "JsPoster",
-      "JsTicket"
+      "JsPoster"
     ],
     "unsafe impl Sync": [
-      "JsPoster",
-      "JsTicket"
+      "JsPoster"
     ]
   },
   "src/jsc/CppTask.rs": {

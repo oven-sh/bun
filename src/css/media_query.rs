@@ -18,8 +18,7 @@ type CSSNumber = f32;
 type CSSInteger = i32;
 
 // ───────────────────────── QueryCondition trait ─────────────────────────
-// Implementors: MediaCondition, StyleQuery, ContainerCondition. SupportsCondition
-// (different leaves, `needs_parens(&Self)`) has its own printer in rules/supports.rs.
+// Implementors: MediaCondition, StyleQuery, ContainerCondition.
 //
 // `deep_clone` is intentionally NOT on this trait. The single mechanism is
 // `#[derive(DeepClone)]` (generics.rs). The hand-expansions in callers exist

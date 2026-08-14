@@ -203,18 +203,27 @@ describe.concurrent("bundler hashbang target default", () => {
     backend: (typeof backends)[number],
     dir: string,
     entries: string[],
-    target?: "node" | "browser",
+    { target, format }: { target?: "node" | "browser"; format?: "cjs" } = {},
   ): Promise<string[]> {
     if (backend === "api") {
       const result = await Bun.build({
         entrypoints: entries.map(entry => join(dir, entry)),
         outdir: join(dir, "out"),
         ...(target ? { target } : {}),
+        ...(format ? { format } : {}),
       });
       expect(result.success).toBe(true);
     } else {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "build", ...entries, "--outdir", "out", ...(target ? [`--target=${target}`] : [])],
+        cmd: [
+          bunExe(),
+          "build",
+          ...entries,
+          "--outdir",
+          "out",
+          ...(target ? [`--target=${target}`] : []),
+          ...(format ? [`--format=${format}`] : []),
+        ],
         cwd: dir,
         env: bunEnv,
         stdout: "pipe",
@@ -283,7 +292,7 @@ describe.concurrent("bundler hashbang target default", () => {
           "shared.js": `export class Shared {}\n`,
           "reexport.js": `import { Shared } from "./shared.js";\nexport const ReExported = Shared;\n`,
         });
-        const [output] = await build(backend, String(dir), ["cli.js"], target);
+        const [output] = await build(backend, String(dir), ["cli.js"], { target });
         expect(output).toStartWith(`${hashbang}\n`);
         expect(output).not.toContain("// @bun");
         // The whole build shares one target, so shared.js is bundled exactly once.
@@ -291,6 +300,14 @@ describe.concurrent("bundler hashbang target default", () => {
         expect(await bunRun(join(String(dir), "out", "cli.js"))).toSpawn("true");
       },
     );
+
+    // Only an explicit target disables the default; format: "cjs" alone does not.
+    test(`${backend}: the hashbang still selects bun with format cjs`, async () => {
+      using dir = tempDir("hashbang-target", { "cli.js": `${hashbang}\nconsole.log("cjs");\n` });
+      const [output] = await build(backend, String(dir), ["cli.js"], { format: "cjs" });
+      expect(output).toStartWith(`${hashbang}\n// @bun @bun-cjs\n`);
+      expect(await bunRun(join(String(dir), "out", "cli.js"))).toSpawn("cjs");
+    });
   }
 
   test("api: an in-memory `files` entry is checked instead of the file on disk", async () => {

@@ -132,6 +132,16 @@ describe("advanceTimersByTime", () => {
     expect(order.takeOrderMessages()).toEqual([]);
     vi.useRealTimers();
   });
+
+  test("useRealTimers() from a fired callback is not undone when the advance completes", () => {
+    vi.useFakeTimers({ now: 0 });
+    setTimeout(() => vi.useRealTimers(), 10);
+    vi.advanceTimersByTime(100);
+    expect(vi.isFakeTimers()).toBe(false);
+    // Still on the real clock, not re-pinned to the fake epoch + 100ms.
+    expect(Date.now()).toBeGreaterThan(1e12);
+    expect(performance.now()).not.toBe(100);
+  });
 });
 describe("runOnlyPendingTimers", () => {
   test("two setIntervals", () => {
@@ -551,6 +561,7 @@ describe.concurrent("fake clock is per-VM", () => {
       let done = 0;
       for (const workerData of configs) {
         const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true, workerData });
+        w.on("error", err => { console.error(err); process.exit(1); });
         w.on("message", mismatches => {
           results[workerData.now] = mismatches;
           if (++done === configs.length) {
@@ -583,6 +594,7 @@ describe.concurrent("fake clock is per-VM", () => {
         'const { jest } = Bun.jest("worker"); jest.useFakeTimers({ now: 0 }); jest.advanceTimersByTime(5000); require("worker_threads").parentPort.postMessage(Date.now());',
         { eval: true },
       );
+      w.on("error", err => { console.error(err); process.exit(1); });
       w.on("message", workerNow => {
         const armed = performance.now();
         setTimeout(() => {

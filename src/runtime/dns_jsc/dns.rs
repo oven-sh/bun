@@ -2317,8 +2317,11 @@ pub mod internal {
         // To preserve memory, we use a 32 bit timestamp
         // However, we're almost out of time to use 32 bit timestamps for anything
         // So we set the epoch to January 1st, 2024 instead.
+        //
+        // Real time: the cache is process-global, shared by every VM's JS
+        // thread and the HTTP thread, so no single VM's fake clock applies.
         fn get_cache_timestamp() -> u32 {
-            (bun::Timespec::now(bun::TimespecMockMode::AllowMockedTime).ms_unsigned() / 1000) as u32
+            (bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ms_unsigned() / 1000) as u32
         }
 
         fn is_nearly_full(&self) -> bool {

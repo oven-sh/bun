@@ -16,7 +16,6 @@ unsafe extern "C" {
 
 #[derive(Default)]
 pub struct FakeTimers {
-    active: bool,
     /// The sorted fake timers. TimerHeap is not optimal here because we need these operations:
     /// - peek/takeFirst (provided by TimerHeap)
     /// - peekLast (cannot be implemented efficiently with TimerHeap)
@@ -30,12 +29,11 @@ pub struct FakeTimers {
 }
 
 impl FakeTimers {
-    pub(crate) fn timespec_now(&self) -> Option<Timespec> {
-        self.now
+    pub(crate) fn is_active(&self) -> bool {
+        self.now.is_some()
     }
 
     fn set_now(&mut self, global: &JSGlobalObject, now: &Timespec, js: Option<f64>) {
-        let vm = global.bun_vm().as_mut();
         self.now = Some(*now);
         // Mirror into T0 storage so `Timespec::now(AllowMockedTime)` sees
         // the fake clock.
@@ -47,19 +45,17 @@ impl FakeTimers {
         let date_now = self.date_now_offset + timespec_ms;
         JSMock__setOverridenDateNow(global, date_now);
         bun_core::mock_time::set_wall_ms(date_now);
-
-        vm.overridden_performance_now = Some(now.ns());
+        global.bun_vm().as_mut().overridden_performance_now = Some(now.ns());
     }
 
     fn clear_now(&mut self, global: &JSGlobalObject) {
-        let vm = global.bun_vm().as_mut();
         self.now = None;
         bun_core::mock_time::clear();
         bun_core::mock_time::clear_wall();
         // NaN is JSGlobalObject::overridenDateNow's "no override" sentinel; a
         // real -1 would pin Date.now() at 1969-12-31T23:59:59.999Z.
         JSMock__setOverridenDateNow(global, f64::NAN);
-        vm.overridden_performance_now = None;
+        global.bun_vm().as_mut().overridden_performance_now = None;
     }
 }
 
@@ -76,7 +72,7 @@ extern "C" fn Bun__FakeTimers__setSystemTime(ms: f64) {
     // SAFETY: called from `jest.setSystemTime` on the JS thread, whose
     // per-thread `timer::All` is live; nothing here re-enters `All`.
     let fake_timers = unsafe { &mut (*timer_all()).fake_timers };
-    let Some(current) = fake_timers.timespec_now() else {
+    let Some(current) = fake_timers.now else {
         return;
     };
     fake_timers.date_now_offset = ms - current.ms() as f64;
@@ -133,19 +129,13 @@ impl ClearedTimers {
 }
 
 impl FakeTimers {
-    pub(crate) fn is_active(&self) -> bool {
-        self.active
-    }
-
     fn activate(&mut self, js_now: f64, global: &JSGlobalObject) {
-        self.active = true;
         self.set_now(global, &Timespec::EPOCH, Some(js_now));
     }
 
     fn deactivate(&mut self, global: &JSGlobalObject) -> ClearedTimers {
         let cleared = self.clear();
         self.clear_now(global);
-        self.active = false;
         cleared
     }
 
@@ -156,7 +146,6 @@ impl FakeTimers {
     /// `TimeoutObject` pins and discard `AbortSignalTimeout` timers.
     pub(crate) fn reset_for_isolation(&mut self, global: &JSGlobalObject) {
         self.clear_now(global);
-        self.active = false;
     }
 
     /// Pop every fake timer. Popping only unlinks the nodes; the owners that
@@ -220,7 +209,7 @@ impl FakeTimers {
         // before `EventLoopTimer::fire` re-enters it.
         let this = unsafe { &mut (*timer_all()).fake_timers };
         if Environment::CI_ASSERT {
-            let prev = this.timespec_now();
+            let prev = this.now;
             debug_assert!(prev.is_some());
             debug_assert!(now.eql(&prev.unwrap()) || now.greater(&prev.unwrap()));
         }
@@ -280,14 +269,19 @@ impl FakeTimers {
 // JS Functions
 // ===
 
-fn error_unless_fake_timers(global: &JSGlobalObject) -> JsResult<()> {
+/// The current fake clock, or a thrown "not active" error.
+fn fake_now(global: &JSGlobalObject) -> JsResult<Timespec> {
     // SAFETY: per-thread `timer::All`, live for the VM lifetime.
-    if unsafe { (*timer_all()).fake_timers.is_active() } {
-        return Ok(());
+    match unsafe { (*timer_all()).fake_timers.now } {
+        Some(now) => Ok(now),
+        None => Err(global.throw(format_args!(
+            "Fake timers are not active. Call useFakeTimers() first."
+        ))),
     }
-    Err(global.throw(format_args!(
-        "Fake timers are not active. Call useFakeTimers() first."
-    )))
+}
+
+fn error_unless_fake_timers(global: &JSGlobalObject) -> JsResult<()> {
+    fake_now(global).map(|_| ())
 }
 
 /// Set or remove the "clock" property on setTimeout to indicate that fake timers are active.
@@ -374,7 +368,7 @@ fn advance_timers_to_next_timer(global: &JSGlobalObject, frame: &CallFrame) -> J
 
 #[bun_jsc::host_fn]
 fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    error_unless_fake_timers(global)?;
+    let current = fake_now(global)?;
 
     let arg = frame.arguments_as_array::<1>()[0];
     if !arg.is_number() {
@@ -382,12 +376,6 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
             "advanceTimersToNextTimer() expects a number of milliseconds"
         )));
     }
-    // SAFETY: per-thread `timer::All`, live for the VM lifetime.
-    let Some(current) = (unsafe { (*timer_all()).fake_timers.timespec_now() }) else {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "Fake timers not initialized. Initialize with useFakeTimers() first."
-        )));
-    };
     let arg_number = arg.as_number();
     let max_advance = u32::MAX;
     if arg_number < 0.0 || arg_number > max_advance as f64 {
@@ -403,8 +391,13 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     let target = current.add_ms_float(effective_advance);
 
     let advanced = FakeTimers::execute_until(global, target);
-    // SAFETY: as above; `set_now` does not re-enter `All`.
-    unsafe { (*timer_all()).fake_timers.set_now(global, &target, None) };
+    // SAFETY: per-thread `timer::All`; `set_now` does not re-enter `All`.
+    let fake_timers = unsafe { &mut (*timer_all()).fake_timers };
+    // A fired callback may have called `useRealTimers()`; don't re-arm the
+    // clock behind its back.
+    if fake_timers.is_active() {
+        fake_timers.set_now(global, &target, None);
+    }
     advanced?;
 
     Ok(frame.this())

@@ -174,6 +174,7 @@ const _: () = {
         fn parse_value(
             this: &mut Self,
             name: &[u8],
+            _start: &ParserState,
             input: &mut Parser,
         ) -> Result<Self::Declaration> {
             crate::match_ignore_ascii_case! { name, {

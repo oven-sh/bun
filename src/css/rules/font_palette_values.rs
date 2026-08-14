@@ -243,6 +243,7 @@ const _: () = {
         fn parse_value(
             _this: &mut Self,
             name: &[u8],
+            _start: &ParserState,
             input: &mut Parser,
         ) -> Result<Self::Declaration> {
             let state = input.state();

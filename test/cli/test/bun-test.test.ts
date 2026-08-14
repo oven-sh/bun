@@ -1644,6 +1644,34 @@ describe("bun test", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("are not run when only a Worker uses node:test", async () => {
+      const { stdout, stderr, exitCode } = await runFiles(
+        {
+          "worker-uses-node-test.test.ts": `
+            import { test } from "bun:test";
+            process.on("exit", () => {
+              console.log("exit listener ran");
+              process.exit(1);
+            });
+            test("a Worker uses node:test", async () => {
+              const worker = new Worker(new URL("./worker.ts", import.meta.url));
+              await new Promise(resolve => worker.addEventListener("message", resolve, { once: true }));
+              worker.terminate();
+            });
+          `,
+          "worker.ts": `
+            import { mock } from "node:test";
+            mock.fn(() => {});
+            postMessage("used");
+          `,
+        },
+        "worker-uses-node-test.test.ts",
+      );
+      expect(stdout).not.toContain("exit listener ran");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
+    });
+
     test("still run when the file itself calls process.exit()", async () => {
       const { stdout, exitCode } = await runFile(
         "explicit-exit.test.ts",

@@ -103,12 +103,9 @@ public:
      * parser when 'close' is emitted on the socket). */
     void stopHTTPParsing();
 
-    /* node:http socket.end(): when the in-flight response still has bytes in
-     * uWS's send buffer, a shutdown now would put the FIN ahead of them and
-     * truncate the response; for the end() issued because the response
-     * finished (afterResponseFinished), a shutdown while that response's
-     * request body is still being parsed out of the current read would drop
-     * the body. Returns true after handing the close to uWS in either case. */
+    /* node:http socket.end(): defer the shutdown while an immediate FIN would
+     * truncate the buffered response or (afterResponseFinished) drop a request
+     * body still being parsed. Returns true after handing the close to uWS. */
     bool shutdownAfterResponseDrains(bool afterResponseFinished);
 
     /* Switch the connection into CONNECT-style tunnel mode after an accepted

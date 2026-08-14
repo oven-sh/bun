@@ -4750,12 +4750,12 @@ impl Resolver {
         }
     }
 
-    /// Whether queries currently bypass the c-ares channel (`getServers()` has
-    /// no list to report then: the platform's servers are per network and not
-    /// exposed).
+    /// Whether record queries currently go through the platform resolver rather
+    /// than the c-ares channel (`getServers()` has no list to report then: the
+    /// platform's servers are per network and not exposed).
     fn uses_platform_resolver(&self) -> bool {
         #[cfg(target_os = "android")]
-        return !self.servers_explicit.get();
+        return !self.servers_explicit.get() && netd::api().is_some();
         #[cfg(not(target_os = "android"))]
         false
     }

@@ -1012,7 +1012,6 @@ pub mod get_addr_info_request {
         type Js = LibcRequest;
         fn run(
             this: &mut Self,
-            _vm: &bun_jsc::vm_handle::Borrow,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
             this.backend.run();
@@ -4132,7 +4131,7 @@ impl Resolver {
         self.ref_();
         let now_ts = now
             .copied()
-            .unwrap_or_else(|| bun::timespec::now(bun::TimespecMockMode::AllowMockedTime));
+            .unwrap_or_else(|| bun::timespec::now(bun::TimespecMockMode::ForceRealTime));
         let next = now_ts.add_ms(1000);
         // `EventLoopTimer.next` uses the event-loop crate's local
         // `Timespec` (distinct from `bun_core::Timespec`); convert by field.

@@ -21,7 +21,7 @@ use std::cell::Cell;
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
 use bun_io::{KeepAlive, Loop as AsyncLoop};
-use bun_jsc::virtual_machine::{HOT_RELOAD_HOT, VirtualMachine};
+use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject,
     JSValue, JsCell, JsRef, JsResult,
@@ -1640,6 +1640,17 @@ impl CronJob {
         Self::remove_from_list(this, vm);
     }
 
+    /// The fake heap dropped this job's timer (`useRealTimers()` /
+    /// `clearAllTimers()`): stop the job as `stop()` would, so it does not
+    /// keep the event loop alive for a timer that can no longer fire.
+    ///
+    /// # Safety
+    /// `this` was recovered from a node just popped off the fake heap and no
+    /// JS has run since; a scheduled job's wrapper keeps it alive.
+    pub(crate) unsafe fn stop_dropped_from_fake_heap(this: *mut Self) {
+        Self::self_stop(this, VirtualMachine::get());
+    }
+
     fn self_stop(this: *mut Self, vm: &VirtualMachine) {
         let this_ref = Self::from_ctx_ptr(this);
         // While the callback is on the stack or its promise is pending, defer
@@ -1976,7 +1987,7 @@ impl CronJob {
         // The cron_jobs list exists so --hot reload and worker teardown can
         // stop/release jobs. Main-thread VMs without --hot never enumerate it,
         // so skip the list ref + append entirely.
-        if vm.hot_reload == HOT_RELOAD_HOT || vm.worker.is_some() {
+        if vm.hot_reload == HotReload::Hot || vm.worker.is_some() {
             job_ref.ref_(); // owned by cron_jobs entry
             // Note: `RareData::cron_jobs` stores the opaque high-tier
             // placeholder type; cast through `*mut ()` and let inference pick

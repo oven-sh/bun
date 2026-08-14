@@ -1170,7 +1170,6 @@ pub(crate) fn install_isolated_packages(
 
             let pkgs = lockfile.packages.slice();
             let pkg_names = pkgs.items_name();
-            let pkg_name_hashes = pkgs.items_name_hash();
             let pkg_resolutions = pkgs.items_resolution();
             let pkg_metas = pkgs.items_meta();
 
@@ -1269,24 +1268,16 @@ pub(crate) fn install_isolated_packages(
                                 // Over-excludes the rare "trusted but actually no
                                 // scripts" case in exchange for not needing a
                                 // lockfile-format change.
-                                let (dep_name, dep_name_hash) = if dep_id != invalid_dependency_id {
-                                    (
-                                        dependencies[dep_id as usize].name.slice(string_buf),
-                                        dependencies[dep_id as usize].name_hash,
-                                    )
+                                let dep_name = if dep_id != invalid_dependency_id {
+                                    dependencies[dep_id as usize].name.slice(string_buf)
                                 } else {
-                                    (
-                                        pkg_names[pkg_id as usize].slice(string_buf),
-                                        pkg_name_hashes[pkg_id as usize],
-                                    )
+                                    pkg_names[pkg_id as usize].slice(string_buf)
                                 };
                                 if lockfile.has_trusted_dependency(
                                     dep_name,
                                     pkg_names[pkg_id as usize].slice(string_buf),
                                     pkg_res,
-                                ) || trusted_from_update
-                                    .get(&(dep_name_hash as crate::TruncatedPackageNameHash))
-                                    .is_some_and(|n| **n == *dep_name)
+                                ) || trusted_from_update.contains(&pkg_id)
                                 {
                                     break 'eligible false;
                                 }
@@ -2311,6 +2302,7 @@ pub(crate) fn install_isolated_packages(
                         continue;
                     }
 
+                    // Downloads only produce the unpatched folder; `apply_package_patch` derives the rest.
                     // SAFETY: each arm reads the union field that `pkg_res_tag`
                     // (== `pkg_res.tag`) names as active.
                     let cache_subpath_z: &bun_core::ZStr = match pkg_res_tag {
@@ -2318,36 +2310,33 @@ pub(crate) fn install_isolated_packages(
                             installer.manager(),
                             pkg_name.slice(string_buf),
                             pkg_res.npm().version,
-                            patch_info.contents_hash(),
+                            None,
                         ),
                         ResolutionTag::Git => package_manager::cached_git_folder_name(
                             installer.manager(),
                             pkg_res.git(),
-                            patch_info.contents_hash(),
+                            None,
                         ),
                         ResolutionTag::Github => package_manager::cached_github_folder_name(
                             installer.manager(),
                             pkg_res.github(),
-                            patch_info.contents_hash(),
+                            None,
                         ),
                         ResolutionTag::LocalTarball => package_manager::cached_tarball_folder_name(
                             installer.manager(),
                             *pkg_res.local_tarball(),
-                            patch_info.contents_hash(),
+                            None,
                         ),
                         ResolutionTag::RemoteTarball => {
                             package_manager::cached_tarball_folder_name(
                                 installer.manager(),
                                 *pkg_res.remote_tarball(),
-                                patch_info.contents_hash(),
+                                None,
                             )
                         }
 
                         _ => unreachable!(),
                     };
-                    let mut pkg_cache_dir_subpath: AutoRelPath =
-                        AutoRelPath::from(cache_subpath_z.as_bytes()).assume_ok();
-
                     let (cache_dir, cache_dir_path) =
                         installer.manager_mut().get_cache_directory_and_abs_path();
                     let _ = &cache_dir_path; // dropped at scope exit
@@ -2355,38 +2344,18 @@ pub(crate) fn install_isolated_packages(
                     let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
                     {
                         install::PreinstallState::Done => false,
-                        _ => 'missing_from_cache: {
-                            if matches!(patch_info, installer::PatchInfo::None) {
-                                let exists = match pkg_res_tag {
-                                    ResolutionTag::Npm => {
-                                        // Reshaped for borrowck — capture length
-                                        // instead of `save()` so the path stays unborrowed.
-                                        let cache_dir_path_save = pkg_cache_dir_subpath.len();
-                                        pkg_cache_dir_subpath.append(b"package.json").assume_ok();
-                                        let exists = sys::exists_at(
-                                            cache_dir,
-                                            pkg_cache_dir_subpath.slice_z(),
-                                        );
-                                        pkg_cache_dir_subpath.set_length(cache_dir_path_save);
-                                        exists
-                                    }
-                                    _ => sys::directory_exists_at(
-                                        cache_dir,
-                                        pkg_cache_dir_subpath.slice_z(),
-                                    )
-                                    .unwrap_or(false),
-                                };
-                                if exists {
-                                    installer.manager_mut().set_preinstall_state(
-                                        pkg_id,
-                                        install::PreinstallState::Done,
-                                    );
-                                }
-                                break 'missing_from_cache !exists;
+                        _ => {
+                            let exists = package_manager::directories::is_package_in_cache_at(
+                                cache_dir,
+                                cache_subpath_z,
+                                pkg_res_tag,
+                            );
+                            if exists {
+                                installer
+                                    .manager_mut()
+                                    .set_preinstall_state(pkg_id, install::PreinstallState::Done);
                             }
-
-                            // TODO: why does this look like it will never work?
-                            break 'missing_from_cache true;
+                            !exists
                         }
                     };
 

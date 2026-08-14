@@ -291,6 +291,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         for part in passthrough {
             copy_script.push(b' ');
+            if cfg!(windows) && use_system_shell && bun_which::batch_arg_has_cmd_metachars(part) {
+                if !silent {
+                    pretty_errorln!(
+                        "<r><red>error<r>: Failed to run script <b>{}<r>: argument {} contains a cmd.exe special character and cannot be passed to the system shell",
+                        bstr::BStr::new(name),
+                        bun_core::fmt::quote(&part[..]),
+                    );
+                    Output::flush();
+                }
+                Global::exit(1);
+            }
             if needs_escape_utf8_ascii_latin1(part) {
                 escape_8bit::<true, false>(part, &mut copy_script).unwrap_or_oom();
                 continue;
@@ -1080,7 +1091,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `ctx.debug.hot_reload` → `vm.hot_reload` (a `u8` until the
         // b2-cycle widens it to `cli::HotReload`); `Run::start` re-reads it
         // from `self.ctx` to drive the hot-reloader enable.
-        vm.hot_reload = ctx.debug.hot_reload as u8;
+        vm.hot_reload = ctx.debug.hot_reload;
 
         Run {
             ctx,
@@ -1269,7 +1280,7 @@ impl Run<'_> {
         } = self;
         let _api_lock = vm.global().vm().get_api_lock();
 
-        vm.hot_reload = ctx.debug.hot_reload as u8;
+        vm.hot_reload = ctx.debug.hot_reload;
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
 
         // ── CPU profiler ────────────────────────────────────────────────────
@@ -1437,7 +1448,7 @@ impl Run<'_> {
                     // `uncaughtException` handler swallowed the error), keep the
                     // process alive instead of hard-exiting on a rejected entry.
                     // The core run-loop below does the actual waiting.
-                    if vm.hot_reload != 0 || handled {
+                    if vm.hot_reload != cli::command::HotReload::None || handled {
                         vm.add_main_to_watcher_if_needed();
                         // SAFETY: `event_loop` is a self-pointer into this VM;
                         // uniquely accessed here.
@@ -1461,9 +1472,8 @@ impl Run<'_> {
         // don't run the GC if we don't actually need to
         if vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0 {
             vm.global().vm().release_weak_refs();
-            // `bun_alloc::Arena = bumpalo::Bump` has no
-            // per-heap collect, so this is a no-op unless the arena type
-            // changes. Semantically a memory-usage hint, not correctness.
+            // `bun_alloc::Arena` has no per-heap collect to run alongside this
+            // GC; it would only be a memory-usage hint, not correctness.
             let _ = vm.global().vm().run_gc(false);
             vm.tick();
         }
@@ -3817,7 +3827,7 @@ impl RunCommand {
             .map(|k| -> &'static [u8] {
                 // SAFETY: every key is a freshly-boxed `Box<[u8]>` owned by
                 // `results`. The owning `ArrayHashMap` is parked in the
-                // process-lifetime `runner_arena()` below and `bumpalo::Bump`
+                // process-lifetime `runner_arena()` below and `bun_alloc::Arena`
                 // never runs `Drop`, so the boxed bytes live until process
                 // exit and erasing to `'static` is sound.
                 unsafe { ::core::slice::from_raw_parts(k.as_ptr(), k.len()) }

@@ -400,7 +400,7 @@ impl DateHeaderTimer {
         // separate allocation from `RuntimeState.timer` so no aliasing with
         // `&mut self`).
         let loop_ = vm.uws_loop_mut();
-        let now = Timespec::now(TimespecMockMode::AllowMockedTime);
+        let now = Timespec::now(TimespecMockMode::ForceRealTime);
 
         // Record when we last ran it.
         self.event_loop_timer.next = ElTimespec {
@@ -1228,9 +1228,12 @@ impl All {
         }
     }
 
-    /// VM-teardown pass: `cancel()` every `TimeoutObject` / `ImmediateObject`
-    /// still linked in `timers` / `fake_timers.timers` so the in-heap `+1` ref
-    /// and the JS pin (`this_value` Strong) are released before the GC sweep.
+    /// VM-teardown / `--isolate` file-swap pass: `cancel()` every
+    /// `TimeoutObject` / `ImmediateObject` still linked in `timers` /
+    /// `fake_timers.timers` so the in-heap `+1` ref and the JS pin
+    /// (`this_value` Strong) are released before the GC sweep, and discard
+    /// every `AbortSignal.timeout()` timer through its signal so the signal
+    /// stops reporting an active timer.
     ///
     /// # Safety
     /// JS thread only, with the TLS `RuntimeState` still installed and `vm`
@@ -1238,7 +1241,7 @@ impl All {
     /// (`Zig__GlobalObject__destructOnExit` / `WebWorker__teardownJSCVM`) and
     /// BEFORE `runtime_state` is nulled — the GC sweep frees the
     /// `TimeoutObject` boxes whose `event_loop_timer` fields the heap nodes
-    /// alias.
+    /// alias, and the `AbortSignal`s that own the `AbortSignalTimeout` boxes.
     pub(crate) unsafe fn cancel_all_timeout_objects(
         this: *mut Self,
         vm: *mut crate::jsc::virtual_machine::VirtualMachine,
@@ -1298,23 +1301,18 @@ impl All {
             unsafe { (*internals).cancel(vm) };
         }
 
-        // `AbortSignal.timeout()` boxes are owned by the C++ `AbortSignal`
-        // (freed via `~AbortSignal` → `cancelTimer`), and the signal is kept
-        // alive by its JS wrapper. Unlink the timer here so `Timeout::deinit`'s
-        // `cancel` is a no-op against the already-destroyed heap, and null the
-        // back-pointer so `Timeout::run` cannot dereference a freed signal if
-        // an event-loop drain sneaks in before teardown.
+        // `AbortSignal.timeout()` boxes are owned by the C++ `AbortSignal`, so
+        // each one is handed back to its signal, which unlinks and frees it and
+        // clears `m_timeout`. Only unlinking the node here would leave every
+        // observed signal's wrapper (under `--isolate`: the retired global its
+        // listeners close over) pinned by `isReachableFromOpaqueRoots` for the
+        // rest of the process; see `Timeout::discard`.
         for t in signal_timeouts {
-            // SAFETY: each `t` was collected from the live heap above and is
-            // still owned by its `AbortSignal` (the box is freed by
-            // `cancelTimer()` at wrapper GC / `lastChanceToFinalize`). JS
-            // thread.
-            unsafe {
-                if (*t).event_loop_timer.state == EventLoopTimerState::ACTIVE {
-                    (*this).remove(core::ptr::addr_of_mut!((*t).event_loop_timer));
-                }
-                (*t).signal = core::ptr::null_mut();
-            }
+            // SAFETY: each `t` was collected from the live heap above, so its
+            // box (and therefore its owning signal) is still alive; JS thread;
+            // no borrow of `*this` is held across the call (`discard` re-enters
+            // `remove` through `timer_remove`). `t` is freed by the call.
+            unsafe { AbortSignalTimeout::discard(t) };
         }
     }
 }

@@ -1342,9 +1342,7 @@ pub mod virtual_machine;
 pub mod vm_handle;
 pub use self::virtual_machine as VirtualMachine;
 pub use self::virtual_machine::InitOptions as VirtualMachineInitOptions;
-pub use self::vm_handle::{
-    ConcurrentPoster, LoopHandle, LoopKind, Postable, Posted, VmHandle, post_job,
-};
+pub use self::vm_handle::{ConcurrentPoster, LoopKind, Posted, Ticket, VmHandle};
 
 #[path = "ModuleLoader.rs"]
 pub mod module_loader;
@@ -1388,7 +1386,7 @@ pub use self::event_loop::{
     JsTerminatedResult, ManagedTask, MiniEventLoop, PosixSignalHandle, PosixSignalTask, Task,
     WorkPool, WorkPoolTask,
 };
-pub use self::job::{Completion, Job, JobContext, JsPtr, JsSide, JsThread, Protected};
+pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread, Protected};
 #[cfg(unix)]
 pub type PlatformEventLoop = bun_uws::Loop;
 #[cfg(not(unix))]

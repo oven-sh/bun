@@ -43,7 +43,7 @@ mod _impl {
         // centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         /// How the pool thread delivers a finished write to the VM.
-        pub loop_handle: bun_jsc::LoopHandle,
+        pub ticket: Cell<Option<bun_jsc::Ticket>>,
         pub stream: JsCell<Context>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
@@ -97,7 +97,7 @@ mod _impl {
             Ok(Box::new(Self {
                 ref_count: Cell::new(1),
                 global_this: bun_ptr::BackRef::new(global),
-                loop_handle: global.bun_vm().loop_handle(),
+                ticket: Cell::new(None),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
@@ -406,10 +406,15 @@ impl Context {
         use c::NodeMode::*;
         self.err = c::ReturnCode::Ok;
         match self.mode {
-            // SAFETY: FFI — state is an initialized deflate stream.
-            DEFLATE | DEFLATERAW => unsafe {
-                self.err = c::deflateParams(&raw mut self.state, level, strategy);
-            },
+            DEFLATE | DEFLATERAW => {
+                self.set_buffers(None, Some(&mut []));
+                // SAFETY: FFI — state is an initialized deflate stream; avail_in/avail_out
+                // are 0 (next_out non-null) so the internal deflate(Z_BLOCK) returns
+                // Z_BUF_ERROR without touching any previously installed caller buffer.
+                unsafe {
+                    self.err = c::deflateParams(&raw mut self.state, level, strategy);
+                }
+            }
             _ => {}
         }
         if self.err != c::ReturnCode::Ok && self.err != c::ReturnCode::BufError {

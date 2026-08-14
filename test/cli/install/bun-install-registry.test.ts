@@ -3439,6 +3439,146 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
 });
 
 describe("hoisting", async () => {
+  // https://github.com/oven-sh/bun/issues/7241
+  test("nested dependency is preserved when its parent is reinstalled from an empty cache", async () => {
+    // `one-fixed-dep@1.0.0` depends on `no-deps@1.0.0`. With `no-deps@2.0.0`
+    // at the root, `no-deps@1.0.0` is forced to nest under
+    // `node_modules/one-fixed-dep/node_modules/no-deps`.
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "one-fixed-dep": "1.0.0",
+          "no-deps": "2.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir);
+
+    const nestedPkg = join(packageDir, "node_modules", "one-fixed-dep", "node_modules", "no-deps", "package.json");
+    expect(await file(nestedPkg).json()).toMatchObject({ name: "no-deps", version: "1.0.0" });
+
+    // Simulate a CI build cache restore: node_modules survives, the install
+    // cache does not, and the parent package needs a reinstall.
+    await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+    await rm(join(packageDir, "node_modules", "one-fixed-dep", "package.json"));
+
+    // The nested child is still correct on disk. The bug was that the installer
+    // verified it before `one-fixed-dep` had finished re-downloading, marked it
+    // as done, and then the parent reinstall deleted `one-fixed-dep/` wholesale.
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      name: "no-deps",
+      version: "2.0.0",
+    });
+    expect(await file(join(packageDir, "node_modules", "one-fixed-dep", "package.json")).json()).toMatchObject({
+      name: "one-fixed-dep",
+      version: "1.0.0",
+    });
+    expect(await file(nestedPkg).json()).toMatchObject({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+
+    const lockfile = parseLockfile(packageDir);
+    expect(lockfile).toMatchNodeModulesAt(packageDir);
+  });
+
+  // https://github.com/oven-sh/bun/issues/16968
+  test("nested dependency is preserved when its parent changes version via lockfile", async () => {
+    // has-bin-entries@1.0.0 and @2.0.0 both depend on no-deps@1.0.0. With
+    // no-deps@2.0.0 at the root, no-deps@1.0.0 nests under has-bin-entries.
+
+    // First produce the "after git pull" lockfile: has-bin-entries@2.0.0.
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "has-bin-entries": "2.0.0", "no-deps": "2.0.0" },
+      }),
+    );
+    await runBunInstall(env, packageDir);
+
+    const nested = join(packageDir, "node_modules", "has-bin-entries", "node_modules", "no-deps", "package.json");
+    expect(await file(nested).json()).toMatchObject({ name: "no-deps", version: "1.0.0" });
+
+    const savedLockb = await file(join(packageDir, "bun.lockb")).arrayBuffer();
+    const savedPkgJson = await file(packageJson).text();
+
+    // Now produce the "before git pull" on-disk state: has-bin-entries@1.0.0.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lockb"), { force: true });
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "has-bin-entries": "1.0.0", "no-deps": "2.0.0" },
+      }),
+    );
+    await runBunInstall(env, packageDir);
+    expect(await file(join(packageDir, "node_modules", "has-bin-entries", "package.json")).json()).toMatchObject({
+      version: "1.0.0",
+    });
+    expect(await file(nested).json()).toMatchObject({ name: "no-deps", version: "1.0.0" });
+
+    // Simulate `git pull`: lockfile + package.json now say 2.0.0, node_modules is
+    // still at 1.0.0. Clear the cache so has-bin-entries@2.0.0 is downloaded
+    // during the install loop (the lockfile matches, so the resolve-phase
+    // prefetch is skipped).
+    await writeFile(join(packageDir, "bun.lockb"), new Uint8Array(savedLockb));
+    await writeFile(packageJson, savedPkgJson);
+    await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+
+    const { err } = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(err).not.toContain("Saved lockfile");
+
+    expect(await file(join(packageDir, "node_modules", "has-bin-entries", "package.json")).json()).toMatchObject({
+      version: "2.0.0",
+    });
+    expect(await file(nested).json()).toMatchObject({ name: "no-deps", version: "1.0.0" });
+
+    const lockfile = parseLockfile(packageDir);
+    expect(lockfile).toMatchNodeModulesAt(packageDir);
+  });
+
+  test("nested dependency deferred behind an unrelated root reinstall is skipped, not reinstalled", async () => {
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "one-fixed-dep": "1.0.0",
+          "no-deps": "2.0.0",
+        },
+      }),
+    );
+    await runBunInstall(env, packageDir);
+
+    const nested = join(packageDir, "node_modules", "one-fixed-dep", "node_modules", "no-deps", "package.json");
+    const { ino } = await lstat(nested);
+
+    // Only the root `no-deps@2.0.0` needs a reinstall. The nested
+    // `no-deps@1.0.0` is deferred until the root tree finishes, then must be
+    // re-verified and skipped rather than downloaded again.
+    await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+    await rm(join(packageDir, "node_modules", "no-deps", "package.json"));
+
+    const { out } = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(out).toContain("1 package installed");
+
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      name: "no-deps",
+      version: "2.0.0",
+    });
+    expect((await lstat(nested)).ino).toBe(ino);
+
+    const lockfile = parseLockfile(packageDir);
+    expect(lockfile).toMatchNodeModulesAt(packageDir);
+  });
+
   var tests: any = [
     {
       situation: "1.0.0 - 1.0.10 is in order",
@@ -9294,4 +9434,88 @@ test("npm manifest cache entries with invalid package version records are treate
   await write(corrupted, bytes);
 
   expect(() => parseManifest(corrupted, registryUrl())).toThrow("manifest is invalid");
+});
+
+test("npm manifest cache entries are only reused for the package name they were saved for", async () => {
+  const { parseManifest } = npm_manifest_test_helpers;
+  const cacheDir = join(packageDir, ".bun-cache");
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "basic-1": "1.0.0",
+        "no-deps": "1.0.0",
+      },
+    }),
+  );
+
+  {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toContain("Saved lockfile");
+    expect(out).toContain("+ basic-1@1.0.0");
+    expect(out).toContain("+ no-deps@1.0.0");
+    expect(exitCode).toBe(0);
+  }
+
+  const manifestFiles = (await readdirSorted(cacheDir)).filter(name => name.endsWith(".npm"));
+  const byName: Record<string, string> = {};
+  for (const manifestFile of manifestFiles) {
+    const fullPath = join(cacheDir, manifestFile);
+    byName[parseManifest(fullPath, registryUrl()).name] = fullPath;
+  }
+  expect(Object.keys(byName).sort()).toEqual(["basic-1", "no-deps"]);
+
+  copyFileSync(byName["basic-1"], byName["no-deps"]);
+  expect(parseManifest(byName["no-deps"], registryUrl()).name).toBe("basic-1");
+
+  await Promise.all([
+    rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+    rm(join(packageDir, "bun.lockb"), { force: true }),
+    rm(join(packageDir, "bun.lock"), { force: true }),
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    ),
+  ]);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).toContain("Saved lockfile");
+  expect(out).toContain("+ no-deps@1.0.0");
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+
+  const lockfile = parseLockfile(packageDir);
+  const npmPackages = (Object.values(lockfile.packages) as any[]).filter(pkg => pkg.resolution.tag === "npm");
+  expect(npmPackages.map(pkg => pkg.name)).toEqual(["no-deps"]);
+  expect(npmPackages[0].resolution.resolved).toBe(`http://localhost:${port}/no-deps/-/no-deps-1.0.0.tgz`);
+
+  expect(parseManifest(byName["no-deps"], registryUrl()).name).toBe("no-deps");
+  expect(exitCode).toBe(0);
 });

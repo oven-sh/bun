@@ -1217,7 +1217,7 @@ impl FFI {
         for function in compile_c.symbols.map.values_mut() {
             // Clone the name before `compile(&mut self)` so the
             // immutable borrow of `function.base_name` doesn't overlap.
-            let function_name = function.base_name.clone().unwrap();
+            let function_name = function.base_name.clone();
 
             if let Err(err) = function.compile(napi_env) {
                 if !global_this.has_exception() {
@@ -1310,7 +1310,6 @@ impl FFI {
         }
 
         // TODO: WeakRefHandle that automatically frees it?
-        func.base_name = Some(ZBox::from_bytes(b""));
         js_callback.ensure_still_alive();
 
         let arg_types: Vec<u8> = func.arg_types.iter().map(|t| *t as u8).collect();
@@ -1556,7 +1555,7 @@ impl FFI {
         let _js_object_guard = js_object.protected();
 
         for function in symbols.values_mut() {
-            let function_name = ZBox::from_bytes(function.base_name.as_ref().unwrap().as_bytes());
+            let function_name = ZBox::from_bytes(function.base_name.as_bytes());
             // Reshaped for borrowck — clone base_name to drop &function borrow
 
             // optional if the user passed "ptr"
@@ -1653,7 +1652,7 @@ impl FFI {
         let _js_object_guard = js_object.protected();
 
         for function in symbols.values_mut() {
-            let function_name = ZBox::from_bytes(function.base_name.as_ref().unwrap().as_bytes());
+            let function_name = ZBox::from_bytes(function.base_name.as_bytes());
 
             if function.symbol_from_dynamic_library.is_none() {
                 let ret = global.to_invalid_arguments(format_args!(
@@ -1855,7 +1854,6 @@ pub(super) fn generate_symbol_for_function(
     }
 
     *function = Function::default();
-    function.base_name = None;
     function.arg_types = abi_types;
     function.return_type = return_type;
     function.threadsafe = threadsafe;
@@ -1914,7 +1912,7 @@ pub(super) fn generate_symbols(
         }
         let base_name = prop.to_owned_slice_z();
         let key = base_name.as_bytes().to_vec().into_boxed_slice();
-        function.base_name = Some(base_name);
+        function.base_name = base_name;
 
         symbols.insert(&key, function);
     }
@@ -1926,7 +1924,7 @@ pub(super) fn generate_symbols(
 
 pub struct Function {
     pub symbol_from_dynamic_library: Option<*mut c_void>,
-    pub base_name: Option<ZBox>,
+    pub base_name: ZBox,
     pub state: Option<NonNull<TCC::State>>,
 
     pub return_type: ABIType,
@@ -1940,7 +1938,7 @@ impl Default for Function {
     fn default() -> Self {
         Self {
             symbol_from_dynamic_library: None,
-            base_name: None,
+            base_name: ZBox::default(),
             state: None,
             return_type: ABIType::Void,
             arg_types: Vec::new(),
@@ -2078,10 +2076,7 @@ impl Function {
         // `symbol_from_dynamic_library` is a dlsym'd address; valid for the
         // loaded library's lifetime, which outlives the TCC state.
         if state
-            .add_symbol(
-                self.base_name.as_ref().unwrap(),
-                self.symbol_from_dynamic_library.unwrap(),
-            )
+            .add_symbol(&self.base_name, self.symbol_from_dynamic_library.unwrap())
             .is_err()
         {
             debug_assert!(matches!(self.step, Step::Failed { .. }));
@@ -2132,7 +2127,7 @@ impl Function {
         writer.write_all(b"/* --- The Function To Call */\n")?;
         self.return_type.typename(writer)?;
         writer.write_all(b" ")?;
-        writer.write_all(self.base_name.as_ref().unwrap().as_bytes())?;
+        writer.write_all(self.base_name.as_bytes())?;
         writer.write_all(b"(")?;
         let mut first = true;
         for (i, arg) in self.arg_types.iter().enumerate() {
@@ -2206,11 +2201,7 @@ impl Function {
             self.return_type.typename(writer)?;
             writer.write_all(b" return_value = ")?;
         }
-        write!(
-            writer,
-            "{}(",
-            BStr::new(self.base_name.as_ref().unwrap().as_bytes())
-        )?;
+        write!(writer, "{}(", BStr::new(self.base_name.as_bytes()))?;
         first = true;
         arg_buf[0..3].copy_from_slice(b"arg");
         for (i, arg) in self.arg_types.iter().enumerate() {
@@ -2361,44 +2352,54 @@ impl CompilerRT {
             return;
         };
 
-        #[cfg(windows)]
+        // Prefer the reusable per-user directory; if it cannot be safely
+        // populated, fall back to a freshly created, randomly named one.
+        #[cfg(unix)]
+        if let Some(bun_cc) = Self::open_owned_compiler_rt_dir(&tmpdir)
+            && Self::populate_compiler_rt_dir(&bun_cc)
         {
-            let Ok(bun_cc) = tmpdir.make_open_path(b"bun-cc", bun_sys::OpenDirOptions::default())
-            else {
+            return;
+        }
+        for _ in 0..8 {
+            let Some(name) = Self::fresh_compiler_rt_dir_name() else {
                 return;
             };
-            Self::populate_compiler_rt_dir(&bun_cc);
+            match bun_sys::mkdirat(tmpdir.fd(), name.as_zstr(), 0o700) {
+                Ok(()) => {}
+                Err(err) if err.get_errno() == bun_sys::E::EEXIST => continue,
+                Err(_) => return,
+            }
+            let dir_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW;
+            let Ok(dir) = tmpdir.open_at_with(name.as_bytes(), dir_flags) else {
+                return;
+            };
+            let _ = Self::populate_compiler_rt_dir(&dir);
+            return;
         }
+    }
 
-        // Prefer the per-user directory; if it (or any candidate) cannot be
-        // safely populated -- wrong owner/mode, or an entry inside it is a
-        // pre-planted symlink -- abandon it and mint a fresh private one.
+    /// Random name for a freshly created header directory. The Windows shape
+    /// keeps the leading characters and the extension random, so a generated
+    /// short (8.3) alias of the directory is random as well.
+    fn fresh_compiler_rt_dir_name() -> Option<ZBox> {
         #[cfg(unix)]
         {
-            if let Some(bun_cc) = Self::open_owned_compiler_rt_dir(&tmpdir)
-                && Self::populate_compiler_rt_dir(&bun_cc)
-            {
-                return;
-            }
-            for _ in 0..8 {
-                let mut name_buf = PathBuffer::uninit();
-                let Ok(name) =
-                    Fs::FileSystem::tmpname(b"bun-cc", &mut name_buf.0, bun_core::fast_random())
-                else {
-                    return;
-                };
-                match bun_sys::mkdirat(tmpdir.fd(), name, 0o700) {
-                    Ok(()) => {}
-                    Err(err) if err.get_errno() == bun_sys::E::EEXIST => continue,
-                    Err(_) => return,
-                }
-                let dir_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW;
-                let Ok(dir) = tmpdir.open_at_with(name.as_bytes(), dir_flags) else {
-                    return;
-                };
-                let _ = Self::populate_compiler_rt_dir(&dir);
-                return;
-            }
+            let mut name_buf = PathBuffer::uninit();
+            let name = Fs::FileSystem::tmpname(b"bun-cc", &mut name_buf.0, bun_core::fast_random())
+                .ok()?;
+            Some(ZBox::from_bytes(name.as_bytes()))
+        }
+        #[cfg(windows)]
+        {
+            let mut name = Vec::new();
+            write!(
+                &mut name,
+                "{}-bun-cc.{}",
+                bun_fmt::truncated_hash32(bun_core::fast_random()),
+                bun_fmt::truncated_hash32(bun_core::fast_random()),
+            )
+            .ok()?;
+            Some(ZBox::from_vec(name))
         }
     }
 
@@ -2407,11 +2408,16 @@ impl CompilerRT {
     /// a pre-planted symlinked entry refused by the no-follow write.
     fn populate_compiler_rt_dir(bun_cc: &bun_sys::Dir) -> bool {
         for (name, source) in CompilerRtSources::SOURCES {
-            let wrote = Self::write_compiler_rt_file(bun_cc, name.as_bytes(), source);
-            // On Unix a refused write means the entry is a planted symlink, so
-            // this directory is abandoned for a fresh one. On Windows the
-            // directory is already per-user; keep staging the rest best-effort.
-            if cfg!(unix) && !wrote {
+            if !Self::write_compiler_rt_file(bun_cc, name.as_bytes(), source) {
+                return false;
+            }
+        }
+        let Ok(node_dir) = bun_cc.make_open_path(b"node", bun_sys::OpenDirOptions::default())
+        else {
+            return false;
+        };
+        for (name, source) in CompilerRtSources::NODE_HEADERS {
+            if !Self::write_compiler_rt_file(&node_dir, name.as_bytes(), source) {
                 return false;
             }
         }
@@ -2421,18 +2427,13 @@ impl CompilerRT {
             return false;
         };
         // `ZBox::from_bytes` panics on OOM.
-        let _ = COMPILER_RT_DIR.set(ZBox::from_bytes(&*path));
-
-        let Ok(node_dir) = bun_cc.make_open_path(b"node", bun_sys::OpenDirOptions::default())
-        else {
-            return true;
+        let path = ZBox::from_bytes(&*path);
+        let Ok(node_path) = bun_sys::get_fd_path(node_dir.fd(), &mut path_buf) else {
+            return false;
         };
-        for (name, source) in CompilerRtSources::NODE_HEADERS {
-            Self::write_compiler_rt_file(&node_dir, name.as_bytes(), source);
-        }
-        if let Ok(node_path) = bun_sys::get_fd_path(node_dir.fd(), &mut path_buf) {
-            let _ = COMPILER_RT_NODE_DIR.set(ZBox::from_bytes(&*node_path));
-        }
+        let node_path = ZBox::from_bytes(&*node_path);
+        let _ = COMPILER_RT_DIR.set(path);
+        let _ = COMPILER_RT_NODE_DIR.set(node_path);
         true
     }
 

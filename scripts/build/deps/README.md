@@ -47,6 +47,33 @@ catches a missed addition (link error on the unresolved symbol); a
 removed file fails at compile. Either way the auto-bump PR goes red,
 which is the cue to diff the upstream `CMakeLists.txt`.
 
+## Iterating on a dep from a local checkout
+
+To hack on a vendored dep (e.g. chase a bug in the mimalloc or libuv fork)
+without cutting a commit and bumping the pin each round, point the build at
+a git clone:
+
+```sh
+git clone https://github.com/oven-sh/mimalloc ~/code/mimalloc
+bun bd --local-deps=mimalloc=~/code/mimalloc test foo.test.ts
+```
+
+Any `github-archive` dep the graph compiles or includes can be redirected
+(so not lolhtml, which cargo reads from `vendor/lolhtml` via the workspace
+`Cargo.toml` — point that path at your checkout instead); several at once
+with `name=path,name=path`. Cross-dep references (`depSourceDir()`, e.g.
+lsquic's `-I` into boringssl) follow the redirect. The checkout is compiled
+as-is — no fetch, no `.ref` stamp, and the dep's `patches` are **not**
+applied (they target the pinned tarball), so start the clone from the pinned
+commit if you want an identical baseline. Switching a dep between pinned and
+local moves its `-I` path, so the first build after the switch recompiles
+every TU that sees the dep's headers; after that, edits are picked up
+incrementally: `direct` deps through the compiler depfiles,
+`nested-cmake`/`cargo` deps by re-invoking their inner build every run. The
+build banner shows `local:<name>` while this is on. Don't edit
+`vendor/<name>/` in place instead — it is wiped whenever the pin or patches
+change. WebKit has its own switch (`--webkit=local`).
+
 ## Common fields
 
 ```ts
@@ -57,8 +84,9 @@ export const mydep: Dependency = {
   // just the files at `commit`). Most deps use this.
   //
   // Other kinds: `prebuilt` (download pre-compiled .a, e.g. WebKit default),
-  // `local` (user manages vendor/<name>/ manually — only WebKit uses this
-  // because its clone is too slow to automate), `in-tree` (source in src/).
+  // `local` (user-managed checkout — WebKit declares it because its clone is
+  // too slow to automate; any github-archive dep becomes one via
+  // `--local-deps`, see below), `in-tree` (source in src/).
   source: () => ({ kind: "github-archive", repo: "owner/repo", commit: "..." }),
 
   // Optional: macro name for bun_dependency_versions.h (process.versions).

@@ -329,7 +329,7 @@ impl EventLoop {
         jsc_vm: &jsc::VM,
     ) -> Result<(), JsTerminated> {
         // Hoist the VM backref once. LLVM can't CSE the `Option<NonNull>` field
-        // load across the FFI calls below (`release_weak_refs`, `drainMicrotasks`,
+        // load across the FFI calls below (`release_weak_refs`, `JSC__JSGlobalObject__drainMicrotasks`,
         // `deferred_tasks.run`), so each `self.vm_ref()` re-loaded
         // `self.virtual_machine` from memory (5× per call, ~2×/request).
         // SAFETY: `virtual_machine` is set in `VirtualMachine::init()` to the
@@ -744,23 +744,19 @@ impl EventLoop {
                 break;
             }
             // SAFETY: `node` is non-null and owned by the popped batch; the
-            // iterator advanced past it before returning, so reading then
-            // freeing here is sound.
-            let (task, auto_delete) = unsafe { ((*node).task, (*node).auto_delete()) };
+            // iterator advanced past it before returning.
+            let task =
+                unsafe { ConcurrentTask::ConcurrentTask::into_task(NonNull::new_unchecked(node)) };
             let _ = self.tasks.write_item(task);
-            if auto_delete {
-                // SAFETY: heap-owned (see `ConcurrentTask::create`); not yet
-                // freed, and the iterator no longer references it.
-                drop(unsafe { bun_core::heap::take(node) });
-            }
         }
     }
 
     /// Release, without running, every task still queued — what other
     /// threads posted and what this thread enqueued — through each type's
     /// `Taskable::release_unrun`, and refuse (release on arrival) anything
-    /// enqueued from here on. Teardown phase B: JS thread, script forbidden,
-    /// JSC heap alive, HTTP thread parked / children joined.
+    /// enqueued from here on. Teardown phase B (JS thread, script forbidden,
+    /// JSC heap alive, children joined): called on every turn of the wait, and
+    /// once more after `Closed`.
     pub fn release_queued_tasks(&mut self) {
         self.closed_for_tasks = true;
         self.take_concurrent_tasks();
@@ -870,7 +866,7 @@ impl EventLoop {
         let mut exception_thrown = false;
         for task in to_run_now.iter() {
             // SAFETY: ImmediateObject pointers are kept alive by the JS heap
-            // until `runImmediateTask` consumes them; `virtual_machine` is the
+            // until `__bun_run_immediate_task` consumes them; `virtual_machine` is the
             // live owning VM per caller contract.
             exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
         }
@@ -1012,7 +1008,7 @@ impl EventLoop {
         }
     }
 
-    /// JS thread: the poster other threads use to reach the loop this
+    /// JS thread: the weak poster other threads use to reach the loop this
     /// `EventLoop` is — the VM's handle for its embedded loops, or the isolated
     /// loop's own poster for a spawnSync loop.
     pub fn js_poster(&self) -> bun_event_loop::JsPoster {
@@ -1067,7 +1063,9 @@ impl EventLoop {
     #[inline(always)]
     pub fn global_ref(&self) -> &'static JSGlobalObject {
         // `self.global` is always assigned `vm.global` at every write site
-        // (`__bun_spawn_sync_*`, `init_runtime_state`, `reload_global`), so
+        // (`VirtualMachine::init`/`init_bake`, `enable_macro_mode`,
+        // `swap_global_for_test_isolation`, `__bun_spawn_sync_*`, bake
+        // `production.rs`), so
         // read it directly instead of the vm→global dependent-load chain.
         // `'static` so callers can hold it across `&mut self` (see
         // `drain_microtasks`), matching `vm_ref()`.
@@ -1341,6 +1339,7 @@ bun_event_loop::link_impl_JsEventLoop! {
         enter() => (*this).enter(),
         exit() => (*this).exit(),
         enqueue_task(task) => (*this).enqueue_task(task),
+        enqueue_task_after_yield(task) => (*this).enqueue_task_after_yield(task),
         js_poster() => (*this).js_poster(),
         env() => (*this).vm_ref().transpiler.env,
         top_level_dir() => core::ptr::from_ref::<[u8]>((*this).vm_ref().top_level_dir()),

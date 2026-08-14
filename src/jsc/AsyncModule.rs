@@ -74,11 +74,13 @@ pub struct Queue {
 
 /// What the resolver's `WakeHandler` carries as its opaque context: the
 /// module queue (for the JS-thread dependency-error callback) and the VM's
-/// handle (for wake-ups from install / HTTP threads). Allocated once per VM at
-/// registration and kept for the VM's lifetime.
+/// weak handle (for wake-ups from the process-wide install / HTTP threads,
+/// which outlive any one VM). Allocated once per VM at registration and kept
+/// for the VM's lifetime.
 pub struct WakeContext {
     pub queue: *mut Queue,
-    pub loop_handle: crate::LoopHandle,
+    pub handle: crate::VmHandle,
+    pub kind: crate::LoopKind,
 }
 
 impl Queue {
@@ -382,8 +384,8 @@ impl Queue {
         // SAFETY: `ctx` is the leaked `WakeContext` registered with this handler.
         let ctx = unsafe { &*ctx.cast::<WakeContext>() };
         let task = ConcurrentTaskItem::create_from(ctx.queue);
-        if let crate::vm_handle::Posted::Refused(task) = ctx.loop_handle.post_task(task) {
-            // VM torn down: nobody is waiting on these modules any more.
+        if let crate::vm_handle::Posted::Refused(task) = ctx.handle.post(ctx.kind, task) {
+            // That VM has closed: nobody is waiting on these modules any more.
             // SAFETY: refused ⇒ we own the task box.
             unsafe { drop(bun_core::heap::take(task.as_ptr())) };
         }

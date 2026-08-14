@@ -17,12 +17,9 @@ pub struct ImportRecord {
     pub path: Path<'static>,
     pub kind: ImportKind,
     pub tag: Tag,
-    /// Set by the parser from a `type` import attribute, and by the bundler when it
-    /// leaves an import to the runtime with a loader of its choosing. Resolution
-    /// reads it to pick the imported file's loader; the printer puts it back as a
-    /// `type` attribute on any import it prints. The loader resolution picks for a
-    /// bundled file is kept with the input file, not here, so a record the linker
-    /// later prints as an external import does not carry a stale one.
+    /// The loader a `type` import attribute asked for, or one the bundler wants the
+    /// runtime to apply to an import it left external; the printer re-emits it as
+    /// the attribute. A bundled file's loader lives on its input file, not here.
     pub loader: Option<Loader>,
 
     pub source_index: Index,

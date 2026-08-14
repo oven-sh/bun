@@ -430,7 +430,7 @@ peer = true
 
 Whether `bun install` runs in "production mode". Default `false`.
 
-In production mode, `"devDependencies"` are not installed. The `--production` CLI flag overrides this setting.
+In production mode, `"devDependencies"` are not installed and the lockfile is frozen (as if `--frozen-lockfile` was passed), so installs fail if `package.json` disagrees with `bun.lock`. The `--production` CLI flag overrides this setting.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]

@@ -521,3 +521,92 @@ test(
   },
   timeout,
 );
+
+// Regression: worker.terminate() never stopped a worker parked in
+// Atomics.wait() (sync-over-async worker pools park exactly there). JSC wakes
+// the parked thread when termination is requested, but the wake-up predicate
+// only looked at a flag the parked thread itself would have had to set, so it
+// went back to sleep and terminate()'s promise never settled.
+test("terminate() stops a worker blocked in Atomics.wait()", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { Worker } = require("node:worker_threads");
+      const w = new Worker(
+        "const { parentPort } = require('node:worker_threads');" +
+        "const i32 = new Int32Array(new SharedArrayBuffer(4));" +
+        "parentPort.postMessage('parking');" +
+        "Atomics.wait(i32, 0, 0);" +
+        "parentPort.postMessage('woke ' + Atomics.load(i32, 0));",
+        { eval: true },
+      );
+      w.on("message", async (m) => {
+        if (m !== "parking") { console.log("unexpected", m); process.exit(1); }
+        // Give the worker time to actually park before terminating it.
+        await Bun.sleep(100);
+        const code = await w.terminate();
+        console.log("terminated", code);
+      });
+      w.on("exit", (c) => console.log("exit", c));
+    `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n").sort()).toEqual(["exit 1", "terminated 1"]);
+  expect(exitCode).toBe(0);
+});
+
+// For a debug build: host code that runs after the worker's own process.exit()
+// unwound script — here a redis connect started in the same immediate tick as
+// the exit, whose ECONNREFUSED then lands in that loop tick — builds JS error objects,
+// initialising lazy structures under the pending TerminationException. JSC's
+// DeferTermination asserted `vm.hasTerminationRequest()` there (and dropped
+// the pending termination in release).
+test.skipIf(!isDebug)(
+  "process.exit() with native error completions landing in the same tick does not trip DeferTermination",
+  async () => {
+    const workers = slow ? 8 : 24;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          "const { parentPort } = require('node:worker_threads');" +
+          "Bun.file(process.execPath).slice(0, 100).json().catch(() => {});" +
+          "setImmediate(() => new Bun.RedisClient('redis://127.0.0.1:9', { connectionTimeout: 100, autoReconnect: false }).connect().catch(() => {}));" +
+          "parentPort.postMessage('up');" +
+          "setImmediate(() => process.exit(0));";
+        let started = 0, exited = 0;
+        function again() {
+          if (started >= ${workers}) {
+            if (exited === ${workers}) console.log("PASS");
+            return;
+          }
+          started++;
+          const w = new Worker(src, { eval: true });
+          w.on("error", (e) => { console.error(e); process.exit(1); });
+          w.on("exit", () => { exited++; again(); });
+        }
+        again(); again();
+      `,
+      ],
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

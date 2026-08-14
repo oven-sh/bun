@@ -6915,8 +6915,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         match prop.kind {
-            // typescript emits design:type for decorated `declare`/`abstract` fields just
-            // like for regular fields, even though the fields themselves are erased.
+            // typescript emits design:type for decorated `declare`/`abstract` fields too.
             PropertyKind::Normal | PropertyKind::Abstract | PropertyKind::Declare => {
                 {
                     // design:type

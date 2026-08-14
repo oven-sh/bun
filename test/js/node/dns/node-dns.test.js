@@ -548,12 +548,33 @@ describe("dns.reverse", () => {
   });
 });
 
-// The system resolver answers loopback from the hosts file on every platform
-// (c-ares reads /etc/hosts first; Android goes through bionic/netd).
-test("dns.reverse of loopback comes from the hosts file", async () => {
-  expect(await dns.promises.reverse("127.0.0.1")).toContain("localhost");
+// reverse()/lookupService() consult the hosts file before DNS on every platform
+// (c-ares reads it first; Android goes through bionic/netd, which does too), so
+// whatever they report for 127.0.0.1 must come from the hosts file's loopback
+// entries (reverse() reports the entry's aliases, which may be none).
+const loopbackNames = (() => {
+  const hostsPath = isWindows
+    ? `${process.env.SystemRoot ?? "C:\\Windows"}\\System32\\drivers\\etc\\hosts`
+    : isAndroid
+      ? "/system/etc/hosts"
+      : "/etc/hosts";
+  try {
+    return fs
+      .readFileSync(hostsPath, "utf8")
+      .split("\n")
+      .map(line => line.replace(/#.*/, "").trim().split(/\s+/))
+      .filter(parts => parts[0] === "127.0.0.1" || parts[0] === "::1")
+      .flatMap(parts => parts.slice(1));
+  } catch {
+    return [];
+  }
+})();
+test.skipIf(!loopbackNames.includes("localhost"))("dns.reverse of loopback comes from the hosts file", async () => {
+  for (const name of await dns.promises.reverse("127.0.0.1")) {
+    expect(loopbackNames).toContain(name);
+  }
   const { hostname } = await dns.promises.lookupService("127.0.0.1", 22);
-  expect(hostname).toBe("localhost");
+  expect(loopbackNames).toContain(hostname);
 });
 
 // A resolver with no explicit servers uses the platform resolver on Android;

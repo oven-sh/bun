@@ -9,6 +9,7 @@ import {
   runInNewContext,
   runInThisContext,
   Script,
+  SourceTextModule,
 } from "node:vm";
 
 function capture(_: any, _1?: any) {}
@@ -122,6 +123,27 @@ describe("vm", () => {
       expect(ctx.fromFunction).toBe(456);
       expect(runInContext("fromFunction", ctx)).toBe(456);
       expect("fromFunction" in globalThis).toBe(false);
+    });
+
+    test("a DONT_CONTEXTIFY parsingContext works before any script has run in the context", () => {
+      // No runInContext() before compileFunction(): the context is used exactly as createContext() returned it.
+      const ctx = createContext(constants.DONT_CONTEXTIFY);
+      ctx.a = 1;
+      ctx.b = 2;
+
+      const result = compileFunction(
+        "const keysBefore = Object.keys(this); const deleted = delete a; return { keysBefore, deleted, aType: typeof a, keysAfter: Object.keys(this) };",
+        [],
+        { parsingContext: ctx },
+      )();
+
+      expect({ ...result, keysBefore: [...result.keysBefore], keysAfter: [...result.keysAfter] }).toEqual({
+        keysBefore: ["a", "b"],
+        deleted: true,
+        aType: "undefined",
+        keysAfter: ["b"],
+      });
+      expect(Object.keys(ctx)).toEqual(["b"]);
     });
 
     test("parsingContext accepts the this and globalThis values of a DONT_CONTEXTIFY context", () => {
@@ -1196,6 +1218,33 @@ describe("DONT_CONTEXTIFY", () => {
 
     ctx.fromOutside = 456;
     expect(runInContext("fromOutside", ctx)).toBe(456);
+  });
+
+  test("a module evaluated in a context no script has run in sees the same global as a script would", async () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    ctx.a = 1;
+    ctx.b = 2;
+
+    // Module code has no `this`; a sloppy function's `this` is the context's global object.
+    const mod = new SourceTextModule(
+      `const g = Function("return this")();
+       export const keysBefore = Object.keys(g);
+       export const deleted = delete g.a;
+       export const keysAfter = Object.keys(g);`,
+      { context: ctx },
+    );
+    await mod.link(() => {
+      throw new Error("unexpected import");
+    });
+    await mod.evaluate();
+
+    const { keysBefore, deleted, keysAfter } = mod.namespace as any;
+    expect({ keysBefore: [...keysBefore], deleted, keysAfter: [...keysAfter] }).toEqual({
+      keysBefore: ["a", "b"],
+      deleted: true,
+      keysAfter: ["b"],
+    });
+    expect(Object.keys(ctx)).toEqual(["b"]);
   });
 });
 

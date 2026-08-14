@@ -1703,7 +1703,10 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
         auto* specialSandbox = NodeVMSpecialSandbox::create(vm, targetContext);
         RETURN_IF_EXCEPTION(scope, {});
         targetContext->setSpecialSandbox(specialSandbox);
-        return JSValue::encode(targetContext->specialSandbox());
+        // The property hooks read the contextified object. Script#runInContext installs this object
+        // there on its first run; compileFunction and modules never do, so install it up front.
+        targetContext->setContextifiedObject(specialSandbox);
+        return JSValue::encode(specialSandbox);
     }
 
     return JSValue::encode(sandbox);
@@ -2094,8 +2097,6 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!parsingContextValue.isEmpty() && !parsingContextValue.isUndefined()) {
-            // Node validates this with isContext(), so every shape isContext() accepts must
-            // resolve here; createContext(DONT_CONTEXTIFY) results are not in vmModuleContextMap.
             parsingContext = getGlobalObjectFromContext(globalObject, parsingContextValue, false);
             RETURN_IF_EXCEPTION(scope, false);
             if (!parsingContext)

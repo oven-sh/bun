@@ -290,24 +290,21 @@ pub use crate::config_version::ConfigVersion;
 pub use bun_install_types::DependencyGroup;
 pub use bun_install_types::NodeLinker::NodeLinker;
 
-/// `mkdir -p` + open `path` (resolved against the process cwd), returning the
-/// directory together with the absolute path it was opened from.
-fn make_open_dir_with_path(path: &[u8]) -> crate::Result<(bun_sys::Dir, ZBox)> {
+/// `mkdir -p` + open `path` (resolved against `cwd`), returning the directory
+/// together with the absolute path it was opened from.
+fn make_open_dir_with_path(cwd: &[u8], path: &[u8]) -> crate::Result<(bun_sys::Dir, ZBox)> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf};
 
-    let mut cwd_buf = bun_paths::path_buffer_pool::get();
-    let cwd: &[u8] = if bun_paths::is_absolute(path) {
-        b""
-    } else {
-        bun_sys::getcwd_z(&mut cwd_buf)?.as_bytes()
-    };
     let mut abs_buf = bun_paths::path_buffer_pool::get();
     let abs = join_abs_string_buf::<platform::Auto>(cwd, &mut abs_buf.0, &[path]);
     let dir = bun_sys::Dir::cwd().make_open_path(abs, bun_sys::OpenDirOptions::default())?;
     Ok((dir, ZBox::from_bytes(abs)))
 }
 
-pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<(bun_sys::Dir, ZBox)> {
+pub fn open_global_dir(
+    cwd: &[u8],
+    explicit_global_dir: &[u8],
+) -> crate::Result<(bun_sys::Dir, ZBox)> {
     use bun_paths::{platform, resolve_path::join_string_buf};
 
     let mut buf = bun_paths::path_buffer_pool::get();
@@ -326,11 +323,14 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<(bun_sys::Di
         return Err(crate::Error::NoGlobalDirectoryFound);
     };
 
-    make_open_dir_with_path(path)
+    make_open_dir_with_path(cwd, path)
 }
 
 /// `mkdir -p` the global bin directory and return its absolute path.
-pub(crate) fn make_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Result<ZBox> {
+pub(crate) fn make_global_bin_dir(
+    cwd: &[u8],
+    opts_: Option<&Api::BunInstall>,
+) -> crate::Result<ZBox> {
     use bun_paths::{platform, resolve_path::join_string_buf};
 
     let mut buf = bun_paths::path_buffer_pool::get();
@@ -352,7 +352,7 @@ pub(crate) fn make_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Res
         return Err(crate::Error::MissingGlobalBinDirectoryTrySettingBUNINSTALL);
     };
 
-    let (_dir, abs) = make_open_dir_with_path(path)?;
+    let (_dir, abs) = make_open_dir_with_path(cwd, path)?;
     Ok(abs)
 }
 

@@ -2036,10 +2036,14 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
+    /// `resolution_tag` is `Symlink` for `bun link` packages, whose
+    /// `cache_dir_subpath` is the global link entry (a symlink to the linked
+    /// project); Workspace/Root paths are the package directory itself.
     pub(crate) fn install_from_link(
         &mut self,
         skip_delete: bool,
         destination_dir: &Dir,
+        resolution_tag: resolution::Tag,
     ) -> InstallResult {
         let dest_path = self.destination_dir_subpath;
         // If this fails, we don't care.
@@ -2057,46 +2061,48 @@ impl<'a> PackageInstall<'a> {
 
         let mut dest_buf = PathBuffer::uninit();
         let mut join_buf = path::path_buffer_pool::get();
-        // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
         let symlinked_path = self.cache_dir_subpath;
         let mut to_buf = PathBuffer::uninit();
-        // `bun_sys::Error::into()` would yield raw errno tags (`ENOENT`/`EACCES`),
-        // so map the realpath errno to the named error tag to preserve the
-        // user-visible error tag
-        // (test/cli/install/bun-link.test.ts asserts on `FileNotFound:`).
-        let realpath_err = |e: bun_sys::Error| -> crate::Error {
-            use sys::E;
-            match e.get_errno() {
-                E::ENOENT => crate::Error::FileNotFound,
-                E::EACCES => crate::Error::AccessDenied,
-                E::ENOTDIR => crate::Error::NotDir,
-                E::ENAMETOOLONG => crate::Error::NameTooLong,
-                E::ELOOP => crate::Error::SymLinkLoop,
-                E::ENOMEM => crate::Error::SystemResources,
-                _ => e.into(),
-            }
-        };
-        let to_path: &[u8] = {
-            let symlinked_abs = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                self.cache_dir_path,
-                &mut join_buf.0,
-                &[symlinked_path.as_bytes()],
-            );
-            match sys::realpath(symlinked_abs, &mut to_buf) {
-                Ok(s) => s,
+        let package_path = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+            self.cache_dir_path,
+            &mut to_buf.0,
+            &[symlinked_path.as_bytes()],
+        );
+        let to_path: &[u8] = if resolution_tag == resolution::Tag::Symlink {
+            let mut link_buf = path::path_buffer_pool::get();
+            match sys::readlink(package_path, &mut link_buf[..]) {
+                Ok(n) => path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
+                    path::resolve_path::dirname::<path::platform::Auto>(package_path.as_bytes()),
+                    &mut join_buf.0,
+                    &[&link_buf[..n]],
+                ),
+                // A real directory placed in the global link dir by hand.
+                Err(err) if err.get_errno() == sys::E::EINVAL => package_path.as_bytes(),
                 Err(err) => {
-                    return InstallResult::fail(realpath_err(err), Step::LinkingDependency, None);
+                    // Named tags rather than raw errno so the message reads
+                    // `FileNotFound:` (test/cli/install/bun-link.test.ts).
+                    let err = match err.get_errno() {
+                        sys::E::ENOENT => crate::Error::FileNotFound,
+                        sys::E::EACCES => crate::Error::AccessDenied,
+                        sys::E::ENOTDIR => crate::Error::NotDir,
+                        sys::E::ENAMETOOLONG => crate::Error::NameTooLong,
+                        _ => err.into(),
+                    };
+                    return InstallResult::fail(err, Step::LinkingDependency, None);
                 }
             }
+        } else {
+            package_path.as_bytes()
         };
         let dest = bun_paths::basename(dest_path.as_bytes());
         // When we're linking on Windows, we want to avoid keeping the source directory handle open
         #[cfg(windows)]
         {
             if let Some(dir) = subdir {
+                let mut subdir_buf = path::path_buffer_pool::get();
                 let subdir_path = path::resolve_path::join_abs_string_buf::<path::platform::Windows>(
                     &self.node_modules.path,
-                    &mut join_buf.0,
+                    &mut subdir_buf.0,
                     &[dir],
                 );
                 let mut wbuf = bun_paths::w_path_buffer_pool::get();
@@ -2110,9 +2116,10 @@ impl<'a> PackageInstall<'a> {
                 &[subdir.unwrap_or(b""), dest],
             );
 
-            let to_len = to_path.len();
-            to_buf[to_len] = 0;
-            let target_z = ZStr::from_buf(&to_buf, to_len);
+            let mut target_buf = path::path_buffer_pool::get();
+            target_buf[..to_path.len()].copy_from_slice(to_path);
+            target_buf[to_path.len()] = 0;
+            let target_z = ZStr::from_buf(&target_buf[..], to_path.len());
 
             // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
             // https://github.com/npm/cli/commit/0e58e6f6b8f0cd62294642a502c17561aaf46553

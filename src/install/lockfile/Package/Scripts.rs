@@ -210,26 +210,11 @@ impl Scripts {
         let (first_index, total, scripts) =
             self.get_script_entries(lockfile_buf, resolution_tag, add_node_gyp_rebuild_script);
         if first_index != -1 {
-            #[cfg(windows)]
-            let mut cwd_buf = bun_paths::PathBuffer::uninit();
-
-            #[cfg(not(windows))]
-            let cwd: &[u8] = cwd_.slice();
-
-            // Lifecycle scripts of junctioned (workspace / `bun link`) packages
-            // run from the real directory, matching what `chdir` does on POSIX.
-            #[cfg(windows)]
-            let cwd: &[u8] = match bun_sys::realpath(cwd_.slice_z(), &mut cwd_buf) {
-                Ok(p) => p,
-                Err(_) => cwd_.slice(),
-            };
-
             return Some(List {
                 items: scripts,
                 first_index: u8::try_from(first_index).expect("int cast"),
                 total,
-                // Owned NUL-terminated copy.
-                cwd: ZBox::from_bytes(cwd),
+                cwd: ZBox::from_bytes(cwd_.slice()),
                 package_name: Box::<[u8]>::from(package_name),
             });
         }

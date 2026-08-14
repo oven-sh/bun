@@ -1842,7 +1842,7 @@ impl<'a> PackageInstaller<'a> {
 
             let install_result: package_install::InstallResult = match resolution.tag {
                 resolution::Tag::Symlink | resolution::Tag::Workspace => {
-                    installer.install_from_link(self.skip_delete, &destination_dir)
+                    installer.install_from_link(self.skip_delete, &destination_dir, resolution.tag)
                 }
                 _ => 'result: {
                     if resolution.tag == resolution::Tag::Root
@@ -1898,7 +1898,11 @@ impl<'a> PackageInstaller<'a> {
                         installer.cache_dir_path = dir_name;
 
                         let result = if resolution.tag == resolution::Tag::Root {
-                            installer.install_from_link(self.skip_delete, &destination_dir)
+                            installer.install_from_link(
+                                self.skip_delete,
+                                &destination_dir,
+                                resolution.tag,
+                            )
                         } else {
                             installer.install(
                                 self.skip_delete,
@@ -1975,11 +1979,7 @@ impl<'a> PackageInstaller<'a> {
                         && (resolution.tag == resolution::Tag::Workspace || is_trusted)
                     {
                         let mut folder_path =
-                            AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
-                        // `defer folder_path.deinit()` — AbsPath impls Drop.
-                        folder_path
-                            .append(alias.slice(string_buf!()))
-                            .unwrap_or_oom();
+                            self.lifecycle_script_dir(alias.slice(string_buf!()), resolution);
 
                         'enqueue_lifecycle_scripts: {
                             if self
@@ -2316,10 +2316,7 @@ impl<'a> PackageInstaller<'a> {
 
             if resolution.tag != resolution::Tag::Root && is_trusted {
                 let mut folder_path =
-                    AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
-                folder_path
-                    .append(alias.slice(string_buf!()))
-                    .unwrap_or_oom();
+                    self.lifecycle_script_dir(alias.slice(string_buf!()), resolution);
 
                 'enqueue_lifecycle_scripts: {
                     if self
@@ -2418,6 +2415,51 @@ impl<'a> PackageInstaller<'a> {
     }
 
     /// returns true if scripts are enqueued
+    /// The directory an installed package's lifecycle scripts run in: the
+    /// package's real location, not the `node_modules` symlink/junction that
+    /// points at it, so `process.cwd()` in the script agrees across platforms.
+    fn lifecycle_script_dir(&mut self, alias: &[u8], resolution: &Resolution) -> AutoAbsPath {
+        match resolution.tag {
+            resolution::Tag::Workspace => {
+                let mut dir = AutoAbsPath::init_top_level_dir();
+                dir.append(
+                    resolution
+                        .workspace()
+                        .slice(self.lockfile().buffers.string_bytes.as_slice()),
+                )
+                .unwrap_or_oom();
+                dir
+            }
+            resolution::Tag::Symlink => {
+                let global_link_dir = package_manager::global_link_dir_path(self.manager_mut());
+                let link = join_abs_string_z::<platform::Auto>(
+                    global_link_dir,
+                    &[resolution
+                        .symlink()
+                        .slice(self.lockfile().buffers.string_bytes.as_slice())],
+                );
+                let mut target = bun_paths::path_buffer_pool::get();
+                match Syscall::readlink(link, &mut target[..]) {
+                    Ok(n) => {
+                        let mut buf = bun_paths::path_buffer_pool::get();
+                        let abs = bun_paths::resolve_path::join_abs_string_buf::<platform::Auto>(
+                            dirname::<platform::Auto>(link.as_bytes()),
+                            &mut buf.0,
+                            &[&target[..n]],
+                        );
+                        AutoAbsPath::from(abs).unwrap_or_oom()
+                    }
+                    Err(_) => AutoAbsPath::from(link.as_bytes()).unwrap_or_oom(),
+                }
+            }
+            _ => {
+                let mut dir = AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
+                dir.append(alias).unwrap_or_oom();
+                dir
+            }
+        }
+    }
+
     fn enqueue_lifecycle_scripts(
         &mut self,
         folder_name: &[u8],

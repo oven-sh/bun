@@ -272,6 +272,9 @@ pub struct VirtualMachine {
     /// Used by bun:test to set global hooks for beforeAll, beforeEach, etc.
     pub is_in_preload: bool,
     pub has_patched_run_main: bool,
+    /// `--preserve-symlinks-main` / `NODE_PRESERVE_SYMLINKS_MAIN=1`: resolve
+    /// the entry point without following symlinks.
+    pub preserve_symlinks_main: bool,
 
     pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,
 
@@ -3532,6 +3535,9 @@ impl VirtualMachine {
         if let Some(value) = map.get(b"NODE_PRESERVE_SYMLINKS") {
             self.transpiler.resolver.opts.preserve_symlinks = value == b"1";
         }
+        if map.get(b"NODE_PRESERVE_SYMLINKS_MAIN") == Some(b"1".as_slice()) {
+            self.preserve_symlinks_main = true;
+        }
 
         if let Some(gc_level) = map.get(b"BUN_GARBAGE_COLLECTOR_LEVEL") {
             // Reuse this flag for other things to avoid unnecessary hashtable
@@ -4346,6 +4352,8 @@ impl VirtualMachine {
         }
 
         let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
+        // The generated `bun:main` wrapper importing the entry point.
+        let is_entry_point = source == MAIN_FILE_NAME && specifier == self.main();
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
         let top_level_dir = self.top_level_dir();
@@ -4379,12 +4387,18 @@ impl VirtualMachine {
                 bun_ast::ImportKind::Require
             };
             let global_cache = self.transpiler.resolver.opts.global_cache;
-            match self.transpiler.resolver.resolve_and_auto_install(
+            let saved_preserve_symlinks = self.transpiler.resolver.opts.preserve_symlinks;
+            if is_entry_point && self.preserve_symlinks_main {
+                self.transpiler.resolver.opts.preserve_symlinks = true;
+            }
+            let resolved = self.transpiler.resolver.resolve_and_auto_install(
                 source_to_use,
                 normalized_specifier,
                 import_kind,
                 global_cache,
-            ) {
+            );
+            self.transpiler.resolver.opts.preserve_symlinks = saved_preserve_symlinks;
+            match resolved {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {
@@ -4458,6 +4472,15 @@ impl VirtualMachine {
         // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
         // note).
         ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
+        // `main` becomes the path the entry module is actually keyed by (the
+        // resolver follows symlinks unless told not to), so `is_main`,
+        // `Bun.main` and `import.meta.main` agree with the loaded module.
+        if is_entry_point && ret.path != self.main() {
+            self.set_main(ret.path);
+            self.main_hash = bun_watcher::Watcher::get_hash(ret.path);
+            self.main_resolved_path.deref();
+            self.main_resolved_path = bun_core::String::empty();
+        }
         ret.result = Some(result);
 
         Ok(())

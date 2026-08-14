@@ -1452,6 +1452,11 @@ pub fn init(
     cli: CommandLineArguments,
     subcommand: Subcommand,
 ) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
+    // Registers the resolver-tier singleton
+    // and seeds `top_level_dir` from `getcwd`.
+    bun_resolver::fs::FileSystem::init(None)?;
+    let fs = FileSystem::instance();
+
     if cli.global {
         // Non-consuming peek: `ctx.install` is
         // `Option<Box<BunInstall>>` borrowed via `&mut ContextData`; reborrow with
@@ -1462,14 +1467,10 @@ pub fn init(
             explicit_global_dir = opts.global_dir.as_deref().unwrap_or(explicit_global_dir);
         }
         let (_global_dir, global_dir_path) =
-            package_manager_options::open_global_dir(explicit_global_dir)?;
+            package_manager_options::open_global_dir(fs.top_level_dir(), explicit_global_dir)?;
         bun_sys::chdir(&global_dir_path)?;
+        fs.set_top_level_dir(fs.dirname_store().append(global_dir_path.as_bytes())?);
     }
-
-    // Registers the resolver-tier singleton
-    // and seeds `top_level_dir` from `getcwd`.
-    bun_resolver::fs::FileSystem::init(None)?;
-    let fs = FileSystem::instance();
     let top_level_dir_no_trailing_slash = strings::without_trailing_slash(fs.top_level_dir());
     // SAFETY: CWD_BUF is a process-global path buffer only touched on the main thread.
     // repr(transparent) makes the `*mut PathBuffer → *mut u8` cast sound.

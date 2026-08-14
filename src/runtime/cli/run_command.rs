@@ -966,6 +966,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.argv = std::mem::take(&mut ctx.passthrough);
         // `InitOptions` has no `store_fd` field, so set it on the resolver directly.
         vm.transpiler.resolver.store_fd = ctx.debug.hot_reload != cli::command::HotReload::None;
+        vm.preserve_symlinks_main |= ctx.runtime_options.preserve_symlinks_main;
         // `vm.dns_result_order` is a `u8` until the b2-cycle widens
         // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
         vm.dns_result_order =
@@ -2710,13 +2711,9 @@ impl RunCommand {
             return false;
         }
 
-        // The booted entry path must be the realpath: `is_main` for a loaded
-        // module is decided by comparing its resolved (symlink-followed) path
-        // against this string byte-for-byte.
         let mut script_name_buf = PathBuffer::uninit();
 
-        // Build a NUL-terminated path to probe (branching for
-        // absolute vs. simple-relative vs. `..`/`~`-prefixed).
+        // Build a NUL-terminated absolute path to probe.
         let open_len: usize = if paths::is_absolute(target) {
             // `PosixToWinNormalizer::resolve_cwd` prepends the cwd drive
             // letter on Windows for `/abs` paths; then, on Windows only,
@@ -2735,23 +2732,15 @@ impl RunCommand {
             }
             script_name_buf[..resolved.len()].copy_from_slice(resolved);
             resolved.len()
-        } else if !target.starts_with(b"..") && target[0] != b'~' {
-            // open relative to cwd as-is
-            if target.len() >= MAX_PATH_BYTES {
-                return false;
-            }
-            script_name_buf[..target.len()].copy_from_slice(target);
-            target.len()
         } else {
-            // `..foo` / `~foo` — resolve against cwd via joinAbsStringBuf.
-            let mut cwd_buf = PathBuffer::uninit();
-            let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {
+            let Some(cwd) = ctx.args.absolute_working_dir.as_deref() else {
                 return false;
             };
-            let cwd_len = cwd.as_bytes().len();
-            cwd_buf[cwd_len] = paths::SEP;
+            if cwd.len() + 1 + target.len() >= MAX_PATH_BYTES {
+                return false;
+            }
             let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
-                &cwd_buf[..cwd_len + 1],
+                cwd,
                 &mut script_name_buf.0,
                 &[target],
             );
@@ -2770,12 +2759,7 @@ impl RunCommand {
             Ok(st) if !bun_sys::S::ISDIR(st.st_mode as _) => {}
             _ => return false,
         }
-
-        let mut resolved_buf = paths::path_buffer_pool::get();
-        let Ok(resolved) = bun_sys::realpath(open_z, &mut resolved_buf) else {
-            return false;
-        };
-        let absolute_script_path: Box<[u8]> = Box::from(resolved);
+        let absolute_script_path: Box<[u8]> = Box::from(open_z.as_bytes());
 
         Global::configure_allocator(core::Global::AllocatorConfiguration {
             long_running: true,

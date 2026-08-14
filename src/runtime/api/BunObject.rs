@@ -87,6 +87,7 @@ use bun_paths::MAX_PATH_BYTES;
 #[cfg(not(windows))]
 use bun_paths::PathBuffer;
 use bun_shell_parser::braces as Braces;
+#[cfg(not(windows))]
 use bun_sys as sys;
 use bun_zlib as zlib;
 
@@ -832,48 +833,18 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
         return overridden_main;
     }
 
-    // Attempt to use the resolved filesystem path
-    // This makes `eval('require.main === module')` work when the main module is a symlink.
-    // This behavior differs slightly from Node. Node sets the `id` to `.` when the main module is a symlink.
-    'use_resolved_path: {
-        if vm.main_resolved_path.is_empty() {
-            // If it's from eval, don't try to resolve it.
-            if strings::ends_with(vm.main(), b"[eval]") {
-                break 'use_resolved_path;
-            }
-            if strings::ends_with(vm.main(), b"[stdin]") {
-                break 'use_resolved_path;
-            }
-
-            let main = vm.main();
-            let mut main_buf = bun_paths::path_buffer_pool::get();
-            if main.len() >= main_buf.len() {
-                break 'use_resolved_path;
-            }
-            main_buf[..main.len()].copy_from_slice(main);
-            main_buf[main.len()] = 0;
-            let main_z = bun_core::ZStr::from_buf(&main_buf[..], main.len());
-
-            let mut resolved_buf = bun_paths::path_buffer_pool::get();
-            let Ok(resolved) = sys::realpath(main_z, &mut resolved_buf) else {
-                break 'use_resolved_path;
-            };
-
-            // Bun.main === otherId will be compared many times, so let's try to create an atom string if we can.
-            if let Some(atom) = BunString::try_create_atom(resolved) {
-                vm.main_resolved_path = atom;
-            } else {
-                vm.main_resolved_path = BunString::clone_utf8(resolved);
-            }
-        }
-
-        return vm
-            .main_resolved_path
-            .to_js(global_this)
-            .or_pending_exception();
+    // `vm.main` is the path the entry module is keyed by (see `_resolve`), so
+    // `Bun.main === import.meta.path` holds for it. It is compared often;
+    // cache it as an atom.
+    if vm.main_resolved_path.is_empty() {
+        vm.main_resolved_path = match BunString::try_create_atom(vm.main()) {
+            Some(atom) => atom,
+            None => BunString::clone_utf8(vm.main()),
+        };
     }
-
-    ZigString::init(vm.main()).to_js(global_this)
+    vm.main_resolved_path
+        .to_js(global_this)
+        .or_pending_exception()
 }
 
 // HOST_EXPORT(BunObject_setter_main, jsc)

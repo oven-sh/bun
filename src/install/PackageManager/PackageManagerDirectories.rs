@@ -776,7 +776,10 @@ pub fn is_package_in_cache(
 // ─────────────────────────── global directories ───────────────────────────────
 
 pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) -> Result<(), Error> {
-    let bin_path = options::make_global_bin_dir(ctx.install.as_deref())?;
+    let bin_path = options::make_global_bin_dir(
+        FileSystem::instance().top_level_dir(),
+        ctx.install.as_deref(),
+    )?;
     let path = FileSystem::instance()
         .dirname_store()
         .append(bin_path.as_bytes_with_nul())?;
@@ -794,6 +797,7 @@ pub fn global_link_dir(this: &mut PackageManager) -> Fd {
     }
 
     let (global_dir, global_dir_path) = match options::open_global_dir(
+        FileSystem::instance().top_level_dir(),
         this.options.explicit_global_directory,
     ) {
         Ok(d) => d,

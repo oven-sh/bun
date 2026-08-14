@@ -827,7 +827,7 @@ impl PosixBufferedReader {
             let mut got_retry = false;
 
             // SAFETY: caller contract; borrow ends at `;`.
-            let unbuffered = scratch.is_some() && unsafe { (*this)._buffer.capacity() == 0 };
+            let unbuffered = scratch.is_some() && unsafe { (*this)._buffer.is_empty() };
             if unbuffered {
                 // Use stack buffer for streaming — per-loop scratch buffer;
                 // single-threaded event loop (see `EventLoopCtx::pipe_read_buffer_mut`).
@@ -952,11 +952,11 @@ impl PosixBufferedReader {
                                     ReadState::Progress
                                 },
                             );
-                            // Reinstall; anything re-entry buffered lands after
-                            // the bytes it was delivered.
+                            // Delivered bytes are consumed by `on_read_chunk`; keep only what re-entry buffered.
                             // SAFETY: caller contract; borrows end at the block.
                             unsafe {
                                 let mut buffer = buffer;
+                                buffer.clear();
                                 buffer.extend_from_slice(&(*this)._buffer);
                                 (*this)._buffer = buffer;
                             }
@@ -1070,7 +1070,7 @@ impl PosixBufferedReader {
             let event_loop = vtable.event_loop();
             let stack_buffer_len = event_loop.pipe_read_buffer_mut().len();
             // SAFETY: caller contract; borrow ends at the loop test.
-            while unsafe { (*this)._buffer.capacity() == 0 } {
+            while unsafe { (*this)._buffer.is_empty() } {
                 let stack_buffer_cutoff = stack_buffer_len / 2;
                 let mut head_start = 0usize; // index into stack_buffer where the unwritten head begins
                 while stack_buffer_len - head_start > 16 * 1024 {

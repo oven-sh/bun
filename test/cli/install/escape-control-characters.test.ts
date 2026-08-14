@@ -11,7 +11,7 @@
  * dist-tag that does not exist; every tarball carries a poisoned bin name.
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -226,7 +226,8 @@ test.concurrent("the verbose resolve trace escapes the specifier and the resolut
   // manager output, so only the package manager's own lines are checked here.
   expect(stderr).toContain(`"dep": "tag-${C1_ESCAPED}"`);
   expect(stderr).toContain(`"ws": "packages/ws-${C1_ESCAPED}"`);
-  expect(stderr).toContain(`ws@workspace:packages/ws-${C1_ESCAPED}`);
+  // The trace prints the resolution with the platform's path separator.
+  expect(stderr).toContain(`ws@workspace:packages${isWindows ? "\\" : "/"}ws-${C1_ESCAPED}`);
   expect(stderr).not.toContain(`tag-${C1}`);
   expect(stderr).not.toContain(`ws-${C1}`);
   expect(exitCode).toBe(0);

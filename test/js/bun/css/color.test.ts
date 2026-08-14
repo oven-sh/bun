@@ -550,6 +550,103 @@ describe("css string output parses back to the same color", () => {
   });
 });
 
+// https://drafts.csswg.org/css-color-5/#relative-colors
+// Inside a math function a channel keyword is a <number> in the function's
+// range, so multiplying it by a <percentage> gives a <percentage> of the
+// channel. Every value in the first three groups is lightningcss 1.30 output.
+describe("relative color calc() with percentages", () => {
+  const origin = "color(srgb .8 .4 .2)";
+
+  test.each([
+    ["calc(r * 50%)", ".4"],
+    ["calc(50% * r)", ".4"],
+    ["calc(r * -50%)", "-.4"],
+    ["calc(r * 50% + 10%)", ".5"],
+    ["calc(50% - r * 25%)", ".3"],
+    ["calc(r / 2 * 100%)", ".4"],
+    ["calc(r * g * 50%)", ".16"],
+    ["calc((r + g) * 50%)", ".6"],
+    ["min(r * 50%, 30%)", ".3"],
+    ["max(r * 50%, 30%)", ".4"],
+    ["round(r * 100%, 30%)", ".9"],
+    ["mod(r * 100%, 30%)", ".2"],
+    ["hypot(r * 100%, 30%)", ".8544"],
+  ])("%s is a percentage of the channel", (expr, expected) => {
+    expect(color(`color(from ${origin} srgb ${expr} g b)`, "css")).toBe(`color(srgb ${expected} .4 .2)`);
+  });
+
+  const spaces: [space: string, channels: string, printed?: string][] = [
+    ["srgb", "g b"],
+    ["srgb-linear", "g b"],
+    ["display-p3", "g b"],
+    ["prophoto-rgb", "g b"],
+    ["rec2020", "g b"],
+    ["xyz-d50", "y z"],
+    ["xyz-d65", "y z", "xyz"],
+    ["xyz", "y z"],
+  ];
+  test.each(spaces)("color(from ... %s calc(<channel> * <percentage>))", (space, channels, printed = space) => {
+    const [b, c] = channels.split(" ");
+    expect(color(`color(from color(${space} .8 .4 .2) ${space} ${b} calc(${b} * 50%) calc(50% * ${c}))`, "css")).toBe(
+      `color(${printed} .4 .2 .1)`,
+    );
+  });
+
+  // The keyword is the channel's <number> in the function's own range (r is 200
+  // in rgb(), s is 50 in hsl(), l is 50 in lab() and .5 in oklab()), not the
+  // unit value the color is stored as.
+  test.each([
+    ["rgb(from rgb(200 100 50) calc(r * 50%) g b)", "#ff6432"],
+    ["rgb(from rgb(200 100 50) calc(r * 0.1%) g b)", "#336432"],
+    ["rgb(from rgb(200 100 50) r g b / calc(r * 0.1%))", "#c8643233"],
+    ["rgb(from rgb(200 100 50 / .5) r g b / calc(alpha * 50%))", "#c8643240"],
+    ["hsl(from hsl(120 50% 40%) h calc(s * 50%) l)", "#0c0"],
+    ["hsl(from hsl(120 50% 40%) h calc(s * 1%) l)", "#393"],
+    ["hsl(from hsl(120 50% 40%) h s calc(l * 1.5%))", "#6c6"],
+    ["hsl(from hsl(120 50% 40%) h s l / calc(s * 0.5%))", "#33993340"],
+    ["hwb(from hwb(120 20% 30%) h calc(w * 2%) b)", "#66b366"],
+    ["hwb(from hwb(120 20% 30% / .5) h w b / calc(alpha * 50%))", "#33b33340"],
+    ["lab(from lab(50% 20 30) calc(l * 1.2%) a b)", "lab(60% 20 30)"],
+    ["lab(from lab(50% 20 30) l a b / calc(l * 1%))", "lab(50% 20 30 / .5)"],
+    ["lch(from lch(50% 30 120) calc(l * 1%) c h)", "lch(50% 30 120)"],
+    ["lch(from lch(50% 30 120 / .5) l c h / calc(alpha * 50%))", "lch(50% 30 120 / .25)"],
+    ["oklab(from oklab(50% .1 .1) calc(l * 50%) a b)", "oklab(25% .1 .1)"],
+    ["oklab(from oklab(50% .1 .1 / .5) l a b / calc(50% * alpha))", "oklab(50% .1 .1 / .25)"],
+    ["oklch(from oklch(50% .1 120) calc(l * 50%) c h)", "oklch(25% .1 120)"],
+    ["oklch(from oklch(50% .1 120 / .5) l c h / calc(alpha * 50%))", "oklch(50% .1 120 / .25)"],
+    ["color(from color(srgb .8 .4 .2 / .5) srgb r g b / calc(alpha * 50%))", "color(srgb .8 .4 .2 / .25)"],
+  ])("%s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  // Forms bun accepted before, with the keyword standing for a percentage of its
+  // range (the documented `calc(l + 15%)`), still mean what they did.
+  test.each([
+    ["lab(from lab(50% 20 30) calc(l + 15%) a b)", "lab(65% 20 30)"],
+    ["hsl(from hsl(120 50% 40%) h calc(s - 10%) l)", "#3d8f3d"],
+    ["rgb(from rgb(200 100 50 / .5) r g b / calc(alpha - 20%))", "#c864324d"],
+    [`color(from ${origin} srgb calc(r + 10%) g b)`, "color(srgb .9 .4 .2)"],
+    [`color(from ${origin} srgb min(r, 50%) g b)`, "color(srgb .5 .4 .2)"],
+    [`color(from ${origin} srgb min(r, g) g b)`, "color(srgb .4 .4 .2)"],
+    [`color(from ${origin} srgb calc(r * .5) g b)`, "color(srgb .4 .4 .2)"],
+  ])("%s still parses", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test.each([
+    `color(from ${origin} srgb calc(r * 50% + .1) g b)`,
+    `color(from ${origin} srgb calc(r * 50% - g) g b)`,
+    `color(from ${origin} srgb calc(r * 50% * 10%) g b)`,
+    // Without relative color syntax there is no keyword to fall back on; these
+    // used to evaluate to NaN and parse as a `none` channel.
+    "color(srgb calc(1 + 50%) 0 0)",
+    "color(srgb calc(50% + 1) 0 0)",
+    "hsl(120 calc(50% + 1) 40%)",
+  ])("%s mixes a number and a percentage and does not parse", input => {
+    expect(color(input, "css")).toBeNull();
+  });
+});
+
 describe("input forms", () => {
   test.each([
     ["a named color", "red"],

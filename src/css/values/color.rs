@@ -2185,17 +2185,32 @@ impl RelativeComponentParser {
     }
 
     /// A math function the `<number>` pass could not fold, evaluated as a
-    /// `<percentage>` and returned as a unit value. A keyword is its channel as
-    /// a percentage of the channel's range here, which is what folds
-    /// `min(r, g)` (`reduce_args` only compares values) and what gives
-    /// `calc(l + 10%)` its pre-existing meaning. Callers try `parse_number`
-    /// first, so a math function over plain numbers gets the CSS Color 5
-    /// meaning, in which the keywords are `<number>`s.
+    /// `<percentage>` and returned as a unit value. The keywords are `<number>`s
+    /// first, per CSS Color 5 (`calc(r * 50%)`). That fails for the forms bun has
+    /// always accepted with the keyword standing for a percentage of its range
+    /// (`calc(l + 10%)`, and `min(r, g)`, which `reduce_args` only folds over
+    /// values), so those are retried that way.
     fn parse_percentage(input: &mut css::Parser, this: &RelativeComponentParser) -> CssResult<f32> {
-        match Calc::<Percentage>::parse_with(input, this, |ctx, ident| {
+        if let Ok(unit_value) = input.try_parse(|i| {
+            RelativeComponentParser::parse_percentage_calc(i, this, |ctx, ident| {
+                Some(Calc::Number(ctx.get_number(ident, ChannelType::NUMBER)?))
+            })
+        }) {
+            return Ok(unit_value);
+        }
+
+        RelativeComponentParser::parse_percentage_calc(input, this, |ctx, ident| {
             let (unit_value, _) = ctx.get_ident(ident, ChannelType::NUMBER)?;
             Some(Calc::Value(Box::new(Percentage { v: unit_value })))
-        }) {
+        })
+    }
+
+    fn parse_percentage_calc(
+        input: &mut css::Parser,
+        this: &RelativeComponentParser,
+        keyword: impl Fn(&RelativeComponentParser, &[u8]) -> Option<Calc<Percentage>> + Copy,
+    ) -> CssResult<f32> {
+        match Calc::<Percentage>::parse_with(input, this, keyword) {
             Ok(Calc::Value(v)) => Ok(v.v),
             _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
         }

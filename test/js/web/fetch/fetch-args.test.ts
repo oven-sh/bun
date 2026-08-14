@@ -76,7 +76,8 @@ test.each([
     port: 0,
     hostname: "127.0.0.1",
     fetch(req, server) {
-      return new Response(String(server.requestIP(req)?.port ?? 0));
+      const remotePort = server.requestIP(req)?.port;
+      return new Response(remotePort === undefined ? "missing-port" : String(remotePort));
     },
   });
   const url = `http://127.0.0.1:${srv.port}/`;
@@ -85,7 +86,10 @@ test.each([
   const ports: number[] = [];
   for (let i = 0; i < 6; i++) {
     const res = await fetch(url, init);
-    ports.push(parseInt(await res.text(), 10));
+    const port = Number(await res.text());
+    expect(Number.isInteger(port)).toBe(true);
+    expect(port).toBeGreaterThan(0);
+    ports.push(port);
   }
 
   // Pooling on → connections reuse → at most 2 unique source ports

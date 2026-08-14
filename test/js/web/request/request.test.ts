@@ -248,6 +248,14 @@ test("clone() preserves referrer, integrity, keepalive", () => {
   });
 });
 
+test("clone() preserves the no-referrer state", () => {
+  // Pins the static no-referrer sentinel through clone's dupe_ref and the
+  // clone's later finalize.
+  const base = new Request("https://example.org/", { referrer: "" });
+  expect(base.referrer).toBe("");
+  expect(base.clone().referrer).toBe("");
+});
+
 test("clone() does not lock original body when body was accessed before clone", async () => {
   const readableStream = new ReadableStream({
     start(controller) {

@@ -64,7 +64,10 @@
     ]
   },
   "src/jsc/web_worker.rs": {
-    "thread spawn": 1
+    "thread spawn": 1,
+    "unsafe impl Send": [
+      "ThreadStart"
+    ]
   },
   "src/jsc/webcore_types.rs": {
     "unsafe impl Send": [

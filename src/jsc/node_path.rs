@@ -77,11 +77,13 @@ impl<T: Unprotect> core::ops::DerefMut for ThreadSafe<T> {
 impl<T: Unprotect> Drop for ThreadSafe<T> {
     #[inline]
     fn drop(&mut self) {
-        debug_assert!(
-            crate::virtual_machine::VirtualMachine::get_or_null().is_some(),
-            "ThreadSafe<T> dropped off its JS thread"
-        );
-        self.0.unprotect();
+        // The same argument types serve mini-loop threads (the shell's `cp` via
+        // `ShellAsyncCpTask`, `bun exec`), which have no VM and never protected
+        // anything; only a JS thread has a protection to release. A JS VM's job
+        // always comes back to its own thread to drop this (its VM waits for it).
+        if crate::virtual_machine::VirtualMachine::get_or_null().is_some() {
+            self.0.unprotect();
+        }
         // `self.0: T` drops next (field drop after `Drop::drop`).
     }
 }

@@ -684,13 +684,13 @@ mod test_gate {
     pub(super) fn closed(_: &VmHandle) {}
 }
 
-// ── C++ holds references and tickets ──────────────────────────────────────
+// ── C++ holds references ──────────────────────────────────────────────────
 //
-// Two representations cross the FFI. `*const Shared` (`BunVmHandleRef`) is one
-// strong count on the Arc behind a [`VmHandle`] — what a long-lived C++ holder
-// (JSVMClientData, NapiEnv) keeps and posts through. `*mut Ticket`
-// (`BunVmTicket`) is a boxed [`Ticket`] — what a piece of C++ work bound for
-// another thread (an `EventLoopTaskNoContext` on the work pool) carries.
+// `*const Shared` (`BunVmHandleRef`) is one strong count on the Arc behind a
+// [`VmHandle`] — what a long-lived C++ holder (JSVMClientData, NapiEnv) keeps
+// and posts through. C++ work bound for another thread (WebCrypto's
+// `EventLoopTaskNoContext`) is carried by a Rust task that holds the ticket
+// (`ConcurrentCppTask`), so no ticket crosses the FFI.
 
 /// A `VmHandle` view over a reference C++ holds, for the duration of one call.
 pub struct BorrowedRef(core::mem::ManuallyDrop<VmHandle>);
@@ -816,21 +816,6 @@ pub unsafe extern "C" fn Bun__VmHandle__stateAddress(r: *const Shared) -> *const
 
 // C++ (BunClientData.h) hard-codes this value.
 const _: () = assert!(State::Open as u8 == 0);
-
-/// JS thread: a ticket on `vm` for C++ work bound for another thread
-/// (`release` on any thread when that work is done).
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VmTicket__create(vm: &VirtualMachine) -> *mut Ticket {
-    bun_core::heap::into_raw(Box::new(vm.ticket()))
-}
-
-/// # Safety
-/// `t` came from `Bun__VmTicket__create` and is not used afterwards.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__VmTicket__release(t: *mut Ticket) {
-    // SAFETY: fn contract.
-    drop(unsafe { bun_core::heap::take(t) });
-}
 
 // ── Producers that serve either a JS VM or a MiniEventLoop ────────────────
 //

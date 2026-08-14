@@ -431,16 +431,28 @@ impl WebWorker {
         // this ticket would otherwise hold.
         // SAFETY: `parent` is the calling thread's live VM.
         let parent_ticket = unsafe { (*parent).ticket() };
-        let worker_addr = worker as usize;
+        /// What the worker thread is handed: its refcounted `WebWorker` (the ref
+        /// taken above is the thread's) and a ticket on the parent VM.
+        struct ThreadStart {
+            worker: *mut WebWorker,
+            _parent_ticket: crate::Ticket,
+        }
+        // SAFETY: `WebWorker` is shared across threads by design (atomics,
+        // `Guarded`, thread-confined cells — see the struct doc) and holds no
+        // parent-VM state; the parent VM itself is kept by `_parent_ticket`.
+        unsafe impl Send for ThreadStart {}
+        let start = ThreadStart {
+            worker,
+            _parent_ticket: parent_ticket,
+        };
         let spawn = std::thread::Builder::new()
             .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
             .spawn(move || {
-                let _parent_ticket = parent_ticket;
-                let worker = worker_addr as *mut WebWorker;
+                let start = start;
                 // SAFETY: `worker` is live (the thread's ref); `&WebWorker`, never `&mut`.
-                unsafe { (*worker).thread_main() };
+                unsafe { (*start.worker).thread_main() };
                 // SAFETY: dropping the thread's ref; nothing below touches `worker`.
-                unsafe { WebWorker::deref(worker) };
+                unsafe { WebWorker::deref(start.worker) };
             });
         match spawn {
             Ok(handle) => {

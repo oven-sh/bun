@@ -379,6 +379,9 @@ describe("color() predefined color spaces", () => {
   test("srgb-linear relative colors can reference r", () => {
     expect(color("color(from red srgb-linear r g b)", "css")).toBe("color(srgb-linear 1 0 0)");
     expect(color("color(from red srgb-linear g g r)", "css")).toBe("color(srgb-linear 0 0 1)");
+    expect(color("color(from #808080 srgb-linear r g b / r)", "css")).toBe(
+      "color(srgb-linear .215861 .215861 .215861 / .215861)",
+    );
   });
 
   test("color-mix(in xyz-d50) stays in xyz-d50", () => {

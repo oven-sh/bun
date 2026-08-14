@@ -3992,11 +3992,14 @@ unsafe fn fetch_builtin_module(
                 // [`SQLITE_MODULE_SOURCE`]: the standalone-binary path reads
                 // the embedded blob via `readFileSync(import.meta.path)`
                 // (resolved through the `/$bunfs/` virtual root).
+                // `new Database(bytes)` rejects an empty buffer, but a 0-byte
+                // file is a valid empty database, which `:memory:` also is.
                 const SQLITE_MODULE_SOURCE_STANDALONE: &[u8] = b"\
 /* Generated code */
 import {Database} from 'bun:sqlite';
 import {readFileSync} from 'node:fs';
-export const db = new Database(readFileSync(import.meta.path));
+const bytes = readFileSync(import.meta.path);
+export const db = bytes.byteLength === 0 ? new Database(':memory:') : new Database(bytes);
 
 export const __esModule = true;
 export default db;

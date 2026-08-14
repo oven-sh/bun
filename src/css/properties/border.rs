@@ -1356,6 +1356,19 @@ mod border_handler_body {
 
             // Helper macros.
 
+            // The buffered block side that, compiled, lands on a physical side.
+            macro_rules! compiled_block_side {
+                (border_top) => {
+                    Some(&self.border_block_start)
+                };
+                (border_bottom) => {
+                    Some(&self.border_block_end)
+                };
+                ($key:ident) => {
+                    None::<&BorderShorthand>
+                };
+            }
+
             macro_rules! flush_helper {
                 ($key:ident, $prop:ident, $val:expr, $category:expr) => {{
                     if $category != self.category
@@ -1364,11 +1377,19 @@ mod border_handler_body {
                         self.flush(dest, context);
                     }
 
-                    if let Some(existing) = &self.$key.$prop
-                        && !existing.eql($val)
-                        && let Some(browsers) = &context.targets.browsers
-                        && !css::generic::is_compatible($val, browsers)
-                    {
+                    // The previous value of the property stays ahead of a value some target rejects.
+                    let previous = self.$key.$prop.as_ref().or_else(|| {
+                        compiled_block_side!($key)
+                            .filter(|_| context.should_compile_logical(Feature::LogicalBorders))
+                            .and_then(|side| side.$prop.as_ref())
+                    });
+                    let needs_fallback = previous.is_some_and(|existing| {
+                        !existing.eql($val)
+                            && context.targets.browsers.as_ref().is_some_and(|browsers| {
+                                !css::generic::is_compatible($val, browsers)
+                            })
+                    });
+                    if needs_fallback {
                         self.flush(dest, context);
                     }
                 }};

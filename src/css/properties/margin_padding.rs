@@ -466,6 +466,14 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             PhysicalSlot::Right => self.right.is_some(),
         }
     }
+    /// Whether a block value is buffered that, compiled, lands on this physical side.
+    fn compiled_block_slot_is_some(&self, slot: PhysicalSlot) -> bool {
+        match slot {
+            PhysicalSlot::Top => self.block_start.is_some(),
+            PhysicalSlot::Bottom => self.block_end.is_some(),
+            PhysicalSlot::Left | PhysicalSlot::Right => false,
+        }
+    }
     fn logical_slot(&mut self, slot: LogicalSlot) -> &mut Option<Property> {
         match slot {
             LogicalSlot::BlockStart => &mut self.block_start,
@@ -768,7 +776,8 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
     ) {
         // If the value contains syntax that isn't supported across all targets,
         // preserve the previous value as a fallback.
-        let needs_fallback = self.physical_slot_is_some(field)
+        let needs_fallback = (self.physical_slot_is_some(field)
+            || (Self::compiles_logical(context) && self.compiled_block_slot_is_some(field)))
             && context
                 .targets
                 .browsers

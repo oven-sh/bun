@@ -2228,6 +2228,9 @@ describe("css tests", () => {
       rule("margin-left: 1px; margin-left: 1dvh;") + rtl("margin-right: 3px;"),
     );
     compiled("margin-inline-start: 3px; margin-left: 1dvh", rule("margin-left: 1dvh;") + rtl("margin-right: 3px;"));
+    // The 4-side shorthand drops the block value it overrides, unless it is needed as a fallback.
+    compiled("margin-block-start: 3px; margin: 0", rule("margin: 0;"));
+    compiled("margin-block-start: 3px; margin: 1dvh", rule("margin-top: 3px; margin: 1dvh;"));
 
     describe("border", () => {
       compiled(
@@ -2320,6 +2323,8 @@ describe("css tests", () => {
         "border-block-start-width: 3px; border-top-width: 1dvh",
         rule("border-top-width: 3px; border-top-width: 1dvh;"),
       );
+      compiled("border-block-start-width: 3px; border-width: 1px", rule("border-width: 1px;"));
+      compiled("border-block-start-width: 3px; border-width: 1dvh", rule("border-top-width: 3px; border-width: 1dvh;"));
       compiled(
         "border-inline-start-width: 3px; border-left-width: 1dvh",
         rule("border-left-width: 1dvh;") + rtl("border-right-width: 3px;"),

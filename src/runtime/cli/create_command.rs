@@ -1165,7 +1165,7 @@ impl CreateCommand {
             }
         }
 
-        if failed_install.is_none() && !user_skipped_install && !postinstall_tasks.is_empty() {
+        if !user_skipped_install && !postinstall_tasks.is_empty() {
             for task in &postinstall_tasks {
                 exec_task(task, destination, path_env, npm_client_);
             }
@@ -1178,8 +1178,8 @@ impl CreateCommand {
         // Only after the git thread is joined: exiting earlier would abandon git mid-commit.
         if let Some(status) = failed_install {
             pretty_errorln!(
-                "<r><red>error<r><d>:<r> <b>bun install<r> failed in \"{}\" ({})\n<blue>note<r><d>:<r> the template files were written; run <b>bun install<r> there once the error above is fixed",
-                bstr::BStr::new(destination),
+                "<r><red>error<r><d>:<r> <b>bun install<r> failed in {} ({})\n<blue>note<r><d>:<r> the template files were written; run <b>bun install<r> in that directory once the error is fixed",
+                bun_core::fmt::quote(destination),
                 status,
             );
             Global::exit(match status {

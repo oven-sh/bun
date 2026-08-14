@@ -319,8 +319,8 @@ it.skipIf(!isPosix)("does not busy-wait on the futex while git runs", async () =
 });
 
 // The exit status of the nested `bun install` used to be dropped: when it
-// failed, `bun create` still ran the postinstall tasks, printed "dependencies
-// were installed automatically" / "Created ... successfully" and exited 0.
+// failed, `bun create` still printed "dependencies were installed
+// automatically" / "Created ... successfully" and exited 0.
 //
 // Ways to make that install fail, and what `bun create` must then exit with: a
 // dependency the registry (a local server answering 404) cannot provide makes
@@ -413,9 +413,13 @@ async function createWithFailingInstall(
   // The template files were copied before the install ran and stay on disk.
   expect(await exists(join(dest, "index.js"))).toBe(true);
   expect(err).toMatch(new RegExp(`error: bun install failed in "[^"]*dest" \\(code: ${failure.exitCode}\\)`));
-  expect(err).toContain("note: the template files were written; run bun install there once the error above is fixed");
+  expect(err).toContain(
+    "note: the template files were written; run bun install in that directory once the error is fixed",
+  );
   expect(out).toContain("$ bun install");
-  expect(out).not.toContain("postinstall-task-ran");
+  // The template's own `bun-create` tasks still run (they are not written to
+  // the project, so this is the only chance to see them); the banner does not.
+  expect(out).toContain("postinstall-task-ran");
   expect(out).not.toContain("installed automatically");
   expect(out).not.toContain("successfully");
   expect(out).not.toContain("To get started");

@@ -923,10 +923,8 @@ pub mod bv2_impl {
                 /// (lives for the entire build pass) instead of the map's key
                 /// storage.
                 ///
-                /// `jsx` is the configured pragma of the transpiler the file is
-                /// bundled with. The resolver fills `Result.jsx` from its options
-                /// for on-disk files and `ParseTask::init` parses with whatever the
-                /// `Result` carries, so a virtual file has to carry it too.
+                /// `jsx` becomes the result's `Result.jsx`, which `ParseTask::init`
+                /// parses with (the resolver fills it from its options for disk files).
                 pub(crate) fn resolve(
                     &self,
                     arena: &bun_alloc::Arena,

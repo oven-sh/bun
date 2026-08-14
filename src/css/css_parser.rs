@@ -5411,11 +5411,8 @@ impl Num {
         generic::implement_hash(self, hasher)
     }
 
-    /// The integer an `<integer-token>` was written as. `value` is an f32 and
-    /// cannot hold every i32 (`2147483647` is stored as `2147483648.0`), so
-    /// printing goes through this instead of `value`. `None` for a fractional
-    /// token, or when `int_value` saturated at the i32 range and no longer
-    /// describes `value`.
+    /// `int_value` unless it saturated and no longer describes `value`. Print
+    /// from this, not `value`: an f32 cannot hold every i32.
     pub(crate) fn exact_int(&self) -> Option<i32> {
         self.int_value.filter(|&int| int as f32 == self.value)
     }
@@ -5792,10 +5789,8 @@ pub mod serializer {
         serialize_dimension_num(&num, unit, dest)
     }
 
-    /// Minified dimension printing: a redundant `+` and the `.0` of an integral
-    /// value are dropped. An `<integer-token>` is printed from its own integer
-    /// (`16777217fr` is stored as the f32 16777216); any other integral value
-    /// is printed from the f32.
+    /// Prints `num` without a redundant `+` or `.0`, from its own integer when
+    /// it has one (see `Num::exact_int`).
     pub(crate) fn serialize_dimension_num(
         num: &Num,
         unit: &'static [u8],
@@ -5909,8 +5904,7 @@ pub mod serializer {
                 scientific: false,
             }
         } else if let Some(int) = num.exact_int() {
-            // `dtoa_short` below keeps 6 significant digits, which would turn
-            // `z-index: 2147483647` into `2147480000`.
+            // `dtoa_short` rounds to 6 significant digits.
             let mut buf = bun_core::fmt::ItoaBuf::new();
             return writer.write_all(bun_core::fmt::itoa(&mut buf, int));
         } else {

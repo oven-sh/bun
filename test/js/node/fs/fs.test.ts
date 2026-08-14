@@ -3130,6 +3130,131 @@ describe("rm", () => {
     fs.rmSync(dir, { recursive: true, force: true });
     expect(fs.existsSync(dir)).toBe(false);
   });
+
+  // A failed unlink does not by itself say whether the target is still there:
+  // Windows reports a file that another rm is in the middle of deleting with
+  // the same EPERM as a genuine access denial, and Linux reports a missing name
+  // on a read-only mount as EROFS. rm has to find out before deciding that
+  // force has nothing to ignore.
+  describe("deciding whether the target exists", () => {
+    type Outcome = "ok" | { code: string; syscall: string };
+    const outcome = (err: any): Outcome => (err == null ? "ok" : { code: err.code, syscall: err.syscall });
+
+    // rmSync, promises.rm and callback rm all end in the same native rm.
+    async function rmEveryWay(target: string, options: { force: boolean }): Promise<Outcome[]> {
+      let sync: Outcome = "ok";
+      try {
+        rmSync(target, options);
+      } catch (err) {
+        sync = outcome(err);
+      }
+      const promise = await promises.rm(target, options).then(() => "ok" as const, outcome);
+      const callback = await new Promise<Outcome>(resolve => fs.rm(target, options, err => resolve(outcome(err))));
+      return [sync, promise, callback];
+    }
+
+    // The target is still there, so neither force nor the missing-path error applies.
+    async function expectRmToFail(target: string) {
+      for (const force of [true, false]) {
+        const codes = (await rmEveryWay(target, { force })).map(result => (result === "ok" ? "ok" : result.code));
+        expect(codes).not.toContain("ok");
+        expect(codes).not.toContain("ENOENT");
+      }
+    }
+
+    it("concurrent rm({ force: true }) calls racing for the same file all resolve", async () => {
+      using dir = tempDir("rm-force-race", {});
+      const file = join(String(dir), "victim.txt");
+      const rejections: Record<string, number> = {};
+      for (let round = 0; round < 50; round++) {
+        await promises.writeFile(file, "x");
+        const results = await Promise.allSettled(Array.from({ length: 20 }, () => promises.rm(file, { force: true })));
+        for (const result of results) {
+          if (result.status === "rejected") {
+            const code = result.reason?.code ?? String(result.reason);
+            rejections[code] = (rejections[code] ?? 0) + 1;
+          }
+        }
+        expect(existsSync(file)).toBe(false);
+      }
+      expect(rejections).toEqual({});
+    });
+
+    // Linux rejects unlink on a read-only mount (EROFS) before looking the
+    // name up, while lstat says the name does not exist. Containers mount
+    // these read-only; when none of them is, there is nothing to test.
+    const codeOf = (op: () => unknown) => {
+      try {
+        op();
+        return undefined;
+      } catch (err: any) {
+        return err.code;
+      }
+    };
+    const missingOnReadOnlyMount = (() => {
+      if (!isLinux) return undefined;
+      for (const mount of ["/sys", "/proc/sys", "/sys/fs/cgroup"]) {
+        const missing = join(mount, "bun-fs-test-rm-does-not-exist");
+        if (codeOf(() => unlinkSync(missing)) === "EROFS" && codeOf(() => lstatSync(missing)) === "ENOENT") {
+          return missing;
+        }
+      }
+      return undefined;
+    })();
+
+    it.skipIf(!missingOnReadOnlyMount)("a missing path on a read-only mount is missing, not EROFS", async () => {
+      expect(await rmEveryWay(missingOnReadOnlyMount!, { force: true })).toEqual(["ok", "ok", "ok"]);
+
+      const enoent = { code: "ENOENT", syscall: "lstat" };
+      expect(await rmEveryWay(missingOnReadOnlyMount!, { force: false })).toEqual([enoent, enoent, enoent]);
+    });
+
+    // "<file>/x": unlink and lstat both fail with ENOTDIR, which is not the
+    // same thing as missing. (Windows reports this path as ENOENT.)
+    it.skipIf(isWindows)("a path through a regular file is not treated as missing", async () => {
+      using dir = tempDir("rm-force-notdir", { afile: "x" });
+      const afile = join(String(dir), "afile");
+
+      await expectRmToFail(join(afile, "x"));
+      expect(existsSync(afile)).toBe(true);
+    });
+
+    // unlink fails but the file is still there, so the unlink error stands.
+    // (root is not subject to directory permissions.)
+    const isRoot = process.getuid?.() === 0;
+    it.skipIf(isWindows || isRoot)("a file that cannot be unlinked reports the unlink error", async () => {
+      using dir = tempDir("rm-force-eacces", { "locked/file.txt": "x" });
+      const locked = join(String(dir), "locked");
+      const target = join(locked, "file.txt");
+      fs.chmodSync(locked, 0o555);
+      try {
+        const eacces = { code: "EACCES", syscall: "rm" };
+        expect(await rmEveryWay(target, { force: true })).toEqual([eacces, eacces, eacces]);
+        expect(await rmEveryWay(target, { force: false })).toEqual([eacces, eacces, eacces]);
+        expect(existsSync(target)).toBe(true);
+      } finally {
+        fs.chmodSync(locked, 0o755);
+      }
+    });
+
+    // Windows refuses to delete the executable of a running process. That is
+    // reported with the same EPERM as a file being deleted by someone else,
+    // but this file is staying, so rm has to fail.
+    it.skipIf(!isWindows)("a file that is in use reports the error", async () => {
+      using dir = tempDir("rm-force-in-use", {});
+      const image = join(String(dir), "in-use.exe");
+      copyFileSync(process.env.ComSpec ?? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "cmd.exe"), image);
+      // cmd /k waits for commands on stdin, which is never written to.
+      const proc = Bun.spawn({ cmd: [image, "/d", "/k"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+      try {
+        await expectRmToFail(image);
+        expect(existsSync(image)).toBe(true);
+      } finally {
+        proc.kill();
+        await proc.exited;
+      }
+    });
+  });
 });
 
 describe("rmdir", () => {

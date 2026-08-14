@@ -7817,7 +7817,24 @@ impl NodeFS {
                 }
                 return Ok(());
             }
-            if e1 == E::ENOENT {
+            // libuv's unlink reports a file that another handle is in the
+            // middle of deleting (STATUS_DELETE_PENDING / STATUS_FILE_DELETED)
+            // as EPERM, the same errno as a genuine access denial. `unlinkat`
+            // goes through NtCreateFile itself and treats those statuses as
+            // success, which is what makes the recursive branch immune to this
+            // race; give it the same chance here.
+            #[cfg(windows)]
+            if e1 == E::EPERM && sys::unlinkat(FD::cwd(), dest).is_ok() {
+                return Ok(());
+            }
+            // unlink's errno is not a reliable "does the path exist" answer:
+            // Linux reports a missing name on a read-only mount as EROFS, for
+            // example. Node decides existence with the lstat() in
+            // validateRmOptions, so ask lstat before treating the failure as
+            // anything other than ENOENT.
+            let gone = e1 == E::ENOENT
+                || matches!(sys::lstat(dest), Err(err) if err.get_errno() == E::ENOENT);
+            if gone {
                 if args.force {
                     return Ok(());
                 }

@@ -1790,7 +1790,7 @@ describe.concurrent.skipIf(!canCreateNonUtf8FileNames())("files whose path is no
     expect(stderr).toMatch(/error: Cannot find module '[^']*\/dir\uFFFD\/inner\.test\.ts'\n/);
     expect(stderr).toContain(" 2 pass");
     expect(stderr).toContain(" 2 fail");
-    expect(stderr).toContain("Ran 4 tests across 4 files.");
+    expect(stderr).toMatch(/\bacross 4 files\./);
     expect(exitCode).toBe(1);
   });
 

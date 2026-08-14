@@ -192,7 +192,8 @@ fn read_package_json(dir: &[u8]) -> PackageJson {
 }
 
 /// Leading `!`s toggle negation; `./` prefixes and trailing slashes are
-/// ignored, as in install's path-based workspace resolution.
+/// ignored. Exotic forms install accepts via path normalization (`.//`,
+/// `\\`, `../`) are not recognized and fail closed (no inheritance).
 fn workspace_pattern(p: &[u8]) -> (bool, &[u8]) {
     let mut negated = false;
     let mut pat = p;
@@ -375,12 +376,11 @@ fn load_config_impl(
                 dir = &dir[..dir.len() - 1];
             }
             // node_modules cwds (lifecycle scripts) and compiled
-            // executables keep the cwd-only lookup.
-            let bound: usize = if StandaloneModuleGraph::get().is_some() || in_node_modules(dir) {
-                dir.len()
-            } else {
-                walk_root_bound(dir)
-            };
+            // executables keep the cwd-only lookup. Computed lazily: the
+            // common bunfig-in-cwd hit never reads it.
+            let cwd_only = StandaloneModuleGraph::get().is_some() || in_node_modules(dir);
+            let start: &[u8] = dir;
+            let mut bound: Option<usize> = None;
             // Roots ("/", "C:\\", UNC) keep their trailing separator: the last to check.
             let mut is_root = matches!(dir.last(), Some(&c) if bun_paths::is_sep_native(c));
             let mut found_len: Option<usize> = None;
@@ -402,6 +402,13 @@ fn load_config_impl(
                     found_len = Some(joined_len);
                     break;
                 }
+                let bound = *bound.get_or_insert_with(|| {
+                    if cwd_only {
+                        start.len()
+                    } else {
+                        walk_root_bound(start)
+                    }
+                });
                 if dir.len() <= bound {
                     break;
                 }

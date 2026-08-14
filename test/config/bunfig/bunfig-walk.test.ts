@@ -144,7 +144,7 @@ function packageJsonAboveTmpdir(): boolean {
 
 // Fail closed: with no package.json anywhere up the tree, only cwd is
 // checked, so a bunfig.toml in an unrelated parent (e.g. /tmp) never applies.
-test.skipIf(packageJsonAboveTmpdir())("no package.json anywhere bounds the lookup to cwd", async () => {
+test.concurrent.skipIf(packageJsonAboveTmpdir())("no package.json anywhere bounds the lookup to cwd", async () => {
   using dir = tempDir("bunfig-walk-no-pkg", {
     "bunfig.toml": `preload = ["./preload.ts"]\n`,
     "preload.ts": `console.log("preload script executed!");\n`,

@@ -13,7 +13,7 @@
 // callback is reported as a process-level uncaughtException.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, describeWithContainer, isDockerEnabled, tempDir } from "harness";
+import { bunEnv, bunExe, describeWithContainer, tempDir } from "harness";
 import path from "node:path";
 
 // Fixtures that need closedPort() / neverAnsweringServer() run them in the
@@ -59,35 +59,38 @@ process.exit(0);
 `;
 }
 
-if (isDockerEnabled()) {
-  describeWithContainer("postgres", { image: "postgres_plain" }, container => {
-    test("a throwing onconnect callback does not leave the pool stuck", async () => {
-      await container.ready;
-      const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
-      const { stdout, exitCode } = await runFixture(throwingHookFixture("onconnect"), { FIXTURE_URL: url });
-      expect(stdout).toBe('onconnect: null\nuncaught: boom from onconnect\nquery: [{"x":1}]\nended\n');
-      expect(exitCode).toBe(0);
+describeWithContainer("postgres", { image: "postgres_plain", concurrent: true }, container => {
+  test("a throwing onconnect callback does not leave the pool stuck", async () => {
+    await container.ready;
+    const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
+    expect(await runFixture(throwingHookFixture("onconnect"), { FIXTURE_URL: url })).toEqual({
+      stdout: 'onconnect: null\nuncaught: boom from onconnect\nquery: [{"x":1}]\nended\n',
+      stderr: "",
+      exitCode: 0,
     });
+  });
 
-    test("a throwing onclose callback does not hang sql.end()", async () => {
-      await container.ready;
-      const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
-      const { stdout, exitCode } = await runFixture(throwingHookFixture("onclose"), { FIXTURE_URL: url });
-      expect(stdout).toBe('query: [{"x":1}]\nonclose: Connection closed\nuncaught: boom from onclose\nended\n');
-      expect(exitCode).toBe(0);
+  test("a throwing onclose callback does not hang sql.end()", async () => {
+    await container.ready;
+    const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
+    expect(await runFixture(throwingHookFixture("onclose"), { FIXTURE_URL: url })).toEqual({
+      stdout: 'query: [{"x":1}]\nonclose: Connection closed\nuncaught: boom from onclose\nended\n',
+      stderr: "",
+      exitCode: 0,
     });
+  });
 
-    // PostgresSQLQuery.do_run refs the connection's poll_ref KeepAlive (a
-    // two-state flag, not a counter). When do_run returns early with a
-    // synchronous error before enqueueing — here a boxed Boolean binding
-    // rejected inside Signature::generate — the poll_ref must not be left
-    // Active, or the event loop stays pinned and the process never exits. The
-    // setImmediate forces do_run onto a later turn so on_data's epilogue
-    // doesn't mask the leak.
-    test("a synchronous do_run failure does not pin the event loop", async () => {
-      await container.ready;
-      const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
-      const fixture = /* ts */ `
+  // PostgresSQLQuery.do_run refs the connection's poll_ref KeepAlive (a
+  // two-state flag, not a counter). When do_run returns early with a
+  // synchronous error before enqueueing — here a boxed Boolean binding
+  // rejected inside Signature::generate — the poll_ref must not be left
+  // Active, or the event loop stays pinned and the process never exits. The
+  // setImmediate forces do_run onto a later turn so on_data's epilogue
+  // doesn't mask the leak.
+  test("a synchronous do_run failure does not pin the event loop", async () => {
+    await container.ready;
+    const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
+    const fixture = /* ts */ `
 const sql = new Bun.SQL({
   url: process.env.FIXTURE_URL,
   max: 1,
@@ -100,33 +103,35 @@ await new Promise(r => setImmediate(r));
 const err = await sql\`SELECT \${new Boolean(true)}\`.catch(e => e);
 console.log("rejected:" + (err?.code ?? err?.name ?? String(err)));
 `;
-      const { stdout, stderr, exitCode } = await runFixture(fixture, { FIXTURE_URL: url });
-      expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: "rejected:ERR_INVALID_ARG_TYPE\n",
-        stderr: expect.any(String),
-        exitCode: 0,
-      });
+    expect(await runFixture(fixture, { FIXTURE_URL: url })).toEqual({
+      stdout: "rejected:ERR_INVALID_ARG_TYPE\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+describeWithContainer("mysql", { image: "mysql_plain", concurrent: true }, container => {
+  test("a throwing onconnect callback does not leave the pool stuck", async () => {
+    await container.ready;
+    const url = `mysql://root@${container.host}:${container.port}/bun_sql_test`;
+    expect(await runFixture(throwingHookFixture("onconnect"), { FIXTURE_URL: url })).toEqual({
+      stdout: 'onconnect: null\nuncaught: boom from onconnect\nquery: [{"x":1}]\nended\n',
+      stderr: "",
+      exitCode: 0,
     });
   });
 
-  describeWithContainer("mysql", { image: "mysql_plain" }, container => {
-    test("a throwing onconnect callback does not leave the pool stuck", async () => {
-      await container.ready;
-      const url = `mysql://root@${container.host}:${container.port}/bun_sql_test`;
-      const { stdout, exitCode } = await runFixture(throwingHookFixture("onconnect"), { FIXTURE_URL: url });
-      expect(stdout).toBe('onconnect: null\nuncaught: boom from onconnect\nquery: [{"x":1}]\nended\n');
-      expect(exitCode).toBe(0);
-    });
-
-    test("a throwing onclose callback does not hang sql.end()", async () => {
-      await container.ready;
-      const url = `mysql://root@${container.host}:${container.port}/bun_sql_test`;
-      const { stdout, exitCode } = await runFixture(throwingHookFixture("onclose"), { FIXTURE_URL: url });
-      expect(stdout).toBe('query: [{"x":1}]\nonclose: Connection closed\nuncaught: boom from onclose\nended\n');
-      expect(exitCode).toBe(0);
+  test("a throwing onclose callback does not hang sql.end()", async () => {
+    await container.ready;
+    const url = `mysql://root@${container.host}:${container.port}/bun_sql_test`;
+    expect(await runFixture(throwingHookFixture("onclose"), { FIXTURE_URL: url })).toEqual({
+      stdout: 'query: [{"x":1}]\nonclose: Connection closed\nuncaught: boom from onclose\nended\n',
+      stderr: "",
+      exitCode: 0,
     });
   });
-}
+});
 
 // Fault-injection test: requires a server that refuses / drops / sends malformed
 // frames, which a healthy container will not do on demand. DO NOT COPY THIS
@@ -173,9 +178,11 @@ for (const [adapter, refusedCode] of [
   test.concurrent(
     `${adapter}: a throwing onclose callback still rejects pending queries when the connection is refused`,
     async () => {
-      const { stdout, exitCode } = await runFixture(refusedConnectionFixture(adapter));
-      expect(stdout).toBe(`onclose: ${refusedCode}\nuncaught: boom from onclose\nquery rejected: ${refusedCode}\n`);
-      expect(exitCode).toBe(0);
+      expect(await runFixture(refusedConnectionFixture(adapter))).toEqual({
+        stdout: `onclose: ${refusedCode}\nuncaught: boom from onclose\nquery rejected: ${refusedCode}\n`,
+        stderr: "",
+        exitCode: 0,
+      });
     },
   );
 }
@@ -217,9 +224,11 @@ try {
 }
 process.exit(0);
 `;
-  const { stdout, exitCode } = await runFixture(fixture);
-  expect(stdout).toBe("reentry ok\nreentry ok\nquery rejected: password error\n");
-  expect(exitCode).toBe(0);
+  expect(await runFixture(fixture)).toEqual({
+    stdout: "reentry ok\nreentry ok\nquery rejected: password error\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 // Fault-injection test: requires a server that refuses / drops / sends malformed
@@ -270,11 +279,11 @@ for (const [adapter, closedCode] of [
   test.concurrent(
     `${adapter}: a throwing onclose does not prevent forced close() from resolving mid-handshake`,
     async () => {
-      const { stdout, exitCode } = await runFixture(forcedCloseFixture(adapter));
-      expect(stdout).toBe(
-        `onclose: ${closedCode}\nuncaught: boom from onclose\nclosed\nquery rejected: ${closedCode}\n`,
-      );
-      expect(exitCode).toBe(0);
+      expect(await runFixture(forcedCloseFixture(adapter))).toEqual({
+        stdout: `onclose: ${closedCode}\nuncaught: boom from onclose\nclosed\nquery rejected: ${closedCode}\n`,
+        stderr: "",
+        exitCode: 0,
+      });
     },
   );
 }

@@ -706,7 +706,8 @@ test("terminate() stops a worker blocked in Atomics.wait()", async () => {
       );
       w.on("message", async (m) => {
         if (m !== "parking") { console.log("unexpected", m); process.exit(1); }
-        // Give the worker time to actually park before terminating it.
+        // The case of interest is terminate() landing once the worker is parked, for which there
+        // is no observable signal, so give it a moment; landing before it parks must pass too.
         await Bun.sleep(100);
         const code = await w.terminate();
         console.log("terminated", code);

@@ -919,15 +919,16 @@ impl<const SSL: bool> NewSocket<SSL> {
                 &sys::Error::from_code_int(fatal_send_errno, sys::Tag::write),
                 &global,
             );
-            handlers.call_error_handler(this_value, &[this_value, err_value])?;
+            let handled = handlers.call_error_handler(this_value, &[this_value, err_value]);
             // The error handler can destroy the socket itself; only close a
             // still-attached socket. Close without detaching so on_close runs
-            // and JS observes 'close' (mirrors h2's dead-transport close).
+            // and JS observes 'close' (mirrors h2's dead-transport close) —
+            // also when `error` itself threw.
             if !this.socket.get().is_detached() {
                 this.socket.get().close(uws::CloseCode::Normal);
             }
             drop(scope);
-            return Ok(());
+            return handled.map(|_| ());
         }
         #[cfg(windows)]
         let _ = fatal_send_errno;
@@ -1878,14 +1879,19 @@ impl<const SSL: bool> NewSocket<SSL> {
             };
         }
 
-        if let Some(err_value) = result.to_error() {
-            handlers.call_error_handler(this_value, &[this_value, err_value])?;
-        }
+        let handled = match result.to_error() {
+            Some(err_value) => handlers
+                .call_error_handler(this_value, &[this_value, err_value])
+                .map(|_| ()),
+            None => Ok(()),
+        };
         drop(scope);
+        // Fail closed: an unauthorized connection is rejected whatever the
+        // handlers threw.
         if reject_unauthorized {
             this.reject_unauthorized_connection();
         }
-        Ok(())
+        handled
     }
 
     /// Stamps the resolved client `rejectUnauthorized` policy on a fresh or

@@ -1,11 +1,8 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
-import { tempDirWithBakeDeps, WAIT_MULTIPLIER } from "../bake-harness";
-
-// Every test here runs a full production build, which takes several seconds on a debug build.
-setDefaultTimeout(10_000 * WAIT_MULTIPLIER);
+import { tempDirWithBakeDeps } from "../bake-harness";
 
 const normalizePath = (path: string) => (process.platform === "win32" ? path.replaceAll("\\", "/") : path);
 const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", "\\") : path);
@@ -503,6 +500,7 @@ export default function Counter() {
     expect(foundCounterBundle).toBe(true);
   });
 
+  // The production build plus the render below take longer than the default test timeout on a debug build.
   test("client component importing another client component gets its client code", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-client-imports-client", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,
@@ -576,7 +574,7 @@ console.log(
       dynamicImportIsSameModule: true,
     });
     expect(exitCode).toBe(0);
-  });
+  }, 60_000);
 
   test("inline flight data is escaped as a single unit across stream chunks", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-flight-escaping", {

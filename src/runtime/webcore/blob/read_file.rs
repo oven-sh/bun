@@ -85,7 +85,7 @@ pub trait ReadFileCompletion {
     /// # Safety
     /// `ctx` must be a heap-allocated `Self` whose ownership is transferred to
     /// this call (it is reclaimed via `bun_core::heap::take`).
-    unsafe fn run(ctx: *mut Self, bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()>;
+    unsafe fn run(ctx: *mut Self, bytes: ReadFileResultType) -> JsResult<()>;
     /// The read will never complete (its VM stopped before it did): release `ctx`.
     ///
     /// # Safety
@@ -97,10 +97,7 @@ pub trait ReadFileCompletion {
 }
 
 impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
-    unsafe fn run(
-        handler: *mut Self,
-        maybe_bytes: ReadFileResultType,
-    ) -> jsc::JsTerminatedResult<()> {
+    unsafe fn run(handler: *mut Self, maybe_bytes: ReadFileResultType) -> JsResult<()> {
         // SAFETY: handler was heap-allocated by doReadFile(); we take ownership here.
         let mut handler = unsafe { bun_core::heap::take(handler) };
         // `Strong::swap()` ties the returned `&mut JSPromise` to
@@ -141,7 +138,7 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
 // Type aliases / result types
 // ──────────────────────────────────────────────────────────────────────────
 
-type ReadFileOnReadFileCallback = fn(ctx: *mut c_void, bytes: ReadFileResultType);
+type ReadFileOnReadFileCallback = fn(ctx: *mut c_void, bytes: ReadFileResultType) -> JsResult<()>;
 /// The read never completed; do with `ctx` what its owner needs (free it, or tell it).
 type ReadFileOnCancelCallback = fn(ctx: *mut c_void);
 
@@ -157,10 +154,9 @@ pub struct ReadFileCompletionFns {
 impl ReadFileCompletionFns {
     /// Erase a typed `ReadFileCompletion`.
     pub(crate) fn of<C: ReadFileCompletion>(ctx: *mut C) -> Self {
-        fn run<C: ReadFileCompletion>(ctx: *mut c_void, bytes: ReadFileResultType) {
-            // The JsTerminated error is intentionally swallowed: the VM is stopping.
+        fn run<C: ReadFileCompletion>(ctx: *mut c_void, bytes: ReadFileResultType) -> JsResult<()> {
             // SAFETY: `ctx` is the `*mut C` erased below; ownership transfers per the trait.
-            let _ = unsafe { C::run(ctx.cast::<C>(), bytes) };
+            unsafe { C::run(ctx.cast::<C>(), bytes) }
         }
         fn cancel<C: ReadFileCompletion>(ctx: *mut c_void) {
             // SAFETY: as for `run`.
@@ -173,7 +169,7 @@ impl ReadFileCompletionFns {
         }
     }
 
-    fn complete(self, bytes: ReadFileResultType) {
+    fn complete(self, bytes: ReadFileResultType) -> JsResult<()> {
         let this = core::mem::ManuallyDrop::new(self);
         (this.run)(this.ctx, bytes)
     }
@@ -235,7 +231,7 @@ impl bun_jsc::JobContext for ReadFile {
         completion: ReadFileCompletionFns,
         cx: &bun_jsc::JsThread<'_>,
     ) -> jsc::JsResult<()> {
-        Ok(ReadFile::then(this, completion, cx.global())?)
+        ReadFile::then(this, completion, cx.global())
     }
     /// A read parked on a pipe/tty that never becomes readable is the one
     /// state this job can be stuck in; end that wait (the read fails with
@@ -597,26 +593,24 @@ impl ReadFile {
         this: Self,
         completion: ReadFileCompletionFns,
         _: &JSGlobalObject,
-    ) -> jsc::JsTerminatedResult<()> {
+    ) -> JsResult<()> {
         let mut this = this;
 
         if this.store.is_none() && this.system_error.is_some() {
             let system_error = this.system_error.take().unwrap();
             drop(this);
-            completion.complete(ReadFileResultType::Err(system_error));
-            return Ok(());
+            return completion.complete(ReadFileResultType::Err(system_error));
         } else if this.store.is_none() {
             drop(this);
             if cfg!(debug_assertions) {
                 panic!("assertion failure - store should not be null");
             }
-            completion.complete(ReadFileResultType::Err(SystemError {
+            return completion.complete(ReadFileResultType::Err(SystemError {
                 code: BunString::static_("INTERNAL_ERROR").into(),
                 message: BunString::static_("assertion failure - store should not be null").into(),
                 syscall: BunString::static_("read").into(),
                 ..Default::default()
             }));
-            return Ok(());
         }
 
         let _store = this.store.take().unwrap();
@@ -628,16 +622,14 @@ impl ReadFile {
         drop(this);
 
         if let Some(err) = system_error {
-            completion.complete(ReadFileResultType::Err(err));
-            return Ok(());
+            return completion.complete(ReadFileResultType::Err(err));
         }
 
         // The receiver takes ownership. Normalize to `Box<[u8]>` so every
         // consumer can reclaim via `heap::take` with a matching layout.
         completion.complete(ReadFileResultType::Result(ReadFileRead {
             buf: bun_core::heap::into_raw(buf.into_boxed_slice()),
-        }));
-        Ok(())
+        }))
     }
 
     pub(crate) fn run(&mut self, task: ReadFileTask) {
@@ -1135,8 +1127,9 @@ impl<'a> ReadFileUV<'a> {
         };
 
         // The completion must run BEFORE the cleanup below (store deref / req.deinit /
-        // box drop / event_loop.unref) — it may inspect store.
-        completion.complete(result);
+        // box drop / event_loop.unref) — it may inspect store. A libuv callback returns void: an
+        // exception the JS side left pending is reported here (a termination just stands down).
+        crate::dispatch::fold(completion.complete(result));
 
         // store.deref runs via StoreRef's Drop when the Box drops.
         this_box.req.deinit();

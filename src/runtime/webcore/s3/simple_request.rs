@@ -149,21 +149,18 @@ impl Taskable for S3HttpSimpleTask {
     }
 }
 
-// Re-export the canonical alias so sibling modules that imported it from here keep compiling.
-pub use bun_jsc::JsTerminatedResult;
-
 pub enum Callback {
-    Stat(fn(S3StatResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
-    Download(fn(S3DownloadResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
-    Upload(fn(S3UploadResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
-    Delete(fn(S3DeleteResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
-    ListObjects(fn(S3ListObjectsResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
-    Commit(fn(S3CommitResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
-    Part(fn(S3PartResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
+    Stat(fn(S3StatResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
+    Download(fn(S3DownloadResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
+    Upload(fn(S3UploadResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
+    Delete(fn(S3DeleteResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
+    ListObjects(fn(S3ListObjectsResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
+    Commit(fn(S3CommitResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
+    Part(fn(S3PartResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
 }
 
 impl Callback {
-    fn fail(&self, code: &[u8], message: &[u8], context: *mut c_void) -> JsTerminatedResult<()> {
+    fn fail(&self, code: &[u8], message: &[u8], context: *mut c_void) -> bun_jsc::JsResult<()> {
         let err = S3Error { code, message };
         match self {
             Callback::Upload(callback) => callback(S3UploadResult::Failure(err), context)?,
@@ -184,7 +181,7 @@ impl Callback {
         code: &[u8],
         message: &[u8],
         context: *mut c_void,
-    ) -> JsTerminatedResult<()> {
+    ) -> bun_jsc::JsResult<()> {
         let err = S3Error { code, message };
         match self {
             Callback::Download(callback) => callback(S3DownloadResult::NotFound(err), context)?,
@@ -215,7 +212,7 @@ impl S3HttpSimpleTask {
         bun_core::heap::into_raw(Box::new(init))
     }
 
-    fn error_with_body(&self, error_type: ErrorType) -> JsTerminatedResult<()> {
+    fn error_with_body(&self, error_type: ErrorType) -> bun_jsc::JsResult<()> {
         let mut code: &[u8] = b"UnknownError";
         let mut message: &[u8] = b"an unexpected error has occurred";
         let mut has_error_code = false;
@@ -254,7 +251,7 @@ impl S3HttpSimpleTask {
     }
 
     /// A commit can answer 200 and still carry an `<Error>` document.
-    fn fail_if_contains_error(&mut self, status: u32) -> JsTerminatedResult<bool> {
+    fn fail_if_contains_error(&mut self, status: u32) -> bun_jsc::JsResult<bool> {
         let mut code: &[u8] = b"UnknownError";
         let mut message: &[u8] = b"an unexpected error has occurred";
         let parsed;
@@ -287,7 +284,7 @@ impl S3HttpSimpleTask {
     // ConcurrentTask dispatch entrypoint (see `runtime::dispatch`): `this` is the raw task
     // pointer the queue hands back, non-null by the `ConcurrentTask::from` contract.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn on_response(this: *mut Self) -> JsTerminatedResult<()> {
+    pub(crate) fn on_response(this: *mut Self) -> bun_jsc::JsResult<()> {
         crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(this).expect("task"))
             .unregister();
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is
@@ -557,7 +554,7 @@ pub(crate) fn execute_simple_s3_request(
     options: S3SimpleRequestOptions<'_>,
     callback: Callback,
     callback_context: *mut c_void,
-) -> JsTerminatedResult<()> {
+) -> bun_jsc::JsResult<()> {
     // A multipart/retry continuation can reach here from teardown's queue
     // release; nothing new leaves a VM that is stopping.
     if !VirtualMachine::get().script_allowed() {

@@ -2927,9 +2927,6 @@ fn transpile_source_code_inner(
                             Err(e) => {
                                 return Err(match e {
                                     bun_ast::ToJSError::JSError => bun_jsc::JsError::Thrown,
-                                    bun_ast::ToJSError::JSTerminated => {
-                                        bun_jsc::JsError::Terminated
-                                    }
                                     bun_ast::ToJSError::OutOfMemory => global.throw_out_of_memory(),
                                     e => global.throw_error(
                                         bun_jsc::CrateError::from(e),

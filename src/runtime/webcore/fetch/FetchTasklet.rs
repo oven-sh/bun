@@ -34,7 +34,6 @@ use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
 use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
 
-use bun_jsc::JsTerminatedResult;
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
 // ConcurrentTask callbacks at the tier-3 layer.
 type ElJsResult<T> = bun_event_loop::JsResult<T>;
@@ -737,7 +736,7 @@ impl FetchTasklet {
         self.write_end_request(None);
     }
 
-    fn on_body_received(&mut self) -> JsTerminatedResult<()> {
+    fn on_body_received(&mut self) -> JsResult<()> {
         let success = self.result.is_success();
         let global_this = self.global_this;
         // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
@@ -780,7 +779,7 @@ impl FetchTasklet {
                     js_err.ensure_still_alive();
                     bytes.on_data(StreamResult::Err(StreamError::JSValue(
                         bun_jsc::strong::Optional::create(js_err, &global_this),
-                    )))?;
+                    )));
                 }
             }
             // A failure result is terminal (`to_result` forces `has_more =
@@ -799,10 +798,7 @@ impl FetchTasklet {
                 // body value now owns the error
                 let err = scopeguard::ScopeGuard::into_inner(err);
                 let body = response.get_body_value();
-                // Body.rs aliases its `JsTerminated<T>` to `JsResult<T>` for
-                // now; narrow back to the real `JsTerminated` here.
-                body.to_error_instance(err, &global_this)
-                    .map_err(|_| bun_jsc::JsTerminated::JSTerminated)?;
+                body.to_error_instance(err, &global_this)?;
             }
             // Cancel the request-body sink last: closing the sink signal fires
             // the controller's onClose synchronously, which can re-enter the
@@ -820,7 +816,7 @@ impl FetchTasklet {
                 // body can be marked as used but we still need to pipe the data
                 if self.result.has_more {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
-                    bytes.on_data(Self::temporary_chunk(chunk, false))?;
+                    bytes.on_data(Self::temporary_chunk(chunk, false));
                     self.drop_backpressure_if_unobserved(&readable, &bytes);
                 } else {
                     self.clear_stream_handlers();
@@ -828,7 +824,7 @@ impl FetchTasklet {
                     buffer_reset.set(false);
 
                     let chunk = self.scheduled_response_buffer.list.as_slice();
-                    bytes.on_data(Self::temporary_chunk(chunk, true))?;
+                    bytes.on_data(Self::temporary_chunk(chunk, true));
                     drop(prev);
                 }
                 return Ok(());
@@ -848,12 +844,12 @@ impl FetchTasklet {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
 
                     if self.result.has_more {
-                        bytes.on_data(Self::temporary_chunk(chunk, false))?;
+                        bytes.on_data(Self::temporary_chunk(chunk, false));
                         self.drop_backpressure_if_unobserved(&readable, &bytes);
                     } else {
                         readable.value.ensure_still_alive();
                         response.detach_readable_stream(&global_this);
-                        bytes.on_data(Self::temporary_chunk(chunk, true))?;
+                        bytes.on_data(Self::temporary_chunk(chunk, true));
                     }
 
                     return Ok(());
@@ -903,19 +899,17 @@ impl FetchTasklet {
                     // erase the borrow into a raw NonNull. Disjoint from `body` (response.init vs
                     // response.body) and outlives this block.
                     let headers = response.get_fetch_headers().map(core::ptr::NonNull::from);
-                    // Body.rs aliases its `JsTerminated<T>` to `JsResult<T>` for
-                    // now; narrow back to the real `JsTerminated` here.
                     // SAFETY: `body` points into `response.body`, disjoint from `headers`
                     // (response.init); both live for this block.
-                    BodyValue::resolve(&mut old, unsafe { &mut *body }, &self.global_this, headers)
-                        .map_err(|_| bun_jsc::JsTerminated::JSTerminated)?;
+                    let body = unsafe { &mut *body };
+                    BodyValue::resolve(&mut old, body, &self.global_this, headers)?;
                 }
             }
         }
         Ok(())
     }
 
-    pub(crate) fn on_progress_update(&mut self) -> JsTerminatedResult<()> {
+    pub(crate) fn on_progress_update(&mut self) -> JsResult<()> {
         jsc::mark_binding!();
         bun_output::scoped_log!(FetchTasklet, "onProgressUpdate");
         self.mutex.lock();
@@ -1203,14 +1197,7 @@ impl FetchTasklet {
                     let js_cert = match X509::to_js(unsafe { &mut *x509 }, &global_object) {
                         Ok(v) => v,
                         Err(e) => {
-                            match e {
-                                jsc::JsError::Thrown => {}
-                                jsc::JsError::OutOfMemory => {
-                                    let _ = global_object.throw_out_of_memory();
-                                }
-                                jsc::JsError::Terminated => {}
-                            }
-                            let check_result = global_object.try_take_exception().unwrap();
+                            let check_result = global_object.take_exception(e);
                             // mark to wait until deinit
                             self.is_waiting_abort = self.result.has_more;
                             self.abort_reason.set(&global_object, check_result);
@@ -1224,14 +1211,7 @@ impl FetchTasklet {
                     let js_hostname: JSValue = match hostname.to_js(&global_object) {
                         Ok(v) => v,
                         Err(e) => {
-                            match e {
-                                jsc::JsError::Thrown => {}
-                                jsc::JsError::OutOfMemory => {
-                                    let _ = global_object.throw_out_of_memory();
-                                }
-                                jsc::JsError::Terminated => {}
-                            }
-                            let hostname_err_result = global_object.try_take_exception().unwrap();
+                            let hostname_err_result = global_object.take_exception(e);
                             self.is_waiting_abort = self.result.has_more;
                             self.abort_reason.set(&global_object, hostname_err_result);
                             self.abort_task();
@@ -2180,20 +2160,15 @@ impl FetchTasklet {
     fn resume_request_data_stream(this: *mut FetchTasklet) -> ElJsResult<()> {
         let this_ref = Self::from_raw_mut(this);
         bun_output::scoped_log!(FetchTasklet, "resumeRequestDataStream");
-        let result = (|| {
-            if this_ref.signal_aborted() {
-                // already aborted; nothing to drain
-                return;
-            }
+        if !this_ref.signal_aborted() {
             let global_this = this_ref.global_this;
             if let Some(sink) = this_ref.sink_mut() {
                 sink.on_drain(&global_this);
             }
-        })();
+        }
         // deref when done because we ref inside onWriteRequestDataDrain
         // SAFETY: `this` is the live heap tasklet; we hold a ref.
         FetchTasklet::deref(this);
-        let () = result;
         Ok(())
     }
 
@@ -2356,7 +2331,6 @@ impl FetchTasklet {
             self.abort_reason.set(&global_this, reason);
         }
         self.abort_task();
-        // Re-borrow after the `&mut self` calls above.
         if let Some(sink) = self.sink_mut() {
             sink.pending.result = Writable::Done;
             sink.pending.run();
@@ -2744,7 +2718,7 @@ pub(crate) struct FetchTaskletPromiseSettle {
 
 impl FetchTaskletPromiseSettle {
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
-    pub(crate) fn run(mut self: Box<Self>) -> jsc::JsTerminatedResult<()> {
+    pub(crate) fn run(mut self: Box<Self>) -> JsResult<()> {
         let prom = self.promise.value_or_empty().as_any_promise().unwrap();
         let res = self.held.swap();
         res.ensure_still_alive();

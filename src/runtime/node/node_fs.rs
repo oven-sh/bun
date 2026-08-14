@@ -934,7 +934,7 @@ mod _async_tasks {
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
-        pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
+        pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
             // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
             let _deinit =
                 scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
@@ -1270,13 +1270,13 @@ mod _async_tasks {
                 Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                     Ok(v) => v,
                     Err(e) => {
-                        return Ok(promise.reject(global_object, Err(e))?);
+                        return promise.reject(global_object, Err(e));
                     }
                 },
                 Ok(res) => match FsReturn::fs_to_js(res, global_object) {
                     Ok(v) => v,
                     Err(e) => {
-                        return Ok(promise.reject(global_object, Err(e))?);
+                        return promise.reject(global_object, Err(e));
                     }
                 },
             };
@@ -1285,7 +1285,7 @@ mod _async_tasks {
             if Self::HAVE_ABORT_SIGNAL {
                 if let Some(signal) = this.args.signal() {
                     if let Some(abort_error) = signal.node_abort_error_if_aborted(global_object) {
-                        return Ok(promise.reject(global_object, Ok(abort_error))?);
+                        return promise.reject(global_object, Ok(abort_error));
                     }
                 }
             }
@@ -1687,7 +1687,7 @@ mod _async_tasks {
             let _ = self.run_from_js_thread(); // TODO: properly propagate exception upwards
         }
 
-        pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
+        pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
             if IS_SHELL {
                 // SAFETY: shelltask is set by create_for_shell and outlives this task
                 // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap
@@ -2207,7 +2207,7 @@ mod _async_tasks {
                 match err.to_js_with_async_stack(global_object, promise) {
                     Ok(v) => v,
                     Err(e) => {
-                        return Ok(promise.reject(global_object, Err(e))?);
+                        return promise.reject(global_object, Err(e));
                     }
                 }
             } else {
@@ -2224,7 +2224,7 @@ mod _async_tasks {
                 match res.to_js(global_object) {
                     Ok(v) => v,
                     Err(e) => {
-                        return Ok(promise.reject(global_object, Err(e))?);
+                        return promise.reject(global_object, Err(e));
                     }
                 }
             };

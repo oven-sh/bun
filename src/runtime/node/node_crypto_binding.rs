@@ -145,17 +145,13 @@ macro_rules! extern_crypto_job {
                     // `runFromJS` never sees the callback, so it cannot run user
                     // JS; free the ctx first, then invoke.
                     drop(this);
-                    match produced {
-                        Ok(()) => {
-                            global.bun_vm().event_loop_mut().run_callback(
-                                callback.get(),
-                                global,
-                                JSValue::UNDEFINED,
-                                args.as_slice(),
-                            );
-                        }
-                        Err(err) => global.report_active_exception_as_unhandled(err),
-                    }
+                    produced?;
+                    global.bun_vm().event_loop_mut().run_callback(
+                        callback.get(),
+                        global,
+                        JSValue::UNDEFINED,
+                        args.as_slice(),
+                    );
                     Ok(())
                 }
             }

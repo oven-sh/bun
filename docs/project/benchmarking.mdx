@@ -187,32 +187,47 @@ Once imported, you should see something like this:
 
 ### Native heap stats
 
-Bun uses mimalloc for the other heap. To print a summary of non-JavaScript memory usage, call `Bun.unsafe.mimallocDump()`.
+Bun uses mimalloc for the other heap. To print a summary of non-JavaScript memory usage to stderr, call `Bun.unsafe.mimallocDump()`.
 
 ```ts
 Bun.unsafe.mimallocDump();
 ```
 
 ```txt
-heap stats:    peak      total      freed    current       unit      count
-  reserved:   64.0 MiB   64.0 MiB      0       64.0 MiB                        not all freed!
- committed:   64.0 MiB   64.0 MiB      0       64.0 MiB                        not all freed!
-     reset:      0          0          0          0                            ok
-   touched:  128.5 KiB  128.5 KiB    5.4 MiB   -5.3 MiB                        ok
-  segments:      1          1          0          1                            not all freed!
--abandoned:      0          0          0          0                            ok
-   -cached:      0          0          0          0                            ok
-     pages:      0          0         53        -53                            ok
--abandoned:      0          0          0          0                            ok
- -extended:      0
- -noretire:      0
-     mmaps:      0
-   commits:      0
-   threads:      0          0          0          0                            ok
-  searches:     0.0 avg
-numa nodes:       1
-   elapsed:       0.068 s
-   process: user: 0.061 s, system: 0.014 s, faults: 0, rss: 57.4 MiB, commit: 64.0 MiB
+subproc 0
+ pages           peak       total     current       block      total#
+  touched   :     0           0           0                                ok
+  pages     :    48          60          48
+  abandoned :     1           1           1
+  reclaima  :     0
+  reclaimf  :     0
+  reabandon :     0
+  waits     :     0
+  extended  :     0
+  retire    :     0
+  searches  :     0.7 avg
+
+ arenas          peak       total     current       block      total#
+  reserved  :     1.0 GiB     1.0 GiB     1.0 GiB
+  committed :    38.8 MiB    38.8 MiB    38.8 MiB
+  reset     :     0
+  purged    :     0
+  arenas    :     2
+  rollback  :     0
+  mmaps     :     5
+  commits   :     3
+  resets    :     0
+  purges    :     0
+  guarded   :     0
+  theaps    :     9           9           8
+  heaps     :     4           5           4
+  heap waits:     0
+
+ process         peak       total     current       block      total#
+  threads   :     8           8           8
+  numa nodes:     2
+  elapsed   :     0.006 s
+  process   : user: 0.003 s, system: 0.005 s, faults: 0, peak rss: 26.2 MiB, peak commit: 38.8 MiB
 ```
 
 ## CPU profiling

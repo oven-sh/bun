@@ -234,16 +234,27 @@ pub(crate) fn do_send(
             }
         }
     }
-    // serialize() already detached a non-keepOpen net.Socket; if it is not sent after all, close it here (node: postSend on error).
-    let close_detached = |global_object: &JSGlobalObject, target: JSValue| -> JsResult<()> {
-        if target.is_object() {
-            if let Some(f) = target.get(global_object, "close")? {
-                if f.is_callable() {
-                    f.call(global_object, target, &[])?;
+    // serialize() already detached a non-keepOpen net.Socket; if it is not sent after all, close it
+    // here (node: postSend on error). The handle's `close()`/`pause()` run as top-level calls: what
+    // they throw is reported, and the send goes on to deliver its own result.
+    let call_handle_method =
+        |global_object: &JSGlobalObject, target: JSValue, name: &'static str| -> JsResult<()> {
+            if target.is_object() {
+                if let Some(f) = target.get(global_object, name)? {
+                    if f.is_callable() {
+                        global_object.bun_vm().event_loop_mut().run_callback(
+                            f,
+                            global_object,
+                            target,
+                            &[],
+                        );
+                    }
                 }
             }
-        }
-        Ok(())
+            Ok(())
+        };
+    let close_detached = |global_object: &JSGlobalObject, target: JSValue| {
+        call_handle_method(global_object, target, "close")
     };
 
     #[cfg(not(windows))]
@@ -272,15 +283,8 @@ pub(crate) fn do_send(
     let status =
         ipc_data.serialize_and_send(global_object, message, is_internal, callback, zig_handle);
 
-    if status != SerializeAndSendResult::Failure
-        && !pause_target.is_undefined()
-        && pause_target.is_object()
-    {
-        if let Some(f) = pause_target.get(global_object, "pause")? {
-            if f.is_callable() {
-                f.call(global_object, pause_target, &[])?;
-            }
-        }
+    if status != SerializeAndSendResult::Failure {
+        call_handle_method(global_object, pause_target, "pause")?;
     }
 
     if status == SerializeAndSendResult::Failure {

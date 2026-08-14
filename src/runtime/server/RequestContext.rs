@@ -403,8 +403,8 @@ mod shim {
         cb: &bun_jsc::JsCell<request::InternalJSEventCallback>,
         ev: request::EventType,
         g: &JSGlobalObject,
-    ) -> bool {
-        cb.with_mut(|cb| cb.trigger(ev, g))
+    ) {
+        cb.with_mut(|cb| cb.trigger(ev, g));
     }
     #[inline]
     pub(super) fn iec_deinit(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) {
@@ -1459,9 +1459,8 @@ where
         if this.is_dead_request() {
             this.finalize_without_deinit();
         } else {
-            if this.end_request_streaming().unwrap_or(true) {
-                // TODO: properly propagate exception upwards
-            }
+            // TODO: properly propagate exception upwards
+            let _ = this.end_request_streaming();
 
             if let Some(response) = this.response_mut() {
                 if let Some(stream) = shim::response_body_stream(response, global_this) {

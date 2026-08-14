@@ -304,6 +304,14 @@ The `serialization` option controls the underlying communication format between 
 - `advanced`: (default) Messages are serialized using the JSC `serialize` API, which supports cloning [everything `structuredClone` supports](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm). This does not support transferring ownership of objects.
 - `json`: Messages are serialized using `JSON.stringify` and `JSON.parse`, which does not support as many object types as `advanced` does.
 
+`childProc.connected` reports whether the IPC channel is still open. It is `true` from the time the process is spawned with `ipc` until either side disconnects or the child exits, and always `false` for a process spawned without `ipc`. Calling `.send()` once it is `false` throws `ERR_IPC_CHANNEL_CLOSED`, so check it before sending to a child that may have gone away:
+
+```ts
+if (childProc.connected) {
+  childProc.send("still there?");
+}
+```
+
 To disconnect the IPC channel from the parent process, call:
 
 ```ts
@@ -580,6 +588,7 @@ interface Subprocess extends AsyncDisposable {
   readonly exitCode: number | null;
   readonly signalCode: NodeJS.Signals | null;
   readonly killed: boolean;
+  readonly connected: boolean;
 
   kill(exitCode?: number | NodeJS.Signals): void;
   ref(): void;

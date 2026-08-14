@@ -127,6 +127,26 @@ function depromise<T>(_promise: Promise<T>): T {
 }
 
 {
+  const proc = Bun.spawn(["bun", "child.ts"], {
+    ipc(message, subprocess) {
+      tsd.expectType(subprocess.connected).is<boolean>();
+    },
+  });
+
+  tsd.expectType(proc.connected).is<boolean>();
+  if (proc.connected) proc.disconnect();
+
+  // @ts-expect-error connected is a read-only getter
+  proc.connected = false;
+}
+
+{
+  // connected exists whether or not the process was spawned with `ipc` (it is false without it).
+  const proc = Bun.spawn(["echo", "hello"]);
+  tsd.expectType(proc.connected).is<boolean>();
+}
+
+{
   const proc = Bun.spawn(["echo", "hello"], {
     stdio: ["pipe", "pipe", "pipe"],
   });

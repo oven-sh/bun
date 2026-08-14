@@ -7519,6 +7519,31 @@ declare module "bun" {
     readonly killed: boolean;
 
     /**
+     * Whether the IPC channel to the subprocess is open.
+     *
+     * `true` from the moment a process is spawned with the `ipc` option until the
+     * channel closes. It becomes `false` synchronously when {@link disconnect} is
+     * called (even if queued messages are still being flushed), and once the
+     * subprocess has called `process.disconnect()` or exited. It is always `false`
+     * for a process spawned without the `ipc` option.
+     *
+     * Once this is `false`, {@link send} fails with `ERR_IPC_CHANNEL_CLOSED`. To be
+     * notified when the channel closes, pass an `onDisconnect` callback to {@link Bun.spawn}.
+     *
+     * This is the same value `child_process.ChildProcess` exposes as `subprocess.connected`.
+     *
+     * @example
+     * ```ts
+     * const child = Bun.spawn(["bun", "child.ts"], { ipc(message) {} });
+     * child.connected; // true
+     *
+     * child.disconnect();
+     * child.connected; // false
+     * ```
+     */
+    readonly connected: boolean;
+
+    /**
      * Kill the process
      * @param exitCode Exit code or signal to send to the process
      */

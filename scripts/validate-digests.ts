@@ -227,7 +227,9 @@ async function loadFromDir(dir: string): Promise<Source> {
     txt: (await txtFile.text()).trim(),
     asc: (await ascFile.text()).trim(),
     async digestOf(name: string) {
-      return createHash("sha256").update(readFileSync(join(dir, name))).digest("hex");
+      return createHash("sha256")
+        .update(readFileSync(join(dir, name)))
+        .digest("hex");
     },
   };
 }

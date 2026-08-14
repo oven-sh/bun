@@ -1115,7 +1115,16 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     // Wrong fingerprint: the signature still verifies cryptographically,
     // but the signer enforcement must reject it.
     const wrongFpr = (fpr[0] === "0" ? "1" : "0") + fpr.slice(1);
-    const bad = await sh([bunExe(), validateScript, "--dir", dirStr, "--require-signer", wrongFpr, "--pubkey", pubPath]);
+    const bad = await sh([
+      bunExe(),
+      validateScript,
+      "--dir",
+      dirStr,
+      "--require-signer",
+      wrongFpr,
+      "--pubkey",
+      pubPath,
+    ]);
     expect(bad.stderr).toContain("Signature made by an unexpected key");
     expect(bad.exitCode).toBe(1);
     // Outlier timeout: this test spawns the debug bun binary three

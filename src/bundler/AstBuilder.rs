@@ -550,7 +550,8 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             module_scope: module_scope_value,
             symbols: bun_alloc::vec_from_iter_in(core::mem::take(&mut self.symbols), self.bump),
             exports_ref,
-            wrapper_ref: Ref::NONE,
+            // Doubles as the HMR API binding, as in js_parser's `to_ast`.
+            wrapper_ref: self.hmr_api_ref,
             module_ref: self.module_ref,
             import_records: bun_alloc::vec_from_iter_in(
                 core::mem::take(&mut self.import_records),

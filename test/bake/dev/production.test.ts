@@ -377,8 +377,8 @@ export default function Client() {
   test("namespace import, export * as and require() of a client component", async () => {
     // The server sees a "use client" module through a generated client
     // reference proxy, and "bun:bake/server" is generated the same way. Named
-    // and default imports bind to their exports directly; these forms all need
-    // the generated module's namespace object.
+    // and default imports bind to their exports directly; these forms need the
+    // generated module's namespace object, and require() also needs its wrapper.
     const dir = await tempDirWithBakeDeps("bake-production-client-namespace", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,
       "components/Client.tsx": `"use client";
@@ -406,12 +406,16 @@ export default function ReexportPage() {
 }`,
       "pages/require.tsx": `export default function RequirePage() {
   const C = require("../components/Client");
-  return <i>{Object.keys(C).sort().join(",")}</i>;
+  return <i>{Object.keys(C).sort().join(",") + " " + typeof C.Client}</i>;
 }`,
       "pages/manifest.tsx": `import * as bake from "bun:bake/server";
 
 export default function ManifestPage() {
   return <i>{Object.keys(bake).sort().join(",")}</i>;
+}`,
+      "pages/manifest-require.tsx": `export default function ManifestRequirePage() {
+  const bake = require("bun:bake/server");
+  return <i>{Object.keys(bake).sort().join(",") + " " + typeof bake.serverManifest}</i>;
 }`,
       "package.json": JSON.stringify({
         "name": "test-app",
@@ -431,16 +435,24 @@ export default function ManifestPage() {
 
     const namespaceHtml = await Bun.file(path.join(dir, "dist", "index.html")).text();
     expect(namespaceHtml).toContain("<b>client</b>");
-    expect(namespaceHtml).toContain("<i>Client,value</i>");
 
-    const reexportHtml = await Bun.file(path.join(dir, "dist", "reexport", "index.html")).text();
-    expect(reexportHtml).toContain("<i>Client,value</i>");
-
-    const requireHtml = await Bun.file(path.join(dir, "dist", "require", "index.html")).text();
-    expect(requireHtml).toContain("<i>Client,value</i>");
-
-    const manifestHtml = await Bun.file(path.join(dir, "dist", "manifest", "index.html")).text();
-    expect(manifestHtml).toContain("<i>serverManifest,ssrManifest</i>");
+    const rendered = async (page: string) => {
+      const html = await Bun.file(path.join(dir, "dist", page, "index.html")).text();
+      return html.match(/<i>(.*?)<\/i>/)?.[1];
+    };
+    expect({
+      namespace: await rendered("."),
+      reexport: await rendered("reexport"),
+      require: await rendered("require"),
+      manifest: await rendered("manifest"),
+      manifestRequire: await rendered("manifest-require"),
+    }).toEqual({
+      namespace: "Client,value",
+      reexport: "Client,value",
+      require: "Client,value function",
+      manifest: "serverManifest,ssrManifest",
+      manifestRequire: "serverManifest,ssrManifest object",
+    });
   });
 
   test("importing useState server-side", async () => {

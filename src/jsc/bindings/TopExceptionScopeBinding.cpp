@@ -39,7 +39,7 @@ extern "C" void TopExceptionScope__construct(
 }
 
 // A stopped worker keeps draining its tick with its TerminationException pending, past the outermost
-// VMEntryScope that reset VM::hasTerminationRequest(); every Rust `return_if_exception()` lands here, so
+// VMEntryScope that reset VM::hasTerminationRequest(); every Rust exception check lands in one of these, so
 // re-mark the request where the exception is observed (see Bun__VM__keepTerminationRequestWithPendingException).
 static inline JSC::Exception* keepTerminationRequest(JSC::VM& vm, JSC::Exception* exception)
 {
@@ -51,7 +51,8 @@ static inline JSC::Exception* keepTerminationRequest(JSC::VM& vm, JSC::Exception
 extern "C" JSC::Exception* TopExceptionScope__pureException(void* ptr)
 {
     ASSERT((uintptr_t)ptr % alignof(TopExceptionScope) == 0);
-    return static_cast<TopExceptionScope*>(ptr)->exception();
+    auto* scope = static_cast<TopExceptionScope*>(ptr);
+    return keepTerminationRequest(scope->vm(), scope->exception());
 }
 
 extern "C" JSC::Exception* TopExceptionScope__exceptionIncludingTraps(void* ptr)

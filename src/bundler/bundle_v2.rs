@@ -6856,10 +6856,9 @@ pub mod bv2_impl {
             }
         }
 
-        /// Creates the module a server-side import of the HTML file at `path` binds
-        /// to: a lazy export of a placeholder the linker replaces with the manifest
-        /// of the page's browser build (see `HTMLImportManifest`). Returns its source
-        /// index; the caller registers it in `target`'s path map.
+        /// The module a server-side import of `path` binds to: a placeholder export the
+        /// linker replaces with the page's manifest. The caller registers the returned
+        /// index in `target`'s path map.
         fn generate_server_html_module(
             &mut self,
             path: &Fs::Path,
@@ -6947,17 +6946,15 @@ pub mod bv2_impl {
             Ok(fake_source_index.0)
         }
 
-        /// Whether an import of a file bundled with `loader` from a `target` graph
-        /// binds to a [`Self::generate_server_html_module`] (the dev server serves
-        /// HTML files as routes instead).
+        /// Whether an import resolved with `loader` from a `target` graph binds to a
+        /// manifest module. The dev server serves HTML files as routes instead.
         fn is_server_html_import(&self, loader: Loader, target: options::Target) -> bool {
             loader == Loader::Html && target.is_server_side() && self.dev_server.is_none()
         }
 
-        /// What `resolve_import_records` + `process_resolve_queue` do for an HTML
-        /// import, for the paths that enqueue one resolved import at a time: creates
-        /// the manifest module (returned; the caller registers and binds it) and
-        /// parses the HTML file as a browser entry point unless that graph has it.
+        /// HTML import resolved outside the bulk pass: creates the manifest module (the
+        /// caller registers and binds the returned index) and parses the page as a
+        /// browser entry point unless that graph already has it.
         fn enqueue_server_html_import(
             &mut self,
             resolve_result: &_resolver::Result,

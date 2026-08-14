@@ -515,18 +515,20 @@ it.concurrent("setTimeout canceling with unref, close, _idleTimeout, and _onTime
 // get freed, and a debug build needs ~40s to churn through that many timers anyway. Those builds
 // run one batch per mode and rely on LeakSanitizer instead: a TimeoutObject still allocated when
 // the child exits is reported on stderr and fails the exit code. The CI runner sets the same
-// variables for the whole ASAN lane (scripts/runner.node.mjs); setting them here as well makes a
-// plain `bun bd test` catch the leak too. BUN_DESTRUCT_VM_ON_EXIT frees the JS heap before the
-// scan, which is what CI does and what keeps the scan at ~0.1s rather than ~3s.
+// variables for the whole ASAN lane (scripts/runner.node.mjs; the only ASAN lane is Linux, hence
+// the isLinux guard); setting them here as well makes a plain `bun bd test` catch the leak too.
+// BUN_DESTRUCT_VM_ON_EXIT frees the JS heap before the scan, which is what CI does and what keeps
+// the scan at ~0.1s rather than ~3s.
 const leakFixtureMeasuresRss = !isASAN && !isDebug;
 const leakFixtureBatches = leakFixtureMeasuresRss ? 100 : 1;
-const leakFixtureEnv = isASAN
-  ? {
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-      LSAN_OPTIONS: bunEnv.LSAN_OPTIONS ?? `suppressions=${path.join(import.meta.dir, "../../../leaksan.supp")}`,
-      BUN_DESTRUCT_VM_ON_EXIT: "1",
-    }
-  : {};
+const leakFixtureEnv =
+  isASAN && isLinux
+    ? {
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: bunEnv.LSAN_OPTIONS ?? `suppressions=${path.join(import.meta.dir, "../../../leaksan.supp")}`,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+      }
+    : {};
 for (const mode of ["clear", "refresh", "repeat"]) {
   it.concurrent(
     `setTimeout doesn't leak when ${mode} is called inside its own callback`,

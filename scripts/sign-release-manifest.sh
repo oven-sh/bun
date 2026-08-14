@@ -371,8 +371,7 @@ cleanup() {
     # so the .bak copy the `mv` didn't move remains reachable for
     # manual recovery. Swallowing the failure here would combine with
     # the unconditional `rm -rf "${scratch_dir}"` that used to live
-    # below to silently nuke the last-good file — exactly the data
-    # loss coderabbit flagged.
+    # below to silently nuke the last-good file.
     if [ -f "${backup_manifest}" ]; then
       if ! mv -f "${backup_manifest}" "${manifest}"; then
         echo "error: failed to restore ${manifest} from ${backup_manifest}" >&2 || true

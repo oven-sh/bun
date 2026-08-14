@@ -68,8 +68,13 @@ async function sh(cmd: string[], env: Record<string, string> = {}) {
 // runs it, so there's no value exercising it there — Windows' gpg would
 // be found on PATH (git-for-windows ships one) but posix_spawn on a .sh
 // file fails outright.
-const canRun =
-  !isWindows && Bun.spawnSync({ cmd: ["gpg", "--version"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+//
+// Bun.which (not a spawnSync probe): spawnSync THROWS ENOENT when the
+// executable is missing rather than returning a non-zero exitCode, so
+// a probe would crash this module at import time on any gpg-less host
+// — before describe.skipIf could fire — turning the intended skip
+// into a file-level failure. Bun.which returns null and never throws.
+const canRun = !isWindows && !!Bun.which("gpg");
 
 // Throwaway GPG key material shared by every test below.
 let keyringDir: ReturnType<typeof tempDir> | undefined;
@@ -240,30 +245,39 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     using verifyHomeDir = tempDir("bun-28931-verify-", {});
     const verifyHome = String(verifyHomeDir);
 
-    const pubRes = await sh(["gpg", "--armor", "--export", keyUid], { GNUPGHOME: gpgHome });
-    // stderr first so a key lookup failure surfaces the real gpg error.
-    expect(pubRes.stderr).not.toContain("error:");
-    expect(pubRes.exitCode).toBe(0);
-    const pubPath = join(verifyHome, "pub.asc");
-    writeFileSync(pubPath, pubRes.stdout);
+    // try/finally so the gpg-agent that `gpg --import` auto-launches
+    // against verifyHome is killed even when an assertion above the
+    // finally throws. Same hazard the afterAll documents for gpgHome:
+    // the `using` disposer rm -rf's the directory out from under a
+    // live agent, which leaks the process past the test run on macOS.
+    try {
+      const pubRes = await sh(["gpg", "--armor", "--export", keyUid], { GNUPGHOME: gpgHome });
+      // stderr first so a key lookup failure surfaces the real gpg error.
+      expect(pubRes.stderr).not.toContain("error:");
+      expect(pubRes.exitCode).toBe(0);
+      const pubPath = join(verifyHome, "pub.asc");
+      writeFileSync(pubPath, pubRes.stdout);
 
-    const imp = await sh(["gpg", "--batch", "--import", pubPath], { GNUPGHOME: verifyHome });
-    expect(imp.stderr).not.toContain("error:");
-    expect(imp.exitCode).toBe(0);
+      const imp = await sh(["gpg", "--batch", "--import", pubPath], { GNUPGHOME: verifyHome });
+      expect(imp.stderr).not.toContain("error:");
+      expect(imp.exitCode).toBe(0);
 
-    const verify = await sh(["gpg", "--batch", "--verify", join(dirStr, "SHASUMS256.txt.asc")], {
-      GNUPGHOME: verifyHome,
-      // Pin the locale — gpg translates "Good signature" to the system
-      // language otherwise (e.g. "Korrekte Unterschrift" on a German dev
-      // box), which would make the substring match below fail even though
-      // the signature itself is cryptographically valid.
-      LANG: "C",
-      LC_ALL: "C",
-      LC_MESSAGES: "C",
-    });
-    // gpg prints "Good signature" to stderr on success (locale pinned above).
-    expect(verify.stderr).toContain("Good signature");
-    expect(verify.exitCode).toBe(0);
+      const verify = await sh(["gpg", "--batch", "--verify", join(dirStr, "SHASUMS256.txt.asc")], {
+        GNUPGHOME: verifyHome,
+        // Pin the locale — gpg translates "Good signature" to the system
+        // language otherwise (e.g. "Korrekte Unterschrift" on a German dev
+        // box), which would make the substring match below fail even though
+        // the signature itself is cryptographically valid.
+        LANG: "C",
+        LC_ALL: "C",
+        LC_MESSAGES: "C",
+      });
+      // gpg prints "Good signature" to stderr on success (locale pinned above).
+      expect(verify.stderr).toContain("Good signature");
+      expect(verify.exitCode).toBe(0);
+    } finally {
+      await sh(["gpgconf", "--kill", "all"], { GNUPGHOME: verifyHome });
+    }
   });
 
   test("writes unsigned SHASUMS256.txt when GPG env vars are empty (rollout fallback)", async () => {

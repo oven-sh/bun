@@ -517,9 +517,7 @@ extern "C" BunString Bun__ErrorCode__determineSpecificType(JSC::JSGlobalObject* 
     return Bun::toStringRef(builder.toString());
 }
 
-// The "Received ..." part of ERR_INVALID_ARG_VALUE. Node renders the value with
-// `util.inspect` ('w', not determineSpecificType's "type string ('w')") and cuts
-// the result to 128 characters followed by "...".
+// ERR_INVALID_ARG_VALUE inspects the value (not determineSpecificType) and keeps at most 128 chars of it:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1471-L1478
 static void appendInvalidArgValueReceived(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue value)
 {
@@ -532,8 +530,7 @@ static void appendInvalidArgValueReceived(JSC::JSGlobalObject* globalObject, WTF
     }
 }
 
-// Expose the formatter above so Rust-side ERR_INVALID_ARG_VALUE paths render
-// the value exactly like the C++ overloads.
+// Rust-side ERR_INVALID_ARG_VALUE messages (JSGlobalObject::inspect_for_error_message).
 extern "C" BunString Bun__ErrorCode__inspectForErrorMessage(JSC::JSGlobalObject* globalObject, EncodedJSValue value)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));

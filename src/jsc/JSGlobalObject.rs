@@ -488,10 +488,9 @@ impl JSGlobalObject {
         Ok(str)
     }
 
-    /// Renders `value` the way Node's `ERR_INVALID_ARG_VALUE` does (`util.inspect`
-    /// quoting, cut to 128 chars + "...", via the same C++ formatter the C++
-    /// overloads use). Returns a +1-ref'd string wrapped in [`OwnedString`] so the
-    /// ref is released on drop.
+    /// The "Received ..." value of an `ERR_INVALID_ARG_VALUE` message, rendered (and cut
+    /// to 128 chars) by the same C++ helper the C++ overloads use. The +1 ref is
+    /// released when the returned [`OwnedString`] drops.
     pub fn inspect_for_error_message(global: &Self, value: JSValue) -> JsResult<OwnedString> {
         crate::top_scope!(scope, global);
         let str = OwnedString::new(Bun__ErrorCode__inspectForErrorMessage(global, value));

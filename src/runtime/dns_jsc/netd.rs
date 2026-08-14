@@ -719,11 +719,7 @@ impl NameLookup {
 impl bun_jsc::JobContext for NameLookup {
     type OffThread = Self;
     type Js = NameJobHandle;
-    fn run(
-        this: &mut Self,
-        _vm: &bun_jsc::vm_handle::Borrow,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         this.run_blocking();
         Some(done)
     }

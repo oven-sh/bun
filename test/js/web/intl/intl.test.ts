@@ -10,7 +10,7 @@
 // links the unmodified libicudata.a.
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, libcPathForDlopen } from "harness";
 
 // Snapshots are CLDR-version-specific. Only check them where Bun bundles the
 // ICU they were generated against; macOS uses Apple's libicucore, so snapshot
@@ -129,6 +129,32 @@ describe("Intl.Collator", () => {
     expect(locale).not.toContain("posix");
     expect(order).toBe(-1);
     expect(grouped).toContain(",");
+    expect(await proc.exited).toBe(0);
+  });
+
+  // Same path with the C locale spelled "C.UTF-8" (glibc/musl name for it, and
+  // what bionic reports by default): WTF must still treat it as C -> "en-US".
+  test.skipIf(!isLinux)("default locale under C.UTF-8 is not en-US-u-va-posix", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { dlopen } = require("bun:ffi");
+         const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, { setlocale: { args: ["i32", "cstring"], returns: "cstring" } });
+         const LC_ALL = 6; // glibc and musl
+         const set = String(libc.symbols.setlocale(LC_ALL, Buffer.from("C.UTF-8\\0")));
+         console.log(JSON.stringify([set, new Intl.Collator().resolvedOptions().locale, "a".localeCompare("B"), (1234.5).toLocaleString()]));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+    });
+    const [set, locale, order, grouped] = JSON.parse(await proc.stdout.text());
+    // a libc without a C.UTF-8 locale keeps "C", which is the case above
+    if (set === "C.UTF-8") {
+      expect(locale).toBe("en-US");
+      expect(order).toBe(-1);
+      expect(grouped).toBe("1,234.5");
+    }
     expect(await proc.exited).toBe(0);
   });
 

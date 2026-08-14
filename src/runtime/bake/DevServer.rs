@@ -19,7 +19,7 @@ use bun_ast::Log;
 use bun_bundler::options_impl::TargetExt as _;
 use bun_collections::{ArrayHashMap, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap};
 use bun_core::{self as str, OwnedString, String as BunString, ZStr, strings};
-use bun_core::{Environment, Output};
+use bun_core::{Environment, Output, feature_flags};
 use bun_jsc::StringJsc as _;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
@@ -417,6 +417,9 @@ pub struct DevServer {
     pub(crate) active_websocket_connections: HashMap<*mut HmrSocket, ()>,
 
     // Debugging
+    /// Where `dump_bundle` writes every bundled module and chunk. Only debug
+    /// builds open it (see `DUMP_SOURCES_DIR`).
+    pub(crate) dump_dir: Option<sys::Dir>,
     /// Reference count to number of active sockets with the incremental_visualizer enabled.
     pub(crate) emit_incremental_visualizer_events: u32,
     /// Reference count to number of active sockets with the memory_visualizer enabled.
@@ -444,6 +447,12 @@ const ASSET_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "/asset");
 ///
 /// Example: `/_bun/client/index-00000000f209a20e.js`
 const CLIENT_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "/client");
+/// Debugging pages (`feature_flags::BAKE_DEBUGGING_FEATURES`). Each page
+/// subscribes to its `HmrTopic` over `/_bun/hmr`; `/_bun/iv` and `/_bun/mv`
+/// redirect here.
+const INCREMENTAL_VISUALIZER_PATH: &str =
+    const_format::concatcp!(INTERNAL_PREFIX, "/incremental_visualizer");
+const MEMORY_VISUALIZER_PATH: &str = const_format::concatcp!(INTERNAL_PREFIX, "/memory_visualizer");
 
 #[derive(Default)]
 pub struct DeferredPromise {
@@ -529,6 +538,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(graph_safety_lock, ThreadLock::init_unlocked());
         w!(framework, options.framework);
         w!(bundler_options, options.bundler_options);
+        // Opened below, once the box is fully initialized, so an early return
+        // in between closes it through `Drop` like every other field.
+        w!(dump_dir, None);
         w!(emit_incremental_visualizer_events, 0);
         w!(emit_memory_visualizer_events, 0);
         w!(
@@ -726,6 +738,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // `addr_of_mut!().write()` / `copy_nonoverlapping`; no field remains uninit.
     let mut dev: Box<DevServer> = unsafe { dev_uninit.assume_init() };
     let dev_ptr: *mut DevServer = &raw mut *dev;
+
+    dev.dump_dir = open_dump_dir();
 
     // Note: the graphs are stored by value; `owner()` is provided on
     // `IncrementalGraph` via `offset_of!` so the parent-pointer invariant is
@@ -1060,6 +1074,7 @@ impl Drop for DevServer {
                 next_bundle: _,
                 deferred_request_pool: _,
                 active_websocket_connections: _,
+                dump_dir: _,
                 emit_incremental_visualizer_events: _,
                 emit_memory_visualizer_events: _,
                 memory_visualizer_timer: _,
@@ -1337,6 +1352,29 @@ impl DevServer {
             hmr_socket_behavior::<SSL>(),
         );
 
+        if feature_flags::BAKE_DEBUGGING_FEATURES {
+            route!(
+                get,
+                INCREMENTAL_VISUALIZER_PATH.as_bytes(),
+                DevHandlerId::IncrementalVisualizer
+            );
+            route!(
+                get,
+                MEMORY_VISUALIZER_PATH.as_bytes(),
+                DevHandlerId::MemoryVisualizer
+            );
+            route!(
+                get,
+                const_format::concatcp!(INTERNAL_PREFIX, "/iv").as_bytes(),
+                DevHandlerId::IncrementalVisualizerShortcut
+            );
+            route!(
+                get,
+                const_format::concatcp!(INTERNAL_PREFIX, "/mv").as_bytes(),
+                DevHandlerId::MemoryVisualizerShortcut
+            );
+        }
+
         // Only attach a catch-all handler if the framework has filesystem
         // router types. Otherwise, this can just be Bun.serve's default handler.
         if !self.framework.file_system_router_types.is_empty() {
@@ -1360,6 +1398,10 @@ pub(super) enum DevHandlerId {
     UnrefSourceMap,
     NotFound,
     Request,
+    IncrementalVisualizer,
+    MemoryVisualizer,
+    IncrementalVisualizerShortcut,
+    MemoryVisualizerShortcut,
 }
 
 /// DNS-rebinding guard for `/_bun/...` internal routes and the Chrome
@@ -1544,7 +1586,35 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
             // trampoline folds what bundling for it left pending.
             crate::dispatch::fold(on_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp));
         }
+        DevHandlerId::IncrementalVisualizer => send_html_page(
+            resp,
+            bun_core::runtime_embed_file!(SrcEager, "runtime/bake/incremental_visualizer.html"),
+        ),
+        DevHandlerId::MemoryVisualizer => send_html_page(
+            resp,
+            bun_core::runtime_embed_file!(SrcEager, "runtime/bake/memory_visualizer.html"),
+        ),
+        DevHandlerId::IncrementalVisualizerShortcut => {
+            send_redirect(resp, INCREMENTAL_VISUALIZER_PATH)
+        }
+        DevHandlerId::MemoryVisualizerShortcut => send_redirect(resp, MEMORY_VISUALIZER_PATH),
     }
+}
+
+fn send_html_page(resp: AnyResponse, html: &'static str) {
+    resp.corked(move || {
+        resp.write_status(b"200 OK");
+        resp.write_header(b"Content-Type", &MimeType::HTML.value);
+        resp.end(html.as_bytes(), false);
+    });
+}
+
+fn send_redirect(resp: AnyResponse, location: &'static str) {
+    resp.corked(move || {
+        resp.write_status(b"302 Found");
+        resp.write_header(b"Location", location.as_bytes());
+        resp.end(b"Redirecting...", false);
+    });
 }
 
 fn on_report_error_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
@@ -5440,8 +5510,114 @@ impl DevServer {
 // body module re-exports it so both modules name the same type.
 pub(super) use crate::bake::dev_server::ChunkKind;
 
+/// Debug builds write every bundled module and chunk below this directory
+/// (relative to the cwd; it is in the repository's `.gitignore`), which is the
+/// only way to read what the dev server actually produced, since the chunks
+/// otherwise only ever live in memory or in a browser tab.
+const DUMP_SOURCES_DIR: Option<&[u8]> = if bun_core::env::IS_DEBUG {
+    Some(b".bake-debug")
+} else {
+    None
+};
+
+fn open_dump_dir() -> Option<sys::Dir> {
+    let dir = DUMP_SOURCES_DIR?;
+    match sys::Dir::cwd().make_open_path(dir, Default::default()) {
+        Ok(dump_dir) => Some(dump_dir),
+        Err(err) => {
+            bun_core::warn!("Could not open directory for dumping sources: {}", err);
+            None
+        }
+    }
+}
+
+/// Writes `chunk` to `<dump_dir>/<graph>/<rel_path>`. Source maps (`.map`)
+/// are written verbatim; anything else gets a comment header saying when and
+/// by which Bun it was bundled. `wrap` encloses the chunk in `({ ... });`,
+/// which makes a single module (an object property in the HMR format) parse
+/// on its own. Failures only produce a warning: the dump is a debugging aid
+/// and must never fail the bundle.
+pub(super) fn dump_bundle(
+    dump_dir: &sys::Dir,
+    graph: bake::Graph,
+    rel_path: &[u8],
+    chunk: &[u8],
+    wrap: bool,
+) {
+    let mut buf = paths::path_buffer_pool::get();
+    let name = &paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+        b"/",
+        &mut buf[..],
+        &[<&'static str>::from(graph).as_bytes(), rel_path],
+    )[1..];
+
+    let mut contents: Vec<u8> = Vec::with_capacity(chunk.len() + 256);
+    if !strings::has_suffix_comptime(rel_path, b".map") {
+        let _ = writeln!(
+            contents,
+            "// {} bundled for {}\n// Bundled at {}, Bun {}",
+            bun_core::fmt::quote(rel_path),
+            <&'static str>::from(graph),
+            bun_core::time::nano_timestamp(),
+            bun_core::Global::package_json_version_with_canary,
+        );
+    }
+    if wrap {
+        contents.extend_from_slice(b"({\n");
+    }
+    contents.extend_from_slice(chunk);
+    if wrap {
+        contents.extend_from_slice(b"});\n");
+    }
+
+    let written = dump_dir
+        .make_open_path(
+            paths::resolve_path::dirname::<paths::platform::Auto>(name),
+            Default::default(),
+        )
+        .and_then(|dir| sys::File::create(&dir, paths::basename(name), true))
+        .and_then(|file| file.write_all(&contents));
+    if let Err(err) = written {
+        bun_core::warn!("Could not dump bundle: {}", err);
+    }
+}
+
+/// `dump_bundle` for one module received from the bundler, named after its
+/// path relative to the project `root`. Files outside of the root keep their
+/// relative path, with every `..` segment turned into the directory `_.._` so
+/// the dump stays inside `dump_dir`.
+pub(super) fn dump_bundle_for_chunk(
+    dump_dir: &sys::Dir,
+    root: &[u8],
+    graph: bake::Graph,
+    key: &[u8],
+    code: &[u8],
+) {
+    let mut rel_path_buf = paths::path_buffer_pool::get();
+    let rel_path = paths::resolve_path::relative_buf_z(&mut rel_path_buf[..], root, key).as_bytes();
+    let rel_path_escaped = strings::replace_owned(
+        rel_path,
+        const_format::concatcp!("..", paths::SEP_STR).as_bytes(),
+        const_format::concatcp!("_.._", paths::SEP_STR).as_bytes(),
+    );
+    dump_bundle(dump_dir, graph, &rel_path_escaped, code, true);
+}
+
 impl DevServer {
-    pub fn emit_visualizer_message_if_needed(&mut self) {}
+    /// Called after every bundle. Only does work while a page served from
+    /// `/_bun/incremental_visualizer` or `/_bun/memory_visualizer` is
+    /// subscribed (`HmrSocket` keeps the two counters).
+    pub fn emit_visualizer_message_if_needed(&mut self) {
+        if !feature_flags::BAKE_DEBUGGING_FEATURES {
+            return;
+        }
+        if self.emit_incremental_visualizer_events > 0 {
+            let mut payload: Vec<u8> = Vec::with_capacity(65536);
+            self.write_visualizer_message(&mut payload);
+            self.publish(HmrTopic::IncrementalVisualizer, &payload, Opcode::BINARY);
+        }
+        self.emit_memory_visualizer_message_if_needed();
+    }
 
     #[inline]
     fn timer_heap(&self) -> &mut crate::timer::All {
@@ -5516,6 +5692,102 @@ impl DevServer {
         }
         Ok(())
     }
+
+    /// The `MessageId::Visualizer` format decoded by `incremental_visualizer.html`.
+    /// Also usable from the crash handler (`BUN_DUMP_STATE_ON_CRASH`), where the graphs
+    /// may be mid-mutation: counts are written after their entries, and the path buffer
+    /// pool (a `RefCell`) is not used.
+    fn write_visualizer_message(&self, payload: &mut Vec<u8>) {
+        payload.push(MessageId::Visualizer.char());
+        let mut buf = Box::new(PathBuffer::ZEROED);
+        self.write_visualizer_files(&self.client_graph, payload, &mut buf);
+        self.write_visualizer_files(&self.server_graph, payload, &mut buf);
+        write_visualizer_edges(&self.client_graph, payload);
+        write_visualizer_edges(&self.server_graph, payload);
+    }
+
+    /// `u32` count, then per file: `u32` path length (0 = deleted file, nothing
+    /// follows), the path, and six `u8` flags: stale, RSC, SSR, route,
+    /// framework file, boundary (client side: HMR root).
+    fn write_visualizer_files<const SIDE: bake::Side>(
+        &self,
+        graph: &IncrementalGraph<SIDE>,
+        payload: &mut Vec<u8>,
+        buf: &mut PathBuffer,
+    ) {
+        let count_at = reserve_visualizer_count(payload);
+        let mut count = 0u32;
+        let keys = graph.bundled_files.keys();
+        for (i, (key, file)) in keys.iter().zip(graph.bundled_files.values()).enumerate() {
+            count += 1;
+            if key.is_empty() {
+                payload.extend_from_slice(&0u32.to_le_bytes());
+                continue;
+            }
+            let path = self.relative_path(buf, key);
+            payload.extend_from_slice(&u32::try_from(path.len()).expect("int cast").to_le_bytes());
+            payload.extend_from_slice(path);
+            let stale = graph.stale_files.is_set_allow_out_of_bound(i, true) || file.failed;
+            let flags: [bool; 6] = match SIDE {
+                bake::Side::Client => [
+                    stale,
+                    false,
+                    false,
+                    file.html_route_bundle_index.is_some(),
+                    file.is_special_framework_file,
+                    file.is_hmr_root,
+                ],
+                bake::Side::Server => [
+                    stale,
+                    file.is_rsc,
+                    file.is_ssr,
+                    file.is_route,
+                    false,
+                    file.is_client_component_boundary,
+                ],
+            };
+            payload.extend_from_slice(&flags.map(u8::from));
+        }
+        set_visualizer_count(payload, count_at, count);
+    }
+}
+
+/// `u32` count, then per live edge: `u32` importer index, `u32` imported index.
+fn write_visualizer_edges<const SIDE: bake::Side>(
+    graph: &IncrementalGraph<SIDE>,
+    payload: &mut Vec<u8>,
+) {
+    let mut freed = vec![false; graph.edges.len()];
+    for free in &graph.edges_free_list {
+        if let Some(slot) = freed.get_mut(free.get() as usize) {
+            *slot = true;
+        }
+    }
+    let count_at = reserve_visualizer_count(payload);
+    let mut count = 0u32;
+    for (edge, _) in graph
+        .edges
+        .iter()
+        .zip(freed)
+        .filter(|(_, is_freed)| !is_freed)
+    {
+        count += 1;
+        payload.extend_from_slice(&edge.dependency.get().to_le_bytes());
+        payload.extend_from_slice(&edge.imported.get().to_le_bytes());
+    }
+    set_visualizer_count(payload, count_at, count);
+}
+
+/// Leaves room for a list's `u32` count, filled in by `set_visualizer_count`
+/// once the number of entries actually written is known.
+fn reserve_visualizer_count(payload: &mut Vec<u8>) -> usize {
+    let at = payload.len();
+    payload.extend_from_slice(&0u32.to_le_bytes());
+    at
+}
+
+fn set_visualizer_count(payload: &mut [u8], at: usize, count: u32) {
+    payload[at..at + 4].copy_from_slice(&count.to_le_bytes());
 }
 
 // Note: MessageId/IncomingMessageId/ConsoleLogKind/HmrTopic are defined

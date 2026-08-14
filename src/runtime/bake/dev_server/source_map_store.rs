@@ -11,7 +11,7 @@ use bun_core::string_joiner::StringJoiner;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_sourcemap::{self as source_map, SourceMapState};
 
-use crate::bake::dev_server_body::map_log;
+use crate::bake::dev_server_body::{dump_bundle, map_log};
 use crate::bake::{self, Side};
 use crate::timer::EventLoopTimerState;
 
@@ -218,7 +218,15 @@ impl Entry {
         let json_bytes = j.done_with_end(b"\"}")?.into_vec();
         // errdefer @compileError("last try should be the final alloc") — no further fallible ops below.
 
-        let _ = dev;
+        if let Some(dump_dir) = &dev.dump_dir {
+            dump_bundle(
+                dump_dir,
+                side.graph(),
+                kind.dump_file_name(true),
+                &json_bytes,
+                false,
+            );
+        }
 
         Ok(json_bytes)
     }

@@ -329,9 +329,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         // MimallocArena::new() calls mi_heap_new(), so defer creation to the
         // paths that actually allocate.
         let arena = Arena::new();
-        // `CssColor::parse` stops after the first <color> it finds, so on its
-        // own it accepts "red;background:url(x)" as red. parse_string also
-        // requires the rest of the input to be empty.
+        // Unlike CssColor::parse alone, this rejects "red;background:url(x)".
         break 'brk css::parse_utility::parse_string(&arena, input.slice(), CssColor::parse);
     };
 

@@ -6058,8 +6058,7 @@ pub mod serializer {
 pub mod parse_utility {
     use super::*;
 
-    /// Parse a value from a string. Anything left over after the value, other
-    /// than whitespace and comments, is a parse error.
+    /// Parse a whole string as one value; anything left after it is a parse error.
     ///
     /// NOTE: `input` should live as long as the returned value. Otherwise,
     /// strings in the returned parsed value will point to undefined memory.

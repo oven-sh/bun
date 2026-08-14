@@ -853,8 +853,7 @@ NodeVMGlobalObject* makeContext(JSGlobalObject* globalObject, JSObject* sandbox,
 
     context->setContextifiedObject(sandbox);
 
-    // Keyed on what the caller holds: for DONT_CONTEXTIFY that is the handle, since
-    // the first run replaces the placeholder `sandbox` and GC would drop the entry.
+    // Keyed on the object the caller holds; a DONT_CONTEXTIFY placeholder `sandbox` is dropped by the first run.
     JSObject* key = sandbox;
     if (contextOptions.notContextified) {
         auto* specialSandbox = NodeVMSpecialSandbox::create(vm, context);

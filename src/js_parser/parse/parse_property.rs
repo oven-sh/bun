@@ -463,10 +463,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                     }
                                     PropertyModifierKeyword::PAccessor => {
-                                        // "accessor" keyword for auto-accessor fields (TC39 standard decorators)
+                                        // Auto-accessor field. Classes going through the
+                                        // standard decorator lowering handle it there;
+                                        // everything else (TypeScript with
+                                        // `experimentalDecorators`, scan-only parses) gets
+                                        // it expanded by `lower_auto_accessors` in the
+                                        // visit pass.
                                         if opts.is_class
                                             && !p.lexer.has_newline_before
-                                            && p.options.features.standard_decorators
                                             && PropertyModifierKeyword::find(raw)
                                                 == Some(PropertyModifierKeyword::PAccessor)
                                         {

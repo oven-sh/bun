@@ -1011,6 +1011,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.fn_only_data_visit.class_name_ref = old_class_name_ref;
             }
 
+            // Runs before the useDefineForClassFields lowering below so the
+            // storage field is treated like any other field there, as tsc does.
+            if !class.should_lower_standard_decorators {
+                self.lower_auto_accessors(class);
+            }
+
             if Self::IS_TYPESCRIPT_ENABLED {
                 // `lower_standard_decorators_stmt` owns field placement for such classes.
                 let use_define = self.options.use_define_for_class_fields
@@ -1308,6 +1314,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut before: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
             let mut after: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
 
+            let prev_nearest_stmt_list = p.nearest_stmt_list;
+            // BACKREF — `before` outlives this block; raw NonNull avoids
+            // the `&'a mut` borrow conflict. Derive via `addr_of_mut!` (no intermediate
+            // `&mut`) so the pointer shares the local's base tag and survives the
+            // direct `&mut before` reborrows in the loops below (Stacked Borrows).
+            // Set before the enum preprocessing so declarations hoisted out of enum
+            // member initializers land in this list too.
+            p.nearest_stmt_list = NonNull::new(core::ptr::addr_of_mut!(before));
+
             // Preprocess TypeScript enums to improve code generation. Otherwise
             // uses of an enum before that enum has been declared won't be inlined:
             //
@@ -1339,13 +1354,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // visit all statements first
             let mut visited: ListManaged<'a, Stmt> =
                 ListManaged::with_capacity_in(stmts.len(), p.arena);
-
-            let prev_nearest_stmt_list = p.nearest_stmt_list;
-            // BACKREF — `before` outlives this block; raw NonNull avoids
-            // the `&'a mut` borrow conflict. Derive via `addr_of_mut!` (no intermediate
-            // `&mut`) so the pointer shares the local's base tag and survives the
-            // direct `&mut before` reborrows in the loop below (Stacked Borrows).
-            p.nearest_stmt_list = NonNull::new(core::ptr::addr_of_mut!(before));
 
             let mut preprocessed_enum_i: usize = 0;
 

@@ -1210,4 +1210,38 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  describe("class expressions inside enum initializers", () => {
+    // Enum members are visited ahead of the surrounding statements, so the
+    // variable declarations the lowering hoists out of the class used to be
+    // dropped when the enum was at the top level of the module.
+    test("lowered classes in top-level enum initializers keep their hoisted declarations", async () => {
+      using dir = tempDir("es-dec-enum-initializer", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+        "test.ts": `
+          const kinds: string[] = [];
+          function dec(value: any, ctx: any) { kinds.push(ctx.kind); }
+          enum E {
+            Decorated = ((globalThis as any).Decorated = @dec class { @dec m() {} }, 1),
+            WithAccessor = ((globalThis as any).WithAccessor = class { accessor x = "x" }, 2),
+          }
+          const withAccessor = new (globalThis as any).WithAccessor();
+          withAccessor.x += "!";
+          console.log(JSON.stringify([E.Decorated, E.WithAccessor, kinds, withAccessor.x]));
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(JSON.parse(stdout)).toEqual([1, 2, ["method", "class"], "x!"]);
+      expect(exitCode).toBe(0);
+    });
+  });
 });

@@ -6553,8 +6553,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let descriptor_key = prop.key.expect("infallible: prop has key");
                         let loc = descriptor_key.loc;
 
-                        // TODO: when we have the `accessor` modifier, add `and !prop.flags.contains(.has_accessor_modifier)` to
-                        // the if statement.
+                        // `accessor` fields were already turned into getter/setter pairs by
+                        // `lower_auto_accessors`, so they take the method (descriptor) path here.
                         let descriptor_kind: Expr =
                             if !prop.flags.contains(Flags::Property::IsMethod) {
                                 self.new_expr(E::Undefined {}, loc)
@@ -7029,7 +7029,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
             }
-            PropertyKind::Spread | PropertyKind::Declare | PropertyKind::AutoAccessor => {} // not allowed in a class (auto_accessor is standard decorators only)
+            PropertyKind::Spread | PropertyKind::Declare => {} // not allowed in a class
+            PropertyKind::AutoAccessor => {} // lowered to a getter/setter pair before this runs
             PropertyKind::ClassStaticBlock => {} // not allowed to decorate this
         }
     }

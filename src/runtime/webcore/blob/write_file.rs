@@ -15,6 +15,8 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, Sys
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
+#[cfg(windows)]
+use crate::webcore::blob::OpenCallback;
 use crate::webcore::blob::{
     self, Blob, FileOpener, MkdirpTarget, Retry, SizeType, mkdir_if_not_exists,
 };
@@ -48,13 +50,13 @@ impl bun_jsc::JobContext for WriteFile {
     type OffThread = Self;
     /// The completion is delivered through `on_complete_callback(ctx, ..)`.
     type Js = ();
-    fn run(
-        this: &mut Self,
+    unsafe fn run(
+        this: *mut Self,
         _vm: &bun_jsc::vm_handle::Borrow,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
-        // Starts the write; finishes from the io loop via the token.
-        this.run(done);
+        // SAFETY: fn contract, passed through; `run_async` hands `*this` on.
+        unsafe { WriteFile::run_async(this, done) };
         None
     }
     fn then(this: Self, _: (), cx: &bun_jsc::JsThread<'_>) -> jsc::JsResult<()> {
@@ -97,6 +99,15 @@ pub struct WriteFile {
 
 bun_threading::intrusive_work_task!(WriteFile, task);
 bun_io::intrusive_io_request!(WriteFile, io_request);
+
+/// The step `run_with_fd` performs once `prepare_write`'s `&mut self` has ended.
+#[cfg(not(windows))]
+#[derive(Clone, Copy)]
+enum Next {
+    WriteLoop,
+    WaitForWritable,
+    Finish,
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // FileOpener / FileCloser
@@ -146,11 +157,11 @@ impl FileOpener for WriteFile {
         unreachable!("WriteFile is POSIX-only")
     }
     #[cfg(windows)]
-    fn set_open_callback(&mut self, _cb: fn(&mut Self, Fd)) {
+    fn set_open_callback(&mut self, _cb: OpenCallback<Self>) {
         unreachable!()
     }
     #[cfg(windows)]
-    fn open_callback(&self) -> fn(&mut Self, Fd) {
+    fn open_callback(&self) -> OpenCallback<Self> {
         unreachable!()
     }
 }
@@ -353,23 +364,25 @@ impl WriteFile {
         Ok(())
     }
 
-    pub(crate) fn run(&mut self, task: WriteFileTask) {
+    /// First pool step: keeps the token and starts the write; `get_fd` hands `*this` on.
+    ///
+    /// # Safety
+    /// [`bun_jsc::JobContext::run`]'s contract.
+    unsafe fn run_async(this: *mut Self, task: WriteFileTask) {
         #[cfg(windows)]
         {
             // Windows writes go through WriteFileWindows, never the pool.
+            let _ = this;
             let _ = task;
             unreachable!("WriteFile on the work pool (Windows uses WriteFileWindows)");
         }
         #[cfg(not(windows))]
         {
-            self.io_task = Some(task);
-            self.run_async();
+            // SAFETY: fn contract; a statement-scoped field write.
+            unsafe { (*this).io_task = Some(task) };
+            // SAFETY: fn contract, passed through.
+            unsafe { Self::get_fd(this, Self::run_with_fd) }
         }
-    }
-
-    #[cfg(not(windows))]
-    fn run_async(&mut self) {
-        self.get_fd(Self::run_with_fd);
     }
 
     #[cfg(not(windows))]
@@ -400,11 +413,30 @@ impl WriteFile {
         }
     }
 
+    /// The write's continuation: `prepare_write`'s reborrow has ended by the
+    /// time the step it chose hands `*this` on.
+    ///
+    /// # Safety
+    /// [`OpenCallback`](crate::webcore::blob::OpenCallback)'s contract.
     #[cfg(not(windows))]
-    fn run_with_fd(&mut self, fd_: Fd) {
+    unsafe fn run_with_fd(this: *mut Self, fd: Fd) {
+        // SAFETY: fn contract; the reborrow ends with the call.
+        let next = unsafe { (*this).prepare_write(fd) };
+        // SAFETY: fn contract; the step is this thread's last access.
+        unsafe {
+            match next {
+                Next::WriteLoop => (*this).do_write_loop(),
+                Next::WaitForWritable => (*this).wait_for_writable(),
+                Next::Finish => (*this).on_finish(),
+            }
+        }
+    }
+
+    /// Blocking-ness, preallocation and the initial writability check.
+    #[cfg(not(windows))]
+    fn prepare_write(&mut self, fd_: Fd) -> Next {
         if fd_ == Fd::INVALID || self.errno.is_some() {
-            self.on_finish();
-            return;
+            return Next::Finish;
         }
 
         let fd = self.opened_fd;
@@ -448,8 +480,7 @@ impl WriteFile {
         // }
 
         if self.could_block && bun_core::is_writable(fd) == bun_core::Pollable::NotReady {
-            self.wait_for_writable();
-            return;
+            return Next::WaitForWritable;
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -469,7 +500,7 @@ impl WriteFile {
             }
         }
 
-        self.do_write_loop();
+        Next::WriteLoop
     }
 
     fn do_write_loop_task(task: *mut WorkPoolTask) {

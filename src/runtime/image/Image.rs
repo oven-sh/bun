@@ -1465,12 +1465,14 @@ impl Drop for PendingTask {
 impl jsc::JobContext for PipelineTask {
     type OffThread = Self;
     type Js = PipelineJs;
-    fn run(
-        this: &mut Self,
+    unsafe fn run(
+        this: *mut Self,
         _vm: &jsc::vm_handle::Borrow,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
-        this.run();
+        // SAFETY: fn contract; the job is not handed on, so the reborrow is
+        // exclusive for the call.
+        unsafe { (*this).run() };
         Some(done)
     }
     fn then(this: Self, js: PipelineJs, cx: &jsc::JsThread<'_>) -> jsc::JsResult<()> {

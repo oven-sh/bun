@@ -39,14 +39,16 @@ impl crate::JobContext for SecretsJob {
     type OffThread = Self;
     type Js = Strong;
 
-    fn run(
-        this: &mut Self,
+    unsafe fn run(
+        this: *mut Self,
         vm: &crate::vm_handle::Borrow,
         done: crate::Completion<Self>,
     ) -> Option<crate::Completion<Self>> {
-        // SAFETY: the creating global, alive under the borrow; C++ only threads it through.
-        let global = unsafe { this.global.under_borrow(vm) };
-        Bun__SecretsJobOptions__runTask(SecretsJobOptions::opaque_mut(this.options.0), global);
+        // SAFETY: fn contract; both fields are copied out of the live job. The
+        // global is the creating one, alive under the borrow; C++ only threads
+        // it through.
+        let (options, global) = unsafe { ((*this).options.0, (*this).global.under_borrow(vm)) };
+        Bun__SecretsJobOptions__runTask(SecretsJobOptions::opaque_mut(options), global);
         Some(done)
     }
 

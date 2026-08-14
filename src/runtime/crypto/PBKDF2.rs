@@ -266,30 +266,39 @@ pub(crate) struct Pbkdf2Job {
     pub err: bool,
 }
 
+impl Pbkdf2Job {
+    /// Pool thread: derives into `output`, or sets `err`.
+    fn run(&mut self) {
+        let len = usize::try_from(self.pbkdf2.length).expect("int cast");
+        // `Vec` allocation aborts on OOM; use try_reserve to surface an error instead.
+        let mut buf = Vec::new();
+        if buf.try_reserve_exact(len).is_err() {
+            self.err = true;
+            return;
+        }
+        buf.resize(len, 0);
+        self.output = buf;
+
+        if !self.pbkdf2.run(&mut self.output) {
+            self.err = true;
+            boringssl::ERR_clear_error();
+            self.output = Vec::new();
+        }
+    }
+}
+
 impl JobContext for Pbkdf2Job {
     type OffThread = Self;
     type Js = JSPromiseStrong;
 
-    fn run(
-        this: &mut Self,
+    unsafe fn run(
+        this: *mut Self,
         _vm: &bun_jsc::vm_handle::Borrow,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
-        let len = usize::try_from(this.pbkdf2.length).expect("int cast");
-        // `Vec` allocation aborts on OOM; use try_reserve to surface an error instead.
-        let mut buf = Vec::new();
-        if buf.try_reserve_exact(len).is_err() {
-            this.err = true;
-            return Some(done);
-        }
-        buf.resize(len, 0);
-        this.output = buf;
-
-        if !this.pbkdf2.run(&mut this.output) {
-            this.err = true;
-            boringssl::ERR_clear_error();
-            this.output = Vec::new();
-        }
+        // SAFETY: fn contract; the job is not handed on, so the reborrow is
+        // exclusive for the call.
+        unsafe { (*this).run() };
         Some(done)
     }
 

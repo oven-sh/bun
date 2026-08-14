@@ -2852,54 +2852,63 @@ pub mod JSZstd {
         pub error_message: Option<&'static [u8]>,
     }
 
-    impl jsc::JobContext for ZstdJob {
-        type OffThread = Self;
-        type Js = jsc::JSPromiseStrong;
+    impl ZstdJob {
+        /// Pool thread: fills `output`, or sets `error_message`.
+        fn run(&mut self) {
+            let input = self.buffer.slice();
 
-        fn run(
-            this: &mut Self,
-            _vm: &jsc::vm_handle::Borrow,
-            done: bun_jsc::Completion<Self>,
-        ) -> Option<bun_jsc::Completion<Self>> {
-            let input = this.buffer.slice();
-
-            if this.is_compress {
+            if self.is_compress {
                 let max_size = bun_zstd::compress_bound(input.len());
                 // Surface OOM as a rejected promise instead of aborting. The
                 // zero-fill is output-irrelevant (zstd overwrites the prefix it reports).
                 let mut output: Vec<u8> = Vec::new();
                 if output.try_reserve_exact(max_size).is_err() {
-                    this.error_message = Some(b"Out of memory");
-                    return Some(done);
+                    self.error_message = Some(b"Out of memory");
+                    return;
                 }
                 output.resize(max_size, 0);
-                this.output = output;
+                self.output = output;
 
-                this.output = match bun_zstd::compress(&mut this.output, input, Some(this.level)) {
+                self.output = match bun_zstd::compress(&mut self.output, input, Some(self.level)) {
                     bun_zstd::Result::Success(size) => 'blk: {
-                        if size < this.output.len() {
-                            let mut out = core::mem::take(&mut this.output);
+                        if size < self.output.len() {
+                            let mut out = core::mem::take(&mut self.output);
                             out.truncate(size);
                             out.shrink_to_fit();
                             break 'blk out;
                         }
-                        break 'blk core::mem::take(&mut this.output);
+                        break 'blk core::mem::take(&mut self.output);
                     }
                     bun_zstd::Result::Err(err) => {
-                        this.output = Vec::new();
-                        this.error_message = Some(err);
-                        return Some(done);
+                        self.output = Vec::new();
+                        self.error_message = Some(err);
+                        return;
                     }
                 };
             } else {
-                this.output = match bun_zstd::decompress_alloc(input) {
+                self.output = match bun_zstd::decompress_alloc(input) {
                     Ok(v) => v,
                     Err(_) => {
-                        this.error_message = Some(b"Decompression failed");
-                        return Some(done);
+                        self.error_message = Some(b"Decompression failed");
+                        return;
                     }
                 };
             }
+        }
+    }
+
+    impl jsc::JobContext for ZstdJob {
+        type OffThread = Self;
+        type Js = jsc::JSPromiseStrong;
+
+        unsafe fn run(
+            this: *mut Self,
+            _vm: &jsc::vm_handle::Borrow,
+            done: bun_jsc::Completion<Self>,
+        ) -> Option<bun_jsc::Completion<Self>> {
+            // SAFETY: fn contract; the job is not handed on, so the reborrow is
+            // exclusive for the call.
+            unsafe { (*this).run() };
             Some(done)
         }
 

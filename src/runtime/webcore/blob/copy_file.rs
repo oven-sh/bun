@@ -75,12 +75,14 @@ unsafe impl Send for CopyFile {}
 impl jsc::JobContext for CopyFile {
     type OffThread = Self;
     type Js = jsc::JSPromiseStrong;
-    fn run(
-        this: &mut Self,
+    unsafe fn run(
+        this: *mut Self,
         _vm: &jsc::vm_handle::Borrow,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
-        this.run_async();
+        // SAFETY: fn contract; the copy is synchronous and the job is not handed
+        // on, so the reborrow is exclusive for the call.
+        unsafe { (*this).run_async() };
         Some(done)
     }
     fn then(

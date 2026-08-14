@@ -561,10 +561,24 @@ impl FileReader {
         if !self.sink_paused.replace(false) {
             return;
         }
-        let sink = *self.sink.get();
-        if sink.is_none() {
+        if self.sink.get().is_none() {
             return;
         }
+        // The sink receives bytes synchronously below (a regular file's whole
+        // read loop runs inside `read`) and may respond by dropping the last
+        // root of this stream — HTMLRewriter clears its `inputStream` slot on
+        // EOF — and then allocating, so pin the source until this returns.
+        let parent = self.parent();
+        // SAFETY: see `parent()`.
+        unsafe { (*parent).increment_count() };
+        self.push_to_sink();
+        // SAFETY: balances the increment above; may free `self`, which is not
+        // touched afterwards.
+        let _ = unsafe { Source::decrement_count(parent) };
+    }
+
+    fn push_to_sink(&self) {
+        let sink = *self.sink.get();
         let reader_done = self.reader().is_done();
         let buffered = self.drain();
         if !buffered.is_empty() {

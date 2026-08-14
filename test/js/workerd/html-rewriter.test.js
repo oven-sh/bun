@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import fs from "fs";
-import { bunEnv, bunExe, gcTick, tempDir, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, gcTick, isASAN, isDebug, isWindows, tempDir, tls, tmpdirSync } from "harness";
 import { createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
@@ -1859,6 +1859,185 @@ describe("output ByteStream backpressured when a native sink is wired", () => {
   it("completes with a streaming input (.text())", async () => {
     const { body } = await makeParkedStreaming();
     expect(await new Response(body).text()).toBe(streamed);
+  });
+
+  it("completes when read with a JS reader", async () => {
+    const { body } = await makeParked();
+    const reader = body.getReader();
+    const chunks = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    expect(Buffer.concat(chunks).toString()).toBe(out);
+  });
+});
+
+// A streamed input is pulled through the rewriter only as fast as its output is
+// consumed: `transform()` returns once the unread output passes the pipe's
+// high-water mark, with the rest of the input still unread, and whichever
+// consumer later attaches to the pending body drives the rewrite to the end.
+describe("streamed input is held until the output is consumed", () => {
+  const text = Buffer.alloc(1000, "a").toString();
+  const piece = `<p>${text}</p>`;
+  const count = 2500; // ~2.4 MB of input: many upstream chunks
+  const input = Buffer.alloc(piece.length * count, piece).toString();
+  const rewritten = Buffer.alloc((piece.length + 6) * count, `<p x="1">${text}</p>`).toString();
+  let dir, file;
+  beforeAll(() => {
+    dir = tempDir("hr-held-input", { "in.html": input });
+    file = path.join(String(dir), "in.html");
+  });
+  afterAll(() => dir?.[Symbol.dispose]());
+
+  function transformFile() {
+    let seen = 0;
+    const res = new HTMLRewriter()
+      .on("p", {
+        element(e) {
+          seen++;
+          e.setAttribute("x", "1");
+        },
+      })
+      .transform(new Response(Bun.file(file)));
+    return { res, seen: () => seen };
+  }
+
+  it("transform() returns before the whole input has been read", async () => {
+    const { res, seen } = transformFile();
+    expect(seen()).toBeGreaterThan(0);
+    expect(seen()).toBeLessThan(count);
+    expect(await res.text()).toBe(rewritten);
+    expect(seen()).toBe(count);
+  });
+
+  it(".arrayBuffer()", async () => {
+    const { res } = transformFile();
+    expect(Buffer.from(await res.arrayBuffer()).toString()).toBe(rewritten);
+  });
+
+  it(".body read after transform() returned, then .text()", async () => {
+    const { res } = transformFile();
+    res.body;
+    expect(await res.text()).toBe(rewritten);
+  });
+
+  it("JS reader", async () => {
+    const { res, seen } = transformFile();
+    const reader = res.body.getReader();
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+    }
+    expect(total).toBe(rewritten.length);
+    expect(seen()).toBe(count);
+  });
+
+  it("for await", async () => {
+    const { res } = transformFile();
+    let total = 0;
+    for await (const chunk of res.body) total += chunk.length;
+    expect(total).toBe(rewritten.length);
+  });
+
+  it("new Response(res.body).text()", async () => {
+    const { res } = transformFile();
+    expect(await new Response(res.body).text()).toBe(rewritten);
+  });
+
+  it("second HTMLRewriter", async () => {
+    const { res } = transformFile();
+    expect(await new HTMLRewriter().transform(res).text()).toBe(rewritten);
+  });
+
+  it(".clone()", async () => {
+    const { res } = transformFile();
+    const clone = res.clone();
+    const [a, b] = await Promise.all([clone.text(), res.text()]);
+    expect(a).toBe(rewritten);
+    expect(b).toBe(rewritten);
+  });
+
+  it("Bun.write(file, res)", async () => {
+    const { res } = transformFile();
+    const out = path.join(String(dir), "out.html");
+    expect(await Bun.write(out, res)).toBe(rewritten.length);
+    expect(await Bun.file(out).text()).toBe(rewritten);
+  });
+
+  it("returned from Bun.serve", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => transformFile().res });
+    expect(await (await fetch(server.url)).text()).toBe(rewritten);
+  });
+
+  it("res.body returned from Bun.serve", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response(transformFile().res.body) });
+    expect(await (await fetch(server.url)).text()).toBe(rewritten);
+  });
+
+  it("fetch() input read with a JS reader", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response(Bun.file(file)) });
+    let seen = 0;
+    const res = new HTMLRewriter()
+      .on("p", {
+        element(e) {
+          seen++;
+          e.setAttribute("x", "1");
+        },
+      })
+      .transform(await fetch(server.url));
+    const reader = res.body.getReader();
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+    }
+    expect(total).toBe(rewritten.length);
+    expect(seen).toBe(count);
+  });
+
+  // Regular-file reads are synchronous on POSIX, so an unbounded pre-stream
+  // buffer shows up as `transform()` itself reading (and buffering the rewrite
+  // of) the entire file. Sparse files keep these cheap.
+  describe.skipIf(isWindows)("large sparse file", () => {
+    function sparse(dir, name, size) {
+      const file = path.join(String(dir), name);
+      const fd = fs.openSync(file, "w");
+      fs.ftruncateSync(fd, size);
+      fs.closeSync(fd);
+      return file;
+    }
+
+    // 5 GiB: a body size that does not fit lol_html's `u32::MAX` memory limit.
+    it.concurrent.each([256 * 1024 * 1024, 5 * 1024 * 1024 * 1024])("of %d bytes: transform() does not read it before the body is consumed", async size => {
+      using dir = tempDir("hr-sparse", {});
+      const file = sparse(dir, "in.html", size);
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const before = process.memoryUsage.rss();
+           const res = new HTMLRewriter().on("a", { element() {} }).transform(new Response(Bun.file(process.argv[1])));
+           const delta = process.memoryUsage.rss() - before;
+           await res.body.cancel();
+           console.log(Math.round(delta / 1024 / 1024));`,
+          file,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      // RSS growth across transform(), in MB. Unfixed, it exceeded the file
+      // size (the whole rewritten output was buffered); fixed, it is one
+      // upstream chunk.
+      expect(parseInt(stdout)).toBeLessThan(isDebug || isASAN ? 96 : 48);
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

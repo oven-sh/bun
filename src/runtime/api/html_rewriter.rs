@@ -729,8 +729,14 @@ pub struct RewriterPipe {
     /// `.body` on the output Response. Kept alive by the cell's `outputStream`
     /// slot.
     output: Cell<Option<bun_ptr::BackRef<ByteStream>>>,
-    /// lol-html output buffered before the output ByteStream exists.
+    /// lol-html output buffered before the output ByteStream exists. Bounded
+    /// by `high_water_mark` (the input is held meanwhile) unless
+    /// `buffer_all_output` is set.
     output_buffer: JsCell<Vec<u8>>,
+    /// A buffered consumer (`.text()`, `Bun.write`, … via
+    /// [`Self::on_start_buffering`]) wants the whole output in
+    /// `output_buffer`.
+    buffer_all_output: Cell<bool>,
     /// Output Response. The pipe holds a native `+1` (released in `Drop`) so
     /// the body stays reachable on the abandon-suspension path after the
     /// Response JS wrapper has been swept alongside the Transform cell.
@@ -907,10 +913,12 @@ impl RewriterPipe {
             }
             return out.buffer.get().len() as BlobSizeType > self.high_water_mark.get();
         }
-        // No output ByteStream yet: the pre-stream buffer has no drain signal
-        // (only `on_start_streaming`/`finish` consume it), so backpressuring
-        // the input here would deadlock the body-mixin (`.text()` etc.) path.
-        false
+        // No output ByteStream yet: hold the input once the pre-stream buffer
+        // passes the high-water mark. Reading `.body` hands the buffer to a
+        // ByteStream whose drain calls `resume()`; buffered consumers lift the
+        // bound through `on_start_buffering`.
+        !self.buffer_all_output.get()
+            && self.output_buffer.get().len() as BlobSizeType > self.high_water_mark.get()
     }
 
     fn init(
@@ -931,6 +939,7 @@ impl RewriterPipe {
             high_water_mark: Cell::new(16384),
             output: Cell::new(None),
             output_buffer: JsCell::new(Vec::new()),
+            buffer_all_output: Cell::new(false),
             response: Cell::new(None),
             phase: Cell::new(RewritePhase::WritePending),
             sync_only_noun: Cell::new(sync_only_noun),
@@ -946,8 +955,6 @@ impl RewriterPipe {
         // `BackRef` is sound across the re-entrant lol-html calls below.
         let this = BackRef::from(pipe);
 
-        let input_size = original.get_body_len();
-
         // The handler closures point into `Box`es owned by `(*pipe).context`,
         // which `pipe` keeps alive for the rewriter's whole lifetime.
         let (element_content_handlers, document_content_handlers) =
@@ -957,15 +964,13 @@ impl RewriterPipe {
                 element_content_handlers,
                 document_content_handlers,
                 encoding: lol_html::AsciiCompatibleEncoding::utf_8(),
+                // The parsing buffer only ever holds the unparsed tail of one
+                // chunk (a token split across writes) and grows on demand, so
+                // its size is unrelated to the input length; keep lol_html's
+                // default preallocation rather than reserving the whole body.
                 memory_settings: lol_html::MemorySettings {
-                    preallocated_parsing_buffer_size: if input_size as u64
-                        == webcore::blob::MAX_SIZE
-                    {
-                        1024
-                    } else {
-                        input_size.max(1024) as usize
-                    },
                     max_allowed_memory_usage: u32::MAX as usize,
+                    ..lol_html::MemorySettings::new()
                 },
                 strict: false,
                 enable_esi_tags: false,
@@ -986,6 +991,7 @@ impl RewriterPipe {
             webcore::Body::new({
                 let mut pv = webcore::body::PendingValue::new(global);
                 pv.task = Some(pipe.cast::<c_void>());
+                pv.on_start_buffering = Some(RewriterPipe::on_start_buffering);
                 pv.on_start_streaming = Some(RewriterPipe::on_start_streaming);
                 pv.on_readable_stream_available = Some(RewriterPipe::on_readable_stream_available);
                 pv.producer = SourceHandle::HTMLRewriter(this);
@@ -1188,6 +1194,17 @@ impl RewriterPipe {
         // undefined/null: the stream drained synchronously inside
         // assignToStream.
         this.end_from_stream(None);
+    }
+
+    /// `PendingValue::on_start_buffering` — `.text()`/`.json()`/`Bun.write`
+    /// want the whole output: stop bounding the pre-stream buffer and pull the
+    /// rest of the input. May complete the rewrite (and resolve the body)
+    /// before returning, so consumers install their state before signalling.
+    fn on_start_buffering(ctx: NonNull<c_void>) {
+        // Same liveness argument as `on_start_streaming`.
+        let this = bun_ptr::BackRef::from(ctx.cast::<RewriterPipe>());
+        this.buffer_all_output.set(true);
+        this.resume();
     }
 
     /// `PendingValue::on_start_streaming` — the output Response's body is
@@ -1439,11 +1456,16 @@ impl RewriterPipe {
         if self.done.get() || self.phase.get() == RewritePhase::Done {
             return;
         }
-        if self.is_suspended() || self.output_backpressured() {
+        if self.is_suspended() {
             return;
         }
+        // Output backpressure only gates pulling more input; once the input
+        // is exhausted, finishing frees the parser and settles the body.
         if self.input_ended.get() {
             self.end_rewrite();
+            return;
+        }
+        if self.output_backpressured() {
             return;
         }
         // `ready()` may re-enter and write `input_source` (sink → feed →

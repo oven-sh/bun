@@ -164,9 +164,11 @@ declare class HTMLRewriter {
   /**
    * Transform HTML content
    *
-   * Returns immediately; the rewrite continues in the background. An error
-   * thrown by a content handler (or a Promise it returns that rejects) rejects
-   * the returned response's body rather than throwing from `transform()`.
+   * Returns immediately. A streamed input (a file, a `fetch()` response, a
+   * `ReadableStream`) is pulled through the rewriter as the returned
+   * response's body is consumed, so the remaining handlers run while it is
+   * read. An error thrown by a content handler (or a Promise it returns that
+   * rejects) rejects that body rather than throwing from `transform()`.
    *
    * @param input - The HTML to transform
    * @returns A new {@link Response} with the transformed HTML

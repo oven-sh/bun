@@ -1469,7 +1469,7 @@ pub mod fs {
             } else if bun_paths::is_absolute(path) {
                 concat_into(&mut out[..], &[path])?
             } else {
-                concat_into(&mut out[..], &[self.cwd, b"/", path])?
+                concat_into(&mut out[..], &[self.cwd, sep_after(self.cwd), path])?
             };
             let root = root_len(&out[..len]);
             let (len, _kind) = resolve_symlinks_after(out, len, root, false)?;
@@ -1479,6 +1479,15 @@ pub mod fs {
 
     fn name_too_long() -> bun_sys::Error {
         bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::lstat)
+    }
+
+    /// The separator to put between directory `prefix` and a following
+    /// component: none if `prefix` already ends in one (the root does).
+    fn sep_after(prefix: &[u8]) -> &'static [u8] {
+        match prefix.last() {
+            Some(&c) if bun_paths::is_sep_native(c) => b"",
+            _ => b"/",
+        }
     }
 
     /// `parts` back to back into `out`, leaving room for a NUL.
@@ -1677,9 +1686,10 @@ pub mod fs {
                     } else if bun_paths::is_absolute(target) {
                         concat_into(&mut join_buf[..], &[target, &path[j..len]])?
                     } else {
+                        let prefix = &path[..known_real];
                         concat_into(
                             &mut join_buf[..],
-                            &[&path[..known_real], b"/", target, &path[j..len]],
+                            &[prefix, sep_after(prefix), target, &path[j..len]],
                         )?
                     };
                     if new_len >= path.len() {

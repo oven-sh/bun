@@ -587,6 +587,100 @@ impl ShellCpTask {
         }
     }
 
+    fn same_inode(a: &bun_sys::Stat, b: &bun_sys::Stat) -> bool {
+        // An inode number of 0 means the filesystem reports no identity.
+        a.st_ino != 0 && a.st_ino == b.st_ino && a.st_dev == b.st_dev
+    }
+
+    /// The up-front src/dest validation `fs.cp` does (node's `checkPaths` and
+    /// `checkParentPaths`) for the final absolute pair, so a copy that cannot
+    /// succeed — notably a directory into itself, which would otherwise nest
+    /// until ENAMETOOLONG — is refused before anything is created. `appended`
+    /// is the source basename when it was joined onto the target operand.
+    fn check_paths(
+        &self,
+        src: &bun_core::ZStr,
+        tgt: &bun_core::ZStr,
+        appended: Option<&[u8]>,
+    ) -> Option<ShellErr> {
+        use bun_sys::S;
+        use resolve_path::Platform;
+
+        let custom = |msg: String| Some(ShellErr::Custom(msg.into_bytes().into_boxed_slice()));
+        let src_shown = bstr::BStr::new(&self.src);
+        let tgt_shown = || -> Vec<u8> {
+            let mut shown = self.tgt.clone();
+            if let Some(basename) = appended {
+                if !Self::has_trailing_sep(&shown) {
+                    shown.push(bun_paths::SEP);
+                }
+                shown.extend_from_slice(basename);
+            }
+            shown
+        };
+
+        // Anything this cannot see is left for the copy itself to report.
+        let Ok(src_stat) = bun_sys::lstat(src) else {
+            return None;
+        };
+        // lstat, so a symlink to a directory — copied as a link — is not one.
+        let src_is_dir = S::ISDIR(src_stat.st_mode as _);
+        if let Ok(tgt_stat) = bun_sys::lstat(tgt) {
+            if Self::same_inode(&src_stat, &tgt_stat) || src.as_bytes() == tgt.as_bytes() {
+                return custom(format!(
+                    "{src_shown} and {} are identical (not copied)",
+                    bstr::BStr::new(&tgt_shown()),
+                ));
+            }
+            let tgt_is_dir = S::ISDIR(tgt_stat.st_mode as _);
+            if src_is_dir && !tgt_is_dir {
+                return custom(format!(
+                    "cannot overwrite non-directory {} with directory {src_shown}",
+                    bstr::BStr::new(&tgt_shown()),
+                ));
+            }
+            if !src_is_dir && tgt_is_dir {
+                return custom(format!(
+                    "cannot overwrite directory {} with non-directory {src_shown}",
+                    bstr::BStr::new(&tgt_shown()),
+                ));
+            }
+        }
+
+        if !src_is_dir {
+            return None;
+        }
+        let into_itself = || {
+            custom(format!(
+                "cannot copy a directory, '{src_shown}', into itself, '{}'",
+                bstr::BStr::new(&tgt_shown()),
+            ))
+        };
+        let (s, t) = (src.as_bytes(), tgt.as_bytes());
+        if t.len() > s.len() && t.starts_with(s) && Platform::AUTO.is_separator(t[s.len()]) {
+            return into_itself();
+        }
+        // The same relationship through symlinks (or any other second name for
+        // `src`): is an ancestor of `tgt` the source directory itself?
+        let src_parent = bun_paths::dirname(s);
+        let mut path = bun_paths::path_buffer_pool::get();
+        let mut ancestor = t;
+        while let Some(parent) = bun_paths::dirname(ancestor) {
+            if Some(parent) == src_parent {
+                break;
+            }
+            path[..parent.len()].copy_from_slice(parent);
+            path[parent.len()] = 0;
+            if let Ok(stat) = bun_sys::stat(bun_core::ZStr::from_buf(&path[..], parent.len())) {
+                if Self::same_inode(&src_stat, &stat) {
+                    return into_itself();
+                }
+            }
+            ancestor = parent;
+        }
+        None
+    }
+
     /// Resolves src/tgt to absolute paths, classifies them per the three
     /// POSIX `cp` synopses
     /// (<https://man7.org/linux/man-pages/man1/cp.1p.html>), then hands off to
@@ -639,17 +733,6 @@ impl ShellCpTask {
             ));
         }
 
-        if !src_is_dir && src.as_bytes() == tgt.as_bytes() {
-            return Some(ShellErr::Custom(
-                format!(
-                    "{0} and {0} are identical (not copied)",
-                    bstr::BStr::new(&self.src)
-                )
-                .into_bytes()
-                .into_boxed_slice(),
-            ));
-        }
-
         let (tgt_is_dir, tgt_exists) = match Self::is_dir(tgt) {
             Ok(is_dir) => (is_dir, true),
             Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
@@ -660,6 +743,8 @@ impl ShellCpTask {
         };
 
         let mut _copying_many = false;
+        // The source basename, once joined onto `tgt`.
+        let mut appended: Option<&[u8]> = None;
 
         // The following logic is based on the POSIX spec.
         if !src_is_dir && !tgt_is_dir && self.operands == 2 {
@@ -672,6 +757,7 @@ impl ShellCpTask {
                     buf3.as_mut_slice(),
                     &[tgt.as_bytes(), basename],
                 );
+                appended = Some(basename);
             } else if self.operands == 2 {
                 // source_dir -> new_target_dir.
             } else {
@@ -703,7 +789,12 @@ impl ShellCpTask {
                 buf3.as_mut_slice(),
                 &[tgt.as_bytes(), basename],
             );
+            appended = Some(basename);
             _copying_many = true;
+        }
+
+        if let Some(err) = self.check_paths(src, tgt, appended) {
+            return Some(err);
         }
 
         self.src_absolute = Some(src.as_bytes().to_vec());

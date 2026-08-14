@@ -475,6 +475,56 @@ pub(crate) const DEFAULT_PERMISSION: Mode = 0;
 // `&AbortSignal` inherent methods — the former `AbortSignalRefExt` shim with
 // per-call `unsafe { self.as_ref() }` is gone. `unref()` is handled by `Drop`.
 
+/// Subdirectories a recursive `cp` walk has seen but not yet entered. The sync
+/// and async walkers share one src/dest buffer pair for the whole tree, so an
+/// entry is its parent's lengths in those buffers plus the name to append; LIFO
+/// order guarantees the parent prefix is still in place when an entry is popped.
+#[derive(Default)]
+struct CpPendingDirs {
+    names: Vec<OSPathChar>,
+    dirs: Vec<CpPendingDir>,
+}
+
+struct CpPendingDir {
+    parent_src_len: PathInt,
+    parent_dest_len: PathInt,
+    name_start: u32,
+}
+
+impl CpPendingDirs {
+    /// The caller has checked that `name` fits both buffers after its parent.
+    fn push(&mut self, parent_src_len: PathInt, parent_dest_len: PathInt, name: &[OSPathChar]) {
+        self.dirs.push(CpPendingDir {
+            parent_src_len,
+            parent_dest_len,
+            name_start: self.names.len() as u32,
+        });
+        self.names.extend_from_slice(name);
+    }
+
+    /// Writes the next directory's NUL-terminated src/dest paths into the
+    /// buffers and returns their lengths.
+    fn pop_into(
+        &mut self,
+        src_buf: &mut OSPathBuffer,
+        dest_buf: &mut OSPathBuffer,
+    ) -> Option<(PathInt, PathInt)> {
+        let dir = self.dirs.pop()?;
+        let name = &self.names[dir.name_start as usize..];
+        let sd = dir.parent_src_len as usize;
+        let dd = dir.parent_dest_len as usize;
+        src_buf[sd] = paths::SEP as OSPathChar;
+        src_buf[sd + 1..sd + 1 + name.len()].copy_from_slice(name);
+        src_buf[sd + 1 + name.len()] = 0;
+        dest_buf[dd] = paths::SEP as OSPathChar;
+        dest_buf[dd + 1..dd + 1 + name.len()].copy_from_slice(name);
+        dest_buf[dd + 1 + name.len()] = 0;
+        let lens = ((sd + 1 + name.len()) as PathInt, (dd + 1 + name.len()) as PathInt);
+        self.names.truncate(dir.name_start as usize);
+        Some(lens)
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Async task type aliases
 // ──────────────────────────────────────────────────────────────────────────
@@ -1902,9 +1952,8 @@ mod _async_tasks {
             // are slices into `src_buf`/`dest_buf` and must end their borrow first.
             let src_len = PathInt::try_from(src.len()).expect("int cast");
             let dest_len = PathInt::try_from(dest.len()).expect("int cast");
-            let _ = Self::cp_async_directory(
+            if let Err(err) = Self::cp_async_directory(
                 nodefs,
-                args.flags,
                 // Pass the raw `*mut Self` (Box::leak provenance) so spawned
                 // `CpSingleTask`s store a pointer that may later be promoted to
                 // `&mut` in `on_subtask_done`.
@@ -1913,19 +1962,50 @@ mod _async_tasks {
                 src_len,
                 &mut dest_buf,
                 dest_len,
-            );
+            ) {
+                this.finish_concurrently(Err(err));
+            }
         }
 
-        // returns boolean `should_continue`
+        /// Walks the tree with an explicit work list: this runs on a pool
+        /// thread, and a call frame per level overflowed its stack on deep trees.
         fn cp_async_directory(
             nodefs: &mut NodeFS,
-            args: args::CpFlags,
             this: *mut Self,
             src_buf: &mut OSPathBuffer,
-            src_dir_len: PathInt,
+            mut src_dir_len: PathInt,
             dest_buf: &mut OSPathBuffer,
+            mut dest_dir_len: PathInt,
+        ) -> Maybe<()> {
+            let mut pending = CpPendingDirs::default();
+            loop {
+                Self::cp_async_one_directory(
+                    nodefs,
+                    this,
+                    src_buf,
+                    src_dir_len,
+                    dest_buf,
+                    dest_dir_len,
+                    &mut pending,
+                )?;
+                match pending.pop_into(src_buf, dest_buf) {
+                    Some((sd, dd)) => (src_dir_len, dest_dir_len) = (sd, dd),
+                    None => return Ok(()),
+                }
+            }
+        }
+
+        /// Creates `dest`, dispatches a `CpSingleTask` per non-directory entry
+        /// of `src` and queues its subdirectories on `pending`.
+        fn cp_async_one_directory(
+            nodefs: &mut NodeFS,
+            this: *mut Self,
+            src_buf: &OSPathBuffer,
+            src_dir_len: PathInt,
+            dest_buf: &OSPathBuffer,
             dest_dir_len: PathInt,
-        ) -> bool {
+            pending: &mut CpPendingDirs,
+        ) -> Maybe<()> {
             // SAFETY: `this` is the live Box-leaked task. Shared borrow only — spawned
             // `CpSingleTask`s on other workpool threads may concurrently hold `&Self`.
             // The raw `*mut` is threaded through (instead of `&Self`) so that the
@@ -1952,34 +2032,26 @@ mod _async_tasks {
                         E::EACCES | E::ENAMETOOLONG | E::EROFS | E::EPERM | E::EINVAL => {
                             // `errno_sys_p`
                             // already boxed `src.as_bytes()` into `err.path`, so just forward.
-                            this_ref.finish_concurrently(err);
-                            return false;
+                            return err;
                         }
                         // Other errors may be due to clonefile() not being supported
                         // We'll fall back to other implementations
                         _ => {}
                     }
                 } else {
-                    return true;
+                    return Ok(());
                 }
             }
 
             let open_flags = sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW;
-            let fd = match openat_os_path(FD::cwd(), src, open_flags, 0) {
-                Err(err) => {
-                    this_ref.finish_concurrently(Err(
-                        err.with_path(nodefs.os_path_into_sync_error_buf(src))
-                    ));
-                    return false;
-                }
-                Ok(fd_) => fd_,
-            };
+            let fd = openat_os_path(FD::cwd(), src, open_flags, 0)
+                .map_err(|err| err.with_path(nodefs.os_path_into_sync_error_buf(src)))?;
             let _close = scopeguard::guard(fd, |fd| fd.close());
 
             #[cfg(windows)]
-            let mut buf = OSPathBuffer::uninit();
+            let mut buf = bun_paths::os_path_buffer_pool::get();
             #[cfg(windows)]
-            let normdest: &OSPathSliceZ = match sys::normalize_path_windows_opts(
+            let normdest: &OSPathSliceZ = sys::normalize_path_windows_opts(
                 FD::INVALID,
                 dest.as_slice(),
                 &mut buf[..],
@@ -1989,26 +2061,12 @@ mod _async_tasks {
                 sys::NormalizePathWindowsOpts {
                     add_nt_prefix: false,
                 },
-            ) {
-                Err(err) => {
-                    this_ref.finish_concurrently(Err(err));
-                    return false;
-                }
-                Ok(n) => n,
-            };
+            )?;
             #[cfg(not(windows))]
             let normdest: &OSPathSliceZ = dest;
 
-            let mkdir_ = nodefs.mkdir_recursive_os_path(normdest, args::Mkdir::DEFAULT_MODE, false);
-            match mkdir_ {
-                Err(err) => {
-                    this_ref.finish_concurrently(Err(err));
-                    return false;
-                }
-                Ok(_) => {
-                    this_ref.on_copy(src, normdest);
-                }
-            }
+            nodefs.mkdir_recursive_os_path(normdest, args::Mkdir::DEFAULT_MODE, false)?;
+            this_ref.on_copy(src, normdest);
 
             // On POSIX directory entries are always UTF-8, so monomorphise the
             // const-generic path type on `U8` and let the Windows branch (gated
@@ -2017,19 +2075,13 @@ mod _async_tasks {
             let mut iterator = DirIterator::iterate::<true>(fd);
             #[cfg(not(windows))]
             let mut iterator = DirIterator::iterate::<false>(fd);
-            let mut entry = iterator.next();
             loop {
-                let current = match entry {
+                let current = match iterator.next() {
                     Err(err) => {
-                        this_ref.finish_concurrently(Err(
-                            err.with_path(nodefs.os_path_into_sync_error_buf(src))
-                        ));
-                        return false;
+                        return Err(err.with_path(nodefs.os_path_into_sync_error_buf(src)));
                     }
-                    Ok(ent) => match ent {
-                        Some(e) => e,
-                        None => break,
-                    },
+                    Ok(Some(e)) => e,
+                    Ok(None) => break,
                 };
                 let cname = current.name.slice();
 
@@ -2039,40 +2091,19 @@ mod _async_tasks {
                 if (src_dir_len as usize) + 1 + cname.len() >= src_buf.len()
                     || (dest_dir_len as usize) + 1 + cname.len() >= dest_buf.len()
                 {
-                    this_ref.finish_concurrently(Err(sys::Error {
+                    return Err(sys::Error {
                         errno: E::ENAMETOOLONG as _,
                         syscall: sys::Tag::copyfile,
                         path: nodefs
                             .os_path_into_sync_error_buf(&src_buf[..src_dir_len as usize])
                             .into(),
                         ..Default::default()
-                    }));
-                    return false;
+                    });
                 }
 
                 match current.kind {
                     crate::node::dirent::Kind::Directory => {
-                        let sd = src_dir_len as usize;
-                        let dd = dest_dir_len as usize;
-                        src_buf[sd + 1..sd + 1 + cname.len()].copy_from_slice(cname);
-                        src_buf[sd] = paths::SEP as OSPathChar;
-                        src_buf[sd + 1 + cname.len()] = 0;
-                        dest_buf[dd + 1..dd + 1 + cname.len()].copy_from_slice(cname);
-                        dest_buf[dd] = paths::SEP as OSPathChar;
-                        dest_buf[dd + 1 + cname.len()] = 0;
-
-                        let should_continue = Self::cp_async_directory(
-                            nodefs,
-                            args,
-                            this,
-                            src_buf,
-                            (sd + 1 + cname.len()) as PathInt,
-                            dest_buf,
-                            (dd + 1 + cname.len()) as PathInt,
-                        );
-                        if !should_continue {
-                            return false;
-                        }
+                        pending.push(src_dir_len, dest_dir_len, cname);
                     }
                     _ => {
                         this_ref.subtask_count.fetch_add(1, Ordering::Relaxed);
@@ -2102,10 +2133,9 @@ mod _async_tasks {
                         );
                     }
                 }
-                entry = iterator.next();
             }
 
-            true
+            Ok(())
         }
     }
 
@@ -8327,6 +8357,45 @@ impl NodeFS {
             });
         }
 
+        // An explicit work list: a call frame per level overflowed the stack on
+        // deep trees.
+        let mut pending = CpPendingDirs::default();
+        let (mut src_dir_len, mut dest_dir_len) = (src_dir_len, dest_dir_len);
+        loop {
+            self.cp_sync_one_directory(
+                src_buf,
+                src_dir_len,
+                dest_buf,
+                dest_dir_len,
+                args,
+                &mut pending,
+            )?;
+            match pending.pop_into(src_buf, dest_buf) {
+                Some((sd, dd)) => (src_dir_len, dest_dir_len) = (sd, dd),
+                None => return Ok(()),
+            }
+        }
+    }
+
+    /// Creates `dest`, copies every non-directory entry of `src` into it and
+    /// queues the subdirectories on `pending`.
+    fn cp_sync_one_directory(
+        &mut self,
+        src_buf: &mut OSPathBuffer,
+        src_dir_len: PathInt,
+        dest_buf: &mut OSPathBuffer,
+        dest_dir_len: PathInt,
+        args: &args::Cp,
+        pending: &mut CpPendingDirs,
+    ) -> Maybe<ret::Cp> {
+        let cp_flags = &args.flags;
+        let sd = src_dir_len as usize;
+        let dd = dest_dir_len as usize;
+        // SAFETY: the caller NUL-terminated both buffers at `sd`/`dd`.
+        let src = unsafe { OSPathSliceZ::from_raw(src_buf.as_ptr(), sd) };
+        // SAFETY: see `src` above.
+        let dest = unsafe { OSPathSliceZ::from_raw(dest_buf.as_ptr(), dd) };
+
         #[cfg(target_os = "macos")]
         'try_with_clonefile: {
             // CLONE_NOFOLLOW: `src` was classified as a directory via lstat, so
@@ -8401,26 +8470,19 @@ impl NodeFS {
                 });
             }
 
-            src_buf[sd + 1..sd + 1 + name_slice.len()].copy_from_slice(name_slice);
-            src_buf[sd] = paths::SEP as OSPathChar;
-            src_buf[sd + 1 + name_slice.len()] = 0;
-
-            dest_buf[dd + 1..dd + 1 + name_slice.len()].copy_from_slice(name_slice);
-            dest_buf[dd] = paths::SEP as OSPathChar;
-            dest_buf[dd + 1 + name_slice.len()] = 0;
-
             match current.kind {
                 sys::FileKind::Directory => {
-                    let r = self.cp_sync_inner(
-                        src_buf,
-                        (sd + 1 + name_slice.len()) as PathInt,
-                        dest_buf,
-                        (dd + 1 + name_slice.len()) as PathInt,
-                        args,
-                    );
-                    r?;
+                    pending.push(src_dir_len, dest_dir_len, name_slice);
                 }
                 _ => {
+                    src_buf[sd + 1..sd + 1 + name_slice.len()].copy_from_slice(name_slice);
+                    src_buf[sd] = paths::SEP as OSPathChar;
+                    src_buf[sd + 1 + name_slice.len()] = 0;
+
+                    dest_buf[dd + 1..dd + 1 + name_slice.len()].copy_from_slice(name_slice);
+                    dest_buf[dd] = paths::SEP as OSPathChar;
+                    dest_buf[dd + 1 + name_slice.len()] = 0;
+
                     // NUL written at [len] above; `from_buf` debug-asserts it.
                     let src_z = OSPathSliceZ::from_buf(&src_buf[..], sd + 1 + name_slice.len());
                     let dest_z = OSPathSliceZ::from_buf(&dest_buf[..], dd + 1 + name_slice.len());

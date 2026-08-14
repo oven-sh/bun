@@ -2562,6 +2562,11 @@ console.log(<div {...obj} key="after" />);`),
       ["whitespace-only lines", `<p title="&amp;\n   \n"/>`, "&\n   \n"],
       ["leading and trailing whitespace", `<p title="  &amp; \n "/>`, "  & \n "],
       ["numeric entity", `<p title="&#65;\n\tb"/>`, "A\n\tb"],
+      // Non-ASCII characters that the children rules themselves treat as
+      // whitespace or as line breaks.
+      ["no-break spaces", `<p title="1\n\u00a0\u00a0z"/>`, "1\n\u00a0\u00a0z"],
+      ["U+2028", `<p title="p\u2028q"/>`, "p\u2028q"],
+      ["U+2029", `<p title="p\u2029q"/>`, "p\u2029q"],
       // JSX strings have no escapes; a `\u` is kept literally, but it is the
       // third thing (besides entities and non-ASCII) that sends the lexer
       // down the decoding path.

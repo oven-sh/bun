@@ -337,6 +337,36 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
   });
 
+  test("writes unsigned SHASUMS256.txt when GPG env vars are unset entirely", async () => {
+    // Same fallback as the empty-string case above, but with both
+    // variables genuinely absent from the environment — the state an
+    // un-provisioned Buildkite agent actually presents. The helper's
+    // `${GPG_PRIVATE_KEY:-}` guards make unset and empty equivalent;
+    // this pins that equivalence.
+    //
+    // Precondition: the harness env must not carry the secrets, or
+    // "unset" would silently become "set" and this test would assert
+    // the signed path instead.
+    expect(bunEnv.GPG_PRIVATE_KEY).toBeUndefined();
+    expect(bunEnv.GPG_PASSPHRASE).toBeUndefined();
+
+    using dir = tempDir("bun-28931-unset-", {
+      "bun-linux-x64.zip": "fake-linux",
+    });
+    const dirStr = String(dir);
+
+    const res = await sh([script, dirStr, "bun-linux-x64.zip"]);
+    expect(res.stderr).toContain("wrote SHASUMS256.txt");
+    expect(res.stderr).toContain("without a signature");
+    expect(res.stderr).not.toContain("error:");
+    expect(res.exitCode).toBe(0);
+
+    const manifest = readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8").trim();
+    const expected = createHash("sha256").update("fake-linux").digest("hex");
+    expect(manifest).toBe(`${expected} *bun-linux-x64.zip`);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
+  });
+
   test.each([
     ["key only", "placeholder-key-material", "", /GPG_PRIVATE_KEY is set but GPG_PASSPHRASE is empty/],
     ["passphrase only", "", passphrase, /GPG_PASSPHRASE is set but GPG_PRIVATE_KEY is empty/],

@@ -1988,25 +1988,31 @@ pub fn to_executable(
         } == windows::FALSE
         {
             let werr = windows::Win32Error::get();
-            if let Some(sys_err) = werr.to_system_errno() {
-                if sys_err == bun_sys::SystemErrno::EISDIR {
-                    return Ok(CompileResult::fail_fmt(format_args!(
-                        "{} is a directory. Please choose a different --outfile or delete the directory",
-                        bstr::BStr::new(outfile)
-                    )));
-                } else {
-                    return Ok(CompileResult::fail_fmt(format_args!(
-                        "failed to move executable to {}: {}",
-                        bstr::BStr::new(dest_path),
-                        <&'static str>::from(sys_err)
-                    )));
-                }
-            } else {
+            // MoveFileExW fails with ERROR_ACCESS_DENIED (EPERM) when the
+            // destination is a directory, so the error code alone cannot tell
+            // that case apart from a real permission problem. The wide path is
+            // empty when `dest_path` did not fit (`to_w_path_normalized` fails
+            // safe to ""), and an empty name would resolve to cwd itself.
+            let dest_w = &dest_buf_u16[..dest_w_len];
+            if !dest_w.is_empty()
+                && bun_sys::directory_exists_at_w(Fd::cwd(), dest_w).unwrap_or(false)
+            {
                 return Ok(CompileResult::fail_fmt(format_args!(
-                    "failed to move executable to {}",
-                    bstr::BStr::new(dest_path)
+                    "{} is a directory. Please choose a different --outfile or delete the directory",
+                    bstr::BStr::new(outfile)
                 )));
             }
+            if let Some(sys_err) = werr.to_system_errno() {
+                return Ok(CompileResult::fail_fmt(format_args!(
+                    "failed to move executable to {}: {}",
+                    bstr::BStr::new(dest_path),
+                    <&'static str>::from(sys_err)
+                )));
+            }
+            return Ok(CompileResult::fail_fmt(format_args!(
+                "failed to move executable to {}",
+                bstr::BStr::new(dest_path)
+            )));
         }
 
         // Set Windows icon and/or metadata using unified function

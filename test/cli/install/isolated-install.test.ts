@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isLinux, isWindows, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { dirname, join } from "path";
 
@@ -2506,6 +2506,160 @@ test("invalid --linker value is echoed back in the error", async () => {
   expect(stderr).toContain('--linker: "isoalted"');
   expect(stderr).toContain("'isolated' or 'hoisted'");
   expect(exitCode).toBe(1);
+});
+
+describe("link: dependencies", () => {
+  // Size of the buffer install paths are built in (`MAX_PATH_BYTES`): PATH_MAX
+  // on Linux and macOS, the UTF-8 worst case of a 32767 character path on Windows.
+  const MAX_PATH_BYTES = isWindows ? 32767 * 3 + 1 : isLinux ? 4096 : 1024;
+
+  // A `link:` target that resolves to the registered `linked` package but is
+  // about `length` bytes as written. The target is stored and joined onto the
+  // global link dir as written, so the `x/..` segments count against the buffer.
+  function linkTarget(length: number): string {
+    const segments = Math.floor((length - "linked".length) / "x/../".length);
+    return Buffer.alloc(segments * "x/../".length, "x/../").toString() + "linked";
+  }
+
+  const linkedPackageJson = JSON.stringify({ name: "linked", version: "1.0.0" });
+
+  // Registers `<dir>/linked` in a global link dir private to the test, so the
+  // dir every `link:` target is joined onto is `<dir>/global/node_modules`.
+  async function registerLinked(dir: string) {
+    const env = {
+      ...bunEnv,
+      BUN_INSTALL_GLOBAL_DIR: join(dir, "global"),
+      BUN_INSTALL_CACHE_DIR: join(dir, "cache"),
+    };
+    await using proc = spawn({
+      cmd: [bunExe(), "link"],
+      cwd: join(dir, "linked"),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain('Registered "linked"');
+    expect(exitCode).toBe(0);
+
+    return { env, projectDir: join(dir, "project"), linkDir: join(dir, "global", "node_modules") };
+  }
+
+  async function installIsolated(env: NodeJS.Dict<string>, cwd: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--linker=isolated"],
+      cwd,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("links the package when the target fits", async () => {
+    using dir = tempDir("isolated-link-fits", {
+      "linked/package.json": linkedPackageJson,
+      "project/package.json": JSON.stringify({
+        name: "link-fits",
+        dependencies: { linked: "link:" + linkTarget(256) },
+      }),
+    });
+    const { env, projectDir } = await registerLinked(String(dir));
+
+    const { stderr, exitCode } = await installIsolated(env, projectDir);
+
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(lstatSync(join(projectDir, "node_modules", "linked")).isSymbolicLink()).toBeTrue();
+    expect(await file(join(projectDir, "node_modules", "linked", "package.json")).json()).toEqual({
+      name: "linked",
+      version: "1.0.0",
+    });
+  });
+
+  test.concurrent("fails with ENAMETOOLONG when the target in bun.lock does not fit", async () => {
+    // A lockfile resolution is used as-is, so this never passes through the
+    // resolver: the linker is the first thing that builds a path from it.
+    const target = linkTarget(MAX_PATH_BYTES + 64);
+    using dir = tempDir("isolated-link-lockfile-too-long", {
+      "linked/package.json": linkedPackageJson,
+      "project/package.json": JSON.stringify({
+        name: "link-from-lockfile",
+        dependencies: { linked: "link:linked" },
+      }),
+      "project/bun.lock": `{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "link-from-lockfile",
+      "dependencies": {
+        "linked": "link:linked",
+      },
+    },
+  },
+  "packages": {
+    "linked": ["linked@link:${target}", {}],
+  }
+}
+`,
+    });
+    const { env, projectDir } = await registerLinked(String(dir));
+
+    const { stdout, stderr, exitCode } = await installIsolated(env, projectDir);
+
+    expect(stderr).toContain("ENAMETOOLONG: link path for package linked is too long");
+    expect(stdout).toContain("Failed to install 1 package");
+    expect(exitCode).toBe(1);
+    expect(() => lstatSync(join(projectDir, "node_modules", "linked"))).toThrow();
+  });
+
+  test.concurrent("fails with ENAMETOOLONG when the target in package.json does not fit", async () => {
+    // Fits on its own, so it resolves; does not fit once joined onto the link dir.
+    const target = linkTarget(MAX_PATH_BYTES - 16);
+    using dir = tempDir("isolated-link-package-json-too-long", {
+      "linked/package.json": linkedPackageJson,
+      "project/package.json": JSON.stringify({
+        name: "link-from-package-json",
+        dependencies: { linked: "link:" + target },
+      }),
+    });
+    const { env, projectDir, linkDir } = await registerLinked(String(dir));
+    expect(linkDir.length + "/".length + target.length).toBeGreaterThanOrEqual(MAX_PATH_BYTES);
+
+    const { stdout, stderr, exitCode } = await installIsolated(env, projectDir);
+
+    expect(stderr).toContain("ENAMETOOLONG: link path for package linked is too long");
+    expect(stdout).toContain("Failed to install 1 package");
+    expect(exitCode).toBe(1);
+    expect(() => lstatSync(join(projectDir, "node_modules", "linked"))).toThrow();
+  });
+
+  test.concurrent("fails the workspace package that depends on a target that does not fit", async () => {
+    const target = linkTarget(MAX_PATH_BYTES - 16);
+    using dir = tempDir("isolated-link-workspace-too-long", {
+      "linked/package.json": linkedPackageJson,
+      "project/package.json": JSON.stringify({
+        name: "link-from-workspace",
+        workspaces: ["packages/*"],
+      }),
+      "project/packages/app/package.json": JSON.stringify({
+        name: "app",
+        dependencies: { linked: "link:" + target },
+      }),
+    });
+    const { env, projectDir, linkDir } = await registerLinked(String(dir));
+    expect(linkDir.length + "/".length + target.length).toBeGreaterThanOrEqual(MAX_PATH_BYTES);
+
+    const { stdout, stderr, exitCode } = await installIsolated(env, projectDir);
+
+    expect(stderr).toContain("ENAMETOOLONG: link path for package linked is too long");
+    expect(stdout).toContain("Failed to install 1 package");
+    expect(exitCode).toBe(1);
+    expect(() => lstatSync(join(projectDir, "packages", "app", "node_modules", "linked"))).toThrow();
+  });
 });
 
 describe("hoist", () => {

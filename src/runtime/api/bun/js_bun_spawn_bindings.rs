@@ -1934,7 +1934,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             // SAFETY: jsc_vm_ptr is the live thread VM; re-borrowed for the nested arg.
             let vm = unsafe { &mut *jsc_vm_ptr };
             // SAFETY: as above.
-            vm.rare_data().spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr })
+            vm.rare_data()
+                .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr })
         });
 
         while subprocess.compute_has_pending_activity() {

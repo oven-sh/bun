@@ -42,21 +42,23 @@ impl<'a> Node<'a> {
     }
 
     /// The element's character data, exactly (entities and CDATA decoded,
-    /// whitespace kept), copied out; `None` for an element with element
-    /// children.
+    /// whitespace kept, comments and PIs skipped), copied out; `None` for an
+    /// element with element children.
     pub(crate) fn text(self) -> Option<Box<[u8]>> {
-        match self.children {
-            [] => Some(Box::default()),
-            [only] => only.as_str().map(Box::from),
-            // Character data interrupted by comments / PIs.
-            runs => {
-                let mut joined = Vec::new();
-                for run in runs {
-                    joined.extend_from_slice(run.as_str()?);
-                }
-                Some(joined.into_boxed_slice())
+        if let [only] = self.children
+            && let Some(text) = only.as_str()
+        {
+            return Some(Box::from(text));
+        }
+        let mut joined = Vec::new();
+        for child in self.children {
+            match child.as_str() {
+                Some(run) => joined.extend_from_slice(run),
+                None if Node::of(child).is_some() => return None,
+                None => {}
             }
         }
+        Some(joined.into_boxed_slice())
     }
 
     pub(crate) fn child_text(self, name: &[u8]) -> Option<Box<[u8]>> {

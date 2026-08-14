@@ -980,8 +980,8 @@ describe.concurrent("S3 - List Objects", () => {
             <Owner><DisplayName>R&amp;D</DisplayName><ID>id-1</ID></Owner>
           </Contents>
           <Contents>
-            <Key><![CDATA[Tom & Jerry/raw <cdata>.txt]]></Key>
-            <ETag>"etag-2"</ETag>
+            <Key><![CDATA[Tom & Jerry/raw ]]><!-- markup between runs is not text --><![CDATA[<cdata>.txt]]></Key>
+            <ETag><?generator v="2"?>"etag-2"</ETag>
             <Size>0</Size>
           </Contents>
           <Contents><Key> leading and trailing spaces are part of the key </Key><Size> 7 </Size></Contents>

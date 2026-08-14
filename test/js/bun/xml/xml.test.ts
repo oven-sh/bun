@@ -143,6 +143,15 @@ describe("compact shape", () => {
     expect(XML.parse(Buffer.from(`<r><é/></r>`), { arrays: ["é"] })).toEqual({ r: { é: [""] } });
     expect(XML.parse(`<r><é/></r>`, { arrays: ["é"] })).toEqual({ r: { é: [""] } });
     expect(XML.parse(`<r><é/><\u{1F600}/></r>`, { arrays: ["é"] })).toEqual({ r: { é: [""], "\u{1F600}": "" } });
+    // Names are compared as code units, so a 16-bit string whose element names begin
+    // with U+xx23 (the low byte of "#") is not mistaken for "#text".
+    expect(XML.parse(`<r é="丣"><У/><أ>1</أ><b/></r>`, { arrays: true })).toEqual({
+      r: { "@é": "丣", У: [""], أ: ["1"], b: [""] },
+    });
+    expect(XML.parse(`<r é="丣"><У/><b/></r>`, { arrays: ["У"] })).toEqual({ r: { "@é": "丣", У: [""], b: "" } });
+    // #text itself is never wrapped, in any encoding.
+    expect(XML.parse(`<r é="丣">t<b/></r>`, { arrays: true })).toEqual({ r: { "@é": "丣", "#text": "t", b: [""] } });
+    expect(XML.parse(Buffer.from(`<r>t<b/></r>`), { arrays: true })).toEqual({ r: { "#text": "t", b: [""] } });
     // Ignored for the tree shape.
     expect(XML.parse(`<r><a/></r>`, { compact: false, arrays: true }).children).toEqual([
       { name: "a", attributes: {}, children: [] },
@@ -838,8 +847,10 @@ describe("XML.stringify", () => {
     }
     expect(XML.stringify(new El("i", ["x"]))).toBe("<i>x</i>");
     // ...inside children any object is a node.
-    expect(() => XML.stringify({ name: "a", children: [{ foo: "bar" }] } as any)).toThrow("with a string name");
-    expect(() => XML.stringify({ name: "a", children: [{ comment: undefined }] } as any)).toThrow("with a string name");
+    expect(() => XML.stringify({ name: "a", children: [{ foo: "bar" }] } as any)).toThrow("element children must be");
+    expect(() => XML.stringify({ name: "a", children: [{ comment: undefined }] } as any)).toThrow(
+      "element children must be",
+    );
     expect(() => XML.stringify({ name: "a", children: "text" } as any)).toThrow("children must be an array");
     expect(() => XML.stringify({ name: "a", children: [], attributes: [] } as any)).toThrow(
       "attributes must be an object",
@@ -872,8 +883,9 @@ describe("XML.stringify", () => {
     expect(XML.stringify({ name: "a", children: [{ target: "xml-stylesheet", data: 'href="s.css"' }] })).toBe(
       `<a><?xml-stylesheet href="s.css"?></a>`,
     );
-    // A `name` makes it an element; other keys are ignored.
+    // A `name` makes it an element; other keys are ignored. Without one, `comment` and `target` together are an error.
     expect(XML.stringify({ name: "a", children: [{ name: "b", comment: "c" }] } as any)).toBe(`<a><b/></a>`);
+    expect(() => XML.stringify({ name: "a", children: [{ comment: "c", target: "p" }] } as any)).toThrow("both");
   });
 
   test("escaping keeps the document well-formed and round-trippable", () => {

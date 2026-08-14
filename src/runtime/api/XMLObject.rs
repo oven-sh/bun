@@ -182,7 +182,8 @@ fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     };
 
     let result = if is_node(global, root)? {
-        stringifier.stringify_node(global, root)
+        let name = root.get(global, "name")?;
+        stringifier.stringify_node(global, root, name)
     } else {
         stringifier.stringify_compact_document(global, root)
     };
@@ -318,13 +319,19 @@ impl Stringifier {
 
     // ── node tree ──────────────────────────────────────────────────────────
 
-    /// `{ name, attributes, children }` → `<name ...>children</name>`.
-    fn stringify_node(&mut self, global: &JSGlobalObject, node: JSValue) -> StringifyResult<()> {
+    /// `{ name, attributes, children }` → `<name ...>children</name>`;
+    /// `name` is the node's already-fetched `name` property.
+    fn stringify_node(
+        &mut self,
+        global: &JSGlobalObject,
+        node: JSValue,
+        name: Option<JSValue>,
+    ) -> StringifyResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
         }
         self.mark_visiting(global, node)?;
-        let result = self.stringify_node_inner(global, node);
+        let result = self.stringify_node_inner(global, node, name);
         self.visiting.remove(&node);
         result
     }
@@ -333,12 +340,13 @@ impl Stringifier {
         &mut self,
         global: &JSGlobalObject,
         node: JSValue,
+        name: Option<JSValue>,
     ) -> StringifyResult<()> {
-        let name = match node.get(global, "name")? {
+        let name = match name {
             Some(name) if name.is_string() => OwnedString::new(name.to_bun_string(global)?),
             _ => {
                 return Err(global
-                    .throw(format_args!("XML.stringify: element children must be strings or {{ name, attributes, children }} nodes with a string name"))
+                    .throw(format_args!("XML.stringify: element children must be strings, {{ name, attributes, children }} elements, {{ comment }} or {{ target, data }}"))
                     .into());
             }
         };
@@ -426,10 +434,11 @@ impl Stringifier {
                 // Inside `children` there is no compact/node ambiguity: any
                 // object is an element (`name`), a comment (`comment`) or a
                 // processing instruction (`target`).
-                if child.get(global, "name")?.is_none() && self.stringify_markup(global, child)? {
+                let name = child.get(global, "name")?;
+                if name.is_none() && self.stringify_markup(global, child)? {
                     continue;
                 }
-                self.stringify_node(global, child)?;
+                self.stringify_node(global, child, name)?;
             } else if child.is_array() {
                 return Err(global
                     .throw(format_args!(
@@ -459,6 +468,9 @@ impl Stringifier {
         child: JSValue,
     ) -> StringifyResult<bool> {
         if let Some(comment) = child.get(global, "comment")? {
+            if child.get(global, "target")?.is_some() {
+                return Err(global.throw(format_args!("XML.stringify: a child with both 'comment' and 'target' is neither a comment nor a processing instruction")).into());
+            }
             if !comment.is_string() {
                 return Err(global
                     .throw(format_args!(

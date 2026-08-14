@@ -1812,15 +1812,18 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
     /// `src[start..end]` as data handed on (a kept comment or processing
     /// instruction): line ends normalized if this is the document entity.
     fn kept(&self, start: usize, end: usize) -> &'a [U] {
-        let raw = &self.src[start..end];
         if !self.keep_markup {
             return &[];
         }
-        if self.frame_kind != FrameKind::Document || !raw.iter().any(|u| u.low() == b'\r') {
+        let raw = &self.src[start..end];
+        if self.frame_kind != FrameKind::Document {
             return raw;
         }
+        let Some(mut i) = find_ascii(raw, b"\r") else {
+            return raw;
+        };
         let mut out: ArenaVec<'a, U> = ArenaVec::with_capacity_in(raw.len(), self.bump);
-        let mut i = 0;
+        out.extend_from_slice(&raw[..i]);
         while i < raw.len() {
             if raw[i].low() == b'\r' {
                 out.push(U::ascii(b'\n'));
@@ -2267,10 +2270,11 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                     self.tag_degraded &= !self.in_document();
                     let pos = self.here();
                     let next = self.peek_at(self.pos + 1);
-                    if self.keep_markup
-                        && (next == b'?' || (next == b'!' && self.starts_with(b"<!--")))
-                    {
-                        if have_text!() {
+                    if next == b'?' || (next == b'!' && self.starts_with(b"<!--")) {
+                        if !self.keep_markup {
+                            flush!();
+                        } else if have_text!() {
+                            // The comment / PI is a token of its own; the run ends here.
                             self.finish_text(start, buf, text_pos);
                             return Ok(());
                         }
@@ -2285,17 +2289,15 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                             self.pos += 4;
                             Kind::Comment(self.scan_comment(pos)?)
                         };
-                        self.tok = Token {
-                            kind,
-                            pos,
-                            frame,
-                            spaced: false,
-                        };
-                        return Ok(());
-                    } else if next == b'!' && self.starts_with(b"<!--") {
-                        flush!();
-                        self.pos += 4;
-                        self.scan_comment(pos)?;
+                        if self.keep_markup {
+                            self.tok = Token {
+                                kind,
+                                pos,
+                                frame,
+                                spaced: false,
+                            };
+                            return Ok(());
+                        }
                         start = self.pos;
                     } else if next == b'!' && self.starts_with(b"<![CDATA[") {
                         let mut b = match buf.take() {
@@ -2313,12 +2315,6 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                         self.pos += 9;
                         self.scan_cdata(pos, &mut b)?;
                         buf = Some(b);
-                        start = self.pos;
-                    } else if next == b'?' {
-                        flush!();
-                        self.pos += 2;
-                        let pi = self.scan_pi(pos)?;
-                        debug_assert!(pi.is_some(), "content never starts the document");
                         start = self.pos;
                     } else if have_text!() {
                         // A tag ends the run; leave it for the next call.
@@ -2568,9 +2564,10 @@ impl<'a> Tape<'a> {
 struct CompactSink<'a, U: Unit> {
     tape: Tape<'a>,
     stack: Vec<CompactFrame<'a, U>>,
-    /// The text runs of every open element, oldest first; each frame owns
-    /// the tail from its `text_mark`. Concatenated when the element ends.
-    text_runs: Vec<&'a [U]>,
+    /// The text runs of every open element, oldest first, each with whether
+    /// it is whitespace only; a frame owns the tail from its `text_mark`.
+    /// Concatenated when the element ends.
+    text_runs: Vec<(&'a [U], bool)>,
     /// Recently built `@name` keys, direct-mapped by a cheap hash of the
     /// name: attribute names repeat, their keys need not be rebuilt.
     key_cache: [Option<E::Str>; KEY_CACHE_SIZE],
@@ -2586,61 +2583,54 @@ struct CompactSink<'a, U: Unit> {
 
 /// `Options::arrays`, with the names in the tape's encoding.
 pub struct ForcedArrays {
+    active: bool,
     all: bool,
     names: HashMap<Box<[u8]>, ()>,
+    /// `#text` in the tape's encoding: staged among the children, never wrapped.
+    text_key: &'static [u8],
 }
 
 impl ForcedArrays {
     fn new<U: Unit>(arrays: Arrays<'_>, encoding: InputEncoding) -> ForcedArrays {
         let mut names = HashMap::default();
-        let all = match arrays {
-            Arrays::Repeated => false,
-            Arrays::All => true,
-            Arrays::Names(list) => {
-                for &name in list {
-                    let key: Box<[u8]> = if U::WIDE {
-                        let mut units: Vec<u16> = Vec::with_capacity(name.len());
-                        let text = core::str::from_utf8(name).unwrap_or("");
-                        units.extend(text.encode_utf16());
-                        Box::from(U::bytes(
-                            // SAFETY: `U` is `u16` (`U::WIDE`).
-                            unsafe {
-                                core::slice::from_raw_parts(units.as_ptr().cast::<U>(), units.len())
-                            },
-                        ))
-                    } else if encoding == InputEncoding::Latin1 {
-                        // Names not representable in Latin-1 cannot occur in the document.
-                        let text = core::str::from_utf8(name).unwrap_or("");
-                        if text.chars().any(|c| c as u32 > 0xFF) {
-                            continue;
-                        }
-                        text.chars().map(|c| c as u8).collect()
-                    } else {
-                        Box::from(name)
-                    };
-                    let _ = names.insert(key, ());
-                }
-                false
+        if let Arrays::Names(list) = arrays {
+            for &name in list {
+                let text = core::str::from_utf8(name).unwrap_or("");
+                let key: Box<[u8]> = if U::WIDE {
+                    let units: Vec<u16> = text.encode_utf16().collect();
+                    Box::from(bytemuck::cast_slice::<u16, u8>(&units))
+                } else if encoding == InputEncoding::Latin1 {
+                    // A name Latin-1 cannot spell cannot occur in the document.
+                    if text.chars().any(|c| c as u32 > 0xFF) {
+                        continue;
+                    }
+                    text.chars().map(|c| c as u8).collect()
+                } else {
+                    Box::from(name)
+                };
+                let _ = names.insert(key, ());
             }
-        };
-        ForcedArrays { all, names }
-    }
-
-    #[inline]
-    fn active(&self) -> bool {
-        self.all || !self.names.is_empty()
+        }
+        let all = matches!(arrays, Arrays::All);
+        ForcedArrays {
+            active: all || !names.is_empty(),
+            all,
+            names,
+            text_key: U::bytes(U::KEY_TEXT),
+        }
     }
 
     #[inline]
     fn forces(&self, key: &[u8]) -> bool {
-        (self.all || self.names.contains_key(key)) && !key.is_empty() && key[0] != b'#'
+        (self.all || self.names.contains_key(key)) && key != self.text_key
     }
 }
 
 /// An open element. Its properties are staged on `Tape::props` from
 /// `props_mark`: the `@`-attributes, then one per child element as each one
 /// ends (repeats are folded when this element ends), with a `#text`
-/// placeholder where the first non-whitespace text run fell among them.
+/// placeholder where the first text run that is not whitespace-only fell
+/// among them.
 struct CompactFrame<'a, U: Unit> {
     name: &'a [U],
     loc: Loc,
@@ -2649,7 +2639,6 @@ struct CompactFrame<'a, U: Unit> {
     text_mark: u32,
     /// Index on `Tape::props` of this element's `#text` placeholder, or `u32::MAX`.
     text_prop: u32,
-    has_elements: bool,
 }
 
 const KEY_CACHE_SIZE: usize = 64;
@@ -2674,6 +2663,7 @@ struct Group {
     /// While gathering a repeated group: the next free slot of its run in
     /// `CompactSink::gathered`.
     cursor: u32,
+    /// Listed in `Options::arrays`: an array even as a singleton.
     forced: bool,
 }
 
@@ -2702,49 +2692,24 @@ impl<'a, U: Unit> CompactSink<'a, U> {
         }
     }
 
-    /// The element's character data: the runs from `mark`, concatenated —
-    /// every run when `exact` (no child elements), otherwise without the
-    /// whitespace-only runs, which are layout between the children. A single
-    /// surviving run is borrowed, not copied.
-    #[inline]
-    fn take_text(&mut self, mark: usize, exact: bool) -> &'a [U] {
+    /// The runs from `mark`, concatenated — all of them, or only those that
+    /// are not whitespace-only. A single surviving run is borrowed, not
+    /// copied.
+    fn concat_text(&self, mark: usize, skip_ws_only: bool) -> &'a [U] {
         let runs = &self.text_runs[mark..];
-        let text: &'a [U] = match runs {
-            [] => &[],
-            [one] if exact => one,
-            [one] => {
-                if is_ws_only(one) {
-                    &[]
-                } else {
-                    one
-                }
-            }
-            _ => self.join_text(mark, !exact),
-        };
-        self.text_runs.truncate(mark);
-        text
-    }
-
-    #[cold]
-    fn join_text(&mut self, mark: usize, has_elements: bool) -> &'a [U] {
-        let runs = &self.text_runs[mark..];
-        let keep = |r: &'a [U]| !has_elements || !is_ws_only(r);
-        let mut kept = runs.iter().copied().filter(|r| keep(r));
-        let (Some(first), second) = (kept.next(), kept.next()) else {
+        let mut kept = runs.iter().filter(|(_, ws)| !(skip_ws_only && *ws));
+        let Some(&(first, _)) = kept.next() else {
             return &[];
         };
-        if second.is_none() {
+        let Some(&(second, _)) = kept.next() else {
             return first;
-        }
-        let len = runs
-            .iter()
-            .copied()
-            .filter(|r| keep(r))
-            .map(<[U]>::len)
-            .sum();
+        };
+        let len = first.len() + second.len() + kept.map(|(r, _)| r.len()).sum::<usize>();
         let mut buf: ArenaVec<'a, U> = ArenaVec::with_capacity_in(len, self.tape.bump);
-        for r in runs.iter().copied().filter(|r| keep(r)) {
-            buf.extend_from_slice(r);
+        for &(run, ws) in runs {
+            if !(skip_ws_only && ws) {
+                buf.extend_from_slice(run);
+            }
         }
         buf.into_bump_slice()
     }
@@ -2756,12 +2721,6 @@ impl<'a, U: Unit> CompactSink<'a, U> {
     fn fold_repeats(&mut self, mark: usize) {
         let children = &self.tape.props[mark..];
         let n = children.len();
-        if self.forced.active() {
-            return self.fold_repeats_slow(mark);
-        }
-        if n < 2 {
-            return;
-        }
         // Usually every name is distinct: settle that cheaply first. A
         // 64-slot filter on (length, first, last byte) says "all distinct"
         // with no comparisons; a collision falls to comparing pairwise.
@@ -2799,10 +2758,19 @@ impl<'a, U: Unit> CompactSink<'a, U> {
         self.fold_repeats_slow(mark);
     }
 
+    /// `fold_repeats` proper; also the entry point when `Options::arrays` is
+    /// in force, since singletons may need wrapping too.
     #[cold]
     fn fold_repeats_slow(&mut self, mark: usize) {
         let children = &self.tape.props[mark..];
         let n = children.len();
+        let forced = &self.forced;
+        let mut any_forced = false;
+        let mut forces = |key: &[u8]| {
+            let f = forced.active && forced.forces(key);
+            any_forced |= f;
+            f
+        };
         // Group by name.
         self.groups.clear();
         self.group_of.clear();
@@ -2821,7 +2789,7 @@ impl<'a, U: Unit> CompactSink<'a, U> {
                     first: i as u32,
                     count: 1,
                     cursor: 0,
-                    forced: self.forced.forces(name),
+                    forced: forces(name),
                 });
             }
         } else {
@@ -2835,14 +2803,28 @@ impl<'a, U: Unit> CompactSink<'a, U> {
                         first: i as u32,
                         count: 0,
                         cursor: 0,
-                        forced: self.forced.forces(child.key.slice()),
+                        forced: forces(child.key.slice()),
                     });
                 }
                 self.groups[g as usize].count += 1;
                 self.group_of.push(g);
             }
         }
-        if self.groups.len() == n && !self.groups.iter().any(|g| g.forced) {
+        if self.groups.len() == n {
+            // No repeats: wrap the forced singletons where they stand.
+            if any_forced {
+                for (i, g) in self.groups.iter().enumerate() {
+                    if g.forced {
+                        let prop = &mut self.tape.props[mark + i];
+                        prop.value = E::JsonValue::Array(Tape::array_of(
+                            self.tape.tape,
+                            core::slice::from_ref(&prop.value),
+                            core::slice::from_ref(&self.tape.prop_locs[mark + i]),
+                            prop.key_loc,
+                        ));
+                    }
+                }
+            }
             return;
         }
         // Lay the values of array-valued names out group by group and cut
@@ -2886,14 +2868,25 @@ impl<'a, U: Unit> CompactSink<'a, U> {
         self.tape.prop_locs.truncate(mark + self.groups.len());
     }
 
+    /// An element with no child elements: its text if it has no attributes
+    /// either, else `{ "@attr".., "#text" }` (`#text` only if there is any).
+    #[inline]
+    fn leaf_value(&mut self, frame: &CompactFrame<'a, U>, text: &'a [U]) -> E::JsonValue {
+        if frame.attribute_count == 0 {
+            return Tape::str(text);
+        }
+        if !text.is_empty() {
+            self.tape
+                .push_prop(U::bytes(U::KEY_TEXT), Tape::str(text), frame.loc);
+        }
+        E::JsonValue::Object(self.tape.object_from(frame.props_mark as usize, frame.loc))
+    }
+
     /// Hands a finished element to its parent (or keeps it as the root).
     #[inline]
     fn deliver(&mut self, name: &'a [U], value: E::JsonValue, loc: Loc) {
-        match self.stack.last_mut() {
-            Some(parent) => {
-                parent.has_elements = true;
-                self.tape.push_prop(U::bytes(name), value, loc);
-            }
+        match self.stack.last() {
+            Some(_) => self.tape.push_prop(U::bytes(name), value, loc),
             None => self.root = Some((name, value, loc)),
         }
     }
@@ -2909,7 +2902,6 @@ impl<'a, U: Unit> Sink<'a, U> for CompactSink<'a, U> {
             props_mark: self.tape.props.len() as u32,
             text_mark: self.text_runs.len() as u32,
             text_prop: u32::MAX,
-            has_elements: false,
         });
     }
 
@@ -2940,58 +2932,55 @@ impl<'a, U: Unit> Sink<'a, U> for CompactSink<'a, U> {
 
     #[inline]
     fn text(&mut self, text: &'a [U], _loc: Loc) {
-        self.text_runs.push(text);
-        let frame = self.stack.last_mut().expect("text outside an element");
-        if frame.text_prop == u32::MAX && !is_ws_only(text) {
-            // Reserve `#text`'s place among the children; filled in at the end.
-            frame.text_prop = self.tape.props.len() as u32;
-            let loc = frame.loc;
-            self.tape
-                .push_prop(U::bytes(U::KEY_TEXT), E::JsonValue::Null, loc);
+        let ws_only = is_ws_only(text);
+        self.text_runs.push((text, ws_only));
+        if !ws_only {
+            let frame = self.stack.last_mut().expect("text outside an element");
+            if frame.text_prop == u32::MAX {
+                // Reserve `#text`'s place among the children; filled in at the end.
+                frame.text_prop = self.tape.props.len() as u32;
+                let loc = frame.loc;
+                self.tape
+                    .push_prop(U::bytes(U::KEY_TEXT), E::JsonValue::Null, loc);
+            }
         }
     }
 
     #[inline]
     fn end_leaf(&mut self, text: &'a [U], _loc: Loc) {
         let frame = self.stack.pop().expect("end_leaf without start_element");
-        let value = if frame.attribute_count == 0 {
-            Tape::str(text)
-        } else {
-            if !text.is_empty() {
-                self.tape
-                    .push_prop(U::bytes(U::KEY_TEXT), Tape::str(text), frame.loc);
-            }
-            E::JsonValue::Object(self.tape.object_from(frame.props_mark as usize, frame.loc))
-        };
+        let value = self.leaf_value(&frame, text);
         self.deliver(frame.name, value, frame.loc);
     }
 
     fn end_element(&mut self) {
         let frame = self.stack.pop().expect("end_element without start_element");
-        let bare = frame.attribute_count == 0 && !frame.has_elements;
-        // Only layout around child elements is ever left out of the text.
-        let text = self.take_text(frame.text_mark as usize, !frame.has_elements);
-        let props_mark = frame.props_mark as usize;
-        let children_mark = props_mark + frame.attribute_count as usize;
-        // No attributes and no child elements: the element is its text.
-        let value = if bare {
-            self.tape.props.truncate(props_mark);
-            self.tape.prop_locs.truncate(props_mark);
-            Tape::str(text)
+        let text_mark = frame.text_mark as usize;
+        let children_mark = frame.props_mark as usize + frame.attribute_count as usize;
+        let has_text = frame.text_prop != u32::MAX;
+        // Past the attributes, `props` holds one entry per child element plus
+        // the `#text` placeholder if there is one.
+        let has_elements = self.tape.props.len() > children_mark + usize::from(has_text);
+        let value = if !has_elements {
+            // Every run, exactly; the placeholder (if any) is re-made last.
+            let text = self.concat_text(text_mark, false);
+            self.tape.props.truncate(children_mark);
+            self.tape.prop_locs.truncate(children_mark);
+            self.leaf_value(&frame, text)
         } else {
-            if frame.text_prop != u32::MAX {
-                debug_assert!(!text.is_empty());
+            // Whitespace-only runs between child elements are layout.
+            if has_text {
+                let text = self.concat_text(text_mark, true);
                 self.tape.props[frame.text_prop as usize].value = Tape::str(text);
-            } else if !text.is_empty() {
-                // Whitespace-only text of an element without child elements.
-                self.tape
-                    .push_prop(U::bytes(U::KEY_TEXT), Tape::str(text), frame.loc);
             }
-            if self.tape.props.len() > children_mark + 1 || self.forced.active() {
+            if self.forced.active {
+                self.fold_repeats_slow(children_mark);
+            } else if self.tape.props.len() > children_mark + 1 {
                 self.fold_repeats(children_mark);
             }
-            E::JsonValue::Object(self.tape.object_from(props_mark, frame.loc))
+            E::JsonValue::Object(self.tape.object_from(frame.props_mark as usize, frame.loc))
         };
+        self.text_runs.truncate(text_mark);
         self.deliver(frame.name, value, frame.loc);
     }
 

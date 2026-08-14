@@ -1648,6 +1648,8 @@ test("a module whose evaluation times out is errored", async () => {
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT|Script execution timed out after 20ms errored ERR_SCRIPT_EXECUTION_TIMEOUT\n");
+  expect(stdout).toBe(
+    "ERR_SCRIPT_EXECUTION_TIMEOUT|Script execution timed out after 20ms errored ERR_SCRIPT_EXECUTION_TIMEOUT\n",
+  );
   expect(exitCode).toBe(0);
 }, 30_000);

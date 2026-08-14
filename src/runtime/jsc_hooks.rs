@@ -3994,12 +3994,17 @@ unsafe fn fetch_builtin_module(
                 // (resolved through the `/$bunfs/` virtual root).
                 // `new Database(bytes)` rejects an empty buffer, but a 0-byte
                 // file is a valid empty database, which `:memory:` also is.
+                // The IIFE keeps `bytes` collectable: `Database` copies them
+                // into sqlite, and a module-level binding would pin a second
+                // copy of the database for the life of the process.
                 const SQLITE_MODULE_SOURCE_STANDALONE: &[u8] = b"\
 /* Generated code */
 import {Database} from 'bun:sqlite';
 import {readFileSync} from 'node:fs';
-const bytes = readFileSync(import.meta.path);
-export const db = bytes.byteLength === 0 ? new Database(':memory:') : new Database(bytes);
+export const db = (() => {
+  const bytes = readFileSync(import.meta.path);
+  return bytes.byteLength === 0 ? new Database(':memory:') : new Database(bytes);
+})();
 
 export const __esModule = true;
 export default db;

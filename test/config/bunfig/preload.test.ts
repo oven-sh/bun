@@ -1,5 +1,5 @@
 import type { SpawnOptions } from "bun";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, fakeNodeRun } from "harness";
 import { join, resolve } from "path";
 
 const fixturePath = (...segs: string[]) => resolve(import.meta.dirname, "fixtures", "preload", ...segs);
@@ -91,16 +91,24 @@ describe("Given a `bunfig.toml` with a list of preloads", () => {
     //
     "--preload ./preload3.ts",
     "--preload=./preload3.ts",
-    // FIXME: Tests are failing due to active bugs
+    // `bun run` loads bunfig.toml after argv has been applied.
+    "--preload=./preload3.ts run",
+    "run --preload ./preload3.ts",
+    "run --preload=./preload3.ts",
+    // FIXME: `bun --preload ./preload3.ts run cli-merge.ts` takes `./preload3.ts` for the subcommand
+    // name, so it runs as `bun run` with no target and only prints the usage text.
     // "--preload ./preload3.ts run",
-    // "--preload=./preload3.ts run",
-    // "run --preload ./preload3.ts",
-    // "run --preload=./preload3.ts",
   ])("When `bun %s cli-merge.ts` is run, `--preload` adds the target file to the list of preloads", async args => {
     const [out, err, code] = await run("cli-merge.ts", { args: args.split(" "), cwd: dir });
     expect(err).toBeEmpty();
     expect(out).toBeEmpty();
     expect(code).toBe(0);
+  });
+
+  // The `node` shim loads bunfig.toml the same way `bun run` does.
+  it("When run as `node -r ./preload3.ts cli-merge.ts`, the preload is added after the ones from bunfig.toml", () => {
+    // fakeNodeRun throws, with the assertion message from cli-merge.ts, when the list is wrong.
+    expect(fakeNodeRun(dir, ["-r", "./preload3.ts", "cli-merge.ts"])).toEqual({ stdout: "", stderr: "" });
   });
 }); // </given a `bunfig.toml` with a list of preloads>
 

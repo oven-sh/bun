@@ -44,6 +44,36 @@ pub struct ContextData {
 
     pub preloads: Vec<Box<[u8]>>,
     pub has_loaded_global_config: bool,
+    pub cli_overrides: CliOverrides,
+}
+
+/// Settings that were given on the command line.
+///
+/// bunfig.toml is usually parsed before argv is applied, so argv simply
+/// overwrites it. `bun run <target>`, the `node` shim, `bun repl` and
+/// standalone executables only load it afterwards (the `loaded_bunfig`
+/// checks in run_command.rs and repl_command.rs); the bunfig parser skips the
+/// keys recorded here so the command line wins in that order too.
+#[derive(Clone, Copy, Default)]
+pub struct CliOverrides {
+    /// `--define`
+    pub define: bool,
+    /// `--loader`
+    pub loaders: bool,
+    /// `--jsx-runtime`
+    pub jsx_runtime: bool,
+    /// `--jsx-factory`
+    pub jsx_factory: bool,
+    /// `--jsx-fragment`
+    pub jsx_fragment: bool,
+    /// `--jsx-import-source`
+    pub jsx_import_source: bool,
+    /// `--console-depth`
+    pub console_depth: bool,
+    /// `--install`, `-i` or `--no-install`
+    pub auto_install: bool,
+    /// `--no-macros`
+    pub macros: bool,
 }
 
 impl Default for ContextData {
@@ -84,6 +114,7 @@ impl Default for ContextData {
             no_exit_on_error: false,
             preloads: Vec::new(),
             has_loaded_global_config: false,
+            cli_overrides: CliOverrides::default(),
         }
     }
 }

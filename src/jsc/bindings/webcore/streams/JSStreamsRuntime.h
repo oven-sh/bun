@@ -147,6 +147,12 @@ namespace WebCore {
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_TS_CONTROLLER(V) \
     V(onTSPerformTransformRejected)
 
+// owner: JSCompressionStreamShared.cpp. context = the JSCompressionStream / JSDecompressionStream
+// (a JSTransformStream) whose codec chunk parked mid-way; registered on the readable side's
+// backpressureChangePromise or on the native sink's ready promise.
+#define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_CODEC(V) \
+    V(onCodecChunkResume)
+
 // owner: CrossRealmTransform.cpp (transferable streams are not implemented; the handler may
 // assert-not-reached). context = the JSCrossRealmTransformState.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_CROSS_REALM(V) \
@@ -227,6 +233,7 @@ namespace WebCore {
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_WS_CONTROLLER(V)         \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_TS_OPERATIONS(V)         \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_TS_CONTROLLER(V)         \
+    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_CODEC(V)                 \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_CROSS_REALM(V)           \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_BUN_SOURCE(V)            \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_DIRECT_CONTROLLER(V)     \

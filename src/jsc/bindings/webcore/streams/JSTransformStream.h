@@ -59,23 +59,29 @@ public:
     // ClearAlgorithms defers the eager free to the arm's epilogue instead.
     bool m_nativeStateInUse : 1 { false };
     bool m_nativeStateReleasePending : 1 { false };
-    // An off-thread codec task holds the coder; ClearAlgorithms / runNativeArm must defer
-    // the free until the task's JS-thread completion clears this.
+    // An off-thread codec step holds the coder; ClearAlgorithms / runNativeArm must defer
+    // the free until the step's JS-thread completion clears this.
     bool m_asyncCodecInFlight : 1 { false };
+    // Compression/Decompression only: the chunk behind m_codecPromise started on the thread
+    // pool, so its remaining steps are dispatched there too (never run on this thread).
+    bool m_codecChunkOffThread : 1 { false };
 
     // Native byte-producing subclasses only: when `readStreamIntoSink` attaches a
     // native JSSink controller to this transform, the transform arms write coder
     // output straight to `m_nativeSinkPtr` via the Rust SinkHandle dispatcher
     // (Bun__NativeTransformSink__writeBytes) instead of wrapping it in a
     // JSUint8Array and enqueueing on the readable.
-    // `m_nativeSinkReadyPromise` is the transform-algorithm result returned on
-    // sink backpressure; the sink's onReady resolves it.
+    // `m_nativeSinkReadyPromise` is whatever promise the arm parked on sink
+    // backpressure (the transform-algorithm result itself, or a codec chunk's
+    // resume gate); the sink's onReady (or detaching from the sink) resolves it.
     JSC::WriteBarrier<JSC::JSObject> m_nativeSinkCell;
     JSC::WriteBarrier<JSC::JSPromise> m_nativeSinkReadyPromise;
-    // Pending transform-algorithm promise for the off-thread codec step; the
-    // WorkTask's single `Strong` roots this cell and this barrier keeps the
-    // promise alive until deliverAsync settles it.
-    JSC::WriteBarrier<JSC::JSPromise> m_asyncCodecPromise;
+    // Compression/Decompression only: the transform-algorithm promise of a chunk (or
+    // flush) whose codec steps span turns, because a step ran off-thread or stopped at
+    // the coder's output cap and is parked until the consumer has room. Set means the
+    // coder still holds that chunk's state, so ClearAlgorithms defers the coder release
+    // to the chunk's terminal (JSCompressionStreamShared.cpp).
+    JSC::WriteBarrier<JSC::JSPromise> m_codecPromise;
     void* m_nativeSinkPtr { nullptr };
     uint8_t m_nativeSinkId { 0 };
 

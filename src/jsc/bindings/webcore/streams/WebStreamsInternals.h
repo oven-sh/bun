@@ -463,6 +463,10 @@ void transformStreamDefaultControllerClearAlgorithms(JSTransformStreamDefaultCon
 // completion, errors the writable, then throws stream.[[readable]].[[storedError]]).
 void transformStreamDefaultControllerEnqueue(JSC::JSGlobalObject*, JSTransformStreamDefaultController*, JSC::JSValue chunk); // userJS: yes; throws — JSTransformStreamDefaultController.cpp
 void nativeTransformReleaseState(JSTransformStream*); // userJS: no — JSTransformStreamDefaultController.cpp
+// Performs the release ClearAlgorithms deferred (m_nativeStateReleasePending), provided nothing
+// holds the native state any more: no arm on the stack, no off-thread codec step, no codec
+// chunk pending across turns. No-op otherwise.
+void nativeTransformReleaseStateIfIdle(JSTransformStream*); // userJS: no — JSTransformStreamDefaultController.cpp
 
 // Rust-side single dispatch for the native-transform → native-JSSink byte write, routed
 // through SinkHandle::write (src/runtime/webcore/Sink.rs). Returns a negative number for
@@ -482,8 +486,8 @@ JSC::JSPromise* runNativeArm(JSC::JSCell* context, Arm&& arm)
     stream->m_nativeStateInUse = true;
     JSC::JSPromise* result = arm(stream);
     stream->m_nativeStateInUse = false;
-    if (stream->m_nativeStateReleasePending && !stream->m_asyncCodecInFlight) [[unlikely]]
-        nativeTransformReleaseState(stream);
+    if (stream->m_nativeStateReleasePending) [[unlikely]]
+        nativeTransformReleaseStateIfIdle(stream);
     return result;
 }
 void transformStreamDefaultControllerError(JSC::JSGlobalObject*, JSTransformStreamDefaultController*, JSC::JSValue error); // userJS: yes — JSTransformStreamDefaultController.cpp

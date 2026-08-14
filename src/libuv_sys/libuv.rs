@@ -2725,6 +2725,9 @@ unsafe extern "C" {
     pub fn uv_update_time(loop_: *mut Loop);
     pub fn uv_now(loop_: *const Loop) -> u64;
 
+    // errors
+    pub fn uv_translate_sys_error(sys_errno: c_int) -> c_int;
+
     // handle/req
     pub fn uv_handle_size(type_: uv_handle_type) -> usize;
     pub fn uv_handle_get_type(handle: *const uv_handle_t) -> uv_handle_type;
@@ -2845,6 +2848,7 @@ unsafe extern "C" {
     pub fn uv_uptime(uptime: *mut f64) -> c_int;
     pub fn uv_getrusage(rusage: *mut uv_rusage_t) -> c_int;
     pub fn uv_os_homedir(buffer: *mut u8, size: *mut usize) -> ReturnCode;
+    pub fn uv_os_getppid() -> uv_pid_t;
     pub fn uv_os_getpriority(pid: uv_pid_t, priority: *mut c_int) -> c_int;
     pub fn uv_cpu_info(cpu_infos: *mut *mut uv_cpu_info_t, count: *mut c_int) -> c_int;
     pub fn uv_free_cpu_info(cpu_infos: *mut uv_cpu_info_t, count: c_int);

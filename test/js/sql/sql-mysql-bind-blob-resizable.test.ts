@@ -46,8 +46,14 @@ function assertFixtureOutput(stdout: string, exitCode: number) {
     gotHex: expectedHex(),
     name: "evil",
     match: true,
+    wasmCalls: expect.any(Number),
+    wasmOriginalHex: expectedHex(),
+    wasmGotHex: expectedHex(),
+    wasmName: "evil",
+    wasmMatch: true,
   });
   expect(payload.calls).toBeGreaterThanOrEqual(2);
+  expect(payload.wasmCalls).toBeGreaterThanOrEqual(2);
   expect(exitCode).toBe(0);
 }
 

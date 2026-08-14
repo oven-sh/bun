@@ -8,6 +8,7 @@ import {
   isASAN,
   isDebug,
   isWindows,
+  normalizeBunSnapshot,
   tempDir,
   tempDirWithFiles,
   tempDirWithFilesAnon,
@@ -1357,6 +1358,196 @@ export { greeting };`,
     // The build actually succeeds because the import is being resolved to nothing
     // What matters is that callbacks fired before promise settled
     expect(result.success).toBeDefined();
+  });
+});
+
+// The tests above pass the tsconfig.json the bundler would have found by itself. These pass a
+// file the bundler would never pick up on its own, so they only pass if the option is honored.
+describe.concurrent("tsconfig option overrides the tsconfig.json found on disk", () => {
+  const pathsTo = (target: string) => JSON.stringify({ compilerOptions: { paths: { "@/*": [`./${target}/*`] } } });
+
+  // The shape from https://github.com/oven-sh/bun/issues/26793: a build script in the project
+  // root, which the runtime has already resolved (and cached the directory of) before
+  // Bun.build() runs.
+  test("resolves paths from a tsconfig that is not the project's tsconfig.json", async () => {
+    using dir = tempDir("build-api-tsconfig-custom", {
+      "tsconfig.custom.json": pathsTo("src"),
+      "src/index.ts": `export { where } from "@/where";`,
+      "src/where.ts": `export const where = "FROM_CUSTOM_TSCONFIG";`,
+      "build.ts": `
+        const result = await Bun.build({
+          entrypoints: ["./src/index.ts"],
+          tsconfig: "./tsconfig.custom.json",
+          throw: false,
+        });
+        console.log(JSON.stringify({
+          success: result.success,
+          logs: result.logs.map(String),
+          bundlesCustom: result.success && (await result.outputs[0].text()).includes("FROM_CUSTOM_TSCONFIG"),
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ success: true, logs: [], bundlesCustom: true });
+    expect(exitCode).toBe(0);
+  });
+
+  test("wins over the project's tsconfig.json for that build only", async () => {
+    using dir = tempDir("build-api-tsconfig-precedence", {
+      "tsconfig.json": pathsTo("from-tsconfig-json"),
+      "tsconfig.build.json": pathsTo("from-override"),
+      "index.ts": `export { where } from "@/where";`,
+      "from-tsconfig-json/where.ts": `export const where = "tsconfig.json";`,
+      "from-override/where.ts": `export const where = "override";`,
+      "build.ts": `
+        const where = async (config: Partial<Parameters<typeof Bun.build>[0]>) => {
+          const result = await Bun.build({ entrypoints: ["./index.ts"], ...config });
+          return /where = "([^"]+)"/.exec(await result.outputs[0].text())![1];
+        };
+        console.log(JSON.stringify({
+          withOverride: await where({ tsconfig: "./tsconfig.build.json" }),
+          // Neither a later build nor the runtime's own resolver may see the override: the
+          // directory cache they all share still describes what is on disk.
+          withoutOverride: await where({}),
+          runtime: Bun.resolveSync("@/where", import.meta.dir).split(/[\\\\/]/).slice(-2).join("/"),
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      withOverride: "override",
+      withoutOverride: "tsconfig.json",
+      runtime: "from-tsconfig-json/where.ts",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("follows the override's extends chain", async () => {
+    using dir = tempDir("build-api-tsconfig-extends", {
+      "tsconfig.build.json": JSON.stringify({ extends: "./tsconfig.base.json" }),
+      "tsconfig.base.json": pathsTo("lib"),
+      "index.ts": `export { where } from "@/where";`,
+      "lib/where.ts": `export const where = "FROM_BASE_TSCONFIG";`,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "index.ts")],
+      tsconfig: join(String(dir), "tsconfig.build.json"),
+    });
+    expect(await result.outputs[0].text()).toContain("FROM_BASE_TSCONFIG");
+  });
+
+  test("bundles path-aliased local files with packages: 'external'", async () => {
+    using dir = tempDir("build-api-tsconfig-packages-external", {
+      "tsconfig.build.json": pathsTo("lib"),
+      "index.ts": `export { where } from "@/where";`,
+      "lib/where.ts": `export const where = "FROM_ALIASED_LOCAL_FILE";`,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "index.ts")],
+      tsconfig: join(String(dir), "tsconfig.build.json"),
+      packages: "external",
+    });
+    const output = await result.outputs[0].text();
+    expect(output).toContain("FROM_ALIASED_LOCAL_FILE");
+    expect(output).not.toContain("@/where");
+  });
+
+  test("applies the override's compilerOptions to every file, like --tsconfig-override", async () => {
+    using dir = tempDir("build-api-tsconfig-jsx", {
+      "tsconfig.build.json": JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: "h" } }),
+      "index.tsx": `
+        import { h } from "./h";
+        export const element = <main />;
+      `,
+      "h.ts": `export const h = (tag: string) => tag;`,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "index.tsx")],
+      tsconfig: join(String(dir), "tsconfig.build.json"),
+    });
+    expect(await result.outputs[0].text()).toContain('h("main", null)');
+  });
+
+  test("fails the build when the file does not exist", async () => {
+    using dir = tempDir("build-api-tsconfig-missing", {
+      "index.ts": `export const x = 1;`,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "index.ts")],
+      tsconfig: join(String(dir), "tsconfig.missing.json"),
+      throw: false,
+    });
+    expect(result.logs.map(log => normalizeBunSnapshot(log.message, String(dir)))).toEqual([
+      'Cannot find tsconfig file "<dir>/tsconfig.missing.json"',
+    ]);
+    expect(result.success).toBe(false);
+  });
+
+  test("fails the build when the file does not parse", async () => {
+    using dir = tempDir("build-api-tsconfig-invalid", {
+      "index.ts": `export const x = 1;`,
+      "tsconfig.bad.json": `{ "compilerOptions": nope }`,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "index.ts")],
+      tsconfig: join(String(dir), "tsconfig.bad.json"),
+      throw: false,
+    });
+    expect(
+      result.logs.map(log => ({
+        message: log.message,
+        file: normalizeBunSnapshot(log.position!.file, String(dir)),
+        line: log.position!.line,
+        lineText: log.position!.lineText,
+      })),
+    ).toEqual([
+      {
+        message: "Unexpected nope",
+        file: "<dir>/tsconfig.bad.json",
+        line: 1,
+        lineText: `{ "compilerOptions": nope }`,
+      },
+    ]);
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects a non-string value", () => {
+    expect(() => {
+      Bun.build({
+        entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
+        // @ts-expect-error
+        tsconfig: 123,
+      });
+    }).toThrow('The "tsconfig" property must be of type string, got number');
+  });
+
+  test("an empty string means no override", async () => {
+    using dir = tempDir("build-api-tsconfig-empty", {
+      "tsconfig.json": pathsTo("lib"),
+      "index.ts": `export { where } from "@/where";`,
+      "lib/where.ts": `export const where = "FROM_TSCONFIG_JSON";`,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "index.ts")],
+      tsconfig: "",
+    });
+    expect(await result.outputs[0].text()).toContain("FROM_TSCONFIG_JSON");
   });
 });
 

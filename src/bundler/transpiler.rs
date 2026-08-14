@@ -170,7 +170,7 @@ impl<'a> Transpiler<'a> {
     /// so free `BundleOptions` here. `log`/`fs`/`env` are aliased/singletons; left alone.
     /// `resolver` is a value field whose caches alias process-global BSSMaps, so the
     /// resolver itself stays put — only its owned `opts` projection (cloned in
-    /// `resolver_bundle_options_subset`) is released.
+    /// `resolver_bundle_options_subset`) and parsed tsconfig override are released.
     ///
     /// # Safety
     /// Calls `drop_in_place` on `options` / `result` / `resolver.opts` /
@@ -190,6 +190,7 @@ impl<'a> Transpiler<'a> {
         if let Some(ctx) = self.macro_context.take() {
             ctx.deinit();
         }
+        drop(self.resolver.tsconfig_override_json.take());
         // SAFETY: `options`, `result`, and `resolver.opts` are init'd and never
         // read past `destroy()` / the `--changed` scan teardown. Caller upholds
         // the no-auto-drop contract above.

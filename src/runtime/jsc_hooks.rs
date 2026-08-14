@@ -3988,16 +3988,18 @@ unsafe fn fetch_builtin_module(
             use bun_standalone_graph::StandaloneModuleGraph::ModuleFormat;
 
             if matches!(file.loader, Loader::Sqlite | Loader::SqliteEmbedded) {
-                // Unlike [`SQLITE_MODULE_SOURCE`], this reads the embedded blob
-                // back through the `/$bunfs/` virtual root. `new Database(bytes)`
-                // rejects an empty blob, hence `:memory:`; the IIFE keeps `bytes`
-                // collectable.
+                // Distinct from
+                // [`SQLITE_MODULE_SOURCE`]: the standalone-binary path reads
+                // the embedded blob via `readFileSync(import.meta.path)`
+                // (resolved through the `/$bunfs/` virtual root).
                 const SQLITE_MODULE_SOURCE_STANDALONE: &[u8] = b"\
 /* Generated code */
 import {Database} from 'bun:sqlite';
 import {readFileSync} from 'node:fs';
 export const db = (() => {
+  // Scoped so the copy of the file can be collected once sqlite has it.
   const bytes = readFileSync(import.meta.path);
+  // An empty file is an empty database, but Database rejects empty buffers.
   return bytes.byteLength === 0 ? new Database(':memory:') : new Database(bytes);
 })();
 

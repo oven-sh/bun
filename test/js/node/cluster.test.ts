@@ -531,7 +531,9 @@ if (cluster.isPrimary) {
 test.skipIf(isWindows).each(["SCHED_RR", "SCHED_NONE"])(
   "%s: resetAndDestroy() on a worker's accepted sockets rejects unix-path connections and resets TCP ones",
   async policy => {
-    using dir = tempDir("cluster-reset-handle-type", {
+    // Short names: the primary connects to the absolute path, which has to fit
+    // in sun_path (104 bytes on macOS) together with the default TMPDIR.
+    using dir = tempDir("cl-reset", {
       "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
@@ -562,7 +564,7 @@ if (cluster.isPrimary) {
       if ("unix" in result && "tcp" in result) process.send(result);
     };
   }
-  net.createServer(report("unix")).listen(path.join(__dirname, "worker.sock"));
+  net.createServer(report("unix")).listen(path.join(__dirname, "w.sock"));
   net.createServer(report("tcp")).listen(0, "127.0.0.1");
 }
 `,

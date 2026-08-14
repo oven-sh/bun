@@ -48,8 +48,7 @@ extern "C" fn node_module_paths_js_value(
         sliced.slice()
     };
     let mut buf = bun_paths::path_buffer_pool::get();
-    // `in_str` is whatever JS passed to `Module._nodeModulePaths`; like Node,
-    // this is string manipulation and has no path-length limit.
+    // Like Node's `_nodeModulePaths`, pure string manipulation: no length limit.
     let mut spill = Vec::new();
 
     let mut full_path: &[u8] = resolve_path::join_abs_string_buf_spill::<bun_paths::platform::Auto>(

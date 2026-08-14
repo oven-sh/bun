@@ -2390,18 +2390,25 @@ function attachServerTLSEngine(self, connection, tls) {
   self._handle = result;
 }
 
+// A failed adoption owns both sockets: the wrap reports the failure, and the
+// connection dies with it (mirrors the client 'connect' path; nothing else
+// holds a connection wrapped inline).
+function failServerAdoption(self, connection, err) {
+  self._handle = null;
+  connection.destroy();
+  self.destroy(err);
+}
+
 // Deferred a tick so plain writes made by later 'connection' listeners are seen below.
 function adoptServerTLS(self, connection, tls) {
   if (self.destroyed || connection.destroyed) {
-    // A destroyed wrap releases the connection it would have owned (mirrors the client 'connect' path).
-    connection.destroy();
-    self.destroy();
+    failServerAdoption(self, connection);
     return;
   }
   // Re-read: family autoselection swaps handles while connecting, and the result may be a pipe.
   const handle = connection._handle;
   if (!handle) {
-    self.destroy();
+    failServerAdoption(self, connection);
     return;
   }
   if (isNamedPipeSocket(handle) || hasUnflushedWrites(connection)) {
@@ -2409,7 +2416,7 @@ function adoptServerTLS(self, connection, tls) {
       attachServerTLSEngine(self, connection, tls);
     } catch (err) {
       // No caller to throw to here, unlike the synchronous engine branch.
-      self.destroy(err);
+      failServerAdoption(self, connection, err);
       return;
     }
     self.emit(kUpgradeAttached);
@@ -2428,13 +2435,11 @@ function adoptServerTLS(self, connection, tls) {
     });
   } catch (err) {
     // e.g. the peer reset a connection that still had unread bytes: the handle outlives the native socket.
-    self._handle = null;
-    self.destroy(err);
+    failServerAdoption(self, connection, err);
     return;
   }
   if (!result) {
-    self._handle = null;
-    self.destroy(new Error("Invalid socket"));
+    failServerAdoption(self, connection, new Error("Invalid socket"));
     return;
   }
   const [raw, tlsHandle] = result;

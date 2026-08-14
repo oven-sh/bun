@@ -2192,6 +2192,8 @@ it("fails a server wrap on the wrap's 'error' when the deferred stream engine re
     await listening.promise;
     outgoing = net.connect((rawServer.address() as AddressInfo).port, "127.0.0.1");
     const conn = await accepted.promise;
+    const connClosed = Promise.withResolvers<void>();
+    conn.on("close", connClosed.resolve);
     wrapped = new TLSSocket(conn, { isServer: true, secureContext: { context: {} } as any });
     const failed = Promise.withResolvers<Error>();
     const closed = Promise.withResolvers<void>();
@@ -2203,6 +2205,39 @@ it("fails a server wrap on the wrap's 'error' when the deferred stream engine re
     conn.write("banner");
     expect((await failed.promise).message).toContain("SecureContext");
     await closed.promise;
+    // The refusal releases the connection along with the wrap.
+    await connClosed.promise;
+    expect(conn.destroyed).toBe(true);
+  } finally {
+    wrapped?.destroy();
+    outgoing?.destroy();
+    rawServer.close();
+  }
+});
+
+it("releases the connection when the deferred adoption refuses the options", async () => {
+  // Same refusal through the native adoption branch (no queued writes): the
+  // wrap reports the error and the connection must not stay open and refed
+  // with no owner.
+  const accepted = Promise.withResolvers<net.Socket>();
+  const rawServer = net.createServer(accepted.resolve);
+  let outgoing: net.Socket | undefined;
+  let wrapped: TLSSocket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    rawServer.once("error", listening.reject);
+    rawServer.listen(0, "127.0.0.1", listening.resolve);
+    await listening.promise;
+    outgoing = net.connect((rawServer.address() as AddressInfo).port, "127.0.0.1");
+    const conn = await accepted.promise;
+    const connClosed = Promise.withResolvers<void>();
+    conn.on("close", connClosed.resolve);
+    wrapped = new TLSSocket(conn, { isServer: true, secureContext: { context: {} } as any });
+    const failed = Promise.withResolvers<Error>();
+    wrapped.on("error", failed.resolve);
+    expect((await failed.promise).message).toContain("SecureContext");
+    await connClosed.promise;
+    expect(conn.destroyed).toBe(true);
   } finally {
     wrapped?.destroy();
     outgoing?.destroy();

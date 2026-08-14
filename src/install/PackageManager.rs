@@ -487,6 +487,13 @@ impl Subcommand {
         matches!(self, Self::Audit | Self::Pm | Self::Info)
     }
 
+    pub(crate) fn wants_missing_package_json_error(self) -> bool {
+        matches!(
+            self,
+            Self::Update | Self::Remove | Self::Patch | Self::PatchCommit
+        )
+    }
+
     // TODO: make all subcommands find root and chdir
     pub(crate) fn should_chdir_to_root(self) -> bool {
         !matches!(self, Self::Link)
@@ -1601,6 +1608,12 @@ pub fn init(
                 }
             }
 
+            if cli.global && !subcommand.wants_missing_package_json_error() {
+                // cwd is the global dir (fchdir'd above), so create lands there.
+                this_cwd = original_cwd;
+                created_package_json = true;
+                break 'child attempt_to_create_package_json_and_open()?;
+            }
             if subcommand == Subcommand::Install {
                 if cli.positionals.len() > 1 {
                     // this is `bun add <package>`.

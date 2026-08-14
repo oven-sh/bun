@@ -43,7 +43,8 @@ pub(crate) fn mark_chunks_with_transitive_use_client(
 
     let parse_graph = c.parse_graph();
     let mut visitor = StaticRouteVisitor {
-        all_import_records: parse_graph.ast.items_import_records(),
+        // The linker's copy is the one `LinkerGraph::load` pointed at the proxies.
+        all_import_records: c.graph.ast.items_import_records(),
         referenced_source_indices: parse_graph
             .server_component_boundaries
             .list

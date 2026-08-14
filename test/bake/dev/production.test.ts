@@ -597,6 +597,8 @@ export default function IndexPage() {
 
   // The <script> that hydrates a prerendered route. Routes without client components don't get one.
   const clientEntryScript = /<script type="module" src="\/_bun\/[^"]+\.js"/;
+  // The row of the inlined RSC payload that refers to the `Client` export as a client reference.
+  const clientReferenceRow = /:I\["[^"]+",\[\],"Client"\]/;
 
   const clientComponentFiles = {
     "src/index.tsx": `export default { app: { framework: "react" } };`,
@@ -634,8 +636,9 @@ export const value = 1;`,
     </div>
   );
 }`,
-      // The same module imported statically by another route, so its code is shared by
-      // both routes and the import() above has to resolve to the module's own chunk.
+      // The same module imported statically by another route. Its code then lands in a chunk
+      // shared with this route, and the import() above has to resolve to the module's own chunk
+      // rather than the shared one, whose exports have minified names (the keys above catch that).
       "pages/static-import.tsx": `import { Client } from "../components/Client";
 
 export default function StaticImportPage() {
@@ -647,12 +650,13 @@ export default function StaticImportPage() {
 
     const index = await html("");
     expect(index).toContain("<span>Client,value</span><b>client</b>");
+    expect(index).toMatch(clientReferenceRow);
     expect(index).toMatch(clientEntryScript);
 
     const staticImport = await html("static-import");
     expect(staticImport).toContain("<div><b>client</b></div>");
     expect(staticImport).toMatch(clientEntryScript);
-  }, 30_000);
+  });
 
   test("a route that only reaches a client component through import() is not fully static", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-dynamic-import-static-route", {
@@ -677,11 +681,12 @@ export function renderClient() {
 
     const index = await html("");
     expect(index).toContain("<div><b>client</b></div>");
+    expect(index).toMatch(clientReferenceRow);
     expect(index).toMatch(clientEntryScript);
 
     // import() of a module without client components keeps the route fully static.
     const plain = await html("plain");
     expect(plain).toContain("<div>no client components here</div>");
     expect(plain).not.toMatch(clientEntryScript);
-  }, 30_000);
+  });
 });

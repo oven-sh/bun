@@ -210,6 +210,7 @@ pub struct LinkerGraph<'a> {
     /// Index from `.parse_graph.input_files` to index in `.files`
     pub(crate) stable_source_indices: Vec<u32>,
 
+    /// The original file of every `"use client"` boundary. See `load`.
     pub(crate) is_scb_bitset: BitSet,
 
     /// This is for cross-module inlining of detected inlinable constants
@@ -754,7 +755,6 @@ impl<'a> LinkerGraph<'a> {
                                 .is_scb_bitset
                                 .is_set(import_record.source_index.get() as usize)
                         {
-                            // Only rewrite if this is an original SCB file, not a reference file
                             if let Some(ref_index) =
                                 scb.get_reference_source_index(import_record.source_index.get())
                             {
@@ -762,7 +762,6 @@ impl<'a> LinkerGraph<'a> {
                                 debug_assert!(import_record.source_index.is_valid());
                                 // did not generate
                             }
-                            // If it's already a reference file, leave it as-is
                         }
                     }
                 }
@@ -988,9 +987,10 @@ pub struct File {
     /// If "entry_point_kind" is not ".none", this is the index of the
     /// corresponding entry point chunk.
     ///
-    /// This is also initialized for files that are a SCB's generated
-    /// reference, pointing to its destination. This forms a lookup map from
-    /// a Source.Index to its output path inb reakOutputIntoPieces
+    /// For the original file of a SCB, `find_all_imported_parts_in_js_order`
+    /// overwrites this with the chunk the file's code was placed in; the SCB
+    /// unique keys (`QueryKind::Scb`) are resolved through it when the output
+    /// is broken into pieces.
     pub entry_point_chunk_index: u32,
 
     pub line_offset_table: bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc>,

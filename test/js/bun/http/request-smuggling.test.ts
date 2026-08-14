@@ -1685,7 +1685,7 @@ describe("Host header field values in request.url", () => {
   test.each([
     ["1.2.3.4.5"],
     ["[::1"],
-    // Long enough that the URL is assembled on the heap instead of the 128-byte stack buffer.
+    // The same fallback for a joined URL much longer than the other cases.
     [`${Buffer.alloc(130, "x").toString()}.example:abc`],
   ])(
     "request.url is the request-target when the Host header %j is in the authority byte set but does not parse",

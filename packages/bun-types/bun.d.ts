@@ -7141,13 +7141,18 @@ declare module "bun" {
 
       /**
        * When specified, Bun opens an IPC channel to the subprocess. The passed callback is called for
-       * incoming messages, and `subprocess.send` can send messages to the subprocess. Messages are serialized
-       * using the JSC serialize API, which allows the same types that `postMessage`/`structuredClone` supports.
+       * incoming messages, and `subprocess.send` can send messages to the subprocess. Messages go through the
+       * same serializer as `structuredClone`: the values it accepts (plain objects and arrays, `Date`, `Map`,
+       * `Set`, `Error`, typed arrays, ...) arrive with their types intact, and the values it rejects make
+       * `send()` throw a `DataCloneError`. Unlike `structuredClone`, a `Blob` (including `Bun.file()`) or a
+       * `net.BlockList` inside a message is not cloned; the other process receives an empty object (`{}`) in
+       * its place, as it would in Node.js.
        *
        * The subprocess can send and receive messages with `process.send` and `process.on("message")`,
        * respectively. This is the same API that Node.js exposes when `child_process.fork()` is used.
        *
-       * This is only compatible with processes that are other `bun` instances.
+       * The default `"advanced"` {@link serialization} can only be read by another `bun` process. To talk to
+       * a Node.js process, set `serialization` to `"json"`.
        */
       ipc?(
         message: any,
@@ -7541,9 +7546,13 @@ declare module "bun" {
 
     /**
      * Send a message to the subprocess. This is only supported if the subprocess
-     * was created with the `ipc` option, and is another instance of `bun`.
+     * was created with the `ipc` option.
      *
-     * Messages are serialized using the JSC serialize API, which allows for the same types that `postMessage`/`structuredClone` supports.
+     * Messages go through the same serializer as `structuredClone`: the values it accepts (plain objects and
+     * arrays, `Date`, `Map`, `Set`, `Error`, typed arrays, ...) arrive with their types intact, and the values
+     * it rejects make this throw a `DataCloneError`. Unlike `structuredClone`, a `Blob` (including
+     * `Bun.file()`) or a `net.BlockList` inside a message is not cloned; the subprocess receives an empty
+     * object (`{}`) in its place, as it would in Node.js.
      */
     send(message: any): void;
 

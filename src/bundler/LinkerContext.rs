@@ -2737,8 +2737,7 @@ impl<'a> LinkerContext<'a> {
                 }
             }
 
-            // An import()ed stylesheet has a JS chunk of its own (`compute_chunks`), so its
-            // parts are walked below like any other entry point's to keep its exports alive.
+            // An import()ed stylesheet has its own JS chunk; walk its parts like an entry point's.
             if ctx.entry_point_kinds[source_index as usize] != EntryPoint::Kind::DynamicImport {
                 return;
             }

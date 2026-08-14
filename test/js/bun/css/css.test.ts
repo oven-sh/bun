@@ -7859,6 +7859,18 @@ describe("css tests", () => {
       ".foo{color:color(xyz-d50 .3 .2 .2)}",
     );
     minify_test(
+      ".foo { color: color-mix(in xyz-d50, color(xyz-d50 .1 .2 .3), color(xyz-d50 none .2 .1)) }",
+      ".foo{color:color(xyz-d50 .1 .2 .2)}",
+    );
+    minify_test(
+      ".foo { color: color-mix(in xyz-d50, color(xyz-d50 none .2 .3), color(xyz-d50 none .2 .1)) }",
+      ".foo{color:color(xyz-d50 none .2 .2)}",
+    );
+    minify_test(
+      ".foo { color: color-mix(in xyz, color(xyz .1 .2 .3), color(xyz none .2 .1)) }",
+      ".foo{color:color(xyz .1 .2 .2)}",
+    );
+    minify_test(
       ".foo { color: color-mix(in xyz-d50, red, blue) }",
       ".foo{color:color(xyz-d50 .289572 .141556 .364012)}",
     );

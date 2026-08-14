@@ -1251,6 +1251,8 @@ mod _async_tasks {
     {
         type OffThread = Self;
         type Js = AsyncFSJs;
+        /// `args` may alias the caller's buffers (`Buffer` paths, `write` data, `read` targets).
+        type Vm = bun_jsc::vm_handle::Borrow;
 
         fn run(
             this: &mut Self,
@@ -2182,6 +2184,8 @@ mod _async_tasks {
     impl bun_jsc::JobContext for AsyncReaddirRecursiveTask {
         type OffThread = Self;
         type Js = AsyncFSJs;
+        /// Still carries its protected `args` (possibly a `Buffer` path), like [`AsyncFSTask`].
+        type Vm = bun_jsc::vm_handle::Borrow;
 
         fn run(
             this: &mut Self,

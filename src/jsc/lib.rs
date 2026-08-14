@@ -1388,7 +1388,7 @@ pub use self::event_loop::{
     JsTerminatedResult, ManagedTask, MiniEventLoop, PosixSignalHandle, PosixSignalTask, Task,
     WorkPool, WorkPoolTask,
 };
-pub use self::job::{Completion, Job, JobContext, JsPtr, JsSide, JsThread, Protected};
+pub use self::job::{Completion, Job, JobContext, JsPtr, JsSide, JsThread, Protected, Unborrowed};
 #[cfg(unix)]
 pub type PlatformEventLoop = bun_uws::Loop;
 #[cfg(not(unix))]

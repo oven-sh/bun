@@ -75,9 +75,11 @@ unsafe impl Send for CopyFile {}
 impl jsc::JobContext for CopyFile {
     type OffThread = Self;
     type Js = jsc::JSPromiseStrong;
+    /// Blocks for the whole copy (a FIFO source waits for a writer); touches only store state.
+    type Vm = jsc::Unborrowed;
     fn run(
         this: &mut Self,
-        _vm: &jsc::vm_handle::Borrow,
+        _: &jsc::Unborrowed,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
         this.run_async();

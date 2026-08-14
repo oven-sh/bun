@@ -124,6 +124,7 @@ macro_rules! extern_crypto_job {
             impl JobContext for ExternJob {
                 type OffThread = Self;
                 type Js = Strong;
+                type Vm = Borrow;
 
                 fn run(
                     this: &mut Self,
@@ -234,6 +235,7 @@ pub mod random {
     impl JobContext for RandomFillJob {
         type OffThread = Self;
         type Js = RandomFillJs;
+        type Vm = Borrow;
 
         fn run(
             this: &mut Self,
@@ -1061,6 +1063,7 @@ mod _impl {
     impl JobContext for ScryptJob {
         type OffThread = Self;
         type Js = ScryptJs;
+        type Vm = Borrow;
 
         fn run(
             this: &mut Self,

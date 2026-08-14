@@ -833,6 +833,8 @@ pub struct CompressionAsyncJs {
 impl bun_jsc::JobContext for CompressionAsyncCtx {
     type OffThread = Self;
     type Js = CompressionAsyncJs;
+    /// `input` may be the pinned chunk's JS bytes, read below.
+    type Vm = bun_jsc::vm_handle::Borrow;
 
     fn run(
         this: &mut Self,

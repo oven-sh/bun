@@ -224,9 +224,11 @@ impl bun_jsc::JobContext for ReadFile {
     /// Where the bytes go: completed by `then`, or cancelled when the VM releases the JS sides of
     /// its live jobs at teardown (a refused or unrun read then frees only this off-thread part).
     type Js = ReadFileCompletionFns;
+    /// Touches only the stores' own state (see the `Send` note above).
+    type Vm = bun_jsc::Unborrowed;
     fn run(
         this: &mut Self,
-        _vm: &bun_jsc::vm_handle::Borrow,
+        _: &bun_jsc::Unborrowed,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
         // Starts the read; finishes from the io loop via the token.

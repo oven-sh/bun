@@ -687,9 +687,11 @@ pub struct AsyncTask<C: TaskContext>(core::marker::PhantomData<C>);
 impl<C: TaskContext> bun_jsc::JobContext for AsyncTask<C> {
     type OffThread = C;
     type Js = JSPromiseStrong;
+    /// A context owns everything `run` touches: a store ref and copied arguments.
+    type Vm = bun_jsc::Unborrowed;
     fn run(
         ctx: &mut C,
-        _vm: &bun_jsc::vm_handle::Borrow,
+        _: &bun_jsc::Unborrowed,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
         ctx.run();

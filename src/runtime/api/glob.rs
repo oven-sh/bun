@@ -246,10 +246,11 @@ impl WalkTaskErr {
 impl JobContext for WalkTask {
     type OffThread = Self;
     type Js = WalkJs;
+    type Vm = bun_jsc::Unborrowed;
 
     fn run(
         this: &mut Self,
-        _vm: &bun_jsc::vm_handle::Borrow,
+        _: &bun_jsc::Unborrowed,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
         let result = match this.walker.walk() {

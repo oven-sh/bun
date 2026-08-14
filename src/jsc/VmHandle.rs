@@ -267,6 +267,11 @@ impl VmHandle {
         (self.0.hot.state.load(Ordering::SeqCst) == State::Open as u8).then_some(b)
     }
 
+    /// Whether `close()` has run (anything posted from now on is refused). Any thread; a snapshot.
+    pub fn is_closed(&self) -> bool {
+        self.0.hot.state.load(Ordering::SeqCst) == State::Closed as u8
+    }
+
     // ── embedded work ─────────────────────────────────────────────────────
     //
     // Pool work whose storage is a field of a JS-owned object (a transpile
@@ -800,6 +805,9 @@ impl LoopHandle {
     }
     pub fn borrow_if_running(&self) -> Option<Borrow> {
         self.vm.borrow_if_running()
+    }
+    pub fn is_closed(&self) -> bool {
+        self.vm.is_closed()
     }
     pub fn accepting_work(&self) -> bool {
         self.vm.accepting_work()

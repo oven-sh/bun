@@ -1465,6 +1465,8 @@ impl Drop for PendingTask {
 impl jsc::JobContext for PipelineTask {
     type OffThread = Self;
     type Js = PipelineJs;
+    /// `input` borrows a pinned JS buffer or the `Image`'s own bytes (see the `Send` note above).
+    type Vm = jsc::vm_handle::Borrow;
     fn run(
         this: &mut Self,
         _vm: &jsc::vm_handle::Borrow,

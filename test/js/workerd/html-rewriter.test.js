@@ -2013,31 +2013,34 @@ describe("streamed input is held until the output is consumed", () => {
     }
 
     // 5 GiB: a body size that does not fit lol_html's `u32::MAX` memory limit.
-    it.concurrent.each([256 * 1024 * 1024, 5 * 1024 * 1024 * 1024])("of %d bytes: transform() does not read it before the body is consumed", async size => {
-      using dir = tempDir("hr-sparse", {});
-      const file = sparse(dir, "in.html", size);
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `const before = process.memoryUsage.rss();
+    it.concurrent.each([256 * 1024 * 1024, 5 * 1024 * 1024 * 1024])(
+      "of %d bytes: transform() does not read it before the body is consumed",
+      async size => {
+        using dir = tempDir("hr-sparse", {});
+        const file = sparse(dir, "in.html", size);
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const before = process.memoryUsage.rss();
            const res = new HTMLRewriter().on("a", { element() {} }).transform(new Response(Bun.file(process.argv[1])));
            const delta = process.memoryUsage.rss() - before;
            await res.body.cancel();
            console.log(Math.round(delta / 1024 / 1024));`,
-          file,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "inherit",
-      });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      // RSS growth across transform(), in MB. Unfixed, it exceeded the file
-      // size (the whole rewritten output was buffered); fixed, it is one
-      // upstream chunk.
-      expect(parseInt(stdout)).toBeLessThan(isDebug || isASAN ? 96 : 48);
-      expect(exitCode).toBe(0);
-    });
+            file,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        // RSS growth across transform(), in MB. Unfixed, it exceeded the file
+        // size (the whole rewritten output was buffered); fixed, it is one
+        // upstream chunk.
+        expect(parseInt(stdout)).toBeLessThan(isDebug || isASAN ? 96 : 48);
+        expect(exitCode).toBe(0);
+      },
+    );
   });
 });
 

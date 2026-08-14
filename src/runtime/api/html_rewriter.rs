@@ -1597,8 +1597,8 @@ impl RewriterPipe {
 
         if let Some(out) = self.output.get() {
             let mut err = err;
-            let errored =
-                settled.and_then(|()| out.on_data(StreamResult::Err(err.to_stream_error(&self.global))));
+            let errored = settled
+                .and_then(|()| out.on_data(StreamResult::Err(err.to_stream_error(&self.global))));
             self.detach_output();
             return errored;
         }

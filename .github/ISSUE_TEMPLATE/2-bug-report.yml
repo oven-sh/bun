@@ -20,7 +20,7 @@ body:
   - type: input
     attributes:
       label: What version of Bun is running?
-      description: Copy the output of `bun --revision`
+      description: Copy the output of `bun -p "Bun.version_with_sha + ' ' + process.arch"` (or of `bun --revision` if Bun does not start)
   - type: input
     attributes:
       label: What platform is your computer?

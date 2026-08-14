@@ -97,7 +97,7 @@ impl IccBuf {
 
     /// Copy the bytes into a `Vec<u8>` (global allocator) and leave the
     /// libc buffer to be freed by `Drop`. Returns `None` if the buffer is
-    /// empty or allocation fails.
+    /// empty.
     fn into_owned(self) -> Option<Vec<u8>> {
         if self.ptr.is_null() || self.size == 0 {
             return None;
@@ -105,14 +105,10 @@ impl IccBuf {
         // SAFETY: the shim's allocation is exactly `self.size` bytes at `self.ptr`;
         // we copy them out before `Drop` frees the source.
         let slice: &[u8] = unsafe { core::slice::from_raw_parts(self.ptr, self.size) };
-        // Fallible alloc — an OOM dropping the profile is fine (AVIF without
-        // ICC is still valid, implicitly sRGB via CICP), same as jpeg/png.
-        let mut v: Vec<u8> = Vec::new();
-        if v.try_reserve_exact(self.size).is_err() {
-            return None;
-        }
-        v.extend_from_slice(slice);
-        Some(v)
+        // OOM on the dupe aborts rather than silently dropping colour
+        // management — matching codec_jpeg/png/webp and the #30197
+        // rationale ("no profile" reinterprets P3/Adobe RGB as sRGB).
+        Some(slice.to_vec())
     }
 }
 
@@ -213,10 +209,9 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
         return Err(codecs::Error::DecodeFailed);
     }
 
-    // Re-home the ICC profile into the global allocator; if the dupe OOMs
-    // we drop the profile and keep the pixels (jpeg/png do the same — see
-    // #30197 rationale; an AVIF without ICC is still valid, implicitly
-    // sRGB via CICP).
+    // Re-home the ICC profile into the global allocator (OOM on the dupe
+    // aborts rather than silently dropping colour management — same
+    // contract as the sibling codecs, see the #30197 rationale there).
     let icc_profile = icc.into_owned();
 
     Ok(codecs::Decoded {

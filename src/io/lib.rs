@@ -1570,7 +1570,7 @@ impl Poll {
         // already fired, the fd already closed) must not come back as an
         // `EV_ERROR` event addressed to it. udata 0 is the waker's: ignored.
         kqueue_event.udata = if action == ApplyAction::Cancel {
-            0
+            0usize as _
         } else {
             udata as _
         };

@@ -922,9 +922,6 @@ pub mod bv2_impl {
                 /// `bun_resolver::Result`'s `Path<'static>` borrows arena memory
                 /// (lives for the entire build pass) instead of the map's key
                 /// storage.
-                ///
-                /// `jsx` becomes the result's `Result.jsx`, which `ParseTask::init`
-                /// parses with (the resolver fills it from its options for disk files).
                 pub(crate) fn resolve(
                     &self,
                     arena: &bun_alloc::Arena,

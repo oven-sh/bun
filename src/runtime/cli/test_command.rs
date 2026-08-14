@@ -2349,11 +2349,8 @@ impl TestCommand {
         vm.ensure_debugger(false)?;
 
         let mut scanner = Scanner::init(&vm.transpiler, ctx.positionals.len()).expect("oom");
-        // When the user hasn't configured `pathIgnorePatterns`, fall back to
-        // the scanner's built-in defaults so conventional output directories
-        // (`dist/`, `build/`) don't duplicate tests into the run. The
-        // `_are_defaults` flag lets `scan_explicit` know it can safely bypass
-        // them when the user names a path directly on the CLI.
+        // Unconfigured pathIgnorePatterns falls back to the built-in defaults
+        // so `dist/`/`build/` copies don't run tests twice.
         if ctx.test_options.path_ignore_patterns_configured {
             // SAFETY: lifetime-erase; `path_ignore_patterns_view` lives in this never-returning
             // frame, underlying bytes live in `ctx` (process-lifetime).
@@ -2381,9 +2378,6 @@ impl TestCommand {
         if has_relative_path {
             // One of the files is a filepath. Instead of treating the
             // arguments as filters, treat them as filepaths.
-            // `scan_explicit` bypasses the Scanner's built-in default
-            // ignore patterns so `bun test ./build/foo.test.ts` isn't
-            // silently filtered out; any user-configured patterns still apply.
             let file_or_dirnames = &ctx.positionals[1..];
             for arg in file_or_dirnames {
                 match scanner.scan_explicit(arg) {

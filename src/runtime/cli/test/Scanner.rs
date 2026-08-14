@@ -24,11 +24,8 @@ pub struct Scanner<'a> {
     /// Glob patterns for paths to ignore. Matched against the path relative to the
     /// project root (top_level_dir). When a file matches any pattern, it is excluded.
     pub(crate) path_ignore_patterns: &'a [&'a [u8]],
-    /// Whether `path_ignore_patterns` are the built-in defaults (see
-    /// `DEFAULT_PATH_IGNORE_PATTERNS`) vs a list configured by the user via
-    /// `--path-ignore-patterns` or `bunfig.toml`. When true, explicit file/directory
-    /// arguments bypass the matching defaults — otherwise running
-    /// `bun test ./build/foo.test.ts` would silently match nothing.
+    /// True when `path_ignore_patterns` is `DEFAULT_PATH_IGNORE_PATTERNS`
+    /// rather than user-configured; `scan_explicit` only bypasses defaults.
     pub(crate) path_ignore_patterns_are_defaults: bool,
     pub(crate) dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
@@ -138,36 +135,23 @@ impl<'a> Scanner<'a> {
         self.scan_internal(path_literal, ScanMode::AutoDiscover)
     }
 
-    /// Like `scan`, but the path came from an explicit command-line argument
-    /// (`bun test ./build/foo.test.ts`). When the patterns in play are the
-    /// Scanner's built-in defaults, drop only the ones matching the explicit
-    /// root for this invocation (see `scan_internal`) — the user pointed at
-    /// this file/directory, so silently dropping it would be surprising. Any
-    /// patterns the user configured themselves still apply.
+    /// Like `scan`, but for an explicit CLI path (`bun test ./build/foo.test.ts`):
+    /// default ignore patterns matching the path itself are dropped for this
+    /// invocation so the named file/directory runs. User-configured patterns
+    /// still apply.
     pub(crate) fn scan_explicit(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
         self.scan_internal(path_literal, ScanMode::ExplicitPath)
     }
 
     fn scan_internal(&mut self, path_literal: &[u8], mode: ScanMode) -> Result<(), ScanError> {
-        // Explicit paths narrow the built-in defaults only: any pattern that
-        // would match the explicit root itself is dropped for this scan, but
-        // every other default keeps pruning. So `bun test ./build/foo.test.ts`
-        // drops `**/build/**` and runs the named file, while
-        // `bun test ./packages/foo` keeps both defaults and still prunes
-        // `packages/foo/dist/`. User-configured patterns are untouched.
-        //
-        // Stored on the heap so `self.path_ignore_patterns` can alias a slice
-        // into it for the duration of this scan; restored via the RAII guard
-        // so `?` early-returns also clean up.
         let saved_patterns = self.path_ignore_patterns;
         let narrowed: Option<Box<[&'static [u8]]>> = if matches!(mode, ScanMode::ExplicitPath)
             && self.path_ignore_patterns_are_defaults
         {
-            // Match each default against the root's project-relative path. An
-            // empty `rel_path` means the explicit arg *is* the project root, so
-            // no default matches it (keep them all) — matching the raw absolute
-            // `path_literal` would wrongly drop `**/build/**` for a project that
-            // merely lives under a `build`/`dist` ancestor (e.g. `/opt/build/app`).
+            // Match against the project-relative path: an empty `rel_path` means
+            // the arg is the project root itself, which no default matches, so
+            // all stay active (a `build`/`dist` ancestor outside the project
+            // must not drop a default).
             let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), path_literal);
             let mut kept: Vec<&'static [u8]> = Vec::with_capacity(self.path_ignore_patterns.len());
             for &pattern in self.path_ignore_patterns {
@@ -505,24 +489,18 @@ impl<'a> Scanner<'a> {
 
 pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];
 
-/// Glob patterns applied when the user has not configured
-/// `pathIgnorePatterns` (neither in `bunfig.toml` nor via
-/// `--path-ignore-patterns`). Matches the relative path from the project
-/// root, so these patterns prune the conventional output directories at any
-/// depth. An explicit (even empty) user configuration replaces this list.
+/// Ignore patterns used when `pathIgnorePatterns` is not configured. Any
+/// explicit user configuration (even an empty array) replaces this list.
 pub(crate) const DEFAULT_PATH_IGNORE_PATTERNS: [&[u8]; 2] = [b"**/dist/**", b"**/build/**"];
 
-/// Returns true if `pattern` matches `rel_path`. Handles the same two-attempt
-/// glob behavior as the main scanner match: try the raw relative path first,
-/// then retry with a trailing `/` for `**` patterns (so `**/build/**` matches
-/// the bare directory name `packages/sub/build` as well as files under it).
+/// Whether `pattern` matches `rel_path`, retrying with a trailing `/` for
+/// `**` patterns so `**/build/**` also matches the bare directory name.
 fn pattern_matches_path(pattern: &[u8], rel_path: &[u8]) -> bool {
     if bun_glob::r#match(pattern, rel_path).matches() {
         return true;
     }
-    // Only try trailing separator for ** patterns (e.g. "vendor/**").
-    // Single-star patterns like "vendor/*" must not prune entire
-    // directories because * doesn't cross directory boundaries.
+    // Trailing-separator retry is only valid for ** patterns; a single `*`
+    // doesn't cross directory boundaries and must not prune whole trees.
     if rel_path.is_empty()
         || rel_path[rel_path.len() - 1] == b'/'
         || strings::index_of(pattern, b"**").is_none()

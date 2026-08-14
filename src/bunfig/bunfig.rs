@@ -682,8 +682,7 @@ impl<'a> Parser<'a> {
                             }
                             ExprData::EArray(arr) => {
                                 let items = arr.items.slice();
-                                // An explicit empty array opts out of the default
-                                // ignore patterns without supplying any of its own.
+                                // An explicit empty array opts out of the defaults.
                                 self.ctx.test_options.path_ignore_patterns_configured = true;
                                 if items.is_empty() {
                                     break 'brk;

@@ -411,9 +411,8 @@ pub struct TestOptions {
     pub coverage: CodeCoverageOptions,
     pub path_ignore_patterns: Vec<Box<[u8]>>,
     pub path_ignore_patterns_from_cli: bool,
-    /// True if `pathIgnorePatterns` was explicitly set by the user via the
-    /// CLI flag or `bunfig.toml`. When false, the scanner falls back to its
-    /// built-in defaults (e.g. `**/dist/**`, `**/build/**`).
+    /// Set when `pathIgnorePatterns` comes from the CLI flag or `bunfig.toml`;
+    /// unset means the scanner uses its built-in defaults.
     pub path_ignore_patterns_configured: bool,
     pub test_filter_pattern: Option<Box<[u8]>>,
     /// `?*bun.jsc.RegularExpression` — typed as opaque to keep this file free

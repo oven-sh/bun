@@ -1,3 +1,4 @@
+import type { BunPlugin } from "bun";
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -339,23 +340,108 @@ error: Hello World`,
       await expectExternalSqliteImport(String(dir), await Bun.file(join(String(dir), "out/entry.js")).text());
     });
 
-    test.concurrent("Bun.build({ loader })", async () => {
-      using dir = tempDir("sqlite-loader-api", loaderMapProject);
-      const result = await Bun.build({
-        entrypoints: [join(String(dir), "src/entry.ts")],
-        outdir: join(String(dir), "out"),
-        target: "bun",
-        loader: { ".db": "sqlite" as any },
+    // The bundler resolves imports on three paths: directly, after an onResolve
+    // plugin matched but returned nothing, and against `files` (in memory); each
+    // path picks the loader itself.
+    const passthroughPlugin: BunPlugin = {
+      name: "passthrough",
+      setup(build) {
+        build.onResolve({ filter: /.*/ }, () => undefined);
+      },
+    };
+    const variants: [string, { plugins?: BunPlugin[]; inMemoryDatabase?: boolean }][] = [
+      ["Bun.build({ loader })", {}],
+      ["Bun.build({ loader, plugins })", { plugins: [passthroughPlugin] }],
+      ["Bun.build({ loader, files })", { inMemoryDatabase: true }],
+      ["Bun.build({ loader, files, plugins })", { inMemoryDatabase: true, plugins: [passthroughPlugin] }],
+    ];
+    for (const [name, { plugins, inMemoryDatabase }] of variants) {
+      test.concurrent(name, async () => {
+        const { "src/app.db": _, ...withoutDatabaseOnDisk } = loaderMapProject;
+        using dir = tempDir("sqlite-loader-api", inMemoryDatabase ? withoutDatabaseOnDisk : loaderMapProject);
+        const result = await Bun.build({
+          entrypoints: [join(String(dir), "src/entry.ts")],
+          outdir: join(String(dir), "out"),
+          target: "bun",
+          loader: { ".db": "sqlite" as any },
+          ...(plugins && { plugins }),
+          ...(inMemoryDatabase && { files: { [join(String(dir), "src/app.db")]: buildTimeCopy } }),
+        });
+        expect(result.outputs.map(output => output.path)).toEqual([join(String(dir), "out/entry.js")]);
+        await expectExternalSqliteImport(String(dir), await result.outputs[0].text());
       });
-      expect(result.outputs.map(output => output.path)).toEqual([join(String(dir), "out/entry.js")]);
-      await expectExternalSqliteImport(String(dir), await result.outputs[0].text());
-    });
+    }
 
     test.concurrent("still requires target bun", async () => {
       using dir = tempDir("sqlite-loader-node-target", loaderMapProject);
       const { stderr, exitCode } = await bunBuild(String(dir), "--target", "node", "--loader", ".db:sqlite");
       expect(stderr).toContain('To use the "sqlite" loader, set target to "bun"');
       expect(exitCode).toBe(1);
+    });
+  });
+
+  // For target bun the printer puts an import record's loader back on the import
+  // as `with { type }` (and `require(path, { type })` / `import(path, { with })`).
+  // Only a loader that came from an import attribute, or from the bundler leaving
+  // the import to the runtime on purpose, may be printed: the loader the bundler
+  // resolved for a file it bundled must not leak onto imports the linker later
+  // turns external, where the runtime would apply it to a different file.
+  describe("type attributes on imports the linker makes external", () => {
+    // `--splitting` rewrites a dynamic import of a bundled file into an import of
+    // the chunk that holds it, which is JavaScript whatever the file was.
+    itBundled("bun/splitting-dynamic-import-does-not-carry-the-loader", {
+      target: "bun",
+      splitting: true,
+      outdir: "/out",
+      files: {
+        "/entry.ts": /* js */ `
+          const { default: data } = await import("./data.json");
+          const { page } = await import("./page.ts");
+          console.log(data.answer, page);
+        `,
+        "/data.json": `{ "answer": 42 }`,
+        "/page.ts": `export const page: string = "page";`,
+      },
+      onAfterBundle(api) {
+        const imports = api.readFile("/out/entry.js").match(/\bimport\(.*\)/g);
+        expect(imports).toHaveLength(2);
+        for (const call of imports!) {
+          expect(call).toMatch(/^import\("\.\/(data|page)-\w+\.js"\)$/);
+        }
+      },
+      run: { file: "/out/entry.js", stdout: "42 page" },
+    });
+
+    // A file consisting of `module.exports = require(x)` is collapsed: imports of
+    // it are redirected to x. When x is external, they are printed as imports of
+    // x and must not carry the loader of the collapsed file. At runtime the
+    // external resolves to a TypeScript file here, which `type: "js"` would
+    // fail to parse.
+    itBundled("bun/redirect-to-external-does-not-carry-the-loader", {
+      target: "bun",
+      external: ["some-ext"],
+      files: {
+        "/entry.ts": /* js */ `
+          import * as viaImport from "./shim.cjs";
+          const viaRequire = require("./shim.cjs");
+          const viaDynamicImport = await import("./shim.cjs");
+          console.log(viaImport.value, viaRequire.value, viaDynamicImport.value);
+        `,
+        "/shim.cjs": `module.exports = require("some-ext");`,
+      },
+      runtimeFiles: {
+        "/node_modules/some-ext/package.json": `{ "name": "some-ext", "main": "index.ts" }`,
+        "/node_modules/some-ext/index.ts": `export const value: string = "from some-ext";`,
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out.match(/^.*"some-ext".*$/gm)).toEqual([
+          'import * as viaImport from "some-ext";',
+          'var viaRequire = __require("some-ext");',
+          'var viaDynamicImport = await import("some-ext");',
+        ]);
+      },
+      run: { stdout: "from some-ext from some-ext from some-ext" },
     });
   });
 });

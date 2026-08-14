@@ -1358,8 +1358,8 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
     }
 }
 
-/// `loader` as the value of a `type` import attribute; the runtime maps it back
-/// with `Loader::from_string` when it loads an import the printed code left to it.
+/// `ImportRecord::loader` as the value of a `type` import attribute; the runtime
+/// maps it back with `Loader::from_string` when it loads the printed import.
 fn import_attribute_type(loader: bun_ast::Loader) -> &'static [u8] {
     use bun_ast::Loader;
     match loader {

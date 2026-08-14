@@ -2255,6 +2255,24 @@ pub mod bv2_impl {
                 ) {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
+                    let has_dev_server = self.dev_server.is_some();
+                    let loader: Loader = {
+                        let record: &mut ImportRecord =
+                            &mut self.graph.ast.items_import_records_mut()
+                                [import_record.importer_source_index as usize]
+                                .as_mut_slice()
+                                [import_record.import_record_index as usize];
+                        let loader = record.loader.unwrap_or_else(|| {
+                            // SAFETY: see `transpiler` note above.
+                            Fs::Path::init(path_primary.text)
+                                .loader(unsafe { &(*transpiler).options.loaders })
+                                .unwrap_or(Loader::File)
+                        });
+                        if keep_sqlite_import_external(record, loader, target, has_dev_server) {
+                            return;
+                        }
+                        loader
+                    };
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
                     // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
                     // type-check. SAFETY: `path_to_source_index_map(target)` is not mutated again
@@ -2270,20 +2288,6 @@ pub mod bv2_impl {
                         )
                     };
                     if !found_existing {
-                        let loader: Loader = 'brk: {
-                            let record: &mut ImportRecord =
-                                &mut self.graph.ast.items_import_records_mut()
-                                    [import_record.importer_source_index as usize]
-                                    .as_mut_slice()
-                                    [import_record.import_record_index as usize];
-                            if let Some(out_loader) = record.loader {
-                                break 'brk out_loader;
-                            }
-                            // SAFETY: see `transpiler` note above.
-                            break 'brk Fs::Path::init(path_primary.text)
-                                .loader(unsafe { &(*transpiler).options.loaders })
-                                .unwrap_or(Loader::File);
-                        };
                         // For virtual files, use the path text as-is (no relative path computation needed).
                         path_primary.pretty = self.arena().alloc_slice_copy(path_primary.text);
                         let mut tmp_source = bun_ast::Source {
@@ -2487,6 +2491,22 @@ pub mod bv2_impl {
                 return;
             }
 
+            let has_dev_server = self.dev_server.is_some();
+            let loader: Loader = {
+                let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
+                    [import_record.importer_source_index as usize]
+                    .as_mut_slice()[import_record.import_record_index as usize];
+                let loader = record.loader.unwrap_or_else(|| {
+                    // SAFETY: see `transpiler` note above.
+                    path.loader(unsafe { &(*transpiler).options.loaders })
+                        .unwrap_or(Loader::File)
+                });
+                if keep_sqlite_import_external(record, loader, target, has_dev_server) {
+                    return;
+                }
+                loader
+            };
+
             if path.pretty.as_ptr() == path.text.as_ptr() {
                 // TODO: outbase
                 let rel = bun_paths::resolve_path::relative_platform::<
@@ -2518,19 +2538,6 @@ pub mod bv2_impl {
                 if let Some(p) = resolve_result.path() {
                     *p = path;
                 }
-                let loader: Loader = 'brk: {
-                    let record: &ImportRecord = &self.graph.ast.items_import_records()
-                        [import_record.importer_source_index as usize]
-                        .as_slice()[import_record.import_record_index as usize];
-                    if let Some(out_loader) = record.loader {
-                        break 'brk out_loader;
-                    }
-                    // SAFETY: see `transpiler` note above.
-                    break 'brk path
-                        .loader(unsafe { &(*transpiler).options.loaders })
-                        .unwrap_or(Loader::File);
-                    // HTML is only allowed at the entry point.
-                };
                 let mut tmp_source = bun_ast::Source {
                     path: path_as_static(&path.dupe_alloc(self.arena()).expect("oom")),
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
@@ -5930,6 +5937,37 @@ pub mod bv2_impl {
         }
     }
 
+    /// An import whose file the loader map (or a `.sqlite` extension) assigns the
+    /// sqlite loader is left to the runtime, like one written with
+    /// `with { type: "sqlite" }`: the loader opens the database at runtime, and
+    /// bundling the file would bake the build machine's absolute path into the
+    /// output. The record keeps the specifier as written, and `loader` makes the
+    /// printer add the type attribute back. Other targets go on to the parse
+    /// task, which reports that the loader needs target bun; the dev server
+    /// resolves imports itself and is left alone.
+    fn keep_sqlite_import_external(
+        import_record: &mut ImportRecord,
+        loader: Loader,
+        target: options::Target,
+        has_dev_server: bool,
+    ) -> bool {
+        if loader != Loader::Sqlite
+            || !target.is_bun()
+            || has_dev_server
+            || !matches!(
+                import_record.kind,
+                ImportKind::Stmt | ImportKind::Require | ImportKind::Dynamic
+            )
+        {
+            return false;
+        }
+        import_record.loader = Some(Loader::Sqlite);
+        import_record
+            .flags
+            .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+        true
+    }
+
     pub(crate) struct ResolveImportRecordCtx<'a> {
         pub(crate) import_records: &'a mut [ImportRecord],
         pub(crate) source: &'a bun_ast::Source,
@@ -6174,7 +6212,15 @@ pub mod bv2_impl {
                                 .loader(&transpiler.options.loaders)
                                 .unwrap_or(Loader::File)
                         });
-                        import_record.loader = Some(import_record_loader);
+
+                        if keep_sqlite_import_external(
+                            import_record,
+                            import_record_loader,
+                            target,
+                            self.dev_server.is_some(),
+                        ) {
+                            continue;
+                        }
 
                         if let Some(id) =
                             self.path_to_source_index_map(target).get(path_primary.text)
@@ -6543,24 +6589,13 @@ pub mod bv2_impl {
                     }
                     break 'brk resolved_loader;
                 };
-                import_record.loader = Some(import_record_loader);
 
-                // Same as the `with { type: "sqlite" }` case above, for databases the
-                // loader map (or a `.sqlite` extension) selects: the import stays as
-                // written and the printer re-attaches the type. Bundling the file would
-                // bake the build machine's absolute path into the output. Other targets
-                // still reach the parse task, which reports that sqlite needs target bun.
-                if import_record_loader == Loader::Sqlite
-                    && target.is_bun()
-                    && self.dev_server.is_none()
-                    && matches!(
-                        import_record.kind,
-                        ImportKind::Stmt | ImportKind::Require | ImportKind::Dynamic
-                    )
-                {
-                    import_record
-                        .flags
-                        .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                if keep_sqlite_import_external(
+                    import_record,
+                    import_record_loader,
+                    target,
+                    self.dev_server.is_some(),
+                ) {
                     continue;
                 }
 

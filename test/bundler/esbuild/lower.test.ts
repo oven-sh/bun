@@ -1544,7 +1544,7 @@ describe.todo("bundler", () => {
         console.log(new Foo().bar === 123)
       `,
     },
-    mode: "passthrough",
+    bundling: false,
   });
   itBundled("lower/LowerPrivateClassMethodOrder", {
     // GENERATED
@@ -1557,7 +1557,7 @@ describe.todo("bundler", () => {
         console.log(new Foo().bar === 123)
       `,
     },
-    mode: "passthrough",
+    bundling: false,
   });
   itBundled("lower/LowerPrivateClassAccessorOrder", {
     // GENERATED
@@ -1570,7 +1570,7 @@ describe.todo("bundler", () => {
         console.log(new Foo().bar === 123)
       `,
     },
-    mode: "passthrough",
+    bundling: false,
   });
   itBundled("lower/LowerPrivateClassStaticFieldOrder", {
     // GENERATED
@@ -1589,7 +1589,7 @@ describe.todo("bundler", () => {
         console.log(FooThis.bar === 123)
       `,
     },
-    mode: "passthrough",
+    bundling: false,
   });
   itBundled("lower/LowerPrivateClassStaticMethodOrder", {
     // GENERATED
@@ -1608,7 +1608,7 @@ describe.todo("bundler", () => {
         console.log(FooThis.bar === 123)
       `,
     },
-    mode: "passthrough",
+    bundling: false,
   });
   itBundled("lower/LowerPrivateClassStaticAccessorOrder", {
     // GENERATED
@@ -1627,7 +1627,7 @@ describe.todo("bundler", () => {
         console.log(FooThis.bar === 123)
       `,
     },
-    mode: "passthrough",
+    bundling: false,
   });
   itBundled("lower/LowerPrivateClassBrandCheckUnsupported", {
     // GENERATED
@@ -1646,7 +1646,7 @@ describe.todo("bundler", () => {
         }
       `,
     },
-    mode: "passthrough",
+    bundling: false,
   });
   itBundled("lower/LowerPrivateClassBrandCheckSupported", {
     // GENERATED
@@ -1665,7 +1665,7 @@ describe.todo("bundler", () => {
         }
       `,
     },
-    mode: "passthrough",
+    bundling: false,
   });
   itBundled("lower/LowerTemplateObject", {
     // GENERATED
@@ -1675,7 +1675,7 @@ describe.todo("bundler", () => {
           tag\` + "\`x\`" +
       `,
     },
-    mode: "passthrough",
+    bundling: false,
   });
   itBundled("lower/LowerPrivateClassFieldStaticESBuildIssue1424", {
     // GENERATED
@@ -1774,7 +1774,7 @@ describe.todo("bundler", () => {
         ]
       `,
     },
-    mode: "passthrough",
+    bundling: false,
   });
   itBundled("lower/LowerForAwait2015", {
     // GENERATED
@@ -1788,7 +1788,7 @@ describe.todo("bundler", () => {
         ]
       `,
     },
-    mode: "passthrough",
+    bundling: false,
   });
   itBundled("lower/LowerNestedFunctionDirectEval", {
     // GENERATED
@@ -1803,6 +1803,6 @@ describe.todo("bundler", () => {
       "/8.js": `'use strict'; if (foo) { eval(''); function x() {} }`,
     },
     entryPoints: ["/1.js", "/2.js", "/3.js", "/4.js", "/5.js", "/6.js", "/7.js", "/8.js"],
-    mode: "passthrough",
+    bundling: false,
   });
 });

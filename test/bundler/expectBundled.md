@@ -14,7 +14,7 @@ In addition to comparing the bundle outputs against snapshots, **most test cases
 
 On top of `expectBundled`, there is also `itBundled` which wraps `expectBundled` and `it` together, which is what we mostly use in our tests.
 
-These two functions have many options you can pass to it, check the examples below for some common use cases, then look at the `BundlerTestInput` for a complete set of options. Not all of the options are implemented; these tests get auto-skipped.
+These two functions have many options you can pass to it, check the examples below for some common use cases, then look at the `BundlerTestInput` for a complete set of options. Not all of the options are implemented; tests that use one of those (or a combination the current backend cannot run) get auto-skipped: `itBundled` registers nothing for them. An option that `BundlerTestInput` does not declare at all is treated as a typo and fails the test file while it is being loaded.
 
 ## Running tests
 

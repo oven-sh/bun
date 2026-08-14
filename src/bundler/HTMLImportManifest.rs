@@ -182,9 +182,8 @@ pub(crate) fn write<W: Write + ?Sized>(
         &*bun_core::from_field_ptr!(BundleV2<'static>, graph, std::ptr::from_ref::<Graph>(graph))
     };
     let options = &bv2.transpiler().options;
-    // Must be sized from the same list as the files' entry bits (with code
-    // splitting it also holds the dynamic imports, unlike `graph.entry_points`):
-    // an `AutoBitSet` that fits inline never intersects a heap-allocated one.
+    // Same size as the files' entry bits (the linker's list includes the dynamic
+    // import entry points); differently sized `AutoBitSet`s never intersect.
     let mut entry_point_bits = AutoBitSet::init_empty(linker_graph.entry_points.len())?;
     let mut chunks_to_write = AutoBitSet::init_empty(chunks.len())?;
     let mut chunks_to_visit: Vec<u32> = Vec::new();
@@ -232,11 +231,9 @@ pub(crate) fn write<W: Write + ?Sized>(
         }
     }
 
-    // The page needs every chunk its own chunks import, transitively: shared
-    // chunks, its CSS chunk (possibly deduplicated into another page's), and
-    // the chunks of its dynamic imports, which are separate entry points when
-    // code splitting. Files reachable only from those entry points carry only
-    // their bits, so collect them too for the asset loop below.
+    // List everything the page's chunks import, transitively, and remember the
+    // entry points among them: with code splitting, a dynamic import is an entry
+    // point, and the assets only it reaches carry only its bit.
     while let Some(chunk_index) = chunks_to_visit.pop() {
         if chunks_to_write.is_set(chunk_index as usize) {
             continue;

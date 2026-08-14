@@ -165,11 +165,121 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.call_runtime(l, name, list)
     }
 
-    /// newSymbol + scope.generated.append in one call.
+    /// A generated symbol whose name is meant literally: the binding name of a
+    /// lowered anonymous class (it becomes the class's `.name`), the parameter
+    /// of a synthesized setter, `arguments` in a synthesized constructor. None
+    /// of them is declared in the scope being lowered into, so none of them can
+    /// collide with a declaration there. Temporaries go through `new_temp`.
     fn new_sym(&mut self, kind: js_ast::symbol::Kind, name: &'a [u8]) -> Ref {
         let ref_ = self.new_symbol(kind, name);
         VecExt::append(&mut self.current_scope_mut().generated, ref_);
         ref_
+    }
+
+    /// A lowering temporary (`_init`, `_dec`, the `_name` WeakMap of a lowered
+    /// member, ...). The lowering declares it with `var` (or `let`, for the
+    /// inner class binding) in the statement list it is lowering into, so it is
+    /// a binding of the nearest scope that stops `var` hoisting, and is
+    /// registered there like any other declaration:
+    ///
+    /// - `scope.generated` + `declared_symbols` let the bundler's renamer see
+    ///   it. The renamer only visits `generated` lists of nested scopes; the
+    ///   top level of a file is renamed from `Part.declared_symbols`.
+    /// - Without a renamer (the runtime transpiler, `bun build --no-bundle`),
+    ///   symbols print under their original names, so `base` is only a
+    ///   request: `name_decorator_temps` picks the final, file-unique name
+    ///   once the whole file has been visited.
+    fn new_temp(&mut self, base: &'a [u8]) -> Ref {
+        debug_assert!(
+            base.starts_with(b"_"),
+            "name_decorator_temps only reserves the file's `_`-prefixed identifiers"
+        );
+        let ref_ = self.new_symbol(js_ast::symbol::Kind::Other, base);
+
+        let mut scope = self.current_scope_ref();
+        while !scope.kind_stops_hoisting() {
+            scope = scope.parent.expect("the module scope stops hoisting");
+        }
+        let is_top_level = scope == self.module_scope_ref();
+        VecExt::append(&mut scope.generated, ref_);
+        self.declared_symbols
+            .append(bun_ast::DeclaredSymbol { ref_, is_top_level })
+            .expect("oom");
+
+        if !self.will_use_renamer() {
+            self.decorator_temp_refs.push(ref_);
+        }
+        ref_
+    }
+
+    /// Gives every temporary created by `new_temp` a name no other symbol in the
+    /// file has. Runs after the visit pass, because that is when the set of
+    /// identifiers the file uses is complete: references to undeclared globals
+    /// only get a symbol when the visit reaches them (`find_symbol`).
+    ///
+    /// Same convention as the renamer: the first temporary asking for a base
+    /// name keeps it, later ones get `base2`, `base3`, ...; names the file
+    /// itself uses are skipped. Every base starts with `_`, so only the file's
+    /// `_`-prefixed identifiers need to be reserved.
+    pub(crate) fn name_decorator_temps(&mut self) {
+        if self.decorator_temp_refs.is_empty() {
+            return;
+        }
+
+        // Clear the temporaries' names first so the reservation pass below only
+        // sees the names the rest of the file uses.
+        let temps = core::mem::replace(&mut self.decorator_temp_refs, BumpVec::new_in(self.arena));
+        let mut bases = BumpVec::<&'a [u8]>::with_capacity_in(temps.len(), self.arena);
+        for temp in temps.iter() {
+            let symbol = &mut self.symbols[temp.inner_index() as usize];
+            bases.push(symbol.original_name.slice());
+            symbol.original_name = js_ast::StoreStr::EMPTY;
+        }
+
+        // name -> highest numeric suffix handed out for it (1 = the bare name),
+        // so repeated requests for one base don't rescan the suffixes already
+        // taken.
+        let mut taken: HashMap<&'a [u8], usize> = HashMap::default();
+        for symbol in self.symbols.iter() {
+            let name: &'a [u8] = symbol.original_name.slice();
+            if name.starts_with(b"_") {
+                taken.insert(name, 1);
+            }
+        }
+
+        for (temp, base) in temps.iter().zip(bases.iter().copied()) {
+            let name = match taken.get(&base) {
+                None => {
+                    taken.insert(base, 1);
+                    base
+                }
+                Some(&last) => {
+                    let mut n = last + 1;
+                    let mut candidate = self.bump_name(base, n);
+                    while taken.contains_key(&candidate) {
+                        n += 1;
+                        candidate = self.bump_name(base, n);
+                    }
+                    taken.insert(base, n);
+                    taken.insert(candidate, 1);
+                    candidate
+                }
+            };
+            self.symbols[temp.inner_index() as usize].original_name = js_ast::StoreStr::new(name);
+        }
+    }
+
+    /// Base name for the WeakMap backing an `accessor`: `_<key>` when the key
+    /// is a plain name, since `accessor "x y"` must not declare `var _x y`.
+    fn accessor_storage_base(&self, key: Option<Expr>) -> &'a [u8] {
+        if let Some(key) = key
+            && let js_ast::ExprData::EString(s) = &key.data
+            && s.is_utf8()
+            && js_lexer::is_identifier(&s.data)
+        {
+            return self.bump_name2(b"_", &s.data);
+        }
+        b"_accessor_storage"
     }
 
     /// Single var declaration statement.
@@ -394,16 +504,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Bump-format `_{prefix}{n}` (or just `_{prefix}` when n is omitted).
-    fn bump_name(&self, prefix: &[u8], n: Option<usize>) -> &'a [u8] {
+    /// Bump-format `{prefix}{n}`.
+    fn bump_name(&self, prefix: &[u8], n: usize) -> &'a [u8] {
         let mut v = BumpVec::<u8>::new_in(self.arena);
         v.extend_from_slice(prefix);
-        if let Some(n) = n {
-            // bumpalo Vec<u8> doesn't impl io::Write; format into a
-            // bump String and copy the bytes.
-            let s = bun_alloc::arena_format!(in self.arena, "{}", n);
-            v.extend_from_slice(s.as_bytes());
-        }
+        // bumpalo Vec<u8> doesn't impl io::Write; format into a
+        // bump String and copy the bytes.
+        let s = bun_alloc::arena_format!(in self.arena, "{}", n);
+        v.extend_from_slice(s.as_bytes());
         v.into_bump_slice()
     }
 
@@ -1128,7 +1236,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut expr_var_decls = BumpVec::<G::Decl>::new_in(bump);
 
         if is_expr {
-            let ecr = p.new_sym(js_ast::symbol::Kind::Other, b"_class");
+            let ecr = p.new_temp(b"_class");
             expr_class_ref = Some(ecr);
             let binding = p.b(B::Identifier { r#ref: ecr }, loc);
             expr_var_decls.push(G::Decl {
@@ -1163,7 +1271,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .original_name
                 .slice();
             let name = p.bump_name2(b"_", cns);
-            inner_class_ref = p.new_sym(js_ast::symbol::Kind::Other, name);
+            inner_class_ref = p.new_temp(name);
         }
 
         // `ExprNodeList = Vec<Expr>` owns its
@@ -1175,7 +1283,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             bun_alloc::AstAlloc::take(&mut class.ts_decorators);
         let class_decorators_len = class_decorators.len_u32() as usize;
 
-        let init_ref = p.new_sym(js_ast::symbol::Kind::Other, b"_init");
+        let init_ref = p.new_temp(b"_init");
         if is_expr {
             let binding = p.b(B::Identifier { r#ref: init_ref }, loc);
             expr_var_decls.push(G::Decl {
@@ -1186,7 +1294,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut base_ref: Option<Ref> = None;
         if class.extends.is_some() {
-            let br = p.new_sym(js_ast::symbol::Kind::Other, b"_base");
+            let br = p.new_temp(b"_base");
             base_ref = Some(br);
             if is_expr {
                 let binding = p.b(B::Identifier { r#ref: br }, loc);
@@ -1198,13 +1306,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // ── Phase 2: Pre-evaluate decorators/keys ────────
-        let mut dec_counter: usize = 0;
         let mut class_dec_ref: Option<Ref> = None;
         let mut class_dec_stmt: Stmt = Stmt::empty();
         let mut class_dec_assign_expr: Option<Expr> = None;
         if class_decorators_len > 0 {
-            dec_counter += 1;
-            let cdr = p.new_sym(js_ast::symbol::Kind::Other, b"_dec");
+            let cdr = p.new_temp(b"_dec");
             class_dec_ref = Some(cdr);
             // Move ownership into the AST node — `class_decorators` is not read
             // again on this branch (Phase-5's else-arm only runs when
@@ -1231,8 +1337,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut prop_dec_refs: HashMap<usize, Ref> = HashMap::default();
         let mut computed_key_refs: HashMap<usize, Ref> = HashMap::default();
+        // In expression mode the bindings declared by `pre_eval_stmts` are
+        // added to `expr_var_decls` when the statements are folded into the
+        // comma expression (Phase 8), so the temporaries created in this loop
+        // must not be pushed there a second time.
         let mut pre_eval_stmts = BumpVec::<Stmt>::new_in(bump);
-        let mut computed_key_counter: usize = 0;
 
         let props_slice: &mut [Property] = class.properties.slice_mut();
         for (prop_idx, prop) in props_slice.iter_mut().enumerate() {
@@ -1240,21 +1349,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
             if prop.ts_decorators.len_u32() > 0 {
-                dec_counter += 1;
-                let dec_name: &'a [u8] = if dec_counter == 1 {
-                    b"_dec"
-                } else {
-                    p.bump_name(b"_dec", Some(dec_counter))
-                };
-                let dec_ref = p.new_sym(js_ast::symbol::Kind::Other, dec_name);
+                let dec_ref = p.new_temp(b"_dec");
                 prop_dec_refs.insert(prop_idx, dec_ref);
-                if is_expr {
-                    let binding = p.b(B::Identifier { r#ref: dec_ref }, loc);
-                    expr_var_decls.push(G::Decl {
-                        binding,
-                        value: None,
-                    });
-                }
                 // SAFETY: shallow-reborrow arena Vec.
                 let items: ExprNodeList = unsafe { core::ptr::read(&raw const prop.ts_decorators) };
                 let arr = p.new_expr(
@@ -1270,21 +1366,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && prop.key.is_some()
                 && prop.ts_decorators.len_u32() > 0
             {
-                computed_key_counter += 1;
-                let key_name: &'a [u8] = if computed_key_counter == 1 {
-                    b"_computedKey"
-                } else {
-                    p.bump_name(b"_computedKey", Some(computed_key_counter))
-                };
-                let key_ref = p.new_sym(js_ast::symbol::Kind::Other, key_name);
+                let key_ref = p.new_temp(b"_computedKey");
                 computed_key_refs.insert(prop_idx, key_ref);
-                if is_expr {
-                    let binding = p.b(B::Identifier { r#ref: key_ref }, loc);
-                    expr_var_decls.push(G::Decl {
-                        binding,
-                        value: None,
-                    });
-                }
                 let key_loc = prop.key.expect("infallible: prop has key").loc;
                 pre_eval_stmts.push(p.var_decl(key_ref, prop.key, loc));
                 prop.key = Some(p.use_ref(key_ref, key_loc));
@@ -1389,7 +1472,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BumpVec::<js_ast::StoreRef<G::ClassStaticBlock>>::new_in(bump);
         let mut prefix_stmts = BumpVec::<Stmt>::new_in(bump);
         let mut private_lowered_map: PrivateLoweredMap = PrivateLoweredMap::default();
-        let mut accessor_storage_counter: usize = 0;
         let mut emitted_private_adds: HashMap<u32, ()> = HashMap::default();
         let mut static_private_add_blocks = BumpVec::<Property>::new_in(bump);
 
@@ -1456,7 +1538,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             ex.storage_ref
                         } else {
                             let nm = p.bump_name2(b"_", &npriv_orig[1..]);
-                            p.new_sym(js_ast::symbol::Kind::Other, nm)
+                            p.new_temp(nm)
                         };
                         let fn_nm = {
                             let mut v = BumpVec::<u8>::new_in(bump);
@@ -1465,7 +1547,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             v.extend_from_slice(Self::fn_suffix(nk));
                             v.into_bump_slice()
                         };
-                        let fn_ref = p.new_sym(js_ast::symbol::Kind::Other, fn_nm);
+                        let fn_ref = p.new_temp(fn_nm);
 
                         let mut new_info =
                             existing.unwrap_or_else(|| PrivateLoweredInfo::new(ws_ref));
@@ -1514,7 +1596,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         // Non-decorated private field → WeakMap
                         let wm_nm = p.bump_name2(b"_", &npriv_orig[1..]);
-                        let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, wm_nm);
+                        let wm_ref = p.new_temp(wm_nm);
                         private_lowered_map.insert(npriv_inner, PrivateLoweredInfo::new(wm_ref));
                         let wme = p.new_weak_map_expr(loc);
                         prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));
@@ -1541,20 +1623,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 // Undecorated auto-accessor → WeakMap + getter/setter
                 if prop.kind == PropertyKind::AutoAccessor {
-                    let accessor_name: &'a [u8] = 'brk: {
-                        if let Some(k) = prop.key {
-                            if let js_ast::ExprData::EString(s) = &k.data
-                                && s.is_utf8()
-                            {
-                                break 'brk p.bump_name2(b"_", &s.data);
-                            }
-                        }
-                        let name =
-                            p.bump_name(b"_accessor_storage", Some(accessor_storage_counter));
-                        accessor_storage_counter += 1;
-                        name
-                    };
-                    let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, accessor_name);
+                    let accessor_name = p.accessor_storage_base(prop.key);
+                    let wm_ref = p.new_temp(accessor_name);
                     let wme = p.new_weak_map_expr(loc);
                     prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));
 
@@ -1724,7 +1794,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ex.storage_ref
                     } else {
                         let nm = p.bump_name2(b"_", &private_orig[1..]);
-                        p.new_sym(js_ast::symbol::Kind::Other, nm)
+                        p.new_temp(nm)
                     };
                     private_storage_ref = Some(ws_ref);
                     let fn_nm = {
@@ -1734,7 +1804,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         v.extend_from_slice(Self::fn_suffix(k));
                         v.into_bump_slice()
                     };
-                    let fn_ref = p.new_sym(js_ast::symbol::Kind::Other, fn_nm);
+                    let fn_ref = p.new_temp(fn_nm);
                     private_method_fn_ref = Some(fn_ref);
 
                     let mut new_info = existing.unwrap_or_else(|| PrivateLoweredInfo::new(ws_ref));
@@ -1756,7 +1826,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     dec_arg_count = 6;
                 } else if k == 5 {
                     let nm = p.bump_name2(b"_", &private_orig[1..]);
-                    let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, nm);
+                    let wm_ref = p.new_temp(nm);
                     private_storage_ref = Some(wm_ref);
                     private_lowered_map.insert(priv_inner, PrivateLoweredInfo::new(wm_ref));
                     let wme = p.new_weak_map_expr(loc);
@@ -1764,7 +1834,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     dec_arg_count = 5;
                 } else if k == 4 {
                     let nm = p.bump_name2(b"_", &private_orig[1..]);
-                    let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, nm);
+                    let wm_ref = p.new_temp(nm);
                     private_storage_ref = Some(wm_ref);
                     let acc_nm = {
                         let mut v = BumpVec::<u8>::new_in(bump);
@@ -1773,7 +1843,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         v.extend_from_slice(b"_acc");
                         v.into_bump_slice()
                     };
-                    let acc_ref = p.new_sym(js_ast::symbol::Kind::Other, acc_nm);
+                    let acc_ref = p.new_temp(acc_nm);
                     private_method_fn_ref = Some(acc_ref);
                     private_lowered_map.insert(
                         priv_inner,
@@ -1791,17 +1861,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             } else if k == 4 {
                 // Decorated public auto-accessor → WeakMap
-                let accessor_name: &'a [u8] = 'brk: {
-                    if let js_ast::ExprData::EString(s) = &key_expr.data
-                        && s.is_utf8()
-                    {
-                        break 'brk p.bump_name2(b"_", &s.data);
-                    }
-                    let name = p.bump_name(b"_accessor_storage", Some(accessor_storage_counter));
-                    accessor_storage_counter += 1;
-                    name
-                };
-                let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, accessor_name);
+                let accessor_name = p.accessor_storage_base(Some(key_expr));
+                let wm_ref = p.new_temp(accessor_name);
                 private_extra_ref = Some(wm_ref);
                 let wme = p.new_weak_map_expr(loc);
                 prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));

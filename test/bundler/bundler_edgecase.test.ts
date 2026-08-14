@@ -3170,6 +3170,94 @@ describe("bundler", () => {
     },
     run: { stdout: "try:false" },
   });
+
+  // Standard decorator / `accessor` lowering declares temporaries (_init, _dec,
+  // _<Class>, one _<name> WeakMap per lowered member, ...) at the top level of
+  // the module. They have to take part in renaming like any other top-level
+  // declaration, or they collide with the user's names and with each other.
+  itBundled("edgecase/DecoratorLoweringTempsVsUserNames", {
+    files: {
+      "/entry.js": /* js */ `
+        const _init = "init";
+        const _dec = "dec";
+        let _x = "x";
+        var _A = "A";
+        function dec(value, ctx) {}
+        class A {
+          @dec m() {}
+          accessor x = 1;
+        }
+        console.log(_init, _dec, _x, _A, new A().x);
+      `,
+    },
+    run: { stdout: "init dec x A 1" },
+  });
+  itBundled("edgecase/DecoratorLoweringTempsWithinOneClass", {
+    files: {
+      "/entry.js": /* js */ `
+        function dec(value, ctx) { return value; }
+        class A {
+          @dec accessor x = 1;
+          #x = 2;
+          get hidden() { return this.#x; }
+        }
+        const a = new A();
+        console.log(a.x, a.hidden);
+      `,
+    },
+    run: { stdout: "1 2" },
+  });
+  itBundled("edgecase/DecoratorLoweringTempsAcrossFiles", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./a.js";
+        import { B } from "./b.js";
+        console.log(a.x, new B().x);
+      `,
+      "/a.js": /* js */ `
+        export class A { accessor x = "a"; }
+        export const a = new A();
+      `,
+      "/b.js": /* js */ `
+        export class B { accessor x = "b"; }
+      `,
+    },
+    run: { stdout: "a b" },
+  });
+  // A class expression inside a block still declares its temporaries with
+  // `var`, so the two blocks' temporaries are bindings of the same scope.
+  const decoratorTempsInSiblingBlocks = {
+    "/entry.js": /* js */ `
+      let A, B;
+      { A = class { accessor x = "a"; }; }
+      const a = new A();
+      { B = class { accessor x = "b"; }; }
+      console.log(a.x, new B().x);
+    `,
+  };
+  itBundled("edgecase/DecoratorLoweringTempsInSiblingBlocks", {
+    files: decoratorTempsInSiblingBlocks,
+    run: { stdout: "a b" },
+  });
+  itBundled("edgecase/DecoratorLoweringTempsInSiblingBlocksMinified", {
+    files: decoratorTempsInSiblingBlocks,
+    minifyIdentifiers: true,
+    run: { stdout: "a b" },
+  });
+  itBundled("edgecase/DecoratorLoweringAccessorKeyNotAnIdentifier", {
+    files: {
+      "/entry.js": /* js */ `
+        function dec(value, ctx) { return value; }
+        class A {
+          accessor "x y" = 1;
+          @dec accessor "x-y" = 2;
+        }
+        const a = new A();
+        console.log(a["x y"], a["x-y"]);
+      `,
+    },
+    run: { stdout: "1 2" },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

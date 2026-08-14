@@ -57,9 +57,11 @@ describe.concurrent("unknown pseudo-classes and pseudo-elements", () => {
   test("known pseudo-classes and pseudo-elements do not warn", async () => {
     const css = [
       "a:hover, a:focus-visible, a:any-link, input:user-valid, [popover]:popover-open { color: red }",
+      "dialog:modal, video:paused, my-element:defined, input:placeholder-shown, a:HOVER { color: red }",
       "input:-webkit-autofill, input:-moz-read-only, div:-webkit-full-screen { color: red }",
-      ":root, li:first-child, li:nth-child(2n of .x), p:lang(en), a:not(.x), :host { color: red }",
-      "a::before, a::-webkit-scrollbar-thumb, p::first-line, ::cue(v) { color: red }",
+      ":root, li:first-child, li:nth-child(2n of .x), p:lang(en), a:not(.x), :host, a:-webkit-any(.x) { color: red }",
+      "a::before, a::-webkit-scrollbar-thumb, p::first-line, ::cue(v), a::before:hover { color: red }",
+      "::-webkit-scrollbar-button:horizontal:decrement { color: red }",
     ].join("\n");
     const { success, logs } = await build("in.css", css);
     expect(logs).toEqual([]);

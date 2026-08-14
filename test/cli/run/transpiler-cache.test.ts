@@ -250,15 +250,16 @@ describe("transpiler cache", () => {
     expect(newCacheCount()).toBe(0); // cache hit, order doesn't matter
   });
 
-  // --define and --drop are substituted into the transpiled output, so an entry
-  // written by one configuration must never be served to another. They are part
-  // of the features hash, like --feature above: a different configuration
-  // replaces the entry (delete + write, net 0 new files), the same one hits it.
-  describe("--define and --drop are part of the cache key", () => {
+  // Everything below changes the transpiled output of the same source bytes, so
+  // an entry written by one configuration must never be served to another. Each
+  // is part of the features hash, like --feature above: a different
+  // configuration replaces the entry (delete + write, net 0 new files), the same
+  // one hits it.
+  describe("the configuration is part of the cache key", () => {
     // Prints what X was defined as, or "nodefine" when it was left alone.
     const defineProbe = { code: 'typeof X === "undefined" ? "nodefine" : X' };
 
-    // Returns the last line a.js printed. (`bun test` reports on stderr, but
+    // Returns the last line the file printed. (`bun test` reports on stderr, but
     // also prints its version banner to stdout ahead of the module's output.)
     function run(args: string[]) {
       const result = Bun.spawnSync({
@@ -374,6 +375,46 @@ describe("transpiler cache", () => {
       expect(newCacheCount()).toBe(0);
 
       expect(run(["a.js"])).toBe("console-kept");
+      expect(newCacheCount()).toBe(0);
+    });
+
+    test('package.json "type" and the .cjs / .mjs extension', () => {
+      // The same bytes under every module type, so all four files share one
+      // entry. The module type decides whether a file without import/export
+      // syntax is wrapped as CommonJS, where `arguments` exists.
+      const source = dummyFile(5 * 1024, "1", { code: "typeof arguments" });
+      mkdirSync(join(temp_dir, "cjs"));
+      mkdirSync(join(temp_dir, "esm"));
+      writeFileSync(join(temp_dir, "cjs", "package.json"), `{ "type": "commonjs" }`);
+      writeFileSync(join(temp_dir, "esm", "package.json"), `{ "type": "module" }`);
+      for (const file of ["cjs/a.js", "esm/a.js", "a.cjs", "a.mjs"]) {
+        writeFileSync(join(temp_dir, file), source);
+      }
+
+      expect(run(["cjs/a.js"])).toBe("object");
+      expect(newCacheCount()).toBe(1);
+      expect(run(["esm/a.js"])).toBe("undefined");
+      expect(newCacheCount()).toBe(0);
+      expect(run(["a.cjs"])).toBe("object");
+      expect(newCacheCount()).toBe(0);
+      expect(run(["a.mjs"])).toBe("undefined");
+      expect(newCacheCount()).toBe(0);
+    });
+
+    test("--jsx-side-effects", () => {
+      // With the classic runtime an unused element is a bare call to the
+      // factory, which is dropped as dead code unless --jsx-side-effects says
+      // the call matters. (The flag is read together with the other JSX flags.)
+      const classic = ["--jsx-runtime=classic", "--jsx-factory=h"];
+      const code = `function h() { console.log("h called"); }\n<div />;`;
+      const filler = Buffer.alloc(5 * 1024, "/").toString();
+      writeFileSync(join(temp_dir, "a.jsx"), code + "\n//" + filler);
+
+      expect(run([...classic, "a.jsx"])).toBe("");
+      expect(newCacheCount()).toBe(1);
+      expect(run([...classic, "--jsx-side-effects", "a.jsx"])).toBe("h called");
+      expect(newCacheCount()).toBe(0);
+      expect(run([...classic, "a.jsx"])).toBe("");
       expect(newCacheCount()).toBe(0);
     });
   });

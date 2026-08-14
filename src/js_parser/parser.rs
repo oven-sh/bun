@@ -264,8 +264,8 @@ pub mod Runtime {
         /// in watch/dev-server mode.
         pub bundler_feature_flags: Option<Box<StringSet>>,
 
-        /// `BundleOptions::user_defines_hash`; `None` contributes nothing to the hash.
-        pub user_defines_hash: Option<u64>,
+        /// `BundleOptions::define_hash`; `None` contributes nothing to the hash.
+        pub define_hash: Option<u64>,
 
         /// REPL mode: transforms code for interactive evaluation
         /// - Wraps lone object literals `{...}` in parentheses
@@ -314,7 +314,7 @@ pub mod Runtime {
                 runtime_transpiler_cache: None,
                 lower_using: true,
                 bundler_feature_flags: None,
-                user_defines_hash: None,
+                define_hash: None,
                 repl_mode: false,
                 jsx_optimization_inline: false,
             }
@@ -403,9 +403,9 @@ pub mod Runtime {
                 }
             }
 
-            // --define / --drop, likewise adding nothing when not given.
-            if let Some(user_defines_hash) = self.user_defines_hash {
-                hasher.update(&user_defines_hash.to_le_bytes());
+            // The define table, likewise adding nothing in the default configuration.
+            if let Some(define_hash) = self.define_hash {
+                hasher.update(&define_hash.to_le_bytes());
             }
         }
 

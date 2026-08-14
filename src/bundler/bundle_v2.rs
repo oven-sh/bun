@@ -6084,8 +6084,7 @@ pub mod bv2_impl {
                     }
                 }
 
-                // External for target bun, where the runtime opens the database. Other
-                // targets fall through to the parse task, which reports the target error.
+                // Left external for target bun; other targets get the parse task's target error.
                 if import_record.loader == Some(Loader::Sqlite) && ctx.target.is_bun() {
                     import_record
                         .flags

@@ -331,11 +331,13 @@ describe("flags", () => {
     });
   }
 
-  // The destination directory itself still fits in the path buffer, but appending
-  // "/<name>-<version>.tgz" to it does not. Windows command lines cannot carry an
-  // argument anywhere near its path buffer size.
+  // The destination directory ends `headroom` bytes short of the path buffer, so it still fits,
+  // but the longer "/<name>-<version>.tgz" appended to it does not. Windows command lines cannot
+  // carry an argument anywhere near its path buffer size.
   test.skipIf(isWindows)("--destination with no room left for the tarball name", async () => {
-    const name = `pack-dest-too-long-${Buffer.alloc(180, "n").toString()}`;
+    const pathMax = isLinux ? 4096 : 1024;
+    const headroom = 100;
+    const name = `pack-dest-too-long-${Buffer.alloc(2 * headroom, "n").toString()}`;
     await Promise.all([
       write(
         join(packageDir, "package.json"),
@@ -347,8 +349,9 @@ describe("flags", () => {
       write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
     ]);
 
-    const pathMax = isLinux ? 4096 : 1024;
-    const dest = join(packageDir, Buffer.alloc(pathMax - 100 - packageDir.length - 1, "d").toString());
+    // packageDir + "/" + filler is `headroom` bytes short of the buffer
+    const filler = Buffer.alloc(pathMax - headroom - Buffer.byteLength(packageDir) - 1, "d").toString();
+    const dest = join(packageDir, filler);
     const { err } = await packExpectError(packageDir, bunEnv, `--destination=${dest}`);
     expect(err).toContain(`error: archive destination name too long: "${dest}/${name}-1.0.0.tgz"\n`);
   });

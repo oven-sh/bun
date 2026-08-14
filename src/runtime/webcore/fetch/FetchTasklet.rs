@@ -1601,7 +1601,7 @@ impl FetchTasklet {
             // SAFETY: the stream (held Strong above) owns a live ByteStream embedded in
             // its Source; JS thread.
             unsafe {
-                let source = (*bytes).parent();
+                let source = crate::webcore::readable_stream::NewSource::from_context_ptr(bytes);
                 (*source).increment_count();
                 this.response_stream_source = NonNull::new(source);
             }

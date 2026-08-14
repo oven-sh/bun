@@ -719,6 +719,78 @@ describe("bun test", () => {
       });
       expect(stderr).toMatch(/::error title=error: Test \"time out\" timed out after \d+ms::/);
     });
+    // The frame on top of these stacks has no file to annotate: a JS builtin
+    // (`reduce`), the `native` / `unknown` placeholders such frames turn into
+    // once error.stack has been read, or one of bun's own `node:*` modules.
+    // The annotation has to point at the first frame below it that is in the
+    // test file. The test callbacks are async so the error reaches the
+    // reporter with its own stack; a synchronous throw is reported with the
+    // frames of the throw site instead, which would not have these on top.
+    test.each([
+      {
+        label: "a JS builtin",
+        body: `[].reduce((a, b) => a);`,
+        callee: "reduce",
+        title: "TypeError: reduce of empty array with no initial value",
+      },
+      {
+        label: "a JS builtin after error.stack was read",
+        body: `try { [].reduce((a, b) => a); } catch (e) { void e.stack; throw e; }`,
+        callee: "reduce",
+        title: "TypeError: reduce of empty array with no initial value",
+      },
+      {
+        label: "a node: module",
+        body: `new EventEmitter().emit("error");`,
+        callee: "emit",
+        title: "error: Unhandled error. (undefined)",
+      },
+      {
+        label: "a node: module after error.stack was read",
+        body: `try { new EventEmitter().emit("error"); } catch (e) { void e.stack; throw e; }`,
+        callee: "emit",
+        title: "error: Unhandled error. (undefined)",
+      },
+    ])("should annotate the first frame in the test file when the top frame is $label", ({ body, callee, title }) => {
+      const lines = [
+        `import { test } from "bun:test";`,
+        `import { EventEmitter } from "node:events";`,
+        `test("fail", async () => {`,
+        `  ${body}`,
+        `});`,
+      ];
+      const line = lines.findIndex(l => l.includes(body)) + 1;
+      const col = lines[line - 1].indexOf(callee) + 1;
+      const stderr = runTest({
+        input: [{ filename: "top-frame-has-no-file.test.ts", contents: lines.join("\n") }],
+        env: {
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+      expect(annotation).toStartWith("::error file=");
+      expect(annotation!.replace(/^::error file=(?:[^,]*[\\/])?/, "")).toStartWith(
+        `top-frame-has-no-file.test.ts,line=${line},col=${col},title=${title}::`,
+      );
+    });
+    test("should annotate without a location when no frame has a file", () => {
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          test("fail", async () => {
+            const err = new Error("boom");
+            err.stack = "Error: boom\\n    at reduce (native:1:11)";
+            throw err;
+          });
+        `,
+        env: {
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+      expect(annotation).toStartWith("::error title=error: boom::");
+      expect(annotation).toContain("at reduce (");
+    });
   });
   describe(".each", () => {
     test("should run tests with test.each", () => {

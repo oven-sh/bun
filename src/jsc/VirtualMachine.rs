@@ -5600,14 +5600,7 @@ impl VirtualMachine {
         let mut top_frame_is_builtin = false;
         if self.hide_bun_stackframes {
             for (i, frame) in frames.iter().enumerate() {
-                if frame.source_url.has_prefix_comptime(b"bun:")
-                    || frame.source_url.has_prefix_comptime(b"node:")
-                    || frame.source_url.is_empty()
-                    || frame.source_url.eql_comptime("native")
-                    || frame.source_url.eql_comptime("unknown")
-                    || frame.source_url.eql_comptime("[unknown]")
-                    || frame.source_url.has_prefix_comptime(b"[source:")
-                {
+                if !frame.has_user_source() {
                     top_frame_is_builtin = true;
                     continue;
                 }
@@ -6123,10 +6116,7 @@ impl VirtualMachine {
                 let mut top_frame: Option<&crate::ZigStackFrame> = frames.first();
                 if self.hide_bun_stackframes {
                     for frame in frames {
-                        if frame.position.is_invalid()
-                            || frame.source_url.has_prefix_comptime(b"bun:")
-                            || frame.source_url.has_prefix_comptime(b"node:")
-                        {
+                        if frame.position.is_invalid() || !frame.has_user_source() {
                             continue;
                         }
                         top_frame = Some(frame);
@@ -6549,29 +6539,26 @@ impl VirtualMachine {
         let name = &exception.name;
         let message = &exception.message;
         let frames = exception.stack.frames();
-        let top_frame = frames.first();
+        let location_frame = frames
+            .iter()
+            .find(|frame| frame.has_user_source() && !frame.position.is_invalid());
         let dir = bun_core::env_var::GITHUB_WORKSPACE::get()
             .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::instance().top_level_dir);
         bun_core::Output::flush();
 
         let writer = bun_core::Output::error_writer();
 
-        let mut has_location = false;
-        if let Some(frame) = top_frame {
-            if !frame.position.is_invalid() {
-                let source_url = frame.source_url.to_utf8();
-                let file = bun_paths::resolve_path::relative(dir, source_url.slice());
-                let _ = write!(
-                    writer,
-                    "\n::error file={},line={},col={},title=",
-                    bun_core::fmt::github_action_property(file),
-                    frame.position.line.one_based(),
-                    frame.position.column.one_based(),
-                );
-                has_location = true;
-            }
-        }
-        if !has_location {
+        if let Some(frame) = location_frame {
+            let source_url = frame.source_url.to_utf8();
+            let file = bun_paths::resolve_path::relative(dir, source_url.slice());
+            let _ = write!(
+                writer,
+                "\n::error file={},line={},col={},title=",
+                bun_core::fmt::github_action_property(file),
+                frame.position.line.one_based(),
+                frame.position.column.one_based(),
+            );
+        } else {
             let _ = writer.write_all(b"\n::error title=");
         }
 
@@ -6612,7 +6599,7 @@ impl VirtualMachine {
             let _ = writer.write_all(b"::");
         }
 
-        if top_frame.is_some() {
+        if !frames.is_empty() {
             // SAFETY: per-thread VM.
             let vm = VirtualMachine::get();
             let origin = if vm.is_from_devserver {

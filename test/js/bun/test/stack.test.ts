@@ -149,3 +149,30 @@ test("Async functions frame should be included in stack trace", async () => {
         at async <anonymous> (file:NN:NN)"
   `);
 });
+
+// `reduce` throws from inside JSC's builtin, so the first frame has a
+// line:column inside the builtin's source and no file. The code frame shows
+// this file, so its caret has to be placed by this file's frame as well. Once
+// error.stack has been read, the frames are parsed back out of that string
+// and the builtin frame turns into the `native` placeholder.
+test.each([
+  ["fresh error", false],
+  ["error whose .stack has been read", true],
+])("code frame caret is placed by the first frame with a file, not a builtin frame on top: %s", (_, readStack) => {
+  let err: unknown;
+  try {
+    const emptyArray: number[] = [];
+    emptyArray.reduce((a, b) => a);
+  } catch (e) {
+    err = e;
+  }
+  if (readStack) void (err as Error).stack;
+
+  const lines = Bun.inspect(err).split("\n");
+  const header = lines.indexOf("TypeError: reduce of empty array with no initial value");
+  expect(header).toBeGreaterThanOrEqual(2);
+  const [sourceLine, caretLine] = lines.slice(header - 2, header);
+  expect(sourceLine).toEndWith("emptyArray.reduce((a, b) => a);");
+  expect(caretLine.trim()).toBe("^");
+  expect(caretLine.indexOf("^")).toBe(sourceLine.indexOf("reduce"));
+});

@@ -928,3 +928,61 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.concurrent("property walk that throws part way through", () => {
+  async function run(code) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("skips a prototype property whose Proxy get trap throws", async () => {
+    const result = await run(`
+      const proto = new Proxy({ a: 1, b: 2 }, {
+        get(target, key, receiver) {
+          if (key === "a") throw new Error("boom");
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      console.log(Bun.inspect(Object.create(proto)));
+    `);
+    expect(result).toEqual({ stdout: "{\n  b: 2,\n}\n", stderr: "", exitCode: 0 });
+  });
+
+  it("stops walking when a Proxy getPrototypeOf trap throws", async () => {
+    const result = await run(`
+      const proto = new Proxy({ a: 1 }, {
+        getPrototypeOf() { throw new Error("boom"); },
+      });
+      console.log(Bun.inspect(Object.create(proto)));
+    `);
+    expect(result).toEqual({ stdout: "{\n  a: 1,\n}\n", stderr: "", exitCode: 0 });
+  });
+
+  it("lazy Bun properties failing with a stack overflow", async () => {
+    // Close to the stack limit, initializing the lazy properties of the Bun
+    // object that have to run JS (Bun.$, Bun.sql, ...) throws a stack overflow
+    // in the middle of the walk. How close depends on how much native stack
+    // each initializer needs, so inspect at a spread of depths above the
+    // frame where the recursion overflowed (level 0).
+    const result = await run(`
+      const levels = new Set([0, 64, 128, 256, 512, 1024, 2048]);
+      let level = -1;
+      function recurse() {
+        try { recurse(); } catch {}
+        level++;
+        if (levels.has(level)) {
+          try { Bun.inspect(Bun); } catch {}
+        }
+      }
+      recurse();
+      console.log("ok");
+    `);
+    expect(result).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  });
+});

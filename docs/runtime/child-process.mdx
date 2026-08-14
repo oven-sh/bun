@@ -581,7 +581,7 @@ namespace SpawnOptions {
       signalCode: number | null,
       error?: ErrorLike,
     ): void | Promise<void>;
-    ipc?(message: any, subprocess: Subprocess): void;
+    ipc?(message: any, subprocess: Subprocess, handle?: SendHandle): void;
     serialization?: "json" | "advanced";
     windowsHide?: boolean;
     windowsVerbatimArguments?: boolean;
@@ -616,6 +616,14 @@ namespace SpawnOptions {
     | Blob
     | Response
     | Request;
+
+  // A socket that can be passed along with an IPC message; the other process
+  // receives its own net.Server / net.Socket / dgram.Socket for it.
+  type SendHandle = net.Server | net.Socket | dgram.Socket;
+
+  interface SendOptions {
+    keepOpen?: boolean; // keep a sent net.Socket open in this process as well
+  }
 }
 
 interface Subprocess extends AsyncDisposable {
@@ -634,7 +642,12 @@ interface Subprocess extends AsyncDisposable {
   ref(): void;
   unref(): void;
 
-  send(message: any): void;
+  send(
+    message: any,
+    handle?: SpawnOptions.SendHandle,
+    options?: SpawnOptions.SendOptions,
+    callback?: (error: Error | null) => void,
+  ): boolean;
   disconnect(): void;
   resourceUsage(): ResourceUsage | undefined;
 }

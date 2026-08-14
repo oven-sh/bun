@@ -1126,7 +1126,7 @@ describe.concurrent("lockfile", () => {
     ]);
     await Promise.all([installOk(x), installOk(y), installOk(z)]);
     const xLock = await lock(x);
-    expect(xLock).toContain('"lockfileVersion": 2');
+    expect(xLock).toContain('"lockfileVersion": 1');
     expect(xLock).toContain('\n    "no-deps": "1.0.0",\n');
     expect(await lock(y)).toContain('"lockfileVersion": 3');
     expect(await lock(z)).toContain('"lockfileVersion": 3');
@@ -1144,10 +1144,10 @@ describe.concurrent("lockfile", () => {
     const dir = await project({ dependencies: walkFallbackDeps });
     await installOk(dir);
     const text = await lock(dir);
-    expect(text).toContain('"lockfileVersion": 2');
+    expect(text).toContain('"lockfileVersion": 1');
     expect(text).toContain('one-dep-1.0.0.tgz", ');
     const stripped = text
-      .replace('"lockfileVersion": 2', `"lockfileVersion": ${stampVersion}`)
+      .replace('"lockfileVersion": 1', `"lockfileVersion": ${stampVersion}`)
       .replace(/, "sha512-[^"]*"\]/g, ', ""]');
     expect(stripped).not.toContain("sha512-");
     await write(join(dir, "bun.lock"), stripped);
@@ -1286,7 +1286,7 @@ describe.concurrent("lockfile", () => {
     const after = await lock(dir);
     expect(after).not.toContain('"overrides"');
     expect(after).not.toContain("no-deps@2.0.0");
-    expect(after).toContain('"lockfileVersion": 2');
+    expect(after).toContain('"lockfileVersion": 1');
     await installOk(dir, "--frozen-lockfile");
   });
 

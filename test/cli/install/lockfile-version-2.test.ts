@@ -4,13 +4,18 @@ import { exists } from "fs/promises";
 import { bunExe, bunEnv as env, tempDir } from "harness";
 import { join } from "path";
 
-// These tests cover the text lockfile bump to version 2 and the parse-time
-// checks gated behind it. They run fully offline — using `file:` deps or
-// loopback/unreachable endpoints — so no external network or registry is
-// required.
+// These tests cover text lockfile version 2 (parse-time checks on v1's
+// content) and which version the writer stamps. They run fully offline — using
+// `file:` deps or loopback/unreachable endpoints — so no external network or
+// registry is required.
 
-it("a freshly written text lockfile defaults to version 2", async () => {
-  using dir = tempDir("lockfile-v2-default", {
+// v1 and v2 have identical content, and Bun releases before v2 existed reject
+// `lockfileVersion: 2` outright ("Unknown lockfile version"), so a lockfile
+// written from scratch is stamped v1: the first `bun install` of a project
+// must produce a file that a teammate or CI image on an older Bun can still
+// install from with `--frozen-lockfile`.
+it("a freshly written text lockfile is stamped version 1", async () => {
+  using dir = tempDir("lockfile-fresh-v1", {
     "package.json": JSON.stringify({ name: "root", dependencies: { dep: "file:./dep" } }),
     "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
   });
@@ -26,15 +31,53 @@ it("a freshly written text lockfile defaults to version 2", async () => {
 
   const lockfile = await file(join(String(dir), "bun.lock")).text();
   expect(err).not.toContain("error:");
-  expect(lockfile).toContain(`"lockfileVersion": 2,`);
+  expect(lockfile).toContain(`"lockfileVersion": 1,`);
+  expect(exitCode).toBe(0);
+});
+
+// An existing v2 lockfile is left alone: the writer neither upgrades nor
+// downgrades a version it loaded, it only avoids introducing v2 on new files.
+it("re-saving a v2 lockfile keeps it at version 2", async () => {
+  const v2Lockfile =
+    JSON.stringify(
+      {
+        lockfileVersion: 2,
+        configVersion: 1,
+        workspaces: { "": { name: "root", dependencies: { a: "file:./a" } } },
+        packages: { a: ["a@file:a", {}] },
+      },
+      null,
+      2,
+    ) + "\n";
+
+  using dir = tempDir("lockfile-v2-preserved", {
+    // package.json asks for a second `file:` dep the lockfile doesn't have yet,
+    // forcing a real re-save (not a no-op skip).
+    "package.json": JSON.stringify({ name: "root", dependencies: { a: "file:./a", b: "file:./b" } }),
+    "a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+    "b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+    "bun.lock": v2Lockfile,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const after = await file(join(String(dir), "bun.lock")).text();
+  expect(err).not.toContain("error:");
+  expect(after).toContain(`"b": ["b@file:b"`);
+  expect(after).toContain(`"lockfileVersion": 2,`);
   expect(exitCode).toBe(0);
 });
 
 // Re-saving an existing lockfile must never bump its version. A v1 `bun.lock`
 // that is rewritten — here because a new dependency is added — keeps
 // `lockfileVersion: 1`, even though every entry would satisfy the v2 invariants.
-// Only a lockfile with no prior version (fresh install / migration) is written
-// at the current version.
 it("re-saving a v1 lockfile keeps it at version 1 even after adding a dependency", async () => {
   const v1Lockfile =
     JSON.stringify(

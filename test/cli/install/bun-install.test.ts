@@ -9449,7 +9449,7 @@ describe.concurrent("bun-install", () => {
       expect(await exists(join(ctx.package_dir, "bun.lockb"))).toBeFalse();
       expect(await file(join(ctx.package_dir, "bun.lock")).text()).toMatchInlineSnapshot(`
       "{
-        "lockfileVersion": 2,
+        "lockfileVersion": 1,
         "configVersion": 1,
         "workspaces": {
           "": {
@@ -10251,7 +10251,7 @@ it("installs file: dependencies that depend on each other", async () => {
   using dir = tempDir("file-dep-cycle", fileDepCycleFixture);
   expect(await installFileDepCycle(String(dir))).toMatchInlineSnapshot(`
     "{
-      "lockfileVersion": 2,
+      "lockfileVersion": 1,
       "configVersion": 1,
       "workspaces": {
         "": {

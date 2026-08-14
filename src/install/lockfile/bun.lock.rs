@@ -114,6 +114,10 @@ pub enum Version {
     /// - a git `.bun-tag` must be a safe path/checkout component (the same
     ///   check on a `github` tag is enforced at every version, since its
     ///   download path has no checkout-time re-validation)
+    ///
+    /// Same content as v1. Only preserved on a lockfile that was loaded at v2;
+    /// a new lockfile is stamped v1 so Bun releases that predate v2 can read it
+    /// (see `Stringifier::version_to_write`).
     V2 = 2,
 
     /// `overrides` values may be objects holding scoped rules (parent-scoped or `name@range` targets); stamped while such rules exist and the package walk in `Stringifier::version_to_write` is v2-clean (object rows themselves parse at every version)
@@ -180,46 +184,43 @@ impl Stringifier {
         Self::save_from_binary_inner(lockfile, load_result, options, writer)
     }
 
-    /// Pick the `lockfileVersion` to stamp. A lockfile loaded from disk keeps
-    /// the version it already carried — re-saving never silently upgrades an
-    /// existing `bun.lock` to a newer format. `text_lockfile_version` holds the
-    /// parsed version when the lockfile was loaded from text, and defaults to
-    /// `Version::CURRENT` otherwise (a fresh install, or a migration from
-    /// another lockfile format), the "no version previously" case whose stamp
-    /// is decided by the walk below.
+    /// Pick the `lockfileVersion` to stamp. The stamp is the lowest version whose
+    /// readers understand the content being written, so a `bun.lock` keeps
+    /// loading in every Bun release that can read it:
     ///
-    /// The one version that is *not* preserved is v0: v0→v1 was a content-format
-    /// change (v1 stopped listing a workspace package's dependencies as a
-    /// trailing object), and the writer only ever emits the v1+ single-element
-    /// `["name@workspace:path"]` form. Stamping v0 on that output would make the
-    /// next parse fail ("Missing dependencies object"), so a v0 lockfile is
-    /// floored to v1 — the lowest version whose content matches what we write.
-    /// v1→v2, by contrast, only added parse-time strictness on identical
-    /// content, so v1 is preserved as-is.
+    /// - A lockfile loaded as v1 or v2 keeps its version. v1→v2 only added
+    ///   parse-time strictness on identical content, so neither is upgraded or
+    ///   downgraded on re-save.
+    /// - A lockfile with no prior version is stamped v1. `text_lockfile_version`
+    ///   holds the parsed version when the lockfile was loaded from text and is
+    ///   left at `Version::CURRENT` otherwise (a fresh install, or a migration
+    ///   from another lockfile format); both land in the v3 arm below. Stamping
+    ///   v2 there would lock out the releases that predate v2 without changing a
+    ///   byte of content.
+    /// - v0 is floored to v1: v0→v1 changed the content (v1 stopped listing a
+    ///   workspace package's dependencies as a trailing object) and the writer
+    ///   only emits the v1+ single-element `["name@workspace:path"]` form, which
+    ///   a v0 stamp would make the next parse reject ("Missing dependencies
+    ///   object").
+    /// - Scoped overrides (parent-scoped or `name@range` rules) are content an
+    ///   older reader would silently ignore, so while any exist the lockfile is
+    ///   stamped v3 whatever version was loaded; once they are gone a v3 lockfile
+    ///   drops back to v1 like a fresh one.
     ///
-    /// Scoped overrides (parent-scoped or `name@range` rules) are stamped v3, but
-    /// only after the same walk: a lockfile the walk holds at v1 stays v1 with the
-    /// override objects written as-is, since the parser reads those at every
-    /// version while its v2+ integrity check is evaluated against the *reader's*
-    /// registries — stamping 3 there would make the file config-dependent again.
-    /// A walk-clean lockfile with scoped rules is stamped v3 whatever version was
-    /// loaded. Without scoped rules a lockfile keeps its loaded v1/v2, and a fresh
-    /// or v3-loaded one is walked down to v2, or to v1 on a v2-invariant violation
-    /// (off-registry npm tarball without a supported integrity, unsafe git
-    /// `.bun-tag`); that decision must not depend on the writer's `~/.npmrc`.
-    ///
-    /// Walks the package tree the same way the writer does — only packages that
-    /// are actually serialized are considered, not every entry in the in-memory
-    /// `pkg_resolutions` buffer (migration can leave pruned/unreferenced entries
-    /// there that never reach the written `packages` object).
+    /// v3 implies the v2 parse checks, and the parser evaluates the integrity
+    /// check against the *reader's* registries, so before stamping v3 the package
+    /// tree is walked the same way the writer serializes it (only packages that
+    /// reach the written `packages` object count; migration can leave
+    /// unreferenced entries in `pkg_resolutions`). A row some reader could reject
+    /// at v2+ (an off-registry npm tarball without a supported integrity, an
+    /// unsafe git `.bun-tag`) holds the lockfile at v1 with the override objects
+    /// written as-is: the parser reads those at every version, so the file still
+    /// round-trips everywhere instead of depending on the writer's `~/.npmrc`.
     fn version_to_write(lockfile: &BinaryLockfile) -> Version {
-        let loaded = lockfile.text_lockfile_version;
-        let has_scoped = lockfile.overrides.has_scoped();
-        if !has_scoped && !loaded.at_least(Version::V3) {
-            return if loaded.at_least(Version::V1) {
-                loaded
-            } else {
-                Version::V1
+        if !lockfile.overrides.has_scoped() {
+            return match lockfile.text_lockfile_version {
+                loaded @ (Version::V1 | Version::V2) => loaded,
+                Version::V0 | Version::V3 => Version::V1,
             };
         }
 
@@ -260,7 +261,7 @@ impl Stringifier {
                         // and the parser's integrity check is evaluated against
                         // the *reader's* scope config, so it is not
                         // config-independent: a writer with a private `@scope`
-                        // registry could stamp v2 on a lockfile a teammate
+                        // registry could stamp v3 on a lockfile a teammate
                         // without that scope then fails to parse. Stay at v1 for
                         // those so the file keeps loading everywhere.
                         let url = res.npm().url.slice(buf);
@@ -269,7 +270,7 @@ impl Stringifier {
                         }
                     }
                     ResolutionTag::Git => {
-                        // An unsafe git `.bun-tag` is only rejected at v2, so
+                        // An unsafe git `.bun-tag` is only rejected at v2+, so
                         // staying at v1 keeps it loading. (A `github` tag is
                         // rejected at every version, so no lockfile version can
                         // round-trip an unsafe one — nothing to gate here.)
@@ -283,7 +284,7 @@ impl Stringifier {
                 }
             }
         }
-        if has_scoped { Version::V3 } else { Version::V2 }
+        Version::V3
     }
 
     fn save_from_binary_inner(

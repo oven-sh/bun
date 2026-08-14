@@ -1154,6 +1154,36 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(res.exitCode).toBe(1);
   });
 
+  test("validate-digests.ts rejects a signature from a revoked key", async () => {
+    // gpg exits 0 and still emits VALIDSIG when the signing key is
+    // revoked (REVKEYSIG replaces GOODSIG), so signer enforcement must
+    // gate on GOODSIG to fail closed. Feed the validator a pubkey file
+    // that includes the revocation certificate gpg auto-generated at
+    // keygen; the import happens in the validator's isolated keyring,
+    // so the shared key stays valid for the other tests.
+    const rev = readFileSync(join(gpgHome, "openpgp-revocs.d", `${signerFpr}.rev`), "utf8").replace(
+      ":-----BEGIN",
+      "-----BEGIN",
+    );
+    const armored = rev.slice(rev.indexOf("-----BEGIN"));
+    using dir = tempDir("bun-28931-revoked-", {});
+    const revokedPub = join(String(dir), "revoked-pub.asc");
+    writeFileSync(revokedPub, readFileSync(signerPubPath, "utf8") + armored);
+
+    const res = await sh([
+      bunExe(),
+      validateScript,
+      "--dir",
+      String(validateFixtureDir),
+      "--require-signer",
+      signerFpr,
+      "--pubkey",
+      revokedPub,
+    ]);
+    expect(res.stderr).toContain("not from a currently valid key");
+    expect(res.exitCode).toBe(1);
+  });
+
   test("validate-digests.ts fails closed when --require-signer has no value", async () => {
     // A missing value must be a usage error, never a silent skip of an
     // explicitly requested security check.

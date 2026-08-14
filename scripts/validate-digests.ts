@@ -181,6 +181,15 @@ async function verifySigner(ascContent: string, fingerprint: string, pubkeyPath?
     if (verify.exitCode !== 0) {
       throw new Error(`gpg --verify failed:\n${verify.stderr.toString()}`);
     }
+    // gpg exits 0 and still emits VALIDSIG for signatures made by
+    // revoked or expired keys (REVKEYSIG / EXPKEYSIG / EXPSIG); only
+    // GOODSIG means the signature checks out AND the key is currently
+    // valid. Fail closed on anything else so revocation of a
+    // compromised release key actually takes effect here.
+    if (!status.includes("[GNUPG:] GOODSIG ")) {
+      const bad = status.match(/\[GNUPG:\] (REVKEYSIG|EXPKEYSIG|EXPSIG|KEYREVOKED)\b/)?.[1];
+      throw new Error(`Signature is not from a currently valid key${bad ? ` (gpg reported ${bad})` : ""}.`);
+    }
     // VALIDSIG <sig-key-fpr> <date> <ts> ... <primary-key-fpr>
     const validsig = status.split(/\r?\n/).find(l => l.startsWith("[GNUPG:] VALIDSIG "));
     if (!validsig) throw new Error("gpg did not report VALIDSIG for the signature.");

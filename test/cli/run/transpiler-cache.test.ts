@@ -307,6 +307,18 @@ describe("transpiler cache", () => {
       expect(run(["--define", "Y=1", "--define", 'X="cli"', "a.js"])).toBe("cli");
       expect(newCacheCount()).toBe(0);
       expect(cacheEntry()).toEqual(twoDefines);
+
+      // ...unless the same key is given twice: the last one wins, so these are
+      // two different configurations, and the second is the same one as a
+      // plain X=1.
+      expect(run(["--define", "X=1", "--define", "X=2", "a.js"])).toBe("2");
+      expect(newCacheCount()).toBe(0);
+      expect(run(["--define", "X=2", "--define", "X=1", "a.js"])).toBe("1");
+      expect(newCacheCount()).toBe(0);
+      const lastWins = cacheEntry();
+      expect(run(["--define", "X=1", "a.js"])).toBe("1");
+      expect(newCacheCount()).toBe(0);
+      expect(cacheEntry()).toEqual(lastWins);
     });
 
     test("--define passed to bun test", () => {

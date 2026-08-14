@@ -826,6 +826,9 @@ pub(crate) mod default_user_defines {
     }
 }
 
+/// Builds the `Define` table. Also returns `BundleOptions::user_defines_hash`
+/// for it, taken from the same resolved `--define` map and `--drop` list the
+/// table is built from.
 pub(crate) fn defines_from_transform_options(
     log: &mut bun_ast::Log,
     // PERF: borrowed, not owned — the caller (`load_defines`) holds
@@ -842,7 +845,7 @@ pub(crate) fn defines_from_transform_options(
     drop: &[&[u8]],
     omit_unused_global_calls: bool,
     bump: &bun_alloc::Arena,
-) -> Result<Box<defines::Define>, crate::Error> {
+) -> Result<(Box<defines::Define>, Option<u64>), crate::Error> {
     let (input_keys, input_values): (&[Box<[u8]>], &[Box<[u8]>]) = match maybe_input_define {
         Some(m) => (&m.keys, &m.values),
         None => (&[], &[]),
@@ -853,6 +856,9 @@ pub(crate) fn defines_from_transform_options(
     for (i, key) in input_keys.iter().enumerate() {
         user_defines.insert(key.as_ref(), input_values[i].clone());
     }
+    // Covers exactly what the user passed; the env-derived defaults added to
+    // the map further down are not part of it.
+    let user_defines_hash = user_defines_hash(&user_defines, drop);
 
     let mut environment_defines = defines::UserDefinesArray::default();
 
@@ -946,35 +952,32 @@ pub(crate) fn defines_from_transform_options(
 
     let drop_debugger = drop.iter().any(|item| *item == b"debugger");
 
-    Ok(defines::Define::init(
+    let define = defines::Define::init(
         Some(resolved_defines),
         Some(environment_defines),
         drop_debugger,
         omit_unused_global_calls,
-    )?)
+    )?;
+    Ok((define, user_defines_hash))
 }
 
-/// Hashes the `--define` map and `--drop` list that `defines_from_transform_options`
-/// builds the user part of the `Define` table from. Both lists are sorted so
-/// the order the flags were given in does not matter; every string is
-/// length-prefixed and the define count comes first, so two different inputs
-/// never serialize to the same byte stream.
-fn user_defines_hash(define: Option<&api::StringMap>, drop: &[Box<[u8]>]) -> Option<u64> {
-    let mut defines: Vec<(&[u8], &[u8])> = define
-        .map(|map| {
-            debug_assert_eq!(map.keys.len(), map.values.len());
-            map.keys
-                .iter()
-                .map(|k| &**k)
-                .zip(map.values.iter().map(|v| &**v))
-                .collect()
-        })
-        .unwrap_or_default();
-    if defines.is_empty() && drop.is_empty() {
+/// `user_defines` is a map, so a key given more than once is already down to
+/// the value that wins; both it and `drop` are sorted here so the order the
+/// flags were given in does not matter either. Every string is length-prefixed
+/// and the define count comes first, so different inputs never serialize to
+/// the same byte stream. `None` when the user gave neither.
+fn user_defines_hash(user_defines: &defines::RawDefines, drop: &[&[u8]]) -> Option<u64> {
+    if user_defines.is_empty() && drop.is_empty() {
         return None;
     }
+    let mut defines: Vec<(&[u8], &[u8])> = user_defines
+        .keys()
+        .iter()
+        .map(|k| &**k)
+        .zip(user_defines.values().iter().map(|v| &**v))
+        .collect();
     defines.sort_unstable();
-    let mut drops: Vec<&[u8]> = drop.iter().map(|d| &**d).collect();
+    let mut drops: Vec<&[u8]> = drop.to_vec();
     drops.sort_unstable();
 
     let mut hasher = bun_wyhash::Wyhash::init(0);
@@ -1619,7 +1622,7 @@ impl<'a> BundleOptions<'a> {
             Some(Cow::Borrowed(b"\"development\"".as_slice()))
         };
         // reshaped for borrowck — node_env computed before passing self.log
-        self.define = defines_from_transform_options(
+        let (define, user_defines_hash) = defines_from_transform_options(
             // No other `&mut Log` is live across this call (see `log_mut`
             // caller contract).
             self.log_mut(),
@@ -1634,8 +1637,8 @@ impl<'a> BundleOptions<'a> {
             self.dead_code_elimination && self.minify_syntax,
             arena,
         )?;
-        self.user_defines_hash =
-            user_defines_hash(self.transform_options.define.as_ref(), &self.drop);
+        self.define = define;
+        self.user_defines_hash = user_defines_hash;
         self.defines_loaded = true;
         Ok(())
     }

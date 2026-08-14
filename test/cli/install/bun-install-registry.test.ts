@@ -5554,6 +5554,58 @@ describe("update", () => {
 
       await runBunInstall(env, packageDir, { savesLockfile: false });
     });
+    // `bun update <name>@npm:<other>` installs the other package, so package.json has to be pointed at
+    // it as well (keeping only the entry's pin style). It used to keep the old target (or a plain range
+    // of it) next to the new package's version. a-dep's latest is 1.0.10.
+    test.each([
+      {
+        key: "aliased-dep",
+        before: "npm:no-deps@~1.0.0",
+        args: ["aliased-dep@npm:a-dep@^1.0.0"],
+        after: "npm:a-dep@~1.0.10",
+      },
+      { key: "aliased-dep", before: "npm:no-deps@~1.0.0", args: ["aliased-dep@npm:a-dep"], after: "npm:a-dep@~1.0.10" },
+      {
+        key: "aliased-dep",
+        before: "npm:no-deps@~1.0.0",
+        args: ["aliased-dep@npm:a-dep", "--latest"],
+        after: "npm:a-dep@~1.0.10",
+      },
+      { key: "aliased-dep", before: "npm:no-deps", args: ["aliased-dep@npm:a-dep"], after: "npm:a-dep@^1.0.10" },
+      { key: "no-deps", before: "~1.0.0", args: ["no-deps@npm:a-dep"], after: "npm:a-dep@~1.0.10" },
+      { key: "no-deps", before: "1.0.0", args: ["no-deps@npm:a-dep@^1.0.0"], after: "npm:a-dep@1.0.10" },
+    ])(`"$key": "$before" + bun update $args retargets it to "$after"`, async ({ key, before, args, after }) => {
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            [key]: before,
+          },
+        }),
+      );
+
+      await runBunInstall(env, packageDir);
+      expect((await file(join(packageDir, "node_modules", key, "package.json")).json()).name).toBe("no-deps");
+
+      await runBunUpdate(env, packageDir, args);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+      expect(await file(packageJson).json()).toEqual({
+        name: "foo",
+        dependencies: {
+          [key]: after,
+        },
+      });
+      expect(await file(join(packageDir, "node_modules", key, "package.json")).json()).toMatchObject({
+        name: "a-dep",
+        version: "1.0.10",
+      });
+
+      // package.json now names the package that is installed, so reinstalling keeps it
+      await runBunInstall(env, packageDir, { savesLockfile: false });
+      expect((await file(join(packageDir, "node_modules", key, "package.json")).json()).name).toBe("a-dep");
+    });
     test("update specific aliased package with --latest alongside a regular package", async () => {
       await write(
         packageJson,

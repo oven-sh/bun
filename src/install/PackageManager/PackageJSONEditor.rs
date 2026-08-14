@@ -1327,8 +1327,22 @@ pub(crate) fn edit(
                             if let Some(entry) =
                                 manager.updating_packages.fetch_swap_remove(request.name)
                             {
+                                let original: &[u8] = &entry.value.original_version_literal;
+                                // `<name>@npm:<other>` retargeted the entry; keep its pin style.
+                                // Plain literals may come from `preprocess_update_requests`.
+                                let installed =
+                                    request.version.literal.slice(request.version_buf());
+                                let original = match split_npm_alias(installed) {
+                                    Some(_) => with_alias_of(
+                                        arena,
+                                        installed,
+                                        split_npm_alias(original)
+                                            .map_or(original, |(_, version)| version),
+                                    ),
+                                    None => original,
+                                };
                                 let new_version = updated_version_literal(
-                                    &entry.value.original_version_literal,
+                                    original,
                                     resolutions[request.package_id as usize].npm().version,
                                     manager.lockfile.buffers.string_bytes.as_slice(),
                                     options.exact_versions,

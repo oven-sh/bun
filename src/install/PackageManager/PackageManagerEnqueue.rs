@@ -2524,7 +2524,7 @@ fn get_or_put_resolved_package(
                 },
             };
 
-            let find_result = match find_result_opt {
+            let mut find_result = match find_result_opt {
                 Some(r) => r,
                 None => {
                     'resolve_workspace_from_dist_tag: {
@@ -2566,6 +2566,50 @@ fn get_or_put_resolved_package(
                     };
                 }
             };
+
+            // Auto-installing a peer: prefer a version that also satisfies
+            // every other non-optional npm peer range recorded for the same
+            // name, so the first-drained range does not win on its own (#8292).
+            // Skip when an override applies: the buffer holds raw ranges and
+            // the override rewrites every peer edge for this name identically.
+            if install_peer
+                && behavior.is_peer()
+                && version.tag == dependency::version::Tag::Npm
+                && this.lockfile.overrides.get(name_hash).is_none()
+            {
+                let lockfile_buf = this.lockfile.buffers.string_bytes.as_slice();
+                let sibling_peer_ranges: Vec<&Semver::query::Group> = this
+                    .lockfile
+                    .buffers
+                    .dependencies
+                    .as_slice()
+                    .iter()
+                    .filter(|dep| {
+                        dep.name_hash == name_hash
+                            && dep.behavior.is_peer()
+                            && !dep.behavior.is_optional_peer()
+                    })
+                    .filter_map(|dep| dep.version.try_npm())
+                    .filter(|npm| !npm.is_alias)
+                    .map(|npm| &npm.version)
+                    .collect();
+                let all_peers_ok = |v: Semver::Version| -> bool {
+                    sibling_peer_ranges
+                        .iter()
+                        .all(|g| g.satisfies(v, lockfile_buf, &manifest.string_buf))
+                };
+                if !all_peers_ok(find_result.version) {
+                    if let Some(refined) = manifest.find_best_version_extra(
+                        &version.npm().version,
+                        lockfile_buf,
+                        this.options.minimum_release_age_ms,
+                        this.options.minimum_release_age_excludes,
+                        all_peers_ok,
+                    ) {
+                        find_result = refined;
+                    }
+                }
+            }
 
             // reshaped for borrowck — `manifest`/`find_result`
             // borrow `this.manifests`; detach via `BackRef` so the `&mut *this`

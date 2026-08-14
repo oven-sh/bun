@@ -114,13 +114,25 @@ async function createDumbHttpGitRepo(
 }
 
 /**
- * A package in a git repository served over dumb HTTP, standing in for a real hosted repository in the committish
- * tests: its single commit is tagged `v1.0.0`. Cloning a real repository for those took 4-12s per test on CI (five
- * tests cloned the same 20MB repository concurrently), this takes well under a second.
+ * The bare clone of a git dependency is kept in the cache under a name derived from its clone task id, whose top bits
+ * make the name start with 8 or 9, so it always sorts before the `@G@<sha>` checkout folders listed next to it.
  */
-async function serveTaggedGitPackage() {
+const gitMirrorFolder = expect.stringMatching(/^[89][0-9a-f]{15}\.git$/);
+
+/**
+ * A package in a git repository served over dumb HTTP, standing in for a real hosted repository: its single commit is
+ * tagged `v1.0.0`, and it has a bin plus whatever else `package_json` adds. Cloning a real repository for the cases
+ * using this took 4-12s per case on CI (five cases cloned the same 20MB repository concurrently); this takes well
+ * under a second.
+ */
+async function serveTaggedGitPackage(package_json: Record<string, unknown> = {}) {
   const dir = tempDir("git-dep-tagged", {
-    "work/package.json": JSON.stringify({ name: "tagged", version: "1.0.0", bin: { tagged: "bin/tagged.js" } }),
+    "work/package.json": JSON.stringify({
+      name: "tagged",
+      version: "1.0.0",
+      bin: { tagged: "bin/tagged.js" },
+      ...package_json,
+    }),
     "work/bin/tagged.js": "#!/usr/bin/env node\nconsole.log('tagged');\n",
   });
   const sha = await createDumbHttpGitRepo(String(dir), {}, ["v1.0.0"]);
@@ -5176,6 +5188,42 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // The two cases below clone dylan-conway/install-test2 from GitHub: a one-commit repository holding an index.js and
+  // a package.json with no dependencies (the file's other git cases use repositories served from the test itself;
+  // these two keep covering the real URL forms end to end). `printed` is how bun echoes the specifier back.
+  async function expectInstallTest2Installed(ctx: TestContext, out: string, printed: string) {
+    const lines = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/);
+    expect(lines).toEqual([
+      expect.stringContaining("bun install v1."),
+      "",
+      expect.stringContaining(`+ install-test2@${printed}#`),
+      "",
+      "1 package installed",
+    ]);
+    // No committish was given, so the commit that was checked out is whatever HEAD was; it is reported in the
+    // summary and has to be the one tagged in the checkout and in the cache.
+    const sha = lines[2].slice(lines[2].indexOf("#") + 1);
+    expect(sha).toMatch(/^[0-9a-f]{40}$/);
+    expect(ctx.requested).toBe(0);
+    expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "install-test2"]);
+    expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".cache"))).toEqual([
+      gitMirrorFolder,
+      `@G@${sha}`,
+    ]);
+    expect(await readdirSorted(join(ctx.package_dir, "node_modules", "install-test2"))).toEqual([
+      ".bun-tag",
+      "index.js",
+      "package.json",
+    ]);
+    expect(await file(join(ctx.package_dir, "node_modules", "install-test2", ".bun-tag")).text()).toBe(sha);
+    expect(await file(join(ctx.package_dir, "node_modules", "install-test2", "package.json")).json()).toEqual({
+      name: "install-test2",
+      version: "0.2.0",
+      main: "index.js",
+    });
+    await access(join(ctx.package_dir, "bun.lockb"));
+  }
+
   it("should handle Git URL in dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
@@ -5186,7 +5234,7 @@ describe.concurrent("bun-install", () => {
           name: "Foo",
           version: "0.0.1",
           dependencies: {
-            "uglify-js": "git+https://git@github.com/mishoo/UglifyJS.git",
+            "install-test2": "git+https://git@github.com/dylan-conway/install-test2.git",
           },
         }),
       );
@@ -5200,42 +5248,10 @@ describe.concurrent("bun-install", () => {
       });
       const err = await stderr.text();
       expect(err).toContain("Saved lockfile");
-      let out = await stdout.text();
-      out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
-      out = out.replace(/(\.git)#[a-f0-9]+/, "$1");
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        expect.stringContaining("bun install v1."),
-        "",
-        "+ uglify-js@git+https://git@github.com/mishoo/UglifyJS.git",
-        "",
-        "1 package installed",
-      ]);
+      const out = await stdout.text();
       expect(await exited).toBe(0);
-      expect(urls.sort()).toBeEmpty();
-      expect(ctx.requested).toBe(0);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
-      expect(join(ctx.package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
-        join("..", "uglify-js", "bin", "uglifyjs"),
-      );
-      expect((await readdirSorted(join(ctx.package_dir, "node_modules", ".cache")))[0]).toBe("9694c5fe9c41ad51.git");
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "uglify-js"))).toEqual([
-        ".bun-tag",
-        ".gitattributes",
-        ".github",
-        ".gitignore",
-        "CONTRIBUTING.md",
-        "LICENSE",
-        "README.md",
-        "bin",
-        "lib",
-        "package.json",
-        "test",
-        "tools",
-      ]);
-      const package_json = await file(join(ctx.package_dir, "node_modules", "uglify-js", "package.json")).json();
-      expect(package_json.name).toBe("uglify-js");
-      await access(join(ctx.package_dir, "bun.lockb"));
+      expect(urls).toBeEmpty();
+      await expectInstallTest2Installed(ctx, out, "git+https://git@github.com/dylan-conway/install-test2.git");
     });
   });
 
@@ -5249,7 +5265,7 @@ describe.concurrent("bun-install", () => {
           name: "foo",
           version: "0.0.1",
           dependencies: {
-            uglify: "github.com:mishoo/UglifyJS.git",
+            "install-test2": "github.com:dylan-conway/install-test2.git",
           },
         }),
       );
@@ -5263,42 +5279,10 @@ describe.concurrent("bun-install", () => {
       });
       const err = await stderr.text();
       expect(err).toContain("Saved lockfile");
-      let out = await stdout.text();
-      out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
-      out = out.replace(/(\.git)#[a-f0-9]+/, "$1");
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        expect.stringContaining("bun install v1."),
-        "",
-        "+ uglify@git+ssh://github.com:mishoo/UglifyJS.git",
-        "",
-        "1 package installed",
-      ]);
+      const out = await stdout.text();
       expect(await exited).toBe(0);
-      expect(urls.sort()).toBeEmpty();
-      expect(ctx.requested).toBe(0);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify"]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
-      expect(join(ctx.package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
-        join("..", "uglify", "bin", "uglifyjs"),
-      );
-      expect((await readdirSorted(join(ctx.package_dir, "node_modules", ".cache")))[0]).toBe("87d55589eb4217d2.git");
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "uglify"))).toEqual([
-        ".bun-tag",
-        ".gitattributes",
-        ".github",
-        ".gitignore",
-        "CONTRIBUTING.md",
-        "LICENSE",
-        "README.md",
-        "bin",
-        "lib",
-        "package.json",
-        "test",
-        "tools",
-      ]);
-      const package_json = await file(join(ctx.package_dir, "node_modules", "uglify", "package.json")).json();
-      expect(package_json.name).toBe("uglify-js");
-      await access(join(ctx.package_dir, "bun.lockb"));
+      expect(urls).toBeEmpty();
+      await expectInstallTest2Installed(ctx, out, "git+ssh://github.com:dylan-conway/install-test2.git");
     });
   });
 
@@ -5346,7 +5330,7 @@ describe.concurrent("bun-install", () => {
       );
       // The cache holds the bare clone (named after a hash of the URL) and the checkout of the resolved commit.
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".cache"))).toEqual([
-        expect.stringMatching(/^[0-9a-f]{16}\.git$/),
+        gitMirrorFolder,
         `@G@${repo.sha}`,
       ]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "uglify"))).toEqual(repo.files);
@@ -5721,7 +5705,7 @@ describe.concurrent("bun-install", () => {
       );
       // One bare clone and one checkout serve both names.
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".cache"))).toEqual([
-        expect.stringMatching(/^[0-9a-f]{16}\.git$/),
+        gitMirrorFolder,
         `@G@${repo.sha}`,
       ]);
       for (const name of ["uglify-hash", "uglify-ver"]) {
@@ -5740,209 +5724,83 @@ describe.concurrent("bun-install", () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
       setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
-      await writeFile(
-        join(ctx.package_dir, "bunfig.toml"),
-        `
-  [install]
-  cache = false
-  saveTextLockfile = false
-  `,
-      );
+      // A git dependency that itself depends on a registry package, so that re-installs exercise both.
+      using repo = await serveTaggedGitPackage({ dependencies: { bar: "0.0.2" } });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
           name: "foo",
           version: "0.0.1",
           dependencies: {
-            "html-minifier": "git+https://git@github.com/kangax/html-minifier#v4.0.0",
+            tagged: `${repo.url}#v1.0.0`,
           },
         }),
       );
-      const {
-        stdout: stdout1,
-        stderr: stderr1,
-        exited: exited1,
-      } = spawn({
-        cmd: [bunExe(), "install", "--linker=hoisted"],
-        cwd: ctx.package_dir,
-        stdout: "pipe",
-        stdin: "pipe",
-        stderr: "pipe",
-        env,
-      });
-      const err1 = await new Response(stderr1).text();
-      expect(err1).toContain("Saved lockfile");
-      const out1 = await new Response(stdout1).text();
-      expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        expect.stringContaining("bun install v1."),
-        "",
-        "+ html-minifier@git+https://git@github.com/kangax/html-minifier#4beb325eb01154a40c0cbebff2e5737bbd7071ab",
-        "",
-        "12 packages installed",
-      ]);
-      expect(await exited1).toBe(0);
-      expect(urls.sort()).toBeEmpty();
-      expect(ctx.requested).toBe(0);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
-        ".bin",
-        ".cache",
-        "camel-case",
-        "clean-css",
-        "commander",
-        "he",
-        "html-minifier",
-        "lower-case",
-        "no-case",
-        "param-case",
-        "relateurl",
-        "source-map",
-        "uglify-js",
-        "upper-case",
-      ]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins([
-        "he",
-        "html-minifier",
-        "uglifyjs",
-      ]);
-      expect(join(ctx.package_dir, "node_modules", ".bin", "he")).toBeValidBin(join("..", "he", "bin", "he"));
-      expect(join(ctx.package_dir, "node_modules", ".bin", "html-minifier")).toBeValidBin(
-        join("..", "html-minifier", "cli.js"),
-      );
-      expect(join(ctx.package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
-        join("..", "uglify-js", "bin", "uglifyjs"),
-      );
-      await access(join(ctx.package_dir, "bun.lockb"));
-      // Perform `bun install` again but with lockfile from before
-      await rm(join(ctx.package_dir, "node_modules"), { force: true, recursive: true });
-      urls.length = 0;
-      const {
-        stdout: stdout2,
-        stderr: stderr2,
-        exited: exited2,
-      } = spawn({
-        cmd: [bunExe(), "install", "--linker=hoisted"],
-        cwd: ctx.package_dir,
-        stdout: "pipe",
-        stdin: "pipe",
-        stderr: "pipe",
-        env,
-      });
-      const err2 = await new Response(stderr2).text();
-      expect(err2).not.toContain("Saved lockfile");
-      const out2 = await new Response(stdout2).text();
-      expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        expect.stringContaining("bun install v1."),
-        "",
-        "+ html-minifier@git+https://git@github.com/kangax/html-minifier#4beb325eb01154a40c0cbebff2e5737bbd7071ab",
-        "",
-        "12 packages installed",
-      ]);
-      expect(await exited2).toBe(0);
-      expect(urls.sort()).toBeEmpty();
-      expect(ctx.requested).toBe(0);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
-        ".bin",
-        ".cache",
-        "camel-case",
-        "clean-css",
-        "commander",
-        "he",
-        "html-minifier",
-        "lower-case",
-        "no-case",
-        "param-case",
-        "relateurl",
-        "source-map",
-        "uglify-js",
-        "upper-case",
-      ]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins([
-        "he",
-        "html-minifier",
-        "uglifyjs",
-      ]);
-      expect(join(ctx.package_dir, "node_modules", ".bin", "he")).toBeValidBin(join("..", "he", "bin", "he"));
-      expect(join(ctx.package_dir, "node_modules", ".bin", "html-minifier")).toBeValidBin(
-        join("..", "html-minifier", "cli.js"),
-      );
-      expect(join(ctx.package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
-        join("..", "uglify-js", "bin", "uglifyjs"),
-      );
-      await access(join(ctx.package_dir, "bun.lockb"));
-      // Perform `bun install` again but with cache & lockfile from before
-      await Promise.all(
-        [
-          ".bin",
-          "camel-case",
-          "clean-css",
-          "commander",
-          "he",
-          "html-minifier",
-          "lower-case",
-          "no-case",
-          "param-case",
-          "relateurl",
-          "source-map",
-          "uglify-js",
-          "upper-case",
-        ].map(async dir => await rm(join(ctx.package_dir, "node_modules", dir), { force: true, recursive: true })),
-      );
 
-      urls.length = 0;
-      const {
-        stdout: stdout3,
-        stderr: stderr3,
-        exited: exited3,
-      } = spawn({
-        cmd: [bunExe(), "install", "--linker=hoisted"],
-        cwd: ctx.package_dir,
-        stdout: "pipe",
-        stdin: "pipe",
-        stderr: "pipe",
-        env,
-      });
-      const err3 = await new Response(stderr3).text();
-      expect(err3).not.toContain("Saved lockfile");
-      const out3 = await new Response(stdout3).text();
-      expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        expect.stringContaining("bun install v1."),
-        "",
-        "+ html-minifier@git+https://git@github.com/kangax/html-minifier#4beb325eb01154a40c0cbebff2e5737bbd7071ab",
-        "",
-        "12 packages installed",
-      ]);
-      expect(await exited3).toBe(0);
-      expect(urls.sort()).toBeEmpty();
-      expect(ctx.requested).toBe(0);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
-        ".bin",
-        ".cache",
-        "camel-case",
-        "clean-css",
-        "commander",
-        "he",
-        "html-minifier",
-        "lower-case",
-        "no-case",
-        "param-case",
-        "relateurl",
-        "source-map",
-        "uglify-js",
-        "upper-case",
-      ]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins([
-        "he",
-        "html-minifier",
-        "uglifyjs",
-      ]);
-      expect(join(ctx.package_dir, "node_modules", ".bin", "he")).toBeValidBin(join("..", "he", "bin", "he"));
-      expect(join(ctx.package_dir, "node_modules", ".bin", "html-minifier")).toBeValidBin(
-        join("..", "html-minifier", "cli.js"),
-      );
-      expect(join(ctx.package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
-        join("..", "uglify-js", "bin", "uglifyjs"),
-      );
-      await access(join(ctx.package_dir, "bun.lockb"));
+      async function install() {
+        urls.length = 0;
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          expect.stringContaining("bun install v1."),
+          "",
+          `+ tagged@${repo.url}#${repo.sha}`,
+          "",
+          "2 packages installed",
+        ]);
+        expect(exitCode).toBe(0);
+        expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar", "tagged"]);
+        expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["tagged"]);
+        expect(join(ctx.package_dir, "node_modules", ".bin", "tagged")).toBeValidBin(
+          join("..", "tagged", "bin", "tagged.js"),
+        );
+        // With the cache disabled in bunfig, the git mirror and checkout as well as the registry package live in
+        // node_modules/.cache, which is what the third install below re-links from.
+        expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".cache"))).toEqual([
+          gitMirrorFolder,
+          `@G@${repo.sha}`,
+          "bar",
+          "bar@0.0.2@@localhost@@@1",
+        ]);
+        expect(await readdirSorted(join(ctx.package_dir, "node_modules", "tagged"))).toEqual(repo.files);
+        expect(await file(join(ctx.package_dir, "node_modules", "tagged", ".bun-tag")).text()).toBe(repo.sha);
+        expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+          name: "bar",
+          version: "0.0.2",
+        });
+        await access(join(ctx.package_dir, "bun.lockb"));
+        return err;
+      }
+
+      // First install: the tag is resolved, bar is resolved against the registry, and a lockfile is written.
+      expect(await install()).toContain("Saved lockfile");
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(ctx.requested).toBe(2);
+      const lockfile = await file(join(ctx.package_dir, "bun.lockb")).bytes();
+
+      // Again without node_modules (which holds the cache too): everything is re-fetched, but nothing is
+      // re-resolved, so bar's manifest is not requested and the lockfile is not rewritten.
+      await rm(join(ctx.package_dir, "node_modules"), { force: true, recursive: true });
+      expect(await install()).not.toContain("Saved lockfile");
+      expect(urls).toEqual([`${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(ctx.requested).toBe(3);
+      expect(await file(join(ctx.package_dir, "bun.lockb")).bytes()).toEqual(lockfile);
+
+      // Again with the cache kept: the packages are re-linked from it without any request.
+      for (const entry of [".bin", "bar", "tagged"]) {
+        await rm(join(ctx.package_dir, "node_modules", entry), { force: true, recursive: true });
+      }
+      expect(await install()).not.toContain("Saved lockfile");
+      expect(urls).toBeEmpty();
+      expect(ctx.requested).toBe(3);
+      expect(await file(join(ctx.package_dir, "bun.lockb")).bytes()).toEqual(lockfile);
     });
   });
 

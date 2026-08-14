@@ -292,7 +292,13 @@ static void continuePendingChunk(JSGlobalObject* globalObject, JSTransformStream
     }
     // stepChunkHere loops on Step itself; an off-thread chunk's next step goes to the pool too.
     ASSERT(stream->m_codecChunkOffThread);
-    dispatchStepOffThread(globalObject, stream, coderOf(stream), jsUndefined(), nullptr, 0, false);
+    void* coder = coderOf(stream);
+    ASSERT(coder);
+    if (!coder) [[unlikely]] {
+        settleCodecChunk(globalObject, stream, JSValue());
+        return;
+    }
+    dispatchStepOffThread(globalObject, stream, coder, jsUndefined(), nullptr, 0, false);
 }
 
 // The transform / flush arm (under runNativeArm). Abrupt completions become a rejected

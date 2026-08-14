@@ -2286,36 +2286,25 @@ pub mod bv2_impl {
                         };
                         // For virtual files, use the path text as-is (no relative path computation needed).
                         path_primary.pretty = self.arena().alloc_slice_copy(path_primary.text);
-                        if self.is_server_html_import(loader, target) {
-                            let manifest_source_index = self
-                                .enqueue_server_html_import(&file_map_result, &path_primary, target)
-                                .expect("oom");
-                            // SAFETY: see `value_ptr` note above; only the browser graph's map
-                            // was touched since.
-                            unsafe { *value_ptr = manifest_source_index };
-                            let record: &mut ImportRecord =
-                                &mut self.graph.ast.items_import_records_mut()
-                                    [import_record.importer_source_index as usize]
-                                    .as_mut_slice()
-                                    [import_record.import_record_index as usize];
-                            record.source_index = Index::init(manifest_source_index);
-                            record.kind = ImportKind::HtmlManifest;
-                            return;
-                        }
-                        let mut tmp_source = bun_ast::Source {
-                            path: path_as_static(&path_primary),
-                            contents: std::borrow::Cow::Borrowed(&b""[..]),
-                            ..Default::default()
-                        };
-                        let idx = self
-                            .enqueue_parse_task(
+                        let idx = if self.is_server_html_import(loader, target) {
+                            self.enqueue_server_html_import(&file_map_result, &path_primary, target)
+                                .expect("oom")
+                        } else {
+                            let mut tmp_source = bun_ast::Source {
+                                path: path_as_static(&path_primary),
+                                contents: std::borrow::Cow::Borrowed(&b""[..]),
+                                ..Default::default()
+                            };
+                            self.enqueue_parse_task(
                                 &file_map_result,
                                 &mut tmp_source,
                                 loader,
                                 import_record.original_target,
                             )
-                            .expect("oom");
-                        // SAFETY: see `value_ptr` note above.
+                            .expect("oom")
+                        };
+                        // SAFETY: see `value_ptr` note above; the HTML branch only touches the
+                        // browser graph's map.
                         unsafe { *value_ptr = idx };
                         let record: &mut ImportRecord =
                             &mut self.graph.ast.items_import_records_mut()
@@ -2557,7 +2546,6 @@ pub mod bv2_impl {
                         [import_record.importer_source_index as usize]
                         .as_mut_slice()[import_record.import_record_index as usize];
                     record.source_index = Index::init(manifest_source_index);
-                    record.kind = ImportKind::HtmlManifest;
                     return;
                 }
                 let mut tmp_source = bun_ast::Source {
@@ -4753,7 +4741,6 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::ResolveValue::Success(result) => {
                     let mut out_source_index: Option<Index> = None;
-                    let mut is_html_manifest = false;
                     if !result.external {
                         // SAFETY: `result.{path,namespace}` are `Box<[u8]>` whose heap
                         // allocations are moved into `this.free_list` below (in the
@@ -4832,7 +4819,6 @@ pub mod bv2_impl {
                                 // graph's map was touched since.
                                 unsafe { *value_ptr = manifest_source_index };
                                 out_source_index = Some(Index::init(manifest_source_index));
-                                is_html_manifest = true;
                             } else {
                                 // We need to parse this
                                 let source_index = Index::init(
@@ -4962,9 +4948,6 @@ pub mod bv2_impl {
                                     .as_mut_slice()
                                     [resolve.import_record.import_record_index as usize];
                                 import_record.source_index = source_index;
-                                if is_html_manifest {
-                                    import_record.kind = ImportKind::HtmlManifest;
-                                }
                             }
                         }
                     }

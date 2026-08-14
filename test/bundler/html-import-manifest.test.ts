@@ -594,9 +594,10 @@ ${printManifest}`,
       expect(scriptCode).toContain("page script");
       expect(scriptCode).not.toContain("// @bun");
 
+      // The import record keeps its own kind; only its target changes.
       const metafile = JSON.parse(api.readFile("metafile.json"));
       expect(metafile.inputs["server.js"].imports).toContainEqual(
-        expect.objectContaining({ path: "page.html", kind: "html_manifest" }),
+        expect.objectContaining({ path: "page.html", kind: "import-statement" }),
       );
     },
   });

@@ -234,9 +234,18 @@ describe("printing the frames parsed back out of error.stack", () => {
     ]);
   });
 
-  test("a path containing parentheses is not mistaken for a function name", () => {
-    expect(printStack(["Error: boom", "    at /fake/app/(group)/page.js:5:3"])).toEqual([
-      "at /fake/app/(group)/page.js:5:3",
+  test("parentheses inside the path or the function name", () => {
+    expect(
+      printStack([
+        "Error: boom",
+        "    at render (/fake/app/(group)/page.js:5:3)",
+        "    at /fake/app/(group)/page.js:9:1",
+        "    at method (with parens) (/fake/lib.js:2:3)", // { "method (with parens)"() {} }
+      ]),
+    ).toEqual([
+      "at render (/fake/app/(group)/page.js:5:3)",
+      "at /fake/app/(group)/page.js:9:1",
+      "at method (with parens) (/fake/lib.js:2:3)",
     ]);
   });
 

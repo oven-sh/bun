@@ -261,6 +261,29 @@ public:
     {
     }
 
+    // A frame is either "functionName (location)" or, when the frame has no
+    // function name (module top-level code, "unknown", "native"), a bare
+    // "location". Only the former ends with a parenthesis. Returns the index of
+    // the "(" opening the location, or notFound for a bare location.
+    static size_t locationOpeningParenthesis(StringView line)
+    {
+        if (!line.endsWith(')'))
+            return WTF::notFound;
+
+        // Match the final ")" so that parentheses inside the location
+        // ("/app/(group)/page.js") or the function name are skipped over.
+        unsigned depth = 0;
+        for (unsigned i = line.length(); i-- > 0;) {
+            if (line[i] == ')')
+                depth++;
+            else if (line[i] == '(' && --depth == 0)
+                return i;
+        }
+
+        // Unbalanced: more ")" than "(".
+        return line.find('(');
+    }
+
     bool parseFrame(StackFrame& frame)
     {
 
@@ -289,12 +312,9 @@ public:
         StringView line = stack.substring(start, end - start).trim(isASCIIWhitespace<char16_t>);
         offset = end;
 
-        // A frame is either "functionName (location)" or, when the frame has no
-        // function name (module top-level code, "unknown", "native"), a bare
-        // "location". Only the former ends with a parenthesis.
         StringView functionName;
         StringView lineInner = line;
-        auto openingParentheses = line.endsWith(')') ? line.reverseFind('(') : WTF::notFound;
+        auto openingParentheses = locationOpeningParenthesis(line);
         if (openingParentheses != WTF::notFound) {
             lineInner = StringView_slice(line, openingParentheses + 1, line.length() - 1);
             functionName = line.substring(0, openingParentheses);

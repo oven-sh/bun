@@ -166,7 +166,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
             }
 
             if (actuallyValid) {
-                auto exception = error.toErrorObject(globalObject, sourceCode, -1);
+                auto exception = createParseError(globalObject, error, sourceCode);
                 // Building the error materializes its stack, running a user
                 // Error.prepareStackTrace that may throw; Node throws the
                 // SyntaxError anyway. Terminations survive tryClearException.
@@ -592,6 +592,24 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
         return true;
     }
     return false;
+}
+
+// ParserError::toErrorObject() with the error tagged as node:vm source first.
+// addErrorInfo() formats the stack before returning, and all it gives the
+// formatter is the URL the source was compiled under, which for node:vm is a
+// caller-chosen filename; the tag is what stops the formatter from remapping
+// the parse location through the source map of whatever file that name denotes.
+JSObject* createParseError(JSGlobalObject* globalObject, JSC::ParserError& parseError, JSC::SourceCode source)
+{
+    if (parseError.type() != JSC::ParserError::ErrorType::SyntaxError)
+        return parseError.toErrorObject(globalObject, source);
+
+    VM& vm = globalObject->vm();
+    auto* error = uncheckedDowncast<ErrorInstance>(createSyntaxError(globalObject, parseError.message()));
+    error->putDirect(vm, WebCore::builtinNames(vm).vmParseErrorPrivateName(), jsBoolean(true), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
+    addErrorInfo(vm, error, parseError.line(), source);
+    error->setParseError();
+    return error;
 }
 
 // Compile-time counterpart of handleException: prepends Node's arrow header

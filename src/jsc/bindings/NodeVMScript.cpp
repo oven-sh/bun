@@ -140,7 +140,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     // via JSC::evaluate); compile-once via m_cachedExecutable is the follow-up.
     JSC::ParserError parseError;
     if (!JSC::checkSyntax(vm, source, parseError)) {
-        auto exception = parseError.toErrorObject(globalObject, source, -1);
+        auto exception = createParseError(globalObject, parseError, source);
         // Building the error materializes its stack, running a user
         // Error.prepareStackTrace that may throw; Node throws the SyntaxError
         // anyway. tryClearException leaves a termination for the check below.

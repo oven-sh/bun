@@ -192,16 +192,19 @@ WTF::String formatStackTrace(
 
                 String sourceURLForFrame = err->sourceURL();
 
-                // If it's not a Zig::GlobalObject, don't bother source-mapping it.
-                if (globalObject && !sourceURLForFrame.isEmpty()) {
+                // Tagged by NodeVM::createParseError(): the URL is the filename the caller
+                // compiled its own string under, so a source map found under that name
+                // describes some other file. The parser's position stands as is, including
+                // as err.line (hasSet keeps the frame loop below from replacing it).
+                if (err->getDirect(vm, builtinNames(vm).vmParseErrorPrivateName())) {
+                    hasSet = true;
+                } else if (globalObject && !sourceURLForFrame.isEmpty()) {
                     // https://github.com/oven-sh/bun/issues/3595
-                    if (!sourceURLForFrame.isEmpty()) {
-                        remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
-                        // This ensures the lifetime of the sourceURL is accounted for correctly
-                        Bun__remapStackFramePositions(getBunVM(), &remappedFrame, 1);
+                    remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
+                    // This ensures the lifetime of the sourceURL is accounted for correctly
+                    Bun__remapStackFramePositions(getBunVM(), &remappedFrame, 1);
 
-                        sourceURLForFrame = remappedFrame.source_url.toWTFString();
-                    }
+                    sourceURLForFrame = remappedFrame.source_url.toWTFString();
                 }
 
                 // there is always a newline before each stack frame line, ensuring that the name + message
@@ -210,7 +213,7 @@ WTF::String formatStackTrace(
 
                 sb.append("    at <parse> ("_s);
 
-                sb.append(remappedFrame.source_url.toWTFString());
+                sb.append(sourceURLForFrame);
 
                 if (remappedFrame.remapped) {
                     errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);

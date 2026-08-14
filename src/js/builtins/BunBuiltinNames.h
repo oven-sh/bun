@@ -200,6 +200,7 @@ using namespace JSC;
     macro(validated) \
     macro(view) \
     macro(vmErrorDecorated) \
+    macro(vmParseError) \
     macro(warning) \
     macro(webStreamClosedPromise) \
     macro(webStreamControllerError) \

@@ -2,16 +2,17 @@ use core::cmp::Ordering;
 use std::io::Write as _;
 
 use bstr::BStr;
-use bun_collections::DynamicBitSet;
 use bun_collections::bit_set::Range;
+use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile::{LoadResult, LoadStep, Lockfile, PackageIndexEntry};
+use crate::lockfile::{LoadResult, LoadStep, Lockfile, Package, PackageIndexEntry};
 use crate::package_manager::Options::{Enable, LogLevel};
+use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::{
-    Dependency, DependencyID, DependencyVersionTag, PackageID, PackageManager, ResolutionTag,
-    dependency, invalid_package_id,
+    Dependency, DependencyID, DependencyVersionTag, Features, GetJsonResult, PackageID,
+    PackageManager, ResolutionTag, dependency, invalid_package_id,
 };
 
 struct Pass<'a> {
@@ -321,7 +322,7 @@ fn order_by_name_then_version(lockfile: &Lockfile, a: PackageID, b: PackageID) -
 }
 
 fn sort_by_name_then_version(lockfile: &Lockfile, ids: &mut [PackageID]) {
-    ids.sort_by(|&a, &b| order_by_name_then_version(lockfile, a, b));
+    index_sort::sort_indices(ids, &mut |a, b| order_by_name_then_version(lockfile, a, b));
 }
 
 #[derive(Default)]
@@ -364,7 +365,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Outcome {
         if candidates.len() < 2 {
             continue;
         }
-        candidates.sort_by(|&a, &b| {
+        index_sort::sort_indices(&mut candidates, &mut |a, b| {
             pkg_res[b as usize]
                 .npm()
                 .version
@@ -463,7 +464,9 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Outcome {
         }
     };
 
-    kept.sort_by(|(a, _), (b, _)| order_by_name_then_version(lockfile, *a, *b));
+    index_sort::sort_vec_by(&mut kept, |(a, _), (b, _)| {
+        order_by_name_then_version(lockfile, *a, *b)
+    });
     let kept: Vec<Box<[u8]>> = kept
         .into_iter()
         .map(|(v, mut needed)| {
@@ -577,11 +580,7 @@ pub fn dedupe_before_install(
                     "failed to {s} lockfile: {s}",
                     (load_step_verb(cause.step), cause.value.name()),
                 );
-                if manager.log_mut().has_errors() {
-                    let _ = manager
-                        .log_mut()
-                        .print(core::ptr::from_mut(Output::error_writer()));
-                }
+                print_log_errors(manager.log_mut());
             }
             Global::crash();
         }
@@ -593,9 +592,71 @@ pub fn dedupe_before_install(
         .root_package()
         .is_none_or(|root| root.dependencies.len == 0)
     {
+        if package_json_declares_dependencies(manager)? {
+            refuse_out_of_date(manager);
+        }
         report_already_deduplicated(manager, &[]);
+        Global::exit(0);
     }
     Ok(())
+}
+
+fn print_log_errors(log: &bun_ast::Log) {
+    if log.has_errors() {
+        let _ = log.print(core::ptr::from_mut(Output::error_writer()));
+    }
+}
+
+fn package_json_declares_dependencies(manager: &mut PackageManager) -> crate::Result<bool> {
+    let quiet = manager.options.log_level == LogLevel::Silent;
+    let log = manager.log_mut();
+    // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
+    let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+    let (source, json) =
+        match manager
+            .workspace_package_json_cache
+            .get_with_path(log, path, Default::default())
+        {
+            GetJsonResult::Entry(entry) => (entry.source.clone(), entry.root),
+            GetJsonResult::ReadErr(err) | GetJsonResult::ParseErr(err) => {
+                if !quiet {
+                    print_log_errors(log);
+                    Output::err(err, "failed to read {s}", (BStr::new(path),));
+                }
+                Global::exit(1);
+            }
+        };
+
+    let mut lockfile = Lockfile::default();
+    let mut root = Package::default();
+    let mut resolver: () = ();
+    if let Err(err) = root.parse_with_json::<()>(
+        &mut lockfile,
+        manager,
+        log,
+        &source,
+        json,
+        &mut resolver,
+        Features::main(),
+    ) {
+        if !quiet {
+            print_log_errors(log);
+        }
+        return Err(err);
+    }
+    Ok(root.dependencies.len > 0)
+}
+
+fn refuse_out_of_date(manager: &PackageManager) -> ! {
+    if manager.options.log_level != LogLevel::Silent {
+        Output::err_generic(
+            "the lockfile is out of date with package.json, nothing was deduplicated",
+            (),
+        );
+        bun_core::note!("run 'bun install' first");
+        Output::flush();
+    }
+    Global::exit(1);
 }
 
 fn report_already_deduplicated(manager: &PackageManager, kept: &[Box<[u8]>]) {
@@ -626,15 +687,7 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
     let quiet = manager.options.log_level == LogLevel::Silent;
 
     if manager.summary.changes_dependencies() {
-        if !quiet {
-            Output::err_generic(
-                "the lockfile is out of date with package.json, nothing was deduplicated",
-                (),
-            );
-            bun_core::note!("run 'bun install' first");
-            Output::flush();
-        }
-        Global::exit(1);
+        refuse_out_of_date(manager);
     }
 
     let outcome = dedupe_lockfile(&mut manager.lockfile);

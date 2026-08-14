@@ -1,8 +1,8 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "fs";
 import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import { isAbsolute, join } from "path";
+import { isAbsolute, join, sep } from "path";
 import { pathToFileURL } from "url";
 
 type Linker = "hoisted" | "isolated";
@@ -38,6 +38,27 @@ const gitEnv = {
   GIT_COMMITTER_NAME: "Test",
   GIT_COMMITTER_EMAIL: "test@example.com",
 };
+
+async function gitRepo(manifest: Record<string, unknown>) {
+  const repoDir = tempDir("licenses-git-repo", { "package.json": JSON.stringify(manifest) });
+  for (const args of [
+    ["init", "-q"],
+    ["add", "package.json"],
+    ["commit", "-q", "-m", "init", "--no-gpg-sign"],
+  ]) {
+    await using proc = spawn({
+      cmd: ["git", ...args],
+      cwd: String(repoDir),
+      env: gitEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("fatal:");
+    expect(exitCode).toBe(0);
+  }
+  return repoDir;
+}
 
 const EMPTY_TEXT = "No packages found\n";
 
@@ -1137,31 +1158,321 @@ describe("bun pm licenses", () => {
 
   // pnpm#8739: git dependencies are looked up the same way the installer wrote them.
   test.concurrent.each(["hoisted", "isolated"] as Linker[])("git dependency is listed (%s)", async linker => {
-    using repoDir = tempDir("licenses-git-repo", {
-      "package.json": JSON.stringify({ name: "git-pkg", version: "3.0.0", license: "ISC" }),
-    });
-    const repo = String(repoDir);
-    for (const args of [
-      ["init", "-q"],
-      ["add", "package.json"],
-      ["commit", "-q", "-m", "init", "--no-gpg-sign"],
-    ]) {
-      await using proc = spawn({ cmd: ["git", ...args], cwd: repo, env: gitEnv, stdout: "ignore", stderr: "pipe" });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("fatal:");
-      expect(exitCode).toBe(0);
-    }
-
+    using repoDir = await gitRepo({ name: "git-pkg", version: "3.0.0", license: "ISC" });
     const dir = await setup(linker, {
-      "package.json": pkg({ dependencies: { "no-deps": "1.0.0", "git-pkg": `git+${pathToFileURL(repo)}` } }),
+      "package.json": pkg({ dependencies: { "no-deps": "1.0.0", "git-pkg": `git+${pathToFileURL(String(repoDir))}` } }),
     });
 
-    const parsed = await licensesJson(dir);
+    const parsed = await licensesJsonRaw(dir);
     expect(Object.keys(parsed)).toStrictEqual(["ISC", "Unknown"]);
-    expect(parsed.ISC).toStrictEqual([
+    const [gitPath] = pathsOf(Object.values(parsed).flat(), "git-pkg")!;
+    expect(stripPaths(parsed).ISC).toStrictEqual([
       { name: "git-pkg", versions: [expect.stringContaining("git+file://")], license: "ISC" },
     ]);
     expect(parsed.Unknown).toStrictEqual([u("no-deps", "1.0.0")]);
+    if (linker === "hoisted") {
+      expect(gitPath).toBe(nm(dir, "git-pkg"));
+    } else {
+      expect(gitPath.startsWith(join(dir, "node_modules", ".bun") + sep)).toBeTrue();
+      expect(gitPath).toEndWith(join("node_modules", "git-pkg"));
+      expect(gitPath).not.toBe(nm(dir, "git-pkg"));
+    }
+  });
+
+  test.concurrent("npm version sorts before a git resolution of the same name in text and --json", async () => {
+    using repoDir = await gitRepo({ name: "no-deps", version: "9.9.9" });
+    const dir = await setup("hoisted", {
+      "package.json": pkg({ dependencies: { "no-deps": "1.0.0", "nd": `git+${pathToFileURL(String(repoDir))}` } }),
+    });
+
+    const [stdout, stderr, exitCode] = await licenses(dir);
+    expect(normalizeBunSnapshot(stdout).replace(/git\+file:\/\/\S+/, "git+file://<repo>")).toMatchInlineSnapshot(`
+      "Unknown (2)
+      ├── no-deps@1.0.0
+      └── no-deps@git+file://<repo>"
+    `);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const [entry] = await licensesEntries(dir);
+    expect(entry.name).toBe("no-deps");
+    expect(entry.versions).toStrictEqual(["1.0.0", expect.stringContaining("git+file://")]);
+    expect(entry.paths).toStrictEqual([nm(dir, "no-deps"), nm(dir, "nd")]);
+  });
+
+  test.concurrent.each(["hoisted", "isolated"] as Linker[])("tarball dependencies are listed (%s)", async linker => {
+    const remoteUrl = `${registry.registryUrl()}a-dep/-/a-dep-1.0.1.tgz`;
+    const { packageDir: dir } = await registry.createTestDir({
+      bunfigOpts: { linker },
+      files: {
+        "package.json": pkg({
+          dependencies: { "no-deps": "1.0.0", "pp": "file:./path-parse-1.0.6.tgz", "ad": remoteUrl },
+        }),
+      },
+    });
+    copyFileSync(join(registry.packagesPath, "path-parse", "path-parse-1.0.6.tgz"), join(dir, "path-parse-1.0.6.tgz"));
+    await install(dir, linker);
+
+    const parsed = await licensesJsonRaw(dir);
+    const entries = Object.values(parsed).flat();
+    const [ppPath] = pathsOf(entries, "path-parse")!;
+    const [adPath] = pathsOf(entries, "a-dep")!;
+    expect(stripPaths(parsed)).toStrictEqual({
+      MIT: [{ ...fullJson.MIT[0], versions: ["./path-parse-1.0.6.tgz"] }],
+      Unknown: [u("a-dep", remoteUrl), u("no-deps", "1.0.0")],
+    });
+    if (linker === "hoisted") {
+      expect(ppPath).toBe(nm(dir, "pp"));
+      expect(adPath).toBe(nm(dir, "ad"));
+    } else {
+      expect(ppPath).toBe(store(dir, "path-parse@.+path-parse-1.0.6.tgz", "path-parse"));
+      expect(adPath).toBe(store(dir, `a-dep@${remoteUrl.replace(/[/:]/g, "+")}`, "a-dep"));
+    }
+  });
+
+  test.concurrent("--omit=dev and bunfig install.production behave like --prod", async () => {
+    expect(await licensesJson(hoistedDir, "--omit=dev")).toStrictEqual(prodJson);
+    expect(await licensesText(hoistedDir, "--omit=dev")).not.toContain("(dev)");
+    expect(await licensesText(hoistedDir, "--omit", "dev")).toBe(await licensesText(hoistedDir, "--prod"));
+
+    const dir = await setup();
+    const bunfig = readFileSync(join(dir, "bunfig.toml"), "utf8");
+    expect(bunfig).toStartWith("[install]\n");
+    writeFileSync(join(dir, "bunfig.toml"), bunfig.replace("[install]\n", "[install]\nproduction = true\n"));
+    expect(await licensesJson(dir)).toStrictEqual(prodJson);
+    const text = await licensesText(dir);
+    expect(text).not.toContain("a-dep");
+    expect(text).not.toContain("(dev)");
+  });
+
+  test.concurrent("--omit=optional drops the optionalDependencies closure", async () => {
+    const dir = await setup("hoisted", {
+      "package.json": pkg({ dependencies: { "no-deps": "1.0.0" }, optionalDependencies: { "one-dep": "1.0.0" } }),
+    });
+
+    expect(await licensesJson(dir)).toStrictEqual({ Unknown: [u("no-deps", "1.0.0", "1.0.1"), u("one-dep", "1.0.0")] });
+    expect(await licensesJson(dir, "--omit=optional")).toStrictEqual({ Unknown: [u("no-deps", "1.0.0")] });
+    expect(normalizeBunSnapshot(await licensesText(dir, "--omit=optional"))).toMatchInlineSnapshot(`
+      "Unknown (1)
+      └── no-deps@1.0.0"
+    `);
+  });
+
+  test.concurrent("packages reachable only through peerDependencies are listed; --omit=peer drops them", async () => {
+    const dir = await setup("hoisted", { "package.json": pkg({ peerDependencies: { "no-deps": "1.0.0" } }) });
+    expect(existsSync(nm(dir, "no-deps", "package.json"))).toBeTrue();
+
+    expect(await licensesJson(dir)).toStrictEqual({ Unknown: [u("no-deps", "1.0.0")] });
+    expect(normalizeBunSnapshot(await licensesText(dir))).toMatchInlineSnapshot(`
+      "Unknown (1)
+      └── no-deps@1.0.0"
+    `);
+    expect(await licensesText(dir, "--omit=peer")).toBe(EMPTY_TEXT);
+    expect(await licensesJson(dir, "--omit=peer")).toStrictEqual({});
+
+    const transitive = await setup("hoisted", { "package.json": pkg({ dependencies: { "has-peer": "1.0.0" } }) });
+    expect(await licensesJson(transitive)).toStrictEqual({
+      Unknown: [u("has-peer", "1.0.0"), u("peer-no-deps", "1.0.1")],
+    });
+    expect(await licensesJson(transitive, "--omit=peer")).toStrictEqual({ Unknown: [u("has-peer", "1.0.0")] });
+  });
+
+  test.concurrent("hoisted linker: scoped packages at their tree location and found by the disk scan", async () => {
+    const dir = await setup("hoisted", { "package.json": pkg({ dependencies: { "two-range-deps": "1.0.0" } }) });
+    const expected = { Unknown: [u("@types/is-number", "2.0.0"), u("no-deps", "1.1.0"), u("two-range-deps", "1.0.0")] };
+
+    expect(await licensesJson(dir)).toStrictEqual(expected);
+    expect(pathsOf(await licensesEntries(dir), "@types/is-number")).toStrictEqual([nm(dir, "@types", "is-number")]);
+
+    renameSync(nm(dir, "@types", "is-number"), nm(dir, "@types", "renamed"));
+    expect(await licensesJson(dir)).toStrictEqual(expected);
+    expect(pathsOf(await licensesEntries(dir), "@types/is-number")).toStrictEqual([nm(dir, "@types", "renamed")]);
+
+    mkdirSync(nm(dir, "two-range-deps", "node_modules"));
+    renameSync(nm(dir, "@types"), nm(dir, "two-range-deps", "node_modules", "@types"));
+    expect(await licensesJson(dir)).toStrictEqual(expected);
+    expect(pathsOf(await licensesEntries(dir), "@types/is-number")).toStrictEqual([
+      nm(dir, "two-range-deps", "node_modules", "@types", "renamed"),
+    ]);
+  });
+
+  test.concurrent("Auto linker resolves to isolated for a workspace project", async () => {
+    const { packageDir: dir } = await registry.createTestDir({ bunfigOpts: {}, files: monorepoFiles });
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      env: installEnv(dir),
+      cwd: dir,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [installStderr, installExit] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(installStderr).not.toContain("error:");
+    expect(installExit).toBe(0);
+    expect(existsSync(nm(dir, ".bun", "no-deps@1.0.0"))).toBeTrue();
+
+    const parsed = await licensesJsonRaw(dir);
+    expect(
+      Object.fromEntries(Object.values(parsed).flatMap(entries => entries.map(e => [e.name, e.paths]))),
+    ).toStrictEqual({
+      "path-parse": [store(dir, "path-parse@1.0.6", "path-parse")],
+      "resolve": [store(dir, "resolve@1.9.0", "resolve")],
+      "a-dep": [store(dir, "a-dep@1.0.1", "a-dep")],
+      "no-deps": [store(dir, "no-deps@1.0.0", "no-deps")],
+    });
+    expect(stripPaths(parsed)).toStrictEqual(monoJson);
+  });
+
+  test.concurrent("one missing package is reported in the singular", async () => {
+    const dir = await setup();
+    rmSync(nm(dir, "a-dep"), { recursive: true });
+
+    const [stdout, stderr, exitCode] = await licenses(dir, "--json");
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(
+      `"warn: omitted 1 package from the lockfile not found in node_modules"`,
+    );
+    expect(stripPaths(JSON.parse(stdout))).toStrictEqual(prodJson);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("hoisted linker falls back to a node_modules/.bun store entry", async () => {
+    const dir = await setup();
+    mkdirSync(store(dir, "a-dep@1.0.1"), { recursive: true });
+    renameSync(nm(dir, "a-dep"), store(dir, "a-dep@1.0.1", "a-dep"));
+
+    const [stdout, stderr, exitCode] = await licenses(dir, "--json");
+    expect(stderr).toBe("");
+    const parsed: Record<string, LicenseEntry[]> = JSON.parse(stdout);
+    expect(pathsOf(Object.values(parsed).flat(), "a-dep")).toStrictEqual([store(dir, "a-dep@1.0.1", "a-dep")]);
+    expect(stripPaths(parsed)).toStrictEqual(fullJson);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an installed manifest without a version is listed under the lockfile version", async () => {
+    const dir = await setup();
+    patchInstalledManifest(dir, "resolve", { version: undefined });
+
+    const [stdout, stderr, exitCode] = await licenses(dir, "--json");
+    expect(stderr).toBe("");
+    const parsed: Record<string, LicenseEntry[]> = JSON.parse(stdout);
+    expect(pathsOf(parsed.MIT, "resolve")).toStrictEqual([nm(dir, "resolve")]);
+    expect(stripPaths(parsed)).toStrictEqual(fullJson);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("author objects: name/email/url combinations; an empty object omits the author", async () => {
+    const dir = await setup();
+    patchInstalledManifest(dir, "a-dep", {
+      author: { name: "Ann", email: "ann@example.com", url: "https://ann.example" },
+    });
+    patchInstalledManifest(dir, "one-dep", { author: { email: "one@example.com" } });
+    patchInstalledManifest(dir, "one-dep/node_modules/no-deps", { author: { url: "https://nd.example" } });
+    patchInstalledManifest(dir, "resolve", { author: {} });
+
+    expect(await licensesJson(dir)).toStrictEqual({
+      MIT: [fullJson.MIT[0], { name: "resolve", versions: ["1.9.0"], license: "MIT", description: resolveDescription }],
+      Unknown: [
+        { ...u("a-dep", "1.0.1"), author: "Ann <ann@example.com> (https://ann.example)" },
+        { ...u("no-deps", "1.0.0", "1.0.1"), author: "(https://nd.example)" },
+        { ...u("one-dep", "1.0.0"), author: "<one@example.com>" },
+      ],
+    });
+    expect(normalizeBunSnapshot(await licensesText(dir, "--long"))).toMatchInlineSnapshot(`
+      "MIT (2)
+      ├── path-parse@1.0.6
+      │   Javier Blanco <http://jbgutierrez.info>
+      │   Node.js path.parse() ponyfill
+      │   https://github.com/jbgutierrez/path-parse#readme
+      └── resolve@1.9.0
+          resolve like require.resolve() on behalf of files asynchronously and synchronously
+
+      Unknown (4)
+      ├── a-dep@1.0.1 (dev)
+      │   Ann <ann@example.com> (https://ann.example)
+      ├── no-deps@1.0.0
+      ├── no-deps@1.0.1
+      │   (https://nd.example)
+      └── one-dep@1.0.0
+          <one@example.com>"
+    `);
+  });
+
+  test.concurrent("--filter matching nothing lists every pattern", async () => {
+    const [stdout, stderr, exitCode] = await licenses(monoDir, "--filter", "nope", "--filter", "nada");
+    expect(stdout).toBe("");
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(
+      `"error: No workspace packages matched the filter "nope", "nada""`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("--json is pretty-printed with inline versions and paths arrays", async () => {
+    const [stdout, stderr, exitCode] = await licenses(hoistedDir, "--json");
+    expect(stderr).toBe("");
+    const dirInJson = JSON.stringify(hoistedDir).slice(1, -1);
+    expect(stdout.split(dirInJson).length).toBe(7);
+    expect(stdout.replaceAll(dirInJson, "<dir>").replaceAll("\\\\", "/")).toMatchInlineSnapshot(`
+      "{
+        "MIT": [
+          {
+            "name": "path-parse",
+            "versions": ["1.0.6"],
+            "paths": ["<dir>/node_modules/path-parse"],
+            "license": "MIT",
+            "homepage": "https://github.com/jbgutierrez/path-parse#readme",
+            "author": "Javier Blanco <http://jbgutierrez.info>",
+            "description": "Node.js path.parse() ponyfill"
+          },
+          {
+            "name": "resolve",
+            "versions": ["1.9.0"],
+            "paths": ["<dir>/node_modules/resolve"],
+            "license": "MIT",
+            "author": "James Halliday <mail@substack.net> (http://substack.net)",
+            "description": "resolve like require.resolve() on behalf of files asynchronously and synchronously"
+          }
+        ],
+        "Unknown": [
+          {
+            "name": "a-dep",
+            "versions": ["1.0.1"],
+            "paths": ["<dir>/node_modules/a-dep"],
+            "license": "Unknown"
+          },
+          {
+            "name": "no-deps",
+            "versions": ["1.0.0", "1.0.1"],
+            "paths": ["<dir>/node_modules/no-deps", "<dir>/node_modules/one-dep/node_modules/no-deps"],
+            "license": "Unknown"
+          },
+          {
+            "name": "one-dep",
+            "versions": ["1.0.0"],
+            "paths": ["<dir>/node_modules/one-dep"],
+            "license": "Unknown"
+          }
+        ]
+      }
+      "
+    `);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a bun.lockb project is read without writing bun.lock or touching bun.lockb", async () => {
+    const { packageDir: dir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted", saveTextLockfile: false },
+      files: { "package.json": fixturePackageJson },
+    });
+    await install(dir, "hoisted");
+    expect(existsSync(join(dir, "bun.lock"))).toBeFalse();
+    const lockbBefore = readFileSync(join(dir, "bun.lockb"));
+    const packageJsonBefore = readFileSync(join(dir, "package.json"));
+
+    expect(await licensesJson(dir)).toStrictEqual(fullJson);
+    expect(await licensesText(dir)).toContain("MIT (2)\n");
+    expect(existsSync(join(dir, "bun.lock"))).toBeFalse();
+    expect(readFileSync(join(dir, "bun.lockb")).equals(lockbBefore)).toBeTrue();
+    expect(readFileSync(join(dir, "package.json")).equals(packageJsonBefore)).toBeTrue();
   });
 
   test.concurrent("bun pm help lists licenses and its flags", async () => {

@@ -640,9 +640,9 @@ describe.concurrent("bun add", () => {
 });
 
 describe.concurrent("catalogs", () => {
-  const CATALOG_REPO = (catalog: Json = { "no-deps": "^1.0.0", aliased: "npm:no-deps" }) =>
+  const CATALOG_REPO = (catalog: Json = { "no-deps": "^1.0.0", aliased: "npm:no-deps" }, protocol = "catalog:") =>
     MONOREPO(
-      { dependencies: Object.fromEntries(Object.keys(catalog).map(name => [name, "catalog:"])) },
+      { dependencies: Object.fromEntries(Object.keys(catalog).map(name => [name, protocol])) },
       { workspaces: { packages: ["packages/*"], catalog } },
     );
 
@@ -699,6 +699,71 @@ describe.concurrent("catalogs", () => {
     await expectCatalog(dir, { "no-deps": "*" });
     expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@2.0.0"]);
     expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ "no-deps": "catalog:" });
+    await expectInSync(dir, ["", PKG1]);
+  });
+
+  const ALIASED_CATALOG = { aliased: "npm:no-deps@~1.0.0", tagged: "npm:dep-with-tags@pre-2" };
+
+  test("bun update bumps an aliased catalog range in place and keeps an aliased dist-tag", async () => {
+    const dir = await setup(CATALOG_REPO(ALIASED_CATALOG));
+    await run(dir, "update");
+    await expectCatalog(dir, { aliased: "npm:no-deps@~1.0.1", tagged: "npm:dep-with-tags@pre-2" });
+    expect(await installed(dir, "aliased")).toMatchObject({ name: "no-deps", version: "1.0.1" });
+    expect(await installed(dir, "tagged")).toMatchObject({ name: "dep-with-tags", version: "2.0.1" });
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ aliased: "catalog:", tagged: "catalog:" });
+    await expectInSync(dir, ["", PKG1]);
+  });
+
+  test("bun update --latest rewrites aliased catalog entries and keeps the alias prefix", async () => {
+    const dir = await setup(CATALOG_REPO(ALIASED_CATALOG));
+    await run(dir, "update", "--latest");
+    await expectCatalog(dir, { aliased: "npm:no-deps@~2.0.0", tagged: "npm:dep-with-tags@^3.0.0" });
+    expect(await installed(dir, "aliased")).toMatchObject({ name: "no-deps", version: "2.0.0" });
+    expect(await installed(dir, "tagged")).toMatchObject({ name: "dep-with-tags", version: "3.0.0" });
+    expect(await lockText(dir)).not.toContain('"latest"');
+    await expectInSync(dir, ["", PKG1]);
+  });
+
+  test.each([
+    [[], { "no-deps": "^1.1.0", aliased: "npm:no-deps@~1.0.1" }, "1.1.0"],
+    [["--latest"], { "no-deps": "^2.0.0", aliased: "npm:no-deps@~2.0.0" }, "2.0.0"],
+  ])("bun update %j rewrites the singular catalog referenced as catalog:default", async (args, expected, version) => {
+    const dir = await setup(CATALOG_REPO({ "no-deps": "^1.0.0", aliased: "npm:no-deps@~1.0.0" }, "catalog:default"));
+    await run(dir, "update", ...args);
+    await expectCatalog(dir, expected);
+    expect(await installed(dir, "no-deps")).toMatchObject({ version });
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({
+      "no-deps": "catalog:default",
+      aliased: "catalog:default",
+    });
+    await expectInSync(dir, ["", PKG1]);
+  });
+
+  test("bun update --latest with install.exact pins a catalog entry", async () => {
+    const dir = await setup(CATALOG_REPO({ "no-deps": "^1.0.0", aliased: "npm:no-deps@~1.0.0" }), { exact: true });
+    await run(dir, "update", "--latest");
+    await expectCatalog(dir, { "no-deps": "2.0.0", aliased: "npm:no-deps@2.0.0" });
+    expect(await installed(dir, "no-deps")).toMatchObject({ version: "2.0.0" });
+    await expectInSync(dir, ["", PKG1]);
+  });
+
+  test("bun update with install.exact pins a catalog range in place", async () => {
+    const dir = await setup(CATALOG_REPO({ "no-deps": "^1.0.0" }), { exact: true });
+    await run(dir, "update");
+    await expectCatalog(dir, { "no-deps": "1.1.0" });
+    expect(await installed(dir, "no-deps")).toMatchObject({ version: "1.1.0" });
+    await expectInSync(dir, ["", PKG1]);
+  });
+
+  test("bun update --latest keeps the = prefix of a catalog entry", async () => {
+    const dir = await setup(CATALOG_REPO({ "no-deps": "=1.0.0" }));
+    const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
+    await run(dir, "update");
+    expect(await pkgText(dir)).toBe(pkgBefore);
+    expect(await lockText(dir)).toBe(lockBefore);
+    await run(dir, "update", "--latest");
+    await expectCatalog(dir, { "no-deps": "=2.0.0" });
+    expect(await installed(dir, "no-deps")).toMatchObject({ version: "2.0.0" });
     await expectInSync(dir, ["", PKG1]);
   });
 

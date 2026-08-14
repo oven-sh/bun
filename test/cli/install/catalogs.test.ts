@@ -3,7 +3,7 @@ import { readTarball } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readlinkSync } from "fs";
 import { exists, readdir, realpath, rm } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, pack, runBunInstall, tempDir } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, pack, runBunInstall, tempDir } from "harness";
 import { join } from "path";
 
 var registry = new VerdaccioRegistry();
@@ -15,6 +15,7 @@ const catalogManifests: Manifests = {
   "leaf": { "1.0.0": {}, "2.0.0": {} },
   "wants-leaf-peer": { "1.0.0": { peerDependencies: { leaf: "catalog:" } } },
   "wants-leaf-dep": { "1.0.0": { dependencies: { leaf: "catalog:" } } },
+  "wants-leaf-optional": { "1.0.0": { optionalDependencies: { leaf: "catalog:" } } },
   "needs-leaf-2": { "1.0.0": { dependencies: { leaf: "2.0.0" } } },
   "no-deps": { "1.0.0": {}, "2.0.0": {} },
   "catalog-peer": {
@@ -798,6 +799,136 @@ describe("errors", () => {
   );
 });
 
+describe("optionalDependencies", () => {
+  type Linker = "hoisted" | "isolated";
+  type Lockfile = {
+    workspaces: Record<string, Record<string, unknown>>;
+    packages: Record<string, unknown[]>;
+  };
+
+  async function spawnInstall(dir: string, linker: Linker, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--linker", linker, ...args],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, code };
+  }
+
+  async function install(dir: string, linker: Linker, ...args: string[]) {
+    const result = await spawnInstall(dir, linker, ...args);
+    expect(result.err).not.toContain("error:");
+    expect(result.code).toBe(0);
+    return result;
+  }
+
+  async function readLockfile(dir: string): Promise<Lockfile> {
+    return Bun.JSONC.parse(await file(join(dir, "bun.lock")).text()) as Lockfile;
+  }
+
+  async function installedVersion(dir: string, name: string) {
+    return (await file(join(dir, "node_modules", name, "package.json")).json()).version;
+  }
+
+  describe.each(["hoisted", "isolated"] as const)("linker=%s", linker => {
+    test.concurrent("catalog: in the root's and a workspace's optionalDependencies resolves", async () => {
+      const { packageDir: dir } = await registry.createTestDir({
+        bunfigOpts: { linker },
+        files: {
+          "package.json": JSON.stringify({
+            name: "root",
+            workspaces: {
+              packages: ["packages/*"],
+              catalog: { "no-deps": "2.0.0" },
+              catalogs: { a: { "a-dep": "1.0.1" } },
+            },
+            optionalDependencies: { "no-deps": "catalog:" },
+          }),
+          "packages/pkg1/package.json": JSON.stringify({
+            name: "pkg1",
+            optionalDependencies: { "a-dep": "catalog:a" },
+          }),
+        },
+      });
+
+      const first = await install(dir, linker);
+      expect(first.err).toContain("Saved lockfile");
+      expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+      const aDepOwner = linker === "isolated" ? join(dir, "packages", "pkg1") : dir;
+      expect(await installedVersion(aDepOwner, "a-dep")).toBe("1.0.1");
+
+      const lockfile = await readLockfile(dir);
+      expect(lockfile.workspaces[""]).toStrictEqual({
+        name: "root",
+        optionalDependencies: { "no-deps": "catalog:" },
+      });
+      expect(lockfile.workspaces["packages/pkg1"]).toStrictEqual({
+        name: "pkg1",
+        optionalDependencies: { "a-dep": "catalog:a" },
+      });
+      expect(Object.keys(lockfile.packages).sort()).toStrictEqual(["a-dep", "no-deps", "pkg1"]);
+      expect(lockfile.packages["no-deps"][0]).toBe("no-deps@2.0.0");
+      expect(lockfile.packages["a-dep"][0]).toBe("a-dep@1.0.1");
+
+      const lockfileText = await file(join(dir, "bun.lock")).text();
+      await rm(join(dir, "node_modules"), { recursive: true, force: true });
+      const warm = await install(dir, linker);
+      expect(warm.err).not.toContain("Saved lockfile");
+      expect(await file(join(dir, "bun.lock")).text()).toBe(lockfileText);
+      expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+      const frozen = await install(dir, linker, "--frozen-lockfile");
+      expect(frozen.err).not.toContain("lockfile had changes");
+    });
+
+    // The registry package's optional `catalog:` edge is stripped to unresolvable instead of reading the consumer's catalog, and stays that way when bun.lock is reloaded.
+    test.concurrent("a registry package's optional catalog: dependency is skipped, fresh and on reload", async () => {
+      using dir = writeRegistryProject(
+        {
+          "package.json": JSON.stringify({
+            name: "root",
+            workspaces: { catalog: { leaf: "^2.0.0" } },
+            dependencies: { "wants-leaf-optional": "1.0.0" },
+          }),
+        },
+        catalogRegistry.url.href,
+      );
+      const root = String(dir);
+      const expectLayout = async () => {
+        expect(await installedVersion(root, "wants-leaf-optional")).toBe("1.0.0");
+        expect(existsSync(join(root, "node_modules", "leaf"))).toBeFalse();
+        const lockfile = await readLockfile(root);
+        expect(Object.keys(lockfile.packages)).toStrictEqual(["wants-leaf-optional"]);
+        expect(lockfile.packages["wants-leaf-optional"]).toStrictEqual([
+          "wants-leaf-optional@1.0.0",
+          expect.stringMatching(/^http:\/\/.*\/wants-leaf-optional-1\.0\.0\.tgz$/),
+          { optionalDependencies: { leaf: "catalog:" } },
+          expect.any(String),
+        ]);
+      };
+
+      const first = await install(root, linker);
+      expect(first.err).toContain("Saved lockfile");
+      await expectLayout();
+      const lockfileText = await file(join(root, "bun.lock")).text();
+
+      await rm(join(root, "node_modules"), { recursive: true, force: true });
+      const warm = await install(root, linker);
+      expect(warm.err).not.toContain("Saved lockfile");
+      expect(await file(join(root, "bun.lock")).text()).toBe(lockfileText);
+      await expectLayout();
+
+      await rm(join(root, "node_modules"), { recursive: true, force: true });
+      const frozen = await install(root, linker, "--frozen-lockfile");
+      expect(frozen.err).not.toContain("lockfile had changes");
+      expect(await file(join(root, "bun.lock")).text()).toBe(lockfileText);
+      await expectLayout();
+    });
+  });
+});
+
 describe("peer dependencies", () => {
   type Linker = "hoisted" | "isolated";
 
@@ -1419,6 +1550,7 @@ describe("peer dependencies", () => {
     ["catalog:peers", { catalogs: { peers: { "no-deps": ">=1.0.0" } } }],
     ["catalog:", { catalogs: { default: { "no-deps": ">=1.0.0" } } }],
     ["catalog:default", { catalog: { "no-deps": ">=1.0.0" } }],
+    ["catalog: peers", { catalogs: { peers: { "no-deps": ">=1.0.0" } } }],
   ] as const)("bun pm pack substitutes the %s peer (%o)", (peerSpec, catalogFields) => {
     test.concurrent("with the catalog's range", async () => {
       const dir = await makeRepo({ ...catalogFields, peerSpec, libVersion: "1.2.3", linker: "hoisted" });
@@ -1434,6 +1566,42 @@ describe("peer dependencies", () => {
         version: "1.2.3",
         peerDependencies: { "no-deps": ">=1.0.0" },
       });
+    });
+  });
+
+  // package.json is edited after the install so bun.lock's catalogs are the ones that lack the entry.
+  describe.each([
+    ["a-dep", "catalog:"],
+    ["no-deps", "catalog:missing"],
+  ] as const)("bun pm pack with a %s peer of %s missing from the lockfile's catalogs", (peerName, peerSpec) => {
+    test.concurrent("fails without writing a tarball", async () => {
+      const dir = await makeRepo({
+        catalog: { "no-deps": ">=1.0.0" },
+        peerSpec: "catalog:",
+        libVersion: "1.2.3",
+        linker: "hoisted",
+      });
+      await install(dir, "hoisted");
+      const libDir = join(dir, "packages", "lib");
+      await Bun.write(
+        join(libDir, "package.json"),
+        JSON.stringify({ name: "lib", version: "1.2.3", peerDependencies: { [peerName]: peerSpec } }),
+      );
+
+      await using proc = spawn({
+        cmd: [bunExe(), "pm", "pack"],
+        cwd: libDir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(normalizeBunSnapshot(err, dir)).toBe(
+        `error: Failed to resolve catalog version for "${peerName}" in \`peerDependencies\` (no matching catalog dependency).`,
+      );
+      expect(normalizeBunSnapshot(out, dir)).toBe("bun pack <version> (<revision>)");
+      expect(exitCode).toBe(1);
+      expect(existsSync(join(libDir, "lib-1.2.3.tgz"))).toBeFalse();
     });
   });
 });

@@ -781,6 +781,80 @@ describe("selectors", () => {
     });
   });
 
+  test("a negation-only filter set starts from every workspace", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "!web",
+      target_pattern: [/out-api/, /out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-web/, /out-root/],
+    });
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: ["!web", "!pkg-b"],
+      target_pattern: [/out-api/, /out-pkg-a/],
+      antipattern: [/out-web/, /out-pkg-b/, /out-root/],
+    });
+  });
+
+  test("a negation-only filter set still skips a package.json without a name", () => {
+    runInCwdSuccess({
+      cwd: cwd_root,
+      pattern: "!pkga",
+      target_pattern: [/scriptb/, /scriptc/, /scriptd/],
+      antipattern: [/scripta/, /malformed1/, /rootscript/],
+    });
+  });
+
+  test("a negated path pattern subtracts from '*'", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: ["*", "!./packages/web"],
+      target_pattern: [/out-api/, /out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-web/, /out-root/],
+    });
+  });
+
+  test("a negated '{dir}' pattern on its own subtracts from every workspace", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "!{./packages/web}",
+      target_pattern: [/out-api/, /out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-web/, /out-root/],
+    });
+  });
+
+  test("'foo...' follows optionalDependencies but not peerDependencies", () => {
+    using dir = tempDir("filter-optional-peer", {
+      packages: {
+        app: {
+          "package.json": JSON.stringify({
+            name: "app",
+            optionalDependencies: { optlib: "workspace:*" },
+            peerDependencies: { peerlib: "workspace:*" },
+            scripts: { present: "echo out-app" },
+          }),
+        },
+        optlib: {
+          "package.json": JSON.stringify({ name: "optlib", scripts: { present: "echo out-optlib" } }),
+        },
+        peerlib: {
+          "package.json": JSON.stringify({ name: "peerlib", scripts: { present: "echo out-peerlib" } }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+        scripts: { present: "echo out-root" },
+      }),
+    });
+    runInCwdSuccess({
+      cwd: String(dir),
+      pattern: "app...",
+      target_pattern: [/out-app/, /out-optlib/],
+      antipattern: [/out-peerlib/, /out-root/],
+    });
+  });
+
   test("a negated relation subtracts the whole group", () => {
     runInCwdSuccess({
       cwd: graph_root,

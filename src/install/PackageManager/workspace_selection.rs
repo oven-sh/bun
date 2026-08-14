@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use bstr::BStr;
-use bun_collections::{DynamicBitSet, HashMap};
+use bun_collections::{DynamicBitSet, HashMap, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
@@ -261,9 +261,10 @@ pub fn select(
     }
 
     if !any_positive {
-        include.unmanaged.set_all(true);
-        if let Some(i) = root_index {
-            include.unset(i);
+        for (i, c) in candidates.iter().enumerate() {
+            if base_matches(&Base::All, c, explicit_root_only) {
+                include.set(i);
+            }
         }
     }
 
@@ -478,7 +479,7 @@ impl LinkTargets {
         importers: impl Iterator<Item = Option<PackageNameHash>>,
     ) -> LinkTargets {
         let mut importers: Vec<Option<PackageNameHash>> = importers.collect();
-        importers.sort_unstable();
+        index_sort::sort_vec_unstable_by(&mut importers, |a, b| a.cmp(b));
         importers.dedup();
         LinkTargets {
             importers: importers.into_boxed_slice(),

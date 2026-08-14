@@ -1131,7 +1131,7 @@ it("should add dependency alongside workspaces", async () => {
     "installed baz@0.0.3 with binaries:",
     " - baz-run",
     "",
-    "2 packages installed",
+    "1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -1240,6 +1240,50 @@ it("should add aliased dependency (npm)", async () => {
     ),
   );
   await access(join(package_dir, "bun.lockb"));
+});
+
+it("should print the npm: alias for an added aliased dependency without binaries", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "not-bar@npm:bar"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toStrictEqual([
+    expect.stringContaining("bun add v1."),
+    "",
+    "installed not-bar@npm:bar@0.0.2",
+    "",
+    "1 package installed",
+  ]);
+  expect(exitCode).toBe(0);
+  expect(urls.sort()).toStrictEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toStrictEqual([".cache", "not-bar"]);
+  expect(await file(join(package_dir, "node_modules", "not-bar", "package.json")).json()).toStrictEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  expect(await file(join(package_dir, "package.json")).json()).toStrictEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      "not-bar": "npm:bar@^0.0.2",
+    },
+  });
 });
 
 describe("npm aliases", () => {
@@ -1351,7 +1395,7 @@ describe("npm aliases", () => {
       expect(err).not.toContain("error:");
       expect(err).toContain("Saved lockfile");
       expect(out).toContain(
-        `installed ${alias}@npm:${resolved.name}@${resolved.version}${resolved.binaries ? " with binaries:" : ""}`,
+        `installed ${alias}@npm:${resolved.name}@${resolved.version}${resolved.binaries ? " with binaries:" : ""}\n`,
       );
       expect(exitCode).toBe(0);
       expect(urls.sort()).toStrictEqual([
@@ -2300,7 +2344,7 @@ it("should add dependencies to workspaces directly", async () => {
     "",
     `installed foo@${relative(package_dir, add_dir).replace(/\\/g, "/")}`,
     "",
-    "2 packages installed",
+    "1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(await readdirSorted(join(package_dir))).toEqual([

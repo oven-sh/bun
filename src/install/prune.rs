@@ -3,7 +3,7 @@ use core::ops::Range;
 use std::io::Write as _;
 
 use bstr::BStr;
-use bun_collections::DynamicBitSet;
+use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
@@ -117,6 +117,10 @@ fn zname(name: &[u8]) -> Vec<u8> {
     z
 }
 
+fn sort_names(names: &mut Vec<Box<[u8]>>) {
+    index_sort::sort_vec_unstable_by(names, |a, b| a.cmp(b));
+}
+
 fn contains(sorted: &[Box<[u8]>], name: &[u8]) -> bool {
     sorted
         .binary_search_by(|item| item.as_ref().cmp(name))
@@ -213,8 +217,7 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         Global::exit(1);
     }
 
-    plan.removals
-        .sort_unstable_by(|a, b| a.display.cmp(&b.display));
+    index_sort::sort_vec_unstable_by(&mut plan.removals, |a, b| a.display.cmp(&b.display));
 
     let n = plan.removals.len();
     let checked = plan.checked;
@@ -296,7 +299,7 @@ fn collect_workspace_names(manager: &PackageManager) -> Vec<Box<[u8]>> {
         })
         .map(|(pkg_id, _)| names[pkg_id].slice(buf).into())
         .collect();
-    out.sort_unstable();
+    sort_names(&mut out);
     out.dedup();
     out
 }
@@ -465,7 +468,7 @@ fn select_importers(manager: &PackageManager, original_cwd: &[u8]) -> Option<Sel
             }
         }
     }
-    protected_aliases.sort_unstable();
+    sort_names(&mut protected_aliases);
     protected_aliases.dedup();
 
     Some(Selection {
@@ -525,31 +528,30 @@ impl<'a> HoistedTree<'a> {
         let mut expected: Vec<(&'a [u8], PackageID)> =
             Vec::with_capacity(lockfile.buffers.hoisted_dependencies.len());
 
+        let mut scratch: Vec<(&'a [u8], PackageID)> = Vec::new();
         let mut it = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
         while let Some(folder) = it.next(None) {
             let path_start = paths.len();
             paths.extend_from_slice(folder.relative_path.as_bytes());
 
-            let start = expected.len();
-            expected.extend(folder.dependencies.iter().map(|&dep_id| {
+            scratch.clear();
+            scratch.extend(folder.dependencies.iter().map(|&dep_id| {
                 (
                     deps[dep_id as usize].name.slice(buf),
                     resolutions[dep_id as usize],
                 )
             }));
-            expected[start..].sort_unstable();
-            let mut len = start;
-            for i in start..expected.len() {
-                if len == start || expected[len - 1].0 != expected[i].0 {
-                    expected[len] = expected[i];
-                    len += 1;
+            index_sort::sort_vec_unstable_by(&mut scratch, |a, b| a.cmp(b));
+            let start = expected.len();
+            for &item in &scratch {
+                if expected.len() == start || expected[expected.len() - 1].0 != item.0 {
+                    expected.push(item);
                 }
             }
-            expected.truncate(len);
 
             folders[folder.tree_id as usize] = TreeFolder {
                 path: path_start as u32..paths.len() as u32,
-                expected: start as u32..len as u32,
+                expected: start as u32..expected.len() as u32,
             };
         }
 
@@ -719,7 +721,7 @@ fn plan_hoisted(
         .skip(1)
         .map(|t| (t.parent, t.folder_name(deps, buf)))
         .collect();
-    nested_trees.sort_unstable();
+    index_sort::sort_vec_unstable_by(&mut nested_trees, |a, b| a.cmp(b));
 
     let tree_owner = |tree_idx: usize| -> PackageID {
         match trees[tree_idx].dependency_id {
@@ -1077,7 +1079,7 @@ fn store_keys(lockfile: &Lockfile, wanted: &DynamicBitSet) -> Vec<Box<[u8]>> {
             keys.push(key.as_slice().into());
         }
     }
-    keys.sort_unstable();
+    sort_names(&mut keys);
     keys.dedup();
     keys
 }
@@ -1116,7 +1118,7 @@ fn direct_aliases(manager: &PackageManager, pkg_id: PackageID) -> Vec<Box<[u8]>>
         }
         direct.push(deps[dep_id as usize].name.slice(buf).into());
     }
-    direct.sort_unstable();
+    sort_names(&mut direct);
     direct.dedup();
     direct
 }
@@ -1162,7 +1164,7 @@ fn plan_isolated(
         }
         plan.retain(store_idx, store);
     }
-    removed_store.sort_unstable();
+    sort_names(&mut removed_store);
     let store_touched = !removed_store.is_empty();
 
     let lockfile: &Lockfile = &manager.lockfile;

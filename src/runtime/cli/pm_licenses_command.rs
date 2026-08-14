@@ -4,7 +4,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 use bun_ast::{Expr, Log, Source};
-use bun_collections::{DynamicBitSet, StringHashMap};
+use bun_collections::{DynamicBitSet, StringHashMap, index_sort};
 use bun_core::fmt::PathSep;
 use bun_core::{FileKind, Global, Output, strings};
 use bun_install::lockfile::{Lockfile, package::PackageColumns as _, reachable, tree};
@@ -254,7 +254,7 @@ impl PmLicensesCommand {
             );
         }
 
-        entries.sort_by(|a, b| {
+        index_sort::sort_vec_by(&mut entries, |a, b| {
             sort_key(a)
                 .cmp(&sort_key(b))
                 .then_with(|| match (a.semver, b.semver) {
@@ -562,7 +562,7 @@ fn list_dir(path: &[u8]) -> Vec<(Box<[u8]>, FileKind)> {
     while let Ok(Some(entry)) = iter.next() {
         out.push((entry.name.slice_u8().into(), entry.kind));
     }
-    out.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    index_sort::sort_vec_unstable_by(&mut out, |a, b| a.0.cmp(&b.0));
     out
 }
 

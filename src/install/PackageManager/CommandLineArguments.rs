@@ -165,6 +165,9 @@ pub(crate) static UPDATE_PARAMS: &[ParamType] = concat_params![
         clap::param!("-D, --development"),
         clap::param!("--no-optional                         Don't update optionalDependencies"),
         clap::param!(
+            "-E, --exact                           Write exact versions to package.json instead of ^ or ~ ranges"
+        ),
+        clap::param!(
             "<POS> ...                             \"name\" or pattern (\"@scope/*\", \"!name\") of packages to update"
         ),
     ]
@@ -1536,6 +1539,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.latest = args.flag(b"--latest");
             cli.interactive = args.flag(b"--interactive");
             cli.recursive = args.flag(b"--recursive");
+            cli.exact = args.flag(b"--exact");
             cli.update_groups = UpdateGroups {
                 dev: args.flag(b"--dev") || args.flag(b"--development"),
                 prod: cli.production,

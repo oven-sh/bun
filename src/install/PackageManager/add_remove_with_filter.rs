@@ -4,7 +4,7 @@ use crate::Error;
 use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::value_loc_of;
 use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
-use bun_collections::StringArrayHashMap;
+use bun_collections::{StringArrayHashMap, index_sort};
 use bun_core::{Global, Output, strings};
 use bun_install::dependency;
 use bun_install::{Lockfile, PackageID, PackageNameHash};
@@ -349,11 +349,23 @@ pub(crate) fn reset_e_strings(updates: &mut [UpdateRequest]) {
 
 /// Moves the requests in `wanted` to the front, preserving order; returns how many there are.
 fn move_to_front(updates: &mut [UpdateRequest], wanted: &[PackageNameHash]) -> usize {
-    updates.sort_by_key(|request| !wanted.contains(&request.name_hash));
-    updates
-        .iter()
-        .take_while(|request| wanted.contains(&request.name_hash))
-        .count()
+    index_sort::stable_partition(updates, |request| wanted.contains(&request.name_hash))
+}
+
+/// Restores the order `updates` had before the `move_to_front` passes (`before[i]` is the i-th original name hash).
+fn restore_order(updates: &mut [UpdateRequest], before: &[PackageNameHash]) {
+    let key = |request: &UpdateRequest| before.iter().position(|&h| h == request.name_hash);
+    let mut order = index_sort::identity(updates.len());
+    index_sort::sort_indices(&mut order, &mut |a, b| {
+        key(&updates[a as usize]).cmp(&key(&updates[b as usize]))
+    });
+    for i in 0..order.len() {
+        let mut j = order[i] as usize;
+        while j < i {
+            j = order[j] as usize;
+        }
+        updates.swap(i, j);
+    }
 }
 
 /// The `(prefix, path)` of a positional naming a local path, which is relative to the invoking cwd.
@@ -547,7 +559,7 @@ impl PendingWrite {
             result?;
             store_entry(manager, &pending.target, root);
         }
-        updates.sort_by_key(|r| summary_order.iter().position(|&h| h == r.name_hash));
+        restore_order(updates, &summary_order);
 
         if self.catalog_mode {
             let root = fetch_entry_root(manager, &self.root_target);

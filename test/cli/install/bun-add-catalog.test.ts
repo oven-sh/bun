@@ -1,6 +1,7 @@
 import { file, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync } from "fs";
 import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall } from "harness";
 import { join } from "path";
 
@@ -200,6 +201,92 @@ describe.concurrent("bun add --catalog", () => {
       });
       expect((await dir.pkg1()).dependencies).toStrictEqual({ "a-dep": "catalog:x" });
     });
+
+    test("workspaces.catalog wins when a top-level catalog also exists", async () => {
+      const dir = await createDir({
+        name: "root",
+        catalog: { "a-dep": "1.0.1" },
+        workspaces: { packages: ["packages/*"], catalog: { "no-deps": "1.0.0" } },
+      });
+
+      expectOk(await dir.add(dir.pkg1Dir, "a-dep", "--catalog"));
+
+      const root = await dir.root();
+      expect(root).toStrictEqual({
+        name: "root",
+        catalog: { "a-dep": "1.0.1" },
+        workspaces: { packages: ["packages/*"], catalog: { "a-dep": "^1.0.10", "no-deps": "1.0.0" } },
+      });
+      expect(Object.keys(root.workspaces.catalog)).toStrictEqual(["a-dep", "no-deps"]);
+      expect((await dir.pkg1()).dependencies).toStrictEqual({ "a-dep": "catalog:" });
+      expect((await dir.installed("a-dep")).version).toBe("1.0.10");
+      expect((await dir.lock()).catalog).toStrictEqual({ "a-dep": "^1.0.10", "no-deps": "1.0.0" });
+
+      await dir.installSavesNothing();
+    });
+  });
+
+  describe("flag spelling", () => {
+    const seeded = {
+      name: "root",
+      workspaces: { packages: ["packages/*"], catalog: { "no-deps": "^2.0.0" } },
+    };
+
+    test("--catalog before the package name does not swallow it", async () => {
+      const dir = await createDir(workspacesObject());
+
+      expectOk(await dir.add(dir.pkg1Dir, "--catalog", "no-deps"));
+
+      expect(await dir.root()).toStrictEqual(seeded);
+      expect((await dir.pkg1()).dependencies).toStrictEqual({ "no-deps": "catalog:" });
+      expect((await dir.installed("no-deps")).version).toBe("2.0.0");
+      expect((await dir.lock()).catalog).toStrictEqual({ "no-deps": "^2.0.0" });
+    });
+
+    test("a word after --catalog is a package, not the catalog name", async () => {
+      const dir = await createDir(workspacesObject());
+
+      expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog", "a-dep"));
+
+      const root = await dir.root();
+      expect(root).toStrictEqual({
+        name: "root",
+        workspaces: { packages: ["packages/*"], catalog: { "a-dep": "^1.0.10", "no-deps": "^2.0.0" } },
+      });
+      expect(Object.keys(root.workspaces.catalog)).toStrictEqual(["a-dep", "no-deps"]);
+      expect((await dir.pkg1()).dependencies).toStrictEqual({ "a-dep": "catalog:", "no-deps": "catalog:" });
+      expect((await dir.installed("a-dep")).version).toBe("1.0.10");
+      expect((await dir.installed("no-deps")).version).toBe("2.0.0");
+      expect((await dir.lock()).catalog).toStrictEqual({ "a-dep": "^1.0.10", "no-deps": "^2.0.0" });
+    });
+
+    for (const flag of ["--catalog=", "--catalog= "]) {
+      test(`${JSON.stringify(flag)} is the default catalog`, async () => {
+        const dir = await createDir(workspacesObject());
+
+        expectOk(await dir.add(dir.pkg1Dir, "no-deps", flag));
+
+        expect(await dir.root()).toStrictEqual(seeded);
+        expect((await dir.pkg1()).dependencies).toStrictEqual({ "no-deps": "catalog:" });
+        const lock = await dir.lock();
+        expect(lock.catalog).toStrictEqual({ "no-deps": "^2.0.0" });
+        expect(lock.catalogs).toBeUndefined();
+        expect(lock.workspaces["packages/pkg1"].dependencies).toStrictEqual({ "no-deps": "catalog:" });
+
+        await dir.installSavesNothing();
+      });
+    }
+
+    test("pnpm's --save-catalog is ignored and the package is added directly", async () => {
+      const root = pretty(workspacesObject({ catalog: {} }));
+      const dir = await createDir(root);
+
+      expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--save-catalog"));
+
+      expect((await dir.pkg1()).dependencies).toStrictEqual({ "no-deps": "^2.0.0" });
+      expect(await dir.rootText()).toBe(root);
+      expect((await dir.lock()).workspaces["packages/pkg1"].dependencies).toStrictEqual({ "no-deps": "^2.0.0" });
+    });
   });
 
   describe("catalog literal", () => {
@@ -287,6 +374,66 @@ describe.concurrent("bun add --catalog", () => {
     const lockText = await dir.lockText();
     expect(lockText).not.toContain("no-deps@1.1.0");
     expect(lockText).not.toContain("no-deps@2.0.0");
+
+    await dir.installSavesNothing();
+  });
+
+  test("--silent prints no note when the target's range differs from the entry", async () => {
+    const dir = await createDir(workspacesObject({ catalog: { "no-deps": "^1.0.0" } }), {
+      name: "pkg1",
+      dependencies: { "no-deps": "1.0.0" },
+    });
+
+    const { stdout, stderr, exitCode } = await dir.add(dir.pkg1Dir, "no-deps", "--catalog", "--silent");
+    expect(stderr).not.toContain("note:");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect((await dir.pkg1()).dependencies).toStrictEqual({ "no-deps": "catalog:" });
+    expect((await dir.root()).workspaces.catalog).toStrictEqual({ "no-deps": "^1.0.0" });
+    expect((await dir.installed("no-deps")).version).toBe("1.1.0");
+  });
+
+  test("the note names package.json when the target has no name", async () => {
+    const dir = await createDir({
+      dependencies: { "no-deps": "^1.0.0" },
+      workspaces: { packages: ["packages/*"], catalog: { "no-deps": "1.0.0" } },
+    });
+
+    const result = await dir.add(dir.packageDir, "no-deps", "--catalog");
+    expectOk(result);
+    expect(result.stderr).toContain(
+      'note: no-deps in package.json now follows the catalog entry "1.0.0" instead of "^1.0.0"',
+    );
+
+    expect(await dir.root()).toStrictEqual({
+      dependencies: { "no-deps": "catalog:" },
+      workspaces: { packages: ["packages/*"], catalog: { "no-deps": "1.0.0" } },
+    });
+    expect((await dir.installed("no-deps")).version).toBe("1.0.0");
+    expect((await dir.lock()).workspaces[""].dependencies).toStrictEqual({ "no-deps": "catalog:" });
+  });
+
+  test("a tarball url the target declares is cataloged verbatim", async () => {
+    const tarball = `${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz`;
+    const dir = await createDir(workspacesObject({ catalog: {} }), {
+      name: "pkg1",
+      dependencies: { "no-deps": tarball },
+    });
+    await dir.install();
+    expect((await dir.installed("no-deps")).version).toBe("1.0.0");
+
+    const result = await dir.add(dir.pkg1Dir, "no-deps", "--catalog");
+    expectOk(result);
+    expect(result.stderr).not.toContain("note:");
+
+    expect(await dir.pkg1()).toStrictEqual({ name: "pkg1", dependencies: { "no-deps": "catalog:" } });
+    expect((await dir.root()).workspaces.catalog).toStrictEqual({ "no-deps": tarball });
+    expect((await dir.installed("no-deps")).version).toBe("1.0.0");
+    const lock = await dir.lock();
+    expect(lock.catalog).toStrictEqual({ "no-deps": tarball });
+    expect(lock.workspaces["packages/pkg1"].dependencies).toStrictEqual({ "no-deps": "catalog:" });
+    expect(await dir.lockText()).not.toContain("no-deps@2.0.0");
 
     await dir.installSavesNothing();
   });
@@ -457,9 +604,59 @@ describe.concurrent("bun add --catalog", () => {
       expect(await dir.lockExists()).toBeFalse();
       expect(exitCode).toBe(0);
     });
+
+    test(`--lockfile-only writes both files and bun.lock but installs nothing (from ${from})`, async () => {
+      const dir = await createDir(workspacesObject({ catalog: {} }));
+
+      const cwd = from === "member" ? dir.pkg1Dir : dir.packageDir;
+      expectOk(await dir.add(cwd, "no-deps", "--catalog", "--lockfile-only"));
+
+      const root = await dir.root();
+      expect(root.workspaces).toStrictEqual({ packages: ["packages/*"], catalog: { "no-deps": "^2.0.0" } });
+      if (from === "member") {
+        expect(root.dependencies).toBeUndefined();
+        expect((await dir.pkg1()).dependencies).toStrictEqual({ "no-deps": "catalog:" });
+      } else {
+        expect(root.dependencies).toStrictEqual({ "no-deps": "catalog:" });
+        expect(await dir.pkg1Text()).toBe(PKG1);
+      }
+
+      const lock = await dir.lock();
+      expect(lock.catalog).toStrictEqual({ "no-deps": "^2.0.0" });
+      expect(lock.workspaces[from === "member" ? "packages/pkg1" : ""].dependencies).toStrictEqual({
+        "no-deps": "catalog:",
+      });
+      expect(lock.packages["no-deps"][0]).toBe("no-deps@2.0.0");
+      expect(existsSync(join(dir.packageDir, "node_modules"))).toBeFalse();
+      expect(existsSync(join(dir.pkg1Dir, "node_modules"))).toBeFalse();
+
+      const { stderr, exitCode } = await dir.frozen();
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect((await dir.installed("no-deps")).version).toBe("2.0.0");
+    });
   }
 
   describe("only the dependency group plain add edits is rewritten", () => {
+    test("--optional", async () => {
+      const dir = await createDir(workspacesObject({ catalog: {} }));
+
+      expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog", "--optional"));
+
+      expect(await dir.pkg1()).toStrictEqual({
+        name: "pkg1",
+        version: "1.0.0",
+        optionalDependencies: { "no-deps": "catalog:" },
+      });
+      expect((await dir.root()).workspaces.catalog).toStrictEqual({ "no-deps": "^2.0.0" });
+      expect((await dir.installed("no-deps")).version).toBe("2.0.0");
+      const lock = await dir.lock();
+      expect(lock.catalog).toStrictEqual({ "no-deps": "^2.0.0" });
+      expect(lock.workspaces["packages/pkg1"].optionalDependencies).toStrictEqual({ "no-deps": "catalog:" });
+
+      await dir.installSavesNothing();
+    });
+
     test("name in devDependencies and peerDependencies, adding with --dev", async () => {
       const dir = await createDir(workspacesObject({ catalog: {} }), {
         name: "pkg1",
@@ -571,6 +768,58 @@ describe.concurrent("bun add --catalog", () => {
       expect(lock.catalog).toBeUndefined();
       expect(lock.catalogs).toStrictEqual({ testing: { "no-deps": "^1.0.0" } });
       expect(lock.packages["no-deps"][0]).toBe("no-deps@1.0.1");
+
+      await dir.installSavesNothing();
+    });
+  });
+
+  describe("target on a named reference whose catalog has no entry", () => {
+    const pkg1 = pretty({ name: "pkg1", dependencies: { "no-deps": "catalog:legacy" } });
+
+    for (const { flag, root } of [
+      { flag: "--catalog", root: { catalog: {} } },
+      { flag: "--catalog=other", root: { catalogs: { legacy: {} } } },
+    ]) {
+      test(`bun add no-deps ${flag} seeds that catalog and keeps the reference`, async () => {
+        const dir = await createDir(workspacesObject(root), pkg1);
+
+        const result = await dir.add(dir.pkg1Dir, "no-deps", flag);
+        expectOk(result);
+        expect(result.stderr).not.toContain("note:");
+
+        expect(await dir.pkg1Text()).toBe(pkg1);
+        expect((await dir.root()).workspaces).toStrictEqual({
+          packages: ["packages/*"],
+          ...root,
+          catalogs: { legacy: { "no-deps": "^2.0.0" } },
+        });
+        expect((await dir.installed("no-deps")).version).toBe("2.0.0");
+
+        const lock = await dir.lock();
+        expect(lock.catalog).toBeUndefined();
+        expect(lock.catalogs).toStrictEqual({ legacy: { "no-deps": "^2.0.0" } });
+        expect(lock.workspaces["packages/pkg1"].dependencies).toStrictEqual({ "no-deps": "catalog:legacy" });
+
+        await dir.installSavesNothing();
+        const { stderr, exitCode } = await dir.frozen();
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+      });
+    }
+
+    test("an explicit version is written into that catalog", async () => {
+      const dir = await createDir(workspacesObject({ catalog: {} }), pkg1);
+
+      expectOk(await dir.add(dir.pkg1Dir, "no-deps@1.0.0", "--catalog=other"));
+
+      expect(await dir.pkg1Text()).toBe(pkg1);
+      expect((await dir.root()).workspaces).toStrictEqual({
+        packages: ["packages/*"],
+        catalog: {},
+        catalogs: { legacy: { "no-deps": "1.0.0" } },
+      });
+      expect((await dir.installed("no-deps")).version).toBe("1.0.0");
+      expect((await dir.lock()).catalogs).toStrictEqual({ legacy: { "no-deps": "1.0.0" } });
 
       await dir.installSavesNothing();
     });
@@ -700,6 +949,20 @@ describe.concurrent("bun add --catalog", () => {
         expect((await dir.lock()).catalog).toStrictEqual({ "a-dep": "^1.0.10", "no-deps": tarball() });
         expect((await dir.installed("a-dep")).version).toBe("1.0.10");
         expect((await dir.installed("no-deps")).version).toBe("1.0.0");
+
+        await dir.installSavesNothing();
+      });
+
+      test("the entry is inserted in alphabetical order", async () => {
+        const dir = await createDir(workspacesObject({ catalog: { zzz: "1.0.0" } }));
+
+        expectOk(await dir.add(dir.pkg1Dir, tarball(), "--catalog"));
+
+        const catalog = (await dir.root()).workspaces.catalog;
+        expect(catalog).toStrictEqual({ "no-deps": tarball(), zzz: "1.0.0" });
+        expect(Object.keys(catalog)).toStrictEqual(["no-deps", "zzz"]);
+        expect((await dir.pkg1()).dependencies).toStrictEqual({ "no-deps": "catalog:" });
+        expect((await dir.lock()).catalog).toStrictEqual({ "no-deps": tarball(), zzz: "1.0.0" });
 
         await dir.installSavesNothing();
       });
@@ -1853,6 +2116,30 @@ describe.concurrent("bun add --catalog", () => {
 
       await dir.installSavesNothing();
     });
+
+    for (const { title, args } of [
+      { title: "bare name", args: ["no-deps"] },
+      { title: "a spec equal to the entry text", args: ["no-deps@^1.0.0"] },
+    ]) {
+      test(`${title} with the default catalog spelled catalogs.default`, async () => {
+        const root = pretty(workspacesObject({ catalogs: { default: { "no-deps": "^1.0.0" } } }));
+        const dir = await createDir(root);
+
+        expectOk(await dir.add(dir.pkg1Dir, ...args));
+
+        expect((await dir.pkg1()).dependencies).toStrictEqual({ "no-deps": "catalog:" });
+        expect(await dir.rootText()).toBe(root);
+        expect((await dir.installed("no-deps")).version).toBe("1.1.0");
+
+        const lock = await dir.lock();
+        expect(lock.workspaces["packages/pkg1"].dependencies).toStrictEqual({ "no-deps": "catalog:" });
+        expect(lock.catalog).toBeUndefined();
+        expect(lock.catalogs).toStrictEqual({ default: { "no-deps": "^1.0.0" } });
+        expect(await dir.lockText()).not.toContain("no-deps@2.0.0");
+
+        await dir.installSavesNothing();
+      });
+    }
 
     test("--dev writes the reference into devDependencies", async () => {
       const dir = await createDir(defaultRoot);

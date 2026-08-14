@@ -1328,11 +1328,19 @@ pub(crate) fn edit(
                     && options.before_install
                     && !e_string.is_blank())
                 .then(|| e_string.data.slice());
+                let requested: &[u8] = request.version.literal.slice(request.version_buf());
+                // A bare `bun update <name>` parses as an empty dist-tag; `<name>@<tag>` is an explicit request.
+                let explicit_dist_tag =
+                    request.version.tag == dependency::Tag::DistTag && !requested.is_empty();
                 let mut version_literal: &[u8] = match existing {
-                    Some(existing) if request.version.tag != dependency::Tag::Npm => existing,
+                    Some(existing)
+                        if request.version.tag != dependency::Tag::Npm && !explicit_dist_tag =>
+                    {
+                        existing
+                    }
                     _ => match request.version.tag {
                         dependency::Tag::Uninitialized => b"latest",
-                        _ => request.version.literal.slice(request.version_buf()),
+                        _ => requested,
                     },
                 };
                 if let Some(existing) = existing {

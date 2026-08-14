@@ -3,7 +3,7 @@ use core::mem::ManuallyDrop;
 use std::io::Write as _;
 
 use bstr::BStr;
-use bun_collections::{DynamicBitSet, HashMap};
+use bun_collections::{DynamicBitSet, HashMap, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, pretty, prettyln, strings};
 use bun_semver::query::Group;
 use bun_semver::{self as Semver, SlicedString};
@@ -128,6 +128,7 @@ struct Edge {
     literal: Box<[u8]>,
     dependent: Box<[u8]>,
     bundled: bool,
+    peer: bool,
     latest_fixes: bool,
     pin: Option<PackageJsonEdit>,
 }
@@ -436,6 +437,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                     literal: Box::from(dep.version.literal.slice(buf)),
                     dependent: dependent.into_boxed_slice(),
                     bundled: dep.behavior.is_bundled(),
+                    peer: dep.behavior.is_peer(),
                     latest_fixes,
                     pin,
                 });
@@ -453,7 +455,9 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             range: Box::from(&index.range_buf[start..start + len]),
         })
         .collect();
-    unmatched.sort_by(|a, b| order_name_from(&a.name, &a.range, &b.name, &b.range));
+    index_sort::sort_vec_by(&mut unmatched, |a, b| {
+        order_name_from(&a.name, &a.range, &b.name, &b.range)
+    });
     unmatched.dedup_by(|a, b| a.name == b.name && a.range == b.range);
 
     if instances.is_empty() {
@@ -560,7 +564,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                 .iter()
                 .map(|&a| advisories[a].ignore_token.clone())
                 .collect();
-            ignore_tokens.sort_unstable();
+            index_sort::sort_vec_unstable_by(&mut ignore_tokens, |a, b| a.cmp(b));
             ignore_tokens.dedup();
             unfixable.push(UnfixableFix {
                 name: inst.name,
@@ -670,6 +674,13 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                                 package_json_edits::new_literal_for(&pin.old_literal, &to, exact);
                             edits.push(edit);
                         }
+                        // A rewritten peer row is deferred by the differ and rebinds to the old package unless the edge is pinned too.
+                        if edge.peer {
+                            edges.push(PlannedEdge {
+                                dep_id: edge.dep_id,
+                                parent: edge.parent,
+                            });
+                        }
                     }
                     _ => edges.push(PlannedEdge {
                         dep_id: edge.dep_id,
@@ -735,13 +746,19 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
         });
     }
 
-    fixes.sort_by(|a, b| {
+    index_sort::sort_vec_by(&mut fixes, |a, b| {
         order_name_from(&a.name, &a.from, &b.name, &b.from)
             .then_with(|| a.to_version.order(b.to_version, b"", b""))
     });
-    blocked.sort_by(|a, b| order_name_from(&a.name, &a.from, &b.name, &b.from));
-    unfixable.sort_by(|a, b| order_name_from(&a.name, &a.from, &b.name, &b.from));
-    manifest_unavailable.sort_by(|a, b| order_name_from(&a.name, &a.from, &b.name, &b.from));
+    index_sort::sort_vec_by(&mut blocked, |a, b| {
+        order_name_from(&a.name, &a.from, &b.name, &b.from)
+    });
+    index_sort::sort_vec_by(&mut unfixable, |a, b| {
+        order_name_from(&a.name, &a.from, &b.name, &b.from)
+    });
+    index_sort::sort_vec_by(&mut manifest_unavailable, |a, b| {
+        order_name_from(&a.name, &a.from, &b.name, &b.from)
+    });
 
     let remaining = advisory_still_present.count() as u32;
     Ok(FixPlan {
@@ -977,7 +994,9 @@ impl FixPlan {
                 still_vulnerable.push((Box::from(names[pkg_id].slice(buf)), ver));
             }
         }
-        still_vulnerable.sort_by(|a, b| order_name_from(&a.0, &a.1, &b.0, &b.1));
+        index_sort::sort_vec_by(&mut still_vulnerable, |a, b| {
+            order_name_from(&a.0, &a.1, &b.0, &b.1)
+        });
         still_vulnerable.dedup();
 
         let remaining_vulnerabilities = remaining.count() as u32;

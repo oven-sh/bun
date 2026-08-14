@@ -2,8 +2,8 @@ use core::cmp::Ordering;
 use std::io::Write as _;
 
 use bstr::BStr;
-use bun_collections::DynamicBitSet;
 use bun_collections::bit_set::Range as BitRange;
+use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::{Output, UnwrapOrOom as _, prettyln};
 use bun_semver as Semver;
 
@@ -310,8 +310,7 @@ impl TransitiveUpdate {
         };
         let mut rows = planned.clone();
         rows.extend(direct.moved_rows(lockfile));
-        rows.sort_unstable();
-        rows.dedup();
+        sort_dedup_rows(&mut rows);
         if rows.is_empty() {
             return;
         }
@@ -398,6 +397,11 @@ fn row(name: &[u8], from: impl core::fmt::Display, to: impl core::fmt::Display) 
         from_text.into_boxed_slice(),
         to_text.into_boxed_slice(),
     )
+}
+
+fn sort_dedup_rows(rows: &mut Vec<Row>) {
+    index_sort::sort_vec_unstable_by(rows, |a, b| a.cmp(b));
+    rows.dedup();
 }
 
 fn print_rows(rows: &[Row]) {
@@ -552,6 +556,8 @@ fn plan_edges(
 
     let mut pins: Vec<Pin> = Vec::new();
     let mut rows: Vec<Row> = Vec::new();
+    // Non-inline prerelease strings of planned versions live in the manifest buffer; copied into the lockfile's below.
+    let mut pre_strings: Vec<(core::ops::Range<usize>, u64, Box<[u8]>)> = Vec::new();
     for inst in &instances {
         let name = pkg_names[inst.pkg_id as usize].slice(buf);
         let mut expired = false;
@@ -568,45 +574,52 @@ fn plan_edges(
         };
         let manifest: &PackageManifest = manifest;
         let manifest_buf: &[u8] = &manifest.string_buf;
-        let releases = manifest.pkg.releases.keys.get(&manifest.versions);
-        let release_pkgs = manifest.pkg.releases.values.get(&manifest.package_versions);
         let age_limit = min_age.filter(|_| !manifest.should_exclude_from_age_filter(excludes));
+        let newest_in = |list: crate::npm::ExternVersionMap, range: &Semver::query::Group| {
+            let versions = list.keys.get(&manifest.versions);
+            let packages = list.values.get(&manifest.package_versions);
+            versions
+                .iter()
+                .enumerate()
+                .rev()
+                .take_while(|(_, v)| v.order(inst.current, manifest_buf, buf) == Ordering::Greater)
+                .find_map(|(i, &v)| {
+                    if v.tag.has_build() || !range.satisfies(v, buf, manifest_buf) {
+                        return None;
+                    }
+                    if let Some(limit) = age_limit
+                        && PackageManifest::is_package_version_too_recent(&packages[i], limit)
+                    {
+                        return None;
+                    }
+                    Some(v)
+                })
+        };
 
         for want in &inst.wants {
             let (v, to) = if want.version.tag == DependencyVersionTag::Npm {
-                let target = releases
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .take_while(|(_, v)| {
-                        v.order(inst.current, manifest_buf, buf) == Ordering::Greater
+                let range = &want.version.npm().version;
+                let mut target = newest_in(manifest.pkg.releases, range);
+                if range.flags.is_set(Semver::query::Flags::PRE)
+                    && let Some(pre) = newest_in(manifest.pkg.prereleases, range)
+                    && target.is_none_or(|release| {
+                        pre.order(release, manifest_buf, manifest_buf) == Ordering::Greater
                     })
-                    .find_map(|(i, &v)| {
-                        if v.tag.has_build()
-                            || !want.version.npm().version.satisfies(v, buf, manifest_buf)
-                        {
-                            return None;
-                        }
-                        if let Some(limit) = age_limit
-                            && PackageManifest::is_package_version_too_recent(
-                                &release_pkgs[i],
-                                limit,
-                            )
-                        {
-                            return None;
-                        }
-                        Some(v)
-                    });
+                {
+                    target = Some(pre);
+                }
                 let Some(v) = target else {
                     continue;
                 };
-                let to = Semver::Version {
-                    major: v.major,
-                    minor: v.minor,
-                    patch: v.patch,
-                    ..Default::default()
-                };
-                (v, Some(to))
+                if !v.tag.pre.value.is_inline() {
+                    let end = pins.len() + want.dep_ids.len();
+                    pre_strings.push((
+                        pins.len()..end,
+                        v.tag.pre.hash,
+                        Box::from(v.tag.pre.slice(manifest_buf)),
+                    ));
+                }
+                (v, Some(v))
             } else {
                 let tag = want.version.dist_tag().tag.slice(buf);
                 let Some(found) = manifest
@@ -629,7 +642,18 @@ fn plan_edges(
         }
     }
 
-    rows.sort_unstable();
-    rows.dedup();
+    for (range, hash, pre) in pre_strings {
+        let pre = manager
+            .lockfile
+            .string_buf()
+            .append_external_with_hash(&pre, hash)?;
+        for pin in &mut pins[range] {
+            if let Some(to) = pin.to.as_mut() {
+                to.tag.pre = pre;
+            }
+        }
+    }
+
+    sort_dedup_rows(&mut rows);
     Ok((pins, rows))
 }

@@ -48,10 +48,12 @@ async function install(dir: string, ...args: string[]) {
 
 const frozen = (dir: string, layout: Layout = {}) => install(dir, "--frozen-lockfile", ...linkerArgs(layout));
 
-async function setup(files: Record<string, Json>, layout: Layout = {}) {
+async function setup(files: Record<string, Json | string>, layout: Layout = {}) {
   const { packageDir } = await registry.createTestDir({
     bunfigOpts: { saveTextLockfile: layout.text ?? true, linker: layout.linker ?? "hoisted" },
-    files: Object.fromEntries(Object.entries(files).map(([path, json]) => [path, stringify(json)])),
+    files: Object.fromEntries(
+      Object.entries(files).map(([path, json]) => [path, typeof json === "string" ? json : stringify(json)]),
+    ),
   });
   await install(packageDir, ...linkerArgs(layout));
   return packageDir;
@@ -217,10 +219,87 @@ test.concurrent("`bun update <name>` rejects a name that is not in the lockfile"
   const before = await lockText(dir);
   const { stderr, exitCode } = await run(dir, "update", "does-not-exist");
   expect(stderr).toContain('error: "does-not-exist" is not in the lockfile, so there is nothing to update');
-  expect(stderr).toContain("bun add");
+  expect(stderr).toContain("note: to add a dependency, use bun add");
   expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
   expect(await lockText(dir)).toBe(before);
   expect(exitCode).toBe(1);
+});
+
+async function withoutLockfile(dependencies: Json) {
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
+    files: { "package.json": stringify(pkgJson(dependencies)) },
+  });
+  return packageDir;
+}
+
+test.concurrent("without a lockfile, `bun update <declared>` resolves and saves", async () => {
+  const dir = await withoutLockfile({ "no-deps": "^1.0.0" });
+  const { stderr, exitCode } = await run(dir, "update", "no-deps");
+  expect(stderr).not.toContain("error:");
+  expect(stderr).toContain("Saved lockfile");
+  expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ "no-deps": "^1.1.0" }));
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
+  expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("without a lockfile, `bun update <undeclared>` is rejected and writes no lockfile", async () => {
+  const dir = await withoutLockfile({ "no-deps": "^1.0.0" });
+  const { stderr, exitCode } = await run(dir, "update", "a-dep");
+  expect(stderr).toContain('error: "a-dep" is not in the lockfile, so there is nothing to update');
+  expect(stderr).toContain("note: to add a dependency, use bun add");
+  expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ "no-deps": "^1.0.0" }));
+  expect(await file(join(dir, "bun.lock")).exists()).toBeFalse();
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("`bun update --lockfile-only` moves the transitive dependency in bun.lock only", async () => {
+  const { dir, packageJson, noDeps } = await stale();
+  const { stdout, stderr, exitCode } = await run(dir, "update", "--lockfile-only");
+  expect(stdout).toContain("  no-deps@1.0.0 → 1.1.0\n");
+  expect(stderr).not.toContain("error:");
+  expect(stderr).toContain("Saved lockfile");
+  expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
+  expect(await installedVersion(dir, ...noDeps)).toBe("1.0.0");
+  await frozen(dir);
+  expect(await installedVersion(dir, ...noDeps)).toBe("1.1.0");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("`bun update --frozen-lockfile` refuses to move the transitive dependency", async () => {
+  const { dir, noDeps } = await stale();
+  const packageJsonBefore = await packageJsonText(dir);
+  const lockBefore = await lockText(dir);
+  const { stderr, exitCode } = await run(dir, "update", "--frozen-lockfile");
+  expect(stderr).toContain("error: lockfile had changes, but lockfile is frozen");
+  expect(await packageJsonText(dir)).toBe(packageJsonBefore);
+  expect(await lockText(dir)).toBe(lockBefore);
+  expect(await installedVersion(dir, ...noDeps)).toBe("1.0.0");
+  expect(exitCode).toBe(1);
+});
+
+// peer-deps-fixed's peer edge is skipped by the plan and only follows the root's moved no-deps; a-dep is inserted ahead of no-deps between the install and the update, so the root's rows no longer line up with the ones bun.lock recorded.
+test.concurrent("a moved direct dependency is still followed after its row index shifted", async () => {
+  const dir = await setup({ "package.json": pkgJson({ "peer-deps-fixed": "1.0.0", "no-deps": "1.0.0" }) });
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  await write(
+    join(dir, "package.json"),
+    stringify(pkgJson({ "a-dep": "1.0.1", "no-deps": "^1.0.0", "peer-deps-fixed": "1.0.0" })),
+  );
+  const { stderr, exitCode } = await run(dir, "update");
+  expect(stderr).not.toContain("error:");
+  expect(await packageJsonOf(dir)).toStrictEqual(
+    pkgJson({ "a-dep": "1.0.1", "no-deps": "^1.1.0", "peer-deps-fixed": "1.0.0" }),
+  );
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
+  expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.1"]);
+  expect((await lock(dir)).packages["peer-deps-fixed/no-deps"]).toBeUndefined();
+  expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
+  await frozen(dir);
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("`bun update --dry-run` prints the transitive plan and writes nothing", async () => {
@@ -315,6 +394,43 @@ test.concurrent("an override holds a transitive dependency back", async () => {
   expect(stderr).not.toContain("error:");
   expect(await lock(dir)).toStrictEqual(before);
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  expect(exitCode).toBe(0);
+});
+
+const NO_DEPS_PATCH = `diff --git a/patched.txt b/patched.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e728b8dad
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++hello world
+`;
+
+const PATCHED = { patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" } };
+
+// The `stale()` recipe with the transitive no-deps@1.0.0 patched.
+test.concurrent.each([
+  ["bare", []],
+  ["no-deps", ["no-deps"]],
+])("a patched transitive dependency is left alone (%s)", async (_, args) => {
+  const dir = await setup({
+    "package.json": pkgJson({ "one-range-dep": "1.0.0", "no-deps": "1.0.0" }, PATCHED),
+    "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH,
+  });
+  const packageJson = pkgJson({ "one-range-dep": "1.0.0" }, PATCHED);
+  await reinstall(dir, packageJson);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  const patched = file(join(dir, "node_modules", "no-deps", "patched.txt"));
+  expect(await patched.exists()).toBeTrue();
+  const before = await lockText(dir);
+  const { stdout, stderr, exitCode } = await run(dir, "update", ...args);
+  expect(stdout).not.toContain("no-deps@");
+  expect(stderr).not.toContain("error:");
+  expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+  expect(await lockText(dir)).toBe(before);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  expect(await patched.exists()).toBeTrue();
+  await frozen(dir);
   expect(exitCode).toBe(0);
 });
 
@@ -812,7 +928,9 @@ type Manifests = Record<string, Record<string, { dependencies?: Record<string, s
 type Tags = Record<string, Record<string, string>>;
 
 // Serves one manifest per name from memory; verdaccio has no parent whose newer version keeps a range on the same child, and its dist-tags cannot move mid-test. `tags` is read per request, so a test can move a tag after installing.
-async function serveRegistry(manifests: Manifests, tags: Tags = {}) {
+type RegistryKnobs = { times?: Record<string, Record<string, string>>; status?: Record<string, number> };
+
+async function serveRegistry(manifests: Manifests, tags: Tags = {}, knobs: RegistryKnobs = {}) {
   const tarballs = new Map<string, Uint8Array>();
   for (const [name, versions] of Object.entries(manifests)) {
     for (const [version, extra] of Object.entries(versions)) {
@@ -831,13 +949,16 @@ async function serveRegistry(manifests: Manifests, tags: Tags = {}) {
       if (tarball) return new Response(tarball);
       const name = pathname.slice(1);
       const entry = manifests[name];
+      const status = knobs.status?.[name];
+      if (status) return new Response("registry says no", { status });
       if (!entry) return new Response("not found", { status: 404 });
       const versions: Json = {};
       for (const [version, extra] of Object.entries(entry)) {
         versions[version] = { name, version, dist: { tarball: `${origin}/${name}-${version}.tgz` }, ...extra };
       }
       const latest = Object.keys(entry).sort(Bun.semver.order).at(-1);
-      return Response.json({ name, versions, "dist-tags": { latest, ...tags[name] } });
+      const time = knobs.times?.[name];
+      return Response.json({ name, versions, "dist-tags": { latest, ...tags[name] }, ...(time ? { time } : {}) });
     },
   });
 }
@@ -943,6 +1064,11 @@ test.concurrent(
   },
 );
 
+const TAGGED_FREE: Manifests = {
+  parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } } },
+  leaf: { "1.0.0": {}, "1.1.0": {} },
+};
+
 const TAGGED: Manifests = {
   parent: { "1.0.0": { dependencies: { leaf: "stable" } } },
   leaf: { "1.0.0": {}, "1.1.0": {} },
@@ -978,6 +1104,129 @@ test.concurrent.each([
   await frozen(dir);
   expect(exitCode).toBe(0);
 });
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const daysAgo = (days: number) => new Date(Date.now() - days * DAY_MS).toISOString();
+const THREE_DAYS_SECONDS = String((3 * DAY_MS) / 1000);
+
+// leaf is reached through a range, tagged through its `stable` tag; both have a newest release published yesterday.
+const AGED: Manifests = {
+  parent: { "1.0.0": { dependencies: { leaf: "^1.0.0", tagged: "stable" } } },
+  leaf: { "1.0.0": {}, "1.1.0": {}, "1.2.0": {} },
+  tagged: { "1.0.0": {}, "1.1.0": {}, "1.2.0": {} },
+};
+const AGED_TIMES = {
+  leaf: { "1.0.0": daysAgo(30), "1.1.0": daysAgo(20), "1.2.0": daysAgo(1) },
+  tagged: { "1.0.0": daysAgo(30), "1.1.0": daysAgo(20), "1.2.0": daysAgo(1) },
+};
+
+test.concurrent(
+  "`bun update --minimum-release-age` stops range and dist-tag edges at the newest old enough release",
+  async () => {
+    const tags: Tags = { tagged: { stable: "1.0.0" } };
+    using server = await serveRegistry(AGED, tags, { times: AGED_TIMES });
+    const packageJson = pkgJson({ parent: "^1.0.0" });
+    const dir = await setupServed(
+      server,
+      "update-min-age-",
+      pkgJson({ ...packageJson.dependencies, leaf: "1.0.0" }),
+      packageJson,
+    );
+    tags.tagged.stable = "1.2.0";
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+    expect(await lockedVersions(dir, "tagged")).toStrictEqual(["1.0.0"]);
+
+    const { stdout, stderr, exitCode } = await run(dir, "update", "--minimum-release-age", THREE_DAYS_SECONDS);
+    expect(stdout).toContain("  leaf@1.0.0 → 1.1.0\n");
+    expect(stdout).toContain("  tagged@1.0.0 → 1.1.0\n");
+    expect(stdout).not.toContain("1.2.0");
+    expect(stderr).not.toContain("error:");
+    expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.1.0"]);
+    expect(await lockedVersions(dir, "tagged")).toStrictEqual(["1.1.0"]);
+    expect(await installedVersion(dir, "leaf")).toBe("1.1.0");
+    expect(await installedVersion(dir, "tagged")).toBe("1.1.0");
+    await frozen(dir);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// `pre` is parked on `from` by a dropped root pin; parent's range on it is `range`.
+test.concurrent.each<[string, string, string[], string, string]>([
+  [
+    "the newest prerelease it allows",
+    "^1.0.0-future.4",
+    ["1.0.0-future.4", "1.0.0-future.7"],
+    "1.0.0-future.4",
+    "1.0.0-future.7",
+  ],
+  [
+    "the release over a prerelease that also satisfies it",
+    "^1.0.0-rc.1",
+    ["1.0.0-rc.1", "1.0.0-rc.2", "1.0.0"],
+    "1.0.0-rc.1",
+    "1.0.0",
+  ],
+  [
+    "a prerelease whose tag is longer than 8 bytes",
+    "^1.0.0-future.4",
+    ["1.0.0-future.4", "1.0.0-future.10"],
+    "1.0.0-future.4",
+    "1.0.0-future.10",
+  ],
+])("a transitive prerelease range moves to %s", async (_, range, versions, from, to) => {
+  using server = await serveRegistry({
+    parent: { "1.0.0": { dependencies: { pre: range } } },
+    pre: Object.fromEntries(versions.map(version => [version, {}])),
+  });
+  const packageJson = pkgJson({ parent: "^1.0.0" });
+  const dir = await setupServed(
+    server,
+    "update-prerelease-",
+    pkgJson({ ...packageJson.dependencies, pre: from }),
+    packageJson,
+  );
+  expect(await lockedVersions(dir, "pre")).toStrictEqual([from]);
+
+  const { stdout, stderr, exitCode } = await run(dir, "update");
+  expect(stdout).toContain(`  pre@${from} → ${to}\n`);
+  expect(stderr).not.toContain("error:");
+  expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+  expect(await lockedVersions(dir, "pre")).toStrictEqual([to]);
+  expect((await lock(dir)).packages.pre[0]).toBe(`pre@${to}`);
+  expect(await installedVersion(dir, "pre")).toBe(to);
+  await frozen(dir);
+  expect(await installedVersion(dir, "pre")).toBe(to);
+  expect(exitCode).toBe(0);
+});
+
+// Only leaf is stale; its manifest stops being served between the install and the update.
+test.concurrent.each([404, 500])(
+  "a %d for a transitive dependency's manifest during a bare `bun update` changes nothing",
+  async status => {
+    const knobs: RegistryKnobs = { status: {} };
+    using server = await serveRegistry(TAGGED_FREE, {}, knobs);
+    const packageJson = pkgJson({ parent: "^1.0.0" });
+    const dir = await setupServed(
+      server,
+      "update-manifest-failure-",
+      pkgJson({ ...packageJson.dependencies, leaf: "1.0.0" }),
+      packageJson,
+    );
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+    const before = await lockText(dir);
+    knobs.status!.leaf = status;
+    const { stdout, stderr, exitCode } = await run(dir, "update");
+    expect(stdout).not.toContain("updating:");
+    expect(stderr).toContain(`warn: GET ${server.url.origin}/leaf - ${status}`);
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain("Saved lockfile");
+    expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+    expect(await lockText(dir)).toBe(before);
+    expect(await installedVersion(dir, "leaf")).toBe("1.0.0");
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent("`bun update <name>` from a member leaves a sibling's own entry alone but lets it follow", async () => {
   const { dir, pkg2Text } = await staleMembers("~1.0.0", "^1.0.0");
@@ -1204,6 +1453,247 @@ test.concurrent("a version cannot be combined with a selector", async () => {
   );
 });
 
+test.concurrent.each([
+  ["a name", "a-dep"],
+  ["a pattern", "a-*"],
+])("`bun update -D` with %s that hits moves only that entry", async (_, arg) => {
+  await expectOnlyADepMoved(await staleSiblings(DEV_A_DEP), "-D", arg);
+});
+
+async function staleAlias() {
+  const dir = await setup({ "package.json": pkgJson({ aliased: "npm:no-deps@1.0.0", "a-dep": "1.0.1" }) });
+  await reinstall(dir, pkgJson({ aliased: "npm:no-deps@~1.0.0", "a-dep": "^1.0.1" }));
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.1"]);
+  return dir;
+}
+
+test.concurrent("a pattern matches an aliased entry through its alias", async () => {
+  const dir = await staleAlias();
+  const { stderr, exitCode } = await run(dir, "update", "alias*");
+  expect(stderr).not.toContain("error:");
+  expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ aliased: "npm:no-deps@~1.0.1", "a-dep": "^1.0.1" }));
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.1"]);
+  expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.1"]);
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a negated pattern excludes an aliased entry through its alias", async () => {
+  const dir = await staleAlias();
+  const { stderr, exitCode } = await run(dir, "update", "!aliased");
+  expect(stderr).not.toContain("error:");
+  expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ aliased: "npm:no-deps@~1.0.0", "a-dep": "^1.0.10" }));
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.10"]);
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a pattern with an unparsable lockfile is an error", async () => {
+  const dir = await setup({ "package.json": pkgJson({ "no-deps": "^1.0.0" }) });
+  await write(join(dir, "bun.lock"), "this is not a lockfile\n");
+  const packageJsonBefore = await packageJsonText(dir);
+  const { stderr, exitCode } = await run(dir, "update", "no-*");
+  expect(stderr).toContain("error: failed to parse lockfile:");
+  expect(await packageJsonText(dir)).toBe(packageJsonBefore);
+  expect(await lockText(dir)).toBe("this is not a lockfile\n");
+  expect(exitCode).toBe(1);
+});
+
+const withPeer = (aDep: string, noDeps: string) => ({
+  name: "foo",
+  dependencies: { "a-dep": aDep },
+  peerDependencies: { "no-deps": noDeps },
+});
+
+async function stalePeerEntry() {
+  const dir = await setup({ "package.json": withPeer("1.0.1", "1.0.0") });
+  await reinstall(dir, withPeer("^1.0.1", "^1.0.0"));
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.1"]);
+  return dir;
+}
+
+// A root peerDependencies entry is never re-resolved by `bun update`; a pattern still counts it as a match, a group selector does not.
+test.concurrent("a pattern matches a peerDependencies entry", async () => {
+  const dir = await stalePeerEntry();
+  const packageJsonBefore = await packageJsonText(dir);
+  const { stderr, exitCode } = await run(dir, "update", "no-*");
+  expect(stderr).not.toContain("error:");
+  expect(await packageJsonText(dir)).toBe(packageJsonBefore);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.1"]);
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("`bun update --prod` does not match a peerDependencies entry", async () => {
+  const dir = await stalePeerEntry();
+  await expectRejected(dir, 'error: no dependencies in the selected groups match "no-*"', "--prod", "no-*");
+});
+
+test.concurrent("`bun update --prod` leaves a stale peerDependencies entry alone", async () => {
+  const dir = await stalePeerEntry();
+  const { stderr, exitCode } = await run(dir, "update", "--prod");
+  expect(stderr).not.toContain("error:");
+  expect(await packageJsonOf(dir)).toStrictEqual(withPeer("^1.0.10", "^1.0.0"));
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.10"]);
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("`bun update --dev` with only a stale peerDependencies entry has nothing to update", async () => {
+  const dir = await stalePeerEntry();
+  const packageJsonBefore = await packageJsonText(dir);
+  await expectNothingToUpdate(dir, "--dev");
+  expect(await packageJsonText(dir)).toBe(packageJsonBefore);
+});
+
+// pkg1 has a stale entry in every group; pkg2 only in dependencies; the root has none.
+const PKG1_GROUPS = (noDeps: string, types: string, aDep: string) => ({
+  name: "pkg1",
+  version: "1.0.0",
+  dependencies: { "no-deps": noDeps, "@types/no-deps": types },
+  devDependencies: { "a-dep": aDep },
+});
+const PKG2_GROUPS = (depWithTags: string, types: string) => ({
+  name: "pkg2",
+  version: "1.0.0",
+  dependencies: { "dep-with-tags": depWithTags, "@types/no-deps": types },
+});
+
+async function staleMemberGroups() {
+  const dir = await setup({
+    "package.json": ROOT,
+    "packages/pkg1/package.json": PKG1_GROUPS("1.0.0", "1.0.0", "1.0.1"),
+    "packages/pkg2/package.json": PKG2_GROUPS("1.0.0", "1.0.0"),
+  });
+  await write(join(dir, "packages/pkg2/package.json"), stringify(PKG2_GROUPS("^1.0.0", "^1.0.0")));
+  await reinstall(dir, PKG1_GROUPS("^1.0.0", "^1.0.0", "^1.0.1"), {}, "packages/pkg1");
+  const locked = async () => ({
+    "no-deps": await lockedVersions(dir, "no-deps"),
+    "@types/no-deps": await lockedVersions(dir, "@types/no-deps"),
+    "a-dep": await lockedVersions(dir, "a-dep"),
+    "dep-with-tags": await lockedVersions(dir, "dep-with-tags"),
+  });
+  const stale = {
+    "no-deps": ["1.0.0"],
+    "@types/no-deps": ["1.0.0"],
+    "a-dep": ["1.0.1"],
+    "dep-with-tags": ["1.0.0"],
+  };
+  expect(await locked()).toStrictEqual(stale);
+  const texts = () => Promise.all(MEMBER_FILES.map(rel => packageJsonText(dir, rel)));
+  return { dir, locked, stale, texts, textsBefore: await texts() };
+}
+
+test.concurrent("`bun update --dev -r` rewrites every workspace's devDependencies and nothing else", async () => {
+  const { dir, locked, stale, texts, textsBefore } = await staleMemberGroups();
+  const [rootBefore, , pkg2Before] = textsBefore;
+  const { stderr, exitCode } = await run(dir, "update", "--dev", "-r");
+  expect(stderr).not.toContain("error:");
+  expect(await texts()).toStrictEqual([rootBefore, stringify(PKG1_GROUPS("^1.0.0", "^1.0.0", "^1.0.10")), pkg2Before]);
+  expect(await locked()).toStrictEqual({ ...stale, "a-dep": ["1.0.10"] });
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("`bun update --prod --filter pkg1` rewrites only pkg1's dependencies", async () => {
+  const { dir, locked, stale, texts, textsBefore } = await staleMemberGroups();
+  const [rootBefore, , pkg2Before] = textsBefore;
+  const { stderr, exitCode } = await run(dir, "update", "--prod", "--filter", "pkg1");
+  expect(stderr).not.toContain("error:");
+  expect(await texts()).toStrictEqual([rootBefore, stringify(PKG1_GROUPS("^1.1.0", "^1.0.0", "^1.0.1")), pkg2Before]);
+  expect(await locked()).toStrictEqual({ ...stale, "no-deps": ["1.1.0"] });
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("`bun update '@types/*' --filter pkg1 --latest` rewrites only pkg1's matching entry", async () => {
+  const { dir, locked, stale, texts, textsBefore } = await staleMemberGroups();
+  const [rootBefore, , pkg2Before] = textsBefore;
+  const { stderr, exitCode } = await run(dir, "update", "@types/*", "--filter", "pkg1", "--latest");
+  expect(stderr).not.toContain("error:");
+  expect(await texts()).toStrictEqual([rootBefore, stringify(PKG1_GROUPS("^1.0.0", "^2.0.0", "^1.0.1")), pkg2Before]);
+  expect(await locked()).toStrictEqual({ ...stale, "@types/no-deps": ["1.0.0", "2.0.0"] });
+  const { workspaces } = await lock(dir);
+  expect(workspaces["packages/pkg2"].dependencies["@types/no-deps"]).toBe("^1.0.0");
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent.each([
+  ["from the root without -r", ["--dev"]],
+  ["with --filter pkg2", ["--dev", "--filter", "pkg2"]],
+])("`bun update --dev` %s selects no entries and prints No packages to update", async (_, args) => {
+  const { dir, texts, textsBefore } = await staleMemberGroups();
+  await expectNothingToUpdate(dir, ...args);
+  expect(await texts()).toStrictEqual(textsBefore);
+});
+
+// pkg1's exact pin is widened in package.json only, so the update itself is the first thing to resolve the new range.
+async function widenedPkg1() {
+  const dir = await setup({
+    "package.json": ROOT,
+    "packages/pkg1/package.json": member("pkg1", { "no-deps": "1.0.0" }),
+    "packages/pkg2/package.json": member("pkg2", { "no-deps": "1.0.0" }),
+  });
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  await write(join(dir, "packages/pkg1/package.json"), stringify(member("pkg1", { "no-deps": "^1.0.0" })));
+  return { dir, rootText: await packageJsonText(dir), pkg2Text: await packageJsonText(dir, "packages/pkg2") };
+}
+
+test.concurrent.each([
+  ["from the member", "packages/pkg1", []],
+  ["with -r from the root", "", ["-r"]],
+])("`bun update <name>` %s re-resolves a range widened since the last install", async (_, cwd, args) => {
+  const { dir, rootText, pkg2Text } = await widenedPkg1();
+  const { stderr, exitCode } = await runIn(dir, cwd, "update", ...args, "no-deps");
+  expect(stderr).not.toContain("error:");
+  expect(await packageJsonText(dir)).toBe(rootText);
+  expect(await packageJsonOf(dir, "packages/pkg1")).toStrictEqual(member("pkg1", { "no-deps": "^1.1.0" }));
+  expect(await packageJsonText(dir, "packages/pkg2")).toBe(pkg2Text);
+  const { workspaces } = await lock(dir);
+  expect(workspaces["packages/pkg1"].dependencies).toStrictEqual({ "no-deps": "^1.1.0" });
+  expect(workspaces["packages/pkg2"].dependencies).toStrictEqual({ "no-deps": "1.0.0" });
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0", "1.1.0"]);
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("`bun update <name> --filter <other>` records a widened range without re-resolving it", async () => {
+  const { dir, rootText, pkg2Text } = await widenedPkg1();
+  const { stderr, exitCode } = await run(dir, "update", "--filter", "pkg2", "no-deps");
+  expect(stderr).not.toContain("error:");
+  expect(await packageJsonText(dir)).toBe(rootText);
+  expect(await packageJsonOf(dir, "packages/pkg1")).toStrictEqual(member("pkg1", { "no-deps": "^1.0.0" }));
+  expect(await packageJsonText(dir, "packages/pkg2")).toBe(pkg2Text);
+  const { workspaces } = await lock(dir);
+  expect(workspaces["packages/pkg1"].dependencies).toStrictEqual({ "no-deps": "^1.0.0" });
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent(
+  "`bun update <name>` from the root still rejects a name only members declare after one was widened",
+  async () => {
+    const { dir, rootText, pkg2Text } = await widenedPkg1();
+    const lockBefore = await lockText(dir);
+    const { stderr, exitCode } = await run(dir, "update", "no-deps");
+    expect(stderr).toContain(
+      'error: "no-deps" is only a dependency of other workspaces, so there is nothing to update here',
+    );
+    expect(await packageJsonText(dir)).toBe(rootText);
+    expect(await packageJsonOf(dir, "packages/pkg1")).toStrictEqual(member("pkg1", { "no-deps": "^1.0.0" }));
+    expect(await packageJsonText(dir, "packages/pkg2")).toBe(pkg2Text);
+    expect(await lockText(dir)).toBe(lockBefore);
+    expect(exitCode).toBe(1);
+  },
+);
+
 // `a` selects every offered row and `\r` confirms; EOF confirms too, so "" answers an empty picker.
 async function runInteractive(dir: string, keys: string, ...args: string[]) {
   await using proc = Bun.spawn({
@@ -1264,5 +1754,47 @@ test.concurrent("`bun update -i` without a selector still offers every group", a
   const { stdout, exitCode } = await runInteractive(dir, "a\r", "--dry-run");
   expect(stdout).toContain("Would update no-deps to 1.1.0");
   expect(stdout).toContain("Would update a-dep to 1.0.10");
+  expect(exitCode).toBe(0);
+});
+
+// Rows are offered sorted by name: a-dep, then no-deps; one-range-dep's edge keeps no-deps@1.0.0 in the picture as a transitive row too.
+async function staleSiblingsWithTransitive() {
+  const dir = await setup({
+    "package.json": pkgJson({ "no-deps": "1.0.0", "a-dep": "1.0.1", "one-range-dep": "1.0.0" }),
+  });
+  await reinstall(dir, pkgJson({ "no-deps": "^1.0.0", "a-dep": "^1.0.1", "one-range-dep": "1.0.0" }));
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.1"]);
+  return dir;
+}
+
+test.concurrent("`bun update -i` installs only the selected entries, as `bun update <selected>`", async () => {
+  const dir = await staleSiblingsWithTransitive();
+  const { stderr, exitCode } = await runInteractive(dir, " \r");
+  expect(stderr).not.toContain("error:");
+  expect(await packageJsonOf(dir)).toStrictEqual(
+    pkgJson({ "no-deps": "^1.0.0", "a-dep": "^1.0.10", "one-range-dep": "1.0.0" }),
+  );
+  expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.10"]);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  expect(await installedVersion(dir, "no-deps")).toBe("1.0.0");
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+// Offered sorted by name: dep-with-tags (in range 1.0.1, latest 3.0.0), then no-deps (in range 1.1.0, latest 2.0.0).
+test.concurrent("`bun update -i --latest` honours an entry toggled back to its in-range target", async () => {
+  const dir = await setup({ "package.json": pkgJson({ "dep-with-tags": "1.0.0", "no-deps": "1.0.0" }) });
+  await reinstall(dir, pkgJson({ "dep-with-tags": "^1.0.0", "no-deps": "^1.0.0" }));
+  expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["1.0.0"]);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  const { stderr, exitCode } = await runInteractive(dir, "lj \r", "--latest");
+  expect(stderr).not.toContain("error:");
+  expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ "dep-with-tags": "^1.0.1", "no-deps": "^2.0.0" }));
+  expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["1.0.1"]);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
+  expect(await installedVersion(dir, "dep-with-tags")).toBe("1.0.1");
+  expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+  await frozen(dir);
   expect(exitCode).toBe(0);
 });

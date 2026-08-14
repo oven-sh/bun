@@ -1,5 +1,6 @@
 use bun_ast::{E, Expr};
 use bun_collections::VecExt as _;
+use bun_collections::index_sort;
 use bun_core::strings;
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
@@ -78,7 +79,7 @@ pub(super) fn apply(manager: &mut PackageManager, plan: &super::FixPlan) -> crat
     if edits.is_empty() {
         return Ok(());
     }
-    edits.sort_by_key(|edit| edit.owner);
+    index_sort::sort_vec_by(&mut edits, |a, b| a.owner.cmp(&b.owner));
 
     let mut start = 0;
     while start < edits.len() {

@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { access, exists, mkdir, readFile, rm, writeFile } from "fs/promises";
+import { access, appendFile, exists, mkdir, readFile, rm, writeFile } from "fs/promises";
 import { VerdaccioRegistry, bunExe, bunEnv as env, pack, readdirSorted, toBeValidBin, toHaveBins } from "harness";
 import { basename, dirname, join } from "path";
 import {
@@ -1859,6 +1859,84 @@ describe("bun update <name> semantics", () => {
     expect(await installedVersion(dir, "no-deps")).toBe("1.0.0");
   });
 
+  it.concurrent.each([
+    ["^1", "^1.1.0", "1.1.0"],
+    ["~1.0", "~1.0.1", "1.0.1"],
+  ])("a plain update rewrites the short range %p to %p", async (literal, rewritten, version) => {
+    const dir = await stale({ "no-deps": "1.0.0" }, { "no-deps": literal });
+    await update(dir);
+    await expectInSync(dir, { "no-deps": rewritten });
+    expect(await lockedVersions(dir, "no-deps")).toStrictEqual([version]);
+    expect(await installedVersion(dir, "no-deps")).toBe(version);
+  });
+
+  it.concurrent.each([
+    ["1", "1.1.0", "^2.0.0"],
+    ["1.0", "1.0.1", "~2.0.0"],
+    ["=1.0.0", "1.0.0", "=2.0.0"],
+  ])("--latest rewrites %p (locked at %p) to %p, keeping its width", async (literal, locked, rewritten) => {
+    const dir = await setup({ "no-deps": literal });
+    expect(await lockedVersions(dir, "no-deps")).toStrictEqual([locked]);
+    await update(dir, "--latest");
+    await expectInSync(dir, { "no-deps": rewritten });
+    expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
+    expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+  });
+
+  // prereleases-2: 0.5.0 (latest) and 1.0.0-next.0..23; prereleases-3: 5.0.0-alpha.150..153.
+  it.concurrent("a plain update moves a caret range on a prerelease and leaves an exact prerelease alone", async () => {
+    const dir = await stale(
+      { "prereleases-2": "1.0.0-next.0", "prereleases-3": "5.0.0-alpha.150" },
+      { "prereleases-2": "^1.0.0-next.0", "prereleases-3": "5.0.0-alpha.150" },
+    );
+    await update(dir);
+    await expectInSync(dir, { "prereleases-2": "^1.0.0-next.23", "prereleases-3": "5.0.0-alpha.150" });
+    expect(await lockedVersions(dir, "prereleases-2")).toStrictEqual(["1.0.0-next.23"]);
+    expect(await lockedVersions(dir, "prereleases-3")).toStrictEqual(["5.0.0-alpha.150"]);
+    expect(await installedVersion(dir, "prereleases-2")).toBe("1.0.0-next.23");
+    expect(await installedVersion(dir, "prereleases-3")).toBe("5.0.0-alpha.150");
+  });
+
+  it.concurrent.each([
+    ["dep-with-tags@pre-2", { "dep-with-tags": "pre-2", "no-deps": "^1.0.0" }, ["2.0.1"], ["1.0.0"]],
+    ["no-deps@latest", { "dep-with-tags": "^1.0.0", "no-deps": "latest" }, ["1.0.1"], ["2.0.0"]],
+  ])(
+    "bun update %p writes the dist-tag literal to package.json and bun.lock follows the tag",
+    async (request, expected, depWithTags, noDeps) => {
+      const dir = await stale(
+        { "dep-with-tags": "1.0.1", "no-deps": "1.0.0" },
+        { "dep-with-tags": "^1.0.0", "no-deps": "^1.0.0" },
+      );
+      await update(dir, request);
+      await expectInSync(dir, expected);
+      expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(depWithTags);
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual(noDeps);
+      expect(await installedVersion(dir, "dep-with-tags")).toBe(depWithTags[0]);
+      expect(await installedVersion(dir, "no-deps")).toBe(noDeps[0]);
+    },
+  );
+
+  it.concurrent(
+    "install.exact + --latest writes exact versions behind an alias and in place of a dist-tag",
+    async () => {
+      const dir = await setup({ tagged: "npm:dep-with-tags@pre-2", "no-deps": "latest", "a-dep": "^1.0.1" });
+      expect(await installedVersion(dir, "tagged")).toBe("2.0.1");
+      await appendFile(join(dir, "bunfig.toml"), "exact = true\n");
+      await update(dir, "--latest");
+      await expectInSync(dir, { tagged: "npm:dep-with-tags@3.0.0", "no-deps": "2.0.0", "a-dep": "1.0.10" });
+      expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["3.0.0"]);
+      expect(await installedVersion(dir, "tagged")).toBe("3.0.0");
+      expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+    },
+  );
+
+  it.concurrent("--exact on the command line writes exact versions like install.exact does", async () => {
+    const dir = await setup({ "no-deps": "^1.0.0", tagged: "npm:dep-with-tags@pre-2" });
+    await update(dir, "--latest", "--exact");
+    await expectInSync(dir, { "no-deps": "2.0.0", tagged: "npm:dep-with-tags@3.0.0" });
+    expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+  });
+
   it.concurrent("-L is an alias of --latest, bare and named", async () => {
     const bare = await setup({ "no-deps": "~1.0.0", "a-dep": "~1.0.1" });
     await update(bare, "-L");
@@ -2462,6 +2540,62 @@ describe("bun update <name> semantics", () => {
       expect(await installed(dir, HOISTED_LINK_PATHS)).toStrictEqual([true, true, false, false, false, true]);
     });
 
+    it.concurrent("an unnamed --filter update links only the selected workspace (isolated)", async () => {
+      const dir = await linkRepo("isolated");
+      await update(dir, "--filter", "api", "--linker=isolated");
+      expect(
+        await installed(dir, [
+          "packages/api/node_modules/no-deps/package.json",
+          "packages/web/node_modules/is-number",
+          "packages/web/node_modules/stale/package.json",
+          "node_modules/web",
+        ]),
+      ).toStrictEqual([true, false, true, false]);
+      await install(dir, "--linker=isolated");
+      expect(await installed(dir, ["packages/web/node_modules/is-number/package.json"])).toStrictEqual([true]);
+    });
+
+    const TABBED = '{\n\t"name": "tabbed",\n\t"dependencies": {\n\t\t"no-deps": "~1.0.0"\n\t}\n}\n';
+    const SPACED = '{\n    "name": "spaced",\n    "devDependencies": {\n        "no-deps": "^1.0.0"\n    }\n}';
+
+    it.concurrent("a bare -r --latest keeps each member's indentation and trailing newline", async () => {
+      const dir = await createDir({
+        "package.json": { name: "root", workspaces: ["packages/*"], dependencies: { "a-dep": "~1.0.1" } },
+        "packages/tabbed/package.json": TABBED,
+        "packages/spaced/package.json": SPACED,
+      });
+      await install(dir);
+      await update(dir, "-r", "--latest");
+      expect(await packageJsonText(dir, "packages/tabbed")).toBe(TABBED.replace("~1.0.0", "~2.0.0"));
+      expect(await packageJsonText(dir, "packages/spaced")).toBe(SPACED.replace("^1.0.0", "^2.0.0"));
+      expect(await packageJsonText(dir)).toBe(
+        stringify({ name: "root", workspaces: ["packages/*"], dependencies: { "a-dep": "~1.0.10" } }),
+      );
+      const { workspaces } = await lock(dir);
+      expect(workspaces["packages/tabbed"].dependencies).toStrictEqual({ "no-deps": "~2.0.0" });
+      expect(workspaces["packages/spaced"].devDependencies).toStrictEqual({ "no-deps": "^2.0.0" });
+      expect(workspaces[""].dependencies).toStrictEqual({ "a-dep": "~1.0.10" });
+      await install(dir, "--frozen-lockfile");
+    });
+
+    it.concurrent.each([[["-r"]], [["--filter", "api"]]])(
+      "a bare update %p without a bun.lock is an error that writes nothing",
+      async flags => {
+        const dir = await createDir(FILES);
+        const before = await texts(dir);
+        const { stdout, stderr, exitCode } = await run(dir, "update", ...flags);
+        expect(stderr).toContain("error: missing lockfile, nothing to update");
+        expect(stdout).not.toContain("installed");
+        expect(await texts(dir)).toStrictEqual(before);
+        expect(await installed(dir, ["bun.lock", "node_modules", "packages/api/node_modules"])).toStrictEqual([
+          false,
+          false,
+          false,
+        ]);
+        expect(exitCode).toBe(1);
+      },
+    );
+
     it.concurrent.each([[["-r"]], [["--filter", "*"]]])(
       "a named update with %p still links every workspace and the root",
       async flags => {
@@ -2478,5 +2612,81 @@ describe("bun update <name> semantics", () => {
         ).toStrictEqual([true, true, true, true, true]);
       },
     );
+  });
+
+  // The global dir (<dir>/.global/install/global) is a sibling of the cwd project: a first `-g` install into a global dir nested under a project walks up to that project's package.json.
+  describe("--global", () => {
+    const PROJECT = { name: "project", dependencies: { "no-deps": "^1.0.0" } };
+    const GLOBAL_PINNED = { "no-deps": "1.0.0", "a-dep": "1.0.1" };
+    const GLOBAL_WIDENED = { "no-deps": "^1.0.0", "a-dep": "^1.0.1" };
+
+    async function globalRepo() {
+      const dir = await createDir({ "project/package.json": PROJECT });
+      const project = join(dir, "project");
+      const globalDir = join(dir, ".global", "install", "global");
+      const runGlobal = async (...args: string[]) => {
+        await using proc = spawn({
+          cmd: [bunExe(), ...args, "-g", `--config=${join(dir, "bunfig.toml")}`],
+          cwd: project,
+          env: { ...envFor(dir), BUN_INSTALL: join(dir, ".global") },
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "ignore",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      const added = await runGlobal("add", "no-deps@1.0.0", "a-dep@1.0.1");
+      expect(added.stderr).not.toContain("error:");
+      expect(added.exitCode).toBe(0);
+      const globalJson = await packageJsonOf(globalDir);
+      expect(globalJson.dependencies).toStrictEqual(GLOBAL_PINNED);
+      await writeFile(join(globalDir, "package.json"), stringify({ ...globalJson, dependencies: GLOBAL_WIDENED }));
+      const projectBefore = await packageJsonText(project);
+      return { project, globalDir, runGlobal, projectBefore };
+    }
+
+    async function expectGlobalInSync(globalDir: string, dependencies: Json) {
+      expect((await packageJsonOf(globalDir)).dependencies).toStrictEqual(dependencies);
+      expect((await lock(globalDir)).workspaces[""].dependencies).toStrictEqual(dependencies);
+    }
+
+    async function expectProjectUntouched(project: string, projectBefore: string) {
+      expect(await packageJsonText(project)).toBe(projectBefore);
+      expect(
+        await Promise.all([exists(join(project, "bun.lock")), exists(join(project, "node_modules"))]),
+      ).toStrictEqual([false, false]);
+    }
+
+    it.concurrent.each([
+      [[], { "no-deps": "^1.1.0", "a-dep": "^1.0.10" }, "1.1.0", "1.0.10"],
+      [["no-deps"], { "no-deps": "^1.1.0", "a-dep": "^1.0.1" }, "1.1.0", "1.0.1"],
+      [["--latest"], { "no-deps": "^2.0.0", "a-dep": "^1.0.10" }, "2.0.0", "1.0.10"],
+    ])("bun update -g %p rewrites the global package.json and bun.lock only", async (args, expected, noDeps, aDep) => {
+      const { project, globalDir, runGlobal, projectBefore } = await globalRepo();
+      const { stderr, exitCode } = await runGlobal("update", ...args);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      await expectGlobalInSync(globalDir, expected);
+      expect(await lockedVersions(globalDir, "no-deps")).toStrictEqual([noDeps]);
+      expect(await lockedVersions(globalDir, "a-dep")).toStrictEqual([aDep]);
+      expect(await installedVersion(globalDir, "no-deps")).toBe(noDeps);
+      expect(await installedVersion(globalDir, "a-dep")).toBe(aDep);
+      await expectProjectUntouched(project, projectBefore);
+    });
+
+    it.concurrent.each([
+      [["-r"], "--recursive"],
+      [["--filter", "*"], "--filter"],
+    ])("bun update <name> %p -g is an error that writes nothing", async (flags, flag) => {
+      const { project, globalDir, runGlobal, projectBefore } = await globalRepo();
+      const globalBefore = await snapshotFiles(globalDir);
+      const { stderr, exitCode } = await runGlobal("update", "no-deps", ...flags);
+      expect(stderr).toContain(`error: ${flag} cannot be used with --global`);
+      await expectUnchanged(globalDir, globalBefore);
+      expect(await installedVersion(globalDir, "no-deps")).toBe("1.0.0");
+      await expectProjectUntouched(project, projectBefore);
+      expect(exitCode).toBe(1);
+    });
   });
 });

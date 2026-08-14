@@ -571,10 +571,10 @@ describe("package-lock.json migration fixes", () => {
   );
   // Port 1 refuses connections, so any accidental registry access fails the test.
   const OFFLINE_REGISTRY = "http://localhost:1/";
-  const OFFLINE_BUNFIG = `[install]\nregistry = "${OFFLINE_REGISTRY}"\n`;
+  const REGISTRY_PACKAGES = join(import.meta.dir, "..", "registry", "packages");
 
-  function writeExtra(dir: string, extra: Record<string, string>) {
-    fs.writeFileSync(join(dir, "bunfig.toml"), OFFLINE_BUNFIG);
+  function writeExtra(dir: string, extra: Record<string, string>, registry = OFFLINE_REGISTRY) {
+    fs.writeFileSync(join(dir, "bunfig.toml"), `[install]\nregistry = "${registry}"\n`);
     for (const [name, contents] of Object.entries(extra)) {
       fs.mkdirSync(dirname(join(dir, name)), { recursive: true });
       fs.writeFileSync(join(dir, name), contents);
@@ -609,11 +609,48 @@ describe("package-lock.json migration fixes", () => {
     return JSON.stringify(lock.packages[""]);
   }
 
-  function synthetic(name: string, files: Record<string, string>) {
+  function synthetic(name: string, files: Record<string, string>, registry = OFFLINE_REGISTRY) {
     const dir = tempDir(name, files);
-    writeExtra(String(dir), {});
+    writeExtra(String(dir), {}, registry);
     return dir;
   }
+
+  // Serves the verdaccio fixture packages from disk and records every path requested.
+  function localRegistry() {
+    const requests: string[] = [];
+    let url = "";
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const { pathname } = new URL(req.url);
+        requests.push(pathname);
+        const tarball = pathname.match(/^\/([^/]+)\/-\/([^/]+\.tgz)$/);
+        const file = tarball
+          ? Bun.file(join(REGISTRY_PACKAGES, tarball[1], tarball[2]))
+          : Bun.file(join(REGISTRY_PACKAGES, pathname.slice(1), "package.json"));
+        if (!(await file.exists())) return new Response("not found", { status: 404 });
+        if (tarball) return new Response(file);
+        return Response.json(
+          JSON.parse((await file.text()).replaceAll(/http:\/\/(?:http:\/\/)?localhost:4873\//g, url)),
+        );
+      },
+    });
+    url = `http://localhost:${server.port}/`;
+    return {
+      url,
+      requests,
+      tarball: (name: string, version: string) => `${url}${name}/-/${name}-${version}.tgz`,
+      integrity: (name: string, version: string): string =>
+        JSON.parse(fs.readFileSync(join(REGISTRY_PACKAGES, name, "package.json"), "utf8")).versions[version].dist
+          .integrity,
+      [Symbol.dispose]() {
+        server.stop(true);
+      },
+    };
+  }
+
+  const npmLock = (name: string, packages: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ name, lockfileVersion: 3, requires: true, ...extra, packages: { "": { name }, ...packages } });
 
   async function run(dir: string, ...args: string[]) {
     await using proc = Bun.spawn({
@@ -885,27 +922,32 @@ describe("package-lock.json migration fixes", () => {
 
   test.concurrent("out-of-tree link targets and their node_modules (B6, walk)", async () => {
     using dir = fixture("external-link--root");
-    const { stderr, exitCode, lock } = await migrate(dir);
+    const { stderr, exitCode, text, lock } = await migrate(dir);
+    expect(stderr).toContain(
+      'skipped "p" from package-lock.json: transitive folder dependency "../m/node_modules/p" is outside the project',
+    );
+    expect(stderr).toContain(
+      'skipped "b" from package-lock.json: transitive folder dependency "../a/node_modules/b" is outside the project',
+    );
     expect(stderr).toContain(
       'skipped 3 package-lock.json entries not depended on by any package: "../a", "../i", "../m"',
     );
-    expect(lock.packages.j).toStrictEqual(["j@file:../i/j", { dependencies: { k: "" } }]);
     const registry = (name: string) => `${OFFLINE_REGISTRY}${name}/-/${name}-1.0.0.tgz`;
-    // Entries without `resolved` get the configured registry (B4); folder names follow npm's name-from-folder.
+    // Root-declared out-of-tree folders (j, o, o2) and registry entries under them (k) migrate; transitive out-of-tree folders (p, b) are skipped along with their edges and their own subtree (c).
     expect(
       Object.fromEntries(Object.entries<any[]>(lock.packages).map(([key, v]) => [key, [v[0], v[1]]])),
     ).toStrictEqual({
-      c: ["c@1.0.0", registry("c")],
       j: ["j@file:../i/j", { dependencies: { k: "" } }],
       k: ["k@1.0.0", registry("k")],
-      o: ["o@file:../m/node_modules/n/o", { dependencies: { p: "" } }],
-      o2: ["o2@file:../m/node_modules/n/o2", { dependencies: { p: "" } }],
+      o: ["o@file:../m/node_modules/n/o", {}],
+      o2: ["o2@file:../m/node_modules/n/o2", {}],
       x: ["x@1.0.0", registry("x")],
-      "o/p": ["p@file:../m/node_modules/p", {}],
-      "o2/p": ["p@file:../m/node_modules/p", {}],
-      "x/b": ["b@file:../a/node_modules/b", { dependencies: { c: "" } }],
     });
+    expect(lock.packages.x[2]).toStrictEqual({});
+    expect(text).not.toContain("../m/node_modules/p");
+    expect(text).not.toContain("../a/node_modules/b");
     expect(exitCode).toBe(0);
+    await frozen(dir);
   });
 
   test.concurrent("optional peer that is present keeps optionalPeers (B8)", async () => {
@@ -1073,6 +1115,422 @@ describe("package-lock.json migration fixes", () => {
     expect(lock.packages.x[2]).toStrictEqual({});
     expect(exitCode).toBe(0);
     await frozen(dir);
+  });
+
+  const linkers = ["hoisted", "isolated"] as const;
+
+  function storeEntries(dir: string) {
+    const store = join(dir, "node_modules", ".bun");
+    if (!fs.existsSync(store)) return [];
+    return fs
+      .readdirSync(store)
+      .filter(n => !n.startsWith(".") && n !== "node_modules")
+      .sort();
+  }
+
+  test.concurrent.each(linkers)("bundled: true edges install from the parent tarball (B9, %s)", async linker => {
+    using registry = localRegistry();
+    const dependencies = { "bundled-1": "1.0.0" };
+    using dir = synthetic(
+      `npm-migrate-bundled-install-${linker}`,
+      {
+        "package.json": JSON.stringify({ name: "bundled-install", dependencies }),
+        "package-lock.json": npmLock("bundled-install", {
+          "": { name: "bundled-install", dependencies },
+          "node_modules/bundled-1": {
+            version: "1.0.0",
+            resolved: registry.tarball("bundled-1", "1.0.0"),
+            dependencies: { "no-deps": "1.0.0" },
+            bundleDependencies: ["no-deps"],
+          },
+          "node_modules/bundled-1/node_modules/no-deps": { version: "1.0.0", inBundle: true },
+        }),
+      },
+      registry.url,
+    );
+
+    const { stderr, exitCode } = await run(dir, "install", "--linker", linker);
+    expect(stderr).toContain("migrated lockfile from package-lock.json");
+    expect(exitCode).toBe(0);
+    const { lock } = await readLock(dir);
+    expect(lock.packages["bundled-1"][2]).toStrictEqual({ dependencies: { "no-deps": "1.0.0" } });
+    expect(lock.packages["bundled-1/no-deps"]).toStrictEqual([
+      "no-deps@1.0.0",
+      registry.tarball("no-deps", "1.0.0"),
+      { bundled: true },
+      "",
+    ]);
+    expect(
+      await Bun.file(join(String(dir), "node_modules", "bundled-1", "node_modules", "no-deps", "package.json")).json(),
+    ).toStrictEqual({ name: "no-deps", version: "1.0.0" });
+    expect(registry.requests).toStrictEqual(["/bundled-1/-/bundled-1-1.0.0.tgz"]);
+    expect(storeEntries(String(dir))).toStrictEqual(linker === "isolated" ? ["bundled-1@1.0.0"] : []);
+    await frozen(dir);
+  });
+
+  test.concurrent(
+    "workspace listing a dependency in dependencies and optionalDependencies matches a fresh resolve",
+    async () => {
+      using registry = localRegistry();
+      const w = {
+        name: "w",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+        optionalDependencies: { "no-deps": "1.0.0" },
+      };
+      const files = {
+        "package.json": JSON.stringify({ name: "ws-dups", workspaces: ["packages/w"] }),
+        "packages/w/package.json": JSON.stringify(w),
+      };
+      using dir = synthetic(
+        "npm-migrate-ws-optional-dup",
+        {
+          ...files,
+          "package-lock.json": npmLock("ws-dups", {
+            "": { name: "ws-dups", workspaces: ["packages/w"] },
+            "node_modules/no-deps": {
+              version: "1.0.0",
+              resolved: registry.tarball("no-deps", "1.0.0"),
+              integrity: registry.integrity("no-deps", "1.0.0"),
+            },
+            "node_modules/w": { resolved: "packages/w", link: true },
+            "packages/w": {
+              version: "1.0.0",
+              dependencies: w.dependencies,
+              optionalDependencies: w.optionalDependencies,
+            },
+          }),
+        },
+        registry.url,
+      );
+      const { lock } = await migrate(dir);
+      await frozen(dir);
+
+      using freshDir = synthetic("npm-migrate-ws-optional-dup-fresh", files, registry.url);
+      const fresh = await run(freshDir, "install", "--lockfile-only");
+      expect(fresh.exitCode).toBe(0);
+      const { lock: freshLock } = await readLock(freshDir);
+      expect(lock.workspaces).toStrictEqual(freshLock.workspaces);
+      expect(lock.packages).toStrictEqual(freshLock.packages);
+    },
+  );
+
+  test.concurrent(
+    "a registry entry naming a dep in dependencies and peerDependencies keeps one edge; the root keeps both",
+    async () => {
+      const root = { name: "peer-dups", dependencies: { x: "1.0.0", z: "1.0.0" }, peerDependencies: { z: "1.0.0" } };
+      using dir = synthetic("npm-migrate-peer-dups", {
+        "package.json": JSON.stringify(root),
+        "package-lock.json": npmLock("peer-dups", {
+          "": root,
+          "node_modules/x": { version: "1.0.0", dependencies: { y: "1.0.0" }, peerDependencies: { y: "1.0.0" } },
+          "node_modules/y": { version: "1.0.0" },
+          "node_modules/z": { version: "1.0.0" },
+        }),
+      });
+      const { lock } = await migrate(dir);
+      expect(lock.packages.x[2]).toStrictEqual({ dependencies: { y: "1.0.0" } });
+      expect(lock.workspaces[""]).toStrictEqual(root);
+      await frozen(dir);
+    },
+  );
+
+  test.concurrent("workspace listed in the lockfile but deleted from disk is skipped", async () => {
+    const src = join(ARBORIST, "workspaces-simple-virtual");
+    const packageLock = JSON.parse(fs.readFileSync(join(src, "package-lock.json"), "utf8"));
+    delete packageLock.packages.a.dependencies;
+    using dir = fixture("workspaces-simple-virtual", {
+      "package.json": JSON.stringify({ name: "workspace-simple", workspaces: ["a"] }),
+      "a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+      "package-lock.json": JSON.stringify(packageLock),
+    });
+    fs.rmSync(join(String(dir), "b"), { recursive: true });
+
+    const { stderr, exitCode, lock } = await migrate(dir);
+    expect(stderr).toContain('skipped 1 package-lock.json entry not depended on by any package: "b"');
+    expect(exitCode).toBe(0);
+    expect(lock.workspaces).toStrictEqual({
+      "": { name: "workspace-simple" },
+      a: { name: "a", version: "1.0.0" },
+    });
+    expect(lock.packages).toStrictEqual({ a: ["a@workspace:a"] });
+    await frozen(dir);
+  });
+
+  const overridesFixture = (rootFields: Record<string, unknown>, extra: Record<string, string> = {}) =>
+    fixture("workspaces-with-overrides", {
+      "package.json": JSON.stringify({ name: "workspace-with-overrides", workspaces: ["ws"], ...rootFields }),
+      ...extra,
+    });
+
+  test.concurrent("yarn-style resolutions are carried into the migrated lockfile", async () => {
+    using dir = overridesFixture({ resolutions: { arg: "4.1.3" } });
+    const { lock } = await migrate(dir);
+    expect(lock.overrides).toStrictEqual({ arg: "4.1.3" });
+    expect(lock.packages.arg[0]).toBe("arg@4.1.3");
+    await frozen(dir);
+  });
+
+  test.concurrent("a $ref override resolves through a workspace's dependencies", async () => {
+    const packageLock = JSON.parse(
+      fs.readFileSync(join(ARBORIST, "workspaces-with-overrides", "package-lock.json"), "utf8"),
+    );
+    packageLock.packages["node_modules/arg"] = {
+      version: "4.1.2",
+      resolved: "https://registry.npmjs.org/arg/-/arg-4.1.2.tgz",
+    };
+    using dir = overridesFixture({ overrides: { arg: "$arg" } }, { "package-lock.json": JSON.stringify(packageLock) });
+    const { stderr, lock } = await migrate(dir);
+    expect(stderr).not.toContain("Could not resolve");
+    expect(lock.overrides).toStrictEqual({ arg: "4.1.2" });
+    expect(lock.packages.arg[0]).toBe("arg@4.1.2");
+    expect(lock.workspaces.ws.dependencies).toStrictEqual({ arg: "4.1.2" });
+    await frozen(dir);
+  });
+
+  test.concurrent("nested and version-scoped overrides migrate into a lockfileVersion 3 bun.lock", async () => {
+    using dir = overridesFixture({ overrides: { "arg@4": "4.1.3", ws: { arg: "4.1.3" } } });
+    const { text, lock } = await migrate(dir);
+    expect(lock.lockfileVersion).toBe(3);
+    expect(lock.overrides).toStrictEqual({ "arg@4": { ".": "4.1.3" }, ws: { arg: "4.1.3" } });
+    expect(text).not.toContain("only supports one level");
+    await frozen(dir);
+  });
+
+  test.concurrent("override warnings are printed after a successful migration", async () => {
+    using dir = overridesFixture({ overrides: { arg: 5 } });
+    const { stderr, exitCode, lock } = await migrate(dir);
+    expect(stderr).toContain('Invalid override value for "arg"');
+    expect(stderr).toContain("migrated lockfile from package-lock.json");
+    expect(lock.overrides).toBeUndefined();
+    expect(exitCode).toBe(0);
+  });
+
+  // Folder dep `o` gets `p` from the node_modules beside it; `m` sits next to the project (external-link--root shape) or inside it.
+  function folderLinkProject(name: string, opts: { outOfTree: boolean; directP?: boolean }) {
+    const m = opts.outOfTree ? "../m" : "m";
+    const project = opts.outOfTree ? "root" : ".";
+    const dependencies: Record<string, string> = { o: `file:${m}/node_modules/n/o` };
+    if (opts.directP) dependencies.p = `file:${m}/node_modules/p`;
+    const copy = tempDir(name, {
+      [`${project}/${m}/node_modules/n/o/package.json`]: JSON.stringify({
+        name: "o",
+        version: "1.0.0",
+        dependencies: { p: "" },
+      }),
+      [`${project}/${m}/node_modules/n/o/index.js`]: `module.exports = require("p/package.json").name;`,
+      [`${project}/${m}/node_modules/p/package.json`]: JSON.stringify({ name: "p", version: "1.0.0" }),
+      [`${project}/package.json`]: JSON.stringify({ name: "root", dependencies }),
+      [`${project}/package-lock.json`]: npmLock("root", {
+        "": { name: "root", dependencies },
+        [m]: {},
+        [`${m}/node_modules/n/o`]: { version: "1.0.0", dependencies: { p: "" } },
+        [`${m}/node_modules/p`]: {},
+        "node_modules/o": { resolved: `${m}/node_modules/n/o`, link: true },
+        ...(opts.directP ? { "node_modules/p": { resolved: `${m}/node_modules/p`, link: true } } : {}),
+      }),
+    });
+    const dir = join(String(copy), project);
+    writeExtra(dir, {});
+    return {
+      dir,
+      o: `o@file:${m}/node_modules/n/o`,
+      p: `p@file:${m}/node_modules/p`,
+      oSource: join(dir, m, "node_modules", "n", "o"),
+      [Symbol.dispose]() {
+        copy[Symbol.dispose]();
+      },
+    };
+  }
+
+  async function expectFolderLinkInstalled(project: ReturnType<typeof folderLinkProject>, linker: string) {
+    const install = await run(project.dir, "install", "--frozen-lockfile", "--linker", linker);
+    expect(install.stderr).not.toContain("error");
+    expect(install.exitCode).toBe(0);
+    expect(fs.existsSync(join(project.oSource, "node_modules"))).toBeFalse();
+    const resolve = await run(project.dir, "-e", `console.log(require("o"))`);
+    expect(resolve.stdout).toBe("p\n");
+    expect(resolve.exitCode).toBe(0);
+    const storeName = (key: string) => key.replaceAll(/[/:]/g, "+");
+    expect(storeEntries(project.dir)).toStrictEqual(
+      linker === "isolated" ? [storeName(project.o), storeName(project.p)] : [],
+    );
+  }
+
+  test.concurrent(
+    "a link target reached both directly and through the find_target walk keeps only the direct entry",
+    async () => {
+      using project = folderLinkProject("npm-migrate-folder-link-direct", { outOfTree: true, directP: true });
+      const { stderr, exitCode, lock } = await migrate(project.dir);
+      // The root's own `p` is recorded; the copy `o` reaches through the walk is a transitive out-of-tree folder and is skipped even though it is the same target.
+      expect(stderr).toContain(
+        'skipped "p" from package-lock.json: transitive folder dependency "../m/node_modules/p" is outside the project',
+      );
+      expect(exitCode).toBe(0);
+      expect(lock.packages).toStrictEqual({
+        o: [project.o, {}],
+        p: [project.p, {}],
+      });
+      await frozen(project.dir);
+    },
+  );
+
+  test.concurrent.each(linkers)("in-tree link target and its node_modules install (%s)", async linker => {
+    using project = folderLinkProject(`npm-migrate-folder-link-in-tree-${linker}`, { outOfTree: false });
+    const { lock } = await migrate(project.dir);
+    expect(lock.packages).toStrictEqual({
+      o: [project.o, { dependencies: { p: "" } }],
+      "o/p": [project.p, {}],
+    });
+    await frozen(project.dir);
+    await expectFolderLinkInstalled(project, linker);
+  });
+
+  // A transitive folder target outside the project is skipped with a warning, so both linkers install the same lockfile.
+  test.concurrent.each(linkers)("out-of-tree link target and its node_modules install (%s)", async linker => {
+    using project = folderLinkProject(`npm-migrate-folder-link-out-of-tree-${linker}`, { outOfTree: true });
+    const { stderr, exitCode, text, lock } = await migrate(project.dir);
+    expect(stderr).toContain("../m/node_modules/p");
+    expect(stderr).toContain("outside");
+    expect(exitCode).toBe(0);
+    expect(Object.keys(lock.packages)).toStrictEqual(["o"]);
+    expect(lock.packages.o[0]).toBe(project.o);
+    expect(text).not.toContain("../m/node_modules/p");
+
+    const install = await run(project.dir, "install", "--linker", linker);
+    expect(install.stderr).not.toContain("error");
+    expect(install.exitCode).toBe(0);
+    expect(await Bun.file(join(project.dir, "node_modules", "o", "package.json")).json()).toHaveProperty("name", "o");
+    expect(fs.existsSync(join(project.dir, "node_modules", "o", "node_modules", "p"))).toBeFalse();
+    expect(fs.existsSync(join(project.oSource, "node_modules"))).toBeFalse();
+    expect(storeEntries(project.dir)).toStrictEqual(linker === "isolated" ? [project.o.replaceAll(/[/:]/g, "+")] : []);
+  });
+
+  test.concurrent("lockfileVersion 5 is refused, and install falls back to a fresh resolve", async () => {
+    using dir = synthetic("npm-migrate-v5", {
+      "package.json": JSON.stringify({ name: "v5", dependencies: { "dep-1": "file:dep-1" } }),
+      "dep-1/package.json": JSON.stringify({ name: "dep-1" }),
+      "package-lock.json": npmLock("v5", {}, { lockfileVersion: 5 }),
+    });
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    expect(stderr).toContain("package-lock.json uses lockfileVersion 5, which this version of bun cannot migrate.");
+    expect(exitCode).toBe(1);
+    expect(fs.existsSync(join(String(dir), "bun.lock"))).toBeFalse();
+
+    const install = await run(dir, "install");
+    expect(install.stderr).toContain("lockfileVersion 5");
+    expect(install.stderr).not.toContain("migrated lockfile");
+    expect(install.exitCode).toBe(0);
+    expect((await readLock(dir)).lock.packages["dep-1"]).toStrictEqual(["dep-1@file:dep-1", {}]);
+    expect(fs.existsSync(join(String(dir), "node_modules", "dep-1", "package.json"))).toBeTrue();
+  });
+
+  test.concurrent.each([
+    ["a string", { lockfileVersion: "3" }],
+    ["missing", { lockfileVersion: undefined }],
+  ])("lockfileVersion %s is an invalid lockfile, and install falls back to a fresh resolve", async (_, extra) => {
+    using dir = synthetic("npm-migrate-bad-version", {
+      "package.json": JSON.stringify({ name: "bad-version", dependencies: { "dep-1": "file:dep-1" } }),
+      "dep-1/package.json": JSON.stringify({ name: "dep-1" }),
+      "package-lock.json": npmLock("bad-version", {}, extra),
+    });
+    const { stderr, exitCode } = await run(dir, "install");
+    expect(stderr).toContain("InvalidNPMLockfile");
+    expect(stderr).not.toContain("migrated lockfile");
+    expect(exitCode).toBe(0);
+    expect((await readLock(dir)).lock.packages["dep-1"]).toStrictEqual(["dep-1@file:dep-1", {}]);
+    expect(fs.existsSync(join(String(dir), "node_modules", "dep-1", "package.json"))).toBeTrue();
+  });
+
+  test.concurrent("several patched entries are reported with a plural", async () => {
+    const dependencies = { x: "1.0.0", y: "1.0.0" };
+    using dir = synthetic("npm-migrate-patched-plural", {
+      "package.json": JSON.stringify({ name: "patched", dependencies }),
+      "package-lock.json": npmLock("patched", {
+        "": { name: "patched", dependencies },
+        "node_modules/x": { version: "1.0.0", patched: { "patches/x.patch": "sha512-x" } },
+        "node_modules/y": { version: "1.0.0", patched: { "patches/y.patch": "sha512-y" } },
+      }),
+    });
+    const { stderr, lock } = await migrate(dir);
+    expect(stderr).toContain("npm patches for 2 packages; bun does not apply them");
+    expect(firstsOf(lock.packages)).toStrictEqual(["x@1.0.0", "y@1.0.0"]);
+    expect(lock.patchedDependencies).toBeUndefined();
+    await frozen(dir);
+  });
+
+  test.concurrent("bundleDependencies: false bundles nothing even when npm marked the child inBundle", async () => {
+    const dependencies = { x: "1.0.0" };
+    using dir = synthetic("npm-migrate-bundle-false", {
+      "package.json": JSON.stringify({ name: "bundle-false", dependencies }),
+      "package-lock.json": npmLock("bundle-false", {
+        "": { name: "bundle-false", dependencies },
+        "node_modules/x": { version: "1.0.0", dependencies: { y: "1.0.0" }, bundleDependencies: false },
+        "node_modules/x/node_modules/y": { version: "1.0.0", inBundle: true },
+      }),
+    });
+    const { text, lock } = await migrate(dir);
+    expect(lock.packages.x[2]).toStrictEqual({ dependencies: { y: "1.0.0" } });
+    expect(lock.packages.y[0]).toBe("y@1.0.0");
+    expect(text).not.toContain('"bundled"');
+    await frozen(dir);
+  });
+
+  test.concurrent("an empty bin object migrates as no bin", async () => {
+    const dependencies = { x: "1.0.0" };
+    using dir = synthetic("npm-migrate-empty-bin", {
+      "package.json": JSON.stringify({ name: "empty-bin", dependencies }),
+      "package-lock.json": npmLock("empty-bin", {
+        "": { name: "empty-bin", dependencies },
+        "node_modules/x": { version: "1.0.0", bin: {} },
+      }),
+    });
+    const { stderr, exitCode, lock } = await migrate(dir);
+    expect(stderr).not.toContain("InvalidNPMLockfile");
+    expect(exitCode).toBe(0);
+    expect(lock.packages.x).toStrictEqual(["x@1.0.0", `${OFFLINE_REGISTRY}x/-/x-1.0.0.tgz`, {}, ""]);
+    await frozen(dir);
+  });
+
+  test.concurrent("a git resolved without a committish is an invalid lockfile, and install falls back", async () => {
+    using dir = synthetic("npm-migrate-git-no-committish", {
+      "package.json": JSON.stringify({ name: "git-no-committish", dependencies: { "dep-1": "file:dep-1" } }),
+      "dep-1/package.json": JSON.stringify({ name: "dep-1" }),
+      "package-lock.json": npmLock("git-no-committish", {
+        "": {
+          name: "git-no-committish",
+          dependencies: { "dep-1": "file:dep-1", x: "git+https://github.com/user/x.git" },
+        },
+        "node_modules/dep-1": { resolved: "dep-1", link: true },
+        "dep-1": {},
+        "node_modules/x": { version: "1.0.0", resolved: "git+https://github.com/user/x.git" },
+      }),
+    });
+    const migrateResult = await run(dir, "pm", "migrate");
+    expect(migrateResult.stderr).toContain("InvalidNPMLockfile");
+    expect(migrateResult.exitCode).toBe(1);
+    expect(fs.existsSync(join(String(dir), "bun.lock"))).toBeFalse();
+
+    const install = await run(dir, "install");
+    expect(install.stderr).toContain("InvalidNPMLockfile");
+    expect(install.stderr).not.toContain("migrated lockfile");
+    expect(install.exitCode).toBe(0);
+    expect(firstsOf((await readLock(dir)).lock.packages)).toStrictEqual(["dep-1@file:dep-1"]);
+  });
+
+  test.concurrent("a link entry without resolved drops the dependency", async () => {
+    using dir = synthetic("npm-migrate-link-no-resolved", {
+      "package.json": JSON.stringify({ name: "link-no-resolved" }),
+      "package-lock.json": npmLock("link-no-resolved", {
+        "": { name: "link-no-resolved", dependencies: { a: "file:../a" } },
+        "node_modules/a": { link: true },
+      }),
+    });
+    const { stderr, exitCode, lock } = await migrate(dir);
+    expect(stderr).not.toContain("InvalidNPMLockfile");
+    expect(exitCode).toBe(0);
+    expect(lock.workspaces).toStrictEqual({ "": { name: "link-no-resolved" } });
+    expect(lock.packages).toStrictEqual({});
   });
 
   describe("arborist fixtures", () => {

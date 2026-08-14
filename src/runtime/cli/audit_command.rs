@@ -127,11 +127,13 @@ impl AuditCommand {
         audit_level: Option<AuditLevel>,
         ignore_list: &[&[u8]],
     ) -> Result<u32, bun_alloc::AllocError> {
-        bun_core::pretty_error!(
-            "<r><b>bun audit <r><d>v{}<r>\n",
-            Global::package_json_version_with_sha,
-        );
-        Output::flush();
+        if pm.options.should_print_command_name() {
+            bun_core::pretty_error!(
+                "<r><b>bun audit <r><d>v{}<r>\n",
+                Global::package_json_version_with_sha,
+            );
+            Output::flush();
+        }
 
         // Note: a self-referential split borrow; encapsulated upstream as
         // `PackageManager::load_lockfile_from_cwd`.
@@ -193,11 +195,13 @@ impl AuditCommand {
         ignore_list: &[&[u8]],
         original_cwd: &[u8],
     ) -> crate::Result<core::convert::Infallible> {
-        bun_core::pretty_error!(
-            "<r><b>bun audit fix <r><d>v{}<r>\n",
-            Global::package_json_version_with_sha,
-        );
-        Output::flush();
+        if pm.options.should_print_command_name() {
+            bun_core::pretty_error!(
+                "<r><b>bun audit fix <r><d>v{}<r>\n",
+                Global::package_json_version_with_sha,
+            );
+            Output::flush();
+        }
 
         {
             let log_level = pm.options.log_level;
@@ -948,234 +952,200 @@ fn print_enhanced_audit_report(
 
     let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
         Ok(e) => e,
-        Err(_) => {
-            let _ = Output::writer().write_all(response_text);
-            let _ = Output::writer().write_all(b"\n");
-            return Ok(1);
-        }
+        Err(_) => return audit_response_parse_failure(response_text),
     };
     let expr = parsed.root;
 
-    if let ExprData::EObjectJSON(obj) = &expr.data {
-        if obj.get().properties().is_empty() {
-            prettyln!("<green>No vulnerabilities found<r>");
-            return Ok(0);
-        }
-    }
+    let ExprData::EObjectJSON(obj) = &expr.data else {
+        return audit_response_parse_failure(response_text);
+    };
 
     let mut audit_result = AuditResult::init();
 
     let mut vuln_counts = VulnCounts::default();
 
-    if let ExprData::EObjectJSON(obj) = &expr.data {
-        for prop in obj.get().properties() {
-            let package_name: &[u8] = prop.key.slice();
+    for prop in obj.get().properties() {
+        let package_name: &[u8] = prop.key.slice();
 
-            if let Some(arr) = prop.value.as_array() {
-                for vuln in arr.items() {
-                    if let Some(vuln_obj) = vuln.as_object() {
-                        let vulnerability = parse_vulnerability(package_name, vuln_obj)?;
+        let Some(arr) = prop.value.as_array() else {
+            continue;
+        };
+        for vuln in arr.items() {
+            let Some(vuln_obj) = vuln.as_object() else {
+                continue;
+            };
+            let vulnerability = parse_vulnerability(package_name, vuln_obj)?;
 
-                        if !keep_vulnerability(&vulnerability, audit_level, ignore_list) {
-                            continue;
-                        }
-
-                        if vulnerability.severity.as_ref() == b"low" {
-                            vuln_counts.low += 1;
-                        } else if vulnerability.severity.as_ref() == b"moderate" {
-                            vuln_counts.moderate += 1;
-                        } else if vulnerability.severity.as_ref() == b"high" {
-                            vuln_counts.high += 1;
-                        } else if vulnerability.severity.as_ref() == b"critical" {
-                            vuln_counts.critical += 1;
-                        } else {
-                            vuln_counts.moderate += 1;
-                        }
-
-                        audit_result.all_vulnerabilities.push(vulnerability);
-                    }
-                }
+            if !keep_vulnerability(&vulnerability, audit_level, ignore_list) {
+                continue;
             }
+
+            match &*vulnerability.severity {
+                b"low" => vuln_counts.low += 1,
+                b"high" => vuln_counts.high += 1,
+                b"critical" => vuln_counts.critical += 1,
+                _ => vuln_counts.moderate += 1,
+            }
+
+            audit_result.all_vulnerabilities.push(vulnerability);
         }
-
-        for vulnerability in &audit_result.all_vulnerabilities {
-            let paths = find_dependency_paths(&vulnerability.package_name, dependency_tree, pm)?;
-
-            let result = audit_result
-                .vulnerable_packages
-                .get_or_put(&vulnerability.package_name)?;
-            if !result.found_existing {
-                *result.value_ptr = PackageInfo {
-                    vulnerabilities: Vec::new(),
-                    dependents: paths,
-                };
-            }
-            result.value_ptr.vulnerabilities.push(VulnerabilityInfo {
-                severity: vulnerability.severity.clone(),
-                title: vulnerability.title.clone(),
-                url: vulnerability.url.clone(),
-                vulnerable_versions: vulnerability.vulnerable_versions.clone(),
-                id: vulnerability.id.clone(),
-                package_name: vulnerability.package_name.clone(),
-            });
-        }
-
-        for (_, package_info) in audit_result.vulnerable_packages.iter() {
-            if !package_info.vulnerabilities.is_empty() {
-                let main_vuln = &package_info.vulnerabilities[0];
-
-                // const is_direct_dependency: bool = brk: {
-                //     for (package_info.dependents.items) |path| {
-                //         if (path.is_direct) {
-                //             break :brk true;
-                //         }
-                //     }
-                //
-                //     break :brk false;
-                // };
-
-                if !main_vuln.vulnerable_versions.is_empty() {
-                    prettyln!(
-                        "<red>{}<r>  {}",
-                        BStr::new(&main_vuln.package_name),
-                        BStr::new(&main_vuln.vulnerable_versions)
-                    );
-                } else {
-                    prettyln!("<red>{}<r>", BStr::new(&main_vuln.package_name));
-                }
-
-                for path in &package_info.dependents {
-                    if path.path.len() > 1 {
-                        if path.path[0].starts_with(b"workspace:") {
-                            let vulnerable_pkg = &path.path[path.path.len() - 1];
-                            let workspace_part = &path.path[0];
-
-                            prettyln!(
-                                "  <d>{} › <red>{}<r>",
-                                BStr::new(workspace_part),
-                                BStr::new(vulnerable_pkg)
-                            );
-                        } else {
-                            let vulnerable_pkg = &path.path[0];
-
-                            let mut reversed_items: Vec<&[u8]> = Vec::new();
-                            for item in &path.path[1..] {
-                                reversed_items.push(item);
-                            }
-                            reversed_items.reverse();
-
-                            let mut vuln_pkg_path: Vec<u8> = Vec::new();
-                            for (i, item) in reversed_items.iter().enumerate() {
-                                if i > 0 {
-                                    vuln_pkg_path.extend_from_slice(" › ".as_bytes());
-                                }
-                                vuln_pkg_path.extend_from_slice(item);
-                            }
-
-                            prettyln!(
-                                "  <d>{} › <red>{}<r>",
-                                BStr::new(&vuln_pkg_path),
-                                BStr::new(vulnerable_pkg)
-                            );
-                        }
-                    } else {
-                        prettyln!("  <d>(direct dependency)<r>");
-                    }
-                }
-
-                for vuln in &package_info.vulnerabilities {
-                    if !vuln.title.is_empty() {
-                        if vuln.severity.as_ref() == b"critical" {
-                            prettyln!(
-                                "  <red>critical<d>:<r> {} - <d>{}<r>",
-                                BStr::new(&vuln.title),
-                                BStr::new(&vuln.url)
-                            );
-                        } else if vuln.severity.as_ref() == b"high" {
-                            prettyln!(
-                                "  <red>high<d>:<r> {} - <d>{}<r>",
-                                BStr::new(&vuln.title),
-                                BStr::new(&vuln.url)
-                            );
-                        } else if vuln.severity.as_ref() == b"moderate" {
-                            prettyln!(
-                                "  <yellow>moderate<d>:<r> {} - <d>{}<r>",
-                                BStr::new(&vuln.title),
-                                BStr::new(&vuln.url)
-                            );
-                        } else {
-                            prettyln!(
-                                "  <cyan>low<d>:<r> {} - <d>{}<r>",
-                                BStr::new(&vuln.title),
-                                BStr::new(&vuln.url)
-                            );
-                        }
-                    }
-                }
-
-                // if (is_direct_dependency) {
-                //     Output.prettyln("  To fix: <green>`bun update {s}`<r>", .{package_info.name});
-                // } else {
-                //     Output.prettyln("  To fix: <green>`bun update --latest`<r><d> (may be a breaking change)<r>", .{});
-                // }
-
-                prettyln!("");
-            }
-        }
-
-        let total =
-            vuln_counts.low + vuln_counts.moderate + vuln_counts.high + vuln_counts.critical;
-        if total > 0 {
-            pretty!("<b>{} {}<r> (", total, audit_fix::vuln_word(total));
-
-            let mut has_previous = false;
-            if vuln_counts.critical > 0 {
-                pretty!("<red><b>{} critical<r>", vuln_counts.critical);
-                has_previous = true;
-            }
-            if vuln_counts.high > 0 {
-                if has_previous {
-                    pretty!(", ");
-                }
-                pretty!("<red>{} high<r>", vuln_counts.high);
-                has_previous = true;
-            }
-            if vuln_counts.moderate > 0 {
-                if has_previous {
-                    pretty!(", ");
-                }
-                pretty!("<yellow>{} moderate<r>", vuln_counts.moderate);
-                has_previous = true;
-            }
-            if vuln_counts.low > 0 {
-                if has_previous {
-                    pretty!(", ");
-                }
-                pretty!("<cyan>{} low<r>", vuln_counts.low);
-            }
-            prettyln!(")");
-
-            prettyln!("");
-            prettyln!("To upgrade only the vulnerable packages, within their declared ranges:");
-            prettyln!("  <green>bun audit fix<r>");
-            prettyln!("");
-            prettyln!("To update all dependencies to the latest compatible versions:");
-            prettyln!("  <green>bun update<r>");
-            prettyln!("");
-            prettyln!(
-                "To update all dependencies to the latest versions (including breaking changes):"
-            );
-            prettyln!("  <green>bun update --latest<r>");
-            prettyln!("");
-        }
-
-        if total > 0 {
-            return Ok(1);
-        }
-    } else {
-        let _ = Output::writer().write_all(response_text);
-        let _ = Output::writer().write_all(b"\n");
     }
 
-    Ok(0)
+    let total = vuln_counts.low + vuln_counts.moderate + vuln_counts.high + vuln_counts.critical;
+    if total == 0 {
+        prettyln!("<green>No vulnerabilities found<r>");
+        return Ok(0);
+    }
+
+    for vulnerability in &audit_result.all_vulnerabilities {
+        let paths = find_dependency_paths(&vulnerability.package_name, dependency_tree, pm)?;
+
+        let result = audit_result
+            .vulnerable_packages
+            .get_or_put(&vulnerability.package_name)?;
+        if !result.found_existing {
+            *result.value_ptr = PackageInfo {
+                vulnerabilities: Vec::new(),
+                dependents: paths,
+            };
+        }
+        result.value_ptr.vulnerabilities.push(VulnerabilityInfo {
+            severity: vulnerability.severity.clone(),
+            title: vulnerability.title.clone(),
+            url: vulnerability.url.clone(),
+            vulnerable_versions: vulnerability.vulnerable_versions.clone(),
+            id: vulnerability.id.clone(),
+            package_name: vulnerability.package_name.clone(),
+        });
+    }
+
+    for (_, package_info) in audit_result.vulnerable_packages.iter() {
+        let Some(main_vuln) = package_info.vulnerabilities.first() else {
+            continue;
+        };
+
+        if !main_vuln.vulnerable_versions.is_empty() {
+            prettyln!(
+                "<red>{}<r>  {}",
+                BStr::new(&main_vuln.package_name),
+                BStr::new(&main_vuln.vulnerable_versions)
+            );
+        } else {
+            prettyln!("<red>{}<r>", BStr::new(&main_vuln.package_name));
+        }
+
+        for path in &package_info.dependents {
+            if path.path.len() > 1 {
+                if path.path[0].starts_with(b"workspace:") {
+                    let vulnerable_pkg = &path.path[path.path.len() - 1];
+                    let workspace_part = &path.path[0];
+
+                    prettyln!(
+                        "  <d>{} › <red>{}<r>",
+                        BStr::new(workspace_part),
+                        BStr::new(vulnerable_pkg)
+                    );
+                } else {
+                    let vulnerable_pkg = &path.path[0];
+
+                    let mut vuln_pkg_path: Vec<u8> = Vec::new();
+                    for (i, item) in path.path[1..].iter().rev().enumerate() {
+                        if i > 0 {
+                            vuln_pkg_path.extend_from_slice(" › ".as_bytes());
+                        }
+                        vuln_pkg_path.extend_from_slice(item);
+                    }
+
+                    prettyln!(
+                        "  <d>{} › <red>{}<r>",
+                        BStr::new(&vuln_pkg_path),
+                        BStr::new(vulnerable_pkg)
+                    );
+                }
+            } else {
+                prettyln!("  <d>(direct dependency)<r>");
+            }
+        }
+
+        for vuln in &package_info.vulnerabilities {
+            if vuln.title.is_empty() {
+                continue;
+            }
+            match &*vuln.severity {
+                b"critical" => prettyln!(
+                    "  <red>critical<d>:<r> {} - <d>{}<r>",
+                    BStr::new(&vuln.title),
+                    BStr::new(&vuln.url)
+                ),
+                b"high" => prettyln!(
+                    "  <red>high<d>:<r> {} - <d>{}<r>",
+                    BStr::new(&vuln.title),
+                    BStr::new(&vuln.url)
+                ),
+                b"low" => prettyln!(
+                    "  <cyan>low<d>:<r> {} - <d>{}<r>",
+                    BStr::new(&vuln.title),
+                    BStr::new(&vuln.url)
+                ),
+                _ => prettyln!(
+                    "  <yellow>moderate<d>:<r> {} - <d>{}<r>",
+                    BStr::new(&vuln.title),
+                    BStr::new(&vuln.url)
+                ),
+            }
+        }
+
+        prettyln!("");
+    }
+
+    pretty!("<b>{} {}<r> (", total, audit_fix::vuln_word(total));
+
+    let mut has_previous = false;
+    if vuln_counts.critical > 0 {
+        pretty!("<red><b>{} critical<r>", vuln_counts.critical);
+        has_previous = true;
+    }
+    if vuln_counts.high > 0 {
+        if has_previous {
+            pretty!(", ");
+        }
+        pretty!("<red>{} high<r>", vuln_counts.high);
+        has_previous = true;
+    }
+    if vuln_counts.moderate > 0 {
+        if has_previous {
+            pretty!(", ");
+        }
+        pretty!("<yellow>{} moderate<r>", vuln_counts.moderate);
+        has_previous = true;
+    }
+    if vuln_counts.low > 0 {
+        if has_previous {
+            pretty!(", ");
+        }
+        pretty!("<cyan>{} low<r>", vuln_counts.low);
+    }
+    prettyln!(")");
+
+    prettyln!("");
+    prettyln!("To upgrade only the vulnerable packages, within their declared ranges:");
+    prettyln!("  <green>bun audit fix<r>");
+    prettyln!("");
+    prettyln!("To update all dependencies to the latest compatible versions:");
+    prettyln!("  <green>bun update<r>");
+    prettyln!("");
+    prettyln!("To update all dependencies to the latest versions (including breaking changes):");
+    prettyln!("  <green>bun update --latest<r>");
+    prettyln!("");
+
+    Ok(1)
+}
+
+fn audit_response_parse_failure(response_text: &[u8]) -> Result<u32, bun_alloc::AllocError> {
+    let _ = Output::writer().write_all(response_text);
+    let _ = Output::writer().write_all(b"\n");
+    bun_core::pretty_errorln!(
+        "<red>error<r>: audit request failed to parse json. Is the registry down?"
+    );
+    Ok(1)
 }

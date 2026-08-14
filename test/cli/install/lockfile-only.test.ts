@@ -5,15 +5,20 @@ import { access, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, tempDir } from "harness";
 import { join } from "path";
 import {
+  createTestContext,
+  destroyTestContext,
   dummyAfterAll,
   dummyAfterEach,
   dummyBeforeAll,
   dummyBeforeEach,
   dummyRegistry,
+  dummyRegistryForContext,
   package_dir,
   requested,
   root_url,
+  setContextHandler,
   setHandler,
+  type TestContext,
 } from "./dummy.registry.js";
 
 beforeAll(dummyBeforeAll);
@@ -113,9 +118,11 @@ describe("--lockfile-only under --frozen-lockfile", () => {
     "  foo@file:foo: {}",
     "",
   ].join("\n");
+  const yarnLock = ["# yarn lockfile v1", "", "", '"foo@file:./foo":', '  version "1.0.0"', ""].join("\n");
   const migrations: [string, string][] = [
     ["package-lock.json", npmLock],
     ["pnpm-lock.yaml", pnpmLock],
+    ["yarn.lock", yarnLock],
   ];
 
   async function run(dir: string, ...args: string[]) {
@@ -217,5 +224,116 @@ describe("--lockfile-only under --frozen-lockfile", () => {
     expect(readFileSync(lock(dir), "utf8")).toContain('"foo": ["foo@file:foo", {}]');
     expect(existsSync(join(dir, "node_modules", "foo", "package.json"))).toBe(true);
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("--lockfile-only with remove and update", () => {
+  async function setup(deps: Record<string, string>, versions: Record<string, unknown>) {
+    const ctx = await createTestContext();
+    const dir = ctx.package_dir;
+    await writeFile(
+      join(dir, "bunfig.toml"),
+      Bun.TOML.stringify({ install: { registry: ctx.registry_url, saveTextLockfile: true } }),
+    );
+    await writeFile(join(dir, "package.json"), JSON.stringify({ name: "foo", dependencies: deps }));
+    const urls: string[] = [];
+    setContextHandler(ctx, dummyRegistryForContext(ctx, urls, versions));
+    const setupRun = await run(ctx, "install", "--lockfile-only");
+    expect(setupRun.stderr).not.toContain("error:");
+    expect(setupRun.exitCode).toBe(0);
+    urls.length = 0;
+    return { ctx, dir, urls };
+  }
+
+  async function run(ctx: TestContext, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: ctx.package_dir,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(ctx.package_dir, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it.concurrent(
+    "bun remove --lockfile-only edits package.json and bun.lock without creating node_modules",
+    async () => {
+      const { ctx, dir, urls } = await setup({ bar: "0.0.1", baz: "0.0.1" }, { "0.0.1": {} });
+      try {
+        const before = readFileSync(join(dir, "bun.lock"), "utf8");
+        expect(before).toContain('"bar": ["bar@0.0.1"');
+        expect(before).toContain('"baz": ["baz@0.0.1"');
+
+        const { stdout, stderr, exitCode } = await run(ctx, "remove", "--lockfile-only", "bar");
+        expect(stderr).not.toContain("error:");
+        expect(stderr).toContain("Saved lockfile");
+        expect(stdout).toContain("Saved bun.lock");
+        expect(JSON.parse(readFileSync(join(dir, "package.json"), "utf8"))).toStrictEqual({
+          name: "foo",
+          dependencies: { baz: "0.0.1" },
+        });
+        const after = readFileSync(join(dir, "bun.lock"), "utf8");
+        expect(after).not.toContain("bar@");
+        expect(after).toContain('"baz": ["baz@0.0.1"');
+        expect(urls.filter(url => url.endsWith(".tgz"))).toStrictEqual([]);
+        expect(existsSync(join(dir, "node_modules"))).toBe(false);
+        expect(exitCode).toBe(0);
+      } finally {
+        destroyTestContext(ctx);
+      }
+    },
+  );
+
+  it.concurrent(
+    "bun update --lockfile-only edits package.json and bun.lock without creating node_modules",
+    async () => {
+      const { ctx, dir, urls } = await setup({ baz: "~0.0.3" }, { "0.0.3": {}, latest: "0.0.3" });
+      try {
+        expect(readFileSync(join(dir, "bun.lock"), "utf8")).toContain('"baz": ["baz@0.0.3"');
+        setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.3": {}, "0.0.5": {}, latest: "0.0.5" }));
+
+        const { stdout, stderr, exitCode } = await run(ctx, "update", "--lockfile-only", "baz");
+        expect(stderr).not.toContain("error:");
+        expect(stderr).toContain("Saved lockfile");
+        expect(stdout).toContain("Saved bun.lock");
+        expect(JSON.parse(readFileSync(join(dir, "package.json"), "utf8"))).toStrictEqual({
+          name: "foo",
+          dependencies: { baz: "~0.0.5" },
+        });
+        const after = readFileSync(join(dir, "bun.lock"), "utf8");
+        expect(after).toContain('"baz": ["baz@0.0.5"');
+        expect(after).not.toContain("baz@0.0.3");
+        expect(urls.map(url => url.slice(ctx.registry_url.length))).toStrictEqual(["baz"]);
+        expect(existsSync(join(dir, "node_modules"))).toBe(false);
+        expect(exitCode).toBe(0);
+      } finally {
+        destroyTestContext(ctx);
+      }
+    },
+  );
+
+  it.concurrent("bun update --lockfile-only with no arguments re-resolves the whole lockfile", async () => {
+    const { ctx, dir, urls } = await setup({ baz: "~0.0.3" }, { "0.0.3": {}, latest: "0.0.3" });
+    try {
+      setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.3": {}, "0.0.5": {}, latest: "0.0.5" }));
+
+      const { stdout, stderr, exitCode } = await run(ctx, "update", "--lockfile-only");
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("Saved bun.lock");
+      expect(JSON.parse(readFileSync(join(dir, "package.json"), "utf8"))).toStrictEqual({
+        name: "foo",
+        dependencies: { baz: "~0.0.5" },
+      });
+      const after = readFileSync(join(dir, "bun.lock"), "utf8");
+      expect(after).toContain('"baz": ["baz@0.0.5"');
+      expect(after).not.toContain("baz@0.0.3");
+      expect(urls.map(url => url.slice(ctx.registry_url.length))).toStrictEqual(["baz"]);
+      expect(existsSync(join(dir, "node_modules"))).toBe(false);
+      expect(exitCode).toBe(0);
+    } finally {
+      destroyTestContext(ctx);
+    }
   });
 });

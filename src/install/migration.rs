@@ -96,6 +96,10 @@ pub fn detect_and_load_other_lockfile<'a>(
         };
 
         if matches!(migrate_result, LoadResult::Ok { .. }) {
+            if log.warnings > 0 && !log.has_errors() {
+                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                log.reset();
+            }
             Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
             bun_core::pretty_error!(" ");
             bun_core::pretty_errorln!("<d>migrated lockfile from <r><green>yarn.lock<r>");
@@ -336,7 +340,7 @@ fn migrate_npm_lockfile<'a>(
         workspace_map.as_ref(),
     )?;
     clear_non_registry_platform_constraints(this);
-    npm_lock::apply_root_overrides(this, manager, log, dir, workspace_map.as_ref())?;
+    npm_lock::apply_root_overrides(this, manager, log, dir, workspace_map.as_ref(), abs_path)?;
 
     this.resolve(log)?;
 

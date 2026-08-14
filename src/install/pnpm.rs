@@ -1,5 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
-use bun_collections::VecExt;
+use bun_collections::{VecExt, index_sort};
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
@@ -681,9 +681,9 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
         struct Patch {
             path: String,
-            key: Box<[u8]>,
+            config_key: Box<[u8]>,
         }
-        // patch hash -> every patchedDependencies key using that patch file
+        // patch hash -> every package.json/pnpm-workspace.yaml patchedDependencies key using that patch file
         let mut patches: StringArrayHashMap<Vec<Patch>> = StringArrayHashMap::new();
         let mut patch_join_buf: Vec<u8> = Vec::new();
 
@@ -698,15 +698,16 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     return Err(invalid_pnpm_lockfile());
                 };
 
-                let (hash_str, path_str) = if let Some(hash_str) = as_string(value) {
+                let (hash_str, path_str, config_key) = if let Some(hash_str) = as_string(value) {
                     if config_patch_paths.is_none() {
                         config_patch_paths = Some(read_config_patch_paths(manager, log)?);
                     }
                     let config = config_patch_paths.as_ref().expect("set above");
-                    let path = config.get(key_str).or_else(|| {
-                        config.get(Dependency::split_name_and_maybe_version(key_str).0)
+                    let found = config.get(key_str).map(|path| (path, key_str)).or_else(|| {
+                        let bare = Dependency::split_name_and_maybe_version(key_str).0;
+                        config.get(bare).map(|path| (path, bare))
                     });
-                    let Some(path) = path else {
+                    let Some((path, config_key)) = found else {
                         log.add_warning_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
@@ -717,7 +718,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                         );
                         continue;
                     };
-                    (hash_str, &**path)
+                    (hash_str, &**path, config_key)
                 } else {
                     let Some((path_str, _)) = get_string(value, b"path") else {
                         return Err(invalid_pnpm_lockfile());
@@ -725,13 +726,13 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     let Some((hash_str, _)) = get_string(value, b"hash") else {
                         return Err(invalid_pnpm_lockfile());
                     };
-                    (hash_str, path_str)
+                    (hash_str, path_str, key_str)
                 };
 
                 let path = sbuf!(lockfile).append(path_str)?;
                 patches.get_or_put(hash_str)?.value_ptr.push(Patch {
                     path,
-                    key: Box::from(key_str),
+                    config_key: Box::from(config_key),
                 });
             }
         }
@@ -1280,7 +1281,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
                 if let Some(patch_list) = patch_hash.and_then(|hash| patches.get(hash)) {
                     if let Some(patch) = patch_list.iter().find(|patch| {
-                        Dependency::split_name_and_maybe_version(&patch.key).0 == name_str
+                        Dependency::split_name_and_maybe_version(&patch.config_key).0 == name_str
                     }) {
                         patch_join_buf.clear();
                         write!(
@@ -1294,12 +1295,12 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                             semver::string::Builder::string_hash(&patch_join_buf),
                             crate::lockfile_real::PatchedDep::with_path(patch.path),
                         )?;
-                        if Dependency::split_name_and_maybe_version(&patch.key)
+                        if Dependency::split_name_and_maybe_version(&patch.config_key)
                             .1
                             .is_none()
                         {
                             found_patches.put(
-                                &patch.key,
+                                &patch.config_key,
                                 Box::from(&patch_join_buf[name_str.len() + 1..]),
                             )?;
                         }
@@ -1949,10 +1950,7 @@ fn parse_append_package_dependencies(
 
     let end = lockfile.buffers.dependencies.len();
 
-    {
-        let bytes = lockfile.buffers.string_bytes.as_slice();
-        lockfile.buffers.dependencies[off..].sort_by(|a, b| Dependency::cmp(bytes, a, b));
-    }
+    sort_appended_dependencies(lockfile, off);
 
     if references_by_name.count() > 0 {
         let bytes = lockfile.buffers.string_bytes.as_slice();
@@ -2313,15 +2311,20 @@ fn parse_append_importer_dependencies(
 
     let end = lockfile.buffers.dependencies.len();
 
-    {
-        let bytes = lockfile.buffers.string_bytes.as_slice();
-        lockfile.buffers.dependencies[off..].sort_by(|a, b| Dependency::cmp(bytes, a, b));
-    }
+    sort_appended_dependencies(lockfile, off);
 
     Ok((
         u32::try_from(off).expect("int cast"),
         u32::try_from(end - off).expect("int cast"),
     ))
+}
+
+fn sort_appended_dependencies(lockfile: &mut Lockfile, off: usize) {
+    let buffers = &mut lockfile.buffers;
+    let bytes = buffers.string_bytes.as_slice();
+    let mut appended = buffers.dependencies.split_off(off);
+    index_sort::sort_vec_by(&mut appended, |a, b| Dependency::cmp(bytes, a, b));
+    buffers.dependencies.append(&mut appended);
 }
 
 /// bun.lock keys patches by `name@version`; pnpm also allows a bare `name` key.

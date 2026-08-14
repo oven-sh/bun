@@ -4,6 +4,7 @@ use bun_ast::E;
 use bun_collections::{DynamicBitSet, StringArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_install_types::DependencyGroup;
+use bun_paths::resolve_path;
 use bun_semver::query::token::Wildcard;
 use bun_semver::{self as Semver, SlicedString, String as SemverString};
 use bun_sys::{Fd, File, O};
@@ -106,6 +107,7 @@ struct Migrator<'a> {
     index: StringHashMap<u32>,
     link_entries: DynamicBitSet,
     shadowed: DynamicBitSet,
+    skipped_external: DynamicBitSet,
     entry_package_ids: Vec<PackageID>,
     queue: Vec<(u32, PackageID)>,
     probe: Vec<u8>,
@@ -137,6 +139,7 @@ pub(super) fn migrate_packages(
         index,
         link_entries: DynamicBitSet::init_empty(entry_count)?,
         shadowed: DynamicBitSet::init_empty(entry_count)?,
+        skipped_external: DynamicBitSet::init_empty(entry_count)?,
         entry_package_ids: vec![INVALID_PACKAGE_ID; entry_count],
         queue: Vec::new(),
         probe: Vec::new(),
@@ -756,7 +759,15 @@ impl<'a> Migrator<'a> {
                 }
 
                 let version_tag = version.tag;
-                let target = match self.find_target(key, name) {
+                let mut found = self.find_target(key, name);
+                if let Some((t, through_link)) = found
+                    && !is_local
+                    && self.is_external_folder(t, through_link)
+                {
+                    self.skip_external(t, name);
+                    found = None;
+                }
+                let target = match found {
                     Some((t, through_link)) => self.build_or_get(t, through_link, version_tag)?,
                     None if behavior.is_peer() || behavior.contains(Behavior::OPTIONAL) => {
                         INVALID_PACKAGE_ID
@@ -889,6 +900,41 @@ impl<'a> Migrator<'a> {
             .filter(|&x| !self.link_entries.is_set(x as usize))
     }
 
+    fn is_external_folder(&self, t: u32, through_link: bool) -> bool {
+        let entry = &self.entries[t as usize];
+        let key = entry.key.slice();
+        if !bin::bin_target_escapes_package_dir(key) {
+            return false;
+        }
+        let id = self.entry_package_ids[t as usize];
+        if id != INVALID_PACKAGE_ID {
+            return self.this.packages.items_resolution()[id as usize].tag
+                == resolution::Tag::Folder;
+        }
+        let pkg = entry_object(entry);
+        if pkg.get(b"resolved").is_some()
+            || self.workspace_map.is_some_and(|m| m.get(key).is_some())
+        {
+            return false;
+        }
+        through_link
+            || pkg.get(b"version").is_none()
+            || strings::index_of(key, b"node_modules/").is_none()
+    }
+
+    fn skip_external(&mut self, t: u32, name: &[u8]) {
+        if self.skipped_external.is_set(t as usize) {
+            return;
+        }
+        self.skipped_external.set(t as usize);
+        bun_core::warn!(
+            "skipped \"{}\" from package-lock.json: transitive folder dependency \"{}\" is outside the project",
+            bstr::BStr::new(name),
+            bstr::BStr::new(self.entries[t as usize].key.slice()),
+        );
+        self.shadow(t);
+    }
+
     fn shadow(&mut self, j: u32) {
         if self.shadowed.is_set(j as usize) {
             return;
@@ -956,6 +1002,7 @@ pub(super) fn apply_root_overrides(
     log: &mut bun_ast::Log,
     dir: Fd,
     workspace_map: Option<&WorkspaceMap>,
+    abs_lockfile_path: &[u8],
 ) -> Result<(), Error> {
     let Ok(file) = File::openat(dir, b"package.json", O::RDONLY, 0) else {
         return Ok(());
@@ -965,7 +1012,15 @@ pub(super) fn apply_root_overrides(
     };
     drop(file);
 
-    let source = bun_ast::Source::init_path_string(&b"package.json"[..], contents.as_slice());
+    let mut package_json_path_buf = bun_paths::path_buffer_pool::get();
+    let package_json_path = resolve_path::join_string_buf::<bun_paths::platform::Auto>(
+        &mut package_json_path_buf[..],
+        &[
+            bun_paths::dirname(abs_lockfile_path).unwrap_or_default(),
+            b"package.json",
+        ],
+    );
+    let source = bun_ast::Source::init_path_string(package_json_path, contents.as_slice());
     let arena = bun_alloc::Arena::new();
     let Ok(parsed) = bun_json::parse_package_json_utf8_with_opts(
         bun_json::JSONOptions {

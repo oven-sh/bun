@@ -3794,7 +3794,9 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures external-link--root 1`] = `
-"warn: skipped 3 package-lock.json entries not depended on by any package: "../a", "../i", "../m"
+"warn: skipped "p" from package-lock.json: transitive folder dependency "../m/node_modules/p" is outside the project
+warn: skipped "b" from package-lock.json: transitive folder dependency "../a/node_modules/b" is outside the project
+warn: skipped 3 package-lock.json entries not depended on by any package: "../a", "../i", "../m"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
@@ -3813,23 +3815,15 @@ bun install --frozen-lockfile exit code: 0
     },
   },
   "packages": {
-    "c": ["c@1.0.0", "http://localhost:1/c/-/c-1.0.0.tgz", {}, ""],
-
     "j": ["j@file:../i/j", { "dependencies": { "k": "" } }],
 
     "k": ["k@1.0.0", "http://localhost:1/k/-/k-1.0.0.tgz", {}, ""],
 
-    "o": ["o@file:../m/node_modules/n/o", { "dependencies": { "p": "" } }],
+    "o": ["o@file:../m/node_modules/n/o", {}],
 
-    "o2": ["o2@file:../m/node_modules/n/o2", { "dependencies": { "p": "" } }],
+    "o2": ["o2@file:../m/node_modules/n/o2", {}],
 
-    "x": ["x@1.0.0", "http://localhost:1/x/-/x-1.0.0.tgz", { "dependencies": { "b": "file:../../../a/node_modules/b" } }, ""],
-
-    "o/p": ["p@file:../m/node_modules/p", {}],
-
-    "o2/p": ["p@file:../m/node_modules/p", {}],
-
-    "x/b": ["b@file:../a/node_modules/b", { "dependencies": { "c": "" } }],
+    "x": ["x@1.0.0", "http://localhost:1/x/-/x-1.0.0.tgz", {}, ""],
   }
 }
 "

@@ -1,6 +1,7 @@
 use core::sync::atomic::Ordering;
 
 use bun_collections::DynamicBitSet;
+use bun_core::UnwrapOrOom as _;
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output};
 
@@ -665,7 +666,7 @@ pub fn install_with_manager(
         || manager.peer_dependencies.readable_length() > 0
         || !named.latest_rows.is_empty()
     {
-        resolve_pending_tasks(manager, &root, log_level, &named.latest_rows)?;
+        resolve_pending_tasks(manager, &root, log_level, &mut named)?;
     }
 
     direct_deps_before.redirect_dependents(&mut manager.lockfile);
@@ -1502,8 +1503,9 @@ struct NamedUpdates {
 fn enqueue_named_updates(manager: &mut PackageManager) -> NamedUpdates {
     let walkable = crate::update_scope::UpdateScope::of(&*manager).walkable_rows(&manager.lockfile);
     let collect_latest_rows = manager.options.do_.update_to_latest();
-    let mut matched = vec![false; manager.update_requests.len()];
-    let mut matched_elsewhere = vec![false; manager.update_requests.len()];
+    let requests = manager.update_requests.len();
+    let mut matched = DynamicBitSet::init_empty(requests).unwrap_or_oom();
+    let mut matched_elsewhere = DynamicBitSet::init_empty(requests).unwrap_or_oom();
     let mut named = NamedUpdates::default();
     let dependencies_len = manager.lockfile.buffers.dependencies.len();
     for dependency_i in 0..dependencies_len {
@@ -1513,10 +1515,10 @@ fn enqueue_named_updates(manager: &mut PackageManager) -> NamedUpdates {
             continue;
         };
         if !walkable.is_set(dependency_i) {
-            matched_elsewhere[request] = true;
+            matched_elsewhere.set(request);
             continue;
         }
-        matched[request] = true;
+        matched.set(request);
         if collect_latest_rows {
             named.latest_rows.push(dependency_i as DependencyID);
         }
@@ -1541,8 +1543,8 @@ fn enqueue_named_updates(manager: &mut PackageManager) -> NamedUpdates {
 
     reject_unknown_update_requests(
         manager,
-        |i, _| !matched[i] && !matched_elsewhere[i],
-        |i| !matched[i] && matched_elsewhere[i],
+        |i, _| !matched.is_set(i) && !matched_elsewhere.is_set(i),
+        |i| !matched.is_set(i) && matched_elsewhere.is_set(i),
     );
     named
 }
@@ -1803,7 +1805,7 @@ fn resolve_pending_tasks(
     manager: &mut PackageManager,
     root: &lockfile::Package,
     log_level: Options::LogLevel,
-    latest_rows: &[DependencyID],
+    named: &mut NamedUpdates,
 ) -> crate::Result<()> {
     if root.dependencies.len > 0 {
         let _ = manager.get_cache_directory();
@@ -1823,8 +1825,9 @@ fn resolve_pending_tasks(
 
     wait_for_resolution(manager)?;
 
-    if !latest_rows.is_empty() {
-        refresh_children_of_named(manager, latest_rows)?;
+    if !named.latest_rows.is_empty() {
+        let child_moves = refresh_children_of_named(manager, &named.latest_rows)?;
+        named.moved.extend(child_moves);
         wait_for_resolution(manager)?;
     }
 
@@ -1846,7 +1849,7 @@ fn resolve_pending_tasks(
 fn refresh_children_of_named(
     manager: &mut PackageManager,
     latest_rows: &[DependencyID],
-) -> crate::Result<()> {
+) -> crate::Result<Vec<(DependencyID, PackageID)>> {
     let mut package_ids: Vec<PackageID> = {
         let lockfile = &*manager.lockfile;
         let resolutions = lockfile.buffers.resolutions.as_slice();
@@ -1866,11 +1869,11 @@ fn refresh_children_of_named(
     package_ids.sort_unstable();
     package_ids.dedup();
     if package_ids.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
-    crate::update_transitive::refresh_children_of(manager, &package_ids)?;
+    let moves = crate::update_transitive::refresh_children_of(manager, &package_ids)?;
     manager.drain_dependency_list();
-    Ok(())
+    Ok(moves)
 }
 
 fn wait_for_resolution(manager: &mut PackageManager) -> crate::Result<()> {

@@ -549,9 +549,7 @@ impl<'a> Installer<'a> {
         };
 
         match real_state {
-            CompleteState::Success => {
-                self.summary.success += 1;
-            }
+            CompleteState::Success => {}
             CompleteState::Skipped => {
                 self.summary.skipped += 1;
                 return;

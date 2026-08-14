@@ -1,7 +1,7 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { exists, mkdir, rm } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe } from "harness";
+import { chmod, exists, mkdir, rm } from "fs/promises";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -1660,4 +1660,417 @@ test.concurrent("path filters resolve against --cwd (pnpm#5270)", async () => {
   expect(await pkg(dir, "api")).toStrictEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
   expect(await pkg(dir, "root")).toStrictEqual(ROOT);
   expect(await exists(join(elsewhere, "package.json"))).toBeFalse();
+});
+
+// Coverage pass: request assignment, local-path spellings, write-back and selector edge cases.
+
+const NO_DEPS_AND_FOO = (foo: string) => ({ foo, "no-deps": "^2.0.0" });
+
+test.concurrent.each([
+  ["no-deps", "./vendor/foo"],
+  ["./vendor/foo", "no-deps"],
+])("a registry request and a local path (%s %s) are both assigned to every target", async (first, second) => {
+  const dir = await makeMonorepo();
+  await addVendorFoo(dir);
+
+  const { stderr, exitCode } = await run(["add", first, second, "--filter", "root", "--filter", "api"], dir, {
+    linker: "hoisted",
+  });
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  expect(await allPackageJsons(dir)).toStrictEqual([
+    { ...ROOT, dependencies: NO_DEPS_AND_FOO("./vendor/foo") },
+    { name: "api", dependencies: NO_DEPS_AND_FOO("../../vendor/foo") },
+    WEB,
+    PKG_A,
+    PKG_B,
+  ]);
+  const { workspaces } = await lockfileJson(dir);
+  expect(workspaces[""].dependencies).toStrictEqual(NO_DEPS_AND_FOO("./vendor/foo"));
+  expect(workspaces["packages/api"].dependencies).toStrictEqual(NO_DEPS_AND_FOO("../../vendor/foo"));
+
+  const reinstall = await run(["install"], dir, { linker: "hoisted" });
+  expect(reinstall.stderr).not.toContain("Saved lockfile");
+  expect(reinstall.stderr).not.toContain("error:");
+  expect(reinstall.exitCode).toBe(0);
+});
+
+// `link:` resolves against the global link dir (same failure without --filter); the error shows the per-target spelling.
+test.concurrent("a link: path is re-spelled relative to the target before it is resolved", async () => {
+  const dir = await makeMonorepo();
+  await addVendorFoo(dir);
+  const before = await allPackageJsonTexts(dir);
+
+  const { stderr, exitCode } = await run(["add", "link:./vendor/foo", "--filter", "api"], dir);
+  expect(stderr).toContain('error: Package "link:../../vendor/foo" is not linked');
+  expect(stderr).not.toContain('"link:./vendor/foo"');
+  expect(exitCode).toBe(1);
+
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
+});
+
+test.concurrent.each([
+  ["./vendor/foo-1.0.0.tgz", "../../vendor/foo-1.0.0.tgz"],
+  ["file:./vendor/foo-1.0.0.tgz", "file:../../vendor/foo-1.0.0.tgz"],
+])("a local tarball %s is re-spelled as %s", async (positional, written) => {
+  const dir = await makeMonorepo();
+  await mkdir(join(dir, "vendor"));
+  await Bun.Archive.write(
+    join(dir, "vendor", "foo-1.0.0.tgz"),
+    { "package/package.json": JSON.stringify(VENDOR_FOO) },
+    { compress: "gzip" },
+  );
+  const before = await allPackageJsonTexts(dir);
+
+  const { stderr, exitCode } = await run(["add", positional, "--filter", "api"], dir, { linker: "hoisted" });
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  await expectAddedOnlyTo(dir, before, ["api"], "foo", written);
+  expect((await lockfileJson(dir)).workspaces["packages/api"].dependencies).toStrictEqual({ foo: written });
+  expect(await file(join(dir, "node_modules", "foo", "package.json")).json()).toStrictEqual(VENDOR_FOO);
+});
+
+test.concurrent("an aliased local path keeps the alias as the key and re-spells the path", async () => {
+  const dir = await makeMonorepo();
+  await addVendorFoo(dir);
+  const before = await allPackageJsonTexts(dir);
+
+  const { stderr, exitCode } = await run(["add", "myfoo@file:./vendor/foo", "--filter", "api"], dir, {
+    linker: "hoisted",
+  });
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  await expectAddedOnlyTo(dir, before, ["api"], "myfoo", "file:../../vendor/foo");
+  expect((await lockfileJson(dir)).workspaces["packages/api"].dependencies).toStrictEqual({
+    myfoo: "file:../../vendor/foo",
+  });
+  // An alias that differs from the package name is nested under the workspace, as without --filter.
+  expect(await file(join(dir, "packages", "api", "node_modules", "myfoo", "package.json")).json()).toStrictEqual(
+    VENDOR_FOO,
+  );
+});
+
+test.concurrent("an aliased local path is shared by targets at the same depth", async () => {
+  const dir = await makeMonorepo();
+  await addVendorFoo(dir);
+  const before = await allPackageJsonTexts(dir);
+
+  const { stderr, exitCode } = await run(
+    ["add", "myfoo@file:./vendor/foo", "--filter", "api", "--filter", "web"],
+    dir,
+    { linker: "hoisted" },
+  );
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  await expectAddedOnlyTo(dir, before, ["api", "web"], "myfoo", "file:../../vendor/foo");
+});
+
+test.concurrent(
+  "an aliased local path spelled differently per target is rejected before anything is written",
+  async () => {
+    const dir = await makeMonorepo();
+    await addVendorFoo(dir);
+    const before = await allPackageJsonTexts(dir);
+
+    const { stderr, exitCode } = await run(
+      ["add", "myfoo@file:./vendor/foo", "--filter", "root", "--filter", "api"],
+      dir,
+    );
+    expect(stderr).toContain(
+      'error: "myfoo@file:../../vendor/foo" is spelled differently relative to each selected workspace; add it to one workspace at a time',
+    );
+    expect(exitCode).toBe(1);
+
+    expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
+    expect(await exists(join(dir, "bun.lock"))).toBeFalse();
+    expect(await exists(join(dir, "node_modules"))).toBeFalse();
+  },
+);
+
+test.concurrent("an absolute local path is written verbatim into every target", async () => {
+  const dir = await makeMonorepo();
+  await addVendorFoo(dir);
+  const abs = join(dir, "vendor", "foo");
+
+  const { stderr, exitCode } = await run(["add", abs, "--filter", "root", "--filter", "api"], dir, {
+    linker: "hoisted",
+  });
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  const literal = abs.replaceAll("\\", "/");
+  expect(await allPackageJsons(dir)).toStrictEqual([
+    { ...ROOT, dependencies: { foo: literal } },
+    { name: "api", dependencies: { foo: literal } },
+    WEB,
+    PKG_A,
+    PKG_B,
+  ]);
+  const { workspaces } = await lockfileJson(dir);
+  expect(workspaces[""].dependencies).toStrictEqual({ foo: literal });
+  expect(workspaces["packages/api"].dependencies).toStrictEqual({ foo: literal });
+});
+
+test.concurrent("a workspaces entry naming a missing directory is an error and nothing is written", async () => {
+  const dir = await makeMonorepo({ root: { name: "root", workspaces: ["packages/*", "missing/dir"] } });
+  const before = await allPackageJsonTexts(dir);
+
+  const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "api"], dir);
+  expect(stderr).toContain('Workspace not found "missing/dir"');
+  expect(exitCode).toBe(1);
+
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
+  expect(await exists(join(dir, "bun.lock"))).toBeFalse();
+  expect(await exists(join(dir, "node_modules"))).toBeFalse();
+});
+
+test.concurrent("an unparsable root package.json is an error and nothing is written", async () => {
+  const dir = await makeMonorepo({ root: '{ "name": "root", "workspaces": ["packages/*"' });
+  const before = await allPackageJsonTexts(dir);
+
+  const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "api"], dir);
+  expect(stderr).toContain("error:");
+  expect(stderr).toContain("package.json");
+  expect(exitCode).toBe(1);
+
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
+  expect(await exists(join(dir, "bun.lock"))).toBeFalse();
+  expect(await exists(join(dir, "node_modules"))).toBeFalse();
+});
+
+test.concurrent("remove --filter --dry-run touches nothing", async () => {
+  const dir = await makeMonorepo({ api: { name: "api", dependencies: { "no-deps": "^2.0.0" } } });
+  await installOk(dir, "hoisted");
+  const before = await allPackageJsonTexts(dir);
+  const lockBefore = await file(join(dir, "bun.lock")).text();
+
+  const { stderr, exitCode } = await run(["remove", "no-deps", "--filter", "api", "--dry-run"], dir, {
+    linker: "hoisted",
+  });
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
+  expect(await file(join(dir, "bun.lock")).text()).toBe(lockBefore);
+  expect(await exists(join(dir, "node_modules", "no-deps", "package.json"))).toBeTrue();
+});
+
+test.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
+  "an unwritable target is reported by name, the rest is still written, exit code 1",
+  async () => {
+    const dir = await makeMonorepo();
+    const apiBefore = await pkgText(dir, "api");
+    await chmod(pkgPath(dir, "api"), 0o444);
+
+    const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "api", "--filter", "web"], dir, {
+      linker: "hoisted",
+    });
+    expect(stderr).toContain("error: failed to write package.json for workspace 'api'");
+    expect(stderr).not.toContain("workspace 'web'");
+    expect(exitCode).toBe(1);
+
+    expect(await pkgText(dir, "api")).toBe(apiBefore);
+    expect(await pkg(dir, "web")).toStrictEqual({
+      name: "web",
+      dependencies: { "a-dep": "1.0.1", "no-deps": "^2.0.0" },
+    });
+    const { workspaces } = await lockfileJson(dir);
+    expect(workspaces["packages/api"]).toStrictEqual({ name: "api", dependencies: { "no-deps": "^2.0.0" } });
+    expect(workspaces["packages/web"]).toStrictEqual({
+      name: "web",
+      dependencies: { "a-dep": "1.0.1", "no-deps": "^2.0.0" },
+    });
+  },
+);
+
+test.concurrent("--trust --filter writes trustedDependencies into every target, not the root", async () => {
+  const dir = await makeMonorepo({ root: '{ "name": "root", "workspaces": ["packages/*"] }' });
+  const rootBefore = await pkgText(dir, "root");
+
+  const { stderr, exitCode } = await run(["add", "uses-what-bin@1.0.0", "--trust", "--filter", "pkg-*"], dir, {
+    linker: "hoisted",
+  });
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  expect(await allPackageJsons(dir)).toStrictEqual([
+    ROOT,
+    API,
+    WEB,
+    { name: "pkg-a", dependencies: { "uses-what-bin": "1.0.0" }, trustedDependencies: ["uses-what-bin"] },
+    { name: "pkg-b", dependencies: { "uses-what-bin": "1.0.0" }, trustedDependencies: ["uses-what-bin"] },
+  ]);
+  expect(await pkgText(dir, "root")).toBe(rootBefore);
+  expect(await exists(join(dir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
+});
+
+test.concurrent("each target keeps its own indentation and trailing-newline style", async () => {
+  const dir = await makeMonorepo({
+    root: '{ "name": "root", "workspaces": ["packages/*"] }',
+    api: '{\n\t"name": "api"\n}\n',
+    web: '{\n    "name": "web"\n}',
+    "pkg-a": '{\n  "name": "pkg-a"\n}\n',
+    "pkg-b": '{\n  "name": "pkg-b"\n}',
+  });
+  const rootBefore = await pkgText(dir, "root");
+
+  const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "*"], dir);
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  expect(await allPackageJsonTexts(dir)).toStrictEqual([
+    rootBefore,
+    '{\n\t"name": "api",\n\t"dependencies": {\n\t\t"no-deps": "^2.0.0"\n\t}\n}\n',
+    '{\n    "name": "web",\n    "dependencies": {\n        "no-deps": "^2.0.0"\n    }\n}',
+    '{\n  "name": "pkg-a",\n  "dependencies": {\n    "no-deps": "^2.0.0"\n  }\n}\n',
+    '{\n  "name": "pkg-b",\n  "dependencies": {\n    "no-deps": "^2.0.0"\n  }\n}',
+  ]);
+});
+
+const ROOT_GRAPH = {
+  root: { ...ROOT, dependencies: { api: "workspace:*" } },
+  api: { name: "api", dependencies: { "pkg-a": "workspace:*" } },
+};
+
+test.concurrent.each<[string, Workspace[]]>([
+  ["root...", ["root", "api", "pkg-a"]],
+  ["root^...", ["api", "pkg-a"]],
+])("a relation based on the root ('%s') edits %p", async (pattern, edited) => {
+  const dir = await makeMonorepo(ROOT_GRAPH);
+  await installOk(dir);
+  const before = await allPackageJsonTexts(dir);
+
+  const { stderr, exitCode } = await run(["add", "no-deps", "--filter", pattern], dir);
+  expect(stderr).not.toContain("error:");
+  expect(stderr).not.toContain("warn:");
+  expect(exitCode).toBe(0);
+
+  await expectAddedOnlyTo(dir, before, edited);
+});
+
+test.concurrent("workspace: and npm: positionals write the same entry as an unfiltered add", async () => {
+  const dir = await makeMonorepo({ "pkg-a": { name: "pkg-a", version: "1.2.3" } });
+  const [rootBefore, , webBefore, pkgABefore, pkgBBefore] = await allPackageJsonTexts(dir);
+
+  for (const positional of ["pkg-a@workspace:*", "alias@npm:no-deps"]) {
+    const filtered = await run(["add", positional, "--filter", "api"], dir, { linker: "hoisted" });
+    expect(filtered.stderr).not.toContain("error:");
+    expect(filtered.exitCode).toBe(0);
+  }
+  expect(await allPackageJsonTexts(dir)).toStrictEqual([
+    rootBefore,
+    await pkgText(dir, "api"),
+    webBefore,
+    pkgABefore,
+    pkgBBefore,
+  ]);
+  const { workspaces } = await lockfileJson(dir);
+  expect(workspaces["packages/api"].dependencies).toStrictEqual((await pkg(dir, "api")).dependencies);
+
+  for (const positional of ["pkg-a@workspace:*", "alias@npm:no-deps"]) {
+    const inside = await run(["add", positional], dir, { cwd: join(dir, "packages", "web"), linker: "hoisted" });
+    expect(inside.stderr).not.toContain("error:");
+    expect(inside.exitCode).toBe(0);
+  }
+  const [api, web] = await Promise.all([pkg(dir, "api"), pkg(dir, "web")]);
+  expect(api.dependencies).toStrictEqual({ "pkg-a": "workspace:*", alias: "npm:no-deps@^2.0.0" });
+  expect(web.dependencies).toStrictEqual({ ...WEB.dependencies, ...api.dependencies });
+});
+
+test.concurrent("a relation with an unreadable bun.lock is an error and nothing is written", async () => {
+  const dir = await makeMonorepo(GRAPH);
+  await write(join(dir, "bun.lock"), "this is not a lockfile\n");
+  const before = await allPackageJsonTexts(dir);
+
+  const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "api..."], dir);
+  expect(stderr).toContain('error: failed to load the lockfile needed by --filter "api..."');
+  expect(exitCode).toBe(1);
+
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
+  expect(await file(join(dir, "bun.lock")).text()).toBe("this is not a lockfile\n");
+  expect(await exists(join(dir, "node_modules"))).toBeFalse();
+});
+
+test.concurrent("the install summary comes from a target that received every request", async () => {
+  // The root (first target) already has no-deps, so under --only-missing only web receives both.
+  const dir = await makeMonorepo({ root: { ...ROOT, dependencies: { "no-deps": "1.0.0" } }, web: { name: "web" } });
+
+  const { stdout, stderr, exitCode } = await run(
+    ["add", "no-deps", "a-dep", "--only-missing", "--filter", "root", "--filter", "web"],
+    dir,
+    { linker: "hoisted" },
+  );
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain("installed no-deps@2.0.0");
+  expect(stdout).toContain("installed a-dep@1.0.10");
+  expect(exitCode).toBe(0);
+
+  expect(await pkg(dir, "root")).toStrictEqual({ ...ROOT, dependencies: { "no-deps": "1.0.0", "a-dep": "^1.0.10" } });
+  expect(await pkg(dir, "web")).toStrictEqual({
+    name: "web",
+    dependencies: { "a-dep": "^1.0.10", "no-deps": "^2.0.0" },
+  });
+});
+
+test.concurrent("'!!name' is a positive selector", async () => {
+  const dir = await makeMonorepo();
+  const before = await allPackageJsonTexts(dir);
+
+  const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "!!api"], dir);
+  expect(stderr).not.toContain("error:");
+  expect(stderr).not.toContain("warn:");
+  expect(exitCode).toBe(0);
+
+  await expectAddedOnlyTo(dir, before, ["api"]);
+});
+
+test.concurrent("'**' selects every workspace except the root, like '*'", async () => {
+  const dir = await makeMonorepo({ root: '{ "name": "root", "workspaces": ["packages/*"] }' });
+  const before = await allPackageJsonTexts(dir);
+
+  const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "**"], dir);
+  expect(stderr).not.toContain("error:");
+  expect(stderr).not.toContain("warn:");
+  expect(exitCode).toBe(0);
+
+  await expectAddedOnlyTo(dir, before, ["api", "web", "pkg-a", "pkg-b"]);
+});
+
+test.concurrent("a name declared in two groups stays in sync with bun.lock after a filtered --peer add", async () => {
+  // The peer range admits both versions: a peer pinned to the old version re-resolves differently on every install, with or without --filter.
+  const dir = await makeMonorepo({
+    api: {
+      name: "api",
+      dependencies: { "no-deps": "1.0.0" },
+      peerDependencies: { "no-deps": "*" },
+    },
+  });
+  await installOk(dir, "hoisted");
+
+  const { stderr, exitCode } = await run(["add", "no-deps", "--peer", "--filter", "api"], dir, { linker: "hoisted" });
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  // Same as an unfiltered add: the entry that already exists (in dependencies) is updated in place.
+  const api = await pkg(dir, "api");
+  expect(api).toStrictEqual({
+    name: "api",
+    dependencies: { "no-deps": "^2.0.0" },
+    peerDependencies: { "no-deps": "*" },
+  });
+  const { workspaces } = await lockfileJson(dir);
+  expect(workspaces["packages/api"]).toStrictEqual(api);
+
+  const frozen = await run(["install", "--frozen-lockfile"], dir, { linker: "hoisted" });
+  expect(frozen.stderr).not.toContain("error:");
+  expect(frozen.exitCode).toBe(0);
+
+  const second = await run(["install"], dir, { linker: "hoisted" });
+  expect(second.stderr).not.toContain("Saved lockfile");
+  expect(second.stderr).not.toContain("error:");
+  expect(second.exitCode).toBe(0);
 });

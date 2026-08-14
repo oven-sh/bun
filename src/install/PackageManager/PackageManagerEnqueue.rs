@@ -2063,6 +2063,18 @@ fn get_or_put_resolved_package_with_find_result(
                     .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
         };
 
+    // Like update_transitive/dedupe, a patched package is pinned: the row stays on it instead of moving.
+    if should_update && !this.update_requests.is_empty() && !behavior.is_peer() {
+        if let Some(id) = patched_package_satisfying(this, name_hash, version) {
+            success_fn(this, dependency_id, id);
+            return Ok(Some(ResolvedPackageResult {
+                package: *this.lockfile.packages.get(id as usize),
+                is_first_time: false,
+                task: None,
+            }));
+        }
+    }
+
     // Was this package already allocated? Let's reuse the existing one.
     //
     // Determinism: passing `version` here unconditionally lets a
@@ -2880,6 +2892,33 @@ fn resolution_satisfies_dependency(
 ) -> bool {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
     resolution.satisfies_dependency_version(dependency, buf, buf)
+}
+
+fn patched_package_satisfying(
+    this: &PackageManager,
+    name_hash: PackageNameHash,
+    version: &dependency::Version,
+) -> Option<PackageID> {
+    let lockfile: &Lockfile::Lockfile = &this.lockfile;
+    if lockfile.patched_dependencies.count() == 0 {
+        return None;
+    }
+    let candidates: &[PackageID] = match lockfile.package_index.get(&name_hash)? {
+        PackageIndexEntry::Id(id) => core::slice::from_ref(id),
+        PackageIndexEntry::Ids(ids) => ids.as_slice(),
+    };
+    let pkg_res = lockfile.packages.items_resolution();
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    candidates.iter().copied().find(|&id| {
+        let res = &pkg_res[id as usize];
+        res.tag == ResolutionTag::Npm
+            && res.satisfies_dependency_version(version, buf, buf)
+            && lockfile
+                .patched_dependencies
+                .contains(&Semver::string::Builder::string_hash(
+                    &crate::dedupe::label(lockfile, id),
+                ))
+    })
 }
 
 // ──────────────────────────────────────────────────────────────────────────

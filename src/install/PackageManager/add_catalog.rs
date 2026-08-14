@@ -7,10 +7,12 @@ use bun_collections::VecExt as _;
 use bun_core::{Global, Output, strings};
 use bun_semver::{self as Semver, SlicedString};
 
-use bun_install::dependency::{self, TagExt as _};
+use bun_install::dependency::{self, DependencyExt as _, TagExt as _};
 use bun_install::lockfile::CatalogMap;
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::{INVALID_PACKAGE_ID, Lockfile, PackageID, PackageNameHash, resolution};
+use bun_install::{
+    Dependency, INVALID_PACKAGE_ID, Lockfile, PackageID, PackageNameHash, resolution,
+};
 use bun_install_types::DependencyGroup;
 
 use super::add_remove_with_filter::{
@@ -417,6 +419,17 @@ fn find_add<'a>(
         .find(|add| add.name_hash == name_hash && CatalogMap::same_name(&add.group, group))
 }
 
+fn catalogable_verbatim(literal: &[u8]) -> bool {
+    match dependency::Tag::infer(literal) {
+        dependency::Tag::Npm
+        | dependency::Tag::DistTag
+        | dependency::Tag::Git
+        | dependency::Tag::Github => true,
+        dependency::Tag::Tarball => Dependency::is_remote_tarball(literal),
+        _ => false,
+    }
+}
+
 fn record_add(
     state: &mut State,
     request: &UpdateRequest,
@@ -445,12 +458,7 @@ fn record_add(
         return Decision::Convert;
     }
 
-    let declared = declared.filter(|literal| {
-        matches!(
-            dependency::Tag::infer(literal),
-            dependency::Tag::Npm | dependency::Tag::DistTag
-        )
-    });
+    let declared = declared.filter(|literal| catalogable_verbatim(literal));
     let candidate = || match declared {
         Some(literal) => Candidate::Existing(literal.into()),
         None => Candidate::Latest,

@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 
 use bstr::BStr;
 use bun_collections::bit_set::Range;
-use bun_collections::{DynamicBitSet, HashMap};
+use bun_collections::{DynamicBitSet, HashMap, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, prettyln, strings};
 use bun_semver::string::Builder as StringBuilder;
 
@@ -447,7 +447,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
         Global::exit(0);
     }
 
-    names.sort_unstable();
+    index_sort::sort_vec_unstable_by(&mut names, |a, b| a.cmp(b));
     static EXPANDED_NAMES: OnceLock<Vec<Box<[u8]>>> = OnceLock::new();
     static EXPANDED_POSITIONALS: OnceLock<Vec<&'static [u8]>> = OnceLock::new();
     let expanded = EXPANDED_NAMES.get_or_init(|| names);

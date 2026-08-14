@@ -50,16 +50,58 @@ beforeAll(() => {
 
 afterAll(dummyAfterAll);
 
+// TEMPORARY CI DIAGNOSTIC (removed before merge): record how long every withContext() test body takes and print the
+// slowest ones at the end of the file, so the CI log shows which cases account for the file's wall time per platform.
+const DIAG_FILE_START = performance.now();
+const DIAG_DURATIONS: { line: number; start: number; ms: number; what: string }[] = [];
+afterAll(async () => {
+  const source = (await file(import.meta.path).text()).split("\n");
+  const nameForLine = (line: number) => {
+    for (let i = line - 1; i >= 0; i--) {
+      if (!/^\s*(?:it|test)(?:\.\w+)*\(/.test(source[i] ?? "")) continue;
+      const m = `${source[i]} ${source[i + 1]}`.match(/(?:`([^`]*)`|"([^"]*)"|'([^']*)')/);
+      return m ? (m[1] ?? m[2] ?? m[3]) : `<line ${i + 1}>`;
+    }
+    return `<line ${line}>`;
+  };
+  const rows = DIAG_DURATIONS.sort((a, b) => b.ms - a.ms).slice(0, 30);
+  const lines = rows.map(
+    r =>
+      `${(r.ms / 1000).toFixed(2).padStart(7)}s  (started at ${((r.start - DIAG_FILE_START) / 1000).toFixed(2)}s)  L${r.line}  ${nameForLine(r.line)}  ${r.what}`,
+  );
+  console.error(
+    `DIAG bun-install.test.ts ${process.platform}-${process.arch}: ${DIAG_DURATIONS.length} withContext tests, file wall ${((performance.now() - DIAG_FILE_START) / 1000).toFixed(2)}s, slowest:\n${lines.join("\n")}`,
+  );
+});
+
 // Helper function that sets up test context and ensures cleanup
 async function withContext(
   opts: { linker?: "hoisted" | "isolated" } | undefined,
   fn: (ctx: TestContext) => Promise<void>,
 ): Promise<void> {
+  const line = Number(
+    new Error().stack
+      ?.split("\n")
+      .find(l => l.includes("bun-install.test.ts") && !l.includes("withContext"))
+      ?.match(/bun-install\.test\.ts:(\d+)/)?.[1] ?? 0,
+  );
+  const start = performance.now();
   const ctx = await createTestContext(opts ? { linker: opts.linker! } : undefined);
   try {
     await fn(ctx);
   } finally {
+    const ms = performance.now() - start;
+    let what = "";
+    try {
+      const pkg = await file(join(ctx.package_dir, "package.json")).json();
+      what = JSON.stringify({ ...pkg.dependencies, ...pkg.devDependencies, ...pkg.optionalDependencies });
+    } catch {}
+    try {
+      const bunfig = await file(join(ctx.package_dir, "bunfig.toml")).text();
+      what += " " + (bunfig.match(/registry\s*=\s*(.*)/)?.[1] ?? "");
+    } catch {}
     destroyTestContext(ctx);
+    DIAG_DURATIONS.push({ line, start, ms, what: what.slice(0, 160) });
   }
 }
 

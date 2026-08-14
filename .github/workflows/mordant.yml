@@ -66,14 +66,8 @@ jobs:
           cargo install --locked cargo-dylint@"$DYLINT_VERSION" dylint-link@"$DYLINT_VERSION"
           echo "::add-matcher::.github/rust-matcher.json"
 
-      - name: Generate codegen
-        # See clippy.yml: bun_runtime/bun_jsc/bun_core include!() generated files.
-        run: |
-          bun install --frozen-lockfile
-          bun scripts/build.ts --configure-only
-          ninja -C build/debug codegen clone-lolhtml
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
 
       - name: mordant
-        env:
-          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
         run: bun run rust:mordant

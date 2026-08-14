@@ -39,14 +39,21 @@ const rustflags = [
   process.env.DYLINT_RUSTFLAGS ?? "",
 ].join(" ");
 
+if (spawnSync("cargo", ["dylint", "--version"], { stdio: "ignore" }).status !== 0) {
+  console.error("cargo-dylint is not installed; run: cargo install cargo-dylint dylint-link");
+  process.exit(1);
+}
+
+// The crates' build.rs files include!() generated sources from
+// build/debug/codegen and lol_html is a path dependency under vendor/; the
+// build knows how to produce both, so ask it for just those targets.
+const prep = spawnSync("bun", ["scripts/build.ts", "--quiet", "--target=codegen", "--target=clone-lolhtml"], {
+  stdio: "inherit",
+});
+if (prep.status !== 0) process.exit(prep.status ?? 1);
+
 const r = spawnSync("cargo", ["dylint", "--all", "--workspace", "--keep-going", "--", "--keep-going"], {
   stdio: "inherit",
   env: { ...process.env, DYLINT_RUSTFLAGS: rustflags },
 });
-if (r.error) {
-  console.error(
-    `could not run cargo dylint (${r.error.message}); install it with: cargo install cargo-dylint dylint-link`,
-  );
-  process.exit(1);
-}
 process.exit(r.status ?? 1);

@@ -409,6 +409,16 @@ impl VmHandle {
         self.0.state() == State::Open
     }
 
+    /// Whether the wait is over (`Closed`): no ticket can be issued any more
+    /// ([`VirtualMachine::ticket`] panics), a task queued on the VM's loops is
+    /// only released, never run, and its JSC VM is being (or has been)
+    /// destroyed. Any thread; meaningful on the JS thread, where the only code
+    /// still running this late is the final collection's finalizers.
+    #[inline]
+    pub fn closed(&self) -> bool {
+        self.0.state() == State::Closed
+    }
+
     pub(crate) fn tickets_outstanding(&self) -> u32 {
         self.0.tickets.load(Ordering::SeqCst)
     }
@@ -503,18 +513,33 @@ impl VmHandle {
 impl VirtualMachine {
     /// JS thread: a ticket for work about to leave this thread — this VM, and
     /// the loop it is currently ticking. Hold it in the in-flight operation
-    /// and drop it after the completion is posted. Infallible until the wait
-    /// has finished (after which nothing on this thread starts off-thread work).
+    /// and drop it after the completion is posted. Infallible until the VM is
+    /// [`closed`](Self::closed).
+    ///
+    /// Panics (in release builds too) once it is: nothing waits for a ticket
+    /// issued after the wait, so its completion would land on a loop that
+    /// teardown is about to free. The code that still runs on this thread by
+    /// then (the final collection's finalizers) has to check `closed()` and
+    /// refuse the work instead, as `napi_async_work::schedule` does; the panic
+    /// names the call site that did not.
     #[track_caller]
     #[inline]
     pub fn ticket(&self) -> Ticket {
         let h = self.handle_ref();
         h.assert_js_thread();
-        debug_assert!(
-            h.0.state() != State::Closed,
+        assert!(
+            !h.closed(),
             "off-thread work started after the VM finished draining"
         );
         Ticket::issue(&h.0, self.current_loop_kind())
+    }
+
+    /// [`VmHandle::closed`] for this VM. Once true, [`ticket`](Self::ticket)
+    /// panics and a task queued on the VM's loop is only released: nothing
+    /// native code on this thread starts for the VM will run any more.
+    #[inline]
+    pub fn closed(&self) -> bool {
+        self.handle_ref().closed()
     }
 }
 

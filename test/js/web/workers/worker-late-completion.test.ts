@@ -14,10 +14,14 @@
 // line appeared (the work really was on another thread, really came back
 // during teardown, and — for ticketed work — was taken through the door at
 // the expected site) and the process exited cleanly; on the ASAN build the
-// release paths are also checked for use-after-free and leaks. Builds with
-// debug assertions only (debug, ASAN): the gate does not exist in release.
+// release paths are also checked for use-after-free and leaks. The napi rows
+// also cover the opposite obligation: work queued once the teardown is under
+// way (from a completion the wait releases, or from a finalizer in the
+// collection that destroys the heap) is settled or refused on the worker's own
+// thread rather than given a ticket nothing would wait for. Builds with debug
+// assertions only (debug, ASAN): the gate does not exist in release.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isAndroid, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isAndroid, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -31,15 +35,30 @@ type Row = {
   parent?: string;
   // Runs in the parent when the worker has exited (release what the prelude holds).
   onExit?: string;
+  // A C source built into `<dir>/addon.node` (against Bun's own N-API headers) before the worker starts.
+  addon?: string;
+  // What the row's native fixture must have printed, in any order.
+  stdout?: string[];
   env?: Record<string, string>;
   files?: Record<string, string>;
   skip?: boolean;
 } & (Ticketed | Weak);
 // Ticketed work: substring of the site (file) the ticket was taken at, as
-// logged by "[vm] late completion from <file>:<line>".
-type Ticketed = { ticket: string; weak?: never };
+// logged by "[vm] late completion from <file>:<line>". `lateCompletions` pins
+// how many completions came back through the door in total; 0 for a row whose
+// work is queued so late that it must be settled or refused on the worker's
+// own thread instead of taking a ticket.
+type Ticketed = ({ ticket: string; lateCompletions?: number } | { ticket?: never; lateCompletions: number }) & {
+  weak?: never;
+};
 // Weak posters: the task tag logged by "[vm] late post: <tag> (...)".
-type Weak = { weak: string; ticket?: never };
+type Weak = { weak: string; ticket?: never; lateCompletions?: never };
+
+// The napi rows need a C compiler; Windows has none on PATH in CI (the napi
+// suite proper goes through node-gyp for that), so they skip there.
+const cc = isWindows ? null : process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+const napiFixture = path.join(import.meta.dir, "worker-late-completion-napi-fixture.c");
+const napiAddon = `require(require("node:path").join(workerData.dir, "addon.node"))`;
 
 const ROWS: Row[] = [
   // ── thread pool: bun_jsc::Job ────────────────────────────────────────────
@@ -192,6 +211,45 @@ const ROWS: Row[] = [
     ticket: "js_bundle_completion_task.rs",
     files: { "entry.ts": `export default 1;\n` },
   },
+  // ── thread pool: napi_async_work (worker-late-completion-napi-fixture.c) ─
+  {
+    // Queued while the worker runs: `execute` runs on the pool under a ticket
+    // and the wait releases the completion, which for napi means running the
+    // addon's `complete` (that is how it frees the work).
+    name: "napi_queue_async_work",
+    addon: napiFixture,
+    worker: `${napiAddon}.queue();`,
+    ticket: "napi_body.rs",
+    stdout: ["queued first: ok", "complete first: ok"],
+    skip: !cc,
+  },
+  {
+    // `first`'s complete runs from the wait's release, with script already
+    // forbidden, and queues `second`. Work queued that late is handed back on
+    // this thread (complete with napi_cancelled) without going near the pool,
+    // so only `first` ever crossed the door.
+    name: "napi_queue_async_work from a complete callback during the wait",
+    addon: napiFixture,
+    worker: `${napiAddon}.queueFromComplete();`,
+    ticket: "napi_body.rs",
+    lateCompletions: 1,
+    stdout: ["queued first: ok", "complete first: ok", "queued from complete second: ok", "complete second: cancelled"],
+    skip: !cc,
+  },
+  {
+    // The addon is NAPI_VERSION_EXPERIMENTAL, so the external's finalizer runs
+    // inline in the collection that destroys the worker's heap: after the wait,
+    // when a ticket would be waited for by nobody and nothing is left to run
+    // `complete` either, so queueing is refused (napi_cannot_run_js) and the
+    // addon keeps the work. The external is kept reachable so that collection
+    // is the one that finalizes it.
+    name: "napi_queue_async_work from a finalizer in the final collection",
+    addon: napiFixture,
+    worker: `globalThis.keep = ${napiAddon}.queueFromFinalizer();`,
+    lateCompletions: 0,
+    stdout: ["queued from finalizer late: cannot run js"],
+    skip: !cc,
+  },
   // ── weak posters (no ticket): delivered while draining, or refused ───────
   {
     name: "child exit reported by the waiter thread",
@@ -242,10 +300,34 @@ function host(row: Row, dir: string) {
   `;
 }
 
+// The napi_* symbols stay undefined in the addon and resolve against the bun
+// that dlopens it (as node-gyp builds do); the headers are Bun's own, as in the
+// in-tree header test of test/napi/napi-value-ffi.test.ts.
+async function buildAddon(source: string, dir: string) {
+  await using proc = Bun.spawn({
+    cmd: [
+      cc!,
+      "-shared",
+      "-fPIC",
+      ...(isMacOS ? ["-undefined", "dynamic_lookup"] : []),
+      `-I${path.resolve(import.meta.dir, "../../../../src/runtime/napi")}`,
+      source,
+      "-o",
+      path.join(dir, "addon.node"),
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ exitCode: 0, stderr: "" });
+}
+
 describe.skipIf(!isDebug && !isASAN)("work that comes back after its worker began tearing down", () => {
   for (const row of ROWS) {
     test.concurrent.skipIf(!!row.skip)(row.name, async () => {
       using dir = tempDir("worker-late-completion", row.files ?? {});
+      if (row.addon) await buildAddon(row.addon, String(dir));
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", host(row, String(dir))],
         env: { ...bunEnv, ...row.env, BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE: "1" },
@@ -254,16 +336,20 @@ describe.skipIf(!isDebug && !isASAN)("work that comes back after its worker bega
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const lines = stderr.split("\n").filter(l => l.startsWith("[vm] "));
+      const completions = lines.filter(l => l.startsWith("[vm] late completion from "));
+      const { ticket, lateCompletions, weak } = row;
       const seen =
-        "ticket" in row && row.ticket
-          ? lines.some(l => l.startsWith("[vm] late completion from ") && l.includes(row.ticket))
-          : lines.some(l => l.startsWith(`[vm] late post: ${row.weak} (`));
+        weak !== undefined
+          ? lines.some(l => l.startsWith(`[vm] late post: ${weak} (`))
+          : (ticket === undefined || completions.some(l => l.includes(ticket))) &&
+            (lateCompletions === undefined || completions.length === lateCompletions);
+      const expected = { exitCode: 0, seen: true, printed: row.stdout && [...row.stdout].sort() };
+      const actual = { exitCode, seen, printed: row.stdout && stdout.split("\n").filter(Boolean).sort() };
       expect({
-        exitCode,
-        seen,
+        ...actual,
         // On a failure, everything the host printed.
-        detail: exitCode === 0 && seen ? "" : stdout + stderr,
-      }).toEqual({ exitCode: 0, seen: true, detail: "" });
+        detail: Bun.deepEquals(actual, expected) ? "" : stdout + stderr,
+      }).toEqual({ ...expected, detail: "" });
     });
   }
 });
@@ -329,7 +415,9 @@ describe.skipIf(isWindows)("terminate() cancels a read parked on the io loop", (
 // and then complete cleanly. Here the job is a read() blocking a pool thread on
 // a FIFO nobody has written to yet (node:fs reads that way), so its duration is
 // entirely the test's to decide — no timing thresholds. Debug builds also name
-// what the wait is waiting for.
+// what the wait is waiting for. (Starting a debug/ASAN host and its worker plus
+// the 2s that report waits on purpose runs past bun test's 5s default, hence
+// the explicit ceiling.)
 describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled", () => {
   test("a pool thread parked in read() holds the worker's teardown until it returns", async () => {
     using dir = tempDir("worker-terminate-waits", {});
@@ -413,5 +501,5 @@ describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled"
     ]);
     expect(stdout).toBe("terminating\nexit code: 1\n");
     expect(await proc.exited).toBe(0);
-  });
+  }, 30_000);
 });

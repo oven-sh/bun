@@ -43,9 +43,10 @@ impl JSValueNapiExt for JSValue {
 // `Taskable` impls for the napi heap tasks dispatched through the JS event loop.
 impl Taskable for napi_async_work {
     const TAG: TaskTag = task_tag::NapiAsyncWork;
-    /// Work the pool handed back during teardown: its `complete` callback is
-    /// how the addon learns the outcome and frees the work (Node calls it from
-    /// environment cleanup too); script it tries to run is refused at the boundary.
+    /// Work handed back during teardown (by the pool, or by `schedule` itself
+    /// once script was forbidden): its `complete` callback is how the addon
+    /// learns the outcome and frees the work (Node calls it from environment
+    /// cleanup too); script it tries to run is refused at the boundary.
     unsafe fn release_unrun(this: *mut Self) {
         let vm = VirtualMachine::get().as_mut();
         let global = vm.global();
@@ -141,6 +142,12 @@ impl NapiEnv {
 
     pub(crate) fn pending_exception(&self) -> napi_status {
         Self::set_last_error(Some(self), NapiStatus::pending_exception)
+    }
+
+    /// Node's status for a call the environment can no longer serve because it
+    /// is shutting down.
+    pub(crate) fn cannot_run_js(&self) -> napi_status {
+        Self::set_last_error(Some(self), NapiStatus::cannot_run_js)
     }
 
     /// Checks both `env->m_pendingException` (set by `napi_throw*`) and the JSC
@@ -1851,17 +1858,41 @@ impl napi_async_work {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub(crate) fn schedule(&mut self) {
+    /// Starts the work, or returns `false` without having touched it: the VM
+    /// has closed and the work stays the addon's to delete.
+    pub(crate) fn schedule(&mut self) -> bool {
         if self.scheduled {
-            return;
+            return true;
+        }
+        let vm = VirtualMachine::get();
+        if vm.closed() {
+            // Queued by a finalizer of the collection that is destroying the
+            // heap: the wait for off-thread work is over (a ticket would be
+            // waited for by nobody; `vm.ticket()` panics), and the queue would
+            // release the work on the spot, running `complete` in the middle
+            // of that collection. Nothing can run it any more.
+            return false;
         }
         self.scheduled = true;
+        if !vm.script_allowed() {
+            // Queued while the VM is stopping, e.g. by a `complete` or
+            // finalizer that teardown is releasing. The pool would only hand
+            // it back cancelled; hand it straight to the queue instead, with
+            // no ticket, and `complete` gets `napi_cancelled` from the next
+            // tick or from teardown's release, as it would have from the pool.
+            // A closed queue releases on the spot, so `complete` (which may
+            // delete the work) can run inside this call: last use of `self`.
+            let _ = self.cancel();
+            vm.event_loop_mut().enqueue_task(Task::init(self));
+            return true;
+        }
         self.poll_ref.ref_(bun_io::js_vm_ctx());
         // The work object belongs to the addon and `execute` receives this
         // env, so the VM waits for it (Node likewise settles its threadpool
         // requests before an environment is freed).
-        self.ticket = Some(self.global.bun_vm().ticket());
+        self.ticket = Some(vm.ticket());
         WorkPool::schedule(&raw mut self.task);
+        true
     }
 
     pub(crate) unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
@@ -2227,7 +2258,9 @@ extern "C" fn napi_queue_async_work(env_: napi_env, work_: *mut napi_async_work)
         return env.invalid_arg();
     };
     debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
-    work.schedule();
+    if !work.schedule() {
+        return env.cannot_run_js();
+    }
     env.ok()
 }
 

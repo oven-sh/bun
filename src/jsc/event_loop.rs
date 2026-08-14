@@ -754,8 +754,9 @@ impl EventLoop {
     /// Release, without running, every task still queued — what other
     /// threads posted and what this thread enqueued — through each type's
     /// `Taskable::release_unrun`, and refuse (release on arrival) anything
-    /// enqueued from here on. Teardown phase B: JS thread, script forbidden,
-    /// JSC heap alive, HTTP thread parked / children joined.
+    /// enqueued from here on. Teardown phase B (JS thread, script forbidden,
+    /// JSC heap alive, children joined): called on every turn of the wait, and
+    /// once more after `Closed`.
     pub fn release_queued_tasks(&mut self) {
         self.closed_for_tasks = true;
         self.take_concurrent_tasks();
@@ -808,23 +809,6 @@ impl EventLoop {
     /// `*mut bun_runtime::timer::ImmediateObject` — see [`RunImmediateFn`].
     pub fn enqueue_immediate_task(&mut self, task: *mut ()) {
         self.immediate_tasks.push(task);
-    }
-
-    /// JS thread: queue `task` on this loop's *concurrent* queue from its own
-    /// thread — a "next tick" bounce that lets the loop poll before it runs
-    /// (the shell's `Async` state and `yes` builtin re-arm themselves this way).
-    pub fn enqueue_task_concurrent_same_thread(
-        &self,
-        task: core::ptr::NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
-    ) {
-        if self.closed_for_tasks {
-            // As `enqueue_task`: the loop never ticks again; release now.
-            // SAFETY: JS thread, heap alive; handed over unqueued.
-            unsafe { __bun_release_task_unrun(ConcurrentTask::ConcurrentTask::into_task(task)) };
-            return;
-        }
-        self.concurrent_tasks.push(task);
-        self.wakeup();
     }
 
     /// See [`EventLoop::yield_tasks`].
@@ -1355,7 +1339,7 @@ bun_event_loop::link_impl_JsEventLoop! {
         enter() => (*this).enter(),
         exit() => (*this).exit(),
         enqueue_task(task) => (*this).enqueue_task(task),
-        enqueue_task_concurrent_same_thread(task) => (*this).enqueue_task_concurrent_same_thread(task),
+        enqueue_task_after_yield(task) => (*this).enqueue_task_after_yield(task),
         js_poster() => (*this).js_poster(),
         env() => (*this).vm_ref().transpiler.env,
         top_level_dir() => core::ptr::from_ref::<[u8]>((*this).vm_ref().top_level_dir()),

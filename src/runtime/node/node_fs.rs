@@ -1220,7 +1220,7 @@ mod _async_tasks {
     }
 
     /// One `fs.promises.*` operation on the work pool. The arguments' JS-backed
-    /// buffers are protected (`ThreadSafe`) and read under the pool's VM borrow.
+    /// buffers are protected (`ThreadSafe`) and read under the job's ticket.
     pub struct AsyncFSTask<R, A: Unprotect, const F: NodeFSFunctionEnum> {
         pub args: ThreadSafe<A>,
         pub(crate) result: Maybe<R>,
@@ -1246,7 +1246,6 @@ mod _async_tasks {
 
         fn run(
             this: &mut Self,
-            _vm: &bun_jsc::Ticket,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
             let mut node_fs = NodeFS::default();
@@ -2124,7 +2123,7 @@ mod _async_tasks {
     /// `readdir(.., { recursive: true })`: a scan fanned out over pool subtasks
     /// that share this state (it is the job's off-thread part, so its address
     /// is stable while any subtask runs). Subtasks touch only owned data here —
-    /// never the JS-backed `args` — since they run outside the VM borrow.
+    /// never the JS-backed `args` — since they run outside `run`.
     pub struct AsyncReaddirRecursiveTask {
         /// Protected arguments; their JS-backed path is not read off-thread
         /// (`root_path` is the owned copy).
@@ -2178,7 +2177,6 @@ mod _async_tasks {
 
         fn run(
             this: &mut Self,
-            _vm: &bun_jsc::Ticket,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
             this.done = Some(done);
@@ -2365,8 +2363,8 @@ mod _async_tasks {
                 ret::ReaddirTag::WithFileTypes => ResultListEntryValue::WithFileTypes(Vec::new()),
                 ret::ReaddirTag::Buffers => ResultListEntryValue::Buffers(Vec::new()),
             };
-            // Subtasks read the root path outside the VM borrow, so it must be an
-            // owned copy rather than the (possibly JS-backed) argument. NUL-terminated.
+            // Subtasks read the root path after `run` has returned its borrow of the
+            // arguments, so it must be an owned copy. NUL-terminated.
             let root_path = {
                 let src = args.path.slice();
                 let mut owned = Vec::with_capacity(src.len() + 1);

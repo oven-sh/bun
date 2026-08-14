@@ -28,6 +28,16 @@ bun_output::declare_scope!(WriteFile, hidden);
 // as a plain Rust enum: it only ever travels through the Rust fn-pointer
 // callbacks below (`WriteFileOnWriteFileCallback`), never across FFI, so the
 // layout is unconstrained.
+/// One `write()` attempt on the pool thread.
+#[cfg(not(windows))]
+pub(crate) enum WriteStep {
+    Wrote(usize),
+    /// A pipe/socket is full: park on the io loop.
+    WouldBlock,
+    /// `errno`/`system_error` are set.
+    Failed,
+}
+
 pub enum WriteFileResultType {
     Result(SizeType),
     Err(Box<SystemError>),
@@ -45,14 +55,11 @@ pub type WriteFileTask = bun_jsc::Completion<WriteFile>;
 unsafe impl Send for WriteFile {}
 
 impl bun_jsc::JobContext for WriteFile {
+    const CANCELLABLE: bool = cfg!(not(windows));
     type OffThread = Self;
     /// The completion is delivered through `on_complete_callback(ctx, ..)`.
     type Js = ();
-    fn run(
-        this: &mut Self,
-        _vm: &bun_jsc::Ticket,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // Starts the write; finishes from the io loop via the token.
         this.run(done);
         None
@@ -62,16 +69,14 @@ impl bun_jsc::JobContext for WriteFile {
     }
     /// As `ReadFile`: a write parked on a full pipe nobody drains is the one
     /// state this job can be stuck in.
+    #[cfg(not(windows))]
     unsafe fn cancel(this: *mut Self) {
-        #[cfg(not(windows))]
         // SAFETY: fn contract; see `ReadFile::cancel`.
         unsafe {
             if (*this).io_parking.cancel() {
-                io::IoRequestLoop::schedule(&mut *core::ptr::addr_of_mut!((*this).io_request));
+                io::IoRequestLoop::schedule(&mut (*this).io_request);
             }
         }
-        #[cfg(windows)]
-        let _ = this;
     }
 }
 
@@ -248,8 +253,7 @@ impl WriteFile {
         })
     }
 
-    /// io thread: the parked wait was cancelled; the close path that follows
-    /// finishes the job with this error.
+    /// See `ReadFile::fail_cancelled`.
     #[cfg(not(windows))]
     fn fail_cancelled(&mut self) {
         let err = sys::Error::from_code(sys::E::ECANCELED, sys::Tag::write);
@@ -259,15 +263,18 @@ impl WriteFile {
             .store(ClosingState::Closing as u8, Ordering::SeqCst);
     }
 
+    /// See `ReadFile::wait_for_readable`: the caller returns without touching
+    /// `self` again.
     #[cfg(not(windows))]
     pub(crate) fn wait_for_writable(&mut self) {
+        if !self.io_parking.park() {
+            self.fail_cancelled();
+            return self.on_finish();
+        }
         self.close_after_io = true;
         self.io_request
             .store_callback_seq_cst(Self::on_request_writable);
-        self.io_parking.park();
-        if !self.io_request.scheduled {
-            io::IoRequestLoop::schedule(&mut self.io_request);
-        }
+        io::IoRequestLoop::schedule(&mut self.io_request);
     }
 
     #[cfg(not(windows))]
@@ -330,7 +337,7 @@ impl WriteFile {
     // reshaped for borrowck — take (off, len) here and re-derive the slice
     // internally so callers don't hold a borrow of self across the &mut self call.
     #[cfg(not(windows))]
-    pub(crate) fn do_write(&mut self, off: usize, len: usize, wrote: &mut usize) -> bool {
+    pub(crate) fn do_write(&mut self, off: usize, len: usize) -> WriteStep {
         let fd = self.opened_fd;
         debug_assert!(fd != Fd::INVALID);
 
@@ -339,35 +346,23 @@ impl WriteFile {
         //
         // On macOS, it is an error to use pwrite() on a
         // non-seekable file.
-        let result: bun_sys::Result<usize> =
-            sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]);
-
         loop {
-            match &result {
-                bun_sys::Result::Ok(res) => {
-                    *wrote = *res;
-                    self.total_written += *res;
+            match sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]) {
+                Ok(wrote) => {
+                    self.total_written += wrote;
+                    return WriteStep::Wrote(wrote);
                 }
-                bun_sys::Result::Err(err) => {
-                    if err.get_errno() == io::RETRY {
-                        if !self.could_block {
-                            // regular files cannot use epoll.
-                            // this is fine on kqueue, but not on epoll.
-                            continue;
-                        }
-                        self.wait_for_writable();
-                        return false;
-                    } else {
-                        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-                        self.system_error = Some(err.to_system_error().into());
-                        return false;
-                    }
+                // regular files cannot use epoll.
+                // this is fine on kqueue, but not on epoll.
+                Err(err) if err.get_errno() == io::RETRY && !self.could_block => continue,
+                Err(err) if err.get_errno() == io::RETRY => return WriteStep::WouldBlock,
+                Err(err) => {
+                    self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                    self.system_error = Some(err.to_system_error().into());
+                    return WriteStep::Failed;
                 }
             }
-            break;
         }
-
-        true
     }
 
     pub(crate) fn then(mut this: WriteFile, _global: &JSGlobalObject) -> Result<(), JsTerminated> {
@@ -551,18 +546,11 @@ impl WriteFile {
             let remain_len = remain_full.len() - off;
 
             if remain_len > 0 && self.errno.is_none() {
-                let mut wrote: usize = 0;
-                let continue_writing = self.do_write(off, remain_len, &mut wrote);
-                if !continue_writing {
-                    // Stop writing, we errored
-                    if self.errno.is_some() {
-                        self.on_finish();
-                        return;
-                    }
-
-                    // Stop writing, we need to wait for it to become writable.
-                    return;
-                }
+                let wrote = match self.do_write(off, remain_len) {
+                    WriteStep::Wrote(n) => n,
+                    WriteStep::WouldBlock => return self.wait_for_writable(),
+                    WriteStep::Failed => return self.on_finish(),
+                };
 
                 // Do not immediately attempt to write again if it's not a regular file.
                 if self.could_block

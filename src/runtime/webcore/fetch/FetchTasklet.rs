@@ -289,6 +289,8 @@ impl HTTPRequestBody {
 }
 
 impl FetchTasklet {
+    const HOLDS_TICKET: &str = "fetch on the HTTP thread holds a ticket";
+
     // ───── raw-ptr field accessors (centralised unsafe) ───────────────────
     //
     // `signal` / `sink` / `native_response` are intrusive-refcounted heap
@@ -432,7 +434,6 @@ impl FetchTasklet {
         let ticket = unsafe { (*this).http_ticket.take() }.expect(Self::HOLDS_TICKET);
         Self::deref_from_thread(this, &ticket);
     }
-    const HOLDS_TICKET: &'static str = "fetch on the HTTP thread holds a ticket";
 
     fn clear_sink(&mut self) {
         if let Some(sink_ptr) = self.sink.take() {

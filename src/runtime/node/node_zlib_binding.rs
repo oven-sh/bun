@@ -205,7 +205,7 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     fn global_this(&self) -> &JSGlobalObject;
     /// The in-flight write's ticket: set in `write` before the task leaves
     /// the thread, moved out by the pool thread before it posts back.
-    fn ticket(&self) -> &JsCell<Option<bun_jsc::Ticket>>;
+    fn ticket(&self) -> &Cell<Option<bun_jsc::Ticket>>;
     fn stream(&self) -> &JsCell<Self::Stream>;
 
     /// Write `(avail_out, avail_in)` into the JS-owned 2-element `Uint32Array`
@@ -498,7 +498,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // or releases the write there.
         let ticket = this_ref
             .ticket()
-            .replace(None)
+            .take()
             .expect("scheduled zlib write holds a ticket");
         if ticket.script_allowed() {
             this_ref.stream().with_mut(|s| s.do_work());
@@ -1048,7 +1048,7 @@ macro_rules! __impl_compression_stream {
             type Stream = $ctx;
 
             #[inline] fn global_this(&self) -> &::bun_jsc::JSGlobalObject { self.global_this.get() }
-            #[inline] fn ticket(&self) -> &::bun_jsc::JsCell<Option<::bun_jsc::Ticket>> { &self.ticket }
+            #[inline] fn ticket(&self) -> &::core::cell::Cell<Option<::bun_jsc::Ticket>> { &self.ticket }
             #[inline] fn stream(&self) -> &::bun_jsc::JsCell<Self::Stream> { &self.stream }
             #[inline] fn poll_ref(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::CountedKeepAlive> { &self.poll_ref }
             #[inline] fn this_value(&self) -> &::bun_jsc::JsCell<::bun_jsc::StrongOptional> { &self.this_value }

@@ -57,7 +57,6 @@ impl Async {
             bun_core::heap::alloc(crate::shell::dispatch_tasks::ShellAsyncTask {
                 interp: interp.as_ctx_ptr(),
                 node: id,
-                concurrent_task: Default::default(),
             });
         id
     }
@@ -150,22 +149,14 @@ impl Async {
     /// Bounce `run_from_main_thread` through the event loop so the async body runs on subsequent ticks while the
     /// parent proceeds.
     fn enqueue_self(interp: &Interpreter, this: NodeId) {
-        use bun_event_loop::ConcurrentTask::AutoDeinit;
         let me = interp.as_async_mut(this);
         let task = me.task;
         debug_assert!(!task.is_null());
-        // Same-thread "next tick" bounce through the owning loop's concurrent queue.
         match me.event_loop {
+            // Next loop iteration, after I/O has had a turn. `task` is the live
+            // heap payload allocated in `init` and freed only in `actually_deinit`.
             EventLoopHandle::Js { owner } => {
-                // SAFETY: `task` is the live heap payload allocated in `init`
-                // and freed only in `actually_deinit`. The embedded
-                // `ConcurrentTask` is reused for each bounce and is never
-                // in-flight twice: every enqueue is dispatched (dequeued)
-                // before the state machine can enqueue again.
-                unsafe {
-                    let ct = (*task).concurrent_task.from(task, AutoDeinit::ManualDeinit);
-                    owner.enqueue_task_concurrent_same_thread(core::ptr::NonNull::from(ct));
-                }
+                owner.enqueue_task_after_yield(bun_jsc::Task::init(task))
             }
             EventLoopHandle::Mini(mut mini) => {
                 // The payload embeds only the JS-arm `ConcurrentTask`, so the

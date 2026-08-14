@@ -330,7 +330,7 @@ pub struct VirtualMachine {
     /// `join_child_workers` drains at exit.
     pub child_workers: Vec<*mut crate::web_worker::WebWorker>,
     /// This VM's live pool jobs (`bun_jsc::job`); JS thread only, zero-valid.
-    pub(crate) jobs: core::cell::UnsafeCell<crate::job::JobList>,
+    pub(crate) jobs: crate::JsCell<crate::job::JobList>,
     /// The door out of this thread (`bun_jsc::vm_handle`): tickets for work
     /// that leaves it are taken here, and `teardown` waits on it.
     handle: core::mem::ManuallyDrop<crate::VmHandle>,
@@ -855,14 +855,6 @@ impl VirtualMachine {
     #[inline]
     pub(crate) fn handle_ref(&self) -> &crate::VmHandle {
         &self.handle
-    }
-
-    /// JS thread: this VM's live pool jobs.
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn jobs(&self) -> &mut crate::job::JobList {
-        // SAFETY: JS thread only; every use is a single statement, so no
-        // two `&mut` overlap.
-        unsafe { &mut *self.jobs.get() }
     }
 
     /// May native code enter user JavaScript right now? `true` in normal
@@ -1907,7 +1899,7 @@ impl VirtualMachine {
         // Pool jobs parked on something external (a pipe that never becomes
         // readable): their completions then arrive through the wait.
         // SAFETY: fn contract.
-        unsafe { (*this).jobs() }.cancel_all();
+        unsafe { (*this).jobs.get() }.cancel_all();
         if let Some(hooks) = hooks {
             // SAFETY: fn contract.
             result = result.and(unsafe { (hooks.stop_active_handles_for_vm_teardown)(this) });

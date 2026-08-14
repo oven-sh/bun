@@ -247,11 +247,7 @@ impl JobContext for WalkTask {
     type OffThread = Self;
     type Js = WalkJs;
 
-    fn run(
-        this: &mut Self,
-        _vm: &bun_jsc::Ticket,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         let result = match this.walker.walk() {
             Ok(r) => r,
             Err(err) => {

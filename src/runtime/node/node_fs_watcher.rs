@@ -51,7 +51,9 @@ pub struct FSWatcher {
     /// events on the JS thread). Weak: `detach()` — close, the VM's stop
     /// phase, or finalize — is what ends the thread's access to `self`.
     #[cfg(not(windows))]
-    handle: (bun_jsc::VmHandle, bun_jsc::LoopKind),
+    handle: bun_jsc::VmHandle,
+    #[cfg(not(windows))]
+    loop_kind: bun_jsc::LoopKind,
     verbose: bool,
 
     mutex: Mutex,
@@ -105,7 +107,7 @@ impl FSWatcher {
         &self,
         task: core::ptr::NonNull<ConcurrentTask>,
     ) -> bun_jsc::vm_handle::Posted {
-        self.handle.0.post(self.handle.1, task)
+        self.handle.post(self.loop_kind, task)
     }
 
     /// `self`'s address as `*mut Self` for path-watcher / abort-signal /
@@ -1133,7 +1135,9 @@ impl FSWatcher {
         let ctx = bun_core::heap::into_raw(Box::new(FSWatcher {
             ctx: vm,
             #[cfg(not(windows))]
-            handle: (vm_ref.handle(), vm_ref.current_loop_kind()),
+            handle: vm_ref.handle(),
+            #[cfg(not(windows))]
+            loop_kind: vm_ref.current_loop_kind(),
             current_task: JsCell::new(FSWatchTask {
                 ctx: None,
                 ..Default::default()

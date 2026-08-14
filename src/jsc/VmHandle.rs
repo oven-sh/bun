@@ -251,6 +251,14 @@ impl Ticket {
     pub fn script_allowed(&self) -> bool {
         self.shared.state() == State::Open
     }
+
+    /// Whether the VM has begun its final wait: work it has not started yet is
+    /// no longer wanted (Node `uv_cancel`s queued work at the same point) —
+    /// hand it straight back.
+    #[inline]
+    pub fn cancelled(&self) -> bool {
+        self.shared.state() >= State::Draining
+    }
 }
 
 impl Clone for Ticket {
@@ -281,7 +289,7 @@ impl Drop for Ticket {
 #[repr(transparent)]
 pub struct VmHandle(Arc<Shared>);
 
-/// RAII: one unit of `active`. While held, `close` cannot complete.
+/// RAII: one unit of `active`. While held, `close_and_wait` cannot return.
 struct Access<'a>(&'a Shared);
 impl Drop for Access<'_> {
     fn drop(&mut self) {
@@ -415,15 +423,16 @@ impl VmHandle {
     #[inline(always)]
     pub(crate) fn assert_js_thread(&self) {}
 
-    /// Teardown step 3 (JS thread, script forbidden, everything cancellable
-    /// cancelled): wait until no ticket is outstanding, calling `service`
+    /// Teardown, phase B of `VirtualMachine::teardown` (JS thread, script
+    /// forbidden, everything cancellable cancelled): wait until no ticket is outstanding, calling `service`
     /// (release everything queued, on this thread, heap alive) whenever
     /// something may have arrived; then refuse weak accessors and wait out any
     /// mid-call. After this returns nothing off-thread can reach the VM.
     ///
     /// Unbounded by design: a job that cannot be cancelled makes this take as
-    /// long as the job (as Node's environment cleanup does). Debug builds name
-    /// the outstanding tickets periodically.
+    /// long as the job (as Node's environment cleanup does). Every wake source
+    /// (ticket drop, post) notifies the condvar; the 1 s timeout is a backstop
+    /// and the debug build's cadence for naming the outstanding tickets.
     pub(crate) fn close_and_wait(&self, mut service: impl FnMut()) {
         self.assert_js_thread();
         let s = &*self.0;

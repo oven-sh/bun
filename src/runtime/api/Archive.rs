@@ -687,11 +687,7 @@ pub struct AsyncTask<C: TaskContext>(core::marker::PhantomData<C>);
 impl<C: TaskContext> bun_jsc::JobContext for AsyncTask<C> {
     type OffThread = C;
     type Js = JSPromiseStrong;
-    fn run(
-        ctx: &mut C,
-        _vm: &bun_jsc::Ticket,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
+    fn run(ctx: &mut C, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         ctx.run();
         Some(done)
     }

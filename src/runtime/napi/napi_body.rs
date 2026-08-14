@@ -1800,7 +1800,7 @@ pub(crate) struct napi_async_work {
     /// Held while the work is out on the pool (`schedule` until it is posted
     /// back): how the pool thread delivers completion / cancellation, and what
     /// makes the VM wait for it.
-    pub(crate) in_flight: Option<bun_jsc::Ticket>,
+    pub(crate) ticket: Option<bun_jsc::Ticket>,
     /// JS thread only.
     pub global: GlobalRef,
     pub(crate) env: NapiEnvRef,
@@ -1833,7 +1833,7 @@ impl napi_async_work {
             // SAFETY: env outlives the async work; clone bumps the C++ refcount.
             env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
             execute,
-            in_flight: None,
+            ticket: None,
             complete,
             data,
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
@@ -1860,7 +1860,7 @@ impl napi_async_work {
         // The work object belongs to the addon and `execute` receives this
         // env, so the VM waits for it (Node likewise settles its threadpool
         // requests before an environment is freed).
-        self.in_flight = Some(self.global.bun_vm().ticket());
+        self.ticket = Some(self.global.bun_vm().ticket());
         WorkPool::schedule(&raw mut self.task);
     }
 
@@ -1874,7 +1874,7 @@ impl napi_async_work {
         let self_ptr: *mut Self = self;
         // Moved out: the JS thread may free `self` the moment it is posted back.
         let ticket = self
-            .in_flight
+            .ticket
             .take()
             .expect("scheduled napi async work holds a ticket");
         // A VM that is already stopping cancels work it has not started, as
@@ -2468,7 +2468,8 @@ pub(crate) struct ThreadSafeFunction {
     /// dispatch on the VM. Weak: addon threads hold this function for as long
     /// as they like (Node: calls after env cleanup get `napi_closing`), so it
     /// cannot be something the VM waits for.
-    pub(crate) handle: (bun_jsc::VmHandle, bun_jsc::LoopKind),
+    pub(crate) handle: bun_jsc::VmHandle,
+    pub(crate) loop_kind: bun_jsc::LoopKind,
     pub(crate) tracker: Debugger::AsyncTaskTracker,
 
     /// Dropped on the JS thread by `env_teardown`; `None` afterwards.
@@ -2861,7 +2862,7 @@ impl ThreadSafeFunction {
                 }
                 let ct = ConcurrentTask::create_from(self_ptr);
                 if let bun_jsc::vm_handle::Posted::Refused(ct) =
-                    self.handle.0.post(self.handle.1, ct)
+                    self.handle.post(self.loop_kind, ct)
                 {
                     // VM closed before the env cleanup hook ran here: no
                     // dispatch will happen; the queued calls are released by the
@@ -3152,7 +3153,8 @@ extern "C" fn napi_create_threadsafe_function(
         // SAFETY: the loop is live now; `NapiEnv::cleanup()` clears this field
         // (via `env_teardown`) before the VirtualMachine holding it is freed.
         event_loop: Some(unsafe { bun_ptr::BackRef::from_raw_mut(vm.event_loop()) }),
-        handle: (vm.handle(), vm.current_loop_kind()),
+        handle: vm.handle(),
+        loop_kind: vm.current_loop_kind(),
         // SAFETY: env is a live C++-owned napi_env.
         env: Some(unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) }),
         callback,

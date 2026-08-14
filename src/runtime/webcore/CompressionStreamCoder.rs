@@ -834,11 +834,7 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
     type OffThread = Self;
     type Js = CompressionAsyncJs;
 
-    fn run(
-        this: &mut Self,
-        _vm: &bun_jsc::Ticket,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // SAFETY: `coder` is kept alive by the reference this ctx holds (the
         // cell's finalizer only releases its own); see the field doc.
         this.error = unsafe { (*this.coder).transform(this.input.slice(), this.finish) }.err();

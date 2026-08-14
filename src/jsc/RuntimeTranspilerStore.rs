@@ -232,9 +232,6 @@ impl RuntimeTranspilerStore {
         Self::default()
     }
 
-    // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
-    // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
-    // a field of `VirtualMachine`). Field-level derefs only.
     /// VM teardown (JS thread, heap alive, script forbidden; called on every
     /// turn of the wait): jobs already handed back whose completion will not
     /// run release their source, log and module promise here instead. Queued ⇒
@@ -257,6 +254,9 @@ impl RuntimeTranspilerStore {
         }
     }
 
+    // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
+    // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
+    // a field of `VirtualMachine`). Field-level derefs only.
     pub fn run_from_js_thread(
         &mut self,
         event_loop: NonNull<EventLoop>,

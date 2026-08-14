@@ -190,22 +190,22 @@ pub trait JobContext: Sized + 'static {
     type OffThread: Send;
     type Js: JsAffine;
 
-    /// Pool thread, VM still running script when the pool reached the job (a
-    /// job reached later is handed back unrun, as Node's environment cleanup
-    /// `uv_cancel`s queued work). Return `done` to complete now; keep it (e.g.
-    /// across async I/O that finishes on another thread) and call
-    /// [`Completion::finish`] later to complete then. `vm` is the job's ticket:
-    /// proof the VM is alive (for [`JsPtr::under_ticket`]) and
-    /// `vm.script_allowed()` says whether the result still has a consumer.
-    /// `off` and `vm` borrow the job, which the JS thread may free the moment
-    /// [`Completion::finish`] queues it: touch neither after finishing (work
+    /// Whether [`cancel`](Self::cancel) does anything, i.e. whether the job
+    /// can wait on something external. Only such jobs are tracked by the VM.
+    const CANCELLABLE: bool = false;
+
+    /// Pool thread, VM not yet in its final wait when the pool reached the job
+    /// (a job reached later is handed back unrun, as Node's environment
+    /// cleanup `uv_cancel`s queued work). Return `done` to complete now; keep
+    /// it (e.g. across async I/O that finishes on another thread) and call
+    /// [`Completion::finish`] later to complete then. `done.ticket()` is the
+    /// job's ticket: proof the VM is alive (for [`JsPtr::under_ticket`]), and
+    /// `script_allowed()` on it says whether the result still has a consumer.
+    /// `off` borrows the job, which the JS thread may free the moment
+    /// [`Completion::finish`] queues it: do not touch it after finishing (work
     /// that continues past `run` reaches its state through
     /// [`Completion::off_thread`]).
-    fn run(
-        off: &mut Self::OffThread,
-        vm: &Ticket,
-        done: Completion<Self>,
-    ) -> Option<Completion<Self>>;
+    fn run(off: &mut Self::OffThread, done: Completion<Self>) -> Option<Completion<Self>>;
 
     /// JS thread, VM still running script: the completion. Both halves are
     /// handed over to use and drop normally.
@@ -236,8 +236,8 @@ pub struct JobHeader {
     next: *mut JobHeader,
 }
 
-/// A VM's live jobs (JS thread only; zero-valid), so its stop phase can
-/// [`cancel`](JobContext::cancel) the ones waiting on something external.
+/// A VM's live [cancellable](JobContext::CANCELLABLE) jobs (JS thread only;
+/// zero-valid), so its stop phase can [`cancel`](JobContext::cancel) them.
 pub struct JobList {
     head: *mut JobHeader,
 }
@@ -289,9 +289,9 @@ impl JobList {
 pub struct Job<C: JobContext> {
     /// Must stay first: erased dispatch casts `*mut Job<C>` to `*mut JobHeader`.
     header: JobHeader,
-    /// Moved out by [`Completion::finish`] to post through (the JS thread may
-    /// free the job the moment it is queued); never touched on the JS side.
-    ticket: ManuallyDrop<Ticket>,
+    /// Moved into the [`Completion`] when the pool picks the job up; `None`
+    /// from then on (never touched on the JS side).
+    ticket: Option<Ticket>,
     task: WorkPoolTask,
     keep_alive: KeepAlive,
     off: C::OffThread,
@@ -300,9 +300,10 @@ pub struct Job<C: JobContext> {
 
 impl<C: JobContext> bun_event_loop::Taskable for Job<C> {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AnyTaskJob;
+    /// Reached through the header (`release_unrun_erased`): the tag is shared.
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract; JS thread with the heap alive.
-        drop(unsafe { Self::take(this) })
+        drop(unsafe { Self::take(this, VirtualMachine::get()) })
     }
 }
 
@@ -318,13 +319,15 @@ impl<C: JobContext> Job<C> {
                 // only reached through this header, so `p` is this `Job<C>`.
                 complete: |p, cx| unsafe { Self::complete(p.cast::<Self>(), cx) },
                 // SAFETY: as above.
-                release_unrun: |p| drop(unsafe { Self::take(p.cast::<Self>()) }),
+                release_unrun: |p| unsafe {
+                    <Self as bun_event_loop::Taskable>::release_unrun(p.cast::<Self>())
+                },
                 // SAFETY: linked ⇒ live; see `JobContext::cancel`.
-                cancel: |p| unsafe { C::cancel(core::ptr::addr_of_mut!((*p.cast::<Self>()).off)) },
+                cancel: |p| unsafe { C::cancel(&raw mut (*p.cast::<Self>()).off) },
                 prev: core::ptr::null_mut(),
                 next: core::ptr::null_mut(),
             },
-            ticket: ManuallyDrop::new(cx.vm().ticket()),
+            ticket: Some(cx.vm().ticket()),
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::run_on_pool,
@@ -335,7 +338,9 @@ impl<C: JobContext> Job<C> {
         }));
         // SAFETY: live until completed/released on this thread; the pool owns it now.
         unsafe {
-            cx.vm().jobs().push(&raw mut (*job).header);
+            if C::CANCELLABLE {
+                cx.vm().jobs.with_mut(|j| j.push(&raw mut (*job).header));
+            }
             WorkPool::schedule(&raw mut (*job).task);
         }
     }
@@ -344,14 +349,17 @@ impl<C: JobContext> Job<C> {
         // SAFETY: only reachable through the `task.callback` slot wired in
         // `schedule`; the pool calls back with exactly that field of a live job.
         let this: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
-        let done = Completion(NonNull::new(this).expect("job"));
-        // SAFETY: live job, exclusively the pool's for this callback; `ticket`
-        // and `off` are disjoint fields.
-        let (off, ticket) = unsafe { (&mut (*this).off, &*(*this).ticket) };
-        if !ticket.script_allowed() {
+        // SAFETY: live job, exclusively the pool's for this callback; the
+        // ticket leaves the job here, for good.
+        let (off, ticket) = unsafe { (&mut (*this).off, (*this).ticket.take().expect("job")) };
+        let done = Completion {
+            job: NonNull::new(this).expect("job"),
+            ticket,
+        };
+        if done.ticket().cancelled() {
             return done.finish();
         }
-        if let Some(done) = C::run(off, ticket, done) {
+        if let Some(done) = C::run(off, done) {
             done.finish();
         }
     }
@@ -360,10 +368,13 @@ impl<C: JobContext> Job<C> {
     /// are the caller's to complete or drop.
     ///
     /// # Safety
-    /// `this` is the job its `Completion` posted; called once.
-    unsafe fn take(this: *mut Self) -> (C::OffThread, C::Js) {
-        // SAFETY: fn contract; JS thread.
-        unsafe { VirtualMachine::get().jobs().unlink(&raw mut (*this).header) };
+    /// `this` is the job its `Completion` posted; called once, on `vm`'s thread.
+    unsafe fn take(this: *mut Self, vm: &VirtualMachine) -> (C::OffThread, C::Js) {
+        if C::CANCELLABLE {
+            // SAFETY: fn contract.
+            vm.jobs
+                .with_mut(|j| j.unlink(unsafe { &raw mut (*this).header }));
+        }
         // SAFETY: fn contract.
         let Job {
             mut keep_alive,
@@ -381,31 +392,38 @@ impl<C: JobContext> Job<C> {
     /// As [`take`](Self::take).
     unsafe fn complete(this: *mut Self, cx: &JsThread<'_>) -> JsResult<()> {
         // SAFETY: fn contract.
-        let (off, js) = unsafe { Self::take(this) };
+        let (off, js) = unsafe { Self::take(this, cx.vm()) };
         C::then(off, js, cx)
     }
 }
 
-/// The obligation to complete a running job exactly once: returned from
+/// The obligation to complete a running job exactly once — and, being what
+/// the other thread holds, the holder of the job's [`Ticket`]. Returned from
 /// [`JobContext::run`] to complete immediately, or kept and
 /// [`finish`](Self::finish)ed later from any thread.
 #[must_use = "a job must be finished exactly once"]
-pub struct Completion<C: JobContext>(NonNull<Job<C>>);
+pub struct Completion<C: JobContext> {
+    job: NonNull<Job<C>>,
+    ticket: Ticket,
+}
 // SAFETY: `finish` only posts the job through its (thread-safe) ticket.
 unsafe impl<C: JobContext> Send for Completion<C> {}
 impl<C: JobContext> Completion<C> {
+    /// Post the job back to its VM. The ticket outlives the post (the JS
+    /// thread may free the job the moment it is queued) and is dropped here.
     pub fn finish(self) {
         // Consumed: the obligation is met here, so its Drop check must not run.
-        let job = ManuallyDrop::new(self).0.as_ptr();
-        // SAFETY: the live heap job this token was created for. The ticket is
-        // moved out first: once the task is queued the JS thread owns (and may
-        // free) the job, and the ticket must outlive the post.
-        unsafe {
-            let ticket = ManuallyDrop::take(&mut (*job).ticket);
-            ticket.post(bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
-                job,
-            ));
-        }
+        let me = ManuallyDrop::new(self);
+        // SAFETY: moving the field out of a value that is never dropped.
+        let ticket = unsafe { core::ptr::read(&raw const me.ticket) };
+        ticket.post(bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
+            me.job.as_ptr(),
+        ));
+    }
+    /// The job's ticket: its VM is alive while this is held.
+    #[inline]
+    pub fn ticket(&self) -> &Ticket {
+        &self.ticket
     }
     /// The job's off-thread part, for work that continues after `run` returned.
     ///
@@ -413,7 +431,7 @@ impl<C: JobContext> Completion<C> {
     /// No other reference to it is live (the pool callback has returned).
     pub unsafe fn off_thread(&self) -> *mut C::OffThread {
         // SAFETY: live job.
-        unsafe { &raw mut (*self.0.as_ptr()).off }
+        unsafe { &raw mut (*self.job.as_ptr()).off }
     }
 }
 impl<C: JobContext> Drop for Completion<C> {

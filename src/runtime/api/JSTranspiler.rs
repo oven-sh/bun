@@ -677,12 +677,8 @@ pub(crate) struct TransformJs {
 impl jsc::JobContext for TransformTask {
     type OffThread = Self;
     type Js = TransformJs;
-    fn run(
-        this: &mut Self,
-        vm: &jsc::Ticket,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
-        TransformTask::run(this, vm);
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+        TransformTask::run(this, done.ticket());
         Some(done)
     }
     fn then(mut this: Self, mut js: TransformJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {

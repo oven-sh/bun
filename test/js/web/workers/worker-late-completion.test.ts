@@ -18,6 +18,7 @@
 // debug assertions only (debug, ASAN): the gate does not exist in release.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import fs from "node:fs";
 import path from "node:path";
 
 type Row = {
@@ -103,8 +104,9 @@ const ROWS: Row[] = [
   },
   {
     name: "Bun.Glob scan",
-    worker: `new Bun.Glob("*").scan({ cwd: require("node:os").tmpdir() })[Symbol.asyncIterator]().next();`,
+    worker: `new Bun.Glob("**/*").scan({ cwd: workerData.dir })[Symbol.asyncIterator]().next();`,
     ticket: "glob.rs",
+    files: { "a/b/c/d.txt": "x", "a/e.txt": "y", "f/g/h.txt": "z" },
   },
   {
     name: "dns lookup on the thread pool",
@@ -220,18 +222,19 @@ const ROWS: Row[] = [
 // cross-thread post that waits for the worker's teardown). Rows with a parent
 // side post in response to "armed".
 function host(row: Row, dir: string) {
+  const worker = `
+    const { parentPort, workerData } = require("node:worker_threads");
+    parentPort.on("message", () => {});
+    ${row.worker}
+    parentPort.postMessage("armed");
+    setImmediate(() => setImmediate(() => process.exit(0)));
+  `;
   return `
     const { Worker, MessageChannel } = require("node:worker_threads");
     const { port1, port2 } = new MessageChannel();
     const data = { port: port2, dir: ${JSON.stringify(dir)} };
     ${row.prelude ?? ""}
-    const w = new Worker(\`
-      const { parentPort, workerData } = require("node:worker_threads");
-      parentPort.on("message", () => {});
-      ${row.worker.replace(/`/g, "\\`").replace(/\$\{/g, "\\${")}
-      parentPort.postMessage("armed");
-      setImmediate(() => setImmediate(() => process.exit(0)));
-    \`, { eval: true, workerData: data, transferList: [port2] });
+    const w = new Worker(${JSON.stringify(worker)}, { eval: true, workerData: data, transferList: [port2] });
     w.on("error", e => { console.error("worker error:", e && e.message); process.exitCode = 1; });
     w.once("message", () => { ${row.parent ?? ""} });
     w.on("exit", code => { port1.close(); ${row.onExit ?? ""} if (code !== 0) { console.error("worker exit code", code); process.exitCode = 1; } });
@@ -268,11 +271,17 @@ describe.skipIf(!isDebug && !isASAN)("work that comes back after its worker bega
 // parks on the io loop instead of blocking a pool thread, so terminate() can
 // and does cancel it: the worker goes away promptly and the read never settles.
 describe.skipIf(isWindows)("terminate() cancels a read parked on the io loop", () => {
-  test.each([
-    ["Bun.stdin.text()", `Bun.stdin.text()`],
-    ["Bun.file(fifo).text()", `Bun.file(workerData).text()`],
-    ["Bun.file(fifo).bytes() twice", `Bun.file(workerData).bytes(); Bun.file(workerData).bytes()`],
-  ])("%s", async (_, read) => {
+  test.concurrent.each([
+    ["Bun.stdin.text()", [`Bun.stdin.text()`]],
+    ["Bun.file(fifo).text()", [`Bun.file(workerData).text()`]],
+    ["Bun.file(fifo).bytes() twice", [`Bun.file(workerData).bytes()`, `Bun.file(workerData).bytes()`]],
+  ])("%s", async (_, reads) => {
+    const worker = `
+      const { parentPort, workerData } = require("node:worker_threads");
+      const settled = w => v => parentPort.postMessage(w);
+      for (const p of [${reads.join(",")}]) p.then(settled("resolved"), settled("rejected"));
+      parentPort.postMessage("reading");
+    `;
     using dir = tempDir("worker-terminate-cancels", {});
     const fifo = path.join(String(dir), "fifo");
     await using proc = Bun.spawn({
@@ -288,13 +297,7 @@ describe.skipIf(isWindows)("terminate() cancels a read parked on the io loop", (
         // open) so the worker's open() succeeds and its read parks waiting for
         // data that never comes.
         const writer = require("node:fs").openSync(fifo, "r+");
-        const w = new Worker(
-          'const { parentPort, workerData } = require("node:worker_threads");' +
-          'const settled = w => v => parentPort.postMessage(w);' +
-          'for (const p of [${read.replace(/;/g, ",")}]) p.then(settled("resolved"), settled("rejected"));' +
-          'parentPort.postMessage("reading");',
-          { eval: true, workerData: fifo },
-        );
+        const w = new Worker(${JSON.stringify(worker)}, { eval: true, workerData: fifo });
         const seen = [];
         w.on("message", async m => {
           seen.push(m);
@@ -337,7 +340,6 @@ describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled"
         `
         const { Worker } = require("node:worker_threads");
         const { execFileSync } = require("node:child_process");
-        const fs = require("node:fs");
         const fifo = ${JSON.stringify(fifo)};
         execFileSync("mkfifo", [fifo]);
         const w = new Worker(
@@ -346,17 +348,9 @@ describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled"
           { eval: true, workerData: fifo },
         );
         w.on("error", e => { console.error("worker error:", e); process.exitCode = 1; });
-        w.once("message", async () => {
-          let terminated = false;
-          const done = w.terminate().then(code => { terminated = true; return code; });
-          // Long enough for a teardown that does not wait to have finished many
-          // times over (an idle worker terminates in milliseconds), and for the
-          // debug build's wait to say what it is waiting for.
-          await Bun.sleep(2500);
-          console.log("terminated before the read returned:", terminated);
-          // Release the read: open the FIFO for writing and close it (EOF).
-          fs.closeSync(fs.openSync(fifo, "w"));
-          console.log("exit code:", await done);
+        w.once("message", () => {
+          w.terminate().then(code => console.log("exit code:", code));
+          console.log("terminating");
         });
       `,
       ],
@@ -366,13 +360,57 @@ describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled"
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("terminated before the read returned: false\nexit code: 1\n");
-    if (isDebug) {
-      // The outstanding-ticket dump names the holder.
+    let stdout = "";
+    let stderr = "";
+    const out = proc.stdout.getReader();
+    const err = proc.stderr.getReader();
+    const pump = async (
+      r: ReadableStreamDefaultReader<Uint8Array>,
+      sink: (s: string) => void,
+      until: () => boolean,
+    ) => {
+      const dec = new TextDecoder();
+      while (!until()) {
+        const { value, done } = await r.read();
+        if (done) break;
+        sink(dec.decode(value, { stream: true }));
+      }
+    };
+    // terminate() has been called...
+    await pump(
+      out,
+      s => (stdout += s),
+      () => stdout.includes("terminating\n"),
+    );
+    if (isDebug || isASAN) {
+      // ...and the wait names what it is waiting for (deterministic: no window)...
+      await pump(
+        err,
+        s => (stderr += s),
+        () => /taken at .*node_fs\.rs:\d+/.test(stderr),
+      );
       expect(stderr).toContain("ticket(s) still held off-thread");
-      expect(stderr).toMatch(/taken at .*node_fs\.rs:\d+/);
+    } else {
+      // ...and long after an idle worker would have gone (milliseconds)...
+      await Bun.sleep(500);
     }
-    expect(exitCode).toBe(0);
-  }, 30_000);
+    // ...it has not resolved, because the read has not returned.
+    expect(stdout).toBe("terminating\n");
+    // Release the read: open the FIFO for writing and close it (EOF).
+    fs.closeSync(fs.openSync(fifo, "w"));
+    await Promise.all([
+      pump(
+        out,
+        s => (stdout += s),
+        () => false,
+      ),
+      pump(
+        err,
+        s => (stderr += s),
+        () => false,
+      ),
+    ]);
+    expect(stdout).toBe("terminating\nexit code: 1\n");
+    expect(await proc.exited).toBe(0);
+  });
 });

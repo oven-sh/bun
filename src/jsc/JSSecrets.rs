@@ -38,11 +38,7 @@ impl crate::JobContext for SecretsJob {
     type OffThread = Self;
     type Js = Strong;
 
-    fn run(
-        this: &mut Self,
-        _vm: &crate::Ticket,
-        done: crate::Completion<Self>,
-    ) -> Option<crate::Completion<Self>> {
+    fn run(this: &mut Self, done: crate::Completion<Self>) -> Option<crate::Completion<Self>> {
         Bun__SecretsJobOptions__runTask(SecretsJobOptions::opaque_mut(this.options.0));
         Some(done)
     }

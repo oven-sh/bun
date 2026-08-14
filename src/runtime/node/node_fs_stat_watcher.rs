@@ -63,7 +63,7 @@ pub struct StatWatcherScheduler {
     vm: BackRef<VirtualMachine>,
     /// Held while the periodic stat pass is out on the pool (set in
     /// `timer_callback`, moved out by `work_pool_callback`).
-    in_flight: Cell<Option<bun_jsc::Ticket>>,
+    ticket: Cell<Option<bun_jsc::Ticket>>,
     watchers: WatcherQueue,
 
     pub(crate) event_loop_timer: EventLoopTimer,
@@ -188,7 +188,7 @@ impl StatWatcherScheduler {
             main_thread: thread::current().id(),
             // JSC_BORROW: `vm` is the live per-thread VM (never null).
             vm: BackRef::from(core::ptr::NonNull::new(vm).expect("vm")),
-            in_flight: Cell::new(None),
+            ticket: Cell::new(None),
             watchers: WatcherQueue::default(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::StatWatcherScheduler),
             ref_count: ThreadSafeRefCount::init(),
@@ -228,27 +228,19 @@ impl StatWatcherScheduler {
         StatWatcher::ref_(watcher.as_ptr());
         // BACKREF — `this` is live (caller holds a ref).
         let this_ref = ParentRef::from(NonNull::new(this).expect("append: scheduler"));
+        debug_assert_eq!(this_ref.main_thread, thread::current().id());
         this_ref.watchers.push(watcher);
         log!("push watcher {:x}", watcher.as_ptr() as usize);
         let current = this_ref.get_interval();
         if current == 0 || current > w.interval {
             // we are not running or the new watcher has a smaller interval
-            Self::set_interval(this, w.interval);
+            this_ref.current_interval.store(w.interval, Ordering::Relaxed);
+            Self::set_timer(this, w.interval);
         }
     }
 
     fn get_interval(&self) -> i32 {
         self.current_interval.load(Ordering::Relaxed)
-    }
-
-    /// JS thread: update the current interval and set the timer.
-    fn set_interval(this: *mut Self, interval: i32) {
-        // BACKREF — `this` is live (caller holds a ref); `ParentRef` Deref
-        // gives safe `&Self` for the atomic store / thread-id check below.
-        let this_ref = ParentRef::from(NonNull::new(this).expect("set_interval: scheduler"));
-        debug_assert!(this_ref.main_thread == thread::current().id());
-        this_ref.current_interval.store(interval, Ordering::Relaxed);
-        Self::set_timer(this, interval);
     }
 
     /// Set the timer (this function is not thread safe, should be called only from the main thread)
@@ -292,10 +284,7 @@ impl StatWatcherScheduler {
             scheduler: unsafe { ParentRef::from_raw_mut(this) },
         });
         let holder = bun_core::heap::into_raw(holder);
-        ticket.post(ConcurrentTask::create(Task::new(
-            <StatWatcherTimerUpdate as bun_event_loop::Taskable>::TAG,
-            holder.cast::<()>(),
-        )));
+        ticket.post(ConcurrentTask::create_from(holder));
     }
 
     pub(crate) fn timer_callback(&mut self) {
@@ -340,7 +329,7 @@ impl StatWatcherScheduler {
         // of accumulating one leak per `set_interval(0)` / re-arm.
         // SAFETY: `self` is live (`&mut self`).
         Self::ref_(core::ptr::from_mut(self));
-        self.in_flight.set(Some(self.vm().ticket()));
+        self.ticket.set(Some(self.vm().ticket()));
         WorkPool::schedule(&raw mut self.task);
     }
 
@@ -362,7 +351,7 @@ impl StatWatcherScheduler {
         // Moved out before anything is posted: the JS thread may re-arm (and
         // store the next pass's ticket) as soon as it hears from this pass.
         let ticket = this_ref
-            .in_flight
+            .ticket
             .take()
             .expect("stat scheduler pass holds a ticket");
 

@@ -1012,7 +1012,6 @@ pub mod get_addr_info_request {
         type Js = LibcRequest;
         fn run(
             this: &mut Self,
-            _vm: &bun_jsc::Ticket,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
             this.backend.run();

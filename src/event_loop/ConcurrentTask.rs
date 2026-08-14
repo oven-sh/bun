@@ -336,16 +336,12 @@ impl ConcurrentTask {
     /// `task` was just refused and is not queued anywhere.
     pub unsafe fn release_refused(task: core::ptr::NonNull<ConcurrentTask>) {
         // SAFETY: fn contract.
-        unsafe {
-            // A callback task (`from_callback`, `ManagedTask::new*`) owns a
-            // heap `ManagedTask` behind `task.ptr` as well.
-            let inner = task.as_ref().task;
-            if inner.tag == crate::task_tag::ManagedTask {
-                crate::ManagedTask::ManagedTask::release(inner.ptr.cast());
-            }
-            if task.as_ref().auto_delete() {
-                drop(bun_core::heap::take(task.as_ptr()));
-            }
+        let inner = unsafe { Self::into_task(task) };
+        // A callback task (`from_callback`, `ManagedTask::new*`) owns a heap
+        // `ManagedTask` behind `task.ptr` as well.
+        if inner.tag == crate::task_tag::ManagedTask {
+            // SAFETY: as above; refused ⇒ ours.
+            unsafe { crate::ManagedTask::ManagedTask::release(inner.ptr.cast()) };
         }
     }
 

@@ -485,7 +485,7 @@ impl ShellCpTask {
     pub(crate) unsafe fn cp_on_finish(this: *mut ShellCpTask, result: bun_sys::Maybe<()>) {
         // SAFETY: caller contract — JS thread, from the `ShellAsyncCpTask`'s
         // completion; `this` is live and ours. The pool side finished (and
-        // stopped counting) when it handed the copy to that task, so continue
+        // dropped its poster) when it handed the copy to that task, so continue
         // in place rather than bouncing through the concurrent queue again.
         unsafe {
             if let Err(e) = result {

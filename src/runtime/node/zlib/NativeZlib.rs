@@ -43,7 +43,7 @@ mod _impl {
         // centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         /// How the pool thread delivers a finished write to the VM.
-        pub ticket: JsCell<Option<bun_jsc::Ticket>>,
+        pub ticket: Cell<Option<bun_jsc::Ticket>>,
         pub stream: JsCell<Context>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
@@ -97,7 +97,7 @@ mod _impl {
             Ok(Box::new(Self {
                 ref_count: Cell::new(1),
                 global_this: bun_ptr::BackRef::new(global),
-                ticket: JsCell::new(None),
+                ticket: Cell::new(None),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),

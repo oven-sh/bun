@@ -208,6 +208,8 @@ enum ErrorType {
 }
 
 impl S3HttpSimpleTask {
+    const HOLDS_TICKET: &str = "S3 request on the HTTP thread holds a ticket";
+
     // bun.TrivialNew(@This()) — heap-allocate; pointer crosses thread boundary via http callback
     pub(crate) fn new(init: Self) -> *mut Self {
         bun_core::heap::into_raw(Box::new(init))
@@ -437,7 +439,7 @@ impl S3HttpSimpleTask {
                 let ticket = (*this)
                     .http_ticket
                     .take()
-                    .expect("S3 request on the HTTP thread holds a ticket");
+                    .expect(Self::HOLDS_TICKET);
                 let queued = core::ptr::NonNull::from(
                     (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
                 );
@@ -461,7 +463,7 @@ impl S3HttpSimpleTask {
             let ticket = (*this)
                 .http_ticket
                 .take()
-                .expect("S3 request on the HTTP thread holds a ticket");
+                .expect(Self::HOLDS_TICKET);
             let queued = core::ptr::NonNull::from(
                 (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );

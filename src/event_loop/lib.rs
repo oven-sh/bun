@@ -61,7 +61,7 @@ bun_dispatch::link_interface! {
         fn enter();
         fn exit();
         fn enqueue_task(task: Task);
-        fn enqueue_task_concurrent_same_thread(task: core::ptr::NonNull<ConcurrentTask::ConcurrentTask>);
+        fn enqueue_task_after_yield(task: Task);
         fn js_poster() -> any_event_loop::JsPoster;
         fn env() -> *mut bun_dotenv::Loader;
         fn top_level_dir() -> *const [u8];

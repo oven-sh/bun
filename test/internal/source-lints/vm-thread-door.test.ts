@@ -7,8 +7,9 @@
 // this lint freezes, for the VM crates (`jsc`, `runtime`, `event_loop`,
 // `sql_jsc`, `http_jsc`), the two things that could open one:
 //
-//   1. `unsafe impl Send` / `unsafe impl Sync` (and the `owned_task!` /
-//      `intrusive_work_task!` macros, which emit one). `VirtualMachine`,
+//   1. `unsafe impl Send` / `unsafe impl Sync`, the `owned_task!` macro
+//      (which emits one) and `intrusive_work_task!` (which is what makes a
+//      type schedulable on the pool). `VirtualMachine`,
 //      `EventLoop` and `JSGlobalObject` are `!Send + !Sync`, so VM state can
 //      only reach another thread inside a type someone declared `Send` by hand.
 //      Every such type must either carry a `Ticket` for the VM whose state it

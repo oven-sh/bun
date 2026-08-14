@@ -56,6 +56,8 @@ impl Taskable for S3HttpDownloadStreamingTask {
 }
 
 impl S3HttpDownloadStreamingTask {
+    const HOLDS_TICKET: &str = "S3 download on the HTTP thread holds a ticket";
+
     pub(crate) fn new(init: Self) -> Box<Self> {
         Box::new(init)
     }
@@ -295,20 +297,14 @@ impl S3HttpDownloadStreamingTask {
                 let task = core::ptr::NonNull::from(
                     (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
                 );
-                match &done_ticket {
-                    Some(ticket) => ticket.post(task),
-                    None => (*this)
-                        .http_ticket
-                        .as_ref()
-                        .expect(Self::HOLDS_TICKET)
-                        .post(task),
-                }
+                done_ticket
+                    .as_ref()
+                    .unwrap_or_else(|| (*this).http_ticket.as_ref().expect(Self::HOLDS_TICKET))
+                    .post(task);
             }
         }
         drop(done_ticket);
     }
-
-    const HOLDS_TICKET: &'static str = "S3 download on the HTTP thread holds a ticket";
 
     /// `HTTPClientResultCallback::release_at_shutdown`: the exiting main
     /// thread parked the HTTP thread, which will not call back; hand the

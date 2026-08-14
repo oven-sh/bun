@@ -175,7 +175,7 @@ static FUTEX_ATOMIC: AtomicU32 = AtomicU32::new(0);
 static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
 
 /// What the debugger thread takes from the debuggee VM's thread.
-pub(crate) struct DebuggerThreadInit {
+struct DebuggerThreadInit {
     debuggee: crate::VmHandle,
     ctx_id: u32,
     is_connect: bool,
@@ -395,14 +395,14 @@ impl Debugger {
             this_ref.as_mut().has_started_debugger = true;
             // Everything the debugger thread needs from this VM, copied here;
             // it reaches back only through the (uncounted) handle to wake us.
-            let init = Box::new(DebuggerThreadInit {
+            let init = DebuggerThreadInit {
                 debuggee: this_ref.handle(),
                 ctx_id: dbg.script_execution_context_id,
                 is_connect: dbg.mode == Mode::Connect,
                 is_node_inspector: dbg.protocol == Protocol::NodeInspector,
                 from_env: dbg.from_environment_variable,
                 path_or_port: dbg.path_or_port,
-            });
+            };
             // Rust's `std::thread` default stack (2 MiB) is too small to run
             // a full `VirtualMachine::init` + JS module load on this thread,
             // so use 16 MiB.
@@ -426,7 +426,7 @@ impl Debugger {
 
     /// Debugger-thread entry: build a second `VirtualMachine`, hold the API
     /// lock, and run [`Debugger::start`] inside it.
-    pub(crate) fn start_js_debugger_thread(init: Box<DebuggerThreadInit>) {
+    fn start_js_debugger_thread(init: DebuggerThreadInit) {
         // The global allocator is mimalloc and `InitOptions` does not carry
         // `allocator`/`env_loader` (those are wired by
         // `RuntimeHooks::init_runtime_state`).
@@ -450,13 +450,16 @@ impl Debugger {
         vm.event_loop_mut().ensure_waker();
 
         extern "C" fn start_trampoline(ctx: *mut c_void) {
-            // SAFETY: `ctx` is the `Box<DebuggerThreadInit>` leaked just below.
-            Debugger::start(*unsafe { bun_core::heap::take(ctx.cast::<DebuggerThreadInit>()) });
+            // SAFETY: `ctx` is `&mut slot` below; `hold_api_lock` calls this
+            // synchronously on the same frame.
+            let init = unsafe { (*ctx.cast::<Option<DebuggerThreadInit>>()).take() };
+            Debugger::start(init.expect("init"));
         }
+        let mut slot = Some(init);
         #[allow(deprecated)]
         vm.global()
             .vm()
-            .hold_api_lock(bun_core::heap::into_raw(init).cast(), start_trampoline);
+            .hold_api_lock((&raw mut slot).cast(), start_trampoline);
     }
 
     /// Runs inside `holdAPILock` on the debugger thread. Publishes the

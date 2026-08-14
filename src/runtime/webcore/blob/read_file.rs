@@ -220,15 +220,12 @@ pub type ReadFileTask = bun_jsc::Completion<ReadFile>;
 unsafe impl Send for ReadFile {}
 
 impl bun_jsc::JobContext for ReadFile {
+    const CANCELLABLE: bool = cfg!(not(windows));
     type OffThread = Self;
     /// Where the bytes go: completed by `then`, or cancelled when the VM releases the JS sides of
     /// its live jobs at teardown (a refused or unrun read then frees only this off-thread part).
     type Js = ReadFileCompletionFns;
-    fn run(
-        this: &mut Self,
-        _vm: &bun_jsc::Ticket,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // Starts the read; finishes from the io loop via the token.
         this.run(done);
         None
@@ -243,17 +240,15 @@ impl bun_jsc::JobContext for ReadFile {
     /// A read parked on a pipe/tty that never becomes readable is the one
     /// state this job can be stuck in; end that wait (the read fails with
     /// ECANCELED through the usual close path).
+    #[cfg(not(windows))]
     unsafe fn cancel(this: *mut Self) {
-        #[cfg(not(windows))]
         // SAFETY: fn contract; `io_parking` is atomic, and a `true` means no
         // other thread touches `io_request` until it is queued again here.
         unsafe {
             if (*this).io_parking.cancel() {
-                io::IoRequestLoop::schedule(&mut *core::ptr::addr_of_mut!((*this).io_request));
+                io::IoRequestLoop::schedule(&mut (*this).io_request);
             }
         }
-        #[cfg(windows)]
-        let _ = this;
     }
 }
 
@@ -485,8 +480,9 @@ impl ReadFile {
         })
     }
 
-    /// io thread: the parked wait was cancelled; the close path that follows
-    /// finishes the job with this error.
+    /// The wait was cancelled (io thread: while parked — the close path that
+    /// follows finishes the job; pool thread: before it could park — the
+    /// caller finishes it): fail with ECANCELED.
     #[cfg(not(windows))]
     fn fail_cancelled(&mut self) {
         let err = bun_sys::Error::from_code(bun_sys::E::ECANCELED, bun_sys::Tag::read);
@@ -496,16 +492,20 @@ impl ReadFile {
             .store(ClosingState::Closing as u8, Ordering::SeqCst);
     }
 
+    /// Pool thread: park on the io loop until the fd is readable (or finish
+    /// now if the VM cancelled the job meanwhile). The caller returns without
+    /// touching `self` again: from here the io thread has it.
     #[cfg(not(windows))]
     pub(crate) fn wait_for_readable(&mut self) {
         bloblog!("ReadFile.waitForReadable");
+        if !self.io_parking.park() {
+            self.fail_cancelled();
+            return self.on_finish();
+        }
         self.close_after_io = true;
         self.io_request
             .store_callback_seq_cst(Self::on_request_readable);
-        self.io_parking.park();
-        if !self.io_request.scheduled {
-            io::IoRequestLoop::schedule(&mut self.io_request);
-        }
+        io::IoRequestLoop::schedule(&mut self.io_request);
     }
 
     /// Pick the read target: `buffer`'s spare capacity if it is at least as

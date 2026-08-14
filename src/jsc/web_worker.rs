@@ -440,8 +440,7 @@ impl WebWorker {
         // The thread is something of this VM's on another thread for as long as
         // it runs: the parent joins it before its own teardown's wait, which
         // this ticket would otherwise hold.
-        // SAFETY: `parent` is the calling thread's live VM.
-        let parent_ticket = unsafe { (*parent).ticket() };
+        let parent_ticket = parent_ref.ticket();
         /// What the worker thread is handed: its refcounted `WebWorker` (the ref
         /// taken above is the thread's), the parent's snapshot, and a ticket on
         /// the parent VM.
@@ -671,8 +670,8 @@ impl WebWorker {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         let WorkerVmInit {
             transform_options,
-            env_map: map,
-            proxy_env_slots: mut temp_proxy_slots,
+            env_map,
+            proxy_env_slots,
         } = init;
 
         // worker-thread only field; no other thread reads `arena`.
@@ -682,7 +681,7 @@ impl WebWorker {
         // it on every path — including the early-terminate checkpoint below,
         // which calls `shutdown()` before the VM exists.
         let loader_ptr: *mut bun_dotenv::Loader =
-            bun_core::heap::into_raw(Box::new(bun_dotenv::Loader::init_with_map(map)));
+            bun_core::heap::into_raw(Box::new(bun_dotenv::Loader::init_with_map(env_map)));
         self.worker_env_loader.set(loader_ptr);
 
         // Checkpoint before the expensive part: initWorker builds a full JSC
@@ -690,7 +689,6 @@ impl WebWorker {
         // above, bail now rather than spending ~50–100ms (release) creating a
         // VM that will immediately tear down.
         if self.has_requested_terminate() {
-            drop(temp_proxy_slots);
             self.shutdown();
             return Ok(core::ptr::null_mut());
         }
@@ -718,8 +716,7 @@ impl WebWorker {
                 .arena
                 .with_mut(|a| NonNull::new(std::ptr::from_mut(a.as_mut().unwrap())));
 
-            // Move the pre-cloned proxy storage into the worker VM.
-            *vm_ref.proxy_env_storage.lock() = core::mem::take(&mut temp_proxy_slots);
+            *vm_ref.proxy_env_storage.lock() = proxy_env_slots;
 
             vm_ref.is_main_thread = false;
             VirtualMachine::set_is_main_thread_vm(false);
@@ -760,7 +757,7 @@ impl WebWorker {
             return Ok(vm);
         }
 
-        // SAFETY: see post-publish note above.
+        // SAFETY: this thread's live VM; per-expression derefs, no long-lived `&mut`.
         unsafe {
             if (*vm).transpiler.configure_defines().is_err() {
                 // Fall through to spin() → shutdown() for full teardown under

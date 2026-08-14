@@ -78,19 +78,24 @@ jobs:
         run: cargo install --locked cargo-dylint@"$DYLINT_VERSION" dylint-link@"$DYLINT_VERSION"
 
       - name: Read the mordant pin
-        # The driver dylint builds (~50s) is tied to the nightly that the pinned
-        # mordant revision names, so the revision is the right cache key for it.
+        # The driver and library dylint builds are tied to the pinned mordant
+        # revision, so it is their cache key.
         id: pin
         run: |
           rev=$(sed -n 's/.*scarletindustries\/mordant", rev = "\([0-9a-f]*\)".*/\1/p' Cargo.toml)
           test -n "$rev"
           echo "rev=$rev" >> "$GITHUB_OUTPUT"
 
-      - name: Cache the dylint driver
+      - name: Cache the dylint driver and the built mordant library
+        # Both are a pure function of the dylint version and the pinned
+        # revision (which names the nightly they are built for): ~50s and
+        # ~60s of the job. What remains uncached is checking bun itself.
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.dylint_drivers
-          key: dylint-driver-${{ runner.os }}-${{ env.DYLINT_VERSION }}-${{ steps.pin.outputs.rev }}
+          path: |
+            ~/.dylint_drivers
+            target/dylint/libraries
+          key: dylint-lib-${{ runner.os }}-${{ env.DYLINT_VERSION }}-${{ steps.pin.outputs.rev }}
 
       - name: Enable rustc annotations
         run: echo "::add-matcher::.github/rust-matcher.json"

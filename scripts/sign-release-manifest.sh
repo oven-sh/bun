@@ -446,14 +446,19 @@ trap cleanup EXIT
 # would silently discard the newer version if its mktemp suffix sorts
 # after an older one. Instead, do two passes:
 #
-#   1. Walk all orphans. For each `${manifest_basename}.bak` /
-#      `${signed_manifest_basename}.bak` found, track the path to the
-#      newest copy via POSIX `[ A -nt B ]` (modification-time
-#      comparison — POSIX test operator, works on bash 3.2 and every
-#      BSD/GNU shell, no `stat -c %Y` or `printf %()T` dependency).
-#   2. Restore only the newest of each, iff the corresponding live
-#      path is missing. Then rm -rf every orphan (including the ones
-#      whose .bak we skipped).
+#   1. Walk all orphans and pick the single newest orphan DIRECTORY,
+#      keyed on its `${manifest_basename}.bak` mtime via POSIX
+#      `[ A -nt B ]` (modification-time comparison — POSIX test
+#      operator, works on bash 3.2 and every BSD/GNU shell, no
+#      `stat -c %Y` or `printf %()T` dependency). Both `.bak` files
+#      are then taken from that one orphan, never mixed across
+#      orphans: a `.txt` from one run and an `.asc` from another is
+#      exactly the mismatched pair this helper exists to prevent. An
+#      orphan holding only an `.asc.bak` is never selected; a
+#      signature whose manifest is gone has nothing to pair with.
+#   2. Restore that orphan's `.bak`s iff the corresponding live
+#      paths are missing. Then rm -rf every orphan (including the
+#      ones we skipped).
 #
 # Identical-mtime tiebreaker: `-nt` is false on ties, so the first
 # orphan wins — deterministic given a stable glob order. In practice
@@ -502,24 +507,25 @@ trap cleanup EXIT
 #   caches) would have its own scratch dir false-aged and swept by a
 #   sibling — a worse bug than the one the aging check was meant to
 #   fix.
-_newest_manifest_bak=""
-_newest_signed_bak=""
+_newest_orphan=""
 for _stale in "${dir}/${scratch_prefix}"*/; do
   if [ -d "${_stale}" ]; then
     _stale_manifest_bak="${_stale}${manifest_basename}.bak"
-    _stale_signed_bak="${_stale}${signed_manifest_basename}.bak"
     if [ -f "${_stale_manifest_bak}" ]; then
-      if [ -z "${_newest_manifest_bak}" ] || [ "${_stale_manifest_bak}" -nt "${_newest_manifest_bak}" ]; then
-        _newest_manifest_bak="${_stale_manifest_bak}"
-      fi
-    fi
-    if [ -f "${_stale_signed_bak}" ]; then
-      if [ -z "${_newest_signed_bak}" ] || [ "${_stale_signed_bak}" -nt "${_newest_signed_bak}" ]; then
-        _newest_signed_bak="${_stale_signed_bak}"
+      if [ -z "${_newest_orphan}" ] || [ "${_stale_manifest_bak}" -nt "${_newest_orphan}${manifest_basename}.bak" ]; then
+        _newest_orphan="${_stale}"
       fi
     fi
   fi
 done
+_newest_manifest_bak=""
+_newest_signed_bak=""
+if [ -n "${_newest_orphan}" ]; then
+  _newest_manifest_bak="${_newest_orphan}${manifest_basename}.bak"
+  if [ -f "${_newest_orphan}${signed_manifest_basename}.bak" ]; then
+    _newest_signed_bak="${_newest_orphan}${signed_manifest_basename}.bak"
+  fi
+fi
 # Restore the newest of each iff the live file is missing. If live
 # already exists (prior completed run's output or — hypothetically —
 # a concurrent producer; see concurrency note above), don't clobber
@@ -563,7 +569,7 @@ for _stale in "${dir}/${scratch_prefix}"*/; do
     rm -rf "${_stale}" || true
   fi
 done
-unset -v _stale _stale_manifest_bak _stale_signed_bak _newest_manifest_bak _newest_signed_bak _live_manifest_missing
+unset -v _stale _stale_manifest_bak _newest_orphan _newest_manifest_bak _newest_signed_bak _live_manifest_missing
 
 # Create the per-invocation scratch directory inside ${dir}. Using
 # `mktemp -d "${dir}/.sign-manifest-scratch.XXXXXXXX"` gives us a name

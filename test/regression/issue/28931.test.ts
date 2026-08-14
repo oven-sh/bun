@@ -614,6 +614,69 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(leftovers).toEqual([]);
   });
 
+  test("sweep never restores a mismatched cross-orphan .txt/.asc pair", async () => {
+    // Selection is keyed on the orphan DIRECTORY (by its .txt.bak
+    // mtime), never per-file: if the newest .txt.bak and the newest
+    // .asc.bak live in different orphans, taking each independently
+    // would restore a manifest from one run and a signature from
+    // another, producing exactly the .txt/.asc identity drift this
+    // helper exists to prevent. Both .baks must come from the single
+    // orphan whose .txt.bak is newest.
+    //
+    // Setup: orphan A holds the NEWEST .txt.bak but an OLD .asc.bak;
+    // orphan B holds an older .txt.bak but the NEWEST .asc.bak. A
+    // per-file newest-wins selection would mix A's .txt with B's
+    // .asc; directory-keyed selection takes both from A.
+    using dir = tempDir("bun-28931-cross-orphan-", {
+      "bun-linux-x64.zip": "fresh",
+    });
+    const dirStr = String(dir);
+
+    const orphanA = join(dirStr, ".sign-manifest-scratch.orphan_a");
+    const orphanB = join(dirStr, ".sign-manifest-scratch.orphan_b");
+    mkdirSync(orphanA);
+    mkdirSync(orphanB);
+
+    const aTxt = Buffer.alloc(64, "a").toString() + " *bun-linux-x64.zip\n";
+    const bTxt = Buffer.alloc(64, "b").toString() + " *bun-linux-x64.zip\n";
+    const aAsc =
+      "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\npair-a\n-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n";
+    const bAsc =
+      "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\npair-b\n-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n";
+    writeFileSync(join(orphanA, "SHASUMS256.txt.bak"), aTxt);
+    writeFileSync(join(orphanA, "SHASUMS256.txt.asc.bak"), aAsc);
+    writeFileSync(join(orphanB, "SHASUMS256.txt.bak"), bTxt);
+    writeFileSync(join(orphanB, "SHASUMS256.txt.asc.bak"), bAsc);
+
+    // A's .txt.bak is newest; B's .asc.bak is newest. 1000s gaps are
+    // far above any filesystem mtime granularity.
+    const now = Math.floor(Date.now() / 1000);
+    utimesSync(join(orphanA, "SHASUMS256.txt.bak"), now, now);
+    utimesSync(join(orphanA, "SHASUMS256.txt.asc.bak"), now - 1000, now - 1000);
+    utimesSync(join(orphanB, "SHASUMS256.txt.bak"), now - 1000, now - 1000);
+    utimesSync(join(orphanB, "SHASUMS256.txt.asc.bak"), now, now);
+
+    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(false);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
+
+    // Bogus GPG key: sweep restores, run re-backs-up, publish, gpg
+    // --import fails, rollback re-restores — final bytes show which
+    // .baks the sweep picked.
+    const res = await sh([script, dirStr, "bun-linux-x64.zip"], {
+      GPG_PRIVATE_KEY: "not-a-valid-pgp-key",
+      GPG_PASSPHRASE: "unused",
+    });
+    expect(res.stderr).toMatch(/^gpg: /m);
+    expect(res.exitCode).not.toBe(0);
+
+    // Both restored files must be A's matched pair: A has the newest
+    // .txt.bak, so A's .asc.bak comes with it even though B's is newer.
+    expect(readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8")).toBe(aTxt);
+    expect(readFileSync(join(dirStr, "SHASUMS256.txt.asc"), "utf8")).toBe(aAsc);
+    const leftovers = readdirSync(dirStr).filter(name => name.startsWith(".sign-manifest-scratch."));
+    expect(leftovers).toEqual([]);
+  });
+
   test("sweep does not clobber live outputs with an orphaned .bak", async () => {
     // Opposite branch of the orphan-restore tests above: when the live
     // SHASUMS256.txt / .asc already exist (e.g. a prior run completed

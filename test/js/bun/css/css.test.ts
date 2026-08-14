@@ -2217,13 +2217,17 @@ describe("css tests", () => {
       });
     });
 
-    // A physical value that needs the buffered values as a fallback still flushes them first.
-    compiled("margin-block-start: 3px; margin: 1dvh", rule("margin-top: 3px; margin: 1dvh;"));
+    // Values with syntax the targets don't support (dvh here): a block value still ends up ahead
+    // of the later one as a fallback, since it is written into the rule first, and the existing
+    // fallback flush between two physical values still applies. An inline value is dropped for the
+    // overridden direction all the same, since keeping it would override the later value in every
+    // browser that does support the syntax.
     compiled("margin-block-start: 3px; margin-top: 1dvh", rule("margin-top: 3px; margin-top: 1dvh;"));
     compiled(
       "margin-inline-start: 3px; margin-left: 1px; margin-left: 1dvh",
       rule("margin-left: 1px; margin-left: 1dvh;") + rtl("margin-right: 3px;"),
     );
+    compiled("margin-inline-start: 3px; margin-left: 1dvh", rule("margin-left: 1dvh;") + rtl("margin-right: 3px;"));
 
     describe("border", () => {
       compiled(
@@ -2308,6 +2312,30 @@ describe("css tests", () => {
       compiled(
         "border-block-start-width: 3px; border-top-width: 1px",
         rule("border-top-width: 3px; border-top-width: 1px;"),
+      );
+
+      // Values with syntax the targets don't support, as for margin above; colors get their own
+      // fallbacks.
+      compiled(
+        "border-block-start-width: 3px; border-top-width: 1dvh",
+        rule("border-top-width: 3px; border-top-width: 1dvh;"),
+      );
+      compiled(
+        "border-inline-start-width: 3px; border-left-width: 1dvh",
+        rule("border-left-width: 1dvh;") + rtl("border-right-width: 3px;"),
+      );
+      compiled(
+        "border-inline-start: 3px solid red; border-left: 1dvh solid #00f",
+        rule("border-left: 1dvh solid #00f;") + rtl("border-right: 3px solid red;"),
+      );
+      compiled(
+        "border-inline-start-color: red; border-left-color: lab(40% 56.6 39)",
+        rule("border-left-color: #b32323; border-left-color: lab(40% 56.6 39);") + rtl("border-right-color: red;"),
+      );
+      compiled(
+        "border-inline-start-color: red; border-left: 1px solid lab(40% 56.6 39)",
+        rule("border-left: 1px solid #b32323; border-left: 1px solid lab(40% 56.6 39);") +
+          rtl("border-right-color: red;"),
       );
 
       // Four-side shorthands set both sides.
@@ -2464,6 +2492,10 @@ describe("css tests", () => {
           rtl("border-top-right-radius: 5px;"),
       );
       compiled("border-start-start-radius: 3px; border-radius: 1px", rule("border-radius: 1px;"));
+      compiled(
+        "border-start-start-radius: 3px; border-top-left-radius: 1dvh",
+        rule("border-top-left-radius: 1dvh;") + rtl("border-top-right-radius: 3px;"),
+      );
       compiled(
         "border-start-start-radius: 3px; border-radius: 1px; border-start-start-radius: 5px",
         rule("border-radius: 1px;") + ltr("border-top-left-radius: 5px;") + rtl("border-top-right-radius: 5px;"),

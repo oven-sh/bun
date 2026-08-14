@@ -769,30 +769,22 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
     ) {
         // If the value contains syntax that isn't supported across all targets,
         // preserve the previous value as a fallback.
-        let needs_fallback = context
-            .targets
-            .browsers
-            .as_ref()
-            .is_some_and(|browsers| !val.is_compatible(browsers));
-        if needs_fallback && self.physical_slot_is_some(field) {
-            self.flush(dest, context);
-            return;
-        }
+        let needs_fallback = self.physical_slot_is_some(field)
+            && context
+                .targets
+                .browsers
+                .as_ref()
+                .is_some_and(|browsers| !val.is_compatible(browsers));
 
-        if category == self.category {
-            return;
-        }
-
-        // A physical value following logical ones. When the logical values are compiled away
-        // anyway, keep them buffered: `flush` then knows which physical sides were declared after
-        // them and leaves those out of the ltr/rtl rules, which would otherwise override this
-        // value (see `flush_compiled_inline`). A value that needs a fallback flushes as before so
-        // that the buffered values are written out ahead of it.
+        // A physical value following logical ones flushes them, unless they are compiled away
+        // anyway: then they stay buffered, so that `flush` knows which physical sides were
+        // declared after them and leaves those out of the ltr/rtl rules, which would otherwise
+        // override this value (see `flush_compiled_inline`).
         let keep_logical_buffered = category == PropertyCategory::Physical
             && self.category == PropertyCategory::Logical
-            && !needs_fallback
             && Self::compiles_logical(context);
-        if !keep_logical_buffered {
+
+        if needs_fallback || (category != self.category && !keep_logical_buffered) {
             self.flush(dest, context);
         }
     }

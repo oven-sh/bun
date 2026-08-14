@@ -1380,24 +1380,18 @@ mod border_handler_body {
 
             macro_rules! flush_helper {
                 ($key:ident, $prop:ident, $val:expr, $category:expr) => {{
-                    // A value containing syntax that isn't supported across all targets keeps
-                    // the previous value as a fallback.
-                    let browsers = context.targets.browsers;
-                    let needs_fallback = || {
-                        browsers
-                            .as_ref()
-                            .is_some_and(|browsers| !css::generic::is_compatible($val, browsers))
-                    };
-
                     if $category != self.category
-                        && !(self.keeps_logical_buffered($category, context) && !needs_fallback())
+                        && !self.keeps_logical_buffered($category, context)
                     {
                         self.flush(dest, context);
                     }
 
+                    // A value containing syntax that isn't supported across all targets keeps
+                    // the previous value as a fallback.
                     if let Some(existing) = &self.$key.$prop
                         && !existing.eql($val)
-                        && needs_fallback()
+                        && let Some(browsers) = &context.targets.browsers
+                        && !css::generic::is_compatible($val, browsers)
                     {
                         self.flush(dest, context);
                     }

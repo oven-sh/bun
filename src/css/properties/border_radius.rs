@@ -214,7 +214,8 @@ macro_rules! maybe_flush {
 
 macro_rules! property_helper {
     ($self:expr, $d:expr, $ctx:expr, $bump:expr, $prop:ident, $val:expr, $vp:expr) => {{
-        if $self.category != PropertyCategory::Physical && !$self.keeps_logical_buffered($ctx, $val)
+        if $self.category != PropertyCategory::Physical
+            && !BorderRadiusHandler::keeps_logical_buffered($ctx)
         {
             $self.flush($d, $ctx);
         }
@@ -492,19 +493,9 @@ impl BorderRadiusHandler {
     /// instead of flushing them. That is done when the logical corners are compiled away anyway:
     /// `flush` then knows which physical corners were declared after them and leaves those out of
     /// the ltr/rtl rules, which would otherwise override the physical corner (see
-    /// `logical_property!`). A value that needs a fallback flushes as before, so that the buffered
-    /// values are written out ahead of it.
-    fn keeps_logical_buffered(
-        &self,
-        context: &PropertyHandlerContext,
-        val: &Size2D<LengthPercentage>,
-    ) -> bool {
+    /// `logical_property!`).
+    fn keeps_logical_buffered(context: &PropertyHandlerContext) -> bool {
         context.should_compile_logical(css::compat::Feature::LogicalBorderRadius)
-            && context
-                .targets
-                .browsers
-                .as_ref()
-                .is_none_or(|browsers| size2d_lp_is_compatible(val, browsers))
     }
 
     /// Flushes ahead of an unparsed physical declaration, which is written out directly instead

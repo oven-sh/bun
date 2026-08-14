@@ -2726,9 +2726,10 @@ fn polar_to_rectangular(l: f32, c: f32, h: f32) -> (f32, f32, f32) {
     (l, a, b)
 }
 
-// Deliberately computed in f32 (as lightningcss does), not in f64 and then cast: the f32 values
-// nearest to the exact quotients are one ulp away from where the f32 XYZd65 -> XYZd50 matrix below
-// puts achromatic colors, which leaves lab(from gray l a b) with a, b around 1e-5 instead of 0 0.
+// The same f32 expression as lightningcss (`D50` in its values/color.rs), so the constants are
+// bit-identical to upstream's. Evaluating it in f64 and casting (#14832) gives x and z one ulp
+// higher, which stops lab()/lch() output from matching upstream: most greys then come out with
+// a, b around 1e-5 instead of 0 0.
 const D50: [f32; 3] = [0.3457 / 0.3585, 1.00000, (1.0 - 0.3457 - 0.3585) / 0.3585];
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2775,8 +2776,8 @@ impl From<LAB> for LCH {
 impl From<LAB> for XYZd50 {
     fn from(lab_: LAB) -> XYZd50 {
         // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L352
-        const K: f32 = (24389.0f64 / 27.0f64) as f32; // 29^3/3^3
-        const E: f32 = (216.0f64 / 24389.0f64) as f32; // 6^3/29^3
+        const K: f32 = 24389.0 / 27.0; // 29^3/3^3
+        const E: f32 = 216.0 / 24389.0; // 6^3/29^3
 
         let lab = lab_.resolve_missing();
         let l = lab.l * 100.0;

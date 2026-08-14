@@ -7559,12 +7559,16 @@ describe("css tests", () => {
     minify_test("@page \\31 st{margin:1em}", "@page \\31 st{margin:1em}");
   });
 
-  // Expected strings are lightningcss 1.30.2 output. These achromatic colors divide out against
-  // the D50 reference white exactly, so lab() gives a = b = 0 and lch() gives c = 0 with no made-up
-  // hue. The reference white used to be rounded one f32 ulp away from where the D65 -> D50
-  // adaptation puts greys, which biased every grey by about that much: gray came out as
-  // lab(53.585% -.0000298023 .0000119209) and lch(53.585% .0000320981 158.199).
+  // Expected strings are lightningcss 1.30.2 output. Using its f32 D50 constants makes a/b (and c/h)
+  // match it for all 256 sRGB greys, 163 of which print exactly 0 0; with D50 rounded from f64 (one
+  // ulp higher in x and z) only 130 did, and gray printed lab(53.585% -.0000298023 .0000119209) and
+  // lch(53.585% .0000320981 158.199).
   describe("achromatic colors converted to lab() and lch()", () => {
+    // Except for white, the greys below have bit-identical x, y, z by the time xyz -> lab takes cube
+    // roots (the sRGB ones also need powf to return the nearest float, which the true value is
+    // within 0.2 ulp of at these inputs), so their 0 0 does not depend on the platform's libm.
+    // white reaches the cube root with z / D50[2] = 1 - 2^-24 and relies on cbrtf rounding that to
+    // 1, as the oklch(100% 0 0deg) -> lab(100% 0 0 / .5) fallbacks pinned above always have.
     minify_test(".foo { color: lab(from gray l a b) }", ".foo{color:lab(53.585% 0 0)}");
     minify_test(".foo { color: lab(from white l a b) }", ".foo{color:lab(100% 0 0)}");
     minify_test(".foo { color: lab(from #212121 l a b) }", ".foo{color:lab(12.74% 0 0)}");
@@ -7575,9 +7579,6 @@ describe("css tests", () => {
     minify_test(".foo { color: lch(from #212121 l c h) }", ".foo{color:lch(12.74% 0 0)}");
     minify_test(".foo { color: lch(from #bdbdbd l c h) }", ".foo{color:lch(76.6112% 0 0)}");
 
-    // srgb-linear skips the sRGB transfer function (libm powf), and for these values the three
-    // channels are still bit-identical when they reach the cbrt in xyz -> lab, so a = b = 0 here
-    // does not depend on the platform's libm.
     minify_test(".foo { color: lab(from color(srgb-linear 0.05 0.05 0.05) l a b) }", ".foo{color:lab(26.7348% 0 0)}");
     minify_test(".foo { color: lab(from color(srgb-linear 0.1 0.1 0.1) l a b) }", ".foo{color:lab(37.8424% 0 0)}");
     minify_test(".foo { color: lab(from color(srgb-linear 0.4 0.4 0.4) l a b) }", ".foo{color:lab(69.4695% 0 0)}");
@@ -7587,7 +7588,7 @@ describe("css tests", () => {
     minify_test(".foo { color: lch(from color(srgb-linear 0.4 0.4 0.4) l c h) }", ".foo{color:lch(69.4695% 0 0)}");
     minify_test(".foo { color: lch(from color(srgb-linear 0.8 0.8 0.8) l c h) }", ".foo{color:lch(91.6849% 0 0)}");
 
-    // The residual used to leak into anything computed from the converted color: -9.99999 here.
+    // The converted grey's a/b feed into the mix (b was -9.99999 with the f64 constants).
     minify_test(".foo { color: color-mix(in lab, gray, lab(50% 50 -20)) }", ".foo{color:lab(51.7925% 25 -10)}");
     minify_test(".foo { color: color-mix(in lab, white, lab(50% 50 -20)) }", ".foo{color:lab(75% 25 -10)}");
     minify_test(

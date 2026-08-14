@@ -540,9 +540,10 @@ describe("css string output parses back to the same color", () => {
     }
   });
 
-  // These greys come out as exactly a = b = 0, as they do in lightningcss. The D50 white point
-  // used to be rounded one f32 ulp away from where the D65 -> D50 adaptation puts greys, which
-  // biased all of them: #808080 printed as lab(53.585022% -0.000029802322 0.000011920929).
+  // These greys print exactly 0 0, as they do in lightningcss, whose f32 D50 constants the
+  // conversion uses; with D50 rounded from f64 (one ulp higher in x and z) #808080 printed as
+  // lab(53.585022% -0.000029802322 0.000011920929). The platform notes in css.test.ts
+  // ("achromatic colors converted to lab() and lch()") apply to the same inputs here.
   test.each(["#000000", "#212121", "#808080", "#bdbdbd", "#ffffff"])("lab of grey %s has a = b = 0", input => {
     expect(color(input, "lab")).toMatch(/^lab\(\d+(\.\d+)?% 0 0\)$/);
   });

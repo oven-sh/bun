@@ -2831,3 +2831,58 @@ it("should add an uncompressed .tar local tarball", async () => {
   expect(package_json.version).toBe("0.0.3");
   expect(await file(join(package_dir, "package.json")).text()).toInclude('"baz-0.0.3.tar"');
 });
+
+it("bun add --trust keeps the new package when another --trust package is already in trustedDependencies", async () => {
+  setHandler(dummyRegistry([]));
+  for (const name of ["a-scripted", "b-scripted"]) {
+    await mkdir(join(package_dir, name));
+    await writeFile(
+      join(package_dir, name, "package.json"),
+      JSON.stringify({
+        name,
+        version: "1.0.0",
+        scripts: { postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall.txt', '')"` },
+      }),
+    );
+  }
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      trustedDependencies: ["a-scripted"],
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "--trust", "file:./a-scripted", "file:./b-scripted"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  const out = await stdout.text();
+  expect(out).toContain("installed b-scripted@");
+  expect(await exited).toBe(0);
+
+  expect(
+    await Promise.all(
+      ["a-scripted", "b-scripted"].map(name =>
+        file(join(package_dir, "node_modules", name, "postinstall.txt")).exists(),
+      ),
+    ),
+  ).toStrictEqual([true, true]);
+  expect(await file(join(package_dir, "package.json")).json()).toStrictEqual({
+    name: "foo",
+    version: "0.0.1",
+    trustedDependencies: ["a-scripted", "b-scripted"],
+    dependencies: {
+      "a-scripted": "file:./a-scripted",
+      "b-scripted": "file:./b-scripted",
+    },
+  });
+});

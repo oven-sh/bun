@@ -1458,7 +1458,7 @@
         },
         {
           "name": "audit-level",
-          "description": "Only print advisories with severity greater than or equal to  (low, moderate, high, critical)",
+          "description": "Only print advisories at or above the given severity (low, moderate, high, critical)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1835,6 +1835,15 @@
           "valueType": "val",
           "required": false,
           "multiple": false
+        },
+        {
+          "name": "filter",
+          "shortName": "F",
+          "description": "Only prune the node_modules folders of the matching workspaces; the shared store / hoisted root folder keeps everything other workspaces use",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": true
         },
         {
           "name": "silent",

@@ -103,8 +103,8 @@ _bun_completions() {
     PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]="-c -y -p -f -g";
 
     PACKAGE_OPTIONS[DEDUPE_OPTIONS_LONG]="--check";
-    PACKAGE_OPTIONS[PRUNE_OPTIONS_LONG]="--production --prod --omit --dry-run --os --cpu --linker --silent --cwd --help";
-    PACKAGE_OPTIONS[PRUNE_OPTIONS_SHORT]="-p -P -h";
+    PACKAGE_OPTIONS[PRUNE_OPTIONS_LONG]="--production --prod --omit --filter --dry-run --os --cpu --linker --silent --cwd --help";
+    PACKAGE_OPTIONS[PRUNE_OPTIONS_SHORT]="-p -P -F -h";
     PACKAGE_OPTIONS[AUDIT_OPTIONS_LONG]="--json --audit-level --ignore --prod --production --omit --dry-run --cwd --help";
 
     PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --json --help"
@@ -128,6 +128,11 @@ _bun_completions() {
         --omit)
             COMPREPLY=( $(compgen -W "dev optional peer" -- "${cur_word}") );
             return;;
+        -F|--filter)
+            case "${COMP_WORDS[1]}" in
+                a|add|remove|rm|i|install|prune) return;;
+            esac
+            ;;
         --linker)
             COMPREPLY=( $(compgen -W "isolated hoisted" -- "${cur_word}") );
             return;;

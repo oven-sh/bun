@@ -512,6 +512,15 @@ pub(crate) fn effective_npm_range(
     dep_id: DependencyID,
     dep: &Dependency,
 ) -> Option<dependency::Version> {
+    effective_version(lockfile, dep_id, dep)
+        .filter(|version| version.tag == DependencyVersionTag::Npm)
+}
+
+pub(crate) fn effective_version(
+    lockfile: &Lockfile,
+    dep_id: DependencyID,
+    dep: &Dependency,
+) -> Option<dependency::Version> {
     let mut version = if dep.behavior.is_workspace()
         || (dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias)
     {
@@ -528,7 +537,7 @@ pub(crate) fn effective_npm_range(
             .get(lockfile, *version.catalog(), dep.name)?
             .version;
     }
-    (version.tag == DependencyVersionTag::Npm).then_some(version)
+    Some(version)
 }
 
 // Optional-peer edges are followed too: with an in-sync package.json `clean` runs with `keep_optional_peer_targets`.

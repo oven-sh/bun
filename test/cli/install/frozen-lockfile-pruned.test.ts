@@ -2,7 +2,7 @@ import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { exists, lstat } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, isWindows } from "harness";
-import { join } from "path";
+import { dirname, join } from "path";
 
 type Linker = "hoisted" | "isolated";
 type PackageJson = Record<string, unknown>;
@@ -42,7 +42,10 @@ async function writeTree(dir: string, tree: Tree, workspaces: string[] = Object.
     write(join(dir, "package.json"), JSON.stringify(tree.root)),
     ...workspaces.map(path => write(join(dir, path, "package.json"), JSON.stringify(tree.packages[path]))),
     ...Object.entries(tree.files ?? {})
-      .filter(([path]) => workspaces.some(ws => path.startsWith(ws + "/")))
+      .filter(([path]) => {
+        const owner = Object.keys(tree.packages).find(ws => path.startsWith(ws + "/"));
+        return owner === undefined || workspaces.includes(owner);
+      })
       .map(([path, contents]) => write(join(dir, path), contents)),
   ]);
 }
@@ -74,6 +77,23 @@ const withApp = (extra: PackageJson): Tree => ({
 
 const survivorTree = withApp({ dependencies: { ...(appPackageJson.dependencies as object), other: "workspace:*" } });
 const rootSurvivorTree: Tree = { ...monorepo, root: { ...rootPackageJson, dependencies: { other: "workspace:*" } } };
+
+const aDepPatch = `diff --git a/patched.txt b/patched.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e728b8dad
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++hello world
+`;
+const aDepPatchedDependencies = { "a-dep@1.0.1": "patches/a-dep@1.0.1.patch" };
+const patchedMonorepo: Tree = {
+  ...monorepo,
+  root: { ...rootPackageJson, patchedDependencies: aDepPatchedDependencies },
+  files: { ...monorepo.files, "patches/a-dep@1.0.1.patch": aDepPatch },
+};
+const patchedLockLine = '"a-dep@1.0.1": "patches/a-dep@1.0.1.patch"';
+const changedSectionNote = (section: string) => `"${section}" in package.json changed since the lockfile was saved`;
 
 const survivorError = (dependent: string, ws = "other") =>
   `workspace "${dependent}" depends on workspace "${ws}" (packages/${ws}), which is listed in bun.lock but not on disk`;
@@ -481,6 +501,90 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
     await frozen(packageDir, linker, 0);
 
     expect(await lockText(packageDir)).toBe(pruned);
+  });
+
+  // Like trustedDependencies above, patchedDependencies is not part of the frozen comparison (docs/pm/cli/install.mdx).
+  test.concurrent("patchedDependencies added after bun.lock was written still passes --frozen-lockfile", async () => {
+    const { packageDir, full } = await verbatimScenario(linker, monorepo, survivors);
+    expect(full).not.toContain('"patchedDependencies"');
+    await writeTree(packageDir, patchedMonorepo, survivors);
+
+    const { stderr } = await frozen(packageDir, linker, 0);
+
+    expect(stderr).not.toContain("patchedDependencies");
+    expect(await lockText(packageDir)).toBe(full);
+    const aDep = installedPath(packageDir, linker, "a-dep", "1.0.1");
+    expect(await file(aDep).json()).toMatchObject({ name: "a-dep", version: "1.0.1" });
+    expect(await file(join(dirname(aDep), "patched.txt")).text()).toBe("hello world\n");
+    expect(await exists(join(packageDir, "node_modules", "other"))).toBeFalse();
+
+    const { stderr: plain } = await install(packageDir, linker);
+
+    expect(plain).toContain("Saved lockfile");
+    expect(await lockText(packageDir)).toContain(patchedLockLine);
+  });
+
+  test.concurrent("patchedDependencies removed after bun.lock was written still passes --frozen-lockfile", async () => {
+    const { fullDir, full } = await fullInstall(linker, patchedMonorepo);
+    expect(full).toContain(patchedLockLine);
+    expect(await exists(join(dirname(installedPath(fullDir, linker, "a-dep", "1.0.1")), "patched.txt"))).toBeTrue();
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker } });
+    await writeTree(packageDir, monorepo, survivors);
+    await write(join(packageDir, "bun.lock"), full);
+
+    const { stderr } = await frozen(packageDir, linker, 0);
+
+    expect(stderr).not.toContain("patchedDependencies");
+    expect(await lockText(packageDir)).toBe(full);
+    const aDep = installedPath(packageDir, linker, "a-dep", "1.0.1");
+    expect(await file(aDep).json()).toMatchObject({ name: "a-dep", version: "1.0.1" });
+    expect(await exists(join(dirname(aDep), "patched.txt"))).toBeFalse();
+  });
+
+  test.concurrent("overrides added after bun.lock was written still fail --frozen-lockfile", async () => {
+    const { packageDir, full } = await verbatimScenario(linker, monorepo, survivors);
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ ...rootPackageJson, overrides: { "a-dep": "1.0.1" } }),
+    );
+
+    const { stderr } = await frozen(packageDir, linker, 1);
+
+    expect(stderr).toContain(changedSectionNote("overrides"));
+    expect(await lockText(packageDir)).toBe(full);
+    expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
+  });
+
+  test.concurrent("overrides trimmed from a pruned bun.lock still fail --frozen-lockfile", async () => {
+    const tree: Tree = { ...monorepo, root: { ...rootPackageJson, overrides: { "a-dep": "1.0.1" } } };
+    const { packageDir, full } = await verbatimScenario(linker, tree, survivors);
+    const trimmed = full.replace(/\n  "overrides": \{\n(?:    [^\n]*\n)*  \},/, "");
+    expect(full).toContain('"overrides"');
+    expect(trimmed).not.toContain('"overrides"');
+    await write(join(packageDir, "bun.lock"), trimmed);
+
+    const { stderr } = await frozen(packageDir, linker, 1);
+
+    expect(stderr).toContain(changedSectionNote("overrides"));
+    expect(await lockText(packageDir)).toBe(trimmed);
+    expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
+  });
+
+  test.concurrent("a catalog entry changed after bun.lock was written still fails --frozen-lockfile", async () => {
+    const { packageDir, full } = await verbatimScenario(linker, catalogTree, ["packages/app"]);
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        ...catalogTree.root,
+        workspaces: { packages: ["packages/*"], catalog: { "a-dep": "1.0.2", "left-pad": "1.0.0" } },
+      }),
+    );
+
+    const { stderr } = await frozen(packageDir, linker, 1);
+
+    expect(stderr).toContain(changedSectionNote("catalogs"));
+    expect(await lockText(packageDir)).toBe(full);
+    expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
   });
 
   test.concurrent("a survivor depending on a pruned workspace fails with the workspace error", async () => {

@@ -1,3 +1,4 @@
+use std::cell::OnceCell;
 use std::sync::OnceLock;
 
 use bstr::BStr;
@@ -7,30 +8,111 @@ use bun_core::{Global, Output, UnwrapOrOom as _, prettyln, strings};
 use bun_semver::string::Builder as StringBuilder;
 
 use crate::dependency::Behavior;
-use crate::lockfile::Lockfile;
 use crate::lockfile::package::PackageColumns as _;
+use crate::lockfile::{Lockfile, reachable};
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager::{UpdateTargetWorkspace, WorkspaceFilter};
 use crate::package_manager_real::command_line_arguments::UpdateGroups;
 use crate::resolution::Tag as ResolutionTag;
-use crate::{DependencyID, PackageManager, PackageNameHash, invalid_package_id};
+use crate::{DependencyID, PackageID, PackageManager, PackageNameHash, invalid_package_id};
 
-/// Which workspaces a named `bun update` may re-resolve and rewrite; rows owned by non-workspace packages are always in scope.
+/// Which workspaces a `bun update` may re-resolve and rewrite; a non-workspace package's rows are in scope when one of those workspaces reaches it.
 pub struct UpdateScope<'a> {
     pub targets: Option<&'a [UpdateTargetWorkspace]>,
     pub invoking: Option<PackageNameHash>,
+    whole_workspace: bool,
+    /// Walked by `plan_named` before the differ invalidates rows; otherwise `reachable()` walks the lockfile it is given.
+    planned: Option<&'a DynamicBitSet>,
+    lazy: OnceCell<DynamicBitSet>,
 }
 
 impl<'a> UpdateScope<'a> {
     pub fn of(manager: &'a PackageManager) -> UpdateScope<'a> {
+        UpdateScope::new(
+            manager.update_target_workspaces.as_deref(),
+            manager.workspace_name_hash,
+            manager.options.filter_patterns.is_empty(),
+            manager.named_update_reachable.as_ref(),
+        )
+    }
+
+    fn new(
+        targets: Option<&'a [UpdateTargetWorkspace]>,
+        invoking: Option<PackageNameHash>,
+        no_filter: bool,
+        planned: Option<&'a DynamicBitSet>,
+    ) -> UpdateScope<'a> {
         UpdateScope {
-            targets: manager.update_target_workspaces.as_deref(),
-            invoking: manager.workspace_name_hash,
+            targets,
+            invoking,
+            whole_workspace: match targets {
+                Some(_) => no_filter,
+                None => invoking.is_none(),
+            },
+            planned,
+            lazy: OnceCell::new(),
         }
     }
 }
 
+/// Runs on the loaded lockfile before the differ invalidates the rows it re-enqueues, like `TransitiveUpdate::plan`.
+pub fn plan_named(manager: &mut PackageManager) {
+    let reachable = {
+        let scope = UpdateScope::of(manager);
+        if scope.is_whole_workspace() {
+            return;
+        }
+        scope.walk(&manager.lockfile)
+    };
+    manager.named_update_reachable = Some(reachable);
+}
+
 impl UpdateScope<'_> {
+    /// Root cwd without `--filter`, or `-r`: every package in bun.lock is in scope.
+    pub(crate) fn is_whole_workspace(&self) -> bool {
+        self.whole_workspace
+    }
+
+    /// Packages reachable from the in-scope workspaces; every package when `is_whole_workspace()`.
+    pub(crate) fn reachable<'s>(&'s self, lockfile: &Lockfile) -> &'s DynamicBitSet {
+        if let Some(planned) = self.planned {
+            return planned;
+        }
+        self.lazy.get_or_init(|| self.walk(lockfile))
+    }
+
+    fn walk(&self, lockfile: &Lockfile) -> DynamicBitSet {
+        let pkg_res = lockfile.packages.items_resolution();
+        if self.whole_workspace {
+            let mut all = DynamicBitSet::init_empty(pkg_res.len()).unwrap_or_oom();
+            all.unmanaged.set_all(true);
+            return all;
+        }
+        let name_hashes = lockfile.packages.items_name_hash();
+        let names = lockfile.packages.items_name();
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let roots: Vec<PackageID> = (0..pkg_res.len())
+            .filter(|&id| {
+                let tag = pkg_res[id].tag;
+                matches!(tag, ResolutionTag::Root | ResolutionTag::Workspace)
+                    && self.contains_workspace(
+                        tag == ResolutionTag::Root,
+                        name_hashes[id],
+                        names[id].slice(buf),
+                    )
+            })
+            .map(|id| id as PackageID)
+            .collect();
+        // The root's `workspaces` listing is not a dependency edge; a `workspace:` dependency between members is.
+        reachable::packages_from(
+            lockfile,
+            lockfile.buffers.resolutions.as_slice(),
+            &roots,
+            false,
+            reachable::Options::all(0),
+        )
+    }
+
     pub fn contains_workspace(
         &self,
         is_root: bool,
@@ -46,40 +128,43 @@ impl UpdateScope<'_> {
         }
     }
 
-    pub fn contains_dependency(&self, lockfile: &Lockfile, dep_id: DependencyID) -> bool {
-        let owner = lockfile.get_workspace_pkg_if_workspace_dep(dep_id);
-        if owner == invalid_package_id {
-            return true;
+    fn contains_package(&self, lockfile: &Lockfile, id: usize) -> bool {
+        let tag = lockfile.packages.items_resolution()[id].tag;
+        match tag {
+            ResolutionTag::Root | ResolutionTag::Workspace => self.contains_workspace(
+                tag == ResolutionTag::Root,
+                lockfile.packages.items_name_hash()[id],
+                lockfile.packages.items_name()[id].slice(lockfile.buffers.string_bytes.as_slice()),
+            ),
+            // Packages appended after the walk (ids past its end) were resolved for an in-scope row.
+            _ => {
+                self.whole_workspace || self.reachable(lockfile).is_set_allow_out_of_bound(id, true)
+            }
         }
-        let owner = owner as usize;
-        let is_root = lockfile.packages.items_resolution()[owner].tag == ResolutionTag::Root;
-        let name =
-            lockfile.packages.items_name()[owner].slice(lockfile.buffers.string_bytes.as_slice());
-        self.contains_workspace(is_root, lockfile.packages.items_name_hash()[owner], name)
+    }
+
+    /// Rows owned by no package (orphans left by the differ) are in scope.
+    pub fn contains_dependency(&self, lockfile: &Lockfile, dep_id: DependencyID) -> bool {
+        match lockfile
+            .packages
+            .items_dependencies()
+            .iter()
+            .position(|slice| slice.contains(dep_id))
+        {
+            Some(owner) => self.contains_package(lockfile, owner),
+            None => true,
+        }
     }
 
     /// One bit per dependency row; rows covered by no package's slice (orphans left by the differ) stay unset.
     pub fn walkable_rows(&self, lockfile: &Lockfile) -> DynamicBitSet {
         let mut walk =
             DynamicBitSet::init_empty(lockfile.buffers.dependencies.len()).unwrap_or_oom();
-        let pkg_res = lockfile.packages.items_resolution();
-        let name_hashes = lockfile.packages.items_name_hash();
-        let names = lockfile.packages.items_name();
-        let buf = lockfile.buffers.string_bytes.as_slice();
         for (id, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
             if slice.len == 0 {
                 continue;
             }
-            let res = &pkg_res[id];
-            let in_scope = match res.tag {
-                ResolutionTag::Root | ResolutionTag::Workspace => self.contains_workspace(
-                    res.tag == ResolutionTag::Root,
-                    name_hashes[id],
-                    names[id].slice(buf),
-                ),
-                _ => true,
-            };
-            if in_scope {
+            if self.contains_package(lockfile, id) {
                 walk.set_range_value(
                     Range {
                         start: slice.begin() as usize,
@@ -255,10 +340,12 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
         })
         .collect()
     });
-    let scope = UpdateScope {
-        targets: selection.as_deref(),
-        invoking: manager.workspace_name_hash,
-    };
+    let scope = UpdateScope::new(
+        selection.as_deref(),
+        manager.workspace_name_hash,
+        manager.options.filter_patterns.is_empty(),
+        None,
+    );
 
     let mut names: Vec<Box<[u8]>> = Vec::new();
     {

@@ -3,6 +3,7 @@ use bun_collections::bit_set::Range as BitRange;
 use bun_core::{Global, strings};
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
+use bun_sys::{Fd, File};
 
 use crate::bun_fs::FileSystem;
 use crate::dependency::DependencyExt as _;
@@ -21,7 +22,7 @@ use super::package_json_editor::{self as PackageJSONEditor, EditOptions};
 use super::update_package_json_and_install::print_package_json_into_cache_entry;
 use super::{PackageManager, Subcommand, UpdateRequest};
 
-/// A package.json whose cache entry differs from disk; `target.name_hash == None` is the root.
+/// A package.json whose cache entry was re-printed; `target.name_hash == None` is the root.
 pub(crate) struct EditedPackageJson {
     pub(crate) target: WorkspaceTarget,
     /// The command's positionals were applied to this file's dependency lists.
@@ -400,7 +401,13 @@ fn same_row(scratch: &Dependency, row: &Dependency) -> bool {
     row.name_hash == scratch.name_hash && row.behavior == scratch.behavior
 }
 
-/// Phase 2 (after bun.lock is saved): add `trustedDependencies` learned during the install and write every edited entry to disk.
+/// Compared against the file, not `stale_contents`: the before-install print in `update_package_json_and_install` replaces the cwd entry's contents without recording them.
+fn unchanged_on_disk(manager: &mut PackageManager, target: &WorkspaceTarget) -> bool {
+    let printed: &[u8] = &fetch_entry(manager, target).source.contents;
+    File::read_from(Fd::cwd(), &target.package_json_path).is_ok_and(|on_disk| on_disk == printed)
+}
+
+/// Phase 2 (after bun.lock is saved): add `trustedDependencies` learned during the install and write every edited entry whose bytes differ from disk.
 pub(crate) fn flush(manager: &mut PackageManager) -> Result<(), crate::Error> {
     if manager.edited_package_jsons.is_empty()
         || !manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
@@ -425,6 +432,9 @@ pub(crate) fn flush(manager: &mut PackageManager) -> Result<(), crate::Error> {
             let mut root = entry.root;
             PackageJSONEditor::edit_trusted_dependencies(&mut root, &mut trusted)?;
             print_package_json_into_cache_entry(entry, root);
+        }
+        if unchanged_on_disk(manager, &e.target) {
+            continue;
         }
         any_failed |= !write_target(manager, &e.target);
     }

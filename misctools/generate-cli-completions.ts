@@ -160,6 +160,9 @@ function parseFlag(line: string): FlagInfo | null {
         continue;
       }
 
+      // The help printer drops escaped <placeholder> tags, leaving doubled spaces behind
+      description = description.replace(/\s{2,}/g, " ").trim();
+
       // Extract additional info from description
       const hasValue = !!valueSpec;
       let valueType: string | undefined;
@@ -188,7 +191,7 @@ function parseFlag(line: string): FlagInfo | null {
       return {
         name: longName.replace(/^--/, ""),
         shortName: shortName?.replace(/^-/, ""),
-        description: description.trim(),
+        description,
         hasValue,
         valueType,
         defaultValue,

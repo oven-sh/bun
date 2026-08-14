@@ -1,5 +1,6 @@
 use core::sync::atomic::Ordering;
 
+use bun_collections::DynamicBitSet;
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output};
 
@@ -112,14 +113,16 @@ pub fn install_with_manager(
         crate::dedupe::dedupe_before_install(manager, &load_result)?;
     }
 
-    let transitive = if manager.subcommand == Subcommand::Update
-        && manager.update_requests.is_empty()
+    let bare_update =
+        manager.subcommand == Subcommand::Update && manager.update_requests.is_empty();
+    let mut transitive = TransitiveUpdate::default();
+    // Reachability must be walked before the differ invalidates the root rows it is about to re-enqueue.
+    if manager.to_update
         && matches!(load_result, lockfile::LoadResult::Ok { .. })
+        && !crate::update_scope::UpdateScope::of(&*manager).is_whole_workspace()
     {
-        TransitiveUpdate::plan(manager)?
-    } else {
-        TransitiveUpdate::default()
-    };
+        crate::update_scope::plan_named(manager);
+    }
 
     // this defaults to false
     // but we force allowing updates to the lockfile when you do bun add
@@ -294,6 +297,10 @@ pub fn install_with_manager(
                         .scripts
                         .clone_into(&lockfile.buffers.string_bytes, builder);
                     builder.clamp();
+                    if bare_update {
+                        transitive = TransitiveUpdate::plan(manager)?;
+                        transitive.enqueue(manager)?;
+                    }
                 } else {
                     // If you changed packages, we will copy over the new package from the new lockfile
                     let new_dependencies =
@@ -503,6 +510,15 @@ pub fn install_with_manager(
 
                     builder.clamp();
 
+                    let invalidates_rows = (manager.summary.overrides_changed
+                        && !all_name_hashes.is_empty())
+                        || manager.summary.catalogs_changed;
+                    let mut pinned_rows = DynamicBitSet::default();
+                    if bare_update {
+                        transitive = TransitiveUpdate::plan(manager)?;
+                        pinned_rows = enqueue_transitive(manager, &transitive, invalidates_rows)?;
+                    }
+
                     // `enqueueDependencyWithMain` can reach `Lockfile.Package.fromNPM`,
                     // which grows `buffers.dependencies` and may reallocate it.
                     // Iterate by index against a snapshot of the original length and
@@ -511,6 +527,9 @@ pub fn install_with_manager(
                     if manager.summary.overrides_changed && !all_name_hashes.is_empty() {
                         let dependencies_len = manager.lockfile.buffers.dependencies.len();
                         for dependency_i in 0..dependencies_len {
+                            if pinned_rows.is_set_allow_out_of_bound(dependency_i, false) {
+                                continue;
+                            }
                             let dependency =
                                 manager.lockfile.buffers.dependencies[dependency_i].clone();
                             if all_name_hashes.binary_search(&dependency.name_hash).is_ok() {
@@ -540,6 +559,9 @@ pub fn install_with_manager(
                         let dependencies_len = manager.lockfile.buffers.dependencies.len();
                         for _dep_id in 0..dependencies_len {
                             let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+                            if pinned_rows.is_set_allow_out_of_bound(_dep_id, false) {
+                                continue;
+                            }
                             let dep =
                                 manager.lockfile.buffers.dependencies[dep_id as usize].clone();
                             if dep.version.tag != DependencyVersionTag::Catalog
@@ -603,12 +625,11 @@ pub fn install_with_manager(
     }
 
     let named_update = manager.to_update && !manager.update_requests.is_empty();
-    let mut named_moves: Vec<(DependencyID, PackageID)> = Vec::new();
+    let mut named = NamedUpdates::default();
     if !needs_new_lockfile {
         if named_update {
-            named_moves = enqueue_named_updates(manager);
+            named = enqueue_named_updates(manager);
         }
-        transitive.enqueue(manager)?;
         if !manager.audit_fix_pins.is_empty() {
             crate::audit_fix::enqueue_planned_fixes(manager)?;
         }
@@ -640,13 +661,17 @@ pub fn install_with_manager(
         manager.drain_dependency_list();
     }
 
-    if manager.pending_task_count() > 0 || manager.peer_dependencies.readable_length() > 0 {
-        resolve_pending_tasks(manager, &root, log_level)?;
+    if manager.pending_task_count() > 0
+        || manager.peer_dependencies.readable_length() > 0
+        || !named.latest_rows.is_empty()
+    {
+        resolve_pending_tasks(manager, &root, log_level, &named.latest_rows)?;
     }
 
     direct_deps_before.redirect_dependents(&mut manager.lockfile);
     transitive.redirect_dependents(&mut manager.lockfile);
-    redirect_moved_edges(&mut manager.lockfile, &named_moves);
+    redirect_moved_edges(&mut manager.lockfile, &named.moved);
+    transitive.print_dry_run(&direct_deps_before, &manager.lockfile);
 
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
     manager
@@ -1344,8 +1369,6 @@ fn frozen_changed_section(manager: &PackageManager) -> Option<&'static str> {
         Some("overrides")
     } else if summary.catalogs_changed {
         Some("catalogs")
-    } else if summary.patched_dependencies_changed {
-        Some("patchedDependencies")
     } else {
         None
     }
@@ -1450,14 +1473,36 @@ fn report_lockfile_load_error(
     Ok(())
 }
 
+/// Returns the rows the plan re-resolved so the overrides/catalogs invalidation loops that follow leave them pinned; only tracked when those loops will run.
+fn enqueue_transitive(
+    manager: &mut PackageManager,
+    transitive: &TransitiveUpdate,
+    track_rows: bool,
+) -> crate::Result<DynamicBitSet> {
+    if !track_rows {
+        transitive.enqueue(manager)?;
+        return Ok(DynamicBitSet::default());
+    }
+    transitive.enqueue_tracked(manager)
+}
+
+#[derive(Default)]
+struct NamedUpdates {
+    /// Invalidated rows paired with the package they resolved to, for redirect_moved_edges.
+    moved: Vec<(DependencyID, PackageID)>,
+    /// `--latest` only: every in-scope row naming a requested package, for refresh_children_of_named.
+    latest_rows: Vec<DependencyID>,
+}
+
 /// bun update <name>…: every in-scope row resolving to <name> (see update_scope) re-resolves within its own range; rows the differ re-enqueued are left to it, peers/bundled rows only follow via redirect_moved_edges.
 #[cold]
 #[inline(never)]
-fn enqueue_named_updates(manager: &mut PackageManager) -> Vec<(DependencyID, PackageID)> {
+fn enqueue_named_updates(manager: &mut PackageManager) -> NamedUpdates {
     let walkable = crate::update_scope::UpdateScope::of(&*manager).walkable_rows(&manager.lockfile);
+    let collect_latest_rows = manager.options.do_.update_to_latest();
     let mut matched = vec![false; manager.update_requests.len()];
     let mut matched_elsewhere = vec![false; manager.update_requests.len()];
-    let mut moved: Vec<(DependencyID, PackageID)> = Vec::new();
+    let mut named = NamedUpdates::default();
     let dependencies_len = manager.lockfile.buffers.dependencies.len();
     for dependency_i in 0..dependencies_len {
         let dependency = manager.lockfile.buffers.dependencies[dependency_i].clone();
@@ -1470,6 +1515,9 @@ fn enqueue_named_updates(manager: &mut PackageManager) -> Vec<(DependencyID, Pac
             continue;
         }
         matched[request] = true;
+        if collect_latest_rows {
+            named.latest_rows.push(dependency_i as DependencyID);
+        }
         if package_id == invalid_package_id
             || dependency.behavior.is_peer()
             || dependency.behavior.is_bundled()
@@ -1477,7 +1525,7 @@ fn enqueue_named_updates(manager: &mut PackageManager) -> Vec<(DependencyID, Pac
             continue;
         }
         manager.lockfile.buffers.resolutions[dependency_i] = invalid_package_id;
-        moved.push((dependency_i as DependencyID, package_id));
+        named.moved.push((dependency_i as DependencyID, package_id));
         if let Err(err) = enqueue_dependency_with_main(
             manager,
             dependency_i as DependencyID,
@@ -1494,7 +1542,7 @@ fn enqueue_named_updates(manager: &mut PackageManager) -> Vec<(DependencyID, Pac
         |i, _| !matched[i] && !matched_elsewhere[i],
         |i| !matched[i] && matched_elsewhere[i],
     );
-    moved
+    named
 }
 
 fn index_of_named_update(
@@ -1753,6 +1801,7 @@ fn resolve_pending_tasks(
     manager: &mut PackageManager,
     root: &lockfile::Package,
     log_level: Options::LogLevel,
+    latest_rows: &[DependencyID],
 ) -> crate::Result<()> {
     if root.dependencies.len > 0 {
         let _ = manager.get_cache_directory();
@@ -1770,6 +1819,59 @@ fn resolve_pending_tasks(
         wait_for_calcing_patch_hashes(manager)?;
     }
 
+    wait_for_resolution(manager)?;
+
+    if !latest_rows.is_empty() {
+        refresh_children_of_named(manager, latest_rows)?;
+        wait_for_resolution(manager)?;
+    }
+
+    if log_level.show_progress() {
+        manager.end_progress_bar();
+    } else if log_level != Options::LogLevel::Silent {
+        bun_core::pretty_errorln!(
+            "Resolved, downloaded and extracted [{}]",
+            manager.total_tasks,
+        );
+        Output::flush();
+    }
+    Ok(())
+}
+
+/// `bun update <name> --latest`: the packages the named rows now resolve to get their own children moved in-range too.
+#[cold]
+#[inline(never)]
+fn refresh_children_of_named(
+    manager: &mut PackageManager,
+    latest_rows: &[DependencyID],
+) -> crate::Result<()> {
+    let mut package_ids: Vec<PackageID> = {
+        let lockfile = &*manager.lockfile;
+        let resolutions = lockfile.buffers.resolutions.as_slice();
+        let pkg_res = lockfile.packages.items_resolution();
+        latest_rows
+            .iter()
+            .map(|&dep_id| resolutions[dep_id as usize])
+            .filter(|&id| {
+                (id as usize) < pkg_res.len()
+                    && !matches!(
+                        pkg_res[id as usize].tag,
+                        ResolutionTag::Root | ResolutionTag::Workspace
+                    )
+            })
+            .collect()
+    };
+    package_ids.sort_unstable();
+    package_ids.dedup();
+    if package_ids.is_empty() {
+        return Ok(());
+    }
+    crate::update_transitive::refresh_children_of(manager, &package_ids)?;
+    manager.drain_dependency_list();
+    Ok(())
+}
+
+fn wait_for_resolution(manager: &mut PackageManager) -> crate::Result<()> {
     if manager.pending_task_count() > 0 {
         wait_for_everything_except_peers(manager)?;
     }
@@ -1787,16 +1889,6 @@ fn resolve_pending_tasks(
 
     if manager.pending_task_count() > 0 {
         wait_for_peers(manager)?;
-    }
-
-    if log_level.show_progress() {
-        manager.end_progress_bar();
-    } else if log_level != Options::LogLevel::Silent {
-        bun_core::pretty_errorln!(
-            "Resolved, downloaded and extracted [{}]",
-            manager.total_tasks,
-        );
-        Output::flush();
     }
     Ok(())
 }

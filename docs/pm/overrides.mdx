@@ -158,6 +158,6 @@ The selector is compared with the range each dependent _declares_ for that depen
 
 - Only one parent level is supported. `a>b>c`, `a/b/c`, and objects nested more than one level deep are ignored with a warning.
 - `"pkg@"` (pnpm's convergence override, an empty selector) is not supported and is skipped with a warning.
-- pnpm's `"-"` value, which removes a dependency, is not supported. Bun currently reads `"-"` as a dist-tag named `-`, and the dependency fails to resolve.
+- pnpm's `"-"` value, which removes a dependency, is not supported. Bun skips the rule with a warning and the dependency resolves from its declared range as if the rule weren't there.
 - A nested rule can't point at a `file:` path outside the project.
 - A `bun.lock` that contains nested or version-scoped rules is written as `lockfileVersion` 3, which older versions of Bun refuse to read (run `bun upgrade`). Projects without such rules keep `lockfileVersion` 2 unchanged.

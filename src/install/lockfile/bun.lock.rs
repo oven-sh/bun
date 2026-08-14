@@ -197,34 +197,32 @@ impl Stringifier {
     /// v1→v2, by contrast, only added parse-time strictness on identical
     /// content, so v1 is preserved as-is.
     ///
-    /// v3 is stamped only while parent-scoped overrides exist (older readers
-    /// cannot parse the object rows, so the upgrade is forced like v0→v1); a
-    /// lockfile without them keeps its loaded v1/v2, and a fresh one — or a v3
-    /// whose nested rules were removed — is walked down to v2, or to v1 when a
-    /// serialized package violates a v2 invariant (an off-registry npm tarball
-    /// without a supported integrity hash, or an unsafe git `.bun-tag`), which
-    /// the writer emits verbatim and a v2 reader would reject on the next parse.
-    /// A loaded v3 with nested rules stays v3 without the walk, so the walk only
-    /// runs for fresh lockfiles and v2↔v3 transitions. The v2 decision must not
-    /// depend on the writer's `~/.npmrc` / scoped registries, since the reader
-    /// may not share them.
+    /// v3 is stamped whenever parent-scoped overrides exist, whatever version was
+    /// loaded (the writer emits object rows older readers cannot parse, so the
+    /// upgrade is forced like v0→v1); a lockfile without them keeps its loaded
+    /// v1/v2, and a fresh one — or a v3 whose nested rules were removed — is
+    /// walked down to v2, or to v1 when a serialized package violates a v2
+    /// invariant (an off-registry npm tarball without a supported integrity
+    /// hash, or an unsafe git `.bun-tag`), which the writer emits verbatim and a
+    /// v2 reader would reject on the next parse. The v2 decision must not depend
+    /// on the writer's `~/.npmrc` / scoped registries, since the reader may not
+    /// share them.
     ///
     /// Walks the package tree the same way the writer does — only packages that
     /// are actually serialized are considered, not every entry in the in-memory
     /// `pkg_resolutions` buffer (migration can leave pruned/unreferenced entries
     /// there that never reach the written `packages` object).
     fn version_to_write(lockfile: &BinaryLockfile) -> Version {
+        if lockfile.overrides.has_scoped() {
+            return Version::V3;
+        }
         let loaded = lockfile.text_lockfile_version;
-        let has_scoped = lockfile.overrides.has_scoped();
-        if !has_scoped && !loaded.at_least(Version::V3) {
+        if !loaded.at_least(Version::V3) {
             return if loaded.at_least(Version::V1) {
                 loaded
             } else {
                 Version::V1
             };
-        }
-        if has_scoped && loaded == Version::V3 {
-            return Version::V3;
         }
 
         let buf = lockfile.buffers.string_bytes.as_slice();
@@ -287,7 +285,7 @@ impl Stringifier {
                 }
             }
         }
-        if has_scoped { Version::V3 } else { Version::V2 }
+        Version::V2
     }
 
     fn save_from_binary_inner(

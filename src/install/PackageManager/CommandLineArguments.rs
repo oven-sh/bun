@@ -993,7 +993,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
   <d>Output package vulnerabilities in JSON format.<r>
   <b><green>bun audit --json<r>
 
-  <d>Upgrade vulnerable packages in place (bun.lock and node_modules; package.json is not modified).<r>
+  <d>Upgrade vulnerable packages in bun.lock and node_modules; package.json is only changed when an exact pin has to be bumped.<r>
   <b><green>bun audit fix<r>
 
   <d>Show what bun audit fix would change without changing anything.<r>

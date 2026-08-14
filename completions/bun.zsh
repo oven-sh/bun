@@ -724,6 +724,8 @@ _bun_prune_completion() {
         '*--os[Prune for a different operating system than the current one]:os' \
         '*--cpu[Prune for a different CPU architecture than the current one]:cpu' \
         '--linker[Prune a node_modules installed with the given linker]:linker:(isolated hoisted)' \
+        '*--filter[Only prune the node_modules folders of the matching workspaces]:workspace pattern' \
+        '*-F[Only prune the node_modules folders of the matching workspaces]:workspace pattern' \
         '--silent[Don'"'"'t log anything]' \
         '--cwd[Set a specific cwd]:cwd' \
         '-h[Print this help menu]' \

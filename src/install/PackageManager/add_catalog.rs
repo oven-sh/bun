@@ -603,7 +603,8 @@ pub(crate) fn edit_target(
     options: EditOptions,
 ) -> Result<(), AllocError> {
     if !manager.catalog_add.enabled {
-        return PackageJSONEditor::edit(manager, updates, package_json, dependency_list, options);
+        PackageJSONEditor::edit(manager, updates, package_json, dependency_list, options)?;
+        return Ok(());
     }
     let quiet = manager.options.log_level == LogLevel::Silent;
     let flag = manager.options.add_catalog;

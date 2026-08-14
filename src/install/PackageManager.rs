@@ -426,6 +426,9 @@ pub struct PackageManager {
     // `bun update -r`/`--filter`: workspaces whose deps update. None = cwd only.
     pub(crate) update_target_workspaces: Option<Box<[UpdateTargetWorkspace]>>,
 
+    // `bun update <name>`: packages reachable from the workspaces in scope, see update_scope::plan_named.
+    pub(crate) named_update_reachable: Option<bun_collections::DynamicBitSet>,
+
     // add/remove/update --filter: only these importers are linked; None = every importer.
     pub(crate) filtered_link_targets: Option<workspace_selection::LinkTargets>,
 
@@ -2133,6 +2136,7 @@ pub fn init(
         wr!(updating_packages, StringArrayHashMap::default());
         wr!(updating_catalogs, Vec::new());
         wr!(update_target_workspaces, None);
+        wr!(named_update_reachable, None);
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);
         wr!(edited_package_jsons, Vec::new());
@@ -2578,6 +2582,7 @@ fn init_with_runtime_once(
         wr!(updating_packages, StringArrayHashMap::default());
         wr!(updating_catalogs, Vec::new());
         wr!(update_target_workspaces, None);
+        wr!(named_update_reachable, None);
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);
         wr!(edited_package_jsons, Vec::new());

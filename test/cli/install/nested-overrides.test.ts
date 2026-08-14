@@ -656,6 +656,64 @@ describe.concurrent("lockfile", () => {
     expect(await lock(z)).toBe(xLock);
   });
 
+  // The registry's tarball URLs are not under the default registry, so a row with an empty integrity walks the writer down to v1.
+  const walkFallbackDeps = { "one-dep": "1.0.0" };
+  async function projectWithWalkFallbackLock(stampVersion: 1 | 2 | 3) {
+    const dir = await project({ dependencies: walkFallbackDeps });
+    await installOk(dir);
+    const text = await lock(dir);
+    expect(text).toContain('"lockfileVersion": 2');
+    expect(text).toContain('one-dep-1.0.0.tgz", ');
+    const stripped = text
+      .replace('"lockfileVersion": 2', `"lockfileVersion": ${stampVersion}`)
+      .replace(/, "sha512-[^"]*"\]/g, ', ""]');
+    expect(stripped).not.toContain("sha512-");
+    await write(join(dir, "bun.lock"), stripped);
+    return dir;
+  }
+
+  test("a walk-fallback row without scoped rules is re-saved as v1", async () => {
+    const dir = await projectWithWalkFallbackLock(3);
+    await write(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "nested-overrides", dependencies: walkFallbackDeps, overrides: { "no-deps": "1.0.1" } }),
+    );
+    const { err } = await installOk(dir);
+    expect(err).toContain("Saved lockfile");
+    const after = await lock(dir);
+    expect(after).toContain('"lockfileVersion": 1');
+    expect(after).toContain('one-dep-1.0.0.tgz", {');
+    expect(after).toContain(', ""]');
+  });
+
+  describe.concurrent.each([1, 2] as const)("an existing v%i lockfile with a walk-fallback row", loaded => {
+    test("gains a nested rule: re-saved lockfile is stamped 3", async () => {
+      const dir = await projectWithWalkFallbackLock(loaded);
+      await write(
+        join(dir, "package.json"),
+        JSON.stringify({
+          name: "nested-overrides",
+          dependencies: walkFallbackDeps,
+          overrides: { "one-dep": { "no-deps": "2.0.0" } },
+        }),
+      );
+      const { err } = await installOk(dir);
+      expect(err).toContain("Saved lockfile");
+      const after = await lock(dir);
+      expect(after).toContain(', ""]');
+      expect(overridesSection(after)).toMatchInlineSnapshot(`
+        ""overrides": {
+          "one-dep": {
+            "no-deps": "2.0.0",
+          },
+        },"
+      `);
+      expect(after).toContain('"lockfileVersion": 3');
+      expect(await versionSeenBy(dir, "one-dep", "no-deps")).toBe("2.0.0");
+      await installOk(dir, "--frozen-lockfile");
+    });
+  });
+
   test("ranged rules round-trip: stable, frozen-clean", async () => {
     const dir = await project(rangedProject);
     await installOk(dir);

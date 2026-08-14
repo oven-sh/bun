@@ -94,9 +94,9 @@ fn keeps_declared_range(version_literal: &[u8]) -> bool {
         rest = tail;
     }
     if let [b'^' | b'~', tail @ ..] = rest {
-        return !strings::trim(tail, &strings::WHITESPACE_CHARS)
-            .first()
-            .is_some_and(u8::is_ascii_digit);
+        let tail = strings::trim(tail, &strings::WHITESPACE_CHARS);
+        return !tail.first().is_some_and(u8::is_ascii_digit)
+            || strings::index_of_any(tail, b" \t|<>").is_some();
     }
     let Some(rest) = skip_ascii_digits(rest)
         .and_then(|r| r.strip_prefix(b"."))
@@ -221,7 +221,9 @@ pub fn edit_trusted_dependencies(
         }
     }
 
-    for i in 0..names_to_add.len() {
+    let mut i = len;
+    while i > 0 {
+        i -= 1;
         let name = &names_to_add[i];
         for item in trusted_dependencies.iter() {
             if let bun_ast::ExprData::EString(s) = &item.data {
@@ -354,12 +356,12 @@ pub fn edit_trusted_dependencies(
 
 /// When `bun update` is called without package names, all dependencies are updated.
 /// This function will identify the current workspace and update all changed package
-/// versions.
+/// versions. Returns whether any entry of `current_package_json` was rewritten.
 pub(crate) fn edit_update_no_args(
     manager: &mut PackageManager,
     current_package_json: &mut Expr,
     options: EditOptions,
-) -> Result<(), bun_alloc::AllocError> {
+) -> Result<bool, bun_alloc::AllocError> {
     edit_update_no_args_in(
         &manager.lockfile,
         &manager.ast_arena,
@@ -380,7 +382,7 @@ pub(crate) fn edit_update_no_args_in(
     update_to_latest: bool,
     current_package_json: &mut Expr,
     options: EditOptions,
-) -> Result<(), bun_alloc::AllocError> {
+) -> Result<bool, bun_alloc::AllocError> {
     edit_update_entries(
         lockfile,
         arena,
@@ -399,7 +401,7 @@ fn edit_update_aliases_of_requests(
     updates: &[UpdateRequest],
     current_package_json: &mut Expr,
     options: EditOptions,
-) -> Result<(), bun_alloc::AllocError> {
+) -> Result<bool, bun_alloc::AllocError> {
     let is_request = |name: &[u8]| updates.iter().any(|r| r.is_aliased && r.name == name);
     let is_alias_of_request = |key: &[u8], literal: &[u8]| {
         split_npm_alias(literal).is_some_and(|(alias, _)| is_request(&alias[b"npm:".len()..]))
@@ -426,11 +428,12 @@ fn edit_update_entries(
     current_package_json: &mut Expr,
     options: EditOptions,
     selected: &dyn Fn(&[u8], &[u8]) -> bool,
-) -> Result<(), bun_alloc::AllocError> {
+) -> Result<bool, bun_alloc::AllocError> {
     // using data store is going to result in undefined memory issues as
     // the store is cleared in some workspace situations. the solution
     // is to always avoid the store
     let _guard = ExprDisabler::scope();
+    let mut changed = false;
 
     for group in DEPENDENCY_GROUPS {
         let group_str = group.prop;
@@ -493,6 +496,10 @@ fn edit_update_entries(
 
                         if update_to_latest {
                             let temp_version = with_alias_of(arena, version_literal, b"latest");
+                            if temp_version == version_literal {
+                                continue;
+                            }
+                            changed = true;
                             dep.value = Some(Expr::allocate(
                                 arena,
                                 E::EString::init(temp_version),
@@ -593,6 +600,10 @@ fn edit_update_entries(
                                     ) else {
                                         break 'updated;
                                     };
+                                    if new_version.as_slice() == value_literal {
+                                        break 'updated;
+                                    }
+                                    changed = true;
                                     dep.value = Some(Expr::allocate(
                                         arena,
                                         E::EString::init(arena_str(arena, &new_version)),
@@ -607,7 +618,7 @@ fn edit_update_entries(
             }
         }
     }
-    Ok(())
+    Ok(changed)
 }
 
 /// Calls `f(catalog_name, entries_object)` for each catalog in the root
@@ -901,7 +912,7 @@ fn resolve_catalog_literals(
     }
 }
 
-/// Edits the dependency lists for `updates`; `trustedDependencies` is added later by `package_json_write_back::flush`.
+/// Edits the dependency lists for `updates` and returns whether anything was rewritten; `trustedDependencies` is added later by `package_json_write_back::flush`.
 pub(crate) fn edit(
     manager: &mut PackageManager,
     // Pointer-to-slice whose `.len` is shrunk in place.
@@ -909,7 +920,7 @@ pub(crate) fn edit(
     current_package_json: &mut Expr,
     dependency_list: &[u8],
     options: EditOptions,
-) -> Result<(), bun_alloc::AllocError> {
+) -> Result<bool, bun_alloc::AllocError> {
     // using data store is going to result in undefined memory issues as
     // the store is cleared in some workspace situations. the solution
     // is to always avoid the store
@@ -934,9 +945,8 @@ pub(crate) fn edit(
             Global::crash();
         }
     }
-    if manager.subcommand == Subcommand::Update {
-        edit_update_aliases_of_requests(manager, &**updates, current_package_json, options)?;
-    }
+    let mut changed = manager.subcommand == Subcommand::Update
+        && edit_update_aliases_of_requests(manager, &**updates, current_package_json, options)?;
 
     // `arena` is a disjoint-field borrow held across the `&mut manager.updating_packages` accesses below.
     let arena = &manager.ast_arena;
@@ -973,7 +983,9 @@ pub(crate) fn edit(
                                             },
                                         );
 
+                                    // `bun update <name>` edits the slot in place; the rebuild below re-sorts the keys.
                                     if request.package_id != INVALID_PACKAGE_ID
+                                        && manager.subcommand != Subcommand::Update
                                         && strings::eql_long(list, dependency_list, true)
                                         && !keep_catalog_reference
                                     {
@@ -1108,6 +1120,7 @@ pub(crate) fn edit(
     }
 
     if remaining != 0 {
+        changed = true;
         let mut new_dependencies: Vec<G::Property> = {
             let mut dependencies: Vec<G::Property> = Vec::new();
             if let Some(query) = current_package_json.as_property(dependency_list) {
@@ -1328,94 +1341,96 @@ pub(crate) fn edit(
                 if update_to_latest {
                     version_literal = with_alias_of(arena, version_literal, b"latest");
                 }
-                e_string.data = arena_dup(arena, version_literal).into();
+                if e_string.data.slice() != version_literal {
+                    changed = true;
+                    e_string.data = arena_dup(arena, version_literal).into();
+                }
 
                 continue;
             }
-            e_string.data =
-                bun_ast::StoreStr::new(match resolutions[request.package_id as usize].tag {
-                    resolution::Tag::Npm => 'npm: {
-                        let installed = request.version.literal.slice(request.version_buf());
-                        let resolved = resolutions[request.package_id as usize].npm().version;
-                        let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
-                        // `bun update <name>` keeps a dist-tag literal as written unless --latest, like the bare path.
-                        if manager.subcommand == Subcommand::Update
-                            && request.version.tag == dependency::Tag::DistTag
-                            && !update_to_latest
-                        {
-                            break 'npm arena_dup(arena, installed);
-                        }
-                        if manager.subcommand == Subcommand::Update
-                            && matches!(
-                                request.version.tag,
-                                dependency::Tag::DistTag | dependency::Tag::Npm
-                            )
-                        {
-                            if let Some(entry) = manager.updating_packages.get(request.name) {
-                                let original: &[u8] = &entry.original_version_literal;
-                                let original = match split_npm_alias(installed) {
-                                    Some(_) => with_alias_of(
-                                        arena,
+            let new_literal: &[u8] = match resolutions[request.package_id as usize].tag {
+                resolution::Tag::Npm => 'npm: {
+                    let installed = request.version.literal.slice(request.version_buf());
+                    let resolved = resolutions[request.package_id as usize].npm().version;
+                    let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
+                    // `bun update <name>` keeps a dist-tag literal as written unless --latest, like the bare path.
+                    if manager.subcommand == Subcommand::Update
+                        && request.version.tag == dependency::Tag::DistTag
+                        && !update_to_latest
+                    {
+                        break 'npm arena_dup(arena, installed);
+                    }
+                    if manager.subcommand == Subcommand::Update
+                        && matches!(
+                            request.version.tag,
+                            dependency::Tag::DistTag | dependency::Tag::Npm
+                        )
+                    {
+                        if let Some(entry) = manager.updating_packages.get(request.name) {
+                            let original: &[u8] = &entry.original_version_literal;
+                            let original = match split_npm_alias(installed) {
+                                Some(_) => with_alias_of(
+                                    arena,
+                                    installed,
+                                    split_npm_alias(original)
+                                        .map_or(original, |(_, version)| version),
+                                ),
+                                None => original,
+                            };
+                            match updated_version_literal(
+                                original,
+                                resolved,
+                                string_buf,
+                                options.exact_versions,
+                                update_to_latest,
+                            ) {
+                                Some(new_version) => break 'npm arena_str(arena, &new_version),
+                                // no explicit `@range`: the row still spells the declared literal, which stays as written
+                                None => {
+                                    if strings::eql_long(
                                         installed,
-                                        split_npm_alias(original)
-                                            .map_or(original, |(_, version)| version),
-                                    ),
-                                    None => original,
-                                };
-                                match updated_version_literal(
-                                    original,
-                                    resolved,
-                                    string_buf,
-                                    options.exact_versions,
-                                    update_to_latest,
-                                ) {
-                                    Some(new_version) => break 'npm arena_str(arena, &new_version),
-                                    // no explicit `@range`: the row still spells the declared literal, which stays as written
-                                    None => {
-                                        if strings::eql_long(
-                                            installed,
-                                            &entry.original_version_literal,
-                                            true,
-                                        ) {
-                                            break 'npm arena_dup(arena, installed);
-                                        }
+                                        &entry.original_version_literal,
+                                        true,
+                                    ) {
+                                        break 'npm arena_dup(arena, installed);
                                     }
                                 }
                             }
                         }
-                        // `foo@npm:bar` (no version part) is saved like `foo` would be: `npm:bar@^<resolved>`.
-                        let bare_alias = split_npm_alias(installed)
-                            .is_some_and(|(_, version)| version.is_empty());
-                        if request.version.tag == dependency::Tag::DistTag
-                            || bare_alias
-                            || (manager.subcommand == Subcommand::Update
-                                && request.version.tag == dependency::Tag::Npm
-                                && !request.version.npm().version.is_exact())
-                        {
-                            let mut new_version = Vec::new();
-                            write!(
-                                &mut new_version,
-                                "{}{}",
-                                if options.exact_versions { "" } else { "^" },
-                                resolved.fmt(string_buf)
-                            )
-                            .expect("infallible: in-memory write");
-                            break 'npm with_alias_of(
-                                arena,
-                                installed,
-                                arena_str(arena, &new_version),
-                            );
-                        }
-
-                        arena_dup(arena, installed)
+                    }
+                    // `foo@npm:bar` (no version part) is saved like `foo` would be: `npm:bar@^<resolved>`.
+                    let bare_alias =
+                        split_npm_alias(installed).is_some_and(|(_, version)| version.is_empty());
+                    if request.version.tag == dependency::Tag::DistTag
+                        || bare_alias
+                        || (manager.subcommand == Subcommand::Update
+                            && request.version.tag == dependency::Tag::Npm
+                            && !request.version.npm().version.is_exact())
+                    {
+                        let mut new_version = Vec::new();
+                        write!(
+                            &mut new_version,
+                            "{}{}",
+                            if options.exact_versions { "" } else { "^" },
+                            resolved.fmt(string_buf)
+                        )
+                        .expect("infallible: in-memory write");
+                        break 'npm with_alias_of(arena, installed, arena_str(arena, &new_version));
                     }
 
-                    resolution::Tag::Workspace => b"workspace:*",
-                    _ => arena_dup(arena, request.version.literal.slice(request.version_buf())),
-                });
+                    arena_dup(arena, installed)
+                }
+
+                resolution::Tag::Workspace => b"workspace:*",
+                _ => arena_dup(arena, request.version.literal.slice(request.version_buf())),
+            };
+            if e_string.data.slice() != new_literal {
+                changed = true;
+                e_string.data = bun_ast::StoreStr::new(new_literal);
+            }
         }
     }
-    Ok(())
+    Ok(changed)
 }
 
 const TRUSTED_DEPENDENCIES_STRING: &[u8] = b"trustedDependencies";

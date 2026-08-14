@@ -1766,6 +1766,7 @@ describe("bun update <name> semantics", () => {
     ["1.x", "1.1.0", []],
     [">=1.0.0 <2", "1.1.0", []],
     ["1.0.0 - 1.0.1", "1.0.1", []],
+    ["^1.0.0 || ^2.0.0", "2.0.0", []],
     ["npm:no-deps@1.x", "1.1.0", []],
     ["*", "2.0.0", ["no-deps"]],
   ])(
@@ -1904,6 +1905,143 @@ describe("bun update <name> semantics", () => {
     const script = await run(dir, "run", "up");
     expect(script.stdout).toContain("SCRIPT_RAN");
     expect(script.exitCode).toBe(0);
+  });
+
+  // The entries are declared out of alphabetical order, so a rewrite of the file would show up as a re-sort.
+  it.concurrent.each([[["no-deps"]], [["one-range-dep"]], [["no-deps", "one-range-dep"]]])(
+    "bun update %p that changes nothing leaves package.json and bun.lock byte-identical",
+    async names => {
+      const dir = await setup({ "one-range-dep": "1.0.0", "no-deps": "^1.1.0" });
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
+      const before = await snapshotFiles(dir);
+      expect(Object.keys(JSON.parse(before.packageJson).dependencies)).toStrictEqual(["one-range-dep", "no-deps"]);
+      const { stdout } = await update(dir, ...names);
+      expect(stdout).not.toContain("→");
+      await expectUnchanged(dir, before);
+      expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
+    },
+  );
+
+  // one-range-dep and one-range-dep-too both depend on no-deps ^1.0.0; the root's exact pin parks their edges on 1.0.0, and dropping it leaves them there.
+  describe("scope of an update run from a workspace member", () => {
+    const ROOT = { name: "root", workspaces: ["packages/*"] };
+    const PINNED_ROOT = { ...ROOT, dependencies: { "no-deps": "1.0.0" } };
+    const member = (name: string, dependencies: Json = {}) => ({ name, version: "1.0.0", dependencies });
+    const DEPENDENTS = ["one-range-dep", "one-range-dep-too"] as const;
+    const FILES = ["", "packages/a", "packages/b"] as const;
+
+    // `widenedA` replaces a's dependencies once its pins are locked, so a's own direct dependencies can be stale as well.
+    async function staleRepo(a: Json, b: Json, widenedA?: Json) {
+      const dir = await createDir({
+        "package.json": PINNED_ROOT,
+        "packages/a/package.json": member("a", a),
+        "packages/b/package.json": member("b", b),
+      });
+      await install(dir);
+      await writeFile(join(dir, "package.json"), stringify(ROOT));
+      if (widenedA) await writeFile(join(dir, "packages", "a", "package.json"), stringify(member("a", widenedA)));
+      expect(await install(dir)).toContain("Saved lockfile");
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+      const texts = () => Promise.all(FILES.map(rel => packageJsonText(dir, rel)));
+      return { dir, texts, packageJsons: await texts(), lockBefore: await lockText(dir) };
+    }
+
+    // The no-deps version each dependent's edge resolves to: its nested row when it lost the hoisting race, else the hoisted one.
+    async function noDepsEdges(dir: string) {
+      const { packages } = await lock(dir);
+      const versionOf = (key: string) => (packages[key] as [string] | undefined)?.[0].slice("no-deps@".length);
+      return Object.fromEntries(
+        DEPENDENTS.filter(dependent => dependent in packages).map(dependent => [
+          dependent,
+          versionOf(`${dependent}/no-deps`) ?? versionOf("no-deps"),
+        ]),
+      );
+    }
+
+    const distinctTransitives = () => staleRepo({ "one-range-dep": "1.0.0" }, { "one-range-dep-too": "1.0.0" });
+
+    // Once a's edge moves, b's edge accepts the new version too and is re-pointed so bun.lock keeps one copy; only a package a cannot reach at all stays put (below).
+    it.concurrent.each([
+      ["from packages/a", "packages/a", []],
+      ["with --filter a", "", ["--filter", "a"]],
+      ["from the root", "", []],
+      ["with -r", "", ["-r"]],
+      ["with --filter '*'", "", ["--filter", "*"]],
+    ])("bun update no-deps %s re-points every edge that accepts the new version", async (_, cwd, flags) => {
+      const { dir, texts, packageJsons } = await distinctTransitives();
+      const { stderr, exitCode } = await runFrom(join(dir, cwd), dir, "update", "no-deps", ...flags);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await noDepsEdges(dir)).toStrictEqual({ "one-range-dep": "1.1.0", "one-range-dep-too": "1.1.0" });
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
+      expect(await texts()).toStrictEqual(packageJsons);
+      await install(dir, "--frozen-lockfile");
+    });
+
+    // a -> a-dep (stale at 1.0.1, no path to no-deps); b -> one-range-dep -> no-deps (stale at 1.0.0).
+    async function unreachableFromA() {
+      const repo = await staleRepo({ "a-dep": "1.0.1" }, { "one-range-dep": "1.0.0" }, { "a-dep": "^1.0.1" });
+      expect(await lockedVersions(repo.dir, "a-dep")).toStrictEqual(["1.0.1"]);
+      return repo;
+    }
+
+    it.concurrent.each([
+      ["from packages/a", "packages/a", ["no-deps"], '"no-deps" is only a dependency of other workspaces'],
+      ["with --filter a", "", ["no-deps", "--filter", "a"], '"no-deps" is only a dependency of other workspaces'],
+      ["as a pattern from packages/a", "packages/a", ["no-*"], 'no packages in bun.lock match "no-*"'],
+    ])(
+      "bun update naming a package the workspace has no path to (%s) is an error that writes nothing",
+      async (_, cwd, args, message) => {
+        const { dir, texts, packageJsons, lockBefore } = await unreachableFromA();
+        const { stderr, exitCode } = await runFrom(join(dir, cwd), dir, "update", ...args);
+        expect(stderr).toContain(`error: ${message}`);
+        expect(await lockText(dir)).toBe(lockBefore);
+        expect(await texts()).toStrictEqual(packageJsons);
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    it.concurrent.each([
+      ["from packages/b", "packages/b", []],
+      ["from the root", "", []],
+      ["with --filter b", "", ["--filter", "b"]],
+    ])(
+      "bun update no-deps %s moves the transitive row b reaches and leaves stale a-dep alone",
+      async (_, cwd, flags) => {
+        const { dir, texts, packageJsons } = await unreachableFromA();
+        const { stderr, exitCode } = await runFrom(join(dir, cwd), dir, "update", "no-deps", ...flags);
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+        expect(await noDepsEdges(dir)).toStrictEqual({ "one-range-dep": "1.1.0" });
+        expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.1"]);
+        expect(await texts()).toStrictEqual(packageJsons);
+        await install(dir, "--frozen-lockfile");
+      },
+    );
+
+    // a-dep is a's own entry, so it moves only when a is selected; no-deps is a nested row, so it moves when b (or the root, which reaches every nested row) is selected.
+    it.concurrent.each([
+      ["from packages/a", "packages/a", [], "1.0.10", "1.0.0"],
+      ["with --filter a", "", ["--filter", "a"], "1.0.10", "1.0.0"],
+      ["from packages/b", "packages/b", [], "1.0.1", "1.1.0"],
+      ["from the root", "", [], "1.0.1", "1.1.0"],
+      ["with -r", "", ["-r"], "1.0.10", "1.1.0"],
+    ])("a bare update %s moves a-dep to %s and no-deps to %s", async (_, cwd, flags, aDep, noDeps) => {
+      const { dir, texts, packageJsons } = await unreachableFromA();
+      const [rootBefore, aBefore, bBefore] = packageJsons;
+      const { stderr, exitCode } = await runFrom(join(dir, cwd), dir, "update", ...flags);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await lockedVersions(dir, "a-dep")).toStrictEqual([aDep]);
+      expect(await noDepsEdges(dir)).toStrictEqual({ "one-range-dep": noDeps });
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual([noDeps]);
+      const aDeps = { "a-dep": `^${aDep}` };
+      expect((await packageJsonOf(dir, "packages/a")).dependencies).toStrictEqual(aDeps);
+      expect((await lock(dir)).workspaces["packages/a"].dependencies).toStrictEqual(aDeps);
+      const [rootAfter, aAfter, bAfter] = await texts();
+      expect([rootAfter, bAfter, aAfter === aBefore]).toStrictEqual([rootBefore, bBefore, aDep === "1.0.1"]);
+      await install(dir, "--frozen-lockfile");
+    });
   });
 
   describe("patterns", () => {

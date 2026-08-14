@@ -2393,9 +2393,7 @@ function attachServerTLSEngine(self, connection, tls) {
 // Deferred a tick so plain writes made by later 'connection' listeners are seen below.
 function adoptServerTLS(self, connection, tls) {
   if (self.destroyed || connection.destroyed) {
-    // A wrap destroyed before adoption (e.g. while the connection was still
-    // connecting) releases the connection it would have owned, like the
-    // client-side 'connect' path above.
+    // A destroyed wrap releases the connection it would have owned (mirrors the client 'connect' path).
     connection.destroy();
     self.destroy();
     return;

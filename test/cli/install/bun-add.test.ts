@@ -113,7 +113,8 @@ it("should reject missing package", async () => {
     env,
   });
   const err = await stderr.text();
-  expect(err).toContain(`error: Could not find package.json for "file:${add_path}" dependency`);
+  // The path is reported the way bun.lock records it: forward slashes on every platform.
+  expect(err).toContain(`error: Could not find package.json for "file:${add_path.replaceAll("\\", "/")}" dependency`);
   expect(err).toContain("failed to resolve");
 
   const out = await stdout.text();

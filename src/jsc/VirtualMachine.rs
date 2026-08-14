@@ -1583,6 +1583,19 @@ impl VirtualMachine {
     }
 
     pub fn on_before_exit(&mut self) {
+        self.on_before_exit_with(|_| {});
+    }
+
+    /// Dispatches 'beforeExit', then drains whatever the listeners scheduled,
+    /// re-dispatching each time the loop empties again (node's semantics).
+    ///
+    /// `after_tick` runs after every tick of that drain. A listener that
+    /// re-arms the loop on each dispatch keeps the process in here for good,
+    /// so per-tick work the caller does in its own run loop has to be passed
+    /// in: `bun run --hot` passes
+    /// [`Self::report_exception_in_hot_reloaded_module_if_needed`], because
+    /// the ticks here run reload tasks too.
+    pub fn on_before_exit_with(&mut self, mut after_tick: impl FnMut(&mut Self)) {
         // Node only emits 'beforeExit' on a natural drain; a fatal uncaught
         // exception that brought us here is an implicit process.exit(1). Arm
         // the hard-exit flag ourselves since we're skipping the dispatch that
@@ -1597,6 +1610,7 @@ impl VirtualMachine {
         loop {
             while self.is_event_loop_alive() {
                 self.tick();
+                after_tick(self);
                 self.auto_tick_active();
                 dispatch = true;
             }

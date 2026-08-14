@@ -1477,7 +1477,9 @@ impl Run<'_> {
                     vm.report_exception_in_hot_reloaded_module_if_needed();
                     vm.auto_tick_active();
                 }
-                vm.on_before_exit();
+                vm.on_before_exit_with(
+                    VirtualMachine::report_exception_in_hot_reloaded_module_if_needed,
+                );
                 vm.report_exception_in_hot_reloaded_module_if_needed();
                 // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
                 // accessed here. Watcher arm keeps the process alive across

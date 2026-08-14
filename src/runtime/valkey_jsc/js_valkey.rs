@@ -1242,7 +1242,8 @@ impl JSValkeyClient {
                     };
                     let failed =
                         rejected.and_then(|()| client.fail_with_js_value(&global_object, error));
-                    return failed.and(self.client_mut().close());
+                    let closed = self.client_mut().close();
+                    return failed.and(closed);
                 }
             };
             Js::hello_set_cached(this_value, &global_object, hello_value);
@@ -1856,7 +1857,8 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let failed = this
             .client_mut()
             .fail_with_js_value(&this.global_object, err_value);
-        failed.and(this.client_mut().close())
+        let closed = this.client_mut().close();
+        failed.and(closed)
     }
 
     pub(crate) const ON_HANDSHAKE: Option<

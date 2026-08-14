@@ -614,7 +614,8 @@ impl ValkeyClient {
 
         if !self.connection_ready() {
             self.flags.is_manually_closed = true;
-            return val.and(self.close());
+            let closed = self.close(); // unconditionally, whatever `val` is
+            return val.and(closed);
         }
         val
     }

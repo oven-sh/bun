@@ -1164,9 +1164,7 @@ pub(crate) fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u
     None
 }
 
-/// The specifier inside a version literal: a package.json value may carry leading whitespace
-/// (`" npm:foo@^1"`), which is not part of the specifier. Every path that classifies
-/// (`Tag::infer`) or parses a literal must look at these bytes, never at the raw literal.
+/// Literals may carry leading whitespace; classify and parse these bytes, not the raw literal.
 #[inline]
 pub fn trim_literal(literal: &[u8]) -> &[u8] {
     strings::trim_left(literal, b" \t\n\r")

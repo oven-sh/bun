@@ -6392,9 +6392,8 @@ impl VirtualMachine {
             }
 
             if !is_first_property {
-                // Separators are written before each property after the first,
-                // so the last line (a regular property or `code`) ends without a
-                // comma; the second newline is the blank line before the stack.
+                // Ends the last property line; the second newline separates the
+                // properties from the stack trace.
                 pretty_write!(writer, "<r>\n\n")?;
             }
 

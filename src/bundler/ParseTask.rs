@@ -117,9 +117,7 @@ pub struct ParseTask {
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
     pub(crate) is_entry_point: bool,
-    /// This task parses a copy of the bundler runtime (`Index::RUNTIME`, or the
-    /// browser copy a server build adds for its HTML imports). The runtime is
-    /// always tree-shaken and always honors its own `@__PURE__` annotations.
+    /// Parses a copy of the bundler runtime (`Index::RUNTIME` or a server build's browser copy).
     pub(crate) is_runtime: bool,
 }
 

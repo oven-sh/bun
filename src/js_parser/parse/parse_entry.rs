@@ -76,10 +76,7 @@ pub struct Options<'a> {
 
     pub tree_shaking: bool,
     pub bundle: bool,
-    /// The source is a copy of the bundler runtime (`src/runtime.js`). A bundle
-    /// may contain more than one copy (a server build parses a second one for
-    /// the browser side of its HTML imports), so this cannot be derived from
-    /// the source index.
+    /// The source is a copy of the bundler runtime (a bundle can contain more than one).
     pub source_is_runtime: bool,
     pub code_splitting: bool,
     pub package_version: &'a [u8],

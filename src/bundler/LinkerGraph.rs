@@ -213,10 +213,7 @@ pub struct LinkerGraph<'a> {
 
     pub(crate) is_scb_bitset: BitSet,
 
-    /// Copied from `Graph::browser_runtime_source_index` in `load`. Every
-    /// runtime helper the linker hands to a file goes through
-    /// [`Self::runtime_source_index_for`] so that browser files of a server
-    /// build use this copy and never share a chunk with `Index::RUNTIME`.
+    /// `Graph::browser_runtime_source_index`, copied in `LinkerContext::load`.
     pub(crate) browser_runtime_source_index: Index,
 
     /// This is for cross-module inlining of detected inlinable constants
@@ -233,8 +230,9 @@ pub struct LinkerGraph<'a> {
 //   (no new allocations) for the duration of any worker-pool fan-out that
 //   holds `&LinkerGraph`.
 // - `files_live` / `parts_live` / `is_scb_bitset` / `reachable_files` /
-//   `stable_source_indices` / `code_splitting` / `browser_runtime_source_index` /
-//   `ts_enums` are populated before fan-out and only read by workers.
+//   `stable_source_indices` / `code_splitting` / `ts_enums` are populated
+//   before fan-out and only read by workers.
+// - `browser_runtime_source_index` is set in `load`, before fan-out, and only read by workers.
 // - `ast` / `meta` / `files` columns that workers mutate are split out via
 //   `split_mut()` into disjoint `&mut [_]` *before* the pool runs (see
 //   `compute_cross_chunk_dependencies`); workers never reach those columns
@@ -489,9 +487,7 @@ pub(crate) fn generate_symbol_import_and_use(
 }
 
 impl<'a> LinkerGraph<'a> {
-    /// The copy of the runtime that `source_index` takes its helpers from.
-    /// There is only ever a second copy in a server-side build with browser
-    /// files (HTML imports); everything else resolves to `Index::RUNTIME`.
+    /// The runtime copy that file `source_index` takes its helpers from.
     pub(crate) fn runtime_source_index_for(&self, source_index: index::Int) -> index::Int {
         if self.browser_runtime_source_index.is_valid()
             && self.ast.items_target()[source_index as usize] == Target::Browser
@@ -507,9 +503,7 @@ impl<'a> LinkerGraph<'a> {
                 && source_index == self.browser_runtime_source_index.get())
     }
 
-    /// Looks up the helper `name` in the runtime copy that `source_index` uses.
-    /// The returned ref's `source_index()` is that runtime copy, which is what
-    /// dependencies on the helper's parts have to point at.
+    /// Helper `name` from the runtime copy `source_index` uses; the ref lives in that copy.
     pub(crate) fn runtime_function_for(&self, source_index: index::Int, name: &[u8]) -> Ref {
         runtime_function(
             self.ast.items_named_exports(),

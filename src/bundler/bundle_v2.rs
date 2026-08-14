@@ -1550,13 +1550,6 @@ pub mod bv2_impl {
             }
         }
 
-        /// Called when a server-side build first needs to bundle browser code (an
-        /// HTML entry point or HTML import). Besides the transpiler, the browser
-        /// side gets its own copy of the runtime (see
-        /// `Graph::browser_runtime_source_index`). Bake builds hand in their
-        /// client transpiler up front and are not affected: they keep sharing
-        /// `Index::RUNTIME` across both sides (`bake::production` writes that one
-        /// shared runtime chunk out for the client itself).
         fn ensure_client_transpiler(&mut self) {
             if self.client_transpiler.is_none() {
                 let _ = self
@@ -1564,6 +1557,7 @@ pub mod bv2_impl {
                     .unwrap_or_else(|e: Error| {
                         panic!("Failed to initialize client transpiler: {}", e.name());
                     });
+                // Bake passes its client transpiler in, so it keeps the single shared runtime.
                 debug_assert!(self.graph.browser_runtime_source_index.is_invalid());
                 self.graph.browser_runtime_source_index = self
                     .enqueue_runtime(Target::Browser)
@@ -3283,11 +3277,7 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        /// Adds a copy of the bundler runtime built for `target` to the graph and
-        /// schedules its parse. The copy takes the next free source index, so the
-        /// main copy has to be added before anything else to land at
-        /// `Index::RUNTIME`; the browser copy of a server build (see
-        /// `Graph::browser_runtime_source_index`) can be added at any point.
+        /// Takes the next source index; the main copy must go first to land at `Index::RUNTIME`.
         fn enqueue_runtime(&mut self, target: options::Target) -> Result<Index, Error> {
             let source_index = Index::init(self.graph.input_files.len());
             let rt = ParseTask::get_runtime_source(target, source_index);
@@ -6946,9 +6936,7 @@ pub mod bv2_impl {
                 )?
                 .unwrap(),
             );
-            // The parser leaves `target` at its browser default; this manifest
-            // module belongs to the importing (server) side of the build, which is
-            // what selects the runtime copy it takes `__jsonParse` from.
+            // The parser defaults `target` to browser; this module belongs to the importing side.
             ast_for_html_entrypoint.target = target;
 
             let fake_input_file = crate::Graph::InputFile {

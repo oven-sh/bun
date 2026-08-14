@@ -1142,8 +1142,7 @@ struct DependencyWrapper<'a> {
     entry_point_kinds: &'a [EntryPoint::Kind],
     export_star_records: &'a [bun_alloc::AstVec<u32>],
     output_format: options::Format,
-    /// `LinkerGraph::browser_runtime_source_index`; `wrap` must skip it just
-    /// like `Index::RUNTIME`.
+    /// `LinkerGraph::browser_runtime_source_index`; `wrap` skips it like `Index::RUNTIME`.
     browser_runtime_source_index: Index,
     wrap_stack: Vec<IndexInt>,
 }

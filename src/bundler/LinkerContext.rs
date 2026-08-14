@@ -2927,19 +2927,13 @@ fn import_tracker_eq(a: &ImportTracker, b: &ImportTracker) -> bool {
 }
 
 impl<'a> LinkerContext<'a> {
-    /// Looks up the symbol `Ref` of the runtime helper `name` in the runtime
-    /// copy that file `source_index` uses (see
-    /// `LinkerGraph::runtime_source_index_for`).
+    /// Looks up the runtime helper `name` in the runtime copy that file `source_index` uses.
     #[inline]
     pub(crate) fn runtime_function_for(&self, source_index: crate::IndexInt, name: &[u8]) -> Ref {
         self.graph.runtime_function_for(source_index, name)
     }
 
-    /// The runtime helpers the printer itself emits references to (interop
-    /// wrappers around `require()` / `import()` and the `require` polyfill),
-    /// taken from the runtime copy that file `source_index` uses. Code printed
-    /// for a chunk must take them from the side the chunk belongs to, or a
-    /// browser chunk would end up referencing the server runtime's symbols.
+    /// The interop helpers the printer references, from the runtime copy file `source_index` uses.
     pub(crate) fn runtime_print_refs_for(&self, source_index: crate::IndexInt) -> RuntimePrintRefs {
         let runtime_source_index = self.graph.runtime_source_index_for(source_index);
         let runtime_members =
@@ -2967,8 +2961,7 @@ impl<'a> LinkerContext<'a> {
         self.graph.top_level_symbol_to_parts(id, r#ref)
     }
 
-    /// Returns the part indices that declare the runtime helper `ref` (a ref
-    /// obtained from [`Self::runtime_function_for`]) in its runtime copy.
+    /// Returns the part indices that declare the runtime helper `ref` in its runtime copy.
     #[inline]
     pub(crate) fn top_level_symbols_to_parts_for_runtime(&self, r#ref: Ref) -> &[u32] {
         self.top_level_symbols_to_parts(r#ref.source_index(), r#ref)

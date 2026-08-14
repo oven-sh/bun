@@ -78,12 +78,7 @@ pub struct Graph<'a> {
     /// OutputPiece.Kind.HTMLManifest corresponds to indices into the array.
     pub(crate) html_imports: HtmlImports,
 
-    /// A second copy of the bundler runtime, parsed for `Target::Browser`. A
-    /// server-side build creates it together with its client transpiler, so the
-    /// browser files it pulls in through HTML imports take `__toESM`,
-    /// `__require`, ... from a runtime built for the browser instead of sharing
-    /// `Index::RUNTIME` (and therefore output chunks) with the server code.
-    /// `Index::INVALID` when the build has no such browser side.
+    /// Runtime copy parsed for the browser side of a server build (HTML imports); invalid if none.
     pub(crate) browser_runtime_source_index: Index,
 
     pub(crate) estimated_file_loader_count: usize,
@@ -232,8 +227,7 @@ impl<'a> Graph<'a> {
         &mut self.build_graphs[target]
     }
 
-    /// The copy of the runtime that files parsed for `target` import their
-    /// helpers from.
+    /// The runtime copy that files parsed for `target` import their helpers from.
     #[inline]
     pub(crate) fn runtime_source_index_for_target(&self, target: options::Target) -> Index {
         if target == options::Target::Browser && self.browser_runtime_source_index.is_valid() {

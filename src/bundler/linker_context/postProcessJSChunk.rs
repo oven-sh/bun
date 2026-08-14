@@ -71,8 +71,7 @@ pub(crate) fn post_process_js_chunk(
     let mut cross_chunk_prefix: PrintResult;
     let mut cross_chunk_suffix: PrintResult;
 
-    // Every file in a chunk is on the same side of the build as the file the
-    // chunk was created for, so that file selects the runtime copy.
+    // Every file in a chunk is on the same side of the build as the file the chunk was created for.
     let runtime_refs = c.runtime_print_refs_for(chunk.entry_point.source_index());
 
     // The chunk's module record, assembled in output order: the printer records

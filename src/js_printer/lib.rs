@@ -1175,10 +1175,7 @@ pub struct Options<'a> {
     /// Controls whether __toESM uses Node ESM semantics (isNodeMode=1 for .esm) or respects __esModule markers.
     pub input_module_type: bundle_opts::ModuleType,
     pub module_type: bundle_opts::Format,
-    /// The source being printed is a copy of the bundler runtime. The dev server
-    /// format prints it as plain top-level code rather than as a module; a
-    /// bundle can contain more than one copy, so the bundler says which sources
-    /// these are instead of the printer assuming source index 0.
+    /// A bundler runtime copy; the dev server format prints it as plain code, not as a module.
     pub source_is_runtime: bool,
 
     // /// Used for cross-module inlining of import items when bundling

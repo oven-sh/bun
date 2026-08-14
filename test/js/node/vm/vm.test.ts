@@ -473,7 +473,11 @@ describe("lineOffset/columnOffset validation (Node's validateInt32)", () => {
   const fourAsDouble = new Float64Array([4])[0];
 
   const source = "new Error().stack";
-  const location = (stack: unknown) => String(stack).match(/offsets\.js:\d+:\d+/)?.[0];
+  const location = (stack: unknown) => {
+    const match = String(stack).match(/offsets\.js:\d+:\d+/);
+    if (!match) throw new Error(`no offsets.js frame in:\n${stack}`);
+    return match[0];
+  };
   const entryPoints: Record<string, (options: Record<string, unknown>) => unknown> = {
     "new Script(code, options).runInThisContext()": options => new Script(source, options).runInThisContext(),
     "new Script(code, options).runInContext(context, options)": options =>
@@ -481,6 +485,8 @@ describe("lineOffset/columnOffset validation (Node's validateInt32)", () => {
     "vm.runInThisContext": options => runInThisContext(source, options),
     "vm.runInContext": options => runInContext(source, createContext(), options),
     "vm.runInNewContext": options => runInNewContext(source, {}, options),
+    // compileFunction does not apply columnOffset to runtime frames yet, so
+    // for this entry only the line half of the comparisons is discriminating.
     "vm.compileFunction": options => compileFunction(`return ${source}`, [], options)(),
   };
 
@@ -489,9 +495,22 @@ describe("lineOffset/columnOffset validation (Node's validateInt32)", () => {
       location(entryPoints[name]({ filename: "offsets.js", ...options }));
 
     expect(run({ lineOffset: -0, columnOffset: -0 })).toBe(run({ lineOffset: 0, columnOffset: 0 }));
-    expect(run({ lineOffset: threeAsDouble, columnOffset: fourAsDouble })).toBe(
-      run({ lineOffset: 3, columnOffset: 4 }),
-    );
+    const shifted = run({ lineOffset: threeAsDouble, columnOffset: fourAsDouble });
+    expect(shifted).toBe(run({ lineOffset: 3, columnOffset: 4 }));
+    expect(shifted).toMatch(/^offsets\.js:4:\d+$/);
+  });
+
+  // Both int32 bounds are accepted whichever way they are boxed. Compiling at
+  // INT32_MAX overflows JSC's line counter (#38228), and the run-side options
+  // are validated without compiling anything, so the bounds are checked there.
+  test.each(["lineOffset", "columnOffset"])("%s accepts INT32_MIN and INT32_MAX as int32 or double", option => {
+    const script = new Script("1");
+    const bounds = [-2147483648, 2147483647];
+    const boundsAsDoubles = new Float64Array(bounds);
+    for (let i = 0; i < bounds.length; i++) {
+      expect(script.runInThisContext({ [option]: bounds[i] })).toBe(1);
+      expect(script.runInThisContext({ [option]: boundsAsDoubles[i] })).toBe(1);
+    }
   });
 
   test("-0 and integral doubles position errors like the integers they equal", () => {
@@ -511,16 +530,16 @@ describe("lineOffset/columnOffset validation (Node's validateInt32)", () => {
   const int32Range = ">= -2147483648 && <= 2147483647";
   const ok = () => "ok";
   const outOfRange = (must: string, received: string) => (name: string) =>
-    `ERR_OUT_OF_RANGE: The value of "${name}" is out of range. It must be ${must}. Received ${received}`;
+    `RangeError ERR_OUT_OF_RANGE: The value of "${name}" is out of range. It must be ${must}. Received ${received}`;
   const invalidType = (received: string) => (name: string) =>
-    `ERR_INVALID_ARG_TYPE: The "${name}" property must be of type number. Received ${received}`;
+    `TypeError ERR_INVALID_ARG_TYPE: The "${name}" property must be of type number. Received ${received}`;
   const cases: [label: string, value: unknown, expected: (name: string) => string][] = [
     ["-0", -0, ok],
     ["integral double", threeAsDouble, ok],
     ["Float64Array element", fourAsDouble, ok],
-    // INT32_MAX is accepted too, but compiling at that offset overflows JSC's
-    // line counter (#38228), so only the lower bound is compiled here.
+    // Only the lower bound is compiled at; see the INT32_MAX test above.
     ["INT32_MIN", -2147483648, ok],
+    ["INT32_MIN as a double", new Float64Array([-2147483648])[0], ok],
     ["undefined", undefined, ok],
     ["INT32_MAX + 1", 2147483648, outOfRange(int32Range, "2147483648")],
     ["INT32_MIN - 1", -2147483649, outOfRange(int32Range, "-2147483649")],
@@ -542,7 +561,7 @@ describe("lineOffset/columnOffset validation (Node's validateInt32)", () => {
       fn();
       return "ok";
     } catch (e: any) {
-      return `${e.code}: ${e.message}`;
+      return `${e.name} ${e.code}: ${e.message}`;
     }
   };
 

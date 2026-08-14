@@ -556,3 +556,74 @@ describe.skipIf(!hasDomains)("scoped runs: I/O", () => {
     conn.end();
   });
 });
+
+describe.skipIf(!hasDomains || process.platform === "win32")("spawnSync on a scoped run", () => {
+  test("JS timers, microtasks, immediates and nextTicks scheduled before spawnSync do not run during it", () => {
+    const log: string[] = [];
+    let during = true;
+    const note = (what: string) => () => log.push(what + (during ? ":during" : ":after"));
+    setTimeout(note("timeout"), 0);
+    setImmediate(note("immediate"));
+    queueMicrotask(note("microtask"));
+    process.nextTick(note("nexttick"));
+    Promise.resolve().then(note("then"));
+
+    const { stdout, exitCode } = Bun.spawnSync({
+      // Long enough for the 0ms timer to be overdue while we wait.
+      cmd: [bunExe(), "-e", "await Bun.sleep(30); console.log('child')"],
+      env: bunEnv,
+    });
+    during = false;
+    expect(stdout.toString().trim()).toBe("child");
+    expect(exitCode).toBe(0);
+    expect(log).toEqual([]);
+
+    return new Promise<void>(resolve =>
+      setTimeout(() => {
+        expect(log.sort()).toEqual([
+          "immediate:after",
+          "microtask:after",
+          "nexttick:after",
+          "then:after",
+          "timeout:after",
+        ]);
+        resolve();
+      }, 5),
+    );
+  });
+
+  test("an outer child's output and exit that arrive during spawnSync are delivered after it", async () => {
+    const log: string[] = [];
+    await using outer = Bun.spawn({
+      cmd: [bunExe(), "-e", "await Bun.sleep(10); console.log('outer')"],
+      env: bunEnv,
+      stdout: "pipe",
+      onExit: () => log.push("outer-exit"),
+    });
+    const outerText = outer.stdout.text().then(t => (log.push("outer-stdout"), t));
+
+    const { stdout } = Bun.spawnSync({
+      cmd: [bunExe(), "-e", "await Bun.sleep(80); console.log('inner')"],
+      env: bunEnv,
+    });
+    log.push("spawnSync-returned:" + stdout.toString().trim());
+    expect(log).toEqual(["spawnSync-returned:inner"]);
+
+    expect((await outerText).trim()).toBe("outer");
+    expect(await outer.exited).toBe(0);
+    // onExit is dispatched from the loop after `exited` settles.
+    await immediate();
+    expect(log.slice(1).sort()).toEqual(["outer-exit", "outer-stdout"]);
+  });
+
+  test("spawnSync inside a scoped run nests", () => {
+    const result = runUntil(async () => {
+      await sleep(1);
+      const { stdout } = Bun.spawnSync({ cmd: [bunExe(), "-e", "console.log('nested')"], env: bunEnv });
+      await immediate();
+      return stdout.toString().trim();
+    });
+    expect(Bun.peek(result)).toBe("nested");
+    expect(currentDomainForTesting()).toEqual([0, 0]);
+  });
+});

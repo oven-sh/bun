@@ -171,9 +171,9 @@ pub(crate) unsafe fn park_immediate_if_foreign(
 }
 
 /// `tick_queue_with_count` dequeued `task` while a run is active. Tasks stamped
-/// with another run's domain are parked; unattributed tasks (domain 0 —
-/// completions posted from other threads) run in any run, since their
-/// observable continuations are microtasks, which are gated.
+/// with another domain (another run's, or the root's) are parked; unattributed
+/// tasks (domain 0 — created off the JS thread, provenance unknown) run in any
+/// run, since their observable continuations are microtasks, which are gated.
 #[inline]
 pub(crate) fn park_task_if_foreign(task: Task) -> bool {
     let active = active_run();
@@ -204,26 +204,12 @@ impl ScopedRun {
     /// `vm` is the live per-thread VM; the run must be dropped on this thread,
     /// innermost first.
     pub unsafe fn enter(vm: *mut VirtualMachine, domain: u32) -> ScopedRun {
-        // SAFETY: per fn contract.
-        unsafe { Self::enter_including_since(vm, domain, bun_io::run_epoch::bump()) }
-    }
-
-    /// Enter a run that also owns the I/O created since `since_epoch` (a value
-    /// from [`current_epoch`]): for a caller that must create what it waits for
-    /// before it can start waiting — spawnSync spawns the child, then runs.
-    ///
-    /// # Safety
-    /// As [`ScopedRun::enter`].
-    pub unsafe fn enter_including_since(
-        vm: *mut VirtualMachine,
-        domain: u32,
-        since_epoch: u32,
-    ) -> ScopedRun {
         debug_assert!(domain != 0);
-        debug_assert!(since_epoch != 0 && since_epoch <= bun_io::run_epoch::current());
         // SAFETY: per fn contract.
         unsafe { Bun__Domain__enterRun((*vm).global, domain) };
         let outer_start_epoch = bun_io::run_epoch::active_run_start();
+        // I/O created from here on is the run's own; everything older is foreign.
+        let start_epoch = bun_io::run_epoch::bump();
         RUNS.with_borrow_mut(|runs| {
             runs.push(RunState {
                 domain,
@@ -235,8 +221,8 @@ impl ScopedRun {
         });
         bun_event_loop::set_active_run_domain(domain);
         // SAFETY: per fn contract.
-        unsafe { set_run_start_epoch(vm, since_epoch) };
-        bun_core::scoped_log!(DomainRun, "enter run {} (epoch {})", domain, since_epoch);
+        unsafe { set_run_start_epoch(vm, start_epoch) };
+        bun_core::scoped_log!(DomainRun, "enter run {} (epoch {})", domain, start_epoch);
         ScopedRun { vm, domain }
     }
 
@@ -249,20 +235,6 @@ impl ScopedRun {
         let domain = unsafe { Bun__Domain__allocate((*vm).global) };
         // SAFETY: per fn contract.
         unsafe { Self::enter(vm, domain) }
-    }
-
-    /// [`ScopedRun::enter_including_since`] for a freshly allocated domain.
-    ///
-    /// # Safety
-    /// As [`ScopedRun::enter`].
-    pub unsafe fn enter_new_including_since(
-        vm: *mut VirtualMachine,
-        since_epoch: u32,
-    ) -> ScopedRun {
-        // SAFETY: per fn contract.
-        let domain = unsafe { Bun__Domain__allocate((*vm).global) };
-        // SAFETY: per fn contract.
-        unsafe { Self::enter_including_since(vm, domain, since_epoch) }
     }
 
     #[inline]
@@ -335,12 +307,6 @@ impl Drop for ScopedRun {
         // SAFETY: `vm` live per `enter` contract; runs are dropped innermost first.
         unsafe { exit_run(self.vm, self.domain) };
     }
-}
-
-/// A fresh epoch boundary: I/O created after this call is stamped `>=` the
-/// returned value, everything created before is `<` it.
-pub fn current_epoch() -> u32 {
-    bun_io::run_epoch::bump()
 }
 
 /// Publish the innermost run's start epoch to the FilePoll gate (thread-local)

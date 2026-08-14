@@ -728,9 +728,9 @@ impl EventLoop {
             return;
         }
         if task.domain == 0 {
-            // Attribute to the scoped run active right now (0 when none), so a
-            // nested run can tell an outer run's tasks from its own.
-            task.domain = bun_event_loop::active_run_domain();
+            // Attribute to whoever is enqueuing (the active scoped run, else the
+            // root), so a run can tell other domains' tasks from its own.
+            task.domain = bun_event_loop::current_task_domain();
         }
         let _ = self.tasks.write_item(task);
     }

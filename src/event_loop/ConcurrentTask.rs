@@ -130,9 +130,11 @@ pub mod task_tag {
 #[derive(Copy, Clone)]
 pub struct Task {
     pub tag: TaskTag,
-    /// Scheduling domain of the scoped event-loop run that was active when the
-    /// task was enqueued on the JS thread (0 = none / posted from another
-    /// thread). Fits in the padding after `tag`. See `bun_runtime::domain_run`.
+    /// Scheduling domain the task is attributed to: the scoped event-loop run
+    /// active when it was created/enqueued on a JS thread,
+    /// [`crate::ROOT_TASK_DOMAIN`] when none was, or 0 when it was created off
+    /// the JS thread (provenance unknown). Fits in the padding after `tag`. See
+    /// `bun_runtime::domain_run`.
     pub domain: u32,
     pub ptr: *mut (),
 }
@@ -191,7 +193,11 @@ impl Task {
     // Takes `*mut T` directly; `&mut T` coerces at call sites.
     #[inline]
     pub fn init<T: Taskable>(ptr: *mut T) -> Task {
-        Task::new(T::TAG, ptr.cast::<()>())
+        Task {
+            tag: T::TAG,
+            domain: crate::current_task_domain(),
+            ptr: ptr.cast::<()>(),
+        }
     }
 
     /// Build a [`Task`] from an owned `Box<T>`. The dispatch arm for `T::TAG`
@@ -200,7 +206,7 @@ impl Task {
     /// callers use instead of open-coding `heap::alloc`.
     #[inline]
     pub fn from_boxed<T: Taskable>(task: Box<T>) -> Task {
-        Task::new(T::TAG, bun_core::heap::into_raw(task).cast::<()>())
+        Task::init(bun_core::heap::into_raw(task))
     }
 }
 

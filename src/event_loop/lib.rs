@@ -33,6 +33,7 @@ pub mod any_event_loop;
 // single TLS load with no upward call.
 thread_local! {
     static ACTIVE_RUN_DOMAIN: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+    static IS_JS_THREAD: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
 }
 
 /// The innermost scoped event-loop run's domain on this thread; 0 when none.
@@ -45,6 +46,30 @@ pub fn active_run_domain() -> u32 {
 #[inline]
 pub fn set_active_run_domain(domain: u32) {
     ACTIVE_RUN_DOMAIN.set(domain)
+}
+
+/// This thread owns a JS VM (main thread or a Worker): work it creates while no
+/// scoped run is active belongs to the *root* domain rather than to nobody.
+#[inline]
+pub fn mark_js_thread() {
+    IS_JS_THREAD.set(true)
+}
+
+/// A [`Task`] stamped with this was created by root-domain code on a JS thread
+/// (as opposed to 0: created off-thread, provenance unknown). During a scoped
+/// run it is foreign like any other domain's; outside one it is nothing special.
+pub const ROOT_TASK_DOMAIN: u32 = u32::MAX;
+
+/// What a task created right now, on this thread, is attributed to: the active
+/// run's domain; else the root domain on a JS thread; else 0 (unknown — such a
+/// task is admitted by any run, since its observable continuations are
+/// microtasks, which are gated).
+#[inline]
+pub fn current_task_domain() -> u32 {
+    match ACTIVE_RUN_DOMAIN.get() {
+        0 if IS_JS_THREAD.get() => ROOT_TASK_DOMAIN,
+        domain => domain,
+    }
 }
 
 // ─── public surface ─────────────────────────────────────────────────────────

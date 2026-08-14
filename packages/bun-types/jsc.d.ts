@@ -14,8 +14,27 @@ declare module "bun:jsc" {
   function setRandomSeed(value: number): void;
   function isRope(input: string): boolean;
   function callerSourceOrigin(): string;
-  function noFTL(func: (...args: any[]) => any): (...args: any[]) => any;
-  function noOSRExitFuzzing(func: (...args: any[]) => any): (...args: any[]) => any;
+  /**
+   * Prevents JavaScriptCore from inlining `func` into its callers.
+   *
+   * Call it before `func` runs for the first time.
+   */
+  function noInline(func: (...args: any[]) => any): void;
+  /**
+   * Keeps `func` out of both optimizing JIT tiers (DFG and FTL), so it only
+   * ever runs in the interpreter or the baseline JIT. Same as `noDFG` in the
+   * `jsc` shell.
+   *
+   * Call it before `func` runs for the first time.
+   */
+  function noDFG(func: (...args: any[]) => any): void;
+  /**
+   * Keeps `func` out of the FTL tier only; it can still be compiled by the DFG.
+   *
+   * Call it before `func` runs for the first time.
+   */
+  function noFTL(func: (...args: any[]) => any): void;
+  function noOSRExitFuzzing(func: (...args: any[]) => any): void;
   function optimizeNextInvocation(func: (...args: any[]) => any): void;
   function numberOfDFGCompiles(func: (...args: any[]) => any): number;
   function releaseWeakRefs(): void;

@@ -13,6 +13,9 @@ import {
   isRope,
   describe as jscDescribe,
   memoryUsage,
+  noDFG,
+  noFTL,
+  noInline,
   numberOfDFGCompiles,
   optimizeNextInvocation,
   profile,
@@ -81,7 +84,42 @@ describe("bun:jsc", () => {
   it("callerSourceOrigin", () => {
     expect(callerSourceOrigin()).toBe(import.meta.url);
   });
-  it("noFTL", () => {});
+  it("noDFG keeps a function out of the DFG, noFTL only keeps it out of the FTL", () => {
+    function pinned(i: number) {
+      return i + 1;
+    }
+    function ftlPinned(i: number) {
+      return i + 1;
+    }
+    function unpinned(i: number) {
+      return i + 1;
+    }
+    expect(noDFG(pinned)).toBeUndefined();
+    expect(noFTL(ftlPinned)).toBeUndefined();
+    noInline(pinned);
+    noInline(ftlPinned);
+    noInline(unpinned);
+
+    // numberOfDFGCompiles() becomes non-zero once DFG (or FTL) code has replaced
+    // the function's baseline code. The DFG compiles on a background thread, so
+    // keep calling all three until the two that are allowed to tier up have
+    // done so; the noDFG'd twin receives the same calls and must still be at 0.
+    for (
+      let i = 0;
+      i < 1_000_000 && (numberOfDFGCompiles(ftlPinned) === 0 || numberOfDFGCompiles(unpinned) === 0);
+      i++
+    ) {
+      pinned(i);
+      ftlPinned(i);
+      unpinned(i);
+    }
+
+    expect({
+      pinned: numberOfDFGCompiles(pinned),
+      ftlPinnedTieredUp: numberOfDFGCompiles(ftlPinned) > 0,
+      unpinnedTieredUp: numberOfDFGCompiles(unpinned) > 0,
+    }).toEqual({ pinned: 0, ftlPinnedTieredUp: true, unpinnedTieredUp: true });
+  });
   it("noOSRExitFuzzing", () => {});
   it("optimizeNextInvocation", () => {
     count();

@@ -108,16 +108,10 @@ using namespace Zig;
 
 namespace {
 
-// The exception handling behind NAPI_PREAMBLE_NO_PENDING_CHECK. An exception that is already on the
-// VM on entry (a termination an earlier call materialised while a worker is being stopped, or one a
-// JSC internal left behind) is stashed so the body runs against a clean VM, and put back on return.
-// With nothing pending the VM is left alone, so whatever the body raises stays pending, as after
-// NAPI_PREAMBLE.
-//
-// The restore must not undo a TerminationException the body raised: the body's exception checks
-// service VM traps, which is how a node:vm timeout or worker.terminate() becomes an exception, and
-// the trap fires only once. A bare JSC::SuspendExceptionScope puts the entry state back
-// unconditionally, which dropped the termination and left the calling JS running forever.
+// Stashes an exception that is already pending when an ungated function is entered and puts it back
+// on return, except that a TerminationException the body raised in between wins: the body's exception
+// checks service VM traps (a node:vm timeout or worker.terminate() becomes an exception there, once),
+// and restoring the entry state over it would leave the calling script running forever.
 class NapiSuspendExceptionScope {
 public:
     explicit NapiSuspendExceptionScope(JSC::VM& vm)
@@ -150,11 +144,9 @@ private:
 } // namespace
 
 // Like NAPI_PREAMBLE but for pure value constructors/accessors, which Node lets an addon call while
-// an exception is pending (CHECK_ENV_NOT_IN_GC only) — node-addon-api relies on that to build the
-// Error it wraps a failed call in. An exception already on the VM is stashed for the duration of the
-// call and restored on return (see NapiSuspendExceptionScope). With nothing pending this behaves like
-// NAPI_PREAMBLE minus the env check: the exception check services VM traps, so a termination that
-// is waiting to be delivered is raised here and reported as napi_pending_exception.
+// an exception is pending (CHECK_ENV_NOT_IN_GC only); node-addon-api relies on that to build the
+// Error for a failed call. With nothing pending it checks for exceptions like NAPI_PREAMBLE does,
+// which also delivers a waiting termination as napi_pending_exception.
 #define NAPI_PREAMBLE_NO_PENDING_CHECK(_env)                                      \
     NAPI_LOG_CURRENT_FUNCTION;                                                    \
     NAPI_CHECK_ARG(_env, _env);                                                   \
@@ -2938,8 +2930,7 @@ extern "C" napi_status napi_get_value_bigint_int64(napi_env env, napi_value valu
     JSValue jsValue = toJS(value);
     NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isHeapBigInt(), napi_bigint_expected);
 
-    // The value is a bigint so the conversion itself cannot throw, but its exception check services
-    // VM traps, so a termination can become pending here.
+    // Cannot throw for a bigint, but its exception check can deliver a pending termination.
     *result = jsValue.toBigInt64(toJS(env));
     NAPI_RETURN_IF_VM_EXCEPTION(env);
 
@@ -2973,8 +2964,7 @@ extern "C" napi_status napi_get_value_bigint_uint64(napi_env env, napi_value val
     JSValue jsValue = toJS(value);
     NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isHeapBigInt(), napi_bigint_expected);
 
-    // As in napi_get_value_bigint_int64: the conversion cannot throw for a bigint, but its exception
-    // check services VM traps.
+    // Cannot throw for a bigint, but its exception check can deliver a pending termination.
     *result = jsValue.toBigUInt64(toJS(env));
     NAPI_RETURN_IF_VM_EXCEPTION(env);
 

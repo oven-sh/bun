@@ -114,10 +114,18 @@ function corruptCSS(css: string): string {
 // TODO:
 if (!isCI) {
   // Main fuzzing test suite for invalid inputs
+  //
+  // Every iteration is one Bun.build call: ~1ms on a release build, ~50ms on a
+  // debug build, where the release counts run past the test timeout. Only ~23%
+  // of "encoding" iterations are rejected by the parser (the randomly corrupted
+  // ones), so debug still needs about 50 of them for `errorCount > 0` to hold.
   test.each(
-    [["syntax", 1000], ["structure", 1000], ["encoding", 500], !isDebug ? ["memory", 100] : []].filter(
-      xs => xs.length > 0,
-    ),
+    [
+      ["syntax", isDebug ? 50 : 1000],
+      ["structure", isDebug ? 50 : 1000],
+      ["encoding", isDebug ? 50 : 500],
+      !isDebug ? ["memory", 100] : [],
+    ].filter(xs => xs.length > 0),
   )(
     "CSS Parser Invalid Input Fuzzing - %s (%d iterations)",
     async (strategy, iterations) => {
@@ -230,15 +238,15 @@ if (!isCI) {
   test("CSS Parser Mixed Input Fuzzing", async () => {
     const validCSS = ".test{color:red}";
 
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < (isDebug ? 10 : 100); i++) {
       const mixedCSS = `
       ${validCSS}
       ${corruptCSS(validCSS)}
       ${validCSS}
     `;
 
-      console.log("--- Mixed CSS ---");
-      console.log(JSON.stringify(mixedCSS, null, 2));
+      log("--- Mixed CSS ---");
+      log(JSON.stringify(mixedCSS, null, 2));
       await Bun.write("invalid.css", mixedCSS);
 
       try {

@@ -1696,9 +1696,7 @@ impl PipelineTask {
         }
 
         if matches!(self.kind, Kind::Placeholder) {
-            // ThumbHash operates on 8-bit RGBA (the hash encoder indexes
-            // the buffer as u8); `apply_pipeline` is also 8-bpc-only, so
-            // a 16-bpc source must narrow first.
+            // ThumbHash operates on 8-bit RGBA.
             decoded.downconvert_to_8();
             self.result = match make_placeholder(&decoded.rgba, decoded.width, decoded.height) {
                 Ok(r) => r,
@@ -1735,9 +1733,7 @@ impl PipelineTask {
         // the profile reinterprets a non-sRGB source (Display-P3, Adobe RGB,
         // Jpegli XYB) as sRGB and visibly shifts the colours — see #30197.
         // JPEG/PNG/WebP embed it; HEIC/AVIF via the system backend do not.
-        // 16-bpc survives only on the PNG-truecolour path — JPEG/WebP/HEIC/
-        // AVIF and indexed-PNG encoders are all u8-only. Narrow here so the
-        // codec arms never see a mismatched buffer. Issue #30462.
+        // Only PNG truecolour encode honours 16 bpc; narrow for everything else.
         if enc.format != codecs::Format::Png || enc.palette {
             decoded.downconvert_to_8();
         }
@@ -1959,10 +1955,8 @@ impl PipelineTask {
     /// the profile survives unchanged.
     fn apply_pipeline(&self, d: &mut codecs::Decoded) -> Result<(), codecs::Error> {
         let p = &self.pipeline;
-        // The geometry kernels (rotate/flip/resize) and the modulate pass
-        // are u8-only. Narrow 16-bpc RGBA to 8 before any op runs. No-op
-        // when all pipeline slots are empty, which preserves the
-        // 16-bpc PNG→PNG pass-through from issue #30462.
+        // The kernels are u8-only; narrow before any op. Skipped when no
+        // ops are set, preserving the 16-bpc PNG pass-through (#30462).
         let has_op =
             p.rotate != 0 || p.flip || p.flop || p.resize.is_some() || p.modulate.is_some();
         if has_op {
@@ -2084,10 +2078,7 @@ fn apply_orientation(
     orient: exif::Orientation,
 ) -> Result<(), codecs::Error> {
     let t = orient.transform();
-    // Same as apply_pipeline — the kernels are u8-only. Reached only
-    // from the JPEG auto-orient path today, and JPEGs are always
-    // 8-bpc, but narrow unconditionally so a future non-JPEG EXIF
-    // path can't skip it.
+    // Same as apply_pipeline: the kernels are u8-only.
     if t.flip || t.flop || t.rotate != 0 {
         d.downconvert_to_8();
     }

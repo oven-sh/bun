@@ -69,10 +69,7 @@ unsafe extern "C" {
         max_pixels: u64,
         out_w: *mut u32,
         out_h: *mut u32,
-        // Phase 1 writes 8 or 16 (driven by `kCGImagePropertyDepth`); phase 2
-        // reads it to size the VFmt/VBuf for either RGBA8 or RGBA16. Any
-        // source with depth ≥ 9 (HEIC 10/12, TIFF 16) maps to 16 so the
-        // extra precision survives through to PNG 16-bpc encode. #30462.
+        // 8 or 16; phase 1 writes it, phase 2 reads it back for validation.
         out_bit_depth: *mut u8,
         out: *mut u8, // nullable
     ) -> i32;
@@ -110,9 +107,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
     let mut h: u32 = 0;
     let mut bit_depth: u8 = 8;
     // Phase 1: dimensions + source depth (out=null) so we can allocate in
-    // the global allocator like every other decode path and size the buffer
-    // for either RGBA8 (4 B/px) or RGBA16 (8 B/px) before asking vImage to
-    // render into it.
+    // the global allocator like every other decode path.
     // SAFETY: bytes is a valid slice; out=null signals "probe only" to the shim.
     match unsafe {
         bun_coregraphics_decode(

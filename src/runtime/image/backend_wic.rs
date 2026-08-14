@@ -116,19 +116,15 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
         return Err(DecodeFailed);
     }
 
-    // Inspect the source's native pixel format. If it carries > 8 bpc
-    // (TIFF-16, HEIC 10/12, AVIF 10/12, HDR10 packed), ask WIC to convert
-    // to 64bppRGBA so the precision survives through to PNG 16-bpc encode.
-    // Otherwise stay on the 32bppRGBA fast path. Issue #30462.
+    // Sources carrying > 8 bpc convert to 64bppRGBA so the precision
+    // survives to PNG 16-bpc encode (#30462); everything else stays 32bppRGBA.
     let mut src_pf = GUID_WICPixelFormat32bppRGBA;
     if frame.get_pixel_format(&mut src_pf) < 0 {
         return Err(DecodeFailed);
     }
     let want_16 = is_high_bit_depth_source(&src_pf);
-    // `max_pixels` is a byte budget in disguise (see codec_png::decode);
-    // halve the pixel cap when we're about to allocate 8 B/pixel so the
-    // byte cap stays constant regardless of source depth, same as the PNG
-    // halving.
+    // 16-bpc doubles bytes/pixel; halve the pixel budget so the byte cap
+    // stays constant (same as codec_png::decode).
     let effective_max_pixels: u64 = if want_16 { max_pixels / 2 } else { max_pixels };
     if (w as u64) * (h as u64) > effective_max_pixels {
         return Err(TooManyPixels);
@@ -153,8 +149,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
 
     // Compute stride/size in u64 first: with `maxPixels` raised past ~1.07B,
     // `w * 4` can wrap u32 (0x4000_0001×4 → 4); the checked cast below is a
-    // process abort, not silent truncation. 16-bpc doubles the per-pixel
-    // footprint so the u32 ceiling halves in effect.
+    // process abort, not silent truncation.
     let bytes_per_pixel: u64 = if want_16 { 8 } else { 4 };
     let stride: u64 = (w as u64) * bytes_per_pixel;
     let out_len: u64 = stride * (h as u64);
@@ -728,11 +723,7 @@ struct IWICBitmapSource {
 struct IWICBitmapSourceVTable {
     unk: IUnknownVTable,
     GetSize: unsafe extern "system" fn(*mut IWICBitmapSource, *mut u32, *mut u32) -> HRESULT,
-    // Reports the source's native WIC pixel format GUID. Used by the
-    // 16-bpc path (issue #30462) to pick between `32bppRGBA` and
-    // `64bppRGBA` for the convert step so TIFF-16 / HEIC-10 / AVIF-12
-    // don't silently downcast to 8-bpc in `WICConvertBitmapSource`.
-    // Cheap — the header was already parsed by CreateDecoderFromStream.
+    // Native pixel-format GUID; drives the 32 vs 64 bppRGBA convert target.
     GetPixelFormat: unsafe extern "system" fn(*mut IWICBitmapSource, *mut GUID) -> HRESULT,
     GetResolution: *const c_void,
     CopyPalette: *const c_void,
@@ -813,12 +804,8 @@ const GUID_WICPixelFormat32bppRGBA: GUID = GUID {
     d3: 0x43dd,
     d4: [0xa7, 0xa8, 0xa2, 0x99, 0x35, 0x26, 0x1a, 0xe9],
 };
-/// 16-bit-per-channel RGBA, host-endian u16. WIC widens 10/12-bit HDR sources
-/// (HEIC/AVIF) and preserves 16-bit sources (TIFF) losslessly when asked for
-/// this target. Straight-alpha (not the "PRGBA" premultiplied variant at
-/// `…c9, 0x17`, which would quantise through the normal pipeline ops). Layout
-/// matches libspng's SPNG_FMT_RGBA16 so a `TIFF 16 → PNG 16` round-trip is
-/// bit-identical without a byte swap. Issue #30462.
+/// Straight-alpha 16-bpc RGBA, host-endian u16, same layout as libspng's
+/// SPNG_FMT_RGBA16. (The 0x17-suffix variant is premultiplied; don't use it.)
 const GUID_WICPixelFormat64bppRGBA: GUID = GUID {
     d1: 0x6fddc324,
     d2: 0x4e03,
@@ -837,17 +824,11 @@ const fn wic_pf(suffix: u8) -> GUID {
     }
 }
 
-/// Source pixel formats that carry > 8-bit-per-channel precision. Listed
-/// explicitly so a future WIC-native format doesn't silently fall back to
-/// 8-bpc: adding a new GUID here is the only change needed to preserve its
-/// depth. The "Half"/"Float"/"FixedPoint" families are included because
-/// WICConvertBitmapSource widens them to u16 RGBA (the float-to-int
-/// conversion is `clamp(0..1) * 0xFFFF` in WIC's reference converter).
-/// Covers TIFF-16 (48bppRGB), HEIC/AVIF 10/12/16-bit (48bpp or 64bpp
-/// flavours), and the 32bppR10G10B10A2 / HDR10 packed-10-bit formats that
-/// the Microsoft HEIF Image Extension may emit for HEVC Main10 content.
+/// Source pixel formats carrying > 8 bpc; a format not listed decodes at 8.
+/// Half/Float/FixedPoint families are included because
+/// WICConvertBitmapSource widens them to clamped u16.
 const HIGH_BPC_SOURCES: [GUID; 15] = [
-    // 48bppRGB / 48bppBGR — no-alpha 16-bpc (common TIFF variants).
+    // 48bppRGB / 48bppBGR (common TIFF-16 variants).
     wic_pf(0x15),
     GUID {
         d1: 0xe605a384,
@@ -875,22 +856,14 @@ const HIGH_BPC_SOURCES: [GUID; 15] = [
     wic_pf(0x3b),
     wic_pf(0x12),
     // 64bppRGBHalf / 64bppRGBAHalf / 64bppRGBAFixedPoint /
-    // 64bppRGBFixedPoint / 128bppRGBFixedPoint. The 64bpp family is the
-    // normal HDR TIFF / high-bit-depth output; 128bpp is listed because
-    // WICConvertBitmapSource narrows it to 64bppRGBA correctly (u32/f32
-    // channels → clamped u16) so the carry-through works uniformly even
-    // for 32-bit-per-channel sources.
+    // 64bppRGBFixedPoint / 128bppRGBFixedPoint.
     wic_pf(0x42),
     wic_pf(0x3a),
     wic_pf(0x1d),
     wic_pf(0x40),
     wic_pf(0x41),
-    // 32bppR10G10B10A2 / 32bppR10G10B10A2HDR10 — 10-bit samples packed into
-    // a 32-bit DWORD. The HEIF Image Extension can emit either for Main10
-    // HEVC / 10-bit AVIF depending on the source's BT.2020 vs sRGB primaries.
-    // WICConvertBitmapSource scales 10-bit → 16-bit losslessly (the default
-    // converter does `value * 0xFFFF / 0x3FF`), so they slot into the same
-    // 64bppRGBA path as the 48/64 bpp formats above.
+    // 32bppR10G10B10A2 / 32bppR10G10B10A2HDR10: packed 10-bit, scaled
+    // losslessly to u16 by WICConvertBitmapSource.
     GUID {
         d1: 0x604e1bb5,
         d2: 0x8a3c,

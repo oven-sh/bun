@@ -72,10 +72,8 @@ struct Ihdr {
 
 const SPNG_CTX_ENCODER: c_int = 2;
 const SPNG_FMT_RGBA8: c_int = 1;
-/// 16-bit-per-channel RGBA, host-endian. libspng converts the PNG's
-/// big-endian samples on decode (and back on encode when the IHDR says 16);
-/// the pipeline stores host-endian u16 internally so a 16-bpc decode →
-/// 16-bpc encode round-trips without a byte swap on our side.
+/// 16-bpc RGBA, host-endian u16; libspng does the big-endian conversion
+/// both ways.
 const SPNG_FMT_RGBA16: c_int = 2;
 const SPNG_FMT_PNG: c_int = 256;
 const SPNG_DECODE_TRNS: c_int = 1; // apply tRNS chunk so paletted/grey get real alpha
@@ -122,24 +120,16 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     if unsafe { spng_get_ihdr(ctx, &raw mut ihdr) } != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
-    // 16-bpc IHDR → keep full precision (issue #30462); everything else is
-    // 8-bpc in the internal buffer. libspng promotes 1/2/4-bpc indexed and
-    // greyscale to 8 on its own, so the only source bit-depth that needs a
-    // separate internal format is 16. Colour types other than truecolour-
-    // alpha still come out as RGBA8/RGBA16 because we pass the RGBA
-    // format enum — libspng does the colour-type expansion.
+    // Only a 16-bpc IHDR needs the wider internal format; libspng expands
+    // every other colour type / depth to RGBA8 itself.
     let fmt: c_int = if ihdr.bit_depth == 16 {
         SPNG_FMT_RGBA16
     } else {
         SPNG_FMT_RGBA8
     };
     let bit_depth: u8 = if ihdr.bit_depth == 16 { 16 } else { 8 };
-    // The `max_pixels` budget is documented in byte terms (codecs.rs's
-    // `DEFAULT_MAX_PIXELS` targets ~1 GiB for RGBA8). 16-bpc doubles
-    // bytes-per-pixel, so a hostile IHDR flipping bit_depth 8→16 would
-    // otherwise buy a 2× allocation for the same pixel count — halve the
-    // budget here so the byte cap stays constant regardless of source
-    // depth.
+    // 16-bpc doubles bytes-per-pixel; halve the pixel budget so the byte
+    // cap (`DEFAULT_MAX_PIXELS` targets ~1 GiB) stays constant.
     let effective_max_pixels: u64 = if ihdr.bit_depth == 16 {
         max_pixels / 2
     } else {
@@ -218,11 +208,8 @@ fn embed_iccp(ctx: *mut spng_ctx, icc_profile: Option<&[u8]>) {
     let _ = unsafe { spng_set_iccp(ctx, &raw const iccp) };
 }
 
-/// `bit_depth` is 8 or 16. 16-bpc input must be host-endian u16 RGBA —
-/// `SPNG_FMT_PNG` tells libspng to convert to PNG's big-endian wire format
-/// itself (`to_bigendian` flag set when `ihdr.bit_depth == 16`). Everything
-/// else — JPEG/WebP/indexed-PNG encode, and the geometry kernels — is
-/// u8-only; the caller in Image.rs downconverts first. Issue #30462.
+/// `bit_depth` is 8 or 16; 16-bpc input is host-endian u16 RGBA (libspng
+/// converts to PNG's big-endian wire format itself via `SPNG_FMT_PNG`).
 pub(crate) fn encode(
     rgba: &[u8],
     w: u32,
@@ -231,9 +218,6 @@ pub(crate) fn encode(
     level: i8,
     icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
-    // Programming error if the caller passed an unexpected depth — the
-    // internal pipeline only produces 8 or 16. A runtime reject here keeps
-    // a future caller from silently writing a malformed IHDR.
     if bit_depth != 8 && bit_depth != 16 {
         return Err(codecs::Error::EncodeFailed);
     }

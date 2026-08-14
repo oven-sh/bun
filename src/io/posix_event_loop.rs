@@ -384,7 +384,7 @@ pub struct FilePoll {
     pub flags: FlagsSet,
     pub owner: Owner,
     /// Run epoch this poll was created (or last registered) in; readiness of a
-    /// poll older than the active scoped run is not that run's to dispatch.
+    /// poll older than the active domain run is not that run's to dispatch.
     /// See `run_epoch`.
     pub epoch: u32,
 
@@ -480,6 +480,7 @@ impl FilePoll {
     }
 
     /// The kernel filters this poll is registered for, as `register` flags.
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     fn registered_directions(&self) -> (Option<Flags>, Option<Flags>) {
         let first = if self.flags.contains(Flags::PollReadable) {
             Some(Flags::Readable)
@@ -499,13 +500,13 @@ impl FilePoll {
         (first, second)
     }
 
-    /// This poll became ready during a scoped event-loop run it is foreign to
-    /// (see `run_epoch`). Its readiness belongs to outer code, so it is not
+    /// This poll became ready during a domain run it is foreign to (see
+    /// `run_epoch`). Its readiness belongs to outer code, so it is not
     /// dispatched; and since readiness is level-triggered it would wake the poll
-    /// again immediately, so take it out of the kernel set — leaving every flag
-    /// the owner reads untouched — until `rearm_after_run`. Readiness that is
-    /// delivered only once (kqueue process exit) is held and replayed instead.
-    /// Returns `false` if the poll could not be disarmed and must dispatch now.
+    /// again immediately, so stop it reporting — leaving every flag the owner
+    /// reads untouched — until `rearm_after_run`. Readiness that is delivered
+    /// only once (kqueue process exit) is held and replayed instead. Returns
+    /// `false` if the poll could not be disarmed and must dispatch now.
     ///
     /// # Safety
     /// `loop_` is this thread's live poll loop, positioned on this poll's event.
@@ -516,6 +517,11 @@ impl FilePoll {
         target_os = "freebsd"
     ))]
     unsafe fn disarm_for_run(&mut self, loop_: *mut Loop) -> bool {
+        if self.flags.contains(Flags::DisarmedByRun) {
+            // kqueue reports each filter separately: the other direction of a
+            // poll already held in this batch.
+            return true;
+        }
         // SAFETY: per fn contract; only the watcher fd is read.
         let watcher_fd = unsafe { (*loop_).fd };
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -558,8 +564,9 @@ impl FilePoll {
                 crate::run_epoch::remember_replay(self, event);
                 return true;
             }
-            // A one-shot knote is already gone after delivery; `rearm_after_run`
-            // re-adds it. A persistent one is disabled in place.
+            // One-shot: the knote is gone. Dispatch: it disabled itself. Only a
+            // persistent knote keeps reporting and must be disabled — every
+            // direction of it, or the other one spins the run.
             if !self.flags.contains(Flags::OneShot) {
                 let (first, second) = self.registered_directions();
                 for flag in [first, second].into_iter().flatten() {
@@ -582,35 +589,60 @@ impl FilePoll {
     }
 
     /// Undo `disarm_for_run`: the poll reports its (still pending) readiness on
-    /// the next poll, now to its owner.
+    /// the next poll, now to its owner. Nothing the owner reads changes.
     pub(crate) fn rearm_after_run(&mut self, loop_: &mut Loop) {
         debug_assert!(self.flags.contains(Flags::DisarmedByRun));
         self.flags.remove(Flags::DisarmedByRun);
-        let epoch = self.epoch;
-        let (first, second) = self.registered_directions();
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        if !self.flags.contains(Flags::OneShot) {
-            for flag in [first, second].into_iter().flatten() {
-                let _ = kevent_enable(loop_.fd, self, flag, true);
-            }
+        if !self.is_registered() {
+            // The owner unregistered it meanwhile (through a path that tolerated
+            // it already being out of the set).
             return;
         }
-        let one_shot = if self.flags.contains(Flags::OneShot) {
-            OneShotFlag::OneShot
-        } else {
-            OneShotFlag::None
-        };
-        // epoll: one CTL_MOD restores the whole mask (register folds in the other
-        // direction). kqueue one-shot: re-add each filter.
-        if let Some(flag) = first.or(second) {
-            let _ = self.register_with_fd(loop_, flag, one_shot, self.fd);
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            use bun_sys::linux::{self, EPOLL};
+            let mut events: u32 = 0;
+            if self.flags.contains(Flags::PollReadable) {
+                events |= EPOLL::IN | EPOLL::HUP;
+            }
+            if self.flags.contains(Flags::PollWritable) {
+                events |= EPOLL::OUT | EPOLL::HUP | EPOLL::ERR;
+            }
+            if self.flags.contains(Flags::PollMemoryPressure) {
+                events |= EPOLL::PRI | EPOLL::ERR;
+            }
+            if self.flags.contains(Flags::OneShot) {
+                events |= EPOLL::ONESHOT;
+            }
+            let mut event = linux::epoll_event {
+                events,
+                u64: Pollable::init(self).ptr() as u64,
+            };
+            // CTL_ADD, not CTL_MOD: if the fd number was registered again during
+            // the run (the owner adopted it, or closed it and something else got
+            // the number) that registration wins — EEXIST — instead of having its
+            // data pointer overwritten with ours.
+            // SAFETY: FFI syscall; `event` is a stack local valid for the call.
+            let _ = unsafe {
+                linux::epoll_ctl(loop_.fd, EPOLL::CTL_ADD, self.fd.native(), &raw mut event)
+            };
         }
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        if let (Some(_), Some(flag)) = (first, second) {
-            let _ = self.register_with_fd(loop_, flag, one_shot, self.fd);
+        {
+            let (first, second) = self.registered_directions();
+            if self.flags.contains(Flags::OneShot) && !self.flags.contains(Flags::KqueueDispatch) {
+                // The knote left with the event; add it back as it was.
+                let epoch = self.epoch;
+                if let Some(flag) = first.or(second) {
+                    let _ = self.register_with_fd(loop_, flag, OneShotFlag::OneShot, self.fd);
+                }
+                self.epoch = epoch; // re-arming on the run's behalf is not use by the run
+            } else {
+                for flag in [first, second].into_iter().flatten() {
+                    let _ = kevent_enable(loop_.fd, self, flag, true);
+                }
+            }
         }
-        // Re-arming on the run's behalf is not use by the run.
-        self.epoch = epoch;
         syslog!(
             "rearm after run: FilePoll(0x{:x}, fd={})",
             std::ptr::from_mut(self) as usize,
@@ -822,7 +854,7 @@ impl FilePoll {
         one_shot: OneShotFlag,
         fd: Fd,
     ) -> sys::Result<()> {
-        // (Re)arming a poll during a scoped run is active use by the code the run
+        // (Re)arming a poll during a domain run is active use by the code the run
         // is executing: from here on its readiness is that run's to dispatch.
         self.forget_run_disarm();
         self.epoch = crate::run_epoch::current();
@@ -872,6 +904,11 @@ impl FilePoll {
 
         if one_shot != OneShotFlag::None {
             self.flags.insert(Flags::OneShot);
+            if one_shot == OneShotFlag::Dispatch {
+                self.flags.insert(Flags::KqueueDispatch);
+            } else {
+                self.flags.remove(Flags::KqueueDispatch);
+            }
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1485,9 +1522,12 @@ pub enum Flags {
 
     Socket,
 
-    /// Masked in the kernel poll set by a scoped event-loop run this poll is
-    /// foreign to; `run_epoch::rearm_after_run` restores it. See `disarm_for_run`.
+    /// Held by a domain run this poll is foreign to; `run_epoch::rearm_after_run`
+    /// restores it. See `disarm_for_run`.
     DisarmedByRun,
+    /// With `OneShot`: registered `EV_DISPATCH` (disabled after delivery, kept)
+    /// rather than `EV_ONESHOT` (deleted after delivery). kqueue only.
+    KqueueDispatch,
 }
 
 pub type FlagsSet = enumset::EnumSet<Flags>;

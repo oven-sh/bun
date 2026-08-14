@@ -113,6 +113,12 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
     }
     /* Re-arm first: a timeout handler may unlink the last socket and disarm. */
     loop->data.sweep_next_tick_ns = now + LIBUS_TIMEOUT_GRANULARITY_NS;
+    /* Socket timeouts are their owners' callbacks and their clocks are ticks of
+     * this sweep: while a domain run turns the loop, time stands still for them
+     * (as it did when the run was a separate loop). */
+    if (UNLIKELY(loop->data.run_start_epoch)) {
+        return;
+    }
     us_internal_timer_sweep(loop);
 }
 
@@ -354,6 +360,31 @@ int us_internal_handle_dns_results(struct us_loop_t *loop) {
     struct us_connecting_socket_t *s = loop->data.dns_ready_head;
     loop->data.dns_ready_head = NULL;
     Bun__unlock(&loop->data.mutex);
+    if (UNLIKELY(loop->data.run_start_epoch) && s) {
+        /* A connect started before the active domain run resolves to its owner's
+         * open/error handlers: not this run's to dispatch. Keep those queued. */
+        struct us_connecting_socket_t *ready = NULL, **ready_tail = &ready, *held = NULL, *next;
+        for (; s; s = next) {
+            next = s->next;
+            if (us_internal_epoch_is_foreign(loop, s->bun_epoch)) {
+                s->next = held;
+                held = s;
+            } else {
+                s->next = NULL;
+                *ready_tail = s;
+                ready_tail = &s->next;
+            }
+        }
+        if (held) {
+            Bun__lock(&loop->data.mutex);
+            struct us_connecting_socket_t **tail = &held;
+            while (*tail) tail = &(*tail)->next;
+            *tail = loop->data.dns_ready_head;
+            loop->data.dns_ready_head = held;
+            Bun__unlock(&loop->data.mutex);
+        }
+        s = ready;
+    }
     us_internal_drain_pending_dns_resolve(loop, s);
     return s != NULL;
 }
@@ -457,49 +488,59 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 #define us_ioctl ioctl
 #endif
 
-/* Scoped event-loop runs: readiness of a socket that predates the active run
- * belongs to the code the run interrupted. Readiness is level-triggered, so the
- * socket is taken out of the poll set until us_internal_run_ended re-arms it,
- * where it reports again for its real owner. Listen sockets are never foreign:
- * a new connection is an external event, and serving it is what a server does. */
-static inline int us_internal_defer_foreign_ready_poll(struct us_poll_t *p) {
+/* Domain runs: readiness of a socket that predates the active run belongs to
+ * the code the run interrupted. Readiness is level-triggered, so the socket is
+ * taken out of the poll set until us_internal_run_ended re-arms it, where it
+ * reports again for its real owner. Listen sockets are exempt when the run
+ * admits new connections (a new connection is an external event, and a run
+ * that fetches from a server created outside it must not deadlock); a strict
+ * run (spawnSync) leaves them in the backlog like everything else. */
+#ifndef LIBUS_USE_LIBUV
+static inline int us_internal_defer_foreign_ready_poll(struct us_poll_t *p, int events) {
     int type = us_internal_poll_type(p);
     if (type != POLL_TYPE_SOCKET && type != POLL_TYPE_SOCKET_SHUT_DOWN && type != POLL_TYPE_SEMI_SOCKET) {
         return 0;
     }
-    if (type == POLL_TYPE_SEMI_SOCKET && !(us_poll_events(p) & LIBUS_SOCKET_WRITABLE)) {
-        return 0; /* listen socket */
-    }
     struct us_socket_t *s = (struct us_socket_t *) p;
     struct us_loop_t *loop = s->group->loop;
-    unsigned int run_start = loop->data.run_start_epoch;
-    if (LIKELY(!run_start) || s->p.bun_epoch >= run_start) {
+    if (LIKELY(!us_internal_epoch_is_foreign(loop, s->p.bun_epoch))) {
         return 0;
     }
-    s->disarmed_events = us_poll_events(p);
-    s->disarmed_by_run = 1;
-    us_internal_poll_disarm(p, loop);
+    if (type == POLL_TYPE_SEMI_SOCKET && !(us_poll_events(p) & LIBUS_SOCKET_WRITABLE) && loop->data.run_admits_accepts) {
+        return 0; /* listen socket */
+    }
+#ifdef LIBUS_USE_KQUEUE
+    if (events & LIBUS_SOCKET_WRITABLE) {
+        s->rearm_writable = 1;
+    }
+#else
+    (void) events;
+#endif
+    if (!s->disarmed_by_run) {
+        s->disarmed_by_run = 1;
+        us_internal_poll_disarm(p, loop);
+    }
     return 1;
-}
-
-/* Undo us_internal_poll_disarm: the socket reports its (still pending)
- * readiness on the next poll. */
-void us_internal_socket_rearm_after_run(struct us_socket_t *s, struct us_loop_t *loop) {
-    s->disarmed_by_run = 0;
-    us_poll_change(&s->p, loop, us_poll_events(&s->p) | s->disarmed_events);
 }
 
 static inline void us_internal_socket_maybe_rearm(struct us_socket_t *s, struct us_loop_t *loop, unsigned int outer_start_epoch) {
     if (!s->disarmed_by_run || us_socket_is_closed(s)) return;
     /* Still foreign to an outer run that remains active: stays parked. */
     if (outer_start_epoch && s->p.bun_epoch < outer_start_epoch) return;
-    us_internal_socket_rearm_after_run(s, loop);
+    s->disarmed_by_run = 0;
+    us_internal_poll_rearm(&s->p, loop, s->rearm_writable);
+    s->rearm_writable = 0;
 }
+#endif
 
 void us_internal_run_ended(struct us_loop_t *loop, unsigned int outer_start_epoch) {
+#ifndef LIBUS_USE_LIBUV
     for (struct us_socket_group_t *g = loop->data.head; g; g = g->next) {
         for (struct us_socket_t *s = g->head_sockets; s; s = s->next) {
             us_internal_socket_maybe_rearm(s, loop, outer_start_epoch);
+        }
+        for (struct us_listen_socket_t *ls = g->head_listen_sockets; ls; ls = ls->next) {
+            us_internal_socket_maybe_rearm(&ls->s, loop, outer_start_epoch);
         }
         for (struct us_connecting_socket_t *c = g->head_connecting_sockets; c; c = c->next) {
             for (struct us_socket_t *s = c->connecting_head; s; s = s->connect_next) {
@@ -510,12 +551,17 @@ void us_internal_run_ended(struct us_loop_t *loop, unsigned int outer_start_epoc
     for (struct us_socket_t *s = loop->data.low_prio_head; s; s = s->next) {
         us_internal_socket_maybe_rearm(s, loop, outer_start_epoch);
     }
+#else
+    (void) loop; (void) outer_start_epoch;
+#endif
 }
 
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
-    if (us_internal_defer_foreign_ready_poll(p)) {
+#ifndef LIBUS_USE_LIBUV
+    if (us_internal_defer_foreign_ready_poll(p, events)) {
         return;
     }
+#endif
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
             struct us_internal_callback_t *cb = (struct us_internal_callback_t *) p;
@@ -586,7 +632,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                         s->group = accept_group;
                         s->kind = listen_socket->accept_kind;
-                        us_internal_socket_stamp_epoch(s);
                         s->ssl = NULL;
                         s->connect_state = NULL;
                         s->timeout = 255;
@@ -601,6 +646,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->unclassified_send_failures = 0;
                         s->read_eof = 0;
                         s->disarmed_by_run = 0;
+                        s->rearm_writable = 0;
                         s->fin_deferred = 0;
 
                         /* We always use nodelay */

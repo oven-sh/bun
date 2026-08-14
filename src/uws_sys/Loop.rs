@@ -51,6 +51,9 @@ pub struct PosixLoop {
 
     /// The list of ready polls
     pub(crate) ready_polls: [EventType; 1024],
+    /// kqueue only: per-entry coalesced flags for the current batch (`ready_flags` in C).
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    pub(crate) ready_flags: [u8; 1024],
 }
 
 /// Zero-sized, 16-byte-aligned marker field type (see `_ready_polls_align`).
@@ -288,21 +291,21 @@ impl PosixLoop {
         unsafe { c::us_internal_free_closed_sockets(self) };
     }
 
-    /// A scoped event-loop run on this loop's thread has ended and
-    /// `outer_start_epoch` is now the innermost run's start (0 if none): put
-    /// `run_start_epoch` back and re-arm every socket the run parked that is not
-    /// still foreign to the outer run. See `bun_runtime::domain_run`.
-    #[cfg(not(windows))]
-    pub fn scoped_run_ended(&mut self, outer_start_epoch: u32) {
-        self.internal_loop_data.run_start_epoch = outer_start_epoch;
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_internal_run_ended(self, outer_start_epoch) };
+    /// A domain run has started on this loop's thread (see `bun_runtime::domain_run`):
+    /// readiness of sockets older than `start_epoch` is held until it ends;
+    /// `admits_accepts` says whether listen sockets that predate it keep accepting.
+    pub fn domain_run_began(&mut self, start_epoch: u32, admits_accepts: bool) {
+        self.internal_loop_data.run_start_epoch = start_epoch;
+        self.internal_loop_data.run_admits_accepts = admits_accepts as core::ffi::c_int;
     }
 
-    /// See [`Self::scoped_run_ended`]; libuv-backed sockets carry no epoch yet.
-    #[cfg(windows)]
-    pub fn scoped_run_ended(&mut self, outer_start_epoch: u32) {
-        self.internal_loop_data.run_start_epoch = outer_start_epoch;
+    /// The innermost domain run has ended and `outer` describes the run that is
+    /// now innermost (start epoch 0 if none): re-arm every socket the run parked
+    /// that is not still foreign to the outer run.
+    pub fn domain_run_ended(&mut self, outer_start_epoch: u32, outer_admits_accepts: bool) {
+        self.domain_run_began(outer_start_epoch, outer_admits_accepts);
+        // SAFETY: self is a valid loop pointer
+        unsafe { c::us_internal_run_ended(self, outer_start_epoch) };
     }
 
     /// `us_socket_group_close_all()` on every group currently linked to this
@@ -406,6 +409,20 @@ pub struct WindowsLoop {
 impl WindowsLoop {
     pub fn should_enable_date_header_timer(&self) -> bool {
         self.internal_loop_data.should_enable_date_header_timer()
+    }
+
+    /// See `PosixLoop::domain_run_began`; libuv-backed sockets carry no epoch
+    /// yet, so this only records the state.
+    pub fn domain_run_began(&mut self, start_epoch: u32, admits_accepts: bool) {
+        self.internal_loop_data.run_start_epoch = start_epoch;
+        self.internal_loop_data.run_admits_accepts = admits_accepts as core::ffi::c_int;
+    }
+
+    /// See `PosixLoop::domain_run_ended`.
+    pub fn domain_run_ended(&mut self, outer_start_epoch: u32, outer_admits_accepts: bool) {
+        self.domain_run_began(outer_start_epoch, outer_admits_accepts);
+        // SAFETY: self is a valid loop pointer
+        unsafe { c::us_internal_run_ended(self, outer_start_epoch) };
     }
 
     pub fn uncork(&mut self) {
@@ -650,7 +667,6 @@ mod c {
             now_ns: u64,
         );
         pub(super) fn us_internal_free_closed_sockets(loop_: *mut Loop);
-        #[cfg(not(windows))]
         pub(super) fn us_internal_run_ended(loop_: *mut Loop, outer_start_epoch: u32);
         pub(super) fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
         #[cfg(not(windows))]

@@ -131,7 +131,7 @@ pub mod task_tag {
 #[derive(Copy, Clone)]
 pub struct Task {
     pub tag: TaskTag,
-    /// Scheduling domain the task is attributed to: the scoped event-loop run
+    /// Scheduling domain the task is attributed to: the domain run
     /// active when it was created/enqueued on a JS thread, that thread's root
     /// domain when none was, or 0 when it was created on a thread with no VM
     /// (provenance unknown). Fits in the padding after `tag`. See

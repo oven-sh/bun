@@ -249,10 +249,13 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
     return loop;
 }
 
-/* Shared dispatch loop for both us_loop_run and us_loop_run_bun_tick */
-static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
+/* Shared dispatch loop for both us_loop_run and us_loop_run_bun_tick.
+ * Dispatches loop->ready_polls[from..num_ready_polls); loop->current_ready_poll
+ * is the cursor, so a nested tick that continues an outer batch (see
+ * us_loop_run_bun_tick) leaves the outer iteration with nothing to repeat. */
+static void us_internal_dispatch_ready_polls_from(struct us_loop_t *loop, int from) {
 #ifdef LIBUS_USE_EPOLL
-    for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
+    for (loop->current_ready_poll = from; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
         struct us_poll_t *poll = GET_READY_POLL(loop, loop->current_ready_poll);
         if (LIKELY(poll)) {
             if (CLEAR_POINTER_TAG(poll) != poll) {
@@ -290,10 +293,11 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
     };
 
     _Static_assert(sizeof(struct kevent_flags) == 1, "kevent_flags must be 1 byte");
-    struct kevent_flags coalesced[LIBUS_MAX_READY_POLLS]; /* no zeroing needed — every index is written in the first pass */
+    struct kevent_flags *coalesced = (struct kevent_flags *) loop->ready_flags; /* no zeroing needed — every index is written in the first pass */
 
-    /* First pass: decode kevents and coalesce same-poll entries */
-    for (int i = 0; i < loop->num_ready_polls; i++) {
+    /* First pass: decode kevents and coalesce same-poll entries (already done
+     * for a batch being continued). */
+    for (int i = from ? loop->num_ready_polls : 0; i < loop->num_ready_polls; i++) {
         struct us_poll_t *poll = GET_READY_POLL(loop, i);
         if (!poll || CLEAR_POINTER_TAG(poll) != poll) {
             coalesced[i] = (struct kevent_flags){ .skip = 1 };
@@ -344,7 +348,7 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
     }
 
     /* Second pass: dispatch everything in order — tagged pointers and coalesced events */
-    for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
+    for (loop->current_ready_poll = from; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
         struct us_poll_t *poll = GET_READY_POLL(loop, loop->current_ready_poll);
         if (!poll) continue;
 
@@ -395,6 +399,10 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
         }
     }
 #endif
+}
+
+static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
+    us_internal_dispatch_ready_polls_from(loop, 0);
 }
 
 /* If the kernel filled our entire buffer, more events are likely already queued.
@@ -472,6 +480,17 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         return;
 
     loop->data.tick_depth++;
+
+    /* Re-entered from inside a poll callback (a domain run started by a socket
+     * handler, waitForPromise): the outer tick was partway through its ready
+     * batch and polling again overwrites it. Finish dispatching that batch first
+     * — through the same gates, so what is foreign to a run is parked properly
+     * rather than dropped (a dropped one-shot event never reports again). The
+     * shared cursor ends at the end of the batch, so the outer tick does not
+     * repeat any of it. */
+    if (loop->data.tick_depth > 1 && loop->current_ready_poll + 1 < loop->num_ready_polls) {
+        us_internal_dispatch_ready_polls_from(loop, loop->current_ready_poll + 1);
+    }
 
     /* Emit pre callback */
     us_internal_loop_pre(loop);
@@ -694,13 +713,16 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     us_poll_start_rc(p, loop, events);
 }
 
-/* Take `p` out of the kernel set entirely (a later us_poll_change re-adds it:
- * epoll via its ENOENT fallback, kqueue by re-adding the filters). Unlike
- * us_poll_change(p, loop, 0) this also stops the implicit EPOLLHUP/EPOLLERR,
- * so a hung-up socket parked by a scoped run cannot spin the loop. */
+/* Stop `p` reporting without touching what it polls for (its POLLING_IN/OUT
+ * bits stay as they are, so the owner's own us_poll_change/us_poll_stop keep
+ * working): epoll takes the fd out of the set — an empty mask would still report
+ * EPOLLHUP and a hung-up socket parked by a domain run must not spin the loop;
+ * a later CTL_MOD by the owner falls back to CTL_ADD. kqueue disables the
+ * filters in place. Pending entries for `p` in the current ready batch are
+ * dropped either way. us_internal_poll_rearm undoes it; readiness that is
+ * still pending is level-triggered and reports again. */
 void us_internal_poll_disarm(struct us_poll_t *p, struct us_loop_t *loop) {
-    int old_events = us_poll_events(p);
-    p->state.poll_type = us_internal_poll_type(p);
+    int events = us_poll_events(p);
 #ifdef LIBUS_USE_EPOLL
     struct epoll_event event;
     int rc;
@@ -708,11 +730,43 @@ void us_internal_poll_disarm(struct us_poll_t *p, struct us_loop_t *loop) {
         rc = epoll_ctl(loop->fd, EPOLL_CTL_DEL, p->state.fd, &event);
     } while (IS_EINTR(rc));
 #else
-    if (old_events) {
-        kqueue_change(loop->fd, p->state.fd, old_events, 0, p);
-    }
+    struct kevent64_s change_list[2];
+    EV_SET64(&change_list[0], p->state.fd, EVFILT_READ, EV_DISABLE, 0, 0, (uint64_t)(void*)p, 0, 0);
+    EV_SET64(&change_list[1], p->state.fd, EVFILT_WRITE, EV_DISABLE, 0, 0, (uint64_t)(void*)p, 0, 0);
+    int rc;
+    do {
+        /* Filters that are not registered come back ENOENT in the receipts; fine. */
+        rc = kevent64(loop->fd, change_list, 2, change_list, 2, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    } while (IS_EINTR(rc));
 #endif
-    us_internal_loop_update_pending_ready_polls(loop, p, p, old_events, 0);
+    us_internal_loop_update_pending_ready_polls(loop, p, 0, events, 0);
+}
+
+void us_internal_poll_rearm(struct us_poll_t *p, struct us_loop_t *loop, int readd_writable) {
+    int events = us_poll_events(p);
+#ifdef LIBUS_USE_EPOLL
+    (void) readd_writable;
+    struct epoll_event event;
+    /* Same mask us_poll_change would compute (HUP/ERR are implicit). */
+    event.events = events ? events : (EPOLLHUP | EPOLLERR);
+    event.data.ptr = p;
+    int rc;
+    do {
+        rc = epoll_ctl(loop->fd, EPOLL_CTL_ADD, p->state.fd, &event);
+    } while (IS_EINTR(rc));
+    /* EEXIST: the owner re-registered it during the run (adopted); leave theirs. */
+#else
+    (void) events;
+    struct kevent64_s change_list[2];
+    EV_SET64(&change_list[0], p->state.fd, EVFILT_READ, EV_ENABLE, 0, 0, (uint64_t)(void*)p, 0, 0);
+    /* Socket write interest is one-shot (kqueue_change): if that is what fired,
+     * the knote is gone and enabling it would find nothing. */
+    EV_SET64(&change_list[1], p->state.fd, EVFILT_WRITE, readd_writable ? (EV_ADD | EV_ONESHOT) : EV_ENABLE, 0, 0, (uint64_t)(void*)p, 0, 0);
+    int rc;
+    do {
+        rc = kevent64(loop->fd, change_list, 2, change_list, 2, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    } while (IS_EINTR(rc));
+#endif
 }
 
 void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {

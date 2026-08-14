@@ -320,11 +320,13 @@ struct us_socket_t {
   unsigned char ssl_pending_detach : 1;
   /* Peer FIN was dispatched as on_end on a half-open socket; readable interest is never re-added and on_end never re-fires. */
   unsigned char read_eof : 1;
-  /* Scoped event-loop runs (see us_poll_t.bun_epoch): the socket became ready during
-   * a run it is foreign to and was taken out of the poll set with these events;
-   * us_internal_run_ended re-arms it. */
+  /* Domain runs (see us_poll_t.bun_epoch): the socket became ready during a run
+   * it is foreign to and was taken out of the kernel poll set (its own polling
+   * bits untouched); us_internal_run_ended puts it back. rearm_writable: that
+   * readiness included kqueue's one-shot EVFILT_WRITE, which must be re-added
+   * rather than re-enabled. */
   unsigned char disarmed_by_run : 1;
-  unsigned char disarmed_events : 2;
+  unsigned char rearm_writable : 1;
   /* The close code passed to the deferred close (e.g. a reset requested from
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */
@@ -352,26 +354,36 @@ struct us_socket_t {
 _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");
 #endif
 
-/* Scoped event-loop runs — the epoch is kept by Rust (bun_io::run_epoch). */
-extern unsigned int Bun__runEpoch(void);
-static inline void us_internal_socket_stamp_epoch(struct us_socket_t *s) {
-    s->p.bun_epoch = Bun__runEpoch();
-    s->disarmed_by_run = 0;
+/* Domain runs — see us_poll_t.bun_epoch. The epoch counter lives in Rust
+ * (bun_io::run_epoch); it is a plain relaxed atomic load from here. */
+extern unsigned int Bun__runEpochCounter;
+#define Bun__runEpoch() __atomic_load_n(&Bun__runEpochCounter, __ATOMIC_RELAXED)
+
+/* Is `epoch` older than the domain run active on this loop's thread (if any)? */
+static inline int us_internal_epoch_is_foreign(struct us_loop_t *loop, unsigned int epoch) {
+    unsigned int run_start = loop->data.run_start_epoch;
+    return UNLIKELY(run_start != 0) && epoch < run_start;
 }
+
 void us_internal_run_ended(struct us_loop_t *loop, unsigned int outer_start_epoch);
+#ifndef LIBUS_USE_LIBUV
 void us_internal_poll_disarm(struct us_poll_t *p, struct us_loop_t *loop);
-void us_internal_socket_rearm_after_run(struct us_socket_t *s, struct us_loop_t *loop);
-/* `s` is being written by whatever code is running now: if that is a scoped run
+void us_internal_poll_rearm(struct us_poll_t *p, struct us_loop_t *loop, int readd_writable);
+#endif
+/* `s` is being written by whatever code is running now: if that is a domain run
  * the socket predates, the socket (and the reply on it) becomes the run's —
  * back into the poll set if the run had already parked it. */
 static inline void us_internal_socket_touch_epoch(struct us_socket_t *s, struct us_loop_t *loop) {
-    if (loop->data.run_start_epoch && s->p.bun_epoch < loop->data.run_start_epoch) {
-        int was_disarmed = s->disarmed_by_run;
-        us_internal_socket_stamp_epoch(s);
-        if (was_disarmed) {
-            us_internal_socket_rearm_after_run(s, loop);
+#ifndef LIBUS_USE_LIBUV
+    if (us_internal_epoch_is_foreign(loop, s->p.bun_epoch) && !us_socket_is_closed(s)) {
+        s->p.bun_epoch = Bun__runEpoch();
+        if (s->disarmed_by_run) {
+            s->disarmed_by_run = 0;
+            us_internal_poll_rearm(&s->p, loop, s->rearm_writable);
+            s->rearm_writable = 0;
         }
     }
+#endif
 }
 
 /* us_socket_adopt relocates a socket whose ext grows and retires the old block
@@ -398,6 +410,10 @@ struct us_connecting_socket_t {
     struct us_loop_t *loop;
     /* SSL_CTX to apply on open (borrowed; up_ref'd while in flight). */
     struct ssl_ctx_st *ssl_ctx;
+    /* us_poll_t.bun_epoch for the sockets this connect will create: they are
+     * consequences of the code that started the connect, not of whatever run
+     * happens to be turning the loop when the DNS answer arrives. */
+    unsigned int bun_epoch;
     // this is used to track all dns resolutions in this connection
     struct us_connecting_socket_t *next;
     struct us_socket_t *connecting_head;

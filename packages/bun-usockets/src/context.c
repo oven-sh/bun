@@ -354,7 +354,6 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     struct us_socket_t *s = &ls->s;
     s->group = group;
     s->kind = 0; /* listener itself never dispatches */
-    us_internal_socket_stamp_epoch(s);
     s->ssl = NULL;
     s->timeout = 255;
     s->long_timeout = 255;
@@ -367,6 +366,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
     s->disarmed_by_run = 0;
+    s->rearm_writable = 0;
     s->fin_deferred = 0;
     s->next = 0;
     s->prev = 0;
@@ -535,7 +535,6 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
                                                    unsigned char kind, int options) {
     s->group = group;
     s->kind = kind;
-    us_internal_socket_stamp_epoch(s);
     s->ssl = NULL;
     s->timeout = 255;
     s->long_timeout = 255;
@@ -549,6 +548,7 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
     s->disarmed_by_run = 0;
+    s->rearm_writable = 0;
     s->fin_deferred = 0;
     s->connect_state = NULL;
     s->connect_next = NULL;
@@ -653,6 +653,7 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
     c->options = options;
     c->kind = kind;
     c->loop = loop;
+    c->bun_epoch = Bun__runEpoch();
     c->ssl_ctx = ssl_ctx;
     if (ssl_ctx) us_internal_ssl_ctx_up_ref(ssl_ctx);
     c->timeout = 255;
@@ -725,6 +726,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         }
         ++opened;
         us_internal_init_connect_socket(s, group, c->kind, c->options);
+        s->p.bun_epoch = c->bun_epoch;
         s->timeout = c->timeout;
         s->long_timeout = c->long_timeout;
 

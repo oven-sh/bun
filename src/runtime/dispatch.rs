@@ -863,10 +863,8 @@ unsafe fn __bun_run_immediate_task(
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) -> bool {
     let immediate = task.cast::<crate::timer::ImmediateObject>();
-    if crate::domain_run::is_in_run()
-        // SAFETY: per fn contract — `task` is a live queued `ImmediateObject`; `vm` is live.
-        && unsafe { crate::domain_run::park_immediate_if_foreign(immediate, vm) }
-    {
+    // SAFETY: per fn contract — `task` is a live queued `ImmediateObject`.
+    if unsafe { crate::domain_run::park_immediate_if_foreign(immediate) } {
         return false;
     }
     // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)

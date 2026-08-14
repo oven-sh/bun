@@ -387,7 +387,7 @@ export function initializeNextTickQueue(
       return frame !== undefined && frame.length >= 2 && frame[0] === sentinel ? frame[1] : 0;
     }
 
-    // Inside a scoped run of `activeDomain`, only that domain's ticks run. Ticks of
+    // Inside a domain run of `activeDomain`, only that domain's ticks run. Ticks of
     // other domains (including the root's, queued before the run began) are parked
     // in arrival order and put back once this domain's ticks and microtasks are
     // exhausted, so the code that queued them observes them later, in the same

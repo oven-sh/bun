@@ -38,10 +38,10 @@ static inline InternalFieldTuple* asyncContextData(JSGlobalObject* globalObject)
 }
 
 // Field 1 of the async-context tuple is the "domain slot" builtins read:
-//   undefined            – no domain has ever been entered on this global
-//   Symbol               – the sentinel; no scoped run is active
-//   [sentinel, D, ...]   – the active run's base context (so JS can read both the
-//                          sentinel and the active run domain with one field load)
+//   undefined       – no domain has ever been entered on this global
+//   Symbol          – the sentinel; no domain run is active
+//   [sentinel, D]   – the active run's bare context (so JS can read both the sentinel
+//                     and the active run domain with one field load)
 Symbol* domainSentinel(JSGlobalObject* globalObject)
 {
     auto* tuple = asyncContextData(globalObject);
@@ -60,7 +60,7 @@ static void updateDomainSlot(JSGlobalObject* globalObject)
 {
     Symbol* sentinel = domainSentinel(globalObject);
     auto& runs = eventLoopDomains(globalObject->vm()).runs();
-    asyncContextData(globalObject)->putInternalField(globalObject->vm(), 1, runs.isEmpty() ? JSValue(sentinel) : runs.last().runContext.get());
+    asyncContextData(globalObject)->putInternalField(globalObject->vm(), 1, runs.isEmpty() ? JSValue(sentinel) : runs.last().bareContext.get());
 }
 
 extern "C" uint32_t Bun__Domain__allocateGlobal();
@@ -107,13 +107,15 @@ JSValue contextWithDomain(JSGlobalObject* globalObject, JSValue context, uint32_
     unsigned skip = existing ? 2 : 0;
 
     unsigned length = 2 + sourceLength - skip;
-    // Contiguous, so MicrotaskQueue::domainOfContext can read it without side effects.
     JSArray* result = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), length);
-    RELEASE_ASSERT(result);
+    RELEASE_ASSERT(result, "out of memory allocating an async context");
     result->putDirectIndex(globalObject, 0, domainSentinel(globalObject));
     result->putDirectIndex(globalObject, 1, jsNumber(domain));
-    for (unsigned i = skip; i < sourceLength; ++i)
-        result->putDirectIndex(globalObject, 2 + i - skip, source->getIndex(globalObject, i));
+    for (unsigned i = skip; i < sourceLength; ++i) {
+        // Context arrays are runtime-made and dense: no getters to run.
+        JSValue element = source->tryGetIndexQuickly(i, nullptr);
+        result->putDirectIndex(globalObject, 2 + i - skip, element ? element : jsUndefined());
+    }
     ASSERT(domainOfContext(globalObject, result) == domain);
     return result;
 }
@@ -140,7 +142,7 @@ JSValue baseContext(JSGlobalObject* globalObject)
     auto& runs = eventLoopDomains(globalObject->vm()).runs();
     if (runs.isEmpty()) [[likely]]
         return jsUndefined();
-    return runs.last().runContext.get();
+    return runs.last().bareContext.get();
 }
 
 JSValue contextForInvocation(JSGlobalObject* globalObject, JSValue captured)
@@ -155,28 +157,50 @@ JSValue contextForInvocation(JSGlobalObject* globalObject, JSValue captured)
     return contextWithDomain(globalObject, captured, active);
 }
 
-void enterScopedRun(JSGlobalObject* globalObject, uint32_t domain)
+void enterDomainRun(JSGlobalObject* globalObject, uint32_t domain, bool admitsLoaderJobs)
 {
     VM& vm = globalObject->vm();
     auto& domains = eventLoopDomains(vm);
-    JSValue saved = enterDomain(globalObject, domain);
-    JSValue runContext = asyncContextData(globalObject)->getInternalField(0);
-    domains.runs().append(ScopedRunEntry {
+    globalObject->setAsyncContextTrackingEnabled(true);
+    auto* tuple = asyncContextData(globalObject);
+    JSValue saved = tuple->getInternalField(0);
+    JSValue bare = contextWithDomain(globalObject, jsUndefined(), domain);
+    domains.runs().append(DomainRunEntry {
         domain,
         vm.microtaskDrainDomain(),
+        vm.microtaskDrainAdmitsLoaderJobs(),
         Strong<Unknown>(vm, saved),
-        Strong<Unknown>(vm, runContext),
+        Strong<Unknown>(vm, bare),
     });
-    vm.setMicrotaskDrainDomain(&domains.sentinelUid(), domain);
+    // While the loop turns, ambient context is the bare domain: callbacks the run
+    // dispatches on others' behalf (a request accepted meanwhile) must not inherit
+    // the entering frame's AsyncLocalStorage values. The frame's own continuation
+    // runs under callInEntryContext.
+    tuple->putInternalField(vm, 0, bare);
+    vm.setMicrotaskDrainDomain(&domains.sentinelUid(), domain, admitsLoaderJobs);
     updateDomainSlot(globalObject);
 }
 
-void exitScopedRun(JSGlobalObject* globalObject)
+JSValue callInEntryContext(JSGlobalObject* globalObject, JSValue function)
+{
+    VM& vm = globalObject->vm();
+    auto& runs = eventLoopDomains(vm).runs();
+    ASSERT(!runs.isEmpty());
+    auto* tuple = asyncContextData(globalObject);
+    JSValue ambient = tuple->getInternalField(0);
+    // The entering frame's values plus the run's domain.
+    tuple->putInternalField(vm, 0, contextWithDomain(globalObject, runs.last().savedContext.get(), runs.last().domain));
+    JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), jsUndefined(), ArgList());
+    tuple->putInternalField(vm, 0, ambient);
+    return result;
+}
+
+void exitDomainRun(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto& domains = eventLoopDomains(vm);
-    ScopedRunEntry entry = domains.runs().takeLast();
-    vm.setMicrotaskDrainDomain(&domains.sentinelUid(), entry.outerRunDomain);
+    DomainRunEntry entry = domains.runs().takeLast();
+    vm.setMicrotaskDrainDomain(&domains.sentinelUid(), entry.outerRunDomain, entry.outerAdmitsLoaderJobs);
     updateDomainSlot(globalObject);
     restoreContext(globalObject, entry.savedContext.get());
 }
@@ -184,44 +208,24 @@ void exitScopedRun(JSGlobalObject* globalObject)
 void drainMicrotasksInDomain(JSGlobalObject* globalObject, uint32_t domain)
 {
     VM& vm = globalObject->vm();
-    vm.drainMicrotasksInDomain(&eventLoopDomains(vm).sentinelUid(), domain);
+    vm.drainMicrotasksInDomain(&eventLoopDomains(vm).sentinelUid(), domain, true);
 }
 
 } // namespace Bun
 
 using namespace JSC;
 
-extern "C" uint32_t Bun__Domain__activeRun(JSGlobalObject* globalObject)
+extern "C" void Bun__Domain__enterRun(JSGlobalObject* globalObject, uint32_t domain, bool admitsLoaderJobs)
 {
-    return Bun::activeRunDomain(globalObject);
-}
-
-extern "C" uint32_t Bun__Domain__current(JSGlobalObject* globalObject)
-{
-    return Bun::currentDomain(globalObject);
-}
-
-extern "C" uint32_t Bun__Domain__ofCallback(JSGlobalObject* globalObject, EncodedJSValue callback)
-{
-    return Bun::domainOfCallback(globalObject, JSValue::decode(callback));
-}
-
-extern "C" uint32_t Bun__Domain__allocate(JSGlobalObject* globalObject)
-{
-    return Bun::allocateDomain(globalObject);
-}
-
-extern "C" void Bun__Domain__enterRun(JSGlobalObject* globalObject, uint32_t domain)
-{
-    Bun::enterScopedRun(globalObject, domain);
+    Bun::enterDomainRun(globalObject, domain, admitsLoaderJobs);
 }
 
 extern "C" void Bun__Domain__exitRun(JSGlobalObject* globalObject)
 {
-    Bun::exitScopedRun(globalObject);
+    Bun::exitDomainRun(globalObject);
 }
 
-extern "C" void Bun__Domain__drainMicrotasks(JSGlobalObject* globalObject, uint32_t domain)
+extern "C" EncodedJSValue Bun__Domain__callInEntryContext(JSGlobalObject* globalObject, EncodedJSValue function)
 {
-    Bun::drainMicrotasksInDomain(globalObject, domain);
+    return JSValue::encode(Bun::callInEntryContext(globalObject, JSValue::decode(function)));
 }

@@ -7,6 +7,7 @@
 #include "JSWritableStream.h"
 
 #include "BunClientData.h"
+#include "EventLoopDomain.h"
 #include "JSBuffer.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSStreamsRuntime.h"
@@ -376,7 +377,7 @@ StreamAsyncContextScope::StreamAsyncContextScope(JSGlobalObject* globalObject, J
     m_previous = current;
     if (snapshot == current)
         return;
-    asyncContextData->putInternalField(m_vm, 0, snapshot);
+    asyncContextData->putInternalField(m_vm, 0, Bun::contextForInvocation(globalObject, snapshot));
 }
 
 StreamAsyncContextScope::~StreamAsyncContextScope()

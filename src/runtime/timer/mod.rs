@@ -665,6 +665,9 @@ impl All {
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         let tag = unsafe { (*timer).tag };
         debug_assert!(tag != EventLoopTimerTag::WTFTimer, "use wtf_arm");
+        // Whoever arms (or re-arms) a timer owns its firing.
+        // SAFETY: as above.
+        unsafe { (*timer).domain = bun_event_loop::current_task_domain() };
 
         // Bump the global epoch into the per-timer flags so equal-deadline JS
         // timers (setTimeout/setInterval/AbortSignal.timeout) fire in insertion
@@ -691,6 +694,27 @@ impl All {
                 (*timer).in_heap = InHeap::Regular;
             }
             #[cfg(windows)]
+            self.ensure_uv_timer();
+        }
+    }
+
+    /// A domain run has ended: put the timers it held back with their original
+    /// deadlines and epochs, so their order relative to each other and to timers
+    /// that never left is unchanged.
+    ///
+    /// # Safety
+    /// Every pointer is a live node this heap handed to `domain_run` and that is
+    /// in no heap now.
+    pub(crate) unsafe fn reinsert_after_run(&mut self, timers: &[*mut EventLoopTimer]) {
+        for &timer in timers {
+            // SAFETY: per fn contract.
+            unsafe {
+                self.timers.insert(timer);
+                (*timer).in_heap = InHeap::Regular;
+            }
+        }
+        #[cfg(windows)]
+        if !timers.is_empty() {
             self.ensure_uv_timer();
         }
     }
@@ -1040,15 +1064,10 @@ impl All {
     /// Pop the next due timer. `now` is filled lazily on first call so we
     /// don't pay for `clock_gettime` when the heap is empty.
     ///
-    /// During a scoped event-loop run, a due JS timer that belongs to another
-    /// domain is handed to `domain_run` instead of being returned (see
+    /// During a domain run, a due timer that belongs to another domain is
+    /// handed to `domain_run` instead of being returned (see
     /// `defer_timer_if_foreign`), and the scan continues with the next node.
-    fn next(
-        &mut self,
-        has_set_now: &mut bool,
-        now: &mut Timespec,
-        vm: *mut (), /* erased *mut VirtualMachine */
-    ) -> Option<*mut EventLoopTimer> {
+    fn next(&mut self, has_set_now: &mut bool, now: &mut Timespec) -> Option<*mut EventLoopTimer> {
         loop {
             let timer = self.timers.peek()?;
             if !*has_set_now {
@@ -1068,10 +1087,8 @@ impl All {
             }
             let deleted = self.timers.delete_min().expect("peek succeeded");
             debug_assert!(core::ptr::eq(deleted, timer));
-            if crate::domain_run::is_in_run()
-                // SAFETY: `timer` was just popped and is live; `vm` per caller contract.
-                && unsafe { crate::domain_run::defer_timer_if_foreign(timer, vm.cast()) }
-            {
+            // SAFETY: `timer` was just popped and is live.
+            if unsafe { crate::domain_run::defer_timer_if_foreign(timer) } {
                 continue;
             }
             return Some(timer);
@@ -1111,7 +1128,7 @@ impl All {
         loop {
             // SAFETY: `this` derived from `&mut self`; short-lived exclusive
             // borrow scoped to this `next()` call only — dropped before fire().
-            let Some(t) = (unsafe { &mut *this }).next(&mut has_set_now, &mut now, vm) else {
+            let Some(t) = (unsafe { &mut *this }).next(&mut has_set_now, &mut now) else {
                 break;
             };
             // Note: re-pack into bun_event_loop's local Timespec stub

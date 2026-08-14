@@ -343,7 +343,11 @@ impl EventLoop {
         }
 
         jsc::mark_binding();
-        jsc_vm.release_weak_refs();
+        // WeakRef targets observed this job stay alive to its end; a checkpoint
+        // inside a domain run is not the end of the outer frame's job.
+        if bun_event_loop::active_run_domain() == 0 {
+            jsc_vm.release_weak_refs();
+        }
 
         match JSC__JSGlobalObject__drainMicrotasks(global_object) {
             drain_result::SUCCESS => {}
@@ -670,7 +674,9 @@ impl EventLoop {
                 }
                 refills += 1;
                 self.tick_concurrent();
-                self.global_ref().handle_rejected_promises();
+                if bun_event_loop::active_run_domain() == 0 {
+                    self.global_ref().handle_rejected_promises();
+                }
             }
             if self
                 .drain_microtasks_with_global(global, global_vm)
@@ -696,7 +702,11 @@ impl EventLoop {
             self.tick_concurrent();
         }
 
-        self.global_ref().handle_rejected_promises();
+        // Inside a domain run the outer frame is mid-job and may still attach
+        // rejection handlers; its unhandled-rejection processing waits for it.
+        if bun_event_loop::active_run_domain() == 0 {
+            self.global_ref().handle_rejected_promises();
+        }
 
         self.entered_event_loop_count -= 1;
     }
@@ -728,7 +738,7 @@ impl EventLoop {
             return;
         }
         if task.domain == 0 {
-            // Attribute to whoever is enqueuing (the active scoped run, else the
+            // Attribute to whoever is enqueuing (the active domain run, else the
             // root), so a run can tell other domains' tasks from its own.
             task.domain = bun_event_loop::current_task_domain();
         }

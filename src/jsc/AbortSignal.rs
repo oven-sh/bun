@@ -321,6 +321,7 @@ impl Timeout {
                 state: TimerState::CANCELLED,
                 heap: IntrusiveField::default(),
                 in_heap: InHeap::default(),
+                domain: 0,
             },
             signal: signal_,
             flags: TimerFlags::default(),

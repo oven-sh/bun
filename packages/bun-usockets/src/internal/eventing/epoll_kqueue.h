@@ -103,6 +103,10 @@ struct us_loop_t {
     alignas(LIBUS_EXT_ALIGNMENT) struct epoll_event ready_polls[1024];
 #else
     alignas(LIBUS_EXT_ALIGNMENT) struct kevent64_s ready_polls[1024];
+    /* Per-entry decoded/coalesced flags for the current batch (kqueue reports
+     * each filter separately). Kept on the loop rather than the dispatching
+     * frame so a nested tick can finish dispatching an outer batch. */
+    unsigned char ready_flags[1024];
 #endif
 };
 
@@ -112,7 +116,7 @@ struct us_poll_t {
         unsigned int poll_type : 5;
     } state;
     /* Bun run epoch (Bun__runEpoch) at creation, adoption or last write. While a
-     * scoped event-loop run is active on this loop's thread, readiness of a socket
+     * domain run is active on this loop's thread, readiness of a socket
      * older than the run's start belongs to the code the run interrupted and is
      * held until the run ends (see us_internal_defer_foreign_ready_poll). Lives
      * in the alignment padding, so it costs nothing. */

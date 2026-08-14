@@ -134,7 +134,7 @@ pub struct Process {
     pub(crate) js_poster: Option<bun_event_loop::JsPoster>,
     /// Scheduling domain that spawned the process (`bun_event_loop::current_task_domain`
     /// at creation): the waiter thread's exit task is attributed to it, so an outer
-    /// child's exit is not delivered inside a scoped run that did not spawn it.
+    /// child's exit is not delivered inside a domain run that did not spawn it.
     #[cfg(unix)]
     pub(crate) task_domain: u32,
 }

@@ -26,7 +26,7 @@ pub mod SpawnSyncEventLoop;
 #[path = "AnyEventLoop.rs"]
 pub mod any_event_loop;
 
-// ─── scoped event-loop runs ──────────────────────────────────────────────────
+// ─── domain runs ──────────────────────────────────────────────────
 // The run driver lives in `bun_runtime::domain_run` (it needs the timer heap
 // and the VM); the one piece of state lower tiers need — which run is innermost
 // on this thread — is mirrored here so `Task` stamping and the gates are a
@@ -55,7 +55,7 @@ thread_local! {
     static ROOT_DOMAIN: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
 }
 
-/// The innermost scoped event-loop run's domain on this thread; 0 when none.
+/// The innermost domain run's domain on this thread; 0 when none.
 #[inline]
 pub fn active_run_domain() -> u32 {
     ACTIVE_RUN_DOMAIN.get()
@@ -68,7 +68,7 @@ pub fn set_active_run_domain(domain: u32) {
 }
 
 /// This thread owns a JS VM (main thread or a Worker): give it a root domain,
-/// so work it creates while no scoped run is active belongs to *its* root rather
+/// so work it creates while no domain run is active belongs to *its* root rather
 /// than to nobody. Idempotent.
 #[inline]
 pub fn mark_js_thread() {
@@ -78,7 +78,7 @@ pub fn mark_js_thread() {
 }
 
 /// This JS thread's root domain id (0 on a thread that owns no VM). A [`Task`]
-/// stamped with it was created by root-domain code here; during a scoped run
+/// stamped with it was created by root-domain code here; during a domain run
 /// it is foreign like any other domain's, outside one it is nothing special.
 #[inline]
 pub fn root_domain() -> u32 {

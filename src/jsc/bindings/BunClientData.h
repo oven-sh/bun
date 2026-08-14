@@ -169,7 +169,7 @@ public:
     ALWAYS_INLINE bool scriptAllowed() const { return Bun__VmHandle__scriptAllowedInline(vmHandleState); }
     Bun::JSCTaskScheduler deferredWorkTimer;
 
-    // Scheduling-domain state for scoped event-loop runs (see EventLoopDomain.h).
+    // Scheduling-domain state for domain runs (see EventLoopDomain.h).
     Bun::EventLoopDomains& eventLoopDomains() { return *m_eventLoopDomains; }
 
     // Linked list of StrongRootBlock cells backing bun_jsc::Strong handles

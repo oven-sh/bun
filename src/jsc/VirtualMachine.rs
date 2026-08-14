@@ -2343,7 +2343,7 @@ impl VirtualMachine {
     /// JSC-tier fields are populated and finishes the rest.
     pub fn init(mut opts: InitOptions) -> crate::CrateResult<*mut VirtualMachine> {
         jsc::mark_binding();
-        // Work this thread creates outside a scoped event-loop run is the root
+        // Work this thread creates outside a domain run is the root
         // domain's from now on (see `bun_event_loop::current_task_domain`).
         bun_event_loop::mark_js_thread();
 

@@ -53,6 +53,10 @@ pub struct EventLoopTimer {
     /// Internal heap fields.
     pub heap: IntrusiveField<EventLoopTimer>,
     pub in_heap: InHeap,
+    /// Scheduling domain that armed the timer (`crate::current_task_domain()` at
+    /// insert). While a domain run turns the loop, a due timer of another domain
+    /// is held out of the heap until the run exits (`Tag::is_domain_gated`).
+    pub domain: u32,
 }
 
 // Duck-typed `.heap` field access for `bun_io::heap::Intrusive`. Implemented
@@ -71,7 +75,7 @@ pub enum InHeap {
     None,
     Regular,
     Fake,
-    /// Due during a scoped event-loop run it did not belong to: held by
+    /// Due during a domain run it did not belong to: held by
     /// `bun_runtime::domain_run` (out of every heap, still `ACTIVE`) until the
     /// run exits and reinserts it into `Regular`.
     DeferredByRun,
@@ -85,6 +89,7 @@ impl EventLoopTimer {
             tag,
             heap: IntrusiveField::default(),
             in_heap: InHeap::None,
+            domain: 0,
         }
     }
 
@@ -209,6 +214,16 @@ pub enum Tag {
 }
 
 impl Tag {
+    /// Whether a domain run holds this timer while it is due but foreign to the
+    /// run (see `EventLoopTimer::domain`): everything whose firing is observable
+    /// to the code that armed it. Runtime housekeeping keeps running.
+    pub fn is_domain_gated(self) -> bool {
+        !matches!(
+            self,
+            Tag::WTFTimer | Tag::GcRepeating | Tag::DateHeaderTimer | Tag::EventLoopDelayMonitor
+        )
+    }
+
     /// Whether `jest.useFakeTimers()` captures this timer. Only timers a
     /// program schedules itself are faked; runtime-internal timeouts stay on
     /// the real clock, as in Jest. A fakeable owner arms with

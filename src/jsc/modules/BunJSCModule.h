@@ -583,7 +583,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunInDomainForTesting, (JSGlobalObject * global
 }
 
 // runUntilInDomainForTesting(thunk) -> promise
-//   Enter a fresh scoped run, call thunk (which returns a promise created under
+//   Enter a fresh domain run, call thunk (which returns a promise created under
 //   that domain), turn the whole loop for the domain until the promise settles.
 extern "C" JSC::EncodedJSValue Bun__Domain__runUntilInDomainForTesting(JSGlobalObject*, JSC::EncodedJSValue thunk);
 JSC_DECLARE_HOST_FUNCTION(functionRunUntilInDomainForTesting);

@@ -1,4 +1,4 @@
-//! I/O attribution for scoped event-loop runs (see `bun_runtime::domain_run`).
+//! I/O attribution for domain runs (see `bun_runtime::domain_run`).
 //!
 //! Readiness has no captured async context, so it is attributed by *time*: a
 //! process-wide, monotonically increasing run epoch. Every `FilePoll` (and every
@@ -16,7 +16,12 @@ use core::cell::Cell;
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-static RUN_EPOCH: AtomicU32 = AtomicU32::new(1);
+/// Read directly by usockets (`Bun__runEpoch()` in internal.h is a relaxed load
+/// of this symbol), so it is exported under a C name.
+#[unsafe(no_mangle)]
+#[allow(non_upper_case_globals)]
+pub static Bun__runEpochCounter: AtomicU32 = AtomicU32::new(1);
+use Bun__runEpochCounter as RUN_EPOCH;
 
 /// A poll a run on this thread has custody of.
 #[cfg(not(windows))]
@@ -70,16 +75,6 @@ pub fn set_active_run_start(epoch: u32) {
 pub fn is_foreign(epoch: u32) -> bool {
     let start = active_run_start();
     start != 0 && epoch < start
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__runEpoch() -> u32 {
-    current()
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__activeRunStartEpoch() -> u32 {
-    active_run_start()
 }
 
 #[cfg(not(windows))]

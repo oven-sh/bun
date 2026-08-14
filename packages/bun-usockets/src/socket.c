@@ -458,7 +458,6 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     struct us_socket_t *s = (struct us_socket_t *) p1;
     s->group = group;
     s->kind = kind;
-    us_internal_socket_stamp_epoch(s);
     s->ssl = NULL;
     s->timeout = 255;
     s->long_timeout = 255;
@@ -472,6 +471,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
     s->disarmed_by_run = 0;
+    s->rearm_writable = 0;
     s->fin_deferred = 0;
     s->connect_state = NULL;
 

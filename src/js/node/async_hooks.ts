@@ -65,7 +65,7 @@ function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<an
   return true;
 }
 
-// While a scoped run is active, a context installed wholesale (snapshot(), bind(),
+// While a domain run is active, a context installed wholesale (snapshot(), bind(),
 // AsyncResource) that was captured before the run names no scheduling domain. Work
 // scheduled under it is nevertheless a consequence of the run, so give it the active
 // run's domain pair; otherwise the run would park that work and could never finish.

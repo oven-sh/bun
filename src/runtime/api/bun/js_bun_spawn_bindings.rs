@@ -301,12 +301,13 @@ pub(crate) fn spawn_sync(
     spawn_maybe_sync::<true>(global_this, args, secondary_args_value)
 }
 
-/// spawnSync waits by turning the real event loop inside a scoped run of its own
-/// domain (`crate::domain_run`): the child's pipes and exit are dispatched on
-/// Bun's one loop while JS timers, immediates, microtasks, nextTicks and I/O
-/// that predate the call are held until it returns. Windows keeps the isolated
-/// `SpawnSyncEventLoop` until its FilePoll/uv paths carry run epochs.
-const SPAWN_SYNC_USES_SCOPED_RUN: bool = cfg!(unix);
+/// spawnSync waits by turning the real event loop inside a strict domain run of
+/// its own (`crate::domain_run`): the child's pipes and exit are dispatched on
+/// Bun's one loop while JS timers, immediates, microtasks, nextTicks, other
+/// connections and I/O that predate the call are held until it returns. Windows
+/// keeps the isolated `SpawnSyncEventLoop` until its FilePoll/uv paths carry
+/// run epochs.
+const SPAWN_SYNC_USES_DOMAIN_RUN: bool = cfg!(unix);
 
 fn spawn_maybe_sync<const IS_SYNC: bool>(
     global_this: &JSGlobalObject,
@@ -1067,16 +1068,20 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // also pass `jsc_vm` into `spawn_sync_event_loop`/`prepare`/`cleanup` while
     // holding it. Route through a raw `*mut VirtualMachineRef` for the duration.
     let jsc_vm_ptr: *mut jsc::VirtualMachineRef = jsc_vm;
-    // Enter the scoped run before spawning so everything created from here on
+    // Enter the domain run before spawning so everything created from here on
     // (the child's pipes, its process poll, its exit task) is the run's own.
     // SAFETY: `bun_vm_ptr()` is the live per-thread VM; the run is dropped
     // below (or on any early return), on this thread.
-    let scoped_run = (IS_SYNC && SPAWN_SYNC_USES_SCOPED_RUN)
-        .then(|| unsafe { crate::domain_run::ScopedRun::enter_new(global_this.bun_vm_ptr()) });
-    // For IS_SYNC without a scoped run, use the isolated loop's `event_loop`
+    let domain_run = (IS_SYNC && SPAWN_SYNC_USES_DOMAIN_RUN).then(|| unsafe {
+        crate::domain_run::DomainRun::enter_new(
+            global_this.bun_vm_ptr(),
+            crate::domain_run::Policy::STRICT,
+        )
+    });
+    // For IS_SYNC without a domain run, use the isolated loop's `event_loop`
     // (created by `SpawnSyncEventLoop::init`) so stdio readers/writers register
     // on it instead of the main loop and JavaScript timers cannot fire.
-    let event_loop: *mut jsc::event_loop::EventLoop = if IS_SYNC && !SPAWN_SYNC_USES_SCOPED_RUN {
+    let event_loop: *mut jsc::event_loop::EventLoop = if IS_SYNC && !SPAWN_SYNC_USES_DOMAIN_RUN {
         // SAFETY: see note above; `spawn_sync_event_loop` re-borrows the
         // same VM via the raw pointer for its `vm` arg.
         unsafe {
@@ -1102,7 +1107,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // local so the closure's captured place is disjoint.
     let jsc_vm_ptr_cleanup = jsc_vm_ptr;
     scopeguard::defer! {
-        if IS_SYNC && !SPAWN_SYNC_USES_SCOPED_RUN {
+        if IS_SYNC && !SPAWN_SYNC_USES_DOMAIN_RUN {
             // SAFETY: defer runs while `jsc_vm` (the thread VM) is still live.
             unsafe {
                 let main_loop = (*jsc_vm_ptr_cleanup).event_loop();
@@ -1880,7 +1885,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     let mut did_timeout = false;
 
-    // Wait inside a scoped run of the real loop (or, without one, by ticking the
+    // Wait inside a domain run of the real loop (or, without one, by ticking the
     // isolated loop): JavaScript timers don't fire and stdin/stdout from the main
     // process aren't affected.
     {
@@ -1926,7 +1931,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         let mut bun_test_fired = false;
 
         // SAFETY: jsc_vm_ptr is the live thread VM; re-borrowed for the nested arg.
-        let mut sync_loop = (IS_SYNC && !SPAWN_SYNC_USES_SCOPED_RUN).then(|| {
+        let mut sync_loop = (IS_SYNC && !SPAWN_SYNC_USES_DOMAIN_RUN).then(|| {
             unsafe { &mut *jsc_vm_ptr }
                 .rare_data()
                 .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr })
@@ -1973,8 +1978,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             } else {
                 None
             };
-            let tick_state = if let Some(run) = &scoped_run {
-                // SAFETY: `run` is the innermost scoped run, entered above on this thread.
+            let tick_state = if let Some(run) = &domain_run {
+                // SAFETY: `run` is the innermost domain run, entered above on this thread.
                 let deadline_passed =
                     unsafe { run.turn(deadline, || !subprocess.compute_has_pending_activity()) };
                 if deadline_passed {
@@ -1985,7 +1990,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             } else {
                 sync_loop
                     .as_mut()
-                    .expect("isolated loop when not on a scoped run")
+                    .expect("isolated loop when not on a domain run")
                     .tick_with_timeout(deadline)
             };
             match tick_state {
@@ -2050,7 +2055,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
     // The wait is over: hand parked timers, immediates, tasks and I/O back to the loop.
-    drop(scoped_run);
+    drop(domain_run);
     if global_this.has_exception() {
         // e.g. a termination exception.
         return Ok(JSValue::ZERO);

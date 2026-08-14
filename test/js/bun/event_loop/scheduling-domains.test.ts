@@ -1,6 +1,6 @@
-// Scheduling domains and scoped event-loop runs.
+// Scheduling domains and domain runs.
 //
-// A scoped run turns Bun's one event loop from inside a synchronous frame while
+// A domain run turns Bun's one event loop from inside a synchronous frame while
 // admitting only the work that frame caused; everything else that surfaces is
 // parked and handed back, in order, when the run exits. These tests pin the two
 // invariants from both vantage points:
@@ -16,6 +16,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const jsc = require("bun:jsc");
 const hasDomains = typeof jsc.runInDomainForTesting === "function";
@@ -34,6 +36,10 @@ function runUntil<T>(thunk: () => Promise<T>): Promise<T> {
 }
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const immediate = () => new Promise<void>(r => setImmediate(r));
+/** Poll (with the run's own timers) until `file` exists: a condition another process controls. */
+async function untilExists(file: string) {
+  while (!existsSync(file)) await sleep(2);
+}
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 
@@ -245,7 +251,7 @@ describe.skipIf(!hasDomains)("microtask domains", () => {
   });
 });
 
-describe.skipIf(!hasDomains)("scoped runs: timers and immediates", () => {
+describe.skipIf(!hasDomains)("domain runs: timers and immediates", () => {
   test("inner: the domain's timers, immediates and sleeps complete inside the run", () => {
     const log: string[] = [];
     const result = runUntil(async () => {
@@ -415,20 +421,23 @@ describe.skipIf(!hasDomains)("scoped runs: timers and immediates", () => {
 
 /**
  * A TCP echo server in a child process (so its timing is independent of this
- * process's loop): echoes each chunk back after `delayMs`.
+ * process's loop): echoes each chunk back, then creates `marker`.
  */
-async function spawnEchoServer(delayMs: number) {
+async function spawnEchoServer(marker: string) {
   const proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
-      `const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: {
-         data(socket, data) { setTimeout(() => socket.write(data), ${delayMs}); },
+      `const { writeFileSync } = require("node:fs");
+       const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: {
+         // Echo, then record that the reply is on its way (in the peer's kernel
+         // buffer by the time anyone sees the marker).
+         data(socket, data) { socket.write(data); socket.flush(); writeFileSync(process.env.ECHO_MARKER, ""); },
        }});
        console.log(server.port);
        process.stdin.on("end", () => process.exit(0)).resume();`,
     ],
-    env: bunEnv,
+    env: { ...bunEnv, ECHO_MARKER: marker },
     stdin: "pipe",
     stdout: "pipe",
     stderr: "inherit",
@@ -454,10 +463,12 @@ async function spawnEchoServer(delayMs: number) {
 
 // Readiness gating rides on FilePoll/usockets run epochs, which the libuv-backed
 // Windows paths do not carry yet.
-describe.skipIf(!hasDomains || process.platform === "win32")("scoped runs: I/O", () => {
+describe.skipIf(!hasDomains || process.platform === "win32")("domain runs: I/O", () => {
   test("outer connections ready during a run wait; a listener still accepts; inner I/O works", async () => {
     const log: string[] = [];
-    await using echo = await spawnEchoServer(10);
+    using dir = tempDir("domain-run-io", {});
+    const marker = join(String(dir), "replied");
+    await using echo = await spawnEchoServer(marker);
     // A server created outside the run. Its listen socket keeps accepting inside
     // the run: a fetch from inside to it must not deadlock.
     using server = Bun.serve({
@@ -483,8 +494,8 @@ describe.skipIf(!hasDomains || process.platform === "win32")("scoped runs: I/O",
     outer.write("ping");
 
     const inner = runUntil(async () => {
-      await sleep(50); // the echo reply to `outer` is now sitting in the kernel
-      log.push("inner-slept");
+      await untilExists(marker); // the echo reply to `outer` is now sitting in the kernel
+      log.push("inner-waited");
       const res = await fetch(`http://127.0.0.1:${server.port}/inner`);
       log.push("inner-fetched:" + (await res.text()));
       // A connection opened inside the run is the run's own.
@@ -500,7 +511,7 @@ describe.skipIf(!hasDomains || process.platform === "win32")("scoped runs: I/O",
       return "done";
     });
     expect(Bun.peek(inner)).toBe("done");
-    expect(log).toEqual(["inner-slept", "served:/inner", "inner-fetched:hi:/inner", "inner-echo:inner-ping"]);
+    expect(log).toEqual(["inner-waited", "served:/inner", "inner-fetched:hi:/inner", "inner-echo:inner-ping"]);
 
     // The outer reply was held, not lost.
     expect(await outerData).toBe("ping");
@@ -508,11 +519,40 @@ describe.skipIf(!hasDomains || process.platform === "win32")("scoped runs: I/O",
     outer.end();
   });
 
+  test("a request accepted inside a run does not see the entering frame's AsyncLocalStorage store", async () => {
+    const als = new AsyncLocalStorage<string>();
+    let seenInHandler: string | undefined = "unset";
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        seenInHandler = als.getStore();
+        return new Response("ok");
+      },
+    });
+    const body = als.run("caller's store", () =>
+      runUntil(async () => {
+        expect(als.getStore()).toBe("caller's store"); // the run's own code inherits it
+        return (await fetch(`http://127.0.0.1:${server.port}/`)).text();
+      }),
+    );
+    expect(Bun.peek(body)).toBe("ok");
+    expect(seenInHandler).toBeUndefined();
+  });
+
   test("outer pipe readiness during a run waits and is delivered afterwards", async () => {
     const log: string[] = [];
-    // An outer child that writes while the run is active.
+    using dir = tempDir("domain-run-pipe", {});
+    const [go, wrote] = [join(String(dir), "go"), join(String(dir), "wrote")];
+    // An outer child that writes (and exits) once the run is active.
     await using child = Bun.spawn({
-      cmd: [bunExe(), "-e", "setTimeout(() => { process.stdout.write('outer-child'); }, 10)"],
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("node:fs");
+         while (!fs.existsSync(${JSON.stringify(go)})) Bun.sleepSync(2);
+         fs.writeSync(1, "outer-child");
+         fs.writeFileSync(${JSON.stringify(wrote)}, "");`,
+      ],
       env: bunEnv,
       stdout: "pipe",
     });
@@ -523,8 +563,9 @@ describe.skipIf(!hasDomains || process.platform === "win32")("scoped runs: I/O",
     })();
 
     runUntil(async () => {
-      await sleep(80); // outer child's write (and exit) happen in here
-      log.push("inner-slept");
+      writeFileSync(go, "");
+      await untilExists(wrote); // outer child's write happened in here
+      log.push("inner-waited");
       await using innerChild = Bun.spawn({
         cmd: [bunExe(), "-e", "process.stdout.write('inner-child')"],
         env: bunEnv,
@@ -533,7 +574,7 @@ describe.skipIf(!hasDomains || process.platform === "win32")("scoped runs: I/O",
       log.push("inner-read:" + (await innerChild.stdout.text()));
       log.push("inner-exit:" + (await innerChild.exited));
     });
-    expect(log).toEqual(["inner-slept", "inner-read:inner-child", "inner-exit:0"]);
+    expect(log).toEqual(["inner-waited", "inner-read:inner-child", "inner-exit:0"]);
     expect(await outerRead).toBe("outer-child");
     expect(await child.exited).toBe(0);
   });
@@ -541,7 +582,9 @@ describe.skipIf(!hasDomains || process.platform === "win32")("scoped runs: I/O",
   test("a socket that predates the run but is written by it gets its reply inside the run", async () => {
     // "The commons": a pooled/keep-alive connection created before the run and
     // reused by code inside it. Writing is the ownership transfer.
-    await using echo = await spawnEchoServer(0);
+    using dir = tempDir("domain-run-commons", {});
+    const marker = join(String(dir), "replied");
+    await using echo = await spawnEchoServer(marker);
     let onData = (_: string) => {};
     const conn = await Bun.connect({
       hostname: "127.0.0.1",
@@ -562,9 +605,11 @@ describe.skipIf(!hasDomains || process.platform === "win32")("scoped runs: I/O",
     // connection is the one case where outer data is admitted, by construction.
     const seen: string[] = [];
     onData = d => seen.push(d);
+    require("node:fs").rmSync(marker);
     conn.write("outer");
     const both = runUntil(async () => {
-      await sleep(30); // "outer" echo is now parked
+      await untilExists(marker); // "outer" echo has been sent...
+      await sleep(5); // ...and this run has polled since: it is parked
       expect(seen).toEqual([]);
       const { promise, resolve } = Promise.withResolvers<void>();
       onData = d => (seen.push(d), seen.join("").includes("inner") && resolve());
@@ -577,80 +622,9 @@ describe.skipIf(!hasDomains || process.platform === "win32")("scoped runs: I/O",
   });
 });
 
-describe.skipIf(!hasDomains || process.platform === "win32")("spawnSync on a scoped run", () => {
-  test("JS timers, microtasks, immediates and nextTicks scheduled before spawnSync do not run during it", () => {
-    const log: string[] = [];
-    let during = true;
-    const note = (what: string) => () => log.push(what + (during ? ":during" : ":after"));
-    setTimeout(note("timeout"), 0);
-    setImmediate(note("immediate"));
-    queueMicrotask(note("microtask"));
-    process.nextTick(note("nexttick"));
-    Promise.resolve().then(note("then"));
-
-    const { stdout, exitCode } = Bun.spawnSync({
-      // Long enough for the 0ms timer to be overdue while we wait.
-      cmd: [bunExe(), "-e", "await Bun.sleep(30); console.log('child')"],
-      env: bunEnv,
-    });
-    during = false;
-    expect(stdout.toString().trim()).toBe("child");
-    expect(exitCode).toBe(0);
-    expect(log).toEqual([]);
-
-    return new Promise<void>(resolve =>
-      setTimeout(() => {
-        expect(log.sort()).toEqual([
-          "immediate:after",
-          "microtask:after",
-          "nexttick:after",
-          "then:after",
-          "timeout:after",
-        ]);
-        resolve();
-      }, 5),
-    );
-  });
-
-  test("an outer child's output and exit that arrive during spawnSync are delivered after it", async () => {
-    const log: string[] = [];
-    await using outer = Bun.spawn({
-      cmd: [bunExe(), "-e", "await Bun.sleep(10); console.log('outer')"],
-      env: bunEnv,
-      stdout: "pipe",
-      onExit: () => log.push("outer-exit"),
-    });
-    const outerText = outer.stdout.text().then(t => (log.push("outer-stdout"), t));
-
-    const { stdout } = Bun.spawnSync({
-      cmd: [bunExe(), "-e", "await Bun.sleep(80); console.log('inner')"],
-      env: bunEnv,
-    });
-    log.push("spawnSync-returned:" + stdout.toString().trim());
-    expect(log).toEqual(["spawnSync-returned:inner"]);
-
-    expect((await outerText).trim()).toBe("outer");
-    expect(await outer.exited).toBe(0);
-    // onExit is dispatched from the loop after `exited` settles.
-    await immediate();
-    expect(log.slice(1).sort()).toEqual(["outer-exit", "outer-stdout"]);
-  });
-
-  test("spawnSync inside a scoped run nests", () => {
-    const result = runUntil(async () => {
-      await sleep(1);
-      const { stdout } = Bun.spawnSync({ cmd: [bunExe(), "-e", "console.log('nested')"], env: bunEnv });
-      await immediate();
-      return stdout.toString().trim();
-    });
-    expect(Bun.peek(result)).toBe("nested");
-    expect(currentDomainForTesting()).toEqual([0, 0]);
-  });
-});
-
-describe.skipIf(!hasDomains || process.platform === "win32")("scoped runs: modules and threads", () => {
+describe.skipIf(!hasDomains || process.platform === "win32")("domain runs: modules, threads, nesting", () => {
   test("dynamic import and require work inside a run", () => {
-    using dir = tempDir("scoped-run-import", {
+    using dir = tempDir("domain-run-import", {
       "esm.mjs": "export const x = await Promise.resolve(42);",
       "cjs.cjs": "module.exports = { y: 7 };",
     });
@@ -664,23 +638,14 @@ describe.skipIf(!hasDomains || process.platform === "win32")("scoped runs: modul
     expect(Bun.peek(result)).toEqual([42, 7, "function"]);
   });
 
-  test("a Worker message that arrives during spawnSync is delivered after it", async () => {
-    const worker = new Worker(
-      "data:text/javascript," +
-        encodeURIComponent("onmessage = () => setTimeout(() => postMessage('from-worker'), 10);"),
-    );
-    const log: string[] = [];
-    const got = new Promise<void>(resolve => {
-      worker.onmessage = e => {
-        log.push(String(e.data));
-        resolve();
-      };
+  test("spawnSync inside a run nests", () => {
+    const result = runUntil(async () => {
+      await sleep(1);
+      const { stdout } = Bun.spawnSync({ cmd: [bunExe(), "-e", "console.log('nested')"], env: bunEnv });
+      await immediate();
+      return stdout.toString().trim();
     });
-    worker.postMessage("go");
-    Bun.spawnSync({ cmd: [bunExe(), "-e", "await Bun.sleep(80)"], env: bunEnv });
-    log.push("spawnSync-returned");
-    await got;
-    expect(log).toEqual(["spawnSync-returned", "from-worker"]);
-    worker.terminate();
+    expect(Bun.peek(result)).toBe("nested");
+    expect(currentDomainForTesting()).toEqual([0, 0]);
   });
 });

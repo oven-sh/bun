@@ -731,6 +731,9 @@ impl VirtualMachine {
 pub struct LoopHandle {
     vm: VmHandle,
     kind: LoopKind,
+    /// Scheduling domain that created the job (`current_task_domain()` on the JS
+    /// thread at capture): its completion is that domain's, whichever thread posts it.
+    domain: u32,
 }
 
 /// A job that finishes off the JS thread and is posted back to its VM as a
@@ -791,9 +794,23 @@ pub unsafe fn post_job<T: Postable>(job: *mut T) {
 
 impl LoopHandle {
     /// Post an already-built task. Prefer [`post_job`], which leaves the caller
-    /// nothing to check; this hands a refusal back.
+    /// nothing to check; this hands a refusal back. A completion built off the
+    /// JS thread has no domain of its own; it is the creating domain's.
     pub fn post_task(&self, task: NonNull<ConcurrentTaskItem>) -> Posted {
+        // SAFETY: `task` is a live carrier not yet posted; ours until `post`.
+        unsafe {
+            let inner = &mut (*task.as_ptr()).task;
+            if inner.domain == 0 {
+                inner.domain = self.domain;
+            }
+        }
         self.vm.post(self.kind, task)
+    }
+
+    /// The domain that created the job (see the field).
+    #[inline]
+    pub fn domain(&self) -> u32 {
+        self.domain
     }
     pub fn borrow(&self) -> Option<Borrow> {
         self.vm.borrow()
@@ -838,6 +855,7 @@ impl VirtualMachine {
         LoopHandle {
             vm: self.handle(),
             kind: self.current_loop_kind(),
+            domain: bun_event_loop::current_task_domain(),
         }
     }
 }

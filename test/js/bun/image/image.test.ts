@@ -826,32 +826,34 @@ describe("Bun.Image", () => {
       await expect(new Bun.Image(buf).metadata()).rejects.toThrow();
     });
 
-    // Hand-roll a TIFF 6.0 "Baseline RGB" (class R) image at `bits`-per-
-    // sample (8 or 16). The 12 baseline-required tags are all present
-    // (ImageWidth, ImageLength, BitsPerSample, Compression=1, Photometric
-    // Interpretation=2, StripOffsets, SamplesPerPixel, RowsPerStrip,
-    // StripByteCounts, XResolution, YResolution, ResolutionUnit) — WIC
-    // in particular is strict about the Resolution tags and rejects the
-    // file without them. II/little-endian throughout. TIFF routes through
-    // the system backend on macOS (CoreGraphics) and Windows (WIC); Linux
-    // returns UnsupportedOnPlatform so the bit_depth plumbing there is
-    // a no-op.
-    function makeTiff(w: number, h: number, bits: 8 | 16, pixelOf: (x: number, y: number) => [number, number, number]) {
+    // Hand-roll a baseline TIFF 6.0 image at `bits`-per-sample (8 or 16).
+    // All 12 baseline-required tags are present (WIC in particular is
+    // strict about the Resolution tags and rejects the file without
+    // them). II/little-endian throughout. TIFF routes through the system
+    // backend on macOS (CoreGraphics) and Windows (WIC); Linux returns
+    // UnsupportedOnPlatform so the bit_depth plumbing there is a no-op.
+    // `samples` selects RGB (3, PhotometricInterpretation=2) or grayscale
+    // (1, PhotometricInterpretation=1); pixelOf returns that many values.
+    function makeTiff(
+      w: number,
+      h: number,
+      bits: 8 | 16,
+      pixelOf: (x: number, y: number) => number[],
+      samples: 1 | 3 = 3,
+    ) {
       const bytesPerSample = bits / 8;
-      const strip = new Uint8Array(w * h * 3 * bytesPerSample);
+      const strip = new Uint8Array(w * h * samples * bytesPerSample);
       const sv = new DataView(strip.buffer);
       for (let y = 0; y < h; y++)
         for (let x = 0; x < w; x++) {
-          const [r, g, b] = pixelOf(x, y);
-          const off = (y * w + x) * 3 * bytesPerSample;
-          if (bits === 16) {
-            sv.setUint16(off, r, true);
-            sv.setUint16(off + 2, g, true);
-            sv.setUint16(off + 4, b, true);
-          } else {
-            strip[off] = r;
-            strip[off + 1] = g;
-            strip[off + 2] = b;
+          const px = pixelOf(x, y);
+          const off = (y * w + x) * samples * bytesPerSample;
+          for (let s = 0; s < samples; s++) {
+            if (bits === 16) {
+              sv.setUint16(off + 2 * s, px[s], true);
+            } else {
+              strip[off + s] = px[s];
+            }
           }
         }
       // External-data region follows the IFD. Contents (in emission order):
@@ -882,11 +884,12 @@ describe("Bun.Image", () => {
       // IFD tags must be sorted ascending by tag ID.
       tag(256, 4, 1, w); // ImageWidth
       tag(257, 4, 1, h); // ImageLength
-      tag(258, 3, 3, bitsOff); // BitsPerSample — 3 u16s at external offset
+      // BitsPerSample: one u16 fits inline; 3 u16s go to an external offset.
+      tag(258, 3, samples, samples === 1 ? bits : bitsOff);
       tag(259, 3, 1, 1); // Compression = none
-      tag(262, 3, 1, 2); // PhotometricInterpretation = RGB
+      tag(262, 3, 1, samples === 1 ? 1 : 2); // PhotometricInterpretation: BlackIsZero / RGB
       tag(273, 4, 1, stripOff); // StripOffsets
-      tag(277, 3, 1, 3); // SamplesPerPixel
+      tag(277, 3, 1, samples); // SamplesPerPixel
       tag(278, 4, 1, h); // RowsPerStrip (whole image in one strip)
       tag(279, 4, 1, strip.length); // StripByteCounts
       tag(282, 5, 1, xResOff); // XResolution = 72/1 → offset
@@ -963,6 +966,25 @@ describe("Bun.Image", () => {
           const src = makeTiff(2, 2, 8, (_x, _y) => [10, 20, 30]);
           const out = await new Bun.Image(src).png().bytes();
           expect(pngBitDepth(out)).toBe(8);
+        });
+      });
+
+      test("TIFF 16-bpc grayscale → PNG 16-bpc (gray sources widen too)", async () => {
+        await runTiffTest(async () => {
+          // WIC reports 16bppGray as the native format; CG reports depth 16.
+          // The two pixels differ only below the 8-bit threshold (0x8000 vs
+          // 0x80ff), so any 8-bpc downcast in the chain makes them equal.
+          // Gray may be colour-managed into RGB (gamma), so assert structure
+          // (neutral R=G=B, opaque, strictly ordered) rather than exact values.
+          const src = makeTiff(2, 1, 16, x => [x === 0 ? 0x8000 : 0x80ff], 1);
+          const out = await new Bun.Image(src).png().bytes();
+          expect(pngBitDepth(out)).toBe(16);
+          const { w, data } = decodePngRaw16(out);
+          const [r0, g0, b0, a0] = rgba16At(data, w, 0, 0);
+          const [r1, g1, b1, a1] = rgba16At(data, w, 1, 0);
+          expect([g0, b0, a0]).toEqual([r0, r0, 0xffff]);
+          expect([g1, b1, a1]).toEqual([r1, r1, 0xffff]);
+          expect(r1).toBeGreaterThan(r0);
         });
       });
 

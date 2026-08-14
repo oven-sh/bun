@@ -827,7 +827,15 @@ const fn wic_pf(suffix: u8) -> GUID {
 /// Source pixel formats carrying > 8 bpc; a format not listed decodes at 8.
 /// Half/Float/FixedPoint families are included because
 /// WICConvertBitmapSource widens them to clamped u16.
-const HIGH_BPC_SOURCES: [GUID; 15] = [
+const HIGH_BPC_SOURCES: [GUID; 20] = [
+    // 16bppGray (the common 16-bit grayscale TIFF: microscopy, scans) +
+    // 32bppGrayFloat / 16bppGrayFixedPoint / 16bppGrayHalf /
+    // 32bppGrayFixedPoint. Gray widens to neutral RGB (R=G=B).
+    wic_pf(0x0b),
+    wic_pf(0x11),
+    wic_pf(0x13),
+    wic_pf(0x3e),
+    wic_pf(0x3f),
     // 48bppRGB / 48bppBGR (common TIFF-16 variants).
     wic_pf(0x15),
     GUID {

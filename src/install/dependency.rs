@@ -1455,7 +1455,7 @@ pub(crate) fn parse_with_tag(
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "invalid or unsupported dependency \"{}\"",
-                            bstr::BStr::new(dependency)
+                            bun_core::fmt::escape_control_chars(dependency)
                         ),
                     );
                 }
@@ -1576,7 +1576,10 @@ pub(crate) fn parse_with_tag(
                     log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
-                        format_args!("Unsupported protocol {}", bstr::BStr::new(dependency)),
+                        format_args!(
+                            "Unsupported protocol {}",
+                            bun_core::fmt::escape_control_chars(dependency)
+                        ),
                     );
                 }
                 return None;

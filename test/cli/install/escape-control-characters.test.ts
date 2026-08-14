@@ -56,7 +56,7 @@ function packumentFor(name: string) {
   });
   return {
     name,
-    "dist-tags": { latest: "2.0.0" },
+    "dist-tags": { latest: "2.0.0", [`tag-${C1}`]: "1.0.0" },
     versions: {
       "1.0.0": manifest("1.0.0", {}),
       "2.0.0": manifest("2.0.0", { sub: BAD_TAG }),
@@ -182,6 +182,24 @@ test.concurrent("resolution errors escape a file: path", async () => {
   expect(exitCode).toBe(1);
 });
 
+test.concurrent("a workspace range that matches nothing is reported escaped", async () => {
+  using dir = tempDir("escape-controls-workspace-range", {
+    "package.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      workspaces: ["packages/*"],
+      dependencies: { ws: `workspace:^2.0.0-${C1}` },
+    }),
+    "packages/ws/package.json": JSON.stringify({ name: "ws", version: "1.0.0" }),
+  });
+  const { stdout, stderr, exitCode } = await run(String(dir), "install");
+  expect(stderr).toContain(
+    `No matching version for workspace dependency "ws". Version: "workspace:^2.0.0-${C1_ESCAPED}"`,
+  );
+  expect(stdout + stderr).not.toMatch(RAW_CONTROL);
+  expect(exitCode).toBe(1);
+});
+
 test.concurrent("a tarball specifier bun rejects is reported with the specifier escaped", async () => {
   // C0 bytes are not valid in a URL, so this never gets as far as a request.
   using dir = project("invalid-url", { dependencies: { dep: `${registryUrl}/tarballs/dep-${ESC}.tgz` } });
@@ -190,6 +208,28 @@ test.concurrent("a tarball specifier bun rejects is reported with the specifier 
   expect(stderr).toContain(`dep@${registryUrl}/tarballs/dep-${ESC_ESCAPED}.tgz failed to resolve`);
   expect(stdout + stderr).not.toMatch(RAW_CONTROL);
   expect(exitCode).toBe(1);
+});
+
+test.concurrent("the verbose resolve trace escapes the specifier and the resolution", async () => {
+  using dir = tempDir("escape-controls-resolve-trace", {
+    "package.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      workspaces: ["packages/*"],
+      dependencies: { dep: `tag-${C1}`, ws: "workspace:*" },
+    }),
+    "bunfig.toml": `[install]\nregistry = "${registryUrl}"\n`,
+    [`packages/ws-${C1}/package.json`]: JSON.stringify({ name: "ws", version: "1.0.0" }),
+  });
+  const { stderr, exitCode } = await run(String(dir), "install", "--verbose");
+  // --verbose also dumps the HTTP client's request trace, which is not package
+  // manager output, so only the package manager's own lines are checked here.
+  expect(stderr).toContain(`"dep": "tag-${C1_ESCAPED}"`);
+  expect(stderr).toContain(`"ws": "packages/ws-${C1_ESCAPED}"`);
+  expect(stderr).toContain(`ws@workspace:packages/ws-${C1_ESCAPED}`);
+  expect(stderr).not.toContain(`tag-${C1}`);
+  expect(stderr).not.toContain(`ws-${C1}`);
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("the verbose retry warning escapes the resolution", async () => {

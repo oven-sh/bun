@@ -920,12 +920,12 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 bun_core::pretty_errorln!(
                                     "   -> \"{}\": \"{}\" -> {}@{}",
                                     bstr::BStr::new(this.lockfile.str(&result.package.name)),
-                                    bstr::BStr::new(label),
+                                    bun_fmt::escape_control_chars(label),
                                     bstr::BStr::new(this.lockfile.str(&result.package.name)),
-                                    result.package.resolution.fmt(
+                                    bun_fmt::EscapeControlChars(result.package.resolution.fmt(
                                         this.lockfile.buffers.string_bytes.as_slice(),
                                         bun_fmt::PathSep::Auto
-                                    ),
+                                    )),
                                 );
                             }
                             // Resolve dependencies first
@@ -1439,12 +1439,12 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         bun_core::pretty_errorln!(
                             "   -> \"{}\": \"{}\" -> {}@{}",
                             bstr::BStr::new(this.lockfile.str(&result.package.name)),
-                            bstr::BStr::new(label),
+                            bun_fmt::escape_control_chars(label),
                             bstr::BStr::new(this.lockfile.str(&result.package.name)),
-                            result.package.resolution.fmt(
+                            bun_fmt::EscapeControlChars(result.package.resolution.fmt(
                                 this.lockfile.buffers.string_bytes.as_slice(),
                                 bun_fmt::PathSep::Auto
-                            ),
+                            )),
                         );
                     }
                     // We shouldn't see any dependencies
@@ -2290,10 +2290,10 @@ fn get_or_put_resolved_package(
                                     existing_package
                                         .name
                                         .fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                                    existing_package.resolution.fmt(
+                                    bun_fmt::EscapeControlChars(existing_package.resolution.fmt(
                                         this.lockfile.buffers.string_bytes.as_slice(),
                                         bun_fmt::PathSep::Auto
-                                    ),
+                                    )),
                                 ),
                             );
                             success_fn(this, dependency_id, existing_id);
@@ -2341,10 +2341,10 @@ fn get_or_put_resolved_package(
                                     existing_package
                                         .name
                                         .fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                                    existing_package.resolution.fmt(
+                                    bun_fmt::EscapeControlChars(existing_package.resolution.fmt(
                                         this.lockfile.buffers.string_bytes.as_slice(),
                                         bun_fmt::PathSep::Auto
-                                    ),
+                                    )),
                                 ),
                             );
                             success_fn(this, dependency_id, list[0]);
@@ -2498,7 +2498,7 @@ fn get_or_put_resolved_package(
                                     bun_core::pretty_errorln!(
                                         "<d>[minimum-release-age]<r> <b>{}@{}<r> selected <green>{}<r> instead of <yellow>{}<r> due to {}-second filter",
                                         bstr::BStr::new(package_name),
-                                        bstr::BStr::new(tag_str),
+                                        bun_fmt::escape_control_chars(tag_str),
                                         result.version.fmt(manifest_buf),
                                         newest.fmt(manifest_buf),
                                         min_age_seconds,

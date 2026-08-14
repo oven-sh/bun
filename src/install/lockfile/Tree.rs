@@ -1101,11 +1101,15 @@ impl Tree {
                     format_args!(
                         "Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"",
                         names[package_id as usize].fmt(buf),
-                        resolutions[package_id as usize].fmt(buf, bun_core::fmt::PathSep::Auto),
+                        bun_core::fmt::EscapeControlChars(
+                            resolutions[package_id as usize].fmt(buf, bun_core::fmt::PathSep::Auto)
+                        ),
                         names[res_id as usize].fmt(buf),
-                        resolutions[res_id as usize].fmt(buf, bun_core::fmt::PathSep::Auto),
+                        bun_core::fmt::EscapeControlChars(
+                            resolutions[res_id as usize].fmt(buf, bun_core::fmt::PathSep::Auto)
+                        ),
                         dependency.name.fmt(buf),
-                        dependency.version.literal.fmt(buf),
+                        bun_core::fmt::EscapeControlChars(dependency.version.literal.fmt(buf)),
                     ),
                 );
                 return Err(SubtreeError::DependencyLoop);

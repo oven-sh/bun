@@ -459,6 +459,37 @@ fn additional_output_file_index(f: &AdditionalFile) -> usize {
     }
 }
 
+/// How the text that replaces a placeholder has to be written into the chunk.
+#[derive(Clone, Copy)]
+enum SpliceEscape {
+    /// CSS and HTML chunks: written as-is; their placeholders sit in `url()`s
+    /// and attributes, not in JS string literals.
+    Raw,
+    /// JS chunks: every placeholder (import path, asset path, HTML import
+    /// manifest) is the body of a double-quoted string literal, so the
+    /// replacement is escaped the way the printer would have escaped it.
+    /// `ascii_only` is set for chunks that start with `// @bun` (see
+    /// postProcessJSChunk): the runtime loads those as Latin-1 without
+    /// re-parsing them, so the printer keeps them ASCII and the splices must too.
+    JsString { ascii_only: bool },
+}
+
+impl SpliceEscape {
+    fn for_chunk(chunk: &Chunk, linker_graph: &LinkerGraph<'_>) -> Self {
+        if !chunk.content.is_javascript() {
+            return Self::Raw;
+        }
+        Self::JsString {
+            ascii_only: linker_graph.ast.items_target()[chunk.entry_point.source_index() as usize]
+                .is_bun(),
+        }
+    }
+
+    fn ascii_only(self) -> bool {
+        matches!(self, Self::JsString { ascii_only: true })
+    }
+}
+
 impl IntermediateOutput {
     pub(crate) fn allocator_for_size(_size: usize) -> &'static DynAlloc {
         // mimalloc serves large allocations via mmap already, so the global
@@ -520,20 +551,57 @@ impl IntermediateOutput {
         dst
     }
 
-    /// Writes the path that replaces a chunk/asset placeholder. `ascii_only`
-    /// (see `code_with_source_map_shifts`) escapes it the way the printer
-    /// escapes the double-quoted literal it is spliced into.
+    /// The two slices (prefix, path) that replace a chunk/asset placeholder.
+    /// `code_with_source_map_shifts` calls this once to size its buffer and once
+    /// to fill it, and `write_spliced_path` escapes what this returns, so both
+    /// passes have to go through here to count the same bytes.
+    fn spliced_path_parts<'a>(
+        file_path: &[u8],
+        import_prefix: &'a [u8],
+        from_chunk_dir: &[u8],
+        use_outdir_relative_path: bool,
+        file_path_buf: &'a mut [u8],
+        relative_platform_buf: &'a mut [u8],
+    ) -> [&'a [u8]; 2] {
+        // normalize windows paths to '/'
+        // The source slices are reachable only
+        // through `&Graph` / `&[Chunk]` here; materialising `&mut` from a
+        // shared-provenance pointer is UB regardless of whether the write
+        // happens. Copy into a pooled scratch buffer and normalise that.
+        let file_path: &'a [u8] = {
+            let dst = &mut file_path_buf[..file_path.len()];
+            dst.copy_from_slice(file_path);
+            bun_paths::resolve_path::platform_to_posix_in_place::<u8>(dst);
+            dst
+        };
+        cheap_prefix_normalizer(
+            import_prefix,
+            if use_outdir_relative_path {
+                file_path
+            } else {
+                bun_paths::resolve_path::relative_platform_buf::<bun_paths::platform::Posix, false>(
+                    relative_platform_buf,
+                    from_chunk_dir,
+                    file_path,
+                )
+            },
+        )
+    }
+
+    /// Writes one of the slices from `spliced_path_parts`.
     fn write_spliced_path<W: bun_io::Write>(
         writer: &mut W,
         path: &[u8],
-        ascii_only: bool,
+        escape: SpliceEscape,
     ) -> Result<(), crate::Error> {
-        if ascii_only {
-            bun_js_printer::write_pre_quoted_string_inner::<_, { bun_js_printer::Encoding::Utf8 }>(
-                path, writer, b'"', true, false,
-            )?;
-        } else {
-            writer.write_all(path)?;
+        match escape {
+            SpliceEscape::Raw => writer.write_all(path)?,
+            SpliceEscape::JsString { ascii_only } => {
+                bun_js_printer::write_pre_quoted_string_inner::<
+                    _,
+                    { bun_js_printer::Encoding::Utf8 },
+                >(path, writer, b'"', ascii_only, false)?
+            }
         }
         Ok(())
     }
@@ -709,14 +777,7 @@ impl IntermediateOutput {
                     &[]
                 };
 
-                // Every placeholder in a JS chunk sits inside a double-quoted string
-                // literal (import paths, asset paths, the HTML import manifest). A
-                // chunk printed for bun starts with `// @bun` (see postProcessJSChunk),
-                // which makes the runtime load it as Latin-1 without re-parsing it, so
-                // the printer escaped it to ASCII; what we splice in has to be too.
-                let ascii_only = chunk.content.is_javascript()
-                    && linker_graph.ast.items_target()[chunk.entry_point.source_index() as usize]
-                        .is_bun();
+                let escape = SpliceEscape::for_chunk(chunk, linker_graph);
 
                 for piece in pieces.slice() {
                     count += piece.data.len();
@@ -783,7 +844,7 @@ impl IntermediateOutput {
                                         graph,
                                         linker_graph,
                                         chunks,
-                                        ascii_only,
+                                        escape.ascii_only(),
                                         &mut counter,
                                     )
                                     .expect("unreachable");
@@ -793,22 +854,16 @@ impl IntermediateOutput {
                                 QueryKind::None => unreachable!(),
                             };
 
-                            let cheap_normalizer = cheap_prefix_normalizer(
+                            for part in Self::spliced_path_parts(
+                                file_path,
                                 import_prefix,
-                                if use_outdir_relative_path {
-                                    file_path
-                                } else {
-                                    bun_paths::resolve_path::relative_platform_buf::<
-                                        bun_paths::platform::Posix,
-                                        false,
-                                    >(
-                                        &mut relative_platform_buf[..], from_chunk_dir, file_path
-                                    )
-                                },
-                            );
-                            for part in cheap_normalizer {
+                                from_chunk_dir,
+                                use_outdir_relative_path,
+                                &mut file_path_buf[..],
+                                &mut relative_platform_buf[..],
+                            ) {
                                 let mut counter = bun_io::DiscardingWriter::new();
-                                Self::write_spliced_path(&mut counter, part, ascii_only)
+                                Self::write_spliced_path(&mut counter, part, escape)
                                     .expect("unreachable");
                                 count += counter.count;
                             }
@@ -953,7 +1008,7 @@ impl IntermediateOutput {
                                             graph,
                                             linker_graph,
                                             chunks,
-                                            ascii_only,
+                                            escape.ascii_only(),
                                             &mut stream,
                                         )
                                         .expect("unreachable");
@@ -973,37 +1028,18 @@ impl IntermediateOutput {
                                 _ => unreachable!(),
                             };
 
-                            // normalize windows paths to '/'
-                            // The source slices are reachable only
-                            // through `&Graph` / `&[Chunk]` here; materialising `&mut` from a
-                            // shared-provenance pointer is UB regardless of whether the write
-                            // happens. Copy into a pooled scratch buffer and normalise that.
-                            let file_path: &[u8] = {
-                                let n = file_path.len();
-                                let dst = &mut file_path_buf[..n];
-                                dst.copy_from_slice(file_path);
-                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(dst);
-                                dst
-                            };
-                            let cheap_normalizer = cheap_prefix_normalizer(
+                            for part in Self::spliced_path_parts(
+                                file_path,
                                 import_prefix,
-                                if use_outdir_relative_path {
-                                    file_path
-                                } else {
-                                    bun_paths::resolve_path::relative_platform_buf::<
-                                        bun_paths::platform::Posix,
-                                        false,
-                                    >(
-                                        &mut relative_platform_buf[..], from_chunk_dir, file_path
-                                    )
-                                },
-                            );
-
-                            for part in cheap_normalizer {
+                                from_chunk_dir,
+                                use_outdir_relative_path,
+                                &mut file_path_buf[..],
+                                &mut relative_platform_buf[..],
+                            ) {
                                 let written = {
                                     let mut stream =
                                         bun_io::FixedBufferStream::new_mut(&mut *remain);
-                                    Self::write_spliced_path(&mut stream, part, ascii_only)
+                                    Self::write_spliced_path(&mut stream, part, escape)
                                         .expect("unreachable");
                                     stream.pos
                                 };

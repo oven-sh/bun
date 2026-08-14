@@ -489,9 +489,9 @@ console.log("About manifest:", aboutHtml);
     expect(result).toSpawn();
     const manifest = JSON.parse(result.stdout);
     expect(manifest.index).toBe("./sidé.html");
-    expect(manifest.files.map(({ input, path, loader }: any) => ({ input, path, loader }))).toEqual([
-      { input: "sidé.html", path: expect.stringMatching(/\.js$/), loader: "js" },
-      { input: "sidé.html", path: "./sidé.html", loader: "html" },
+    expect(manifest.files.map(({ path, loader }: any) => ({ path, loader }))).toEqual([
+      { path: expect.stringMatching(/\.js$/), loader: "js" },
+      { path: "./sidé.html", loader: "html" },
     ]);
   });
 

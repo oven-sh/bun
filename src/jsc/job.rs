@@ -287,7 +287,8 @@ impl JobList {
 /// the JS thread by its completion or by the teardown's release.
 #[repr(C)]
 pub struct Job<C: JobContext> {
-    /// Must stay first: erased dispatch casts `*mut Job<C>` to `*mut JobHeader`.
+    /// First (asserted at the bottom of the file): erased dispatch casts
+    /// `*mut Job<C>` to `*mut JobHeader`.
     header: JobHeader,
     /// Moved into the [`Completion`] when the pool picks the job up; `None`
     /// from then on (never touched on the JS side).
@@ -469,4 +470,20 @@ pub unsafe fn release_unrun_erased(ptr: *mut ()) {
     let header = ptr.cast::<JobHeader>();
     // SAFETY: as above.
     unsafe { ((*header).release_unrun)(header) }
+}
+
+// The erased dispatchers above cast `*mut Job<C>` to `*mut JobHeader`.
+const _: () = assert!(core::mem::offset_of!(Job<Never>, header) == 0);
+
+#[doc(hidden)]
+pub enum Never {}
+impl JobContext for Never {
+    type OffThread = ();
+    type Js = ();
+    fn run(_: &mut (), done: Completion<Self>) -> Option<Completion<Self>> {
+        Some(done)
+    }
+    fn then(_: (), _: (), _: &JsThread<'_>) -> JsResult<()> {
+        Ok(())
+    }
 }

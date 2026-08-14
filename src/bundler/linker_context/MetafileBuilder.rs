@@ -215,11 +215,9 @@ pub(crate) fn generate(c: &LinkerContext, chunks: &[Chunk]) -> crate::Result<Box
     // Iterate through all files in chunks to collect unique source indices
     let mut seen_sources = DynamicBitSet::init_empty(sources.len())?;
 
-    // With code splitting, `compute_cross_chunk_dependencies` rewrites a dynamic
-    // import of another entry point so the printer emits an import of that entry
-    // point's chunk: `path.text` becomes the chunk's unique key and `source_index`
-    // is cleared. The inputs graph describes source files, so such a record is
-    // reported as an import of the chunk's entry point, the file the source imports.
+    // Resolves the import records that `compute_cross_chunk_dependencies` pointed at a
+    // chunk (`path.text` = the chunk's unique key, no `source_index`) back to the
+    // imported file: the chunk's entry point.
     let mut entry_point_by_chunk_key: StringHashMap<u32> = StringHashMap::default();
 
     // Mark all files that appear in chunks

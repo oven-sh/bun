@@ -75,6 +75,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include "PathInlines.h"
+#include "EmbedFunctionBody.h"
 #include "wtf/NakedPtr.h"
 #include "wtf/URL.h"
 #include "wtf/text/StringImpl.h"
@@ -720,22 +721,6 @@ JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
     return true;
 }
 
-struct EmbeddedModuleBody {
-    ASCIILiteral prefix;
-    StringView rest;
-};
-
-// JSC only lexes "#!" as a comment at offset 0 of the source, and here the body follows the wrapper.
-// Same-length rewrite, so no position in the body moves. "//# " and "//@ " would start a sourceURL directive, which a hashbang line never is.
-static EmbeddedModuleBody embedModuleBody(const String& source)
-{
-    if (!source.startsWith("#!"_s))
-        return { ""_s, source };
-    if (source.length() > 2 && (source[2] == '#' || source[2] == '@'))
-        return { "// "_s, StringView(source).substring(3) };
-    return { "//"_s, StringView(source).substring(2) };
-}
-
 JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto* moduleObject = dynamicDowncast<JSCommonJSModule>(callframe->thisValue());
@@ -753,7 +738,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     String filenameString = filenameValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto [bodyPrefix, body] = embedModuleBody(sourceString);
+    auto [bodyPrefix, body] = embedFunctionBody(sourceString);
     String wrappedString;
     auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     if (zigGlobalObject->hasOverriddenModuleWrapper) [[unlikely]] {

@@ -513,8 +513,10 @@ console.log("survived", require("./late.js"));`,
   });
 
   describe("Module.prototype._compile with a hashbang line", () => {
-    // require.extensions hooks (pirates, esbuild-register, ...) pass _compile the
-    // contents of the file, and CLI entry files start with "#!". Node accepts it.
+    // Only text that user code hands to _compile itself (require-from-string style
+    // helpers, require.extensions handlers that readFileSync) still has the file's
+    // "#!" line; what bun's loader passes to an overridden _compile is transpiled
+    // output with the hashbang already removed. Node accepts the hashbang.
     function compile(source, filename = "/hashbang-test/module.js") {
       const module = new Module(filename);
       module._compile(source, filename);

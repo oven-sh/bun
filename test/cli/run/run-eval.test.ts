@@ -1,7 +1,7 @@
 import { SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
 
@@ -107,6 +107,74 @@ for (const flag of ["-e", "--print"]) {
     });
   });
 }
+
+// The subcommand lookup skips the leading flags and matches the next argument
+// against the subcommand names. It used to stop only at `-e`; after any other
+// eval flag the code (or, with an attached value, the script's first argument)
+// was matched instead, so `bun -p test` ran the test runner and `bun -pe help`
+// printed bun's help. Every child runs in an empty directory so a misdispatched
+// subcommand has nothing to act on.
+describe("eval flags take precedence over subcommand names", () => {
+  describe("the code is a subcommand name", () => {
+    const cases: string[][] = [
+      ["-p", "test"],
+      ["--print", "test"],
+      ["--eval", "test"],
+      ["-pe", "help"],
+      ["-e", "test"],
+      // The eval flag comes after another flag.
+      ["--smol", "-p", "test"],
+    ];
+
+    for (const args of cases) {
+      const name = args[args.length - 1];
+      test.concurrent(`bun ${args.join(" ")} evaluates \`${name}\``, async () => {
+        using dir = tempDir("eval-subcommand-name", {});
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain(`ReferenceError: ${name} is not defined`);
+        expect(stdout).toBe("");
+        expect(exitCode).toBe(1);
+      });
+    }
+  });
+
+  describe("a script argument is a subcommand name", () => {
+    const argv = "JSON.stringify(process.argv.slice(1))";
+    const cases: string[][] = [
+      [`-p${argv}`, "test"],
+      [`-p=${argv}`, "test"],
+      [`--print=${argv}`, "test"],
+      [`--eval=console.log(${argv})`, "help"],
+      [`-e=console.log(${argv})`, "test"],
+      ["-p", argv, "test"],
+    ];
+
+    for (const args of cases) {
+      const name = args[args.length - 1];
+      test.concurrent(`bun ${args.join(" ")} passes \`${name}\` to the script`, async () => {
+        using dir = tempDir("eval-subcommand-arg", {});
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe(JSON.stringify([name]) + "\n");
+        expect(exitCode).toBe(0);
+      });
+    }
+  });
+});
 
 describe("--print for cjs/esm", () => {
   test("eval result between esm imports", async () => {

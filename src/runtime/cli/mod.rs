@@ -890,6 +890,18 @@ pub mod command {
         strings::contains_char(basename, b'.')
     }
 
+    /// `-e` / `--eval` / `-p` / `--print` in any spelling `arguments::parse`
+    /// accepts for [`Tag::AutoCommand`]: the value as the next token, attached
+    /// (`-p1+1`, `-p=1+1`, `--print=1+1`), or node's `-pe` (a
+    /// `NODE_SHORT_ALIASES` entry). `-e` and `-p` take a value, so anything
+    /// trailing them in the same token is that value, never another flag.
+    #[inline]
+    fn is_eval_flag(arg: &[u8]) -> bool {
+        matches!(arg, [b'-', b'e' | b'p', ..] | b"--eval" | b"--print")
+            || arg.starts_with(b"--eval=")
+            || arg.starts_with(b"--print=")
+    }
+
     /// `#[inline(never)]`: argv→`Tag` classification, called once from
     /// `Cli::start` on every `bun` invocation. Kept a concrete symbol so
     /// `src/startup.order` can place it next to `Cli::start` /
@@ -937,10 +949,12 @@ pub mod command {
         let Some(mut first_arg_name) = iter.next() else {
             return Tag::AutoCommand;
         };
-        while !first_arg_name.is_empty()
-            && first_arg_name[0] == b'-'
-            && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
-        {
+        while !first_arg_name.is_empty() && first_arg_name[0] == b'-' {
+            // What follows an eval flag is the script and its argv, so `bun -p test`
+            // evaluates `test` rather than running `bun test`.
+            if is_eval_flag(first_arg_name) {
+                return Tag::AutoCommand;
+            }
             // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
             // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
             // that and boot the legacy `bun repl` implementation instead.
@@ -1066,9 +1080,6 @@ pub mod command {
             if bun_core::Environment::ENABLE_FUZZILLI {
                 return Tag::FuzzilliCommand;
             }
-            return Tag::AutoCommand;
-        }
-        if x == RootCommandMatcher::case(b"-e") {
             return Tag::AutoCommand;
         }
         Tag::AutoCommand

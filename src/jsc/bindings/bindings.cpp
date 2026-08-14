@@ -4883,6 +4883,11 @@ extern "C" JSC::EncodedJSValue JSC__Exception__asJSValue(JSC::Exception* excepti
     return JSC::JSValue::encode(exception);
 }
 
+extern "C" JSC::EncodedJSValue JSC__Exception__thrownValue(JSC::Exception* exception)
+{
+    return JSC::JSValue::encode(exception->value());
+}
+
 void JSC__VM__releaseWeakRefs(JSC::VM* arg0)
 {
     arg0->finalizeSynchronousJSExecution();
@@ -6346,6 +6351,17 @@ extern "C" EncodedJSValue JSC__createTypeError(JSC::JSGlobalObject* globalObject
 extern "C" EncodedJSValue JSC__createRangeError(JSC::JSGlobalObject* globalObject, const BunString* str)
 {
     return JSValue::encode(JSC::createRangeError(globalObject, str->toWTFString(BunString::ZeroCopy)));
+}
+
+// An ErrorInstance whose location is supplied rather than captured from the
+// current JS stack — the same constructor structured-clone deserialization
+// uses. `line`/`column`/`sourceURL`/`stack` materialize lazily as the usual
+// non-enumerable own properties.
+extern "C" EncodedJSValue JSC__createErrorWithLocation(JSC::JSGlobalObject* globalObject, uint8_t errorType, const BunString* message, const BunString* sourceURL, int32_t line, int32_t column, const BunString* stack)
+{
+    return JSValue::encode(JSC::ErrorInstance::create(globalObject, message->toWTFString(), static_cast<JSC::ErrorType>(errorType),
+        { line < 0 ? 0u : static_cast<unsigned>(line), column < 0 ? 0u : static_cast<unsigned>(column) },
+        sourceURL->toWTFString(), stack->toWTFString()));
 }
 
 extern "C" EncodedJSValue ExpectMatcherUtils__getSingleton(JSC::JSGlobalObject* globalObject_)

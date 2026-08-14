@@ -296,23 +296,100 @@ test("support require in eval for a file", async () => {
 
 test("support require in eval for a file that doesnt exist", async () => {
   const worker = new Worker(`postMessage(require('./fixture-invalid.js').argv[0])`, { eval: true });
-  const result = await new Promise(resolve => {
+  const result = await new Promise<any>(resolve => {
     worker.on("message", resolve);
     worker.on("error", resolve);
   });
-  expect(result.toString()).toInclude(`error: Cannot find module './fixture-invalid.js' from 'blob:`);
+  expect(result).toBeInstanceOf(Error);
+  expect(result.message).toStartWith(`Cannot find module './fixture-invalid.js'\nRequire stack:\n- blob:`);
   await worker.terminate();
 });
 
-test("support worker eval that throws", async () => {
+test("worker eval parse errors reach the parent as a SyntaxError with its location", async () => {
   const worker = new Worker(`postMessage(throw new Error("boom"))`, { eval: true });
-  const result = await new Promise(resolve => {
+  const result = await new Promise<any>(resolve => {
     worker.on("message", resolve);
     worker.on("error", resolve);
   });
-  expect(result.toString()).toInclude("Unexpected throw");
-  expect(result.name).toBe("SyntaxError");
+  expect({
+    constructor: result?.constructor,
+    message: result?.message,
+    line: result?.line,
+    column: result?.column,
+    stack: typeof result?.stack,
+  }).toEqual({
+    constructor: SyntaxError,
+    message: "Unexpected throw",
+    line: 1,
+    column: 13,
+    stack: "string",
+  });
+  expect(result.stack).toMatch(/^SyntaxError: Unexpected throw\n    at .+:1:13$/);
   await worker.terminate();
+});
+
+test("worker entry-point parse errors reach the parent as a SyntaxError with its location", async () => {
+  using dir = tempDir("worker-syntax-error", {
+    "bad.js": "// line 1\nconst y = ;\n",
+    "main-listener.mjs": `
+      import { Worker } from "node:worker_threads";
+      const worker = new Worker(new URL("./bad.js", import.meta.url));
+      const e = await new Promise(r => { worker.on("message", r); worker.on("error", r); });
+      console.log(JSON.stringify({
+        constructor: e?.constructor?.name,
+        message: e?.message,
+        line: e?.line,
+        column: e?.column,
+        sourceURL: String(e?.sourceURL).replaceAll("\\\\", "/"),
+        stack: String(e?.stack).replaceAll("\\\\", "/"),
+      }));
+    `,
+    "main-uncaught.mjs": `
+      import { Worker } from "node:worker_threads";
+      const worker = new Worker(new URL("./bad.js", import.meta.url));
+      await new Promise(r => worker.on("exit", r));
+    `,
+  });
+  const badPath = join(String(dir), "bad.js").replaceAll("\\", "/");
+
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main-listener.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({
+      constructor: "SyntaxError",
+      message: "Unexpected ;",
+      line: 2,
+      column: 11,
+      sourceURL: badPath,
+      stack: `SyntaxError: Unexpected ;\n    at ${badPath}:2:11`,
+    });
+    expect(exitCode).toBe(0);
+  }
+
+  // With no 'error' listener the parent dies with the worker's error; what it
+  // prints must point at the worker file, not at node:events' rethrow.
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main-uncaught.mjs"],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const output = stderr.replaceAll("\\", "/");
+    expect(output).toContain("2 | const y = ;");
+    expect(output).toContain("SyntaxError: Unexpected ;");
+    expect(output).toContain(`at ${badPath}:2:11`);
+    expect(output).not.toContain("node:events");
+    expect(exitCode).toBe(1);
+  }
 });
 
 describe("execArgv option", async () => {

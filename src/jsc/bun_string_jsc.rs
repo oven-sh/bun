@@ -27,6 +27,15 @@ unsafe extern "C" {
     safe fn JSC__createError(global: &JSGlobalObject, str_: &String) -> JSValue;
     safe fn JSC__createTypeError(global: &JSGlobalObject, str_: &String) -> JSValue;
     safe fn JSC__createRangeError(global: &JSGlobalObject, str_: &String) -> JSValue;
+    safe fn JSC__createErrorWithLocation(
+        global: &JSGlobalObject,
+        error_type: u8,
+        message: &String,
+        source_url: &String,
+        line: i32,
+        column: i32,
+        stack: &String,
+    ) -> JSValue;
 }
 
 // ── bun.String methods ──────────────────────────────────────────────────────
@@ -53,6 +62,47 @@ pub(crate) fn to_range_error_instance(this: &String, global_object: &JSGlobalObj
     let result = JSC__createRangeError(global_object, this);
     this.deref();
     result
+}
+
+/// Builds a `JSErrorCode`-typed ErrorInstance describing a diagnostic that has
+/// a source location but no JS frames (a parse or resolve failure). Its `stack`
+/// is the conventional `Name: message\n    at file:line:column`, so anything
+/// that reads `.stack` — structured clone, `console.error`, the uncaught-error
+/// printer — sees the diagnostic's location rather than nothing.
+pub fn error_instance_from_location(
+    global: &JSGlobalObject,
+    code: crate::JSErrorCode,
+    message: &[u8],
+    file: &[u8],
+    line: i32,
+    column: i32,
+) -> JSValue {
+    use std::io::Write as _;
+
+    let name: &str = match code {
+        crate::JSErrorCode::SyntaxError => "SyntaxError",
+        crate::JSErrorCode::TypeError => "TypeError",
+        crate::JSErrorCode::RangeError => "RangeError",
+        crate::JSErrorCode::ReferenceError => "ReferenceError",
+        _ => "Error",
+    };
+    let mut stack: Vec<u8> = Vec::with_capacity(name.len() + message.len() + 64);
+    let _ = write!(&mut stack, "{name}: {}", bstr::BStr::new(message));
+    let (line, column) = if file.is_empty() { (0, 0) } else { (line.max(0), column.max(0)) };
+    if !file.is_empty() {
+        let _ = write!(&mut stack, "\n    at {}", bstr::BStr::new(file));
+        if line > 0 {
+            let _ = write!(&mut stack, ":{line}");
+            if column > 0 {
+                let _ = write!(&mut stack, ":{column}");
+            }
+        }
+    }
+
+    let message = bun_core::OwnedString::new(String::clone_utf8(message));
+    let source_url = bun_core::OwnedString::new(String::clone_utf8(file));
+    let stack = bun_core::OwnedString::new(String::clone_utf8(&stack));
+    JSC__createErrorWithLocation(global, code.0, &message, &source_url, line, column, &stack)
 }
 
 #[inline]

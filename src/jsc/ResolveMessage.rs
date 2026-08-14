@@ -494,8 +494,36 @@ impl ResolveMessage {
         })
     }
 
+    /// See `BuildMessage::to_error_instance`.
+    pub fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
+        let node_message = self.node_message();
+        // Runtime resolution failures know the importing file (`referrer`) but
+        // carry no `location`; either way the importer is where this points.
+        let (file, line, column): (&[u8], i32, i32) = match &self.msg.data.location {
+            Some(loc) => (&loc.file, loc.line, loc.column),
+            None => (self.referrer.as_deref().unwrap_or(b""), 0, 0),
+        };
+        crate::bun_string_jsc::error_instance_from_location(
+            global,
+            crate::JSErrorCode::Error,
+            node_message.as_deref().unwrap_or(&self.msg.data.text),
+            file,
+            line,
+            column,
+        )
+    }
+
     pub fn finalize(self: Box<Self>) {
         // Dropping the Box drops `msg` and the owned `referrer` buffer.
         drop(self);
     }
+}
+
+// SerializedScriptValue.cpp
+#[unsafe(no_mangle)]
+extern "C" fn ResolveMessage__toErrorInstance(
+    this: &ResolveMessage,
+    global: &JSGlobalObject,
+) -> JSValue {
+    this.to_error_instance(global)
 }

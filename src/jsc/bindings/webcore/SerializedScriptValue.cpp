@@ -205,6 +205,9 @@ enum SerializationTag {
 // pointer is gone.
 extern "C" SYSV_ABI void BlockList__onStructuredCloneDestroy(void*);
 
+extern "C" JSC::EncodedJSValue BuildMessage__toErrorInstance(void*, JSC::JSGlobalObject*);
+extern "C" JSC::EncodedJSValue ResolveMessage__toErrorInstance(void*, JSC::JSGlobalObject*);
+
 enum ArrayBufferViewSubtag {
     DataViewTag = 0,
     Int8ArrayTag = 1,
@@ -1183,8 +1186,21 @@ private:
                 write(String::fromLatin1(JSC::Yarr::flagsString(regExp->regExp()->flags()).data()));
                 return true;
             }
-            if (auto* errorInstance = dynamicDowncast<ErrorInstance>(obj)) {
-                if (!startObjectInternal(errorInstance)) // handle duplicates
+            auto* errorInstance = dynamicDowncast<ErrorInstance>(obj);
+            if (!errorInstance) {
+                // Bun's parse/resolve diagnostics have Error.prototype in their
+                // chain but wrap VM-local parser state; they cross realms as the
+                // plain SyntaxError / Error carrying their message and location.
+                JSValue converted;
+                if (auto* buildMessage = dynamicDowncast<JSBuildMessage>(obj); buildMessage && buildMessage->wrapped())
+                    converted = JSValue::decode(BuildMessage__toErrorInstance(buildMessage->wrapped(), m_lexicalGlobalObject));
+                else if (auto* resolveMessage = dynamicDowncast<JSResolveMessage>(obj); resolveMessage && resolveMessage->wrapped())
+                    converted = JSValue::decode(ResolveMessage__toErrorInstance(resolveMessage->wrapped(), m_lexicalGlobalObject));
+                if (converted)
+                    errorInstance = uncheckedDowncast<ErrorInstance>(converted);
+            }
+            if (errorInstance) {
+                if (!startObjectInternal(obj)) // handle duplicates
                     return true;
                 auto& vm = m_lexicalGlobalObject->vm();
                 auto errorTypeValue = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->name);

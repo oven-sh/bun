@@ -125,6 +125,44 @@ describe("css tests", () => {
     // Same trimming applies inside function arguments.
     minify_test(":root{--a:f(x y z)}", ":root{--a:f(x y z)}");
     minify_test(":root{--a:f( x y z )}", ":root{--a:f(x y z)}");
+
+    describe("dimension tokens with a long unit", () => {
+      // A dimension with a magnitude below 1 is printed without its leading zero (`.5px`). That
+      // path used to serialize the whole token into a 64 byte scratch buffer, so a unit long
+      // enough to overflow it failed the whole stylesheet with a PrintError. In custom properties
+      // and in declarations that fall back to a token list the unit is whatever the stylesheet
+      // says, so its length is unbounded.
+      const unit = Buffer.alloc(200, "a").toString();
+      minify_test(`.a{--x:0.5${unit}}`, `.a{--x:.5${unit}}`);
+      minify_test(`.a{--x:-0.5${unit}}`, `.a{--x:-.5${unit}}`);
+      minify_test(`.a{--x:.25${unit} f(0.75${unit})}`, `.a{--x:.25${unit} f(.75${unit})}`);
+      // A known property with an unknown unit, and an unknown property, are printed as token lists too.
+      minify_test(`.a{width:0.5${unit}}`, `.a{width:.5${unit}}`);
+      minify_test(`.a{unknown-prop:0.5${unit}}`, `.a{unknown-prop:.5${unit}}`);
+      minify_test(`@foo 0.5${unit};`, `@foo .5${unit};`);
+      cssTest(`.a{--x:0.5${unit}}`, `.a {\n  --x: .5${unit};\n}\n`);
+      // `0.5` plus 61 bytes of unit exactly filled the old buffer; one more byte overflowed it.
+      const unit61 = Buffer.alloc(61, "a").toString();
+      const unit62 = Buffer.alloc(62, "a").toString();
+      minify_test(`.a{--x:0.5${unit61}}`, `.a{--x:.5${unit61}}`);
+      minify_test(`.a{--x:0.5${unit62}}`, `.a{--x:.5${unit62}}`);
+      // Zero and values of 1 and above never went through the scratch buffer.
+      minify_test(`.a{--x:0${unit}}`, `.a{--x:0${unit}}`);
+      minify_test(`.a{--x:1.5${unit}}`, `.a{--x:1.5${unit}}`);
+      minify_test(`.a{--x:-2${unit}}`, `.a{--x:-2${unit}}`);
+      // A unit that would read as an exponent gets its `e` escaped, whichever way the number is printed.
+      minify_test(`.a{--x:0.5e-${unit}}`, `.a{--x:.5\\65 -${unit}}`);
+      minify_test(`.a{--x:0.5e-foo}`, `.a{--x:.5\\65 -foo}`);
+      minify_test(`.a{--x:-0.5E}`, `.a{--x:-.5\\65 }`);
+      minify_test(`.a{--x:2e-foo}`, `.a{--x:2\\65 -foo}`);
+      minify_test(`.a{--x:2E}`, `.a{--x:2\\65 }`);
+      minify_test(`.a{--x:0.5ex 2em}`, `.a{--x:.5ex 2em}`);
+      // Arguments of unknown pseudo-classes are printed as raw tokens, with the same unit escaping.
+      minify_test(`.a:-x-foo(0.5e-x 2e-${unit}){color:red}`, `.a:-x-foo(0.5\\65 -x 2\\65 -${unit}){color:red}`);
+      minify_test(`.a:-x-foo(0.5E 2e 0.5px){color:red}`, `.a:-x-foo(0.5\\65  2\\65  0.5px){color:red}`);
+      // Typed dimensions inside a token list still drop the leading zero.
+      minify_test(`.a{--x:0.5px 0.5deg 0.5s 0.5dpi}`, `.a{--x:.5px .5deg .5s .5dpi}`);
+    });
   });
 
   describe("pseudo-class edge case", () => {

@@ -5346,18 +5346,7 @@ impl Token {
             }
             Token::Dimension(d) => {
                 serializer::write_numeric(d.num.value, d.num.int_value, d.num.has_sign, writer)?;
-                // Disambiguate with scientific notation.
-                let unit = d.unit;
-                if (unit.len() == 1 && unit[0] == b'e')
-                    || (unit.len() == 1 && unit[0] == b'E')
-                    || unit.starts_with(b"e-")
-                    || unit.starts_with(b"E-")
-                {
-                    writer.write_all(b"\\65 ")?;
-                    serializer::serialize_name(&unit[1..], writer)
-                } else {
-                    serializer::serialize_identifier(unit, writer)
-                }
+                serializer::serialize_dimension_unit(d.unit, writer)
             }
             Token::Whitespace(content) => writer.write_all(content),
             Token::Comment(content) => {
@@ -5440,17 +5429,8 @@ impl Token {
             Token::Dimension(dim) => {
                 serializer::write_numeric(dim.num.value, dim.num.int_value, dim.num.has_sign, dest)
                     .map_err(|_| dest.add_fmt_error())?;
-                let unit = dim.unit;
-                if unit == b"e"
-                    || unit == b"E"
-                    || unit.starts_with(b"e-")
-                    || unit.starts_with(b"E-")
-                {
-                    dest.write_str("\\65 ")?;
-                    dest.serialize_name(&unit[1..])
-                } else {
-                    dest.serialize_identifier(unit)
-                }
+                serializer::serialize_dimension_unit(dim.unit, dest)
+                    .map_err(|_| dest.add_fmt_error())
             }
             Token::Whitespace(content) => dest.write_bytes(content),
             Token::Comment(content) => {
@@ -5872,6 +5852,12 @@ pub mod serializer {
         unit: &'static [u8],
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
+        if value != 0.0 && value.abs() < 1.0 {
+            // Prints `.5px`. The unit goes straight to `dest`: in a token list it is whatever
+            // the stylesheet used, so it has no length bound a scratch buffer could be sized for.
+            CSSNumberFns::to_css(value, dest)?;
+            return serialize_dimension_unit(unit, dest).map_err(|_| dest.add_fmt_error());
+        }
         let int_value: Option<i32> = if fract(value) == 0.0 {
             Some(value as i32) // saturating cast
         } else {
@@ -5885,22 +5871,20 @@ pub mod serializer {
             },
             unit,
         });
-        if value != 0.0 && value.abs() < 1.0 {
-            // TODO: calculate the actual number of chars here
-            let mut buf = [0u8; 64];
-            let mut fbs = FixedBufWriter::new(&mut buf);
-            token
-                .to_css_generic(&mut fbs)
-                .map_err(|_| dest.add_fmt_error())?;
-            let s = fbs.get_written();
-            if value < 0.0 {
-                dest.write_str("-")?;
-                dest.write_bytes(strings::trim_leading_pattern2(s, b'-', b'0'))
-            } else {
-                dest.write_bytes(strings::trim_leading_char(s, b'0'))
-            }
+        token.to_css_generic(dest).map_err(|_| dest.add_fmt_error())
+    }
+
+    /// Writes a dimension's unit. A unit that would read as an exponent of the preceding
+    /// number (`e`, `e-...`) gets its `e` escaped.
+    pub(crate) fn serialize_dimension_unit<W: WriteAll + ?Sized>(
+        unit: &[u8],
+        writer: &mut W,
+    ) -> bun_io::Result<()> {
+        if unit == b"e" || unit == b"E" || unit.starts_with(b"e-") || unit.starts_with(b"E-") {
+            writer.write_all(b"\\65 ")?;
+            serialize_name(&unit[1..], writer)
         } else {
-            token.to_css_generic(dest).map_err(|_| dest.add_fmt_error())
+            serialize_identifier(unit, writer)
         }
     }
 
@@ -6048,7 +6032,7 @@ pub mod serializer {
         }
     }
 
-    /// Fixed-buffer writer for `serialize_dimension` — alias for the canonical
+    /// Fixed-buffer writer for `Percentage::to_css` — alias for the canonical
     /// `bun_io::FixedBufferStream`. Callers use `.get_written()` (was `.buffered()`).
     pub(crate) type FixedBufWriter<'a> = bun_io::FixedBufferStream<&'a mut [u8]>;
 }

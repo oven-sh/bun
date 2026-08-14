@@ -90,8 +90,8 @@ describe("Given a `bunfig.toml` with a list of preloads", () => {
     //
     "--preload ./preload3.ts",
     "--preload=./preload3.ts",
-    // FIXME: the space-separated form parses "run" as the flag value's
-    // follow-on script and prints run usage instead of executing the file.
+    // The space-separated form misparses "run" as the script name and prints
+    // run usage; an argv-parsing quirk independent of config loading.
     // "--preload ./preload3.ts run",
     "--preload=./preload3.ts run",
     "run --preload ./preload3.ts",

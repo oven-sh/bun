@@ -154,7 +154,7 @@ enum PackageJson {
     Workspaces(Vec<Box<[u8]>>),
 }
 
-/// Classifies `dir/package.json`; an unreadable file counts as `Plain`.
+/// Classifies `dir/package.json`; an unparseable file counts as `Plain`.
 fn read_package_json(dir: &[u8]) -> PackageJson {
     let mut name_buf = PathBuffer::uninit();
     let json_path: &ZStr = resolve_path::join_abs_string_buf_z::<platform::Auto>(
@@ -442,10 +442,11 @@ fn load_config_impl(
     let config_path = ZStr::from_buf(&config_buf[..], config_path_len);
 
     if let Err(err) = load_config_path(cmd, auto_loaded, config_path, ctx) {
-        // Non-fatal only for `bun run`; `bun -e` and explicit --config stay fatal.
-        if !(auto_loaded && cmd == CommandTag::RunCommand) {
-            report_bunfig_load_failure(ctx.log, err);
+        // force_auto callers decide fatality themselves (`?` or `let _`).
+        if force_auto {
+            return Err(err);
         }
+        report_bunfig_load_failure(ctx.log, err);
     }
     Ok(())
 }

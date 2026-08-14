@@ -462,7 +462,6 @@ impl<'a> Parser<'a> {
         if cmd == CommandTag::TestCommand {
             if let Some(test) = json.get(b"test") {
                 if let Some(root) = test.get(b"root") {
-                    self.expect_string(&root)?;
                     self.ctx.debug.test_directory = root.as_string(self.bump).unwrap_or(b"").into();
                 }
 

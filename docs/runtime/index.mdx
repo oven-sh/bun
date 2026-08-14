@@ -144,7 +144,7 @@ bun run --bun vite
 
 In a monorepo, the `--filter` argument runs a script in many packages at once.
 
-`bun run --filter <name_pattern> <script>` executes `<script>` in every package whose name matches `<name_pattern>`.
+`bun run --filter <pattern> <script>` executes `<script>` in every package selected by `<pattern>`, which can be a package name glob, a `./path`, a `{dir}` directory or a dependency relation like `foo...`.
 For example, if you have subdirectories containing packages named `foo`, `bar` and `baz`, running
 
 ```bash terminal icon="terminal"

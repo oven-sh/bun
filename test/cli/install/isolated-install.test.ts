@@ -2357,6 +2357,53 @@ describe("global virtual store", () => {
     ).toMatchObject({ version: "1.1.0" });
   });
 
+  test("re-resolving the same project re-points the entry link at the new-hash global entry", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-reresolve",
+        dependencies: { "two-range-deps": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const entry = join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0");
+    const nestedNoDeps = join(entry, "node_modules", "no-deps", "package.json");
+    const before = readlinkSync(entry);
+    expect(entryStoreName(before)).toMatch(/^two-range-deps@1\.0\.0-[0-9a-f]{16}$/);
+    expect(await file(nestedNoDeps).json()).toStrictEqual({ name: "no-deps", version: "1.1.0" });
+
+    // Same node_modules; the override changes two-range-deps' closure so its existing link must move.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-reresolve",
+        dependencies: { "two-range-deps": "1.0.0" },
+        overrides: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(lstatSync(entry).isSymbolicLink()).toBe(true);
+    const after = readlinkSync(entry);
+    expect(entryStoreName(after)).toMatch(/^two-range-deps@1\.0\.0-[0-9a-f]{16}$/);
+    expect(after).not.toBe(before);
+    expect(await file(nestedNoDeps).json()).toStrictEqual({ name: "no-deps", version: "1.0.0" });
+    expect(readlinkSync(join(after, "node_modules", "no-deps"))).toMatch(
+      /^\.\.[\/\\]\.\.[\/\\]no-deps@1\.0\.0-[0-9a-f]{16}[\/\\]node_modules[\/\\]no-deps$/,
+    );
+
+    // The old-closure entry is untouched in the shared store.
+    expect(await file(join(before, "node_modules", "no-deps", "package.json")).json()).toStrictEqual({
+      name: "no-deps",
+      version: "1.1.0",
+    });
+  });
+
   test("two projects with the same closure share one global entry", async () => {
     const a = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
     const b = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });

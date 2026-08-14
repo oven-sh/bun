@@ -32,7 +32,6 @@
 
 #include "TextCodec.h"
 #include "TextEncodingRegistry.h"
-#include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/StringView.h>
 
@@ -79,13 +78,6 @@ Vector<uint8_t> TextEncoding::encode(StringView string, PAL::UnencodableHandling
 char16_t TextEncoding::backslashAsCurrencySymbol() const
 {
     return shouldShowBackslashAsCurrencySymbolIn(m_name) ? 0x00A5 : '\\';
-}
-
-const TextEncoding& UTF8Encoding()
-{
-    static NeverDestroyed<TextEncoding> globalUTF8Encoding("UTF-8"_s);
-    ASSERT(globalUTF8Encoding.get().isValid());
-    return globalUTF8Encoding;
 }
 
 } // namespace PAL

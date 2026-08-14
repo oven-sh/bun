@@ -815,14 +815,8 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 
-    /// The tsconfig.json governing the file at `path`: the nearest one in its
-    /// directory or an ancestor, which is what the resolver applies to the file
-    /// when `bun build` bundles it. `None` when there is none, or when `path`
-    /// has no directory on disk (virtual modules).
-    ///
-    /// The directory was already walked to resolve the file, so this is a cache
-    /// lookup in practice. Runs on the JS thread: a cache miss reads the
-    /// directory through this transpiler's resolver.
+    /// The tsconfig.json nearest to `path`, as `bun build` applies it; `None` for
+    /// paths with no directory on disk. Uses the resolver, so JS thread only.
     pub fn tsconfig_for_file(&mut self, path: &[u8]) -> Option<&'static TSConfigJSON> {
         let dir = Fs::PathName::init(path).dir;
         if !bun_paths::is_absolute(dir) {
@@ -835,16 +829,14 @@ impl<'a> Transpiler<'a> {
             .enclosing_tsconfig_json
     }
 
-    /// The [`ParseOptions`] fields that tsconfig.json controls, for a file
-    /// governed by `tsconfig` (see [`Self::tsconfig_for_file`]). A file without
-    /// one gets the values `configure_linker` took from the cwd's tsconfig.
+    /// Settings for a file governed by `tsconfig` ([`Self::tsconfig_for_file`]);
+    /// without one, the cwd tsconfig values `configure_linker` put in `options`.
     pub fn tsconfig_parse_options(&self, tsconfig: Option<&TSConfigJSON>) -> TSConfigParseOptions {
         match tsconfig {
             Some(tsconfig) => {
                 let mut jsx = tsconfig.merge_jsx(self.options.jsx.clone());
-                // An explicit NODE_ENV outranks the tsconfig's "react-jsx" /
-                // "react-jsxdev" choice (`force_node_env`); `configure_defines`
-                // already settled it in `options.jsx` for the whole process.
+                // An explicit NODE_ENV (settled in `options.jsx` by `configure_defines`)
+                // outranks the tsconfig's react-jsx / react-jsxdev choice.
                 if self.options.production
                     || self.options.force_node_env != options::ForceNodeEnv::Unspecified
                 {
@@ -869,9 +861,7 @@ impl<'a> Transpiler<'a> {
     }
 }
 
-/// Per-file parse settings derived from a tsconfig.json by
-/// [`Transpiler::tsconfig_parse_options`]; copied into the same-named
-/// [`ParseOptions`] fields.
+/// The [`ParseOptions`] fields a tsconfig.json controls.
 pub struct TSConfigParseOptions {
     pub jsx: crate::options_impl::jsx::Pragma,
     pub emit_decorator_metadata: bool,
@@ -1015,9 +1005,8 @@ pub struct ParseOptions<'a, 'b> {
 
     pub path: bun_paths::fs::Path<'static>,
     pub loader: options::Loader,
-    /// `BundleOptions.jsx` — the file-backed `options_impl::jsx::Pragma`, NOT
-    /// the lib.rs shim — with the file's tsconfig.json merged in; see
-    /// [`TSConfigParseOptions`].
+    /// The file-backed `options_impl::jsx::Pragma` (NOT the lib.rs shim), with
+    /// the file's tsconfig.json merged in; see [`TSConfigParseOptions`].
     pub jsx: crate::options_impl::jsx::Pragma,
     pub macro_remappings: MacroRemap,
     pub macro_js_ctx: MacroJSCtx,
@@ -1025,7 +1014,6 @@ pub struct ParseOptions<'a, 'b> {
     pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>,
     pub inject_jest_globals: bool,
     pub set_breakpoint_on_first_line: bool,
-    /// These three come from the file's tsconfig.json too.
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
     pub use_define_for_class_fields: bool,

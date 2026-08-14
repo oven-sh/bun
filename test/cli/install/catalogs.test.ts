@@ -716,6 +716,50 @@ describe("update", () => {
   }
 });
 
+describe("pack", () => {
+  test("replaces a catalog: reference with leading whitespace", async () => {
+    const { packageDir } = await registry.createTestDir();
+    const pkg1Dir = join(packageDir, "packages", "pkg1");
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "catalog-pack-whitespace",
+          workspaces: {
+            packages: ["packages/*"],
+            catalog: {
+              "no-deps": "^1.0.0",
+            },
+          },
+        }),
+      ),
+      write(
+        join(pkg1Dir, "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": " catalog:",
+          },
+        }),
+      ),
+    ]);
+    await runBunInstall(bunEnv, packageDir);
+
+    await pack(pkg1Dir, bunEnv);
+
+    const tarball = readTarball(join(pkg1Dir, "pkg1-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }]);
+    expect(JSON.parse(tarball.entries[0].contents)).toEqual({
+      name: "pkg1",
+      version: "1.0.0",
+      dependencies: {
+        "no-deps": "^1.0.0",
+      },
+    });
+  });
+});
+
 describe("errors", () => {
   async function failingInstall(cwd: string) {
     await using proc = spawn({

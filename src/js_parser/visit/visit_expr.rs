@@ -255,8 +255,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.symbols[result.r#ref.inner_index() as usize].set_has_been_assigned_to(true);
         }
 
-        let mut original_name: Option<&[u8]> = None;
-
         // Substitute user-specified defines for unbound symbols
         if p.symbols[e_.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound
             && !result.is_inside_with_scope
@@ -272,7 +270,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.value_for_define(expr.loc, in_.assign_target, is_delete_target, def);
 
                     // Don't substitute an identifier for a non-identifier if this is an
-                    // assignment target, since it'll cause a syntax error
+                    // assignment target, since it'll cause a syntax error. The original
+                    // identifier is kept in that case.
                     if matches!(newvalue.data.tag(), Tag::EIdentifier)
                         || in_.assign_target == js_ast::AssignTarget::None
                     {
@@ -280,8 +279,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         *e = newvalue;
                         return;
                     }
-
-                    original_name = def.original_name();
                 }
 
                 // Copy the side effect flags over in case this expression is unused
@@ -326,7 +323,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         *e = p.handle_identifier(
             expr.loc,
             e_,
-            original_name,
+            None,
             IdentifierOpts::default()
                 .with_assign_target(in_.assign_target)
                 .with_is_delete_target(is_delete_target)

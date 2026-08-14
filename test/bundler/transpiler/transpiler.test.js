@@ -3052,6 +3052,34 @@ console.log(resolve.length)
       expectPrinted_("Math.log('hi')", 'console.error("hi")');
     });
 
+    it("define with a constant value keeps the identifier in an assignment target", () => {
+      // Only reads of `user_undefined` are replaced; `undefined = 1` would
+      // silently assign to the wrong name.
+      expectPrinted_(
+        `user_undefined = 1; console.log(user_undefined);`,
+        `user_undefined = 1;\nconsole.log(undefined);\n`,
+      );
+      expectPrinted_(`user_undefined += 1`, `user_undefined += 1`);
+      expectPrinted_(`user_undefined++`, `user_undefined++`);
+      expectPrinted_(`[user_undefined] = [1]`, `[user_undefined] = [1]`);
+      expectPrinted_(`({ a: user_undefined } = { a: 1 })`, `({ a: user_undefined } = { a: 1 })`);
+      expectPrinted_(`for (user_undefined of []);`, `for (user_undefined of [])\n  ;\n`);
+      expectPrintedMin_(
+        `user_undefined = 1; console.log(user_undefined);`,
+        `user_undefined = 1;\nconsole.log(void 0);\n`,
+      );
+
+      // A define whose value is itself assignable is substituted either way.
+      expectPrinted_(`user_nested = 1`, `location.origin = 1`);
+
+      // Non-identifier values used to be looked up as if they were a symbol
+      // name, printing the value's source text as the assignment target.
+      const constants = new Bun.Transpiler({ define: { STR: JSON.stringify("abc"), NUM: "1" } });
+      expect(constants.transformSync(`STR = 1; NUM = 1; console.log(STR, NUM);`, "js")).toBe(
+        `STR = 1;\nNUM = 1;\nconsole.log("abc", 1);\n`,
+      );
+    });
+
     it("jsx symbol should work", () => {
       expectBunPrinted_(`var x = jsx; export default x;`, "var x = jsx;\nexport default x");
     });

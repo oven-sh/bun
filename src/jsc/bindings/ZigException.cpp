@@ -261,8 +261,7 @@ public:
     {
     }
 
-    // Index of the "(" before the location in "name (location)", or notFound for a
-    // bare "location", which is how frames without a function name are printed.
+    // The "(" opening the location of "name (location)"; notFound for a bare "location", which is how frames without a function name are printed.
     static size_t locationOpeningParenthesis(StringView line)
     {
         if (!line.endsWith(')'))

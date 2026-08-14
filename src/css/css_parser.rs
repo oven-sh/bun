@@ -5898,12 +5898,8 @@ pub mod serializer {
         }
     }
 
-    /// Writes a serialized number whose magnitude is below 1 without the zero in
-    /// front of the decimal point: `0.5px` -> `.5px`, `-0.5px` -> `-.5px`.
-    ///
-    /// Not every such number has that zero: `dtoa_short` prints magnitudes below
-    /// 1e-6 in exponent form (`-1e-7`) and rounds -0.9999999 to `-1`. Those are
-    /// written unchanged.
+    /// `0.5px` -> `.5px`, `-0.5px` -> `-.5px`. A magnitude below 1 can also leave
+    /// `dtoa_short` as `-1e-7` or, rounded, `-1`; those have no zero to drop.
     pub(crate) fn write_without_leading_zero(
         number: &[u8],
         dest: &mut Printer,

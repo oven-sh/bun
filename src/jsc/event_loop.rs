@@ -169,7 +169,7 @@ impl JSGlobalObject {
     pub fn drain_microtasks_and_next_ticks(&self) -> Result<(), Stopped> {
         jsc::mark_binding();
         match JSC__JSGlobalObject__drainMicrotasks(self) {
-            drain_result::SUCCESS => Ok(()),
+            drain_result::SUCCESS | drain_result::PENDING_EXCEPTION => Ok(()),
             drain_result::STOPPED => Err(Stopped),
             _ => unreachable!(),
         }
@@ -699,6 +699,12 @@ impl EventLoop {
                 .is_err()
                 || scope.has_exception()
             {
+                // Every task's exception was folded by the drain above; one
+                // still pending here escaped whoever produced it.
+                debug_assert!(
+                    global.has_pending_termination_exception(),
+                    "a task returned Ok with a JS exception pending"
+                );
                 self.entered_event_loop_count -= 1;
                 return;
             }

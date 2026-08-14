@@ -705,6 +705,7 @@ impl S3UploadStreamWrapper {
                     .unwrap_or_else(|| s3_error_to_js(err, &global, Some(self_.path.slice())));
                 js_err.ensure_still_alive();
                 let mut is_native = false;
+                let mut settled: JsResult<()> = Ok(());
                 if let Some(sink) = self_.sink_mut() {
                     // Sink pump still in-flight: fire source.close() so the JSSink
                     // controller's onClose cancels the upstream ReadableStream. The
@@ -724,15 +725,18 @@ impl S3UploadStreamWrapper {
                     sink.ended = true;
                     sink.done = true;
                     sink.pending.result = crate::webcore::streams::Writable::Done;
-                    sink.pending.run()?;
-                    if sink.flush_promise.has_value() {
-                        sink.flush_promise.reject(&global, Ok(js_err))?;
-                    }
-                    if sink.end_promise.has_value() {
-                        sink.end_promise.reject(&global, Ok(js_err))?;
-                    }
-                    sink.source.close(None)?;
+                    settled = (|| -> JsResult<()> {
+                        sink.pending.run()?;
+                        if sink.flush_promise.has_value() {
+                            sink.flush_promise.reject(&global, Ok(js_err))?;
+                        }
+                        if sink.end_promise.has_value() {
+                            sink.end_promise.reject(&global, Ok(js_err))?;
+                        }
+                        sink.source.close(None)
+                    })();
                 }
+                // The pump ref is released whatever the settles above left.
                 if is_native {
                     self_.detach_sink();
                     // SAFETY: `self_` is the live Box allocation; this balances the
@@ -740,6 +744,7 @@ impl S3UploadStreamWrapper {
                     // releases the remaining ref at scope exit.
                     unsafe { Self::deref_(std::ptr::from_mut::<Self>(self_)) };
                 }
+                settled?;
                 if self_.end_promise.has_value() {
                     self_.end_promise.reject(&global, Ok(js_err))?;
                     self_.end_promise = bun_jsc::JSPromiseStrong::empty();

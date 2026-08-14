@@ -443,14 +443,17 @@ impl MultiPartUpload {
             S3UploadResult::Success => {
                 scoped_log!(S3MultiPartUpload, "singleSendUploadResponse success");
 
-                if let Some(callback) = self_.on_writable {
-                    callback(
+                let woke = match self_.on_writable {
+                    Some(callback) => callback(
                         self_,
                         self_.callback_context.get(),
                         self_.buffered.get().size() as u64,
-                    )?;
-                }
-                self_.done()
+                    ),
+                    None => Ok(()),
+                };
+                // The upload finishes whatever waking the source left pending.
+                let done = self_.done();
+                woke.and(done)
             }
         }
     }
@@ -541,12 +544,17 @@ impl MultiPartUpload {
 
         // empty queue
         if self.is_queue_empty() {
-            if let Some(callback) = self.on_writable {
-                callback(self, self.callback_context.get(), flushed)?;
-            }
+            let woke = match self.on_writable {
+                Some(callback) => callback(self, self.callback_context.get(), flushed),
+                None => Ok(()),
+            };
             // `on_writable` may re-enter and enqueue a final part; re-check.
+            // The upload finishes whatever waking the source left pending.
             if self.ended.get() && self.is_queue_empty() {
-                self.done()?;
+                let done = self.done();
+                woke.and(done)?;
+            } else {
+                woke?;
             }
         } else if !self.has_backpressure() && flushed > 0 {
             // we have more space in the queue, we can drain more

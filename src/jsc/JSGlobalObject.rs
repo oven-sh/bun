@@ -1454,13 +1454,6 @@ unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
     unsafe { VirtualMachine::report_uncaught_exception(&*global, &*exception) }
 }
 
-// Safe wrapper used internally.
-#[inline]
-pub(crate) fn report_uncaught_exception(global: &JSGlobalObject, exception: &Exception) -> JSValue {
-    crate::mark_binding();
-    VirtualMachine::report_uncaught_exception(global, exception)
-}
-
 #[unsafe(no_mangle)]
 extern "C" fn Zig__GlobalObject__onCrash() {
     crate::mark_binding();

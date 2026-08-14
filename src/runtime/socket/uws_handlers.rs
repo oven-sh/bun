@@ -41,7 +41,7 @@ pub(crate) fn fold(result: bun_jsc::JsResult<()>) {
     #[cold]
     fn report(err: bun_jsc::JsError) {
         let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
-        let _ = bun_jsc::task::fold_at_loop_entry(global, err);
+        let _ = bun_jsc::task::report_error_or_terminate(global, err);
     }
     if let Err(err) = result {
         report(err);

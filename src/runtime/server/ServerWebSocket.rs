@@ -723,9 +723,8 @@ impl ServerWebSocket {
         let vm = handler.vm();
 
         // on_open's error branch closes the socket, landing here nested with
-        // the termination from its handler still pending: that exception is
-        // on_open's and its fold's, so this dispatch neither enters JS over
-        // it nor claims it as its own `Err`.
+        // the termination from its handler still pending: it belongs to that
+        // frame, so this dispatch neither enters JS over it nor claims it.
         if handler.global_object().has_exception() {
             return Ok(());
         }
@@ -1580,7 +1579,7 @@ impl WebSocketHandler for ServerWebSocket {
     #[inline(always)]
     unsafe fn on_open(this: *mut Self, ws: AnyWebSocket) -> bun_uws_sys::web_socket::JsResult<()> {
         // SAFETY: per trait contract — `this` is the live user-data slot.
-        unsafe { &*this }.on_open(ws).map_err(Into::into)
+        unsafe { &*this }.on_open(ws)
     }
     #[inline(always)]
     unsafe fn on_message(
@@ -1590,14 +1589,12 @@ impl WebSocketHandler for ServerWebSocket {
         opcode: Opcode,
     ) -> bun_uws_sys::web_socket::JsResult<()> {
         // SAFETY: per trait contract.
-        unsafe { &*this }
-            .on_message(ws, message, opcode)
-            .map_err(Into::into)
+        unsafe { &*this }.on_message(ws, message, opcode)
     }
     #[inline(always)]
     unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket) -> bun_uws_sys::web_socket::JsResult<()> {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_drain(ws).map_err(Into::into)
+        unsafe { &*this }.on_drain(ws)
     }
     #[inline(always)]
     unsafe fn on_ping(
@@ -1606,7 +1603,7 @@ impl WebSocketHandler for ServerWebSocket {
         message: &[u8],
     ) -> bun_uws_sys::web_socket::JsResult<()> {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_ping(ws, message).map_err(Into::into)
+        unsafe { &*this }.on_ping(ws, message)
     }
     #[inline(always)]
     unsafe fn on_pong(
@@ -1615,7 +1612,7 @@ impl WebSocketHandler for ServerWebSocket {
         message: &[u8],
     ) -> bun_uws_sys::web_socket::JsResult<()> {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_pong(ws, message).map_err(Into::into)
+        unsafe { &*this }.on_pong(ws, message)
     }
     #[inline(always)]
     unsafe fn on_close(
@@ -1625,9 +1622,7 @@ impl WebSocketHandler for ServerWebSocket {
         message: &[u8],
     ) -> bun_uws_sys::web_socket::JsResult<()> {
         // SAFETY: per trait contract.
-        unsafe { &*this }
-            .on_close(ws, code, message)
-            .map_err(Into::into)
+        unsafe { &*this }.on_close(ws, code, message)
     }
 }
 

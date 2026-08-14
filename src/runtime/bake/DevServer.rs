@@ -1543,7 +1543,8 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
             // The catch-all route can reach a framework request handler; this
             // trampoline folds what bundling for it left pending.
             if let Err(err) = on_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp) {
-                let _ = bun_jsc::task::fold_at_loop_entry(unsafe { &*dev }.vm().global(), err);
+                let _ =
+                    bun_jsc::task::report_error_or_terminate(unsafe { &*dev }.vm().global(), err);
             }
         }
     }
@@ -5196,7 +5197,10 @@ impl DevServer {
                 // This is the dev server's entry from Bun.serve's static-route
                 // trampoline (`StaticRouteLike`, which otherwise never enters
                 // JS): what bundling left pending is folded at this boundary.
-                let _ = bun_jsc::task::fold_at_loop_entry(self.vm().global(), jsc::JsError::Thrown);
+                let _ = bun_jsc::task::report_error_or_terminate(
+                    self.vm().global(),
+                    jsc::JsError::Thrown,
+                );
             }
             Err(jsc::JsError::OutOfMemory) => return Err(AllocError),
         }

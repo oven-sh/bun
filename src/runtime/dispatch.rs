@@ -430,7 +430,7 @@ mod run_impls {
     impl RunTask for crate::api::js_bundle_completion_task::JSBundleCompletionTask {
         #[inline]
         unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            Self::on_complete_anytask(this).map_err(Into::into)
+            Self::on_complete_anytask(this)
         }
     }
 
@@ -522,7 +522,7 @@ mod run_impls {
         #[inline]
         unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
             // SAFETY: posted by `StatWatcher::post_to_js_thread` with a ref held.
-            unsafe { Self::run_hop(this) }.map_err(Into::into)
+            unsafe { Self::run_hop(this) }
         }
     }
 
@@ -531,7 +531,7 @@ mod run_impls {
         unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
             // SAFETY: produced by `heap::alloc` in `ManagedTask::new`; `run`
             // consumes/frees it.
-            unsafe { ManagedTask::run(this) }.map_err(Into::into)
+            unsafe { ManagedTask::run(this) }
         }
     }
 
@@ -1372,11 +1372,9 @@ pub(crate) unsafe fn __bun_fire_timer(
             Ok(())
         }
     };
-    fired.map_err(Into::into)
+    fired
 }
 
-/// Lifts a timer entry's return to the dispatcher's `JsResult`: entries that
-/// cannot enter JS return `()`.
 /// Lifts what a dispatcher's callee returns into the `JsResult<()>` its fold
 /// reads: `()` for owners that never enter JS, identity otherwise. Shared by
 /// the timer switch here and the socket trampolines (`uws_handlers`).

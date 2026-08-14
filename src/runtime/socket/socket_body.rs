@@ -404,30 +404,6 @@ impl<const SSL: bool> Drop for ScopeExit<SSL> {
     }
 }
 
-/// Run `step` — a native operation that synchronously dispatches other socket
-/// callbacks (a close reaches `on_close` through the uSockets trampoline) —
-/// with the exception `pending` carries parked off the VM, then put it back.
-/// The nested dispatch must neither run its handlers over that exception nor
-/// have its own fold take it: it belongs to the frame unwinding with `pending`.
-/// A termination is left in place; nested entries stand down on it.
-fn with_exception_parked(
-    global: &JSGlobalObject,
-    pending: JsResult<()>,
-    step: impl FnOnce(),
-) -> JsResult<()> {
-    match pending {
-        Err(err) if !global.has_pending_termination_exception() => {
-            let exception = global.take_exception(err);
-            step();
-            Err(global.throw_value(exception))
-        }
-        other => {
-            step();
-            other
-        }
-    }
-}
-
 impl<const SSL: bool> NewSocket<SSL> {
     // ─── R-2 interior-mutability helpers ─────────────────────────────────────
 
@@ -941,18 +917,15 @@ impl<const SSL: bool> NewSocket<SSL> {
                 &sys::Error::from_code_int(fatal_send_errno, sys::Tag::write),
                 &global,
             );
-            let handled = handlers.call_error_handler(this_value, &[this_value, err_value]);
+            handlers.call_error_handler(this_value, &[this_value, err_value])?;
             // The error handler can destroy the socket itself; only close a
             // still-attached socket. Close without detaching so on_close runs
-            // and JS observes 'close' (mirrors h2's dead-transport close) —
-            // also when `error` itself threw.
-            let handled = with_exception_parked(&global, handled, || {
-                if !this.socket.get().is_detached() {
-                    this.socket.get().close(uws::CloseCode::Normal);
-                }
-            });
+            // and JS observes 'close' (mirrors h2's dead-transport close).
+            if !this.socket.get().is_detached() {
+                this.socket.get().close(uws::CloseCode::Normal);
+            }
             drop(scope);
-            return handled;
+            return Ok(());
         }
         #[cfg(windows)]
         let _ = fatal_send_errno;
@@ -1534,9 +1507,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         let handshake_callback = handlers.on_handshake();
 
         handlers.resolve_promise(this_value)?;
-        // What rejecting the promise / the `error` handler left pending is
-        // surfaced last, once the socket state below is settled.
-        let mut opened: JsResult<()> = Ok(());
 
         if SSL {
             // only calls open callback if handshake callback is provided
@@ -1569,13 +1539,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                 log!("Already closed");
             }
 
-            let rejected = match handlers.reject_promise(err) {
-                Ok(true) => Ok(()),
-                Ok(false) => handlers.call_error_handler(this_value, &[this_value, err]),
-                Err(e) => Err(e),
-            };
-            // `mark_inactive` closes the socket, which dispatches `on_close`.
-            opened = with_exception_parked(&global, rejected, || this.mark_inactive());
+            if !handlers.reject_promise(err)? {
+                handlers.call_error_handler(this_value, &[this_value, err])?;
+            }
+            this.mark_inactive();
         }
         if !SSL
             && !global.has_exception()
@@ -1607,7 +1574,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         }
         drop(scope);
-        opened
+        Ok(())
     }
 
     pub(crate) fn get_this_value(&self, global: &JSGlobalObject) -> JSValue {
@@ -1884,11 +1851,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                     Ok(v) => v,
                     Err(e) => {
                         drop(scope);
-                        return with_exception_parked(&global, Err(e), || {
-                            if reject_unauthorized {
-                                this.reject_unauthorized_connection();
-                            }
-                        });
+                        if reject_unauthorized {
+                            this.reject_unauthorized_connection();
+                        }
+                        return Err(e);
                     }
                 }
             };
@@ -1908,13 +1874,12 @@ impl<const SSL: bool> NewSocket<SSL> {
             None => Ok(()),
         };
         drop(scope);
-        // Fail closed: an unauthorized connection is rejected (closed, which
-        // dispatches `on_close`) whatever the handlers threw.
-        with_exception_parked(&global, handled, || {
-            if reject_unauthorized {
-                this.reject_unauthorized_connection();
-            }
-        })
+        // Fail closed: an unauthorized connection is rejected whatever happened
+        // in the handlers.
+        if reject_unauthorized {
+            this.reject_unauthorized_connection();
+        }
+        handled
     }
 
     /// Stamps the resolved client `rejectUnauthorized` policy on a fresh or
@@ -2139,10 +2104,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
 
-        // Reached by a nested dispatch while a handler above is unwinding with
-        // its exception (a termination; anything else is parked, see
-        // `with_exception_parked`): it belongs to that frame and its fold, so
-        // this dispatch neither enters JS over it nor claims it as its `Err`.
+        // Reached by a nested dispatch (a close from on_open's error branch,
+        // on_writable's fatal close, a rejected handshake) while the handler
+        // above is unwinding with a termination pending: it belongs to that
+        // frame, so this dispatch neither enters JS over it nor claims it.
         if handlers.global_object.has_exception() {
             drop(cleanup);
             return Ok(());
@@ -3772,9 +3737,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Fire onOpen with the right `this`, then send ClientHello. Doing
         // it before ext was repointed would have ALPN/onOpen land in the
         // dead TCPSocket.
-        // What the new socket's `open` (and then `error`) handler threw surfaces
-        // from `upgradeTLS()`; the handshake, which re-enters JS, is not started
-        // over it.
+        // What settling in the new socket's `on_open` left pending (a
+        // terminating VM) is not run over: the handshake re-enters JS.
         TLSSocket::on_open(tls, tls.socket.get())?;
         bun_opaque::opaque_deref_mut(new_raw.as_ptr()).start_tls_handshake();
         // The socket being wrapped may have had its readable interest off (an

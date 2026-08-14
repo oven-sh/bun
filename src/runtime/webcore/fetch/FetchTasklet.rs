@@ -2175,7 +2175,7 @@ impl FetchTasklet {
         // deref when done because we ref inside onWriteRequestDataDrain
         // SAFETY: `this` is the live heap tasklet; we hold a ref.
         FetchTasklet::deref(this);
-        drained.map_err(Into::into)
+        drained
     }
 
     /// Whether the request body should skip chunked transfer encoding framing.

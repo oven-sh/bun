@@ -715,7 +715,7 @@ impl ErrorDeferred {
                 // below; ManagedTask::run calls us exactly once with that pointer.
                 let this = unsafe { bun_core::heap::take(this) };
                 let global = this.global_this.get();
-                this.deferred.reject(global).map_err(Into::into)
+                this.deferred.reject(global)
             }
         }
 

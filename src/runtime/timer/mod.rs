@@ -1396,7 +1396,7 @@ unsafe fn fold_timer(
             // SAFETY: fn contract.
             let global =
                 unsafe { (*vm.cast::<bun_jsc::virtual_machine::VirtualMachine>()).global() };
-            bun_jsc::task::fold_at_loop_entry(global, err.into())
+            bun_jsc::task::report_error_or_terminate(global, err)
         }
     }
 }

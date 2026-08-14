@@ -446,12 +446,14 @@ impl FileSink {
                 settled = FileSink::run_pending(this);
             }
 
-            if settled.is_ok()
-                && (was_pending || (status == WriteStatus::Drained && !has_pending_data))
+            // The source is woken whatever the settle left (a JS controller does
+            // nothing over a pending exception; a native producer resumes).
+            if (was_pending || (status == WriteStatus::Drained && !has_pending_data))
                 && (*this).source_pending_pull.replace(false)
             {
                 let mut src = *(*this).source.get();
-                settled = src.ready(None, None);
+                let ready = src.ready(None, None);
+                settled = settled.and(ready);
             }
 
             // `end()`'s Pending flush branch leaves the writer running; finish the
@@ -464,10 +466,9 @@ impl FileSink {
 
             if status == WriteStatus::EndOfFile {
                 FileSink::clear_keep_alive_ref(this);
-                if settled.is_ok() {
-                    let mut src = *(*this).source.get();
-                    settled = src.close(None);
-                }
+                let mut src = *(*this).source.get();
+                let closed = src.close(None);
+                settled = settled.and(closed);
             }
             settled
         }

@@ -696,12 +696,10 @@ impl IntoParentResult<()> for () {
         Ok(())
     }
 }
-/// `E` is `bun_core::JsError` or the `bun_jsc` enum that mirrors it (this
-/// crate cannot name the latter); both mean an exception is pending.
-impl<T, E: Into<bun_core::JsError>> IntoParentResult<T> for core::result::Result<T, E> {
+impl<T> IntoParentResult<T> for JsResult<T> {
     #[inline(always)]
     fn into_parent_result(self) -> JsResult<T> {
-        self.map_err(Into::into)
+        self
     }
 }
 

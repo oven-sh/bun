@@ -1597,10 +1597,10 @@ impl RewriterPipe {
 
         if let Some(out) = self.output.get() {
             let mut err = err;
-            let errored = settled
-                .and_then(|()| out.on_data(StreamResult::Err(err.to_stream_error(&self.global))));
+            // The output stream is errored either way, or its reader hangs.
+            let errored = out.on_data(StreamResult::Err(err.to_stream_error(&self.global)));
             self.detach_output();
-            return errored;
+            return settled.and(errored);
         }
         let Some(response) = self.response.get() else {
             return settled;
@@ -1616,7 +1616,8 @@ impl RewriterPipe {
         {
             *body_value = webcore::body::Value::Empty;
         }
-        settled.and_then(|()| body_value.to_error_instance(err, &self.global))
+        let errored = body_value.to_error_instance(err, &self.global);
+        settled.and(errored)
     }
 }
 

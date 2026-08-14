@@ -1621,9 +1621,8 @@ fn connect_finish<const IS_SSL: bool>(
     }
     // Note: `do_connect` reads `self.connection` directly so no second
     // borrow is needed here.
-    // An already-open fd socket runs its `open` handler synchronously; what it
-    // (and then `error`) threw is pending, and is not a connect failure: the
-    // socket is live, so finish as for a started connection and throw it.
+    // An already-open fd socket runs `on_open` synchronously; what settling
+    // the connect promise there left pending is not a connect failure.
     let opened_err = match socket_ref.do_connect() {
         Ok(()) => None,
         Err(crate::Error::Js(err)) => Some(err),
@@ -1688,20 +1687,19 @@ fn connect_finish<const IS_SSL: bool>(
         }
     };
 
-    // The socket's `on_open` has already run (and, when its handlers threw,
-    // closed it): nothing is left to keep the loop alive for.
-    if let Some(err) = opened_err {
-        return Err(err);
-    }
-
     // if this is from node:net there's surface where the user can .ref() and .deref()
     // before the connection starts. make sure we honor that here.
-    if socket_ref.ref_pollref_on_connect.get() {
+    if socket_ref.ref_pollref_on_connect.get() && !socket_ref.socket.get().is_closed() {
         socket_ref
             .poll_ref
             .with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
     }
 
+    // What settling the connect promise in `on_open` left pending (allocation
+    // failure, a terminating VM).
+    if let Some(err) = opened_err {
+        return Err(err);
+    }
     Ok(promise_value)
 }
 

@@ -555,7 +555,8 @@ Warning: options change between releases of Bun and WebKit without notice. This 
     bun_core::exit(1);
 }
 
-/// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory}`).
+/// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory}`), defined at
+/// tier 0 (`bun_core`) so every layer names the one type.
 ///
 /// `Err(JsError::Thrown)` means exactly what a JSC `ThrowScope` seeing an exception means: one is
 /// pending on the VM. There is deliberately no "terminated" variant: a worker being terminated reaches
@@ -563,14 +564,7 @@ Warning: options change between releases of Bun and WebKit without notice. This 
 /// `Thrown` -- and only the boundary that entered JS asks whether the exception it takes is the
 /// termination one and stands the loop down with [`Stopped`]. Loop-level code that learns of a stop
 /// from the gate and must return a `JsError` throws that exception for real ([`Stopped::throw`]).
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum JsError {
-    /// A JavaScript exception is pending in the VM's exception scope (a termination is just such an
-    /// exception): unwind to the native/JS boundary.
-    Thrown,
-    /// Allocation failure; caller must throw an `OutOfMemoryError`.
-    OutOfMemory,
-}
+pub use bun_core::JsError;
 /// `bun.JSError!T`. Dropping a `JsResult` leaves a JS exception pending on the
 /// VM: `?`-propagate it to the frame's dispatcher (which folds it —
 /// [`task::report_error_or_terminate`]), run further JS through
@@ -581,30 +575,6 @@ pub enum JsError {
 /// carries it. We instead `#![warn(unused_must_use)]` in every crate that
 /// blanket-`allow(unused)`s so the underlying lint is never silenced.
 pub type JsResult<T> = core::result::Result<T, JsError>;
-
-bun_core::oom_from_alloc!(JsError);
-
-impl From<bun_core::JsError> for JsError {
-    #[inline]
-    fn from(e: bun_core::JsError) -> Self {
-        use bun_core::JsError as E;
-        match e {
-            E::Thrown => JsError::Thrown,
-            E::OutOfMemory => JsError::OutOfMemory,
-        }
-    }
-}
-
-impl From<JsError> for bun_core::JsError {
-    #[inline]
-    fn from(e: JsError) -> Self {
-        use bun_core::JsError as E;
-        match e {
-            JsError::Thrown => E::Thrown,
-            JsError::OutOfMemory => E::OutOfMemory,
-        }
-    }
-}
 
 /// Converts `bun.JSError` → `std.Io.Writer.Error` for Console formatting paths.
 /// `Display` impls return `fmt::Error`; the JS exception, if any, remains on the VM.

@@ -29,7 +29,7 @@ const tracked: Set<string> | null = (() => {
 })();
 
 const FOLD = new RegExp(
-  String.raw`\b(?:report_error_or_terminate|fold_at_loop_entry|__bun_fold_loop_js_error)\s*\(`,
+  String.raw`\b(?:report_error_or_terminate|__bun_fold_loop_js_error)\s*\(`,
   "g",
 );
 

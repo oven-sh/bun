@@ -310,7 +310,7 @@ impl DeferredFailure {
         fn run_raw(ptr: *mut DeferredFailure) -> bun_event_loop::JsResult<()> {
             // SAFETY: `ptr` was produced by `heap::alloc` below; we are the sole owner.
             let this = unsafe { bun_core::heap::take(ptr) };
-            DeferredFailure::run(*this).map_err(Into::into)
+            DeferredFailure::run(*this)
         }
         let managed_task =
             bun_jsc::ManagedTask::ManagedTask::new(bun_core::heap::into_raw(self), run_raw);
@@ -642,7 +642,9 @@ impl ValkeyClient {
         socket.close(uws::CloseCode::Normal);
         if is_semi_socket {
             self.status = Status::Disconnected;
-            let _ = self.on_close();
+            // A half-open socket never gets uSockets' close dispatch, so this is
+            // its trampoline for the event: fold what `onclose` left pending here.
+            crate::socket::uws_handlers::fold(self.on_close());
         }
     }
 

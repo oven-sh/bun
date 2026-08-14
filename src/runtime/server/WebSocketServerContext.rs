@@ -70,9 +70,10 @@ impl Handler {
         self.vm.get()
     }
 
-    /// Route an error a websocket handler produced to the `error` handler, or —
-    /// with none — to the uncaught-exception path. `Err` is what `error` itself
-    /// threw.
+    /// Route an error a websocket handler produced to the `error` handler (a
+    /// top-level call: what it throws is reported and the handler goes on), or
+    /// — with none — to the uncaught-exception path. `Err` is only a termination
+    /// pending from the preceding callback.
     ///
     /// `on_error` must be copied to a stack local by the caller before any
     /// user JS runs: a re-entrant `ws.close()` on the last socket of a stopped
@@ -91,7 +92,13 @@ impl Handler {
             return Err(bun_jsc::JsError::Thrown);
         }
         if !on_error.is_empty_or_undefined_or_null() {
-            on_error.call(global_object, JSValue::UNDEFINED, &[error_value])?;
+            // A top-level call of its own: what `error` throws is reported here.
+            global_object.bun_vm().event_loop_mut().run_callback(
+                on_error,
+                global_object,
+                JSValue::UNDEFINED,
+                &[error_value],
+            );
             return Ok(());
         }
 

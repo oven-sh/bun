@@ -36,38 +36,23 @@ pub fn new<T: Taskable>(ptr: *mut T) -> Task {
 // `pub fn run_tasks` wrapper here had no callers and aliased the same body —
 // deleted r6 (one symbol per dispatch entry, per PORTING.md §extern-Rust-ban).
 
-/// The fold at a loop entry that ran a task's JS: report the uncaught exception, or -- if what came
-/// back is the VM's termination -- stand the tick loop down (WebCore: `isTerminationException(returned)`).
+/// The fold: what a dispatcher does with the exception a callback it invoked left pending — report it
+/// as uncaught, or, if what came back is the VM's termination, stand the loop down
+/// (WebCore: `isTerminationException(returned)`). When this runs as the outermost frame (a foreign
+/// trampoline: uSockets, uWS, timers, pipe I/O), the scopes beneath it skipped their microtask
+/// checkpoint over the pending exception, so it runs here once the exception is taken; beneath
+/// another dispatch or a host function that checkpoint is still the outer frame's.
 #[cold]
 pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
     let ex = global.take_exception(proof);
     if ex.is_termination_exception() {
         return Err(Stopped);
     }
-    let vm = std::ptr::from_ref::<crate::VM>(global.vm()).cast_mut();
-    let exc = ex
-        .as_exception(vm)
-        .expect("exception value must be an Exception cell");
-    // `as_exception` returned a non-null cell pointer rooted on the VM;
-    // `Exception` is an opaque ZST handle — safe deref (panics on null).
-    let _ = crate::js_global_object::report_uncaught_exception(
-        global,
-        crate::Exception::opaque_ref(exc),
-    );
-    Ok(())
-}
-
-/// [`report_error_or_terminate`] for a foreign dispatcher's trampoline
-/// (uSockets, uWS, timers, pipe I/O). When that trampoline is the outermost
-/// frame, the scopes beneath it skipped their microtask checkpoint over the
-/// pending exception (`EventLoop::exit`), so it runs here once the exception is
-/// taken; when it was reached from inside another dispatch or a host function
-/// (a close issued from JS lands in `on_close` synchronously), the checkpoint is
-/// still that outer frame's.
-#[cold]
-pub fn fold_at_loop_entry(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
-    report_error_or_terminate(global, proof)?;
-    global.bun_vm().event_loop_mut().maybe_drain_microtasks();
+    let vm = global.bun_vm();
+    let _ = vm.as_mut().uncaught_exception(global, ex, false);
+    if !vm.is_shutting_down() {
+        vm.event_loop_mut().maybe_drain_microtasks();
+    }
     Ok(())
 }
 
@@ -78,7 +63,7 @@ pub fn fold_at_loop_entry(global: &JSGlobalObject, proof: JsError) -> Result<(),
 #[unsafe(no_mangle)]
 fn __bun_fold_loop_js_error(err: bun_core::JsError) {
     let global = crate::virtual_machine::VirtualMachine::get().global();
-    let _ = fold_at_loop_entry(global, err.into());
+    let _ = report_error_or_terminate(global, err);
 }
 
 // The full ~96-arm `match` (previously in this file) has been hoisted to

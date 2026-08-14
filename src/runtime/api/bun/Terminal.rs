@@ -2042,9 +2042,7 @@ impl BufferedReaderParent for Terminal {
         chunk: &[u8],
         has_more: ReadState,
     ) -> bun_io::JsResult<bool> {
-        Self::from_parent_ptr(this)
-            .on_read_chunk(chunk, has_more)
-            .map_err(Into::into)
+        Self::from_parent_ptr(this).on_read_chunk(chunk, has_more)
     }
     unsafe fn on_reader_done(this: *mut Self) -> bun_io::JsResult<()> {
         Self::from_parent_ptr(this).on_reader_done();

@@ -219,7 +219,8 @@ impl ByteStream {
         let settled = self.on_cancel();
         let source = self.parent_const();
         let mut p = source.producer.replace(streams::SourceHandle::None);
-        settled.and_then(|()| p.close(None))
+        let closed = p.close(None);
+        settled.and(closed)
     }
 
     #[inline]

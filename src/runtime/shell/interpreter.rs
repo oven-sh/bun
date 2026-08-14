@@ -1206,24 +1206,36 @@ impl Interpreter {
                     self.deref_root_shell_and_io_if_needed(true);
                     let _entered = loop_.entered();
                     // The shell state machine (`Yield`) has no exception channel,
-                    // so the resolver runs as its own top-level callback: what
-                    // it throws is reported here, and the interpreter finishes.
+                    // so the promise is settled by a top-level call of its own:
+                    // what it throws is reported there, and the interpreter
+                    // finishes. If the output buffers could not be built
+                    // (allocation failure), the promise is rejected with that
+                    // instead; a terminating VM settles nothing.
+                    let event_loop = global_this.bun_vm().event_loop_mut();
                     match buffers {
-                        Ok((buffered_stdout, buffered_stderr)) => {
-                            global_this.bun_vm().event_loop_mut().run_callback(
-                                resolve,
-                                global_this,
-                                JSValue::UNDEFINED,
-                                &[
-                                    JSValue::js_number_from_int32(i32::from(exit_code)),
-                                    buffered_stdout,
-                                    buffered_stderr,
-                                ],
-                            );
+                        Ok((buffered_stdout, buffered_stderr)) => event_loop.run_callback(
+                            resolve,
+                            global_this,
+                            JSValue::UNDEFINED,
+                            &[
+                                JSValue::js_number_from_int32(i32::from(exit_code)),
+                                buffered_stdout,
+                                buffered_stderr,
+                            ],
+                        ),
+                        Err(err) if !global_this.has_pending_termination_exception() => {
+                            let error = global_this.take_exception(err);
+                            if let Some(reject) =
+                                JSShellInterpreter::reject_get_cached(this_jsvalue)
+                            {
+                                event_loop.run_callback(
+                                    reject,
+                                    global_this,
+                                    JSValue::UNDEFINED,
+                                    &[error],
+                                );
+                            }
                         }
-                        // Building the output buffers failed — allocation
-                        // failure or a terminating VM, never user code — and
-                        // `Yield` has nowhere to hand that: it stays pending.
                         Err(_) => {}
                     }
                     JSShellInterpreter::resolve_set_cached(

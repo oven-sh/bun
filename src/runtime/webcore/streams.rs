@@ -957,8 +957,10 @@ impl SourceHandle {
                     return Ok(());
                 }
                 let global = VirtualMachine::get().global();
+                // A frame above is unwinding with its exception: not ours to run
+                // over or to claim.
                 if global.has_exception() {
-                    return Err(jsc::JsError::Thrown);
+                    return Ok(());
                 }
                 ::bun_jsc::call_check_slow(global, || {
                     controller_abi::on_close(cpp, JSValue::UNDEFINED)
@@ -1000,8 +1002,10 @@ impl SourceHandle {
                     return Ok(());
                 }
                 let global = VirtualMachine::get().global();
+                // A frame above is unwinding with its exception: not ours to run
+                // over or to claim.
                 if global.has_exception() {
-                    return Err(jsc::JsError::Thrown);
+                    return Ok(());
                 }
                 ::bun_jsc::call_check_slow(global, || {
                     controller_abi::on_ready(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
@@ -2103,8 +2107,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     pub(crate) fn flush_promise(&mut self) -> JsResult<()> {
         // Settle any `write()` → `Pending` promise first so a parked JS writer
-        // wakes on every drain/teardown path that reaches here.
-        self.pending.run()?;
+        // wakes on every drain/teardown path that reaches here; the flush
+        // promise below is settled (and unprotected) either way.
+        let woke = self.pending.run();
         if let Some(prom) = self.pending_flush.take() {
             bun_core::scoped_log!(HTTPServerWritableLog, "flushPromise()");
 
@@ -2131,9 +2136,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             // SAFETY: `this` is the live heap payload (refcounted via the JS
             // wrapper); momentary access only.
             unsafe { (*this).wrote_at_start_of_flush = (*this).wrote };
-            return result;
+            return woke.and(result);
         }
-        Ok(())
+        woke
     }
 }
 

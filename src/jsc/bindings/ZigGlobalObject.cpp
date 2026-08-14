@@ -3315,6 +3315,27 @@ extern "C" uint8_t JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globa
     return globalObject->drainMicrotasks();
 }
 
+bool GlobalObject::drainMicrotasksAtEventLoop()
+{
+    switch (drainMicrotasks()) {
+    case 0:
+        return true;
+    case 1:
+        return false;
+    default: {
+        // A top-level dispatch loop with no fold above it: an exception still
+        // pending here escaped whoever produced it. Report it, then this is
+        // the checkpoint.
+        auto& vm = this->vm();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        auto* exception = scope.exception();
+        (void)scope.tryClearException();
+        reportUncaughtExceptionAtEventLoop(this, exception);
+        return drainMicrotasks() != 1;
+    }
+    }
+}
+
 extern "C" EncodedJSValue JSC__JSGlobalObject__getHTTP2CommonString(Zig::GlobalObject* globalObject, uint32_t hpack_index)
 {
     auto value = globalObject->http2CommonStrings().getStringFromHPackIndex(hpack_index, globalObject);

@@ -610,7 +610,7 @@ mod windows_impl {
     #[cold]
     fn report(err: jsc::JsError) {
         let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
-        let _ = bun_jsc::task::fold_at_loop_entry(global, err);
+        let _ = bun_jsc::task::report_error_or_terminate(global, err);
     }
 
     impl WriteFileWindows {

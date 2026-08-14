@@ -1091,7 +1091,7 @@ impl<'a> ReadFileUV<'a> {
         // exception the JS side left pending is reported here (a termination just stands down).
         if let Err(err) = completion.complete(result) {
             let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
-            let _ = bun_jsc::task::fold_at_loop_entry(global, err);
+            let _ = bun_jsc::task::report_error_or_terminate(global, err);
         }
 
         // store.deref runs via StoreRef's Drop when the Box drops.

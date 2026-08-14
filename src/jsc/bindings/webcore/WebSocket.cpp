@@ -57,6 +57,7 @@
 #include "JSBuffer.h"
 #include "BunClientData.h"
 #include "ErrorEvent.h"
+#include "FormatStackTraceForJS.h"
 #include "WebSocketDeflate.h"
 
 namespace WebCore {
@@ -76,7 +77,7 @@ static ErrorEvent::Init createErrorEventInit(WebSocket& webSocket, const String&
     eventInit.bubbles = false;
     eventInit.cancelable = false;
     eventInit.colno = 0;
-    eventInit.error = JSC::createError(globalObject, eventInit.message);
+    eventInit.error = Bun::installLazyStackIfFrameless(globalObject, JSC::createError(globalObject, eventInit.message));
     return eventInit;
 }
 

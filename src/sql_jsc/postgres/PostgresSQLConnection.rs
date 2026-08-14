@@ -1371,7 +1371,11 @@ impl PostgresSQLConnection {
             self.disconnect();
         }
         self.unregister_auto_flusher();
-        self.write_buffer.with_mut(|b| b.clear_and_free());
+        // Closed from user JS inside an encoder: it still holds offsets into
+        // the buffer, so `encode_request` releases it once the encoder returns.
+        if !self.flags.get().contains(ConnectionFlags::IS_DISPATCHING) {
+            self.write_buffer.with_mut(|b| b.clear_and_free());
+        }
     }
 
     pub fn do_close(
@@ -1791,6 +1795,45 @@ impl PostgresSQLConnection {
             && self.pipelined_requests.get() == 0
     }
 
+    /// Runs `encode`, which appends one request's messages to `write_buffer`,
+    /// failing with `ConnectionClosed` if the connection is not connected once
+    /// it returns.
+    ///
+    /// Encoding a Bind converts the parameters through user JS (`valueOf()`,
+    /// `toString()`, `toJSON()`, getters), which can `close()` this connection
+    /// synchronously. That rejects and dequeues every request, including the
+    /// one being encoded, but the encoder still holds offsets into
+    /// `write_buffer` for the length prefixes it patches in on its way out, so
+    /// `close()` leaves the buffer alone while `IS_DISPATCHING` is set and it
+    /// is released here instead. The `ConnectionClosed` result sends the caller
+    /// down its encode-failure path, which is a no-op for a request that
+    /// `clean_up_requests` already rejected, and keeps it from recording the
+    /// request as written on a dead connection.
+    pub(crate) fn encode_request(
+        &self,
+        encode: impl FnOnce() -> Result<(), AnyPostgresError>,
+    ) -> Result<(), AnyPostgresError> {
+        if self.status.get() != Status::Connected {
+            return Err(AnyPostgresError::ConnectionClosed);
+        }
+        // Nested when user JS inside an encoder dispatches another query; the
+        // outermost encoder owns the flag and the buffer.
+        let outermost = !self.flags.get().contains(ConnectionFlags::IS_DISPATCHING);
+        self.update_flags(|f| f.insert(ConnectionFlags::IS_DISPATCHING));
+        let result = encode();
+        if outermost {
+            self.update_flags(|f| f.remove(ConnectionFlags::IS_DISPATCHING));
+        }
+        if self.status.get() == Status::Connected {
+            return result;
+        }
+        debug!("connection closed while encoding a request");
+        if outermost {
+            self.write_buffer.with_mut(|b| b.clear_and_free());
+        }
+        Err(AnyPostgresError::ConnectionClosed)
+    }
+
     /// Process pending requests and flush. Called from the enqueue path when
     /// unnamed prepared statements with params skip writeQuery+Sync and need
     /// advance() to send everything atomically on an idle connection.
@@ -1842,6 +1885,9 @@ impl PostgresSQLConnection {
             // (refcount ≥ 1 held by the queue). R-2: `ParentRef` yields `&T`
             // only — `PostgresSQLQuery` is Cell/JsCell-backed.
             let req = ParentRef::from(NonNull::new(req_ptr).expect("queue item non-null"));
+            // The encoders below run user JS, which can close() the connection
+            // and thereby drop the queue's ref mid-iteration (encode_request).
+            let _req_ref = req.ref_guard();
             match req.status.get() {
                 QueryStatus::Pending => {
                     // Optimistically account for this request leaving Pending; the
@@ -1944,6 +1990,11 @@ impl PostgresSQLConnection {
                                         postgres_sql_query::js::columns_get_cached(this_value)
                                             .unwrap_or_default();
                                     req.update_flags(|f| f.binary = !statement.fields.is_empty());
+                                    // Binding before the encoder runs: it was already taken out
+                                    // of pending_requests above, and a close() from inside the
+                                    // encoder cleans up Binding requests without touching that
+                                    // counter. The encode-failure paths below overwrite this.
+                                    req.status.set(QueryStatus::Binding);
 
                                     if self
                                         .flags
@@ -1957,7 +2008,7 @@ impl PostgresSQLConnection {
                                         debug!("parse, bind and execute unnamed stmt");
                                         let query_str = req.query.to_utf8();
                                         let global = self.global_object;
-                                        if let Err(err) =
+                                        if let Err(err) = self.encode_request(|| {
                                             PostgresRequest::parse_and_bind_and_execute(
                                                 &global,
                                                 query_str.slice(),
@@ -1967,7 +2018,7 @@ impl PostgresSQLConnection {
                                                 false,
                                                 self.writer(),
                                             )
-                                        {
+                                        }) {
                                             if let Some(err_) = self.global().try_take_exception() {
                                                 req.on_js_error(err_, self.global());
                                             } else {
@@ -1993,13 +2044,15 @@ impl PostgresSQLConnection {
                                     } else {
                                         debug!("binding and executing stmt");
                                         let global = self.global_object;
-                                        if let Err(err) = PostgresRequest::bind_and_execute(
-                                            &global,
-                                            statement,
-                                            binding_value,
-                                            columns_value,
-                                            self.writer(),
-                                        ) {
+                                        if let Err(err) = self.encode_request(|| {
+                                            PostgresRequest::bind_and_execute(
+                                                &global,
+                                                statement,
+                                                binding_value,
+                                                columns_value,
+                                                self.writer(),
+                                            )
+                                        }) {
                                             if let Some(err_) = self.global().try_take_exception() {
                                                 req.on_js_error(err_, self.global());
                                             } else {
@@ -2024,7 +2077,6 @@ impl PostgresSQLConnection {
                                     self.update_flags(|f| {
                                         f.remove(ConnectionFlags::IS_READY_FOR_QUERY)
                                     });
-                                    req.status.set(QueryStatus::Binding);
                                     req.update_flags(|f| f.counter = RequestCounter::Pipelined);
                                     self.pipelined_requests
                                         .set(self.pipelined_requests.get() + 1);
@@ -2079,7 +2131,9 @@ impl PostgresSQLConnection {
                                                 .unwrap_or_default();
                                         debug!("prepareAndQueryWithSignature");
                                         let global = self.global_object;
-                                        if let Err(err) =
+                                        // See the Prepared arm: Binding before the encoder runs.
+                                        req.status.set(QueryStatus::Binding);
+                                        if let Err(err) = self.encode_request(|| {
                                             PostgresRequest::prepare_and_query_with_signature(
                                                 &global,
                                                 query_str.slice(),
@@ -2087,7 +2141,7 @@ impl PostgresSQLConnection {
                                                 self.writer(),
                                                 &mut statement.signature,
                                             )
-                                        {
+                                        }) {
                                             if let Some(err_) = self.global().try_take_exception() {
                                                 req.on_js_error(err_, self.global());
                                             } else {
@@ -2116,7 +2170,6 @@ impl PostgresSQLConnection {
                                             f.remove(ConnectionFlags::IS_READY_FOR_QUERY);
                                             f.insert(ConnectionFlags::WAITING_TO_PREPARE);
                                         });
-                                        req.status.set(QueryStatus::Binding);
                                         statement.status = StatementStatus::Parsing;
                                         self.flush_data_and_reset_timeout();
                                         defer_cleanup!(self);
@@ -2151,7 +2204,9 @@ impl PostgresSQLConnection {
                                                 .unwrap_or_default();
                                         debug!("parseAndBindAndExecute (unnamed, first execution)");
                                         let global = self.global_object;
-                                        if let Err(err) =
+                                        // See the Prepared arm: Binding before the encoder runs.
+                                        req.status.set(QueryStatus::Binding);
+                                        if let Err(err) = self.encode_request(|| {
                                             PostgresRequest::parse_and_bind_and_execute(
                                                 &global,
                                                 query_str.slice(),
@@ -2161,7 +2216,7 @@ impl PostgresSQLConnection {
                                                 true,
                                                 self.writer(),
                                             )
-                                        {
+                                        }) {
                                             if let Some(err_) = self.global().try_take_exception() {
                                                 req.on_js_error(err_, self.global());
                                             } else {
@@ -2186,7 +2241,6 @@ impl PostgresSQLConnection {
                                             f.remove(ConnectionFlags::IS_READY_FOR_QUERY);
                                             f.insert(ConnectionFlags::WAITING_TO_PREPARE);
                                         });
-                                        req.status.set(QueryStatus::Binding);
                                         statement.status = StatementStatus::Parsing;
                                         req.update_flags(|f| f.counter = RequestCounter::Pipelined);
                                         self.pipelined_requests

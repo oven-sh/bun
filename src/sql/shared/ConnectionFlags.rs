@@ -8,6 +8,9 @@ bitflags! {
         const USE_UNNAMED_PREPARED_STATEMENTS = 1 << 2;
         const WAITING_TO_PREPARE              = 1 << 3;
         const HAS_BACKPRESSURE                = 1 << 4;
+        /// A request is being encoded into the write buffer further up the
+        /// stack; see `PostgresSQLConnection::encode_request`.
+        const IS_DISPATCHING                  = 1 << 5;
     }
 }
 

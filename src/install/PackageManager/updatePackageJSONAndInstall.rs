@@ -1042,8 +1042,15 @@ fn write_resolved_versions_to_targets(
 pub fn update_package_json_and_install_and_cli(
     ctx: Command::Context,
     subcommand: Subcommand,
-    cli: CommandLineArguments,
+    mut cli: CommandLineArguments,
 ) -> Result<(), Error> {
+    // https://github.com/oven-sh/bun/issues/5682
+    if cli.global && subcommand.supports_folder_positionals() && cli.positionals.len() > 1 {
+        if let Some(rewritten) = super::absolutize_folder_positionals(cli.positionals) {
+            cli.positionals = rewritten;
+        }
+    }
+
     let (manager_ptr, original_cwd) = 'brk: {
         match super::init(ctx, cli.clone(), subcommand) {
             Ok(v) => v,

@@ -32,6 +32,7 @@
 //! set of call sites and of `unsafe impl Send/Sync` in the VM crates so a new
 //! path around the door needs a justification rather than a reviewer's luck.
 
+#[cfg(debug_assertions)]
 use core::panic::Location;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};

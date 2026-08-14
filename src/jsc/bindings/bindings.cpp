@@ -4883,11 +4883,6 @@ extern "C" JSC::EncodedJSValue JSC__Exception__asJSValue(JSC::Exception* excepti
     return JSC::JSValue::encode(exception);
 }
 
-extern "C" JSC::EncodedJSValue JSC__Exception__thrownValue(JSC::Exception* exception)
-{
-    return JSC::JSValue::encode(exception->value());
-}
-
 void JSC__VM__releaseWeakRefs(JSC::VM* arg0)
 {
     arg0->finalizeSynchronousJSExecution();

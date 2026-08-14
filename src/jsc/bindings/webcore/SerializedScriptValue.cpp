@@ -208,19 +208,22 @@ extern "C" SYSV_ABI void BlockList__onStructuredCloneDestroy(void*);
 extern "C" JSC::EncodedJSValue BuildMessage__toErrorInstance(void*, JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue ResolveMessage__toErrorInstance(void*, JSC::JSGlobalObject*);
 
-// The ErrorInstance to write for `object`, if it is an error. Bun's parse and
-// resolve diagnostics have Error.prototype in their chain but wrap VM-local
-// parser state, so they serialize as the plain SyntaxError / Error carrying
-// their message and location.
+// Bun's parse and resolve diagnostics have Error.prototype in their chain but
+// wrap VM-local parser state, so they serialize as the plain SyntaxError /
+// Error carrying their message and location.
+static bool serializesAsError(JSC::JSObject* object)
+{
+    return object->inherits<JSC::ErrorInstance>() || object->inherits<JSBuildMessage>() || object->inherits<JSResolveMessage>();
+}
+
+// The ErrorInstance to write for an `object` that `serializesAsError`.
 static JSC::ErrorInstance* toSerializableErrorInstance(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
 {
     if (auto* errorInstance = dynamicDowncast<JSC::ErrorInstance>(object))
         return errorInstance;
     if (auto* buildMessage = dynamicDowncast<JSBuildMessage>(object))
         return uncheckedDowncast<JSC::ErrorInstance>(JSC::JSValue::decode(BuildMessage__toErrorInstance(buildMessage->wrapped(), globalObject)));
-    if (auto* resolveMessage = dynamicDowncast<JSResolveMessage>(object))
-        return uncheckedDowncast<JSC::ErrorInstance>(JSC::JSValue::decode(ResolveMessage__toErrorInstance(resolveMessage->wrapped(), globalObject)));
-    return nullptr;
+    return uncheckedDowncast<JSC::ErrorInstance>(JSC::JSValue::decode(ResolveMessage__toErrorInstance(uncheckedDowncast<JSResolveMessage>(object)->wrapped(), globalObject)));
 }
 
 enum ArrayBufferViewSubtag {
@@ -1201,9 +1204,10 @@ private:
                 write(String::fromLatin1(JSC::Yarr::flagsString(regExp->regExp()->flags()).data()));
                 return true;
             }
-            if (auto* errorInstance = toSerializableErrorInstance(m_lexicalGlobalObject, obj)) {
+            if (serializesAsError(obj)) {
                 if (!startObjectInternal(obj)) // handle duplicates
                     return true;
+                auto* errorInstance = toSerializableErrorInstance(m_lexicalGlobalObject, obj);
                 auto& vm = m_lexicalGlobalObject->vm();
                 auto errorTypeValue = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->name);
                 RETURN_IF_EXCEPTION(scope, false);

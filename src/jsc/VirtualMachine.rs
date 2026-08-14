@@ -5205,6 +5205,14 @@ impl VirtualMachine {
                 let zig_exception: &mut ZigException = holder.zig_exception();
                 exception_.get_stack_trace(global_ref, &mut zig_exception.stack);
                 if zig_exception.stack.frames_len > 0 {
+                    // SAFETY: `frames_ptr[..frames_len]` were just populated by
+                    // `get_stack_trace` into `holder`'s frame buffer.
+                    unsafe {
+                        self.remap_stack_frame_positions(
+                            zig_exception.stack.frames_ptr,
+                            zig_exception.stack.frames_len as usize,
+                        );
+                    }
                     let _ = Self::print_stack_trace(writer, &zig_exception.stack, allow_ansi_color);
                 }
                 if let Some(list) = exception_list {
@@ -5237,17 +5245,15 @@ impl VirtualMachine {
 
         // A thrown (rather than rejected) diagnostic arrives wrapped in its
         // JSC::Exception; look through it so it still prints as a diagnostic.
-        let thrown = match value.as_exception(self.jsc_vm) {
-            // SAFETY: `as_exception` proved `value` is a live `JSC::Exception` cell.
-            Some(exception) => unsafe { &*exception }.thrown_value(),
-            None => value,
-        };
-        if thrown.js_type() == jsc::JSType::DOMWrapper {
-            let value = thrown;
+        // `logged` dedupes against the module loader having already printed
+        // it, which doesn't apply to user code throwing it later.
+        let was_thrown = value.is_exception(self.jsc_vm);
+        let diagnostic = if was_thrown { value.to_error().unwrap_or(value) } else { value };
+        if diagnostic.js_type() == jsc::JSType::DOMWrapper {
             // `as_class_ref` is the audited `as_::<T>() → &T` backref-deref;
             // R-2: shared borrow — `logged` is `Cell<bool>`.
-            if let Some(build_error) = value.as_class_ref::<crate::BuildMessage>() {
-                if !build_error.logged.get() {
+            if let Some(build_error) = diagnostic.as_class_ref::<crate::BuildMessage>() {
+                if was_thrown || !build_error.logged.get() {
                     if self.had_errors {
                         let _ = writer.write_all(b"\n");
                     }
@@ -5265,8 +5271,8 @@ impl VirtualMachine {
                 }
                 bun_core::Output::flush();
                 return true;
-            } else if let Some(resolve_error) = value.as_class_ref::<crate::ResolveMessage>() {
-                if !resolve_error.logged.get() {
+            } else if let Some(resolve_error) = diagnostic.as_class_ref::<crate::ResolveMessage>() {
+                if was_thrown || !resolve_error.logged.get() {
                     if self.had_errors {
                         let _ = writer.write_all(b"\n");
                     }
@@ -5616,11 +5622,7 @@ impl VirtualMachine {
             for (i, frame) in frames.iter().enumerate() {
                 if frame.source_url.has_prefix_comptime(b"bun:")
                     || frame.source_url.has_prefix_comptime(b"node:")
-                    || frame.source_url.is_empty()
-                    || frame.source_url.eql_comptime("native")
-                    || frame.source_url.eql_comptime("unknown")
-                    || frame.source_url.eql_comptime("[unknown]")
-                    || frame.source_url.has_prefix_comptime(b"[source:")
+                    || is_unknown_source(&frame.source_url)
                 {
                     top_frame_is_builtin = true;
                     continue;
@@ -5640,7 +5642,13 @@ impl VirtualMachine {
         let top_source_url = frames[top].source_url.to_utf8();
 
         let already_remapped = frames[top].remapped;
-        let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if already_remapped {
+        let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if already_remapped
+            && !frames[top].position.line.is_valid()
+        {
+            // `at <file>` with no line (e.g. parsed from a `.stack`): nothing
+            // to look up or preview.
+            None
+        } else if already_remapped {
             Some(bun_sourcemap::mapping::Lookup {
                 mapping: bun_sourcemap::mapping::Mapping {
                     generated: bun_sourcemap::LineColumnOffset::default(),
@@ -5741,9 +5749,11 @@ impl VirtualMachine {
                 exception.collect_source_lines();
             }
 
-            // Direct copy; both sides are `bun_core::Ordinal`.
-            frames[top].position.line = mapping.original.lines;
-            frames[top].position.column = mapping.original.columns;
+            if !already_remapped {
+                // Direct copy; both sides are `bun_core::Ordinal`.
+                frames[top].position.line = mapping.original.lines;
+                frames[top].position.column = mapping.original.columns;
+            }
             exception.remapped = true;
             frames[top].remapped = true;
 

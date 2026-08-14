@@ -947,6 +947,7 @@ describe("Error serialization semantics", () => {
     afterAll(() => dir[Symbol.dispose]());
     const badSyntax = join(String(dir), "bad-syntax.js");
     const badImport = join(String(dir), "bad-import.js");
+    const slashes = (s: unknown) => String(s).replaceAll("\\", "/");
 
     test("BuildMessage clones as a SyntaxError with the parse error's location", async () => {
       const buildMessage: any = await import(badSyntax).then(
@@ -959,17 +960,17 @@ describe("Error serialization semantics", () => {
         expect({
           constructor: cloned.constructor,
           message: cloned.message,
-          sourceURL: cloned.sourceURL,
+          sourceURL: slashes(cloned.sourceURL),
           line: cloned.line,
           column: cloned.column,
-          stack: cloned.stack,
+          stack: slashes(cloned.stack),
         }).toEqual({
           constructor: SyntaxError,
           message: buildMessage.message,
-          sourceURL: badSyntax,
+          sourceURL: slashes(badSyntax),
           line: 2,
           column: 11,
-          stack: `SyntaxError: ${buildMessage.message}\n    at ${badSyntax}:2:11`,
+          stack: `SyntaxError: ${buildMessage.message}\n    at ${slashes(badSyntax)}:2:11`,
         });
       }
       // Still enters the object pool: duplicate references keep their identity.
@@ -983,18 +984,20 @@ describe("Error serialization semantics", () => {
         e => e,
       );
       expect(resolveMessage.constructor.name).toBe("ResolveMessage");
-      const cloned = structuredClone(resolveMessage);
-      expect({
-        constructor: cloned.constructor,
-        message: cloned.message,
-        sourceURL: cloned.sourceURL,
-        stack: cloned.stack,
-      }).toEqual({
-        constructor: Error,
-        message: resolveMessage.message,
-        sourceURL: badImport,
-        stack: `Error: ${resolveMessage.message}\n    at ${badImport}`,
-      });
+      for (const clone of [structuredClone, jscSerializeRoundtrip]) {
+        const cloned = clone(resolveMessage);
+        expect({
+          constructor: cloned.constructor,
+          message: cloned.message,
+          sourceURL: slashes(cloned.sourceURL),
+          stack: slashes(cloned.stack),
+        }).toEqual({
+          constructor: Error,
+          message: resolveMessage.message,
+          sourceURL: slashes(badImport),
+          stack: `Error: ${slashes(resolveMessage.message)}\n    at ${slashes(badImport)}`,
+        });
+      }
     });
   });
 });

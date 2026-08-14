@@ -79,11 +79,15 @@ pub fn error_instance_from_location(
 ) -> JSValue {
     use std::io::Write as _;
 
+    // JSC::errorTypeName
     let name: &str = match code {
-        crate::JSErrorCode::SyntaxError => "SyntaxError",
-        crate::JSErrorCode::TypeError => "TypeError",
+        crate::JSErrorCode::EvalError => "EvalError",
         crate::JSErrorCode::RangeError => "RangeError",
         crate::JSErrorCode::ReferenceError => "ReferenceError",
+        crate::JSErrorCode::SyntaxError => "SyntaxError",
+        crate::JSErrorCode::TypeError => "TypeError",
+        crate::JSErrorCode::URIError => "URIError",
+        crate::JSErrorCode::AggregateError => "AggregateError",
         _ => "Error",
     };
     let mut stack: Vec<u8> = Vec::with_capacity(name.len() + message.len() + 64);

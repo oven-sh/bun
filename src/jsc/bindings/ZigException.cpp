@@ -475,11 +475,8 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
     // that string. `stackTrace`, the wrapping JSC::Exception's throw site, is
     // the fallback for errors carrying neither, so a rethrown or cross-thread
     // error points at its origin rather than at `throw err`.
-    bool getFromSourceURL = false;
     if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
         populateStackTrace(vm, *err->stackTrace(), except.stack, global, FinalizerSafety::MustNotTriggerGC);
-    } else {
-        getFromSourceURL = true;
     }
     except.type = (unsigned char)err->errorType();
     if (err->isStackOverflowError()) {
@@ -566,8 +563,7 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
         }
     }
 
-    if (getFromSourceURL) {
-
+    if (except.stack.frames_len == 0) {
         // we don't want to serialize JSC::StackFrame longer than we need to
         // so in this case, we parse the stack trace as a string
 
@@ -623,22 +619,17 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
                         stop = except.stack.frames_len >= frame_count;
                     });
 
-                    if (except.stack.frames_len > 0) {
-                        getFromSourceURL = false;
+                    if (except.stack.frames_len > 0)
                         except.remapped = true;
-                    }
                 }
             }
         }
     }
 
-    if (except.stack.frames_len == 0 && stackTrace != nullptr && stackTrace->size() > 0) {
+    if (except.stack.frames_len == 0 && stackTrace != nullptr && stackTrace->size() > 0)
         populateStackTrace(vm, *stackTrace, except.stack, global);
-        if (except.stack.frames_len > 0)
-            getFromSourceURL = false;
-    }
 
-    if (except.stack.frames_len == 0 && getFromSourceURL) {
+    if (except.stack.frames_len == 0) {
         JSC::JSValue sourceURL = getNonObservable(vm, global, obj, vm.propertyNames->sourceURL);
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
@@ -685,20 +676,11 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
                 }
             }
 
-            {
-                for (int i = 1; i < except.stack.frames_len; i++) {
-                    auto& frame = except.stack.frames_ptr[i];
-                    frame.function_name.deref();
-                    frame.source_url.deref();
-                    if (auto* provider = std::exchange(frame.source_provider, nullptr))
-                        provider->deref();
-                }
-                except.stack.frames_len = 1;
-                PropertySlot slot = PropertySlot(obj, PropertySlot::InternalMethodType::VMInquiry, &vm);
-                except.stack.frames_ptr[0].remapped = obj->getNonIndexPropertySlot(global, names.originalLinePublicName(), slot);
-                if (!scope.clearExceptionExceptTermination()) [[unlikely]]
-                    return;
-            }
+            except.stack.frames_len = 1;
+            PropertySlot slot = PropertySlot(obj, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            except.stack.frames_ptr[0].remapped = obj->getNonIndexPropertySlot(global, names.originalLinePublicName(), slot);
+            if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                return;
         }
     }
 }

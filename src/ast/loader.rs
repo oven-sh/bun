@@ -173,8 +173,7 @@ impl Loader {
         })
     }
 
-    /// Every name `from_string` accepts, one `-  name` line each, for
-    /// "expected one of:" errors.
+    /// Formats every name `from_string` accepts as `\n-  name` lines.
     pub fn accepted_names_list() -> impl core::fmt::Display {
         AcceptedNamesList
     }

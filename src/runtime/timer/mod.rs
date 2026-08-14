@@ -1043,10 +1043,10 @@ impl All {
 
         // A native-only domain run has no timers of its own (spawnSync enforces
         // its timeout by deadline), so the heap neither wakes it nor is drained.
-        // SAFETY: `this` is live, and only this thread touches the regular heap.
         let reg_next = if bun_io::run_epoch::active_run_is_native_only() {
             None
         } else {
+            // SAFETY: `this` is live, and only this thread touches the regular heap.
             (unsafe { &*this }).timers.peek()
         }
         .map(|min| {

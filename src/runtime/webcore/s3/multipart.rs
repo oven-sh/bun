@@ -600,8 +600,7 @@ impl MultiPartUpload {
                     b"<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">",
                 );
                 self.multipart_etags.with_mut(|etags| {
-                    // Sort by part number. Part numbers are unique (assigned from a
-                    // monotonically increasing counter), so stability is not required.
+                    // sort the etags
                     etags.sort_unstable_by_key(|a| a.number);
                     for tag in etags.drain(..) {
                         write!(

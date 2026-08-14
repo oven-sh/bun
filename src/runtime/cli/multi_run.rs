@@ -1025,8 +1025,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             });
         }
 
-        // Phase 2: Sort by package name, then by path as tiebreaker for deterministic ordering.
-        // `dirpath` is unique per workspace, so the comparator is a total order and stability is moot.
+        // Phase 2: Sort by package name, then by path as tiebreaker for deterministic ordering
         matched_packages.sort_unstable_by(|a, b| {
             let name_order = a.name.cmp(&b.name);
             if name_order != core::cmp::Ordering::Equal {

@@ -257,15 +257,17 @@ impl RuntimeTranspilerStore {
         }
     }
 
-    /// Fulfil every completed job's module promise. A fulfilment that throws
-    /// ends this run: the rest of the batch goes back on the queue (each still
-    /// has its own posted task) and the exception is the tick loop's to fold.
+    /// Fulfil every completed job's module promise. This drain is a dispatcher:
+    /// each fulfilment is a JS entry of its own, so what one leaves pending is
+    /// folded here and the drain goes on; the VM's termination ends it, with
+    /// the rest of the batch back on the queue (each still has its own posted
+    /// task, or the teardown release, to pick it up).
     pub fn run_from_js_thread(
         &mut self,
         event_loop: NonNull<EventLoop>,
         global: &JSGlobalObject,
         vm: NonNull<VirtualMachine>,
-    ) -> JsResult<()> {
+    ) {
         let batch = self.queue.pop_batch();
         // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
         let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
@@ -278,9 +280,9 @@ impl RuntimeTranspilerStore {
                 // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
                 let drained =
                     unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) };
-                if let Err(stopped) = drained {
+                if drained.is_err() {
                     self.requeue(job, &mut iter);
-                    return Err(stopped.throw(global));
+                    return;
                 }
             }
             first = false;
@@ -288,12 +290,13 @@ impl RuntimeTranspilerStore {
             let fulfilled = unsafe { (*job).run_from_js_thread() };
             job = iter.next();
             if let Err(err) = fulfilled {
-                self.requeue(job, &mut iter);
-                return Err(err);
+                if crate::task::report_error_or_terminate(global, err).is_err() {
+                    self.requeue(job, &mut iter);
+                    return;
+                }
             }
         }
         // immediately after this is called, the microtasks will be drained again.
-        Ok(())
     }
 
     /// Put `job` and the rest of a popped batch back: each still has its posted

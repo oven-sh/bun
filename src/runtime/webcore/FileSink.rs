@@ -326,7 +326,7 @@ impl FileSink {
                             );
                             stream.cancel(global);
                         } else {
-                            crate::webcore::streams::settled_from_native(stream.done(global));
+                            stream.done(global);
                         }
                     }
                 }
@@ -345,12 +345,11 @@ impl FileSink {
                     sys::Tag::write,
                 ));
             });
-            let settled = FileSink::run_pending(this);
+            FileSink::run_pending(this);
 
             // `writer.close()` → `onClose` already released this above; kept for
             // paths where `onClose` isn't reached (e.g. writer already closed).
             FileSink::clear_keep_alive_ref(this);
-            crate::webcore::streams::settled_from_native(settled);
         }
     }
 
@@ -359,7 +358,7 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)). `WritablePending::run`
     /// may re-enter JS / drop refs / free `this` on the last `deref`; the body
     /// reborrows `(*this).field` per-statement only.
-    unsafe fn run_pending(this: *mut FileSink) -> JsResult<()> {
+    unsafe fn run_pending(this: *mut FileSink) {
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
             let _guard = FileSinkRef::new_ref(this);
@@ -370,26 +369,19 @@ impl FileSink {
             // SAFETY(JsCell): `WritablePending::run` resolves a JSPromise which may
             // re-enter JS, but no other path holds a borrow of `self.pending` for
             // the duration (host-fns gate on `pending.state != Pending` first).
-            let settled = (*this).pending.get_mut().run();
+            (*this).pending.get_mut().run();
 
             // Release the JS wrapper reference now that the pending operation is complete.
             // This was held to prevent GC from collecting the wrapper while the async
             // operation was in progress.
             (*this).js_sink_ref.with_mut(|r| r.deinit());
-            settled
         }
     }
 
     /// # Safety
     /// `this` must be the canonical live `*mut FileSink` (see
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
-    /// `Err` is the exception settling the parked write left pending; the
-    /// native drain/teardown below still runs, the JS wake-ups do not.
-    pub(crate) unsafe fn on_write(
-        this: *mut FileSink,
-        amount: usize,
-        status: WriteStatus,
-    ) -> JsResult<()> {
+    pub(crate) unsafe fn on_write(this: *mut FileSink, amount: usize, status: WriteStatus) {
         bun_core::scoped_log!(FileSink, "onWrite({}, {})", amount, status as u8);
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
@@ -423,10 +415,9 @@ impl FileSink {
 
             // if we are not done yet and has pending data we just wait so we do not runPending twice
             if status == WriteStatus::Pending && has_pending_data {
-                return Ok(());
+                return;
             }
 
-            let mut settled = Ok(());
             let was_pending = (*this).pending.get().state == streams::PendingState::Pending;
             if was_pending {
                 // `consumed` was credited when the pending operation accepted its
@@ -443,17 +434,14 @@ impl FileSink {
                         .with_mut(|p| p.result = streams::Writable::Owned(consumed));
                 }
 
-                settled = FileSink::run_pending(this);
+                FileSink::run_pending(this);
             }
 
-            // The source is woken whatever the settle left (a JS controller does
-            // nothing over a pending exception; a native producer resumes).
             if (was_pending || (status == WriteStatus::Drained && !has_pending_data))
                 && (*this).source_pending_pull.replace(false)
             {
                 let mut src = *(*this).source.get();
-                let ready = src.ready(None, None);
-                settled = settled.and(ready);
+                src.ready(None, None);
             }
 
             // `end()`'s Pending flush branch leaves the writer running; finish the
@@ -465,19 +453,17 @@ impl FileSink {
             }
 
             if status == WriteStatus::EndOfFile {
-                FileSink::clear_keep_alive_ref(this);
                 let mut src = *(*this).source.get();
-                let closed = src.close(None);
-                settled = settled.and(closed);
+                src.close(None);
+                FileSink::clear_keep_alive_ref(this);
             }
-            settled
         }
     }
 
     /// # Safety
     /// `this` must be the canonical live `*mut FileSink` (see
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
-    pub(crate) unsafe fn on_error(this: *mut FileSink, err: sys::Error) -> JsResult<()> {
+    pub(crate) unsafe fn on_error(this: *mut FileSink, err: sys::Error) {
         bun_core::scoped_log!(FileSink, "onError({:?})", err);
         // The streaming writer follows every `onError` with `close()` →
         // `onClose` (on both platforms), which fires `source.close()` and
@@ -492,13 +478,12 @@ impl FileSink {
                 if let Some(vm) = (*this).js_vm() {
                     if vm.is_inside_deferred_task_queue.get() {
                         (*this).run_pending_later();
-                        return Ok(());
+                        return;
                     }
                 }
 
-                return FileSink::run_pending(this);
+                FileSink::run_pending(this);
             }
-            Ok(())
         }
     }
 
@@ -513,7 +498,7 @@ impl FileSink {
         unsafe {
             if (*this).source_pending_pull.replace(false) {
                 let mut src = *(*this).source.get();
-                crate::webcore::streams::settled_from_native(src.ready(None, None));
+                src.ready(None, None);
             }
         }
     }
@@ -530,13 +515,13 @@ impl FileSink {
             if (*this).readable_stream.get_mut().has() {
                 if let Some(global) = (*this).js_global() {
                     if let Some(stream) = (*this).readable_stream.get().get(global) {
-                        crate::webcore::streams::settled_from_native(stream.done(global));
+                        stream.done(global);
                     }
                 }
             }
 
             let mut src = *(*this).source.get();
-            crate::webcore::streams::settled_from_native(src.close(None));
+            src.close(None);
 
             // The writer is fully closed; no further callbacks will arrive. Release
             // the ref taken when a write returned `.pending`. This must be the last
@@ -868,7 +853,7 @@ impl FileSink {
                         // `flush()`'s drain bypasses `on_write(Drained)`; resume the parked ByteStream here.
                         if (*this).source_pending_pull.replace(false) {
                             let mut src = *(*this).source.get();
-                            crate::webcore::streams::settled_from_native(src.ready(None, None));
+                            src.ready(None, None);
                         }
                     }
                 }
@@ -1466,7 +1451,7 @@ impl FlushPendingTask {
     /// `FileSink` that holds at least the ref taken in `run_pending_later()`
     /// when this task was enqueued (i.e. the canonical heap-allocation pointer
     /// with write+dealloc provenance is recoverable via `from_field_ptr!`).
-    pub(crate) unsafe fn run_from_js_thread(flush_pending: *mut FlushPendingTask) -> JsResult<()> {
+    pub(crate) unsafe fn run_from_js_thread(flush_pending: *mut FlushPendingTask) {
         // SAFETY: caller contract — `flush_pending` points to
         // `FileSink.run_pending_later` of a live FileSink. `Cell::replace`
         // reads-then-clears in one step so only a single raw deref is needed.
@@ -1481,9 +1466,8 @@ impl FlushPendingTask {
             // SAFETY: `this` is the canonical `*mut FileSink` recovered via
             // `from_field_ptr!` from the embedded `run_pending_later` task;
             // `_guard` keeps it live for the call.
-            return unsafe { FileSink::run_pending(this) };
+            unsafe { FileSink::run_pending(this) };
         }
-        Ok(())
     }
 }
 
@@ -1491,7 +1475,7 @@ impl FileSink {
     /// Does not ref or unref.
     fn handle_resolve_stream(&self, global_this: &JSGlobalObject) {
         if let Some(stream) = self.readable_stream.get().get(global_this).as_mut() {
-            crate::webcore::streams::settled_from_native(stream.done(global_this));
+            stream.done(global_this);
         }
 
         if !self.done.get() {

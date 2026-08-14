@@ -81,7 +81,7 @@ impl readable_stream::SourceContext for ByteStream {
     fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result {
         Self::on_pull(self, buf, view)
     }
-    fn on_cancel(&mut self) -> jsc::JsResult<()> {
+    fn on_cancel(&mut self) {
         Self::on_cancel(self)
     }
     fn deinit_fn(&mut self) {
@@ -209,23 +209,22 @@ impl ByteStream {
     }
 
     /// Sink closed early: detach and drive the NewSource cancel path.
-    pub fn cancel_from_sink(&self, _err: Option<SysError>) -> jsc::JsResult<()> {
+    pub fn cancel_from_sink(&self, _err: Option<SysError>) {
         self.sink.set(SinkHandle::None);
         self.sink_paused.set(false);
         if self.done.get() {
-            return Ok(());
+            return;
         }
         self.has_received_last_chunk.set(true);
-        let settled = self.on_cancel();
+        self.on_cancel();
         let source = self.parent_const();
         let mut p = source.producer.replace(streams::SourceHandle::None);
-        let closed = p.close(None);
-        settled.and(closed)
+        p.close(None);
     }
 
     #[inline]
     pub(crate) fn signal_drained(&self) {
-        streams::settled_from_native(self.parent_const().producer.get().ready(None, None));
+        self.parent_const().producer.get().ready(None, None);
     }
 
     /// Take the buffered bytes without signalling the producer; the caller
@@ -316,7 +315,7 @@ impl ByteStream {
                 // and `reject`; both can re-enter and consume the slot.
                 let mut action = self.buffer_action.replace(None).unwrap();
                 self.signal_drained();
-                let res = action.reject(global, err);
+                action.reject(global, err);
 
                 self.buffer.with_mut(|b| {
                     b.clear();
@@ -328,7 +327,7 @@ impl ByteStream {
                 });
                 self.buffer_action.set(None);
 
-                return res;
+                return Ok(());
             }
 
             // R-2: the drain signal can re-enter and consume `buffer_action`,
@@ -349,7 +348,8 @@ impl ByteStream {
                     );
 
                     let mut blob = self.to_any_blob().unwrap();
-                    return action.fulfill(self.parent_const().global_this(), &mut blob);
+                    action.fulfill(self.parent_const().global_this(), &mut blob);
+                    return Ok(());
                 }
                 if self.buffer.get().capacity() == 0 {
                     if let streams::Result::OwnedAndDone(mut owned) = stream {
@@ -363,7 +363,8 @@ impl ByteStream {
                         // `stream`).
                         self.buffer.set(owned.move_to_list_managed());
                         let mut blob = self.to_any_blob().unwrap();
-                        return action.fulfill(self.parent_const().global_this(), &mut blob);
+                        action.fulfill(self.parent_const().global_this(), &mut blob);
+                        return Ok(());
                     }
                 }
 
@@ -379,7 +380,8 @@ impl ByteStream {
                 // (Temporary* variants are non-owning `RawSlice` and so are left alone).
                 drop(stream);
                 let mut blob = self.to_any_blob().unwrap();
-                return action.fulfill(self.parent_const().global_this(), &mut blob);
+                action.fulfill(self.parent_const().global_this(), &mut blob);
+                return Ok(());
             } else {
                 self.buffer
                     .with_mut(|b| b.extend_from_slice(stream.slice()));
@@ -465,7 +467,7 @@ impl ByteStream {
             // `with_mut` borrow is `UnsafeCell`-backed so `noalias` is
             // suppressed on `&self`, which is the load-bearing fix vs the old
             // `&mut self` form.
-            self.pending.with_mut(|p| p.run())?;
+            self.pending.with_mut(|p| p.run());
 
             return Ok(());
         }
@@ -605,8 +607,7 @@ impl ByteStream {
         streams::Result::Pending(self.pending.as_ptr())
     }
 
-    pub(crate) fn on_cancel(&self) -> jsc::JsResult<()> {
-        let mut settled: jsc::JsResult<()> = Ok(());
+    pub(crate) fn on_cancel(&self) {
         bun_jsc::mark_binding!();
         let view = self.value();
         if self.buffer.get().capacity() > 0 {
@@ -624,20 +625,17 @@ impl ByteStream {
                 p.result.release();
                 p.result = streams::Result::Done;
             });
-            settled = self.pending.with_mut(|p| p.run());
+            self.pending.with_mut(|p| p.run());
         }
 
         if let Some(mut action) = self.buffer_action.replace(None) {
             let global = self.parent_const().global_this();
-            settled = settled.and_then(|()| {
-                action.reject(
-                    global,
-                    &streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort),
-                )
-            });
+            action.reject(
+                global,
+                &streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort),
+            );
             self.buffer_action.set(None);
         }
-        settled
     }
 
     fn memory_cost(&self) -> usize {
@@ -679,9 +677,7 @@ impl ByteStream {
             } else {
                 // A `Handler` future is a native continuation, not script:
                 // nothing to settle, so nothing can be left pending.
-                let Ok(()) = self.pending.with_mut(|p| p.run()) else {
-                    unreachable!("GC finalizer settled a promise")
-                };
+                self.pending.with_mut(|p| p.run());
             }
         }
         if let Some(action) = self.buffer_action.replace(None) {

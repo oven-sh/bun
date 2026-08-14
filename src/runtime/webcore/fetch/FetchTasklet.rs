@@ -2161,21 +2161,16 @@ impl FetchTasklet {
     fn resume_request_data_stream(this: *mut FetchTasklet) -> ElJsResult<()> {
         let this_ref = Self::from_raw_mut(this);
         bun_output::scoped_log!(FetchTasklet, "resumeRequestDataStream");
-        let drained = (|| {
-            if this_ref.signal_aborted() {
-                // already aborted; nothing to drain
-                return Ok(());
-            }
+        if !this_ref.signal_aborted() {
             let global_this = this_ref.global_this;
-            match this_ref.sink_mut() {
-                Some(sink) => sink.on_drain(&global_this),
-                None => Ok(()),
+            if let Some(sink) = this_ref.sink_mut() {
+                sink.on_drain(&global_this);
             }
-        })();
+        }
         // deref when done because we ref inside onWriteRequestDataDrain
         // SAFETY: `this` is the live heap tasklet; we hold a ref.
         FetchTasklet::deref(this);
-        drained
+        Ok(())
     }
 
     /// Whether the request body should skip chunked transfer encoding framing.
@@ -2339,12 +2334,11 @@ impl FetchTasklet {
         self.abort_task();
         if let Some(sink) = self.sink_mut() {
             sink.pending.result = Writable::Done;
-            let settled = sink.pending.run();
-            crate::webcore::streams::settled_from_native(sink.source.close(None));
+            sink.pending.run();
+            sink.source.close(None);
             if is_native {
                 sink.task = None;
             }
-            crate::webcore::streams::settled_from_native(settled);
         }
         if is_native {
             // No pump promise exists to balance the `+1` from

@@ -1644,7 +1644,7 @@ impl BlobExt for Blob {
                     jsc::js_promise::Status::Fulfilled => {
                         // SAFETY: release our +1 ref on the sink.
                         unsafe { webcore::FileSink::deref(file_sink) };
-                        readable_stream.done(global_this)?;
+                        readable_stream.done(global_this);
                         return Ok(JSPromise::resolved_promise_value(
                             global_this,
                             JSValue::js_number(0.0),
@@ -5895,7 +5895,7 @@ pub(crate) fn on_file_stream_resolve_request_stream(
     };
     let strong = core::mem::take(&mut this.readable_stream_ref);
     if let Some(stream) = strong.get(global_this) {
-        stream.done(global_this)?;
+        stream.done(global_this);
     }
     this.promise.resolve(global_this, JSValue::js_number(0.0))?;
     Ok(JSValue::UNDEFINED)

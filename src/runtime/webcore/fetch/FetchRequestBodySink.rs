@@ -235,7 +235,7 @@ impl FetchRequestBodySink {
             Some(StreamError::Error(e)) => Some(e),
             _ => None,
         };
-        crate::webcore::streams::settled_from_native(self.source.close(sys_err));
+        self.source.close(sys_err);
     }
 
     pub fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
@@ -258,12 +258,11 @@ impl FetchRequestBodySink {
     }
 
     /// HTTP-thread drain ack: resolves the pending write/flush promise and wakes source.ready().
-    pub fn on_drain(&mut self, _global_this: &JSGlobalObject) -> bun_jsc::JsResult<()> {
+    pub fn on_drain(&mut self, _global_this: &JSGlobalObject) {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "onDrain");
         self.pending_bytes = 0;
-        self.pending.run()?;
-        self.source.ready(None, None)?;
-        Ok(())
+        self.pending.run();
+        self.source.ready(None, None);
     }
 
     pub fn memory_cost(&self) -> usize {

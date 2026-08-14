@@ -251,16 +251,14 @@ pub trait PosixBufferedWriterParent {
     const POLL_OWNER_TAG: PollTag;
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) -> crate::JsResult<()>;
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn on_error(this: *mut Self, err: sys::Error) -> crate::JsResult<()>;
+    unsafe fn on_error(this: *mut Self, err: sys::Error);
     const HAS_ON_CLOSE: bool;
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn on_close(_this: *mut Self) -> crate::JsResult<()> {
-        Ok(())
-    }
+    unsafe fn on_close(_this: *mut Self) {}
     /// # Safety
     /// `this` must point to a live `Self`; returned slice borrows from it.
     unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8];
@@ -358,7 +356,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     #[inline]
     fn parent_on_error(&self, err: sys::Error) {
         // SAFETY: type invariant — set-once parent backref outlives writer.
-        crate::fold_parent(unsafe { Parent::on_error(self.parent(), err) })
+        unsafe { Parent::on_error(self.parent(), err) }
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -414,7 +412,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         }
 
         // SAFETY: parent BACKREF valid.
-        crate::fold_parent(unsafe { Parent::on_write(parent, written, status) });
+        unsafe { Parent::on_write(parent, written, status) };
         // Re-escape so the trailing `close()` cannot reuse the spilled
         // `self.handle` from before `on_write`.
         core::hint::black_box(this);
@@ -477,15 +475,13 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
             if self.closed_without_reporting {
                 self.closed_without_reporting = false;
                 // SAFETY: parent BACKREF valid.
-                crate::fold_parent(unsafe { Parent::on_close(self.parent()) });
+                unsafe { Parent::on_close(self.parent()) };
             } else {
                 let parent = self.parent();
                 self.handle.close_impl(
                     Some(parent.cast()),
-                    Some(|ctx: *mut c_void| {
-                        // SAFETY: parent was set via set_parent with a *mut Parent.
-                        crate::fold_parent(unsafe { Parent::on_close(ctx.cast::<Parent>()) })
-                    }),
+                    // SAFETY: parent was set via set_parent with a *mut Parent.
+                    Some(|ctx: *mut c_void| unsafe { Parent::on_close(ctx.cast::<Parent>()) }),
                     self.close_fd,
                 );
             }
@@ -571,19 +567,17 @@ pub trait PosixStreamingWriterParent {
     const POLL_OWNER_TAG: PollTag;
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) -> crate::JsResult<()>;
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn on_error(this: *mut Self, err: sys::Error) -> crate::JsResult<()>;
+    unsafe fn on_error(this: *mut Self, err: sys::Error);
     const HAS_ON_READY: bool;
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn on_ready(_this: *mut Self) -> crate::JsResult<()> {
-        Ok(())
-    }
+    unsafe fn on_ready(_this: *mut Self) {}
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn on_close(this: *mut Self) -> crate::JsResult<()>;
+    unsafe fn on_close(this: *mut Self);
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
@@ -674,7 +668,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     /// [`set_parent`](Self::set_parent) before any write path is reached, and
     /// the writer is an intrusive field of `*parent` so the pointee strictly
     /// outlives `self`. Collapses the N identical
-    /// `crate::fold_parent(unsafe { Parent::on_write(self.parent(), ..) })` blocks (one per
+    /// `unsafe { Parent::on_write(self.parent(), ..) }` blocks (one per
     /// `WriteResult` arm) into one. `on_write` may re-enter via the parent's
     /// intrusive `writer` field; callers that read `self` afterwards must
     /// launder (R-2 noalias) — the existing laundered sites in `_on_write` /
@@ -685,7 +679,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         // on_write may re-enter write(); record first so re-entry leaves the newer value.
         self.backed_up.set(status == WriteStatus::Pending);
         // SAFETY: type invariant — set-once parent backref outlives writer.
-        crate::fold_parent(unsafe { Parent::on_write(self.parent(), amount, status) })
+        unsafe { Parent::on_write(self.parent(), amount, status) }
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -737,7 +731,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.outgoing.reset();
 
         // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-        crate::fold_parent(unsafe { Parent::on_error(self.parent(), err) });
+        unsafe { Parent::on_error(self.parent(), err) };
         self.close();
     }
 
@@ -789,7 +783,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 // field reads. Launder so `close()` sees fresh state.
                 let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
                 // SAFETY: parent BACKREF valid.
-                crate::fold_parent(unsafe { Parent::on_error(Self::r(this).parent(), err) });
+                unsafe { Parent::on_error(Self::r(this).parent(), err) };
                 // `this` is still live (parent owns this writer; an on_error
                 // handler may end/detach but never frees mid-call).
                 Self::r(this).close();
@@ -1028,17 +1022,15 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             self.closed_without_reporting = false;
             debug_assert!(self.get_fd() == Fd::INVALID);
             // SAFETY: parent BACKREF valid.
-            crate::fold_parent(unsafe { Parent::on_close(self.parent()) });
+            unsafe { Parent::on_close(self.parent()) };
             return;
         }
 
         let parent = self.parent;
         self.handle.close(
             Some(parent.cast()),
-            Some(|ctx: *mut c_void| {
-                // SAFETY: parent was set via set_parent with a *mut Parent.
-                crate::fold_parent(unsafe { Parent::on_close(ctx.cast::<Parent>()) })
-            }),
+            // SAFETY: parent was set via set_parent with a *mut Parent.
+            Some(|ctx: *mut c_void| unsafe { Parent::on_close(ctx.cast::<Parent>()) }),
         );
     }
 
@@ -1370,25 +1362,21 @@ pub trait WindowsWriterParent {
 pub trait WindowsBufferedWriterParent: WindowsWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) -> crate::JsResult<()>;
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn on_error(this: *mut Self, err: sys::Error) -> crate::JsResult<()>;
+    unsafe fn on_error(this: *mut Self, err: sys::Error);
     const HAS_ON_CLOSE: bool;
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn on_close(_this: *mut Self) -> crate::JsResult<()> {
-        Ok(())
-    }
+    unsafe fn on_close(_this: *mut Self) {}
     /// # Safety
     /// `this` must point to a live `Self`; returned slice borrows from it.
     unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8];
     const HAS_ON_WRITABLE: bool;
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn on_writable(_this: *mut Self) -> crate::JsResult<()> {
-        Ok(())
-    }
+    unsafe fn on_writable(_this: *mut Self) {}
 }
 
 #[cfg(windows)]
@@ -1453,7 +1441,7 @@ impl<Parent: WindowsBufferedWriterParent> BaseWindowsPipeWriter for WindowsBuffe
         }
         if Parent::HAS_ON_CLOSE {
             // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
-            crate::fold_parent(unsafe { Parent::on_close(self.parent) });
+            unsafe { Parent::on_close(self.parent) };
         }
     }
     fn closed_without_reporting(&self) -> bool {
@@ -1501,7 +1489,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
     #[inline]
     fn parent_on_error(&self, err: sys::Error) {
         // SAFETY: type invariant — set-once parent backref outlives writer.
-        crate::fold_parent(unsafe { Parent::on_error(self.parent(), err) })
+        unsafe { Parent::on_error(self.parent(), err) }
     }
 
     /// Laundered-receiver variant of [`parent_on_error`](Self::parent_on_error).
@@ -1519,7 +1507,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
     fn r_on_error(this: *mut Self, err: sys::Error) {
         let parent = Self::r(this).parent;
         // SAFETY: type invariant — set-once parent backref outlives writer.
-        crate::fold_parent(unsafe { Parent::on_error(parent, err) })
+        unsafe { Parent::on_error(parent, err) }
     }
 
     /// See [`r_on_error`](Self::r_on_error). Reads `self.parent` at guard
@@ -1565,7 +1553,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         let has_pending_data = pending.len().saturating_sub(written) != 0;
         let is_done_before = Self::r(this).is_done;
         // SAFETY: parent BACKREF valid.
-        crate::fold_parent(unsafe {
+        unsafe {
             Parent::on_write(
                 Self::r(this).parent(),
                 written,
@@ -1575,7 +1563,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
                     WriteStatus::Pending
                 },
             )
-        });
+        };
         // Re-escape so the trailing `is_done`/`parent`/`close()` cannot reuse
         // values spilled from before `on_write`.
         core::hint::black_box(this);
@@ -1588,7 +1576,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
 
         if Parent::HAS_ON_WRITABLE {
             // SAFETY: parent BACKREF valid.
-            crate::fold_parent(unsafe { Parent::on_writable(Self::r(this).parent()) });
+            unsafe { Parent::on_writable(Self::r(this).parent()) };
         }
     }
 
@@ -1902,19 +1890,17 @@ pub trait WindowsStreamingWriterParent: WindowsWriterParent {
     /// other pending data to send (but we may send more data)
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) -> crate::JsResult<()>;
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn on_error(this: *mut Self, err: sys::Error) -> crate::JsResult<()>;
+    unsafe fn on_error(this: *mut Self, err: sys::Error);
     const HAS_ON_WRITABLE: bool;
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn on_writable(_this: *mut Self) -> crate::JsResult<()> {
-        Ok(())
-    }
+    unsafe fn on_writable(_this: *mut Self) {}
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn on_close(this: *mut Self) -> crate::JsResult<()>;
+    unsafe fn on_close(this: *mut Self);
 }
 
 #[cfg(windows)]
@@ -1992,7 +1978,7 @@ impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter
             return;
         }
         // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
-        crate::fold_parent(unsafe { Parent::on_close(self.parent) });
+        unsafe { Parent::on_close(self.parent) };
     }
     fn closed_without_reporting(&self) -> bool {
         self.closed_without_reporting
@@ -2044,7 +2030,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     fn r_on_error(this: *mut Self, err: sys::Error) {
         let parent = Self::r(this).parent;
         // SAFETY: type invariant — set-once parent backref outlives writer.
-        crate::fold_parent(unsafe { Parent::on_error(parent, err) })
+        unsafe { Parent::on_error(parent, err) }
     }
 
     /// See [`r_on_error`](Self::r_on_error) for the encapsulated type
@@ -2054,7 +2040,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     fn r_on_write(this: *mut Self, written: usize, status: WriteStatus) {
         let parent = Self::r(this).parent;
         // SAFETY: type invariant — set-once parent backref outlives writer.
-        crate::fold_parent(unsafe { Parent::on_write(parent, written, status) })
+        unsafe { Parent::on_write(parent, written, status) }
     }
 
     /// See [`r_on_error`](Self::r_on_error) for the encapsulated type
@@ -2167,7 +2153,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // TODO: should we report writable?
         if Parent::HAS_ON_WRITABLE {
             // SAFETY: parent BACKREF valid.
-            crate::fold_parent(unsafe { Parent::on_writable(Self::r(this).parent()) });
+            unsafe { Parent::on_writable(Self::r(this).parent()) };
         }
     }
 
@@ -2631,28 +2617,28 @@ macro_rules! impl_streaming_writer_parent {
             const POLL_OWNER_TAG: $crate::PollTag = $poll_tag;
             const HAS_ON_READY: bool = true;
             #[inline]
-            unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) -> $crate::JsResult<()> {
+            unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: `this` is the BACKREF set via `set_parent`; the
                 // StreamingWriter never materializes `&mut Parent`. The handler
                 // is dispatched per the `borrow` mode (`mut`/`shared`/`ptr` —
                 // see the module comment); `ptr` keeps full write/dealloc
                 // provenance through re-entrant, freeing callbacks.
-                $crate::IntoParentResult::into_parent_result(unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_write(amount, status)) })
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_write(amount, status)) }
             }
             #[inline]
-            unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) -> $crate::JsResult<()> {
+            unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
                 // SAFETY: see on_write.
-                $crate::IntoParentResult::into_parent_result(unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_error(err)) })
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_error(err)) }
             }
             #[inline]
-            unsafe fn on_ready(this: *mut Self) -> $crate::JsResult<()> {
+            unsafe fn on_ready(this: *mut Self) {
                 // SAFETY: see on_write.
-                $crate::IntoParentResult::into_parent_result(unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_ready()) })
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_ready()) }
             }
             #[inline]
-            unsafe fn on_close(this: *mut Self) -> $crate::JsResult<()> {
+            unsafe fn on_close(this: *mut Self) {
                 // SAFETY: see on_write.
-                $crate::IntoParentResult::into_parent_result(unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_close()) })
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_close()) }
             }
             #[inline]
             unsafe fn event_loop(this: *mut Self) -> $crate::EventLoopHandle {
@@ -2700,24 +2686,24 @@ macro_rules! impl_streaming_writer_parent {
             // Same body as POSIX `on_ready`.
             const HAS_ON_WRITABLE: bool = true;
             #[inline]
-            unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) -> $crate::JsResult<()> {
+            unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: BACKREF set via `set_parent`; see borrow-mode note.
-                $crate::IntoParentResult::into_parent_result(unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_write(amount, status)) })
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_write(amount, status)) }
             }
             #[inline]
-            unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) -> $crate::JsResult<()> {
+            unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
                 // SAFETY: see on_write.
-                $crate::IntoParentResult::into_parent_result(unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_error(err)) })
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_error(err)) }
             }
             #[inline]
-            unsafe fn on_writable(this: *mut Self) -> $crate::JsResult<()> {
+            unsafe fn on_writable(this: *mut Self) {
                 // SAFETY: see on_write.
-                $crate::IntoParentResult::into_parent_result(unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_ready()) })
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_ready()) }
             }
             #[inline]
-            unsafe fn on_close(this: *mut Self) -> $crate::JsResult<()> {
+            unsafe fn on_close(this: *mut Self) {
                 // SAFETY: see on_write.
-                $crate::IntoParentResult::into_parent_result(unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_close()) })
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_close()) }
             }
         }
     };
@@ -2765,22 +2751,22 @@ macro_rules! impl_buffered_writer_parent {
         impl $($gen)* $crate::pipe_writer::PosixBufferedWriterParent for $Ty {
             const POLL_OWNER_TAG: $crate::PollTag = $poll_tag;
             #[inline]
-            unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) -> $crate::JsResult<()> {
+            unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: `this` is the BACKREF set via `set_parent`; the
                 // BufferedWriter never materializes `&mut Parent`, so this is
                 // the unique access path for the callback's duration.
-                $crate::IntoParentResult::into_parent_result(unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_write(amount, status) })
+                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_write(amount, status) };
             }
             #[inline]
-            unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) -> $crate::JsResult<()> {
+            unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
                 // SAFETY: see on_write.
-                $crate::IntoParentResult::into_parent_result(unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(&err) })
+                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(&err) };
             }
             const HAS_ON_CLOSE: bool = true;
             #[inline]
-            unsafe fn on_close(this: *mut Self) -> $crate::JsResult<()> {
+            unsafe fn on_close(this: *mut Self) {
                 // SAFETY: see on_write.
-                $crate::IntoParentResult::into_parent_result(unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_close() })
+                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_close() };
             }
             #[inline]
             unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
@@ -2826,20 +2812,20 @@ macro_rules! impl_buffered_writer_parent {
         #[cfg(windows)]
         impl $($gen)* $crate::pipe_writer::WindowsBufferedWriterParent for $Ty {
             #[inline]
-            unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) -> $crate::JsResult<()> {
+            unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: BACKREF set via `set_parent`; see borrow-mode note.
-                $crate::IntoParentResult::into_parent_result(unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_write(amount, status) })
+                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_write(amount, status) };
             }
             #[inline]
-            unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) -> $crate::JsResult<()> {
+            unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
                 // SAFETY: see on_write.
-                $crate::IntoParentResult::into_parent_result(unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(&err) })
+                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(&err) };
             }
             const HAS_ON_CLOSE: bool = true;
             #[inline]
-            unsafe fn on_close(this: *mut Self) -> $crate::JsResult<()> {
+            unsafe fn on_close(this: *mut Self) {
                 // SAFETY: see on_write.
-                $crate::IntoParentResult::into_parent_result(unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_close() })
+                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_close() };
             }
             #[inline]
             unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {

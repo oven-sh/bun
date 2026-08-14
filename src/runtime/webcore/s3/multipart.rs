@@ -154,8 +154,7 @@ pub struct MultiPartUpload {
     pub(crate) state: Cell<State>,
 
     pub callback: fn(S3UploadResult, *mut c_void) -> bun_jsc::JsResult<()>,
-    /// The sink whose source to wake; returns what waking it left pending.
-    pub(crate) on_writable: Option<fn(&MultiPartUpload, *mut c_void, u64) -> bun_jsc::JsResult<()>>,
+    pub(crate) on_writable: Option<fn(&MultiPartUpload, *mut c_void, u64)>,
     pub(crate) callback_context: Cell<*mut c_void>,
 }
 
@@ -443,17 +442,14 @@ impl MultiPartUpload {
             S3UploadResult::Success => {
                 scoped_log!(S3MultiPartUpload, "singleSendUploadResponse success");
 
-                let woke = match self_.on_writable {
-                    Some(callback) => callback(
+                if let Some(callback) = self_.on_writable {
+                    callback(
                         self_,
                         self_.callback_context.get(),
                         self_.buffered.get().size() as u64,
-                    ),
-                    None => Ok(()),
-                };
-                // The upload finishes whatever waking the source left pending.
-                let done = self_.done();
-                woke.and(done)
+                    );
+                }
+                self_.done()
             }
         }
     }
@@ -544,22 +540,17 @@ impl MultiPartUpload {
 
         // empty queue
         if self.is_queue_empty() {
-            let woke = match self.on_writable {
-                Some(callback) => callback(self, self.callback_context.get(), flushed),
-                None => Ok(()),
-            };
+            if let Some(callback) = self.on_writable {
+                callback(self, self.callback_context.get(), flushed);
+            }
             // `on_writable` may re-enter and enqueue a final part; re-check.
-            // The upload finishes whatever waking the source left pending.
             if self.ended.get() && self.is_queue_empty() {
-                let done = self.done();
-                woke.and(done)?;
-            } else {
-                woke?;
+                self.done()?;
             }
         } else if !self.has_backpressure() && flushed > 0 {
             // we have more space in the queue, we can drain more
             if let Some(callback) = self.on_writable {
-                callback(self, self.callback_context.get(), flushed)?;
+                callback(self, self.callback_context.get(), flushed);
             }
         }
         Ok(())

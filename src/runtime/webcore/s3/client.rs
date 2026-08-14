@@ -476,8 +476,8 @@ pub(crate) fn writable_stream(
         // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below.
         wrapper_callback(result, unsafe { bun_ptr::callback_ctx::<NetworkSink>(ctx) })
     }
-    fn on_writable_thunk(task: &MultiPartUpload, ctx: *mut c_void, flushed: u64) -> JsResult<()> {
-        NetworkSink::on_writable(task, ctx.cast::<NetworkSink>(), flushed)
+    fn on_writable_thunk(task: &MultiPartUpload, ctx: *mut c_void, flushed: u64) {
+        NetworkSink::on_writable(task, ctx.cast::<NetworkSink>(), flushed);
     }
 
     let proxy_url = proxy.unwrap_or(b"");
@@ -612,11 +612,7 @@ impl S3UploadStreamWrapper {
         unsafe { &*self.task }
     }
 
-    pub(crate) fn on_writable(
-        task: &MultiPartUpload,
-        self_: &mut Self,
-        flushed: u64,
-    ) -> JsResult<()> {
+    pub(crate) fn on_writable(task: &MultiPartUpload, self_: &mut Self, flushed: u64) {
         bun_output::scoped_log!(
             S3UploadStream,
             "onWritable {} {}",
@@ -625,12 +621,11 @@ impl S3UploadStreamWrapper {
         );
         // end was called we dont need to drain anymore
         if task.ended.get() {
-            return Ok(());
+            return;
         }
-        match self_.sink_mut() {
+        if let Some(sink) = self_.sink_mut() {
             // Fires `source.ready()` so the upstream pump resumes.
-            Some(sink) => NetworkSink::on_writable(task, sink, flushed),
-            None => Ok(()),
+            NetworkSink::on_writable(task, sink, flushed);
         }
     }
 
@@ -680,7 +675,7 @@ impl S3UploadStreamWrapper {
         match &result {
             S3UploadResult::Success => {
                 if let Some(sink) = self_.sink_mut() {
-                    sink.pending.run()?;
+                    sink.pending.run();
                     if sink.flush_promise.has_value() {
                         sink.flush_promise
                             .resolve(&global, JSValue::js_number(0.0))?;
@@ -725,16 +720,17 @@ impl S3UploadStreamWrapper {
                     sink.ended = true;
                     sink.done = true;
                     sink.pending.result = crate::webcore::streams::Writable::Done;
+                    sink.pending.run();
                     settled = (|| -> JsResult<()> {
-                        sink.pending.run()?;
                         if sink.flush_promise.has_value() {
                             sink.flush_promise.reject(&global, Ok(js_err))?;
                         }
                         if sink.end_promise.has_value() {
                             sink.end_promise.reject(&global, Ok(js_err))?;
                         }
-                        sink.source.close(None)
+                        Ok(())
                     })();
+                    sink.source.close(None);
                 }
                 // The pump ref is released whatever the settles above left.
                 if is_native {
@@ -930,13 +926,13 @@ pub(crate) fn upload_stream(
             bun_ptr::callback_ctx::<S3UploadStreamWrapper>(ctx)
         })
     }
-    fn on_writable_thunk(task: &MultiPartUpload, ctx: *mut c_void, flushed: u64) -> JsResult<()> {
+    fn on_writable_thunk(task: &MultiPartUpload, ctx: *mut c_void, flushed: u64) {
         // SAFETY: task is the live MultiPartUpload; ctx is the wrapper set as callback_context.
         S3UploadStreamWrapper::on_writable(
             task,
             unsafe { bun_ptr::callback_ctx::<S3UploadStreamWrapper>(ctx) },
             flushed,
-        )
+        );
     }
 
     // `credentials` is owned-by-value and explicitly `.deref()`ed on each early

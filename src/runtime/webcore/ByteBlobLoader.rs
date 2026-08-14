@@ -48,9 +48,8 @@ impl readable_stream::SourceContext for ByteBlobLoader {
     fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result {
         Self::on_pull(self, buf, view)
     }
-    fn on_cancel(&mut self) -> JsResult<()> {
+    fn on_cancel(&mut self) {
         Self::on_cancel(self);
-        Ok(())
     }
     fn deinit_fn(&mut self) {
         Self::deinit(self)

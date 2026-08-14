@@ -706,29 +706,19 @@ impl<T> IntoParentResult<T> for JsResult<T> {
 unsafe extern "Rust" {
     /// `bun_jsc`: report the exception a loop-level callback left pending as
     /// uncaught, or stand down if it is the VM's termination. This crate sits
-    /// below the JS tiers, so the readers/writers it drives reach the fold
-    /// through this one hook.
+    /// below the JS tiers, so the readers it drives reach the fold through
+    /// this one hook.
     fn __bun_fold_loop_js_error(err: bun_core::JsError);
 }
 
-/// The fold for the pipe reader/writer trampolines: what a parent's callback
-/// left pending is reported here (JS thread), and the caller stops driving I/O
-/// for this event. Usually the outermost frame (a poll or uv callback); a
-/// writer's `write`/`flush`/`end` also reaches its parent synchronously from a
-/// host function, where the report is that call's and no checkpoint runs.
+/// The fold for the pipe reader trampolines (a poll or uv callback, the
+/// outermost frame): what a parent's callback left pending is reported here
+/// (JS thread), and the caller stops driving I/O for this event.
 #[cold]
 #[inline(never)]
 pub(crate) fn fold_loop_js_error(err: bun_core::JsError) {
     // SAFETY: link-time resolved; defined `#[no_mangle]` in `bun_jsc`.
     unsafe { __bun_fold_loop_js_error(err) }
-}
-
-/// The pipe writers' fold at each call into their parent.
-#[inline(always)]
-pub(crate) fn fold_parent(called: JsResult<()>) {
-    if let Err(err) = called {
-        fold_loop_js_error(err);
-    }
 }
 
 pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};

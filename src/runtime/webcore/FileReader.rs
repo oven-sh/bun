@@ -640,7 +640,7 @@ impl FileReader {
         true
     }
 
-    pub(crate) fn on_read_chunk(&self, init_buf: &[u8], state: ReadState) -> jsc::JsResult<bool> {
+    pub(crate) fn on_read_chunk(&self, init_buf: &[u8], state: ReadState) -> bool {
         let mut buf = init_buf;
         bun_core::scoped_log!(
             FileReader,
@@ -652,7 +652,7 @@ impl FileReader {
 
         if self.done.get() {
             self.reader().close();
-            return Ok(false);
+            return false;
         }
         let mut close = false;
         // The close-on-exit is handled at each return
@@ -670,7 +670,7 @@ impl FileReader {
             if let Some(max_size) = self.max_size {
                 let total_readed = self.total_readed.get();
                 if total_readed >= max_size {
-                    return Ok(false);
+                    return false;
                 }
                 let len = (max_size - total_readed).min(buf.len());
                 if buf.len() > len {
@@ -714,19 +714,19 @@ impl FileReader {
                     streams::Writable::Backpressure(_) => {
                         self.sink_paused.set(true);
                         close_if_needed!();
-                        return Ok(false);
+                        return false;
                     }
                     streams::Writable::Err(e) => {
                         self.sink.set(SinkHandle::None);
                         sink.end(Some(streams::StreamError::Error(e)));
                         close_if_needed!();
-                        return Ok(false);
+                        return false;
                     }
                     streams::Writable::Done => {
                         self.sink.set(SinkHandle::None);
                         sink.end(None);
                         close_if_needed!();
-                        return Ok(false);
+                        return false;
                     }
                     _ => {}
                 }
@@ -736,7 +736,7 @@ impl FileReader {
                 sink.end(None);
             }
             close_if_needed!();
-            return Ok(has_more);
+            return has_more;
         }
 
         if !self.read_inside_on_pull.get().is_none() {
@@ -775,7 +775,7 @@ impl FileReader {
             if buf.is_empty() && state == ReadState::Drained {
                 // If the reader is not done, we still want to keep reading.
                 close_if_needed!();
-                return Ok(true);
+                return true;
             }
 
             // A labeled block computes `ret`, then cleanup + run + return.
@@ -898,7 +898,7 @@ impl FileReader {
             let parent = self.parent();
             // SAFETY: see `parent()`.
             unsafe { (*parent).increment_count() };
-            let settled = self.pending.with_mut(|p| p.run());
+            self.pending.with_mut(|p| p.run());
             close_if_needed!();
             // Re-entrant cancel (sets `done`) or a nested on_pull that read to
             // EOF (sets IS_DONE via on_reader_done but not `self.done`) closed
@@ -912,7 +912,7 @@ impl FileReader {
             // SAFETY: see `parent()`; the pin keeps the count >= 1, so this
             // never frees. `self` is not accessed after.
             let _ = unsafe { Source::decrement_count(parent) };
-            return settled.map(|()| ret);
+            return ret;
         } else if !is_slice_in_vec_capacity(buf, self.buffered.get()) {
             self.buffered.with_mut(|b| b.extend_from_slice(buf));
             // SAFETY: see `reader_buffer` decl.
@@ -937,7 +937,7 @@ impl FileReader {
             || (self.flowing.get()
                 && self.buffered.get().len() + reader_buffer_len < self.highwater_mark));
         close_if_needed!();
-        Ok(ret)
+        ret
     }
 
     fn is_pulling(&self) -> bool {
@@ -1118,7 +1118,7 @@ impl FileReader {
         }
     }
 
-    pub(crate) fn on_reader_done(&self) -> jsc::JsResult<()> {
+    pub(crate) fn on_reader_done(&self) {
         bun_core::scoped_log!(FileReader, "onReaderDone()");
         // Pin across `p.run()` and `on_close()`: both can run user JS, and the
         // `self.buffered` / `waiting_for_on_reader_done` reads below must not
@@ -1126,7 +1126,6 @@ impl FileReader {
         let parent = self.parent();
         // SAFETY: see `parent()`.
         unsafe { (*parent).increment_count() };
-        let mut settled = Ok(());
         let sink = *self.sink.get();
         if sink.is_some() {
             self.consume_reader_buffer();
@@ -1151,15 +1150,14 @@ impl FileReader {
                     self.pending.with_mut(|p| p.result = streams::Result::Done);
                 }
                 self.buffered.set(Vec::new());
-                settled = self.pending.with_mut(|p| p.run());
+                self.pending.with_mut(|p| p.run());
             }
             // Don't handle buffered data here - it will be returned on the next onPull
             // This ensures proper ordering of chunks
         }
 
         // Only close the stream if there's no buffered data left to deliver
-        // (and the settle above left nothing pending to re-enter JS over).
-        if settled.is_ok() && self.buffered.get().is_empty() {
+        if self.buffered.get().is_empty() {
             // SAFETY: see `parent()`; the pin keeps the count > 0.
             unsafe { (*parent).on_close() };
         }
@@ -1172,10 +1170,9 @@ impl FileReader {
         // field of `*parent`) is not accessed after this call, which may free
         // the allocation when the refcount hits zero.
         let _ = unsafe { Source::decrement_count(parent) };
-        settled
     }
 
-    pub(crate) fn on_reader_error(&self, err: sys::Error) -> jsc::JsResult<()> {
+    pub(crate) fn on_reader_error(&self, err: sys::Error) {
         self.consume_reader_buffer();
         if self.buffered.get().capacity() > 0 && self.buffered.get().is_empty() {
             self.buffered.set(Vec::new());
@@ -1192,7 +1189,7 @@ impl FileReader {
                 // SAFETY: see `parent()`.
                 let _ = unsafe { Source::decrement_count(parent) };
             }
-            return Ok(());
+            return;
         }
 
         self.pending.with_mut(|p| {
@@ -1204,7 +1201,7 @@ impl FileReader {
         let parent = self.parent();
         // SAFETY: see `parent()`.
         unsafe { (*parent).increment_count() };
-        let settled = self.pending.with_mut(|p| p.run());
+        self.pending.with_mut(|p| p.run());
 
         if self.waiting_for_on_reader_done.get() && !self.done.get() {
             self.waiting_for_on_reader_done.set(false);
@@ -1214,7 +1211,6 @@ impl FileReader {
         // SAFETY: see `parent()`; the pin keeps the count >= 1, so this never
         // frees. Tail call, `self` is not accessed after.
         let _ = unsafe { Source::decrement_count(parent) };
-        settled
     }
 
     pub(crate) fn set_raw_mode(&self, _flag: bool) -> sys::Result<()> {
@@ -1293,9 +1289,8 @@ impl readable_stream::SourceContext for FileReader {
         let buf = unsafe { &mut *std::ptr::from_mut::<[u8]>(buf) };
         Self::on_pull(self, buf, arr)
     }
-    fn on_cancel(&mut self) -> jsc::JsResult<()> {
+    fn on_cancel(&mut self) {
         Self::on_cancel(self);
-        Ok(())
     }
     fn deinit_fn(&mut self) {
         Self::deinit(self)

@@ -83,7 +83,7 @@ impl ArrayBufferSink {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
         };
-        crate::webcore::streams::settled_from_native(self.source.ready(None, None));
+        self.source.ready(None, None);
         streams::result::Writable::Owned(len as u64)
     }
 
@@ -92,7 +92,7 @@ impl ArrayBufferSink {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
         };
-        crate::webcore::streams::settled_from_native(self.source.ready(None, None));
+        self.source.ready(None, None);
         streams::result::Writable::Owned(len as u64)
     }
 
@@ -106,12 +106,12 @@ impl ArrayBufferSink {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
         };
-        crate::webcore::streams::settled_from_native(self.source.ready(None, None));
+        self.source.ready(None, None);
         streams::result::Writable::Owned(len as u64)
     }
 
     pub(crate) fn end(&mut self, err: Option<syscall::Error>) -> bun_sys::Result<()> {
-        crate::webcore::streams::settled_from_native(self.source.close(err));
+        self.source.close(err);
         Ok(())
     }
 
@@ -165,7 +165,7 @@ impl ArrayBufferSink {
         }
 
         self.done = true;
-        crate::webcore::streams::settled_from_native(self.source.close(None));
+        self.source.close(None);
         // `defer this.bytes = bun.Vec<u8>.empty` → take ownership, leave empty.
         let mut bytes = core::mem::take(&mut self.bytes);
         // Ownership transfers to JSC; the caller wraps the returned

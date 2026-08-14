@@ -665,7 +665,8 @@ mod run_impls {
     impl RunTask for ThreadSafeFunction {
         #[inline]
         unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
-            Self::on_dispatch(this)
+            Self::on_dispatch(this);
+            Ok(())
         }
     }
 
@@ -702,7 +703,8 @@ mod run_impls {
                 (&mut *tick.el).into(),
                 tick.global,
                 (&mut *tick.vm).into(),
-            )
+            );
+            Ok(())
         }
     }
 
@@ -828,7 +830,8 @@ mod run_impls {
         #[inline]
         unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
             // `this` packs an int, not a pointer.
-            Self::run_from_js_thread(this as usize)
+            Self::run_from_js_thread(this as usize);
+            Ok(())
         }
     }
 
@@ -856,7 +859,8 @@ mod run_impls {
         #[inline]
         unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
             // SAFETY: the heap-allocated task; sole owner.
-            unsafe { Self::run_from_js_thread(this) }
+            unsafe { Self::run_from_js_thread(this) };
+            Ok(())
         }
     }
 
@@ -864,7 +868,8 @@ mod run_impls {
         #[inline]
         unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
             // The heap-allocated task; sole owner.
-            Self::run_from_js_thread(this)
+            Self::run_from_js_thread(this);
+            Ok(())
         }
     }
 }

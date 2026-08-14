@@ -2575,21 +2575,24 @@ impl ThreadSafeFunction {
     //
     // Dispatched via the event-loop task table (`dispatch.rs`), which hands us
     // a `*mut ThreadSafeFunction`; the signature is fixed by that registry.
+    /// The threadsafe function's queue drain is a dispatcher: each queued call
+    /// is a JS entry of its own, so what one leaves pending is folded per call
+    /// (`dispatch_one`) and the drain goes on; the VM's termination ends it.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn on_dispatch(this: *mut ThreadSafeFunction) -> JsResult<()> {
+    pub(crate) fn on_dispatch(this: *mut ThreadSafeFunction) {
         // SAFETY: `this` is a live heap allocation owned by the event loop
         // dispatch; `env_dead` is atomic so a shared reborrow suffices.
         if unsafe { (*this).env_dead.load(Ordering::SeqCst) } {
             // `env_teardown` already released everything and owns the free
             // decision. The loop this task came from is being destroyed.
-            return Ok(());
+            return;
         }
         // SAFETY: as above.
         if unsafe { (*this).closing.load(Ordering::SeqCst) } == ClosingState::Closed as u8 {
             // Finalize the ThreadSafeFunction.
             // SAFETY: `this` is the live heap allocation we own; closed state guarantees no other thread will touch it.
             unsafe { ThreadSafeFunction::destroy(this) };
-            return Ok(());
+            return;
         }
 
         let mut is_first = true;
@@ -2604,26 +2607,8 @@ impl ThreadSafeFunction {
             };
             // SAFETY: as above. `dispatch_one` runs JS that can re-enter other
             // TSFN entry points, so the exclusive borrow is scoped to this call.
-            let more = match unsafe { (*this).dispatch_one(is_first) } {
-                Ok(more) => more,
-                Err(err) => {
-                    // The callback threw: hand the exception to the tick loop and
-                    // drain the rest of the queue from a fresh dispatch, so the
-                    // uncaught-exception path runs before the next queued call.
-                    // If that call was the last one and queued the finalizer, the
-                    // finalizer task frees `this`: nothing else may be scheduled.
-                    // SAFETY: as above.
-                    unsafe {
-                        if !(*this).has_queued_finalizer {
-                            (*this)
-                                .dispatch_state
-                                .store(DispatchState::Idle as u8, Ordering::SeqCst);
-                            (*this).schedule_dispatch();
-                        }
-                    }
-                    return Err(err);
-                }
-            };
+            // A stopping VM ends the drain like an empty queue does.
+            let more = unsafe { (*this).dispatch_one(is_first) }.unwrap_or(false);
             if more {
                 is_first = false;
                 // SAFETY: as above.
@@ -2664,7 +2649,6 @@ impl ThreadSafeFunction {
         // We don't set a max. I would like to see an issue caused by not
         // setting a max before we do set a max. It is better for performance to
         // not add unnecessary event loop ticks.
-        Ok(())
     }
 
     pub(crate) fn is_closing(&self) -> bool {
@@ -2710,8 +2694,9 @@ impl ThreadSafeFunction {
         }
     }
 
-    /// `Ok(true)`: a queued call ran, keep draining. `Err`: it ran and threw.
-    pub(crate) fn dispatch_one(&mut self, is_first: bool) -> JsResult<bool> {
+    /// `Ok(true)`: a queued call ran (what it threw has been reported), keep
+    /// draining. `Err`: the VM is stopping.
+    pub(crate) fn dispatch_one(&mut self, is_first: bool) -> Result<bool, bun_jsc::Stopped> {
         let mut queue_finalizer_after_call = false;
         let task = 'brk: {
             // `MutexGuard` holds the lock by raw pointer, so it does not borrow
@@ -2749,7 +2734,7 @@ impl ThreadSafeFunction {
 
         let called = self.call(task, is_first);
 
-        // The last queued call finalizes even when it threw.
+        // The last queued call finalizes even when the VM is stopping.
         if queue_finalizer_after_call {
             self.maybe_queue_finalizer();
         }
@@ -2763,7 +2748,9 @@ impl ThreadSafeFunction {
     /// This function can be called multiple times in one tick of the event loop.
     /// See: https://github.com/nodejs/node/pull/38506
     /// In that case, we need to drain microtasks.
-    fn call(&mut self, task: *mut c_void, is_first: bool) -> JsResult<()> {
+    /// One queued call: a JS entry of its own, so what it leaves pending is
+    /// folded here. `Err`: the VM is stopping.
+    fn call(&mut self, task: *mut c_void, is_first: bool) -> Result<(), bun_jsc::Stopped> {
         let Some(env) = self.env.as_ref().map(NapiEnvRef::get) else {
             // env torn down; nothing to call into.
             return Ok(());
@@ -2774,21 +2761,19 @@ impl ThreadSafeFunction {
             let Some(loop_) = self.loop_mut() else {
                 return Ok(());
             };
-            if let Err(stopped) = loop_.drain_microtasks() {
-                return Err(stopped.throw(global_object));
-            }
+            loop_.drain_microtasks()?;
         }
 
         let _dispatch = self.tracker.dispatch(global_object);
 
-        match &self.callback {
+        let called = match &self.callback {
             TsfnCallback::Js(strong) => {
                 let js: JSValue = strong.get().unwrap_or(JSValue::UNDEFINED);
                 if js.is_empty_or_undefined_or_null() {
                     return Ok(());
                 }
 
-                js.call(global_object, JSValue::UNDEFINED, &[])?;
+                js.call(global_object, JSValue::UNDEFINED, &[]).map(drop)
             }
             TsfnCallback::C {
                 js: cb_js,
@@ -2803,10 +2788,13 @@ impl ThreadSafeFunction {
                     None => napi_value(0),
                 };
                 napi_threadsafe_function_call_js(env, js, self.ctx, task);
-                env_ref.surface_exception(global_object)?;
+                env_ref.surface_exception(global_object)
             }
+        };
+        match called {
+            Ok(()) => Ok(()),
+            Err(err) => bun_jsc::task::report_error_or_terminate(global_object, err),
         }
-        Ok(())
     }
 
     /// Runs on an addon thread. A call that reports `napi_closing` consumes the

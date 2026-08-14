@@ -1945,16 +1945,20 @@ impl Outcome {
         }
     }
 
-    /// Runs from the resolver backends' completion callbacks (c-ares poll,
-    /// libinfo, libuv), which have no exception channel; see
-    /// `streams::settled_from_native` for what settling can leave pending.
+    /// The resolver backends' completion callbacks (c-ares poll, libinfo,
+    /// libuv) land here to settle the lookup's promise with a value built by
+    /// the resolver: this is their fold for what settling leaves pending
+    /// (allocation failure, a terminating VM).
     fn settle(self, promise: &mut JSPromiseStrong, global: &JSGlobalObject) {
         let _guard = VirtualMachine::get().enter_event_loop_scope();
-        crate::webcore::streams::settled_from_native(match self {
+        let settled = match self {
             Outcome::Value(v) => promise.resolve(global, v),
             Outcome::Error(e) => promise.reject(global, Ok(e)),
             Outcome::Stopped => return,
-        });
+        };
+        if let Err(err) = settled {
+            let _ = bun_jsc::task::report_error_or_terminate(global, err);
+        }
     }
 }
 

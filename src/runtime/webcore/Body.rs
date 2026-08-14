@@ -1107,14 +1107,12 @@ impl Value {
                     })
                     .transpose()?;
 
-                let done = if fed.is_some() {
+                if fed.is_some() {
                     *new = Value::Used;
-                    Ok(())
                 } else {
-                    readable.done(global)
-                };
+                    readable.done(global);
+                }
                 locked.readable.deinit();
-                done?;
             }
 
             if let Some(callback) = locked.on_receive_value.take() {

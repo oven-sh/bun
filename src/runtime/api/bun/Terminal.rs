@@ -2071,25 +2071,17 @@ impl BufferedReaderParent for Terminal {
 impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::TERMINAL_POLL;
     const HAS_ON_READY: bool = true;
-    unsafe fn on_write(
-        this: *mut Self,
-        amount: usize,
-        status: WriteStatus,
-    ) -> bun_io::JsResult<()> {
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         Self::from_parent_ptr(this).on_write(amount, status);
-        Ok(())
     }
-    unsafe fn on_error(this: *mut Self, err: sys::Error) -> bun_io::JsResult<()> {
+    unsafe fn on_error(this: *mut Self, err: sys::Error) {
         Self::from_parent_ptr(this).on_writer_error(&err);
-        Ok(())
     }
-    unsafe fn on_ready(this: *mut Self) -> bun_io::JsResult<()> {
+    unsafe fn on_ready(this: *mut Self) {
         Self::from_parent_ptr(this).on_writer_ready();
-        Ok(())
     }
-    unsafe fn on_close(this: *mut Self) -> bun_io::JsResult<()> {
+    unsafe fn on_close(this: *mut Self) {
         Self::from_parent_ptr(this).on_writer_close();
-        Ok(())
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         Self::from_parent_ptr(this)
@@ -2123,24 +2115,16 @@ impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
 #[cfg(windows)]
 impl bun_io::pipe_writer::WindowsStreamingWriterParent for Terminal {
     const HAS_ON_WRITABLE: bool = true;
-    unsafe fn on_write(
-        this: *mut Self,
-        amount: usize,
-        status: WriteStatus,
-    ) -> bun_io::JsResult<()> {
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         Self::from_parent_ptr(this).on_write(amount, status);
-        Ok(())
     }
-    unsafe fn on_error(this: *mut Self, err: sys::Error) -> bun_io::JsResult<()> {
+    unsafe fn on_error(this: *mut Self, err: sys::Error) {
         Self::from_parent_ptr(this).on_writer_error(&err);
-        Ok(())
     }
-    unsafe fn on_writable(this: *mut Self) -> bun_io::JsResult<()> {
+    unsafe fn on_writable(this: *mut Self) {
         Self::from_parent_ptr(this).on_writer_ready();
-        Ok(())
     }
-    unsafe fn on_close(this: *mut Self) -> bun_io::JsResult<()> {
+    unsafe fn on_close(this: *mut Self) {
         Self::from_parent_ptr(this).on_writer_close();
-        Ok(())
     }
 }

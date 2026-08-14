@@ -7678,6 +7678,78 @@ describe("css tests", () => {
         `,
       { chrome: Some(90 << 16) },
     );
+    // When the selector is not compatible with the targets (a nested rule
+    // below chrome 88, :has() on any current target), the re-emitted
+    // dark-mode rule cannot be declaration-merged with the previous pass's
+    // copy and is removed as a duplicate instead, which leaves an Ignored
+    // placeholder in the list. The next merge must not treat that placeholder
+    // as a rule, or the copies start piling up again.
+    prefix_test(
+      `
+      @media (min-width: 1px) { .foo { color: red; &:hover { color-scheme: light dark; } } }
+      @media (min-width: 1px) { .bar { color: red; } }
+      @media (min-width: 1px) { .baz { color: green; } }
+      `,
+      `@media (min-width: 1px) {
+          .foo {
+            color: red;
+          }
+
+          .foo:hover {
+            --buncss-light: initial;
+            --buncss-dark: ;
+            color-scheme: light dark;
+          }
+
+          @media (prefers-color-scheme: dark) {
+            .foo:hover {
+              --buncss-light: ;
+              --buncss-dark: initial;
+            }
+          }
+
+          .bar {
+            color: red;
+          }
+
+          .baz {
+            color: green;
+          }
+        }
+        `,
+      { chrome: Some(80 << 16) },
+    );
+    prefix_test(
+      `
+      @media (min-width: 1px) { :root:has(.dark) { color-scheme: light dark; } }
+      @media (min-width: 1px) { .bar { color: red; } }
+      @media (min-width: 1px) { .baz { color: green; } }
+      `,
+      `@media (min-width: 1px) {
+          :root:has(.dark) {
+            --buncss-light: initial;
+            --buncss-dark: ;
+            color-scheme: light dark;
+          }
+
+          @media (prefers-color-scheme: dark) {
+            :root:has(.dark) {
+              --buncss-light: ;
+              --buncss-dark: initial;
+            }
+          }
+
+          .bar {
+            color: red;
+          }
+
+          .baz {
+            color: green;
+          }
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
     // Targets that support light-dark() emit no vars; a re-minified block
     // must stay untouched.
     prefix_test(

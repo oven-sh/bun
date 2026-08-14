@@ -504,6 +504,12 @@ impl<R> CssRuleList<R> {
 
             'arm: {
                 match rule {
+                    // Left behind by the duplicate check below (`rules[i] =
+                    // Ignored`) when an already minified list is minified
+                    // again, e.g. after a same-query `@media` merge. Pushing it
+                    // would clear the duplicate table and end the merge run
+                    // for a rule that prints nothing.
+                    CssRule::Ignored => break 'arm,
                     CssRule::Keyframes(_keyframez) => {
                         // KeyframesRule minify (unused-symbol drop + same-name
                         // merge + vendor-prefix downlevel + fallbacks) is

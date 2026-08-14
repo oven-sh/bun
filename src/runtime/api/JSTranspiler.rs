@@ -46,10 +46,9 @@ pub struct JSTranspiler {
     pub(crate) config: JsCell<Config>,
     pub(crate) scan_pass_result: JsCell<ScanPassResult>,
     pub(crate) buffer_writer: JsCell<Option<JSPrinter::BufferWriter>>,
-    // Arena bulk-frees the config strings and the `exports.replace` value
-    // nodes in `config.runtime.replace_exports`. Boxed so its address is stable
-    // across the move into `Box<JSTranspiler>` — `transpiler.arena` holds a
-    // `&'static Arena` pointing into it.
+    // Arena bulk-frees the config strings. Boxed so its
+    // address is stable across the move into `Box<JSTranspiler>` —
+    // `transpiler.arena` holds a `&'static Arena` pointing into it.
     pub arena: Box<Arena>,
     // Intrusive refcount field for `bun_ptr::IntrusiveRc<JSTranspiler>`:
     // single-thread intrusive `bun.ptr.RefCount` because `*JSTranspiler`
@@ -934,14 +933,12 @@ fn export_replacement_value(
         let zig_str = value.get_zig_string(global)?;
         let mut buf = Vec::new();
         write!(&mut buf, "{}", zig_str).expect("unreachable");
-        // This Expr lives in `Config.runtime.replace_exports` for the lifetime of
-        // the JSTranspiler and is copied into every later parse, so both the bytes
-        // and the `E::EString` node must live in the JSTranspiler's arena.
-        // `Expr::init` would put the node in the thread-local AST store, which
-        // the next parse on this thread (e.g. a `require()`) resets.
+        // Bump-allocate so the bytes
+        // live as long as the JSTranspiler arena that owns the resulting Expr;
         // `E::EString::init` erases the borrow to `'static` per the AST
         // crate's `Str` convention (see ast/E.rs).
         let data = arena.alloc_slice_copy(&buf);
+        // Not `Expr::init`: the thread-local store it appends to is reset by the next parse.
         return Ok(Some(Expr::allocate(
             arena,
             bun_ast::E::EString::init(data),

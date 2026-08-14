@@ -13,6 +13,7 @@ on:
       - "scripts/build/**"
       - "scripts/build.ts"
       - "scripts/rust-mordant.ts"
+      - "package.json"
       - "Cargo.toml"
       - "Cargo.lock"
       - "dylint.toml"

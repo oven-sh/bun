@@ -146,7 +146,85 @@ pub fn report_ebadf(what: &str, fd: i32) {
     eprintln!("======================================================================\n");
 }
 
-/// Print the current stack plus what `fd`, stdout and stderr point at. Used to
+/// Event-loop registration events (epoll add/del) per fd, same shape as the
+/// close ledger. `kind` is a free-form label supplied by the event loop.
+#[derive(Clone, Copy)]
+struct RegSlot {
+    seq: u64,
+    tid: i64,
+    kind: [u8; 32],
+    description: FdDescription,
+    trace: StoredTrace,
+}
+
+impl RegSlot {
+    const EMPTY: RegSlot = RegSlot {
+        seq: 0,
+        tid: 0,
+        kind: [0; 32],
+        description: FdDescription::UNKNOWN,
+        trace: StoredTrace::EMPTY,
+    };
+}
+
+const REG_HISTORY: usize = 6;
+
+static REGISTRATIONS: Mutex<[[RegSlot; REG_HISTORY]; MAX_TRACKED_FD]> =
+    Mutex::new([[RegSlot::EMPTY; REG_HISTORY]; MAX_TRACKED_FD]);
+
+/// Record an event-loop registration event for `fd` (`kind` is truncated to 32 bytes).
+pub fn record_registration_event(kind: &str, fd: i32) {
+    if fd < 0 || fd as usize >= MAX_TRACKED_FD {
+        return;
+    }
+    let mut slot = RegSlot {
+        seq: SEQ.fetch_add(1, Ordering::Relaxed),
+        tid: current_tid(),
+        kind: [0; 32],
+        description: FdDescription::of(fd),
+        trace: StoredTrace::capture(None),
+    };
+    let n = kind.len().min(32);
+    slot.kind[..n].copy_from_slice(&kind.as_bytes()[..n]);
+    let mut table = match REGISTRATIONS.lock() {
+        Ok(t) => t,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let history = &mut table[fd as usize];
+    history.copy_within(0..REG_HISTORY - 1, 1);
+    history[0] = slot;
+}
+
+fn dump_registration_events(fd: i32) {
+    if fd < 0 || fd as usize >= MAX_TRACKED_FD {
+        return;
+    }
+    let history = {
+        let table = match REGISTRATIONS.lock() {
+            Ok(t) => t,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        table[fd as usize]
+    };
+    if history[0].seq == 0 {
+        eprintln!("fd {fd}: no event-loop registration events recorded");
+        return;
+    }
+    for slot in history.iter().filter(|s| s.seq != 0) {
+        let len = slot.kind.iter().position(|&b| b == 0).unwrap_or(slot.kind.len());
+        eprintln!(
+            "fd {fd} registration event #{}: {} (fd was \"{}\") on tid {} at:",
+            slot.seq,
+            core::str::from_utf8(&slot.kind[..len]).unwrap_or("?"),
+            slot.description.as_str(),
+            slot.tid
+        );
+        bun_core::dump_stack_trace(&slot.trace.trace(), DumpStackTraceOptions::default());
+    }
+}
+
+/// Print the current stack plus what `fd`, stdout and stderr point at, the
+/// registration events recorded for `fd`, and its close history. Used to
 /// report failures to register `fd` with the event loop.
 pub fn report_fd_event(what: &str, fd: i32) {
     let now = StoredTrace::capture(None);
@@ -160,6 +238,7 @@ pub fn report_fd_event(what: &str, fd: i32) {
     );
     eprintln!("at:");
     bun_core::dump_stack_trace(&now.trace(), DumpStackTraceOptions::default());
+    dump_registration_events(fd);
     dump_history(fd);
     eprintln!("======================================================================\n");
 }

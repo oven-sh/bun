@@ -690,6 +690,14 @@ impl FilePoll {
                 self.deactivate(loop_);
                 return errno;
             }
+            #[cfg(debug_assertions)]
+            {
+                // Only ADDs create kernel registrations; MODs are noise here.
+                if op == EPOLL::CTL_ADD {
+                    let what = std::format!("ADD ok ({})", <&'static str>::from(flag));
+                    sys::close_ledger::record_registration_event(&what, fd.native());
+                }
+            }
         }
         #[cfg(target_os = "macos")]
         {
@@ -943,6 +951,11 @@ impl FilePoll {
             || self.flags.contains(Flags::PollMachport)
             || self.flags.contains(Flags::PollMemoryPressure))
         {
+            #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
+            sys::close_ledger::record_registration_event(
+                if force_unregister { "DEL skipped(force): no poll flags" } else { "DEL skipped: no poll flags" },
+                fd.native(),
+            );
             // no-op
             return sys::Result::Ok(());
         }
@@ -981,6 +994,8 @@ impl FilePoll {
             self.flags.remove(Flags::PollWritable);
             self.flags.remove(Flags::PollMachport);
             self.flags.remove(Flags::PollMemoryPressure);
+            #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
+            sys::close_ledger::record_registration_event("DEL skipped: needs_rearm", fd.native());
             return sys::Result::Ok(());
         }
 
@@ -1003,9 +1018,22 @@ impl FilePoll {
             };
 
             match sys::get_errno(ctl) {
-                sys::E::SUCCESS => {}
-                e if deregistration_already_gone(e) => {}
-                e => return sys::Result::Err(sys::Error::from_code(e, sys::Tag::epoll_ctl)),
+                sys::E::SUCCESS => {
+                    #[cfg(debug_assertions)]
+                    sys::close_ledger::record_registration_event("DEL ok", fd.native());
+                }
+                e if deregistration_already_gone(e) => {
+                    #[cfg(debug_assertions)]
+                    sys::close_ledger::record_registration_event(
+                        if e == sys::E::EBADF { "DEL -> EBADF (fd already closed)" } else { "DEL -> ENOENT (not registered)" },
+                        fd.native(),
+                    );
+                }
+                e => {
+                    #[cfg(debug_assertions)]
+                    sys::close_ledger::record_registration_event("DEL failed (other errno)", fd.native());
+                    return sys::Result::Err(sys::Error::from_code(e, sys::Tag::epoll_ctl));
+                }
             }
         }
         #[cfg(target_os = "macos")]

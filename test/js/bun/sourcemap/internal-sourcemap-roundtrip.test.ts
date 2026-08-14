@@ -513,7 +513,7 @@ describe.concurrent("sourcemap of a source with an ill-formed UTF-8 sequence rig
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
     const outfile = path.join(String(dir), "out", entry);
     const outputLines = readFileSync(outfile, "latin1").split("\n");

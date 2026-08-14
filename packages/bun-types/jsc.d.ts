@@ -169,9 +169,14 @@ declare module "bun:jsc" {
     bytecodes: string;
 
     /**
-     * Stack traces of the top functions
+     * Sampled stack traces in JSC's native `stackTracesAsJSON()` format.
+     *
+     * `null` when another CPU profiler consumer (`--cpu-prof`,
+     * `node:inspector`'s `Profiler.start`, `Worker.startCpuProfile`) already
+     * owns the VM's single sampling profiler: JSC's stack-trace dump is
+     * destructive, so it is skipped to preserve the other consumer's samples.
      */
-    stackTraces: string[];
+    stackTraces: { interval: number; traces: unknown[]; sources: unknown[] } | null;
   }
 
   /**

@@ -131,4 +131,27 @@ describe("tsconfig compilerOptions.jsx", () => {
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: runStdout, exitCode: 0 });
   });
+
+  // https://github.com/oven-sh/bun/issues/28605: a workspace root with no
+  // tsconfig at all used to make every file fall back to importing from "react".
+  test("jsxImportSource of a package's tsconfig applies when run from a workspace root without one", async () => {
+    using dir = tempDir("jsx-tsconfig-workspace-root", {
+      ...shimFiles,
+      "package.json": JSON.stringify({ private: true, workspaces: ["services/connect"] }),
+      "services/connect/tsconfig.json": JSON.stringify({
+        compilerOptions: { jsx: "react-jsx", jsxImportSource: "shim" },
+      }),
+      "services/connect/src/app.ts": `import "./lib/prompt.tsx";`,
+      "services/connect/src/lib/prompt.tsx": `export const prompt = <div>hello</div>;`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "./services/connect/src/app.ts"],
+      env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "prod jsx", exitCode: 0 });
+  });
 });

@@ -3273,6 +3273,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JS
 
 // ====================== end conditional builtin globals ======================
 
+extern "C" void Bun__VM__keepTerminationRequestWithPendingException(JSC::JSGlobalObject*);
+
 uint8_t GlobalObject::drainMicrotasks()
 {
     auto& vm = this->vm();
@@ -3280,6 +3282,7 @@ uint8_t GlobalObject::drainMicrotasks()
 
     if (auto* exception = scope.exception()) [[unlikely]] {
         if (vm.isTerminationException(exception)) [[unlikely]] {
+            Bun__VM__keepTerminationRequestWithPendingException(this);
             return 1;
         }
 
@@ -3303,6 +3306,7 @@ uint8_t GlobalObject::drainMicrotasks()
         nextTickQueue->drain(vm, this);
         if (auto* exception = scope.exception()) {
             if (vm.isTerminationException(exception)) {
+                Bun__VM__keepTerminationRequestWithPendingException(this);
                 return 1;
             }
             (void)scope.tryClearException();
@@ -3313,6 +3317,7 @@ uint8_t GlobalObject::drainMicrotasks()
     vm.drainMicrotasks();
     if (auto* exception = scope.exception()) {
         if (vm.isTerminationException(exception)) {
+            Bun__VM__keepTerminationRequestWithPendingException(this);
             return 1;
         }
         (void)scope.tryClearException();

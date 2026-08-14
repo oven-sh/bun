@@ -18,9 +18,19 @@ bun create vite my-app
 ```
 
 ```txt
-✔ Select a framework: › React
-✔ Select a variant: › TypeScript + SWC
-Scaffolding project in /path/to/my-app...
+◇  Select a framework:
+│  React
+│
+◇  Select a variant:
+│  TypeScript
+│
+◇  Which linter to use?
+│  Oxlint
+│
+◇  Install with bun and start now?
+│  No
+│
+◇  Scaffolding project in /path/to/my-app...
 ```
 
 ---
@@ -50,8 +60,9 @@ To simplify this command, update the `"dev"` script in `package.json` to the fol
   "scripts": {
     "dev": "vite", // [!code --]
     "dev": "bunx --bun vite", // [!code ++]
-    "build": "vite build",
-    "serve": "vite preview"
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
   },
   // ...
 ```

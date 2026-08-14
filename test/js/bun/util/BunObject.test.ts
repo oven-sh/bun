@@ -58,14 +58,15 @@ test("a lazy property whose builtin fails to load throws from the read", async (
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout.trim()).toBe(
-    JSON.stringify({
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({
       $: ["TypeError", "TypeError"],
       sql: ["TypeError", "TypeError"],
       SQL: ["TypeError", "TypeError"],
       postgres: ["TypeError", "TypeError"],
     }),
-  );
-  expect(exitCode).toBe(0);
+    stderr: "",
+    exitCode: 0,
+  });
 });

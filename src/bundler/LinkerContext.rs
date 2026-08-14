@@ -926,6 +926,7 @@ impl<'a> LinkerContext<'a> {
                 parts,
                 import_records,
                 file_entry_bits,
+                css_reprs,
                 queue: std::collections::VecDeque::new(),
             };
 
@@ -2596,6 +2597,7 @@ pub(crate) struct CodeSplitCtx<'a, 'r> {
     pub(crate) parts: &'r [bun_ast::PartList<'a>],
     pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
     pub(crate) file_entry_bits: &'r mut [AutoBitSet],
+    pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol],
     pub(crate) queue: std::collections::VecDeque<(crate::IndexInt, u32)>,
 }
 
@@ -2648,8 +2650,17 @@ impl<'a> LinkerContext<'a> {
                 }
             }
 
-            // CSS files too: the JS printed for a stylesheet lives in the same source index.
-            for part in ctx.parts[source_index as usize].as_slice() {
+            // Of the JS parts a stylesheet also carries, only the live ones get printed.
+            let live_parts_only = ctx.css_reprs[source_index as usize].is_some();
+            let parts_live = &self.graph.parts_live[source_index as usize];
+            for (part_index, part) in ctx.parts[source_index as usize]
+                .as_slice()
+                .iter()
+                .enumerate()
+            {
+                if live_parts_only && !parts_live.is_set(part_index) {
+                    continue;
+                }
                 for dependency in part.dependencies.iter() {
                     let dep = dependency.source_index.get();
                     if dep != source_index

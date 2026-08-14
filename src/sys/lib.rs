@@ -7709,7 +7709,7 @@ pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         if rc < 0 {
             let e = last_errno();
             match e {
-                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
+                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES | libc::ESPIPE => {
                     linux::RWFFlagSupport::disable();
                     // Only fall through to BLOCKING read if the fd is
                     // actually readable now; otherwise return retry (EAGAIN).
@@ -7739,7 +7739,7 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         if rc < 0 {
             let e = last_errno();
             match e {
-                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
+                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES | libc::ESPIPE => {
                     linux::RWFFlagSupport::disable();
                     // Poll before issuing a blocking write.
                     return match bun_core::is_writable(fd) {

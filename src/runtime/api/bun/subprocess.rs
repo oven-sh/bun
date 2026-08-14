@@ -142,6 +142,8 @@ pub struct Subprocess<'a> {
     pub this_value: JsCell<JsRef>,
 
     pub(crate) ipc_data: Cell<Option<core::ptr::NonNull<IPC::SendQueue>>>,
+    /// Node `subprocess.channel.ref()`/`.unref()` keepalive; see `set_channel_ref`.
+    pub(crate) ipc_channel_ref: JsCell<bun_io::KeepAlive>,
     pub(crate) flags: Cell<Flags>,
 
     /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
@@ -856,6 +858,25 @@ impl Subprocess<'_> {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// `$setChannelRef(enabled)`: the open channel's own loop ref, independent of `ref()`/`unref()`.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn set_channel_ref(
+        this: &Self,
+        _global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let enabled = callframe.argument(0).to_boolean();
+        let connected = this.ipc().map(|d| d.is_connected()).unwrap_or(false);
+        this.ipc_channel_ref.with_mut(|k| {
+            if enabled && connected {
+                k.ref_(bun_io::js_vm_ctx());
+            } else {
+                k.unref(bun_io::js_vm_ctx());
+            }
+        });
+        Ok(JSValue::UNDEFINED)
+    }
+
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_connected(this: &Self, _global_this: &JSGlobalObject) -> JSValue {
         let connected = this.ipc().map(|d| d.is_connected()).unwrap_or(false);
@@ -1353,6 +1374,7 @@ impl Subprocess<'_> {
         MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
         this.stderr_maxbuf.set(mb);
 
+        this.ipc_channel_ref.with_mut(|k| k.disable());
         if let Some(ipc_data) = this.ipc_data.take() {
             // In normal operation the socket is already `.closed` by the time we
             // get here (that is what allowed `compute_has_pending_activity` to drop
@@ -1473,6 +1495,7 @@ impl Subprocess<'_> {
         let _keep = jsc::EnsureStillAlive(this_jsvalue);
         let global_this = self.global_this;
         let global_this = global_this.get();
+        self.ipc_channel_ref.with_mut(|k| k.disable());
         self.update_has_pending_activity();
 
         if !this_jsvalue.is_empty() {

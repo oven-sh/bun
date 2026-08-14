@@ -352,6 +352,10 @@ pub struct VirtualMachine {
     pub channel_ref: Async::KeepAlive,
     pub channel_ref_overridden: bool,
     pub channel_ref_should_ignore_one_disconnect_event_listener: bool,
+    /// Node's `Control#refs` for `process.channel`; drives `channel_ref` on its 0 <-> 1 edges.
+    pub channel_ref_count: i32,
+    /// Listener share of `channel_ref_count`.
+    pub channel_listener_refs: u32,
 
     /// A set of extensions that exist in the require.extensions map.
     pub commonjs_custom_extensions:

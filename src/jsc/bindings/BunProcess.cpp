@@ -176,7 +176,6 @@ extern "C" bool Bun__closeChildIPC(JSGlobalObject*);
 
 extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
-extern "C" bool Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
 extern "C" const char* Bun__sqlite3_version();
 BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
@@ -1528,8 +1527,7 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
     return false;
 }
 
-extern "C" void Bun__refChannelUnlessOverridden(JSC::JSGlobalObject* globalObject);
-extern "C" void Bun__unrefChannelUnlessOverridden(JSC::JSGlobalObject* globalObject);
+extern "C" void Bun__setChannelListenerCount(JSC::JSGlobalObject* globalObject, uint32_t count);
 extern "C" bool Bun__shouldIgnoreOneDisconnectEventListener(JSC::JSGlobalObject* globalObject);
 
 extern "C" void Bun__ensureSignalHandler();
@@ -1597,17 +1595,8 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                 disconnectListenerCount--;
             }
             auto totalListenerCount = messageListenerCount + disconnectListenerCount;
-            if (isAdded) {
-                if (Bun__GlobalObject__hasIPC(global)
-                    && totalListenerCount == 1) {
-                    Bun__ensureProcessIPCInitialized(global);
-                    Bun__refChannelUnlessOverridden(global);
-                }
-            } else {
-                if (Bun__GlobalObject__hasIPC(global)
-                    && totalListenerCount == 0) {
-                    Bun__unrefChannelUnlessOverridden(global);
-                }
+            if (Bun__GlobalObject__hasIPC(global)) {
+                Bun__setChannelListenerCount(global, static_cast<uint32_t>(totalListenerCount));
             }
             return;
         }

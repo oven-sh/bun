@@ -260,3 +260,42 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
   expect(JSON.parse(stdout.trim())).toEqual([1, 2, 0, 0, 0]);
   expect(exitCode).toBe(0);
 });
+
+// The channel keepalive that node:child_process engages (subprocess.channel.ref()
+// semantics) is opt-in from that layer; a plain Bun.spawn({ ipc }) subprocess
+// still follows unref() even while its channel is open.
+it("unref() lets the parent exit while a Bun.spawn({ ipc }) channel is still open", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        let got = null;
+        const kid = Bun.spawn({
+          cmd: [process.execPath, "-e", 'process.on("message", m => setTimeout(() => { try { process.send({ pong: m }); } catch {} process.exit(0); }, 100));'],
+          stdio: ["ignore", "ignore", "ignore"],
+          ipc(message) {
+            got = message;
+          },
+        });
+        kid.send("ping");
+        kid.unref();
+        process.on("exit", () => console.log(JSON.stringify({ gotReply: got !== null, connected: kid.connected })));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ gotReply: false, connected: true });
+  expect(exitCode).toBe(0);
+});
+
+it("does not expose node:child_process's channel keepalive toggle on Subprocess", async () => {
+  await using child = Bun.spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv, ipc() {} });
+  expect("setChannelRef" in child).toBe(false);
+  expect(Object.getOwnPropertyNames(Object.getPrototypeOf(child))).toContain("disconnect");
+  await child.exited;
+});

@@ -1318,6 +1318,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         ref_count: bun_ptr::RefCount::init_exact_refs(2),
         stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
         ipc_data: Cell::new(None),
+        ipc_channel_ref: JsCell::new(bun_io::KeepAlive::default()),
         flags: Cell::new(if IS_SYNC {
             Subprocess::Flags::IS_SYNC
         } else {

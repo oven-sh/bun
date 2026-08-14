@@ -217,9 +217,12 @@ test("deferred @media merge re-minify keeps per-merge output", () => {
   expect(minify(run)).toBe("@media (width>=1px){.a{color:#00f}}");
   // ... with a style rule.
   expect(minify(run + ".c{color:green}")).toBe("@media (width>=1px){.a{color:#00f}}.c{color:green}");
-  // ... with another at-rule.
+  // ... with another at-rule, whether or not its arm minifies it.
   expect(minify(run + "@supports (display:grid){.c{color:green}}")).toBe(
     "@media (width>=1px){.a{color:#00f}}@supports (display:grid){.c{color:green}}",
+  );
+  expect(minify(run + "@keyframes k{to{opacity:0}}")).toBe(
+    "@media (width>=1px){.a{color:#00f}}@keyframes k{to{opacity:0}}",
   );
   // ... with a @media rule for a different query, after which a new run starts.
   expect(minify(run + "@media print{.c{color:green}}@media (min-width:1px){.d{color:blue}}")).toBe(

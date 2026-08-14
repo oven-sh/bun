@@ -494,8 +494,7 @@ impl<R> CssRuleList<R> {
         R: for<'b> css::generics::DeepClone<'b>,
     {
         let mut style_rules = StyleRuleKeyMap::default();
-        let mut merge_state = StyleRuleMergeState::default();
-        let mut pending_media_minify = false;
+        let mut merge_state = MergeState::default();
         let mut rules: Vec<CssRule<R>> = Vec::new();
 
         for rule in self.v.iter_mut() {
@@ -520,10 +519,9 @@ impl<R> CssRuleList<R> {
                             && last_rule.query.eql(&med.query)
                         {
                             // The merged body is minified once the run of
-                            // same-query rules ends (see
-                            // `flush_pending_media_merge`).
+                            // same-query rules ends (see `MergeState`).
                             last_rule.rules.v.append(&mut med.rules.v);
-                            pending_media_minify = true;
+                            merge_state.pending_at_rule_minify = true;
                             break 'arm;
                         }
                         if med.minify(context, parent_is_unused)? {
@@ -571,7 +569,6 @@ impl<R> CssRuleList<R> {
                             &mut rules,
                             &mut style_rules,
                             &mut merge_state,
-                            &mut pending_media_minify,
                             context,
                             parent_is_unused,
                         )?;
@@ -610,16 +607,7 @@ impl<R> CssRuleList<R> {
                     _ => {}
                 }
 
-                // Appending a non-style rule ends the current style-rule or
-                // `@media` merge run, so settle any pending merge first.
-                flush_pending_style_merge(&mut rules, &mut merge_state, context);
-                merge_state.last_compat = None;
-                flush_pending_media_merge(
-                    &mut rules,
-                    &mut pending_media_minify,
-                    context,
-                    parent_is_unused,
-                )?;
+                end_merge_run(&mut rules, &mut merge_state, context, parent_is_unused)?;
                 rules.push(core::mem::replace(rule, CssRule::Ignored));
                 moved_rule = true;
 
@@ -638,15 +626,8 @@ impl<R> CssRuleList<R> {
             }
         }
 
-        // The last merge run may still have a pending declaration or `@media`
-        // body merge.
-        flush_pending_style_merge(&mut rules, &mut merge_state, context);
-        flush_pending_media_merge(
-            &mut rules,
-            &mut pending_media_minify,
-            context,
-            parent_is_unused,
-        )?;
+        // The last merge run may still have a pending merge.
+        flush_pending_merges(&mut rules, &mut merge_state, context, parent_is_unused)?;
 
         // The old Vec is dropped on assignment.
         self.v = rules;
@@ -663,44 +644,11 @@ impl<R> CssRuleList<R> {
     }
 }
 
-/// Minify the last rule's body if it absorbed the bodies of following
-/// same-query `@media` rules (`*pending`). Must run before anything is pushed
-/// after it, which is what ends a merge run: a `@media` rule merges into the
-/// last *pushed* rule, so rules dropped in between keep the run going.
-///
-/// Re-minifying after every merge ran the bodies merged so far through the
-/// minifier once per further merge, so a run of n same-query rules cost O(n^2)
-/// style-rule minifications. Inside a style rule whose nesting is compiled
-/// away, every pass also charged the whole accumulated body against
-/// [`MAX_SELECTOR_EXPANSION`] again, so a few hundred such rules failed with
-/// `selector_expansion_limit_exceeded` while expanding to a tiny fraction of
-/// that. Minifying the merged body once per run keeps both linear.
-///
-/// The rule was kept when it was first pushed; like the per-merge re-minify,
-/// this does not revisit that decision, so the drop result is ignored.
-fn flush_pending_media_merge<R: for<'b> css::generics::DeepClone<'b>>(
-    rules: &mut [CssRule<R>],
-    pending: &mut bool,
-    context: &mut MinifyContext<'_, '_>,
-    parent_is_unused: bool,
-) -> Result<(), MinifyErr> {
-    if !core::mem::take(pending) {
-        return Ok(());
-    }
-    let Some(CssRule::Media(last)) = rules.last_mut() else {
-        debug_assert!(false, "pending @media merge without a @media rule last");
-        return Ok(());
-    };
-    let _ = last.minify(context, parent_is_unused)?;
-    Ok(())
-}
-
 fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     rule: &mut CssRule<R>,
     rules: &mut Vec<CssRule<R>>,
     style_rules: &mut StyleRuleKeyMap,
-    merge_state: &mut StyleRuleMergeState,
-    pending_media_minify: &mut bool,
+    merge_state: &mut MergeState,
     context: &mut MinifyContext<'_, '_>,
     parent_is_unused: bool,
 ) -> Result<(), MinifyErr> {
@@ -786,7 +734,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         // selectors/declarations of the new rule. This might mean that we can merge it
         // with the previous rule, so continue trying while we have style rules available.
         // A declaration merge defers both the re-minify and this cascade to
-        // the end of the merge run (see `flush_pending_style_merge`).
+        // the end of the merge run (see `flush_pending_merges`).
         if !merge_state.pending_minify {
             cascade_merge_with_previous(rules, merge_state, context);
         }
@@ -804,7 +752,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         // equal and start a new declaration merge, which the cascade returns
         // on. Settle it now: `sty` is pushed below, which would bury the
         // pending rule one slot down where no later flush can find it.
-        flush_pending_style_merge(rules, merge_state, context);
+        flush_pending_merges(rules, merge_state, context, parent_is_unused)?;
     }
 
     // If this iteration staged handler-context rules (e.g. the merged-in rule
@@ -819,7 +767,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
             && context.handler_context.rtl.is_empty()
             && context.handler_context.dark.is_empty())
     {
-        flush_pending_style_merge(rules, merge_state, context);
+        flush_pending_merges(rules, merge_state, context, parent_is_unused)?;
     }
 
     // Create additional rules for logical properties, @supports overrides, and incompatible selectors.
@@ -893,7 +841,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         // every rule already in the list is fully minified here, which the
         // duplicate check below relies on.
         debug_assert!(!merge_state.pending_minify);
-        flush_pending_media_merge(rules, pending_media_minify, context, parent_is_unused)?;
+        end_merge_run(rules, merge_state, context, parent_is_unused)?;
         rules.push(core::mem::replace(rule, CssRule::Ignored));
         merge_state.last_compat = sty_compat;
 
@@ -914,16 +862,12 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         }
     }
 
-    // Appending anything below ends the current merge run, so settle any
-    // pending declaration or `@media` body merge on the last rule first.
     if !logical.is_empty()
         || !supps.is_empty()
         || incompatible_rules.len() > 0
         || nested_rule.is_some()
     {
-        flush_pending_style_merge(rules, merge_state, context);
-        merge_state.last_compat = None;
-        flush_pending_media_merge(rules, pending_media_minify, context, parent_is_unused)?;
+        end_merge_run(rules, merge_state, context, parent_is_unused)?;
     }
 
     if !logical.is_empty() {
@@ -1028,8 +972,15 @@ impl StyleRuleKeyMap {
 
 // ─── merge_style_rules ─────────────────────────────────────────────────────
 
-/// Cross-iteration state for the style-rule merge fast path in
-/// [`CssRuleList::minify`].
+/// Cross-iteration state of the merges [`CssRuleList::minify`] performs into
+/// the last rule of its output list.
+///
+/// A merge only concatenates; re-minifying the merged result is deferred to
+/// the end of the merge run, which is when another rule gets pushed after it
+/// (every push goes through [`end_merge_run`]) or the list ends. Merges target
+/// the last *pushed* rule, so rules that minify away in between keep the run
+/// going. At most one of the two pending flags is set at a time: they describe
+/// the same last rule, which is either a style rule or an at-rule.
 ///
 /// `pending_minify` marks the last rule in the output list as a style rule
 /// whose declarations were concatenated by one or more declaration merges but
@@ -1040,8 +991,18 @@ impl StyleRuleKeyMap {
 /// prefixed background images, ...) keep that list O(n) long, so the total
 /// work was O(n^2), and worse for handlers whose re-processing re-expands
 /// their own output. Deferring to one re-minify per merge run keeps it O(n).
-/// The flag must be cleared (via [`flush_pending_style_merge`]) before
-/// anything reads the merged declarations or appends another rule.
+/// The flag must be cleared (via [`flush_pending_merges`]) before anything
+/// reads the merged declarations or appends another rule.
+///
+/// `pending_at_rule_minify` marks the last rule as an at-rule (`@media`) whose
+/// body absorbed the bodies of following rules with the same prelude and has
+/// not been minified since. Re-minifying after every merge minified the bodies
+/// merged so far once per further merge, so a run of n same-query rules cost
+/// O(n^2) rule minifications; inside a style rule whose nesting is compiled
+/// away, every pass also charged the accumulated body against
+/// [`MAX_SELECTOR_EXPANSION`] again, so a few hundred such rules failed with
+/// `selector_expansion_limit_exceeded` while expanding to a tiny fraction of
+/// that. One minify per run keeps both linear.
 ///
 /// `last_compat` caches `StyleRule::is_compatible` for the current last rule.
 /// Selector merges grow the last rule's selector list by one selector per
@@ -1050,25 +1011,30 @@ impl StyleRuleKeyMap {
 /// whenever the last rule changes and updated incrementally on selector
 /// merges (the merged result is compatible iff both inputs were).
 #[derive(Default)]
-pub(crate) struct StyleRuleMergeState {
+pub(crate) struct MergeState {
     pending_minify: bool,
+    pending_at_rule_minify: bool,
     last_compat: Option<bool>,
 }
 
-/// Re-run the declaration minifier on the last rule if it has pending merged
+/// Settle the merge run targeting the last rule, leaving it fully minified.
+///
+/// For a style rule: re-run the declaration minifier on its merged
 /// declarations, then attempt the merge-with-previous cascade that a
 /// declaration merge enables (the re-minified declarations may now equal the
-/// previous rule's, allowing a selector merge, and so on).
-fn flush_pending_style_merge<R>(
+/// previous rule's, allowing a selector merge, and so on). For an at-rule:
+/// minify its merged body.
+fn flush_pending_merges<R: for<'b> css::generics::DeepClone<'b>>(
     rules: &mut Vec<CssRule<R>>,
-    state: &mut StyleRuleMergeState,
+    state: &mut MergeState,
     context: &mut MinifyContext<'_, '_>,
-) {
+    parent_is_unused: bool,
+) -> Result<(), MinifyErr> {
     while state.pending_minify {
         state.pending_minify = false;
         let Some(CssRule::Style(last)) = rules.last_mut() else {
             debug_assert!(false, "pending declaration merge without a style rule last");
-            return;
+            break;
         };
         // The re-minify can re-stage handler-context rules: `color-scheme`
         // re-emits itself and pushes its dark-mode fallback vars on every
@@ -1086,15 +1052,45 @@ fn flush_pending_style_merge<R>(
         );
         cascade_merge_with_previous(rules, state, context);
     }
+
+    if core::mem::take(&mut state.pending_at_rule_minify) {
+        match rules.last_mut() {
+            // The rule was kept when it was first pushed; like the per-merge
+            // re-minify this replaces, this does not revisit that decision, so
+            // the drop result is ignored.
+            Some(CssRule::Media(last)) => {
+                let _ = last.minify(context, parent_is_unused)?;
+            }
+            _ => debug_assert!(
+                false,
+                "pending at-rule merge without a mergeable at-rule last"
+            ),
+        }
+    }
+    Ok(())
+}
+
+/// Pushing a rule after the current last rule ends that rule's merge run:
+/// settle it and drop what is cached about it. Every push into the output
+/// list of [`CssRuleList::minify`] goes through this first.
+fn end_merge_run<R: for<'b> css::generics::DeepClone<'b>>(
+    rules: &mut Vec<CssRule<R>>,
+    state: &mut MergeState,
+    context: &mut MinifyContext<'_, '_>,
+    parent_is_unused: bool,
+) -> Result<(), MinifyErr> {
+    flush_pending_merges(rules, state, context, parent_is_unused)?;
+    state.last_compat = None;
+    Ok(())
 }
 
 /// Try to merge the last style rule into the one before it, repeatedly, while
 /// merges keep succeeding. A declaration merge leaves `state.pending_minify`
-/// set, in which case the caller ([`flush_pending_style_merge`]) re-minifies
+/// set, in which case the caller ([`flush_pending_merges`]) re-minifies
 /// before cascading further.
 fn cascade_merge_with_previous<R>(
     rules: &mut Vec<CssRule<R>>,
-    state: &mut StyleRuleMergeState,
+    state: &mut MergeState,
     context: &mut MinifyContext<'_, '_>,
 ) {
     // The last rule was settled before cascading, so `merge_style_rules`'s
@@ -1141,7 +1137,7 @@ fn cached_is_compatible<R>(
 ///
 /// A declaration merge only concatenates the declaration lists and sets
 /// `pending_minify`; the re-minify is deferred to the end of the merge run
-/// (see [`StyleRuleMergeState`]). `pending_minify` may only be set on entry
+/// (see [`MergeState`]). `pending_minify` may only be set on entry
 /// when `last_style_rule` is the rule it tracks (the forward merge in
 /// `minify_style_arm`); the cascade always settles it first.
 /// `sty_compat` / `last_compat` cache `is_compatible` for the respective

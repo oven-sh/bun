@@ -257,7 +257,7 @@ describe("source map remapping of the printed stack", () => {
   // removed after it was loaded, so the code frame can no longer be read back.
   // Reading error.stack first makes the printer start from the already
   // remapped frames of that string instead of the raw JSC frames; those must
-  // not be remapped a second time.
+  // not be remapped a second time (https://github.com/oven-sh/bun/issues/15859).
   test.concurrent("transpiled modules: source deleted, and frames already remapped by error.stack", async () => {
     const module = message =>
       [

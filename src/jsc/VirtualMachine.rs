@@ -5705,9 +5705,6 @@ impl VirtualMachine {
                     break 'code bun_core::ZigStringSlice::EMPTY;
                 }
                 let mut log = bun_ast::Log::default();
-                // The source may be gone (deleted after it was loaded, or named by
-                // a source map that carries no `sourcesContent`). That only costs
-                // the code frame; the frames below still have to be remapped.
                 let Ok(original_source) = Self::fetch_without_on_load_plugins(
                     self,
                     global,
@@ -5718,6 +5715,7 @@ impl VirtualMachine {
                     &mut log,
                     FetchFlags::PrintSource,
                 ) else {
+                    // Source is gone; the frames still get remapped below.
                     break 'code bun_core::ZigStringSlice::EMPTY;
                 };
                 *must_reset_parser_arena_later = true;
@@ -5792,9 +5790,7 @@ impl VirtualMachine {
 
         if frames.len() > 1 {
             for i in 0..frames.len() {
-                // Frames parsed back out of an already formatted `error.stack`
-                // arrive with `remapped` set; their positions are original
-                // positions and must not be run through the source map again.
+                // `remapped`: frames parsed back out of a formatted `error.stack`.
                 if i == top || frames[i].remapped || frames[i].position.is_invalid() {
                     continue;
                 }

@@ -16,10 +16,11 @@ import {
   rmSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, isCI, isDebug } from "harness";
+import { bunEnv, bunExe, isCI, isDebug, isWindows } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 import { SourceMapConsumer } from "source-map";
+import { getCallSites } from "util";
 
 /** Dedent module does a bit too much with their stuff. we will be much simpler */
 export function dedent(str: string | TemplateStringsArray, ...args: any[]) {
@@ -469,12 +470,6 @@ function expectBundled(
   dryRun = false,
   ignoreFilter = false,
 ): Promise<BundlerTestRef> | BundlerTestRef {
-  if (!new Error().stack!.includes("test/bundler/")) {
-    throw new Error(
-      `All bundler tests must be placed in ./test/bundler/ so that regressions can be quickly detected locally via the 'bun test bundler' command`,
-    );
-  }
-
   var { expect, it, test } = testForFile(currentFile ?? callerSourceOrigin());
   if (!ignoreFilter && FILTER && !filterMatches(id)) return testRef(id, opts);
 
@@ -1877,12 +1872,32 @@ for (const [key, blob] of build.outputs) {
   })();
 }
 
+/**
+ * Bundler tests live in test/bundler/ so that `bun test bundler` runs all of them. Throws out of
+ * the registration call (never from inside the dry run, which `itBundled` swallows to skip tests
+ * whose options the current backend does not implement) so a misplaced file fails to load instead
+ * of silently registering nothing.
+ */
+function assertCalledFromBundlerTestDir(id: string) {
+  // The nearest frame that is not this file is the test file registering the test.
+  const caller = getCallSites().find(site => site.scriptName && site.scriptName !== import.meta.path)?.scriptName;
+  if (caller) {
+    const relative = path.relative(import.meta.dir, caller);
+    if (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) return;
+  }
+  throw new Error(
+    `itBundled("${id}") was called from ${caller ?? "an unknown file"}. All bundler tests must be placed in ` +
+      `test/bundler/ so that regressions can be quickly detected locally via the 'bun test bundler' command`,
+  );
+}
+
 /** Shorthand for test and expectBundled. See `expectBundled` for what this does.
  */
 export function itBundled(
   id: string,
   opts: BundlerTestInput | ((metadata: BundlerTestWrappedAPI) => BundlerTestInput),
 ): BundlerTestRef {
+  assertCalledFromBundlerTestDir(id);
   if (typeof opts === "function") {
     const fn = opts;
     opts = opts({ root: path.join(tempDirectory, id), getConfigRef });
@@ -1890,6 +1905,11 @@ export function itBundled(
     opts._referenceFn = fn;
   }
   const ref = testRef(id, opts);
+  // itBundled has not registered anything on Windows since the location check was added (#15181): it
+  // ran inside the dry run below and failed on every backslash path. Registering the ~1950 tests again
+  // adds 55 failures today (bundleErrors keys built with backslashes, posix-only assertions,
+  // sideEffects globs, [dir] naming); #34552 removes this line and fixes those.
+  if (isWindows) return ref;
   const { it } = testForFile(currentFile ?? callerSourceOrigin()) as any;
 
   if (FILTER && !filterMatches(id)) {
@@ -1920,6 +1940,7 @@ export function itBundled(
 }
 
 itBundled.only = (id: string, opts: BundlerTestInput) => {
+  assertCalledFromBundlerTestDir(id);
   const { it } = testForFile(currentFile ?? callerSourceOrigin());
 
   it.only(
@@ -1931,6 +1952,7 @@ itBundled.only = (id: string, opts: BundlerTestInput) => {
 };
 
 itBundled.skip = (id: string, opts: BundlerTestInput) => {
+  assertCalledFromBundlerTestDir(id);
   if (FILTER && !filterMatches(id)) {
     return testRef(id, opts);
   }

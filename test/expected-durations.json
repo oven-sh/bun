@@ -399,6 +399,12 @@
     "musl": 27320,
     "windows": 31130
   },
+  "bundler/compile-html-asset-urls.test.ts": {
+    "default": 1710,
+    "asan": 3560,
+    "musl": 1250,
+    "windows": 0
+  },
   "bundler/compile-process-execargv.test.ts": {
     "default": 1500,
     "asan": 4070,
@@ -565,6 +571,12 @@
     "asan": 440,
     "musl": 30,
     "windows": 90
+  },
+  "bundler/plugin-onresolve-entrypoint.test.ts": {
+    "default": 70,
+    "asan": 900,
+    "musl": 360,
+    "windows": 0
   },
   "bundler/plugin-sync-exception-fallback.test.ts": {
     "default": 20,
@@ -32856,12 +32868,6 @@
     "musl": 30,
     "windows": 80
   },
-  "regression/issue/27465.test.ts": {
-    "default": 1710,
-    "asan": 3560,
-    "musl": 1250,
-    "windows": 0
-  },
   "regression/issue/27478.test.ts": {
     "default": 30,
     "asan": 210,
@@ -33365,12 +33371,6 @@
     "asan": 130,
     "musl": 60,
     "windows": 20
-  },
-  "regression/issue/bundler-plugin-onresolve-entrypoint.test.ts": {
-    "default": 70,
-    "asan": 900,
-    "musl": 360,
-    "windows": 0
   },
   "regression/issue/circular-error-stack-edge-cases.test.ts": {
     "default": 50,

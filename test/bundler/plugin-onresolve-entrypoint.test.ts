@@ -1,6 +1,6 @@
 import { describe } from "bun:test";
 import path from "node:path";
-import { itBundled } from "../../bundler/expectBundled";
+import { itBundled } from "./expectBundled";
 
 describe("bundler plugin onResolve entry point", () => {
   itBundled("onResolve-entrypoint-modification", {

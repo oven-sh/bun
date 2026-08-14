@@ -1,5 +1,5 @@
 import { describe } from "bun:test";
-import { itBundled } from "../../bundler/expectBundled";
+import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   // Test that `bun build --compile` produces absolute asset URLs in HTML,

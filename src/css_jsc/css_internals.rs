@@ -23,6 +23,11 @@ pub(crate) enum TestCategory {
     ParserOptions,
 }
 
+/// Stands in for the path of the stylesheet under test when the `css_modules`
+/// option is on: the names of its locals are hashed from it, exactly as
+/// `bun build` would hash the path of a real `test.module.css`.
+const CSS_MODULE_FILENAME: &[u8] = b"test.module.css";
+
 // These test-only wrappers are consumed as plain safe fns through
 // `dispatch_js2native.rs` re-exports, so they don't use the
 // `#[bun_jsc::host_fn]` C-ABI shim.
@@ -92,8 +97,8 @@ fn testing_impl(
 ) -> JsResult<JSValue> {
     use bun_ast::ImportRecord;
     use bun_css::{
-        DefaultAtRule, ImportRecordHandler, LocalsResultsMap, MinifyOptions, ParserOptions,
-        PrinterOptions, StyleSheet,
+        DefaultAtRule, ImportRecordHandler, MinifyOptions, ParserOptions, PrinterOptions,
+        StyleSheet,
     };
     use bun_jsc::{LogJsc as _, StringJsc as _};
 
@@ -167,12 +172,16 @@ fn testing_impl(
     };
 
     let mut import_records = Vec::<ImportRecord>::default();
+    // Same single-sheet setup as `Transpiler::build_css_output`: css-modules
+    // locals are refs into `extra.symbols` at this source index, which
+    // `init_with_one_list` below puts at index 0.
+    let source_index = bun_ast::Index::RUNTIME;
     match StyleSheet::<DefaultAtRule>::parse(
         alloc,
         source.slice(),
         parser_options,
         Some(&mut import_records),
-        bun_ast::Index::INVALID,
+        source_index,
     ) {
         Ok(ret) => {
             let (mut stylesheet, extra) = ret;
@@ -187,8 +196,8 @@ fn testing_impl(
                 }
             }
 
-            let symbols = bun_ast::symbol::Map::init_list(Default::default());
-            let local_names = LocalsResultsMap::default();
+            let local_names = stylesheet.local_names(source_index, CSS_MODULE_FILENAME);
+            let symbols = bun_ast::symbol::Map::init_with_one_list(extra.symbols);
             let result = match stylesheet.to_css(
                 alloc,
                 &PrinterOptions {
@@ -255,16 +264,18 @@ fn parser_options_from_js(
         }
     }
 
-    // if (try jsobj.getTruthy(globalThis, "css_modules")) |val| {
-    //     opts.css_modules = bun.css.css_modules.Config{
-    //
-    //     };
-    //     if (val.isObject()) {
-    //         if (try val.getTruthy(globalThis, "pure")) |pure_val| {
-    //             opts.css_modules.pure = pure_val.toBoolean();
-    //         }
-    //     }
-    // }
+    if let Some(val) = jsobj
+        .get_truthy(global, b"css_modules")?
+        .filter(|val| val.to_boolean())
+    {
+        // Bun's css modules have no lightningcss-style `pure` mode, so a test
+        // asking for it must not silently run without it.
+        if val.is_object() && val.get_boolean_loose(global, b"pure")? == Some(true) {
+            return Err(global.throw(format_args!("css_modules.pure is not supported")));
+        }
+        opts.filename = CSS_MODULE_FILENAME;
+        opts.css_modules = Some(bun_css::css_modules::Config::default());
+    }
 
     Ok(())
 }

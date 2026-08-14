@@ -2379,7 +2379,10 @@ impl<'a> LinkerContext<'a> {
                         self.mangled_props
                             .put(
                                 r#ref,
-                                local_css_name(symbol.original_name.slice(), source.path.pretty),
+                                crate::bun_css::css_modules::local_name(
+                                    symbol.original_name.slice(),
+                                    source.path.pretty,
+                                ),
                             )
                             .expect("OOM");
                     }
@@ -2539,25 +2542,6 @@ impl<'a> LinkerContext<'a> {
         });
     }
 } // end — split: tree-shaking trio below
-
-/// The name a CSS module's local class or id is printed as:
-/// `<original name>_<hash of the file's path relative to the project root>`.
-/// Used both by `mangle_local_css` and by the `--no-bundle` CSS path
-/// (`Transpiler::build_css_output`), so a `.module.css` file transpiled on its
-/// own gets the same names the bundler would give it.
-pub(crate) fn local_css_name(original_name: &[u8], pretty_path: &[u8]) -> Box<[u8]> {
-    let scratch = Bump::new();
-    let path_hash = ::bun_base64::wyhash_url_safe(
-        &scratch,
-        format_args!("{}", bstr::BStr::new(pretty_path)),
-        false,
-    );
-    let mut name = Vec::with_capacity(original_name.len() + 1 + path_hash.len());
-    name.extend_from_slice(original_name);
-    name.push(b'_');
-    name.extend_from_slice(path_hash);
-    name.into_boxed_slice()
-}
 
 /// `js_printer::RequireOrImportMetaSource` — manual-vtable shim so the printer
 /// can call back into `LinkerContext::require_or_import_meta_for_source`.

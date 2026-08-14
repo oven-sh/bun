@@ -3102,22 +3102,7 @@ impl<'a> Transpiler<'a> {
             );
             return None;
         }
-        let mut local_names = bun_css::LocalsResultsMap::default();
-        for (inner_index, symbol) in extra.symbols.iter().enumerate() {
-            if symbol.kind == bun_ast::symbol::Kind::LocalCss {
-                local_names.insert(
-                    bun_ast::Ref::new(
-                        u32::try_from(inner_index).expect("int cast"),
-                        source_index.get(),
-                        bun_ast::RefTag::Symbol,
-                    ),
-                    crate::linker_context_mod::local_css_name(
-                        symbol.original_name.slice(),
-                        file_path_pretty,
-                    ),
-                );
-            }
-        }
+        let local_names = sheet.local_names(source_index, file_path_pretty);
         let symbols = bun_ast::symbol::Map::init_with_one_list(extra.symbols);
         let result = match sheet.to_css(
             alloc,

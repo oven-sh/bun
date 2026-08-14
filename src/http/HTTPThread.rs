@@ -1109,10 +1109,7 @@ impl HttpThread {
         // no happens-before for the init it guards" case.
         if self.has_awoken.load(Ordering::Acquire) {
             // SAFETY: uws_loop is the live HTTP-thread loop set in on_start.
-            // Call the raw extern (not `Loop::wakeup(&mut self)`) — this runs
-            // cross-thread while the HTTP thread owns the loop, so forming
-            // `&mut Loop` here would alias.
-            unsafe { uws::us_wakeup_loop(self.uws_loop) };
+            unsafe { uws::Loop::wakeup(self.uws_loop) };
         }
     }
 

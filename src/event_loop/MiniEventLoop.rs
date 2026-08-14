@@ -190,9 +190,8 @@ impl MiniEventLoop {
     /// Make a poll in progress (or the next one) return immediately, so the
     /// `is_done` predicate a `tick` loop spins on is evaluated again. Any thread.
     pub fn wakeup(&self) {
-        // SAFETY: `loop_` is the live uws loop; `us_wakeup_loop` is thread-safe
-        // and takes the raw pointer (no `&mut Loop` formed).
-        unsafe { bun_uws::us_wakeup_loop(self.loop_) };
+        // SAFETY: see `loop_ptr()` invariant.
+        unsafe { UwsLoop::wakeup(self.loop_) };
     }
 
     /// Raw pointer to the `DotEnv::Loader` backref.
@@ -387,8 +386,7 @@ impl MiniEventLoop {
     /// node stays with the caller until the callback runs.
     pub fn enqueue_task_concurrent(&mut self, task: NonNull<AnyTaskWithExtraContext>) {
         self.concurrent_tasks.push(task);
-        // SAFETY: see `loop_ptr()` invariant.
-        unsafe { (*self.loop_ptr()).wakeup() };
+        self.wakeup();
     }
 
     /// The caller supplies `field_offset = core::mem::offset_of!(C, <field>)` of the
@@ -412,9 +410,7 @@ impl MiniEventLoop {
         // SAFETY: `task` was just initialized above and is non-null (derived from `ctx`).
         self.concurrent_tasks
             .push(unsafe { NonNull::new_unchecked(task) });
-
-        // SAFETY: see `loop_ptr()` invariant.
-        unsafe { (*self.loop_ptr()).wakeup() };
+        self.wakeup();
     }
 }
 

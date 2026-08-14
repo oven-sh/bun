@@ -50,6 +50,8 @@ bun_dispatch::link_interface! {
         fn file_polls() -> *mut bun_io::file_poll::Store;
         fn put_file_poll(poll: *mut bun_io::FilePoll, was_ever_registered: bool);
         fn uws_loop() -> *mut bun_uws::Loop;
+        // Any thread; everything else here is for the loop's own thread.
+        fn wakeup();
         fn pipe_read_buffer() -> *mut [u8];
         fn tick();
         fn auto_tick();

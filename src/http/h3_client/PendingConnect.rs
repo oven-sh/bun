@@ -128,8 +128,8 @@ impl PendingConnect {
         )
         .r#loop();
         RESOLVED.lock().push(Resolved(this));
-        // SAFETY: `loop_ptr` is a live uws::Loop for as long as the HTTP thread runs.
-        unsafe { (*loop_ptr).wakeup() };
+        // SAFETY: `loop_ptr` is the HTTP thread's loop, live for as long as that thread runs.
+        unsafe { uws::Loop::wakeup(loop_ptr) };
     }
 
     pub(crate) fn drain_resolved() {

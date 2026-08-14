@@ -243,14 +243,16 @@ impl PosixLoop {
         p
     }
 
-    pub fn wakeup(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_wakeup_loop(self) };
-    }
-
-    #[inline]
-    pub fn wake(&mut self) {
-        self.wakeup();
+    /// Make the poll in progress on this loop (or the next one) return. Any thread.
+    ///
+    /// Raw pointer, not `&mut self`: the loop's own thread holds `&mut Loop` across `tick*`/`run`
+    /// while other threads call this, and `us_wakeup_loop` writes `pending_wakeups`.
+    ///
+    /// # Safety
+    /// `this` must be a live loop returned by `create`/`get` and not yet destroyed.
+    pub unsafe fn wakeup(this: *mut Self) {
+        // SAFETY: `this` is a live loop per fn contract; `us_wakeup_loop` is thread-safe.
+        unsafe { c::us_wakeup_loop(this) };
     }
 
     pub fn tick(&mut self) {
@@ -444,14 +446,14 @@ impl WindowsLoop {
         self.uv().is_active()
     }
 
-    pub fn wakeup(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_wakeup_loop(self) };
-    }
-
-    #[inline]
-    pub fn wake(&mut self) {
-        self.wakeup();
+    /// See `PosixLoop::wakeup`. Any thread.
+    ///
+    /// # Safety
+    /// `this` must be a live loop returned by `create`/`get` and not yet destroyed.
+    pub unsafe fn wakeup(this: *mut Self) {
+        // SAFETY: `this` is a live loop per fn contract; `us_wakeup_loop` (`uv_async_send`) is
+        // thread-safe.
+        unsafe { c::us_wakeup_loop(this) };
     }
 
     /// Signature matches the POSIX impl so callers need no `cfg`. `now_ns` is unused here: on
@@ -623,7 +625,7 @@ mod c {
         pub fn us_loop_run(loop_: *mut Loop);
         #[cfg(windows)]
         pub(super) fn us_loop_pump(loop_: *mut Loop);
-        pub fn us_wakeup_loop(loop_: *mut Loop);
+        pub(super) fn us_wakeup_loop(loop_: *mut Loop);
         pub(super) fn uws_loop_addPostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub(super) fn uws_loop_addPreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         #[cfg(not(windows))]
@@ -643,14 +645,9 @@ mod c {
         pub(super) fn uws_loop_date_header_timer_update(loop_: *mut Loop);
     }
 }
-// Re-exported raw externs for cross-thread callers (e.g. bun_http's
-// `HTTPThread::wakeup`, bun_io's `WindowsWaker`) that hold only a `*mut Loop`
-// and MUST NOT form a `&mut Loop` via `Loop::wakeup`/`Loop::run` — see the
-// noalias warning on `mod c` above. `us_loop_run` is included because the
-// event-loop thread parks inside it while worker threads call
-// `us_wakeup_loop` concurrently; routing either through a `&mut self`
-// receiver would create two live `&mut Loop` to the same singleton (UB).
-pub use c::{us_loop_run, us_wakeup_loop};
+// For bun_io's `WindowsWaker::wait`, which must not hold the `&mut Loop` that `run` would take
+// across the park (see there).
+pub use c::us_loop_run;
 
 unsafe extern "C" {
     // safe: no args; frees this thread's lazily-created uws loop if it exists.

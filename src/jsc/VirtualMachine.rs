@@ -1209,8 +1209,8 @@ impl VirtualMachine {
             || !el.next_immediate_tasks.is_empty()
     }
 
-    pub fn wakeup(&mut self) {
-        self.event_loop_mut().wakeup();
+    pub fn wakeup(&self) {
+        self.event_loop_shared().wakeup();
     }
 
     pub fn on_quiet_unhandled_rejection_handler_capture_value(

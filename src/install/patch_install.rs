@@ -39,9 +39,9 @@ pub struct PatchTask {
     /// is held via raw pointer through the intrusive thread-pool queue while
     /// the manager is concurrently borrowed `&mut` on the main thread; a `&`
     /// reference here would alias that exclusive borrow under Stacked Borrows.
-    /// Constructed via `BackRef::new_mut` so the underlying pointer carries
-    /// write provenance for `PackageManager::wake_raw(*mut Self)`, which
-    /// writes the event-loop wake flag.
+    /// `Mut` because `PackageManager::wake_raw` takes `*mut Self` (it hands
+    /// the pointer on to the registered wake handler); `wake_raw` itself only
+    /// reads through it.
     pub(crate) manager: bun_ptr::BackRef<PackageManager, bun_ptr::Mut>,
     /// Borrowed view of the manager's temp directory fd (see comment at top of file).
     pub(crate) tempdir: Fd,

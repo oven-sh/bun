@@ -1035,24 +1035,22 @@ impl EventLoop {
         Ok(())
     }
 
+    /// Any thread: make the thread running this loop return from its poll. A no-op before
+    /// `ensure_waker` has run (the first tick drains whatever was queued). Only the loop pointer
+    /// is read here: the loop's thread may be parked in one of the `&mut self` tick methods on
+    /// the loop, so it is only touched through `uws::Loop::wakeup`.
     pub fn wakeup(&self) {
         #[cfg(windows)]
-        {
-            if let Some(loop_) = self.uws_loop {
-                // SAFETY: uws_loop is a valid live uws::Loop handle
-                unsafe { (*loop_.as_ptr()).wakeup() };
-            }
-            return;
-        }
+        let loop_ = self.uws_loop.map(NonNull::as_ptr);
         #[cfg(not(windows))]
-        {
-            // Route through the single audited `platform_loop_opt()` accessor
-            // (set-once `Option<*mut>` deref) instead of open-coding the raw
-            // `(*event_loop_handle).wakeup()` here. Same `&mut Loop` is formed
-            // either way (autoref), so no soundness change vs the prior code.
-            if let Some(loop_) = self.vm_ref().platform_loop_opt() {
-                loop_.wakeup();
-            }
+        let loop_ = {
+            // SAFETY: `vm()` is the owning VM (see `vm_ref`); `addr_of!` reads the field
+            // without forming a `&VirtualMachine`.
+            unsafe { core::ptr::addr_of!((*self.vm()).event_loop_handle).read() }
+        };
+        if let Some(loop_) = loop_ {
+            // SAFETY: once set, the handle is this VM's loop and stays live for the VM lifetime.
+            unsafe { uws::Loop::wakeup(loop_) };
         }
     }
 
@@ -1341,7 +1339,7 @@ fn el_ref<'a>(owner: *mut ()) -> &'a mut EventLoop {
 
 // `this: *mut EventLoop` — owner was erased from a live `*mut EventLoop` in
 // `__bun_js_event_loop_current` / `EventLoopHandle::js`. All calls run on the
-// JS thread.
+// JS thread, except `wakeup`, which is the cross-thread signal.
 bun_event_loop::link_impl_JsEventLoop! {
     Jsc for EventLoop => |this| {
         // Reads the EventLoop's own `uws_loop` field; on
@@ -1377,6 +1375,7 @@ bun_event_loop::link_impl_JsEventLoop! {
             (*store).put(core::ptr::NonNull::new_unchecked(poll), ctx, was_ever_registered);
         },
         uws_loop() => (*this).usockets_loop(),
+        wakeup() => (*this).wakeup(),
         pipe_read_buffer() => core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()),
         tick() => (*this).tick(),
         auto_tick() => (*this).auto_tick(),

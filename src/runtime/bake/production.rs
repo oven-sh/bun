@@ -418,9 +418,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     loader.map.put(b"NODE_ENV", b"production")?;
     dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader>(loader));
 
-    // The transpilers borrow `framework_view` and `options.arena` until their
-    // slots drop at the end of this function (on every exit path), so both
-    // have to be declared before the slots.
+    // Borrowed by the transpilers until their slots drop, so it is declared first.
     let framework_view = framework.as_bundler_view();
     let mut server_slot = bake_body::TranspilerSlot::uninit();
     let mut client_slot = bake_body::TranspilerSlot::uninit();
@@ -588,14 +586,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         framework_router::InsertionContext::wrap(&mut entry_points),
     )?;
 
-    // `bake_body::Framework` is the runtime-side superset; the bundler reads only
-    // `built_in_modules` / `server_components` / `react_fast_refresh` /
-    // `is_built_in_react` via its lower-tier `bake_types::Framework` view.
-    // Unlike `framework_view` (projected before `resolve()` because the
-    // transpilers it configures are what `resolve()` runs on), this projection
-    // carries the resolved paths; `BundleV2` takes ownership of it.
-    // (The two Framework types could only merge if `FileSystemRouterType` /
-    // `framework_router::Style` moved down to bun_bundler.)
+    // `framework_view` predates `resolve()` (which ran on the transpilers it
+    // configured), so the bundle gets a fresh projection with the resolved paths.
     let bundler_framework = framework.as_bundler_view();
 
     let bundled_outputs_list: Vec<OutputFile> = {

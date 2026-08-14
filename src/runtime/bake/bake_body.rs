@@ -1136,11 +1136,8 @@ impl Framework {
         )
     }
 
-    /// Builds the transpiler for one graph of a production build into `out`
-    /// and returns it. `framework_view` is the projection of `self` the
-    /// transpiler (and the workers cloned from it) read while bundling; it
-    /// must outlive `out`. On `Err` after the transpiler was constructed, the
-    /// partially configured transpiler stays in `out` and is released with it.
+    /// On `Err`, a transpiler that was already constructed stays in `out`,
+    /// which drops it.
     pub(crate) fn init_transpiler_with_options<'a, 'slot>(
         &self,
         arena: &'a Arena,
@@ -1292,11 +1289,9 @@ impl Framework {
     }
 }
 
-/// Stack home of one production-build transpiler. A configured `Transpiler`
-/// points back into its own fields (`configure_linker`), so
-/// [`Framework::init_transpiler_with_options`] builds it in place here instead
-/// of returning it by value, and the slot must stay where it is afterwards.
-/// The transpiler built into the slot is dropped with it.
+/// Owns a `Transpiler` built in place (a configured one points into its own
+/// fields, see `configure_linker`, so it cannot be returned by value) and
+/// drops it.
 pub(crate) struct TranspilerSlot<'a> {
     transpiler: MaybeUninit<bun_bundler::Transpiler<'a>>,
     initialized: bool,

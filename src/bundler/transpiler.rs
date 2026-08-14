@@ -2856,9 +2856,7 @@ impl<'a> Transpiler<'a> {
 
         let mut file_path = Fs::Path::init(file_path_text);
 
-        // Computed the way the bundler computes `Source.path.pretty` (see
-        // `generic_path_with_pretty_initialized`: forward slashes on every
-        // platform), because CSS module names are hashed from it.
+        // Forward slashes on every platform, like the bundler's `Source.path.pretty`.
         let top_level_dir = self.fs().top_level_dir;
         let rel = bun_paths::resolve_path::relative_platform::<
             bun_paths::resolve_path::platform::Loose,
@@ -3073,9 +3071,7 @@ impl<'a> Transpiler<'a> {
         // `'bump`-threading note).
         let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
 
-        // Every class/id selector of a CSS module becomes a `LocalCss` symbol
-        // `Ref` carrying this source index; the printer resolves those through
-        // the symbol map and local names built below, so the three must agree.
+        // CSS module locals are `Ref`s into the one-list symbol map built below.
         let source_index = bun_ast::Index::RUNTIME;
         let (mut sheet, extra) = match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
             alloc,
@@ -3102,8 +3098,7 @@ impl<'a> Transpiler<'a> {
             );
             return None;
         }
-        // Same `<name>_<hash of the path relative to the cwd>` names that
-        // `LinkerContext::mangle_local_css` gives these locals in a bundle.
+        // Same names `LinkerContext::mangle_local_css` gives these locals in a bundle.
         let mut local_names = bun_css::LocalsResultsMap::default();
         if !sheet.local_scope.is_empty() {
             let path_hash = ::bun_base64::wyhash_url_safe(

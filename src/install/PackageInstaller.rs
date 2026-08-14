@@ -424,6 +424,22 @@ pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
     component_count == 1 || (component_count == 2 && alias[0] == b'@')
 }
 
+/// Formats the version label `PackageInstall` verifies and hashes patches
+/// against. npm versions fit `buf`; tarball, folder and git resolutions (and
+/// prerelease tags) repeat a user-supplied path, URL or tag of unbounded
+/// length, so a label that does not fit is formatted into `spill` instead.
+fn print_package_version<'a>(
+    buf: &'a mut [u8],
+    spill: &'a mut Vec<u8>,
+    args: core::fmt::Arguments<'_>,
+) -> &'a [u8] {
+    if let Ok(label) = bun_core::fmt::buf_print(buf, args) {
+        return label;
+    }
+    std::io::Write::write_fmt(spill, args).expect("formatting into a Vec is infallible");
+    spill
+}
+
 impl<'a> PackageInstaller<'a> {
     // ──────────────────────────────────────────────────────────────────────
     // BACKREF accessors
@@ -910,7 +926,8 @@ impl<'a> PackageInstaller<'a> {
                     self.node_modules.path = context.path;
                     self.current_tree_id = context.tree_id;
 
-                    const NEEDS_VERIFY: bool = false;
+                    // Re-verify: a parent reinstall may have deleted a deferred entry.
+                    const NEEDS_VERIFY: bool = true;
                     const IS_PENDING_PACKAGE_INSTALL: bool = true;
                     self.install_package_with_name_and_resolution::<NEEDS_VERIFY, IS_PENDING_PACKAGE_INSTALL>(
                         // This id might be different from the id used to enqueue the task. Important
@@ -1311,6 +1328,7 @@ impl<'a> PackageInstaller<'a> {
         let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
 
         let mut resolution_buf = [0u8; 512];
+        let mut resolution_spill = Vec::new();
         let package_version: &[u8] = if resolution.tag == resolution::Tag::Workspace {
             'brk: {
                 if let Some(workspace_version) = self
@@ -1319,22 +1337,22 @@ impl<'a> PackageInstaller<'a> {
                     .workspace_versions
                     .get(&pkg_name_hash)
                 {
-                    break 'brk bun_core::fmt::buf_print(
+                    break 'brk print_package_version(
                         &mut resolution_buf,
+                        &mut resolution_spill,
                         format_args!("{}", workspace_version.fmt(string_buf!())),
-                    )
-                    .expect("unreachable");
+                    );
                 }
 
                 // no version
                 break 'brk b"";
             }
         } else {
-            bun_core::fmt::buf_print(
+            print_package_version(
                 &mut resolution_buf,
+                &mut resolution_spill,
                 format_args!("{}", resolution.fmt(string_buf!(), PathSep::Posix)),
             )
-            .expect("unreachable")
         };
 
         let (patch_patch, patch_contents_hash, patch_name_and_version_hash, remove_patch) = 'brk: {
@@ -1584,7 +1602,6 @@ impl<'a> PackageInstaller<'a> {
             || !NEEDS_VERIFY
             || remove_patch
             || !installer.verify(resolution, &self.root_node_modules_folder);
-        self.summary.skipped += (!needs_install) as u32;
 
         if needs_install {
             if resolution.tag.can_enqueue_install_task()
@@ -2203,6 +2220,27 @@ impl<'a> PackageInstaller<'a> {
                 }
             }
         } else {
+            // Same gate as the `needs_install` branch: a pending parent's
+            // `uninstall_before_install` would delete this verified package.
+            if !IS_PENDING_PACKAGE_INSTALL
+                && !Self::can_install_package_for_tree(
+                    &self.completed_trees,
+                    self.lockfile().buffers.trees.as_slice(),
+                    self.current_tree_id,
+                )
+            {
+                self.trees[self.current_tree_id as usize]
+                    .pending_installs
+                    .push(DependencyInstallContext {
+                        dependency_id,
+                        tree_id: self.current_tree_id,
+                        path: self.node_modules.path.clone(),
+                    });
+                return;
+            }
+
+            self.summary.skipped += 1;
+
             if self.bins[package_id as usize].tag != bin::Tag::None {
                 self.trees[self.current_tree_id as usize]
                     .binaries
@@ -2221,7 +2259,7 @@ impl<'a> PackageInstaller<'a> {
             };
 
             // `defer { destination_dir.close(); }` + `defer increment_tree_install_count`.
-            // No early returns in this branch, so manual calls at end are equivalent.
+            // No early returns after this point, so manual calls at end are equivalent.
 
             let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
             let dep_behavior = dep.behavior;

@@ -32,12 +32,14 @@ pub struct Options {
     pub positionals: &'static [&'static [u8]],
     pub(crate) update: DependencyGroup,
     pub dry_run: bool,
+    pub check: bool,
     pub(crate) link_workspace_packages: bool,
     pub(crate) remote_package_features: Features,
-    pub(crate) local_package_features: Features,
+    pub local_package_features: Features,
     pub(crate) patch_features: PatchFeatures,
 
     pub filter_patterns: &'static [&'static [u8]],
+    pub add_catalog: Option<&'static [u8]>,
     pub pack_destination: &'static [u8],
     pub pack_filename: &'static [u8],
     pub pack_gzip_level: Option<&'static [u8]>,
@@ -70,7 +72,7 @@ pub struct Options {
     pub depth: Option<usize>,
 
     /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
-    pub(crate) node_linker: NodeLinker,
+    pub node_linker: NodeLinker,
 
     pub(crate) public_hoist_pattern: Option<Api::PnpmMatcher>,
     pub(crate) hoist_pattern: Option<Api::PnpmMatcher>,
@@ -89,9 +91,9 @@ pub struct Options {
     pub minimum_release_age_excludes: Option<&'static [&'static [u8]]>,
 
     /// Override CPU architecture for optional dependencies filtering
-    pub(crate) cpu: Npm::Architecture,
+    pub cpu: Npm::Architecture,
     /// Override OS for optional dependencies filtering
-    pub(crate) os: Npm::OperatingSystem,
+    pub os: Npm::OperatingSystem,
 
     pub(crate) config_version: Option<ConfigVersion>,
 }
@@ -114,6 +116,7 @@ impl Default for Options {
             positionals: &[],
             update: DependencyGroup::default(),
             dry_run: false,
+            check: false,
             link_workspace_packages: true,
             remote_package_features: Features {
                 optional_dependencies: true,
@@ -127,6 +130,7 @@ impl Default for Options {
             },
             patch_features: PatchFeatures::Nothing,
             filter_patterns: &[],
+            add_catalog: None,
             pack_destination: b"",
             pack_filename: b"",
             pack_gzip_level: None,
@@ -725,12 +729,14 @@ impl Options {
                 self.do_.set(Do::WRITE_PACKAGE_JSON, false);
                 self.do_.set(Do::SAVE_LOCKFILE, false);
             }
+            self.check = cli.check;
 
             if cli.no_summary || cli.log_level.is_silent() {
                 self.do_.set(Do::SUMMARY, false);
             }
 
             self.filter_patterns = cli.filters;
+            self.add_catalog = cli.add_catalog;
             self.pack_destination = cli.pack_destination;
             self.pack_filename = cli.pack_filename;
             self.pack_gzip_level = cli.pack_gzip_level;
@@ -790,6 +796,10 @@ impl Options {
             } else {
                 cli.log_level
             };
+            if cli.log_level.is_silent() {
+                log.level = bun_ast::Level::Err;
+                bun_ast::DEFAULT_LOG_LEVEL.store(bun_ast::Level::Err);
+            }
             // SAFETY: main-thread CLI option load — single writer.
             super::PackageManager::set_verbose_install(cli.log_level.is_verbose());
 

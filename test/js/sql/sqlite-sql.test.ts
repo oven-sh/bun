@@ -1,6 +1,6 @@
 import { randomUUIDv7, SQL } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { tempDir } from "harness";
+import { isDebug, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -1356,6 +1356,120 @@ describe("SQL helpers", () => {
     expect(results[0].value).toBe("test");
   });
 
+  test("unsafe with named parameters (strict mode)", async () => {
+    await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE named_test (id INTEGER, name TEXT, age INTEGER)`;
+
+    const insert = await strictSql.unsafe("INSERT INTO named_test VALUES (:id, :name, :age)", {
+      id: 1,
+      name: "Alice",
+      age: 30,
+    });
+    expect(insert.count).toBe(1);
+
+    const results = await strictSql.unsafe("SELECT * FROM named_test WHERE name = :name", { name: "Alice" });
+    expect(results).toEqual([{ id: 1, name: "Alice", age: 30 }]);
+  });
+
+  test("unsafe with named parameters using different prefixes", async () => {
+    await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE prefix_test (col TEXT)`;
+
+    await strictSql.unsafe("INSERT INTO prefix_test VALUES (:value)", { value: "colon" });
+    await strictSql.unsafe("INSERT INTO prefix_test VALUES ($value)", { value: "dollar" });
+    await strictSql.unsafe("INSERT INTO prefix_test VALUES (@value)", { value: "at" });
+
+    const results = await strictSql.unsafe("SELECT * FROM prefix_test WHERE col = :wanted", { wanted: "dollar" });
+    expect(results).toEqual([{ col: "dollar" }]);
+
+    const all = await strictSql.unsafe("SELECT * FROM prefix_test");
+    expect(all.map(r => r.col).sort()).toEqual(["at", "colon", "dollar"]);
+  });
+
+  test("unsafe with named parameters without strict mode (requires prefix in keys)", async () => {
+    await using defaultSql = new SQL({ adapter: "sqlite", filename: ":memory:" });
+    await defaultSql`CREATE TABLE default_named_test (id INTEGER, name TEXT)`;
+
+    await defaultSql.unsafe("INSERT INTO default_named_test VALUES (:id, :name)", { ":id": 1, ":name": "Bob" });
+    await defaultSql.unsafe("INSERT INTO default_named_test VALUES ($id, $name)", { $id: 2, $name: "Dan" });
+    await defaultSql.unsafe("INSERT INTO default_named_test VALUES (@id, @name)", { "@id": 3, "@name": "Eve" });
+
+    const byColon = await defaultSql.unsafe("SELECT * FROM default_named_test WHERE id = :id_param", {
+      ":id_param": 1,
+    });
+    expect(byColon).toEqual([{ id: 1, name: "Bob" }]);
+
+    const byDollar = await defaultSql.unsafe("SELECT name FROM default_named_test WHERE id = $wanted", {
+      $wanted: 2,
+    });
+    expect(byDollar).toEqual([{ name: "Dan" }]);
+
+    const byAt = await defaultSql.unsafe("SELECT name FROM default_named_test WHERE id = @wanted", {
+      "@wanted": 3,
+    });
+    expect(byAt).toEqual([{ name: "Eve" }]);
+  });
+
+  test("unsafe with named parameters supports values() and raw() modes", async () => {
+    await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE named_modes_test (id INTEGER, name TEXT)`;
+    await strictSql.unsafe("INSERT INTO named_modes_test VALUES (:id, :name)", { id: 7, name: "Carol" });
+
+    const values = await strictSql.unsafe("SELECT id, name FROM named_modes_test WHERE id = :id", { id: 7 }).values();
+    expect(values).toEqual([[7, "Carol"]]);
+
+    const raw = await strictSql.unsafe("SELECT id FROM named_modes_test WHERE id = :id", { id: 7 }).raw();
+    expect(raw).toHaveLength(1);
+    expect(raw[0]).toHaveLength(1);
+    const idBuf = raw[0][0] as Uint8Array;
+    expect(idBuf).toBeInstanceOf(Uint8Array);
+    expect(new DataView(idBuf.buffer, idBuf.byteOffset, idBuf.byteLength).getBigInt64(0, true)).toBe(7n);
+  });
+
+  test("unsafe with named parameters rejects on missing bindings in strict mode", async () => {
+    await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE missing_binding_test (id INTEGER, name TEXT)`;
+    await strictSql.unsafe("INSERT INTO missing_binding_test VALUES (:id, :name)", { id: 1, name: "Alice" });
+
+    await expect(
+      async () =>
+        await strictSql.unsafe("SELECT * FROM missing_binding_test WHERE id = :id AND name = :name", { id: 1 }),
+    ).toThrow('Missing parameter "name"');
+
+    // The connection stays usable after a rejected bind.
+    const rows = await strictSql.unsafe("SELECT * FROM missing_binding_test WHERE id = :id", { id: 1 });
+    expect(rows).toEqual([{ id: 1, name: "Alice" }]);
+  });
+
+  test("unsafe with named parameters for UPDATE and DELETE", async () => {
+    await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE named_update_test (id INTEGER, name TEXT)`;
+    await strictSql.unsafe("INSERT INTO named_update_test VALUES (:id, :name)", { id: 1, name: "before" });
+
+    const update = await strictSql.unsafe("UPDATE named_update_test SET name = :name WHERE id = :id", {
+      id: 1,
+      name: "after",
+    });
+    expect(update.count).toBe(1);
+
+    const results = await strictSql.unsafe("SELECT name FROM named_update_test WHERE id = :id", { id: 1 });
+    expect(results).toEqual([{ name: "after" }]);
+
+    const del = await strictSql.unsafe("DELETE FROM named_update_test WHERE id = :id", { id: 1 });
+    expect(del.count).toBe(1);
+  });
+
+  test("unsafe with named parameters inside a transaction", async () => {
+    await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE named_tx_test (id INTEGER, name TEXT)`;
+
+    const rows = await strictSql.begin(async tx => {
+      await tx.unsafe("INSERT INTO named_tx_test VALUES (:id, :name)", { id: 1, name: "tx" });
+      return await tx.unsafe("SELECT * FROM named_tx_test WHERE id = :id", { id: 1 });
+    });
+    expect(rows).toEqual([{ id: 1, name: "tx" }]);
+  });
+
   test("insert into with select helper using where IN", async () => {
     const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
     await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
@@ -1506,6 +1620,27 @@ describe("SQL helpers", () => {
     const result = await sql.file(path.join(dir, "query.sql"), ["value1", "value2"]);
     expect(result[0].param1).toBe("value1");
     expect(result[0].param2).toBe("value2");
+  });
+
+  test("file with named parameters", async () => {
+    await using dir = tempDir("sql-file-named", {
+      "query.sql": `SELECT * FROM file_named_test WHERE name = :name`,
+    });
+
+    await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE file_named_test (id INTEGER, name TEXT)`;
+    await strictSql.unsafe("INSERT INTO file_named_test VALUES (:id, :name)", { id: 1, name: "Alice" });
+
+    const result = await strictSql.file(path.join(dir, "query.sql"), { name: "Alice" });
+    expect(result).toEqual([{ id: 1, name: "Alice" }]);
+
+    // Non-strict connections use the same file with prefixed keys.
+    await using defaultSql = new SQL({ adapter: "sqlite", filename: ":memory:" });
+    await defaultSql`CREATE TABLE file_named_test (id INTEGER, name TEXT)`;
+    await defaultSql.unsafe("INSERT INTO file_named_test VALUES (:id, :name)", { ":id": 2, ":name": "Bob" });
+
+    const defaultResult = await defaultSql.file(path.join(dir, "query.sql"), { ":name": "Bob" });
+    expect(defaultResult).toEqual([{ id: 2, name: "Bob" }]);
   });
 });
 
@@ -2014,7 +2149,9 @@ describe("Memory and resource management", () => {
 
     await sql`CREATE TABLE stmt_test (id INTEGER PRIMARY KEY, value TEXT)`;
 
-    const iterations = 10000;
+    // Debug builds run the serial awaited inserts 10-100x slower, so use a
+    // smaller workload there to stay under the default timeout.
+    const iterations = isDebug ? 1000 : 10000;
 
     for (let i = 0; i < iterations; i++) {
       await sql`INSERT INTO stmt_test (id, value) VALUES (${i}, ${"test" + i})`;

@@ -93,8 +93,4 @@ template<> struct JSDOMWrapperConverterTraits<TextEncoder> {
     using WrapperClass = JSTextEncoder;
     using ToWrappedReturnType = TextEncoder*;
 };
-template<> TextEncoder::EncodeIntoResult convertDictionary<TextEncoder::EncodeIntoResult>(JSC::JSGlobalObject&, JSC::JSValue);
-
-JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject&, JSDOMGlobalObject&, const TextEncoder::EncodeIntoResult&);
-
 } // namespace WebCore

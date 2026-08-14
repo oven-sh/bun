@@ -823,13 +823,14 @@ impl UDPSocket {
             return;
         }
 
-        let event_loop = vm.event_loop_mut();
-        event_loop.enter();
-        let result = callback.call(global_this, this_value, &[err.to_error().unwrap_or(err)]);
-        if let Err(e) = result {
-            global_this.report_active_exception_as_unhandled(e);
-        }
-        event_loop.exit();
+        // A top-level call from the UDP socket callbacks: what `error` itself
+        // throws is reported.
+        vm.event_loop_mut().run_callback(
+            callback,
+            global_this,
+            this_value,
+            &[err.to_error().unwrap_or(err)],
+        );
     }
 
     #[bun_jsc::host_fn(method)]

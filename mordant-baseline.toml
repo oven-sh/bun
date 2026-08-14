@@ -1,0 +1,23 @@
+[bun_bundler]
+"defaulted_failure:src/bundler/bundle_v2.rs" = 2
+
+[bun_core]
+"defaulted_failure:src/bun_core/string/immutable.rs" = 1
+
+[bun_install]
+"defaulted_failure:src/install/npm.rs" = 1
+"unread_none:src/install/PackageInstall.rs" = 1
+
+[bun_jsc]
+"defaulted_failure:src/jsc/ConsoleObject.rs" = 4
+
+[bun_runtime]
+"bypassed_validator:src/runtime/api/js_bundle_completion_task.rs" = 1
+"bypassed_validator:src/runtime/cli/pack_command.rs" = 2
+"bypassed_validator:src/runtime/server/HTMLBundle.rs" = 2
+"bypassed_validator:src/runtime/server/mod.rs" = 1
+"bypassed_validator:src/runtime/server/server_body.rs" = 5
+"defaulted_failure:src/runtime/ffi/ffi_body.rs" = 1
+"defaulted_failure:src/runtime/server/RequestContext.rs" = 1
+"defaulted_failure:src/runtime/test_runner/pretty_format.rs" = 4
+"stored_projection:src/runtime/test_runner/bun_test.rs" = 1

@@ -15,7 +15,6 @@ fn js_err(e: JsError) -> ToJSError {
     match e {
         JsError::Thrown => ToJSError::JSError,
         JsError::OutOfMemory => ToJSError::OutOfMemory,
-        JsError::Terminated => ToJSError::JSTerminated,
     }
 }
 
@@ -29,7 +28,6 @@ pub fn to_js_error(e: ToJSError, global: &JSGlobalObject) -> JsError {
     match e {
         ToJSError::OutOfMemory => JsError::OutOfMemory,
         ToJSError::JSError => JsError::Thrown,
-        ToJSError::JSTerminated => JsError::Terminated,
         _ => global.throw(format_args!("Cannot convert value to JS")),
     }
 }
@@ -185,7 +183,7 @@ extern "C" fn Bun__JSONRows__wtf8ToJS(
     let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
     match utf8_bytes_to_js(bytes, global) {
         Ok(value) => value,
-        // Only the string's to_js can fail here (JSError / JSTerminated): the
+        // Only the string's to_js can fail here (JSError): the
         // exception is pending and the caller RETURN_IF_EXCEPTIONs on empty.
         Err(_) => JSValue::ZERO,
     }

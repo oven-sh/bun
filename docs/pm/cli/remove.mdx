@@ -7,8 +7,23 @@ import Remove from "/snippets/cli/remove.mdx";
 
 ## Basic Usage
 
+<Note>**Alias** — `bun rm`, `bun uninstall`, `bun r`</Note>
+
 ```bash terminal icon="terminal"
 bun remove ts-node
+```
+
+The package is removed from every dependency group in `package.json` that lists it, `bun.lock` is updated, and it is deleted from `node_modules` once nothing else depends on it.
+
+## `--filter`
+
+<Note>**Alias** — `-F`</Note>
+
+In a monorepo, remove the package from the matching workspace(s) instead of the current directory's package, using the same patterns as [`bun add --filter`](/pm/cli/add#--filter). Use `--filter '*'` to remove it from every workspace package. Workspaces that don't list the package are left untouched.
+
+```bash terminal icon="terminal"
+bun remove zod --filter api
+bun remove zod --filter '*'
 ```
 
 ---

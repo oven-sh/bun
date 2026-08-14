@@ -5,6 +5,7 @@ use bun_threading::RwLock;
 use bun_core::Environment;
 use bun_core::Timespec;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
+use crate::api::cron::CronJob;
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::timer::{
     AbortSignalTimeout, ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
@@ -116,7 +117,7 @@ fn from_el_timespec(t: &ElTimespec) -> Timespec {
 }
 
 /// Owners of the nodes [`FakeTimers::clear`] popped, still to be told their
-/// timer is gone. Released only once the `FakeTimers` borrow has ended: both
+/// timer is gone. Released only once the `FakeTimers` borrow has ended: these
 /// paths re-enter `timer::All` (`TimerObjectInternals::cancel` → `All::remove`,
 /// `Timeout` deinit → `timer_remove`).
 #[derive(Default)]
@@ -132,6 +133,8 @@ struct ClearedTimers {
     /// pins an observed signal's wrapper for as long as that is set. Only the
     /// signal's `cancelTimer()` clears it (and frees the box).
     signal_timeouts: Vec<*mut AbortSignalTimeout>,
+    /// A `Bun.cron()` job keeps the event loop alive until it is stopped.
+    cron_jobs: Vec<*mut CronJob>,
 }
 
 impl ClearedTimers {
@@ -144,6 +147,13 @@ impl ClearedTimers {
             // still owned by a live signal; JS thread; the `FakeTimers` borrow
             // ended before this call. `t` is freed by the call.
             unsafe { AbortSignalTimeout::discard(t) };
+        }
+        for job in self.cron_jobs {
+            // SAFETY: `clear` popped `job`'s node from the fake heap, so the
+            // job was scheduled and its JS wrapper (strong while scheduled)
+            // keeps it alive; no JS has run since; the `FakeTimers` borrow
+            // ended before this call.
+            unsafe { CronJob::stop_dropped_from_fake_heap(job) };
         }
     }
 }
@@ -197,7 +207,14 @@ impl FakeTimers {
                             .signal_timeouts
                             .push(AbortSignalTimeout::from_timer_ptr(timer));
                     }
-                    _ => {}
+                    EventLoopTimerTag::CronJob => {
+                        cleared.cron_jobs.push(CronJob::from_timer_ptr(timer));
+                    }
+                    tag => debug_assert!(
+                        false,
+                        "{} timer in the fake heap has no release path",
+                        <&'static str>::from(tag),
+                    ),
                 }
             }
         }
@@ -205,19 +222,23 @@ impl FakeTimers {
         cleared
     }
 
-    fn execute_next(global: &JSGlobalObject) -> bool {
+    fn execute_next(global: &JSGlobalObject) -> JsResult<bool> {
         // SAFETY: `timer_all()` is the live per-thread `All`; the borrow ends
         // at this statement, before `fire` re-enters `All::insert`.
         let next = match unsafe { (*timer_all()).fake_timers.timers.delete_min() } {
             Some(n) => n,
-            None => return false,
+            None => return Ok(false),
         };
 
-        Self::fire(global, next);
-        true
+        Self::fire(global, next)?;
+        Ok(true)
     }
 
-    fn fire(global: &JSGlobalObject, next: *mut EventLoopTimer) {
+    /// Fired from inside the `jest` timer-control host functions. The fake
+    /// clock is a timer drain of its own: like `All::drain_timers`, a
+    /// timer whose callback threw is reported and the drain goes on; only the
+    /// VM's termination stops it, thrown to the `jest` host function driving it.
+    fn fire(global: &JSGlobalObject, next: *mut EventLoopTimer) -> JsResult<()> {
         let _vm = global.bun_vm();
 
         // SAFETY: `next` was just popped from our heap; live until callback completes.
@@ -231,10 +252,15 @@ impl FakeTimers {
         CURRENT_TIME.set(global, &now, None);
         // SAFETY: `next` is live; `fire` takes `*mut Self` (noalias re-entrancy)
         // and an erased `*mut ()` for the VM.
-        unsafe { EventLoopTimer::fire(next, &now_el, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
+        let fired = unsafe { EventLoopTimer::fire(next, &now_el, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
+        match fired {
+            Ok(()) => Ok(()),
+            Err(err) => bun_jsc::task::report_error_or_terminate(global, err)
+                .map_err(|stopped| stopped.throw(global)),
+        }
     }
 
-    fn execute_until(global: &JSGlobalObject, until: Timespec) {
+    fn execute_until(global: &JSGlobalObject, until: Timespec) -> JsResult<()> {
         let all = timer_all();
         'outer: loop {
             let next = 'blk: {
@@ -254,22 +280,24 @@ impl FakeTimers {
                 debug_assert!(core::ptr::eq(min, peek));
                 break 'blk min;
             };
-            Self::fire(global, next);
+            Self::fire(global, next)?;
         }
+        Ok(())
     }
 
-    fn execute_only_pending_timers(global: &JSGlobalObject) {
+    fn execute_only_pending_timers(global: &JSGlobalObject) -> JsResult<()> {
         // SAFETY: `timer_all()` is the live per-thread `All`.
         let until = match unsafe { (*timer_all()).fake_timers.timers.find_max() } {
             // SAFETY: `t` is reachable in the heap and live while linked.
             Some(t) => from_el_timespec(unsafe { &(*t).next }),
-            None => return,
+            None => return Ok(()),
         };
-        Self::execute_until(global, until);
+        Self::execute_until(global, until)
     }
 
-    fn execute_all_timers(global: &JSGlobalObject) {
-        while Self::execute_next(global) {}
+    fn execute_all_timers(global: &JSGlobalObject) -> JsResult<()> {
+        while Self::execute_next(global)? {}
+        Ok(())
     }
 }
 
@@ -364,7 +392,7 @@ fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 fn advance_timers_to_next_timer(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
 
-    let _ = FakeTimers::execute_next(global);
+    FakeTimers::execute_next(global)?;
 
     Ok(frame.this())
 }
@@ -398,8 +426,9 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     let effective_advance = if arg_number == 0.0 { 1.0 } else { arg_number };
     let target = current.add_ms_float(effective_advance);
 
-    FakeTimers::execute_until(global, target);
+    let advanced = FakeTimers::execute_until(global, target);
     CURRENT_TIME.set(global, &target, None);
+    advanced?;
 
     Ok(frame.this())
 }
@@ -408,7 +437,7 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
 fn run_only_pending_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
 
-    FakeTimers::execute_only_pending_timers(global);
+    FakeTimers::execute_only_pending_timers(global)?;
 
     Ok(frame.this())
 }
@@ -417,7 +446,7 @@ fn run_only_pending_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 fn run_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
 
-    FakeTimers::execute_all_timers(global);
+    FakeTimers::execute_all_timers(global)?;
 
     Ok(frame.this())
 }

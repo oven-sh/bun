@@ -165,14 +165,14 @@ static void populateStackFrame(JSC::VM& vm, const JSC::StackFrame& stackFrame, Z
     populateStackFramePosition(stackFrame, frame);
 }
 
-// The top frame's line and a few above it, for the source preview. Most of the
-// time the printer reads the original file itself; this is the fallback for
-// sources that only exist in memory (eval, builtins, blobs).
-static void collectSourceLines(ZigStackTrace& trace)
+// Frame `topFrame`'s line and a few above it, for the source preview. Most of
+// the time the printer reads the original file itself; this is the fallback
+// for sources that only exist in memory (eval, builtins, blobs).
+static void collectSourceLines(ZigStackTrace& trace, uint8_t topFrame)
 {
-    if (trace.frames_len == 0 || trace.source_lines_ptr == nullptr || trace.source_lines_to_collect <= 1)
+    if (topFrame >= trace.frames_len || trace.source_lines_ptr == nullptr || trace.source_lines_to_collect <= 1)
         return;
-    ZigStackFrame& top = trace.frames_ptr[0];
+    ZigStackFrame& top = trace.frames_ptr[topFrame];
     JSC::SourceProvider* provider = top.source_provider;
     if (!provider || top.position.byte_position < 0)
         return;
@@ -182,25 +182,10 @@ static void collectSourceLines(ZigStackTrace& trace)
 
     BunString* source_lines = trace.source_lines_ptr;
     OrdinalNumber* source_line_numbers = trace.source_lines_numbers;
-    uint8_t source_lines_count = trace.source_lines_to_collect;
-    ZigStackFramePosition location = top.position;
-
-    // Search for the beginning of the line
-    unsigned int lineStart = location.byte_position;
-    while (lineStart > 0 && sourceString[lineStart] != '\n') {
-        lineStart--;
-    }
-
-    // Search for the end of the line
-    unsigned int lineEnd = location.byte_position;
-    unsigned int maxSearch = sourceString.length();
-    while (lineEnd < maxSearch && sourceString[lineEnd] != '\n') {
-        lineEnd++;
-    }
-
-    const unsigned char* bytes = sourceString.span8().data();
-
-    // Most of the time, when you look at a stack trace, you want a couple lines above.
+    const uint8_t source_lines_count = trace.source_lines_to_collect;
+    const OrdinalNumber line = top.position.line();
+    const unsigned length = sourceString.length();
+    const Latin1Character* bytes = sourceString.span8().data();
 
     // It is key to not clone this data because source code strings are large.
     // Usage of toStringView (non-owning) is safe as we ref the provider.
@@ -209,41 +194,27 @@ static void collectSourceLines(ZigStackTrace& trace)
         trace.referenced_source_provider->deref();
     }
     trace.referenced_source_provider = provider;
+
+    // The top frame's line…
+    unsigned lineStart = top.position.byte_position;
+    while (lineStart > 0 && bytes[lineStart - 1] != '\n')
+        lineStart--;
+    unsigned lineEnd = top.position.byte_position;
+    while (lineEnd < length && bytes[lineEnd] != '\n')
+        lineEnd++;
     source_lines[0] = Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart));
-    source_line_numbers[0] = location.line();
+    source_line_numbers[0] = line;
 
-    if (lineStart > 0) {
-        auto byte_offset_in_source_string = lineStart - 1;
-        uint8_t source_line_i = 1;
-        auto remaining_lines_to_grab = source_lines_count - 1;
-
-        {
-            // This should probably be code points instead of newlines
-            while (byte_offset_in_source_string > 0 && bytes[byte_offset_in_source_string] != '\n') {
-                byte_offset_in_source_string--;
-            }
-
-            byte_offset_in_source_string -= byte_offset_in_source_string > 0;
-        }
-
-        while (byte_offset_in_source_string > 0 && remaining_lines_to_grab > 0) {
-            unsigned int end_of_line_offset = byte_offset_in_source_string;
-
-            // This should probably be code points instead of newlines
-            while (byte_offset_in_source_string > 0 && bytes[byte_offset_in_source_string] != '\n') {
-                byte_offset_in_source_string--;
-            }
-
-            // We are at the beginning of the line
-            source_lines[source_line_i] = Bun::toStringView(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1));
-
-            source_line_numbers[source_line_i] = location.line().fromZeroBasedInt(location.line().zeroBasedInt() - source_line_i);
-            source_line_i++;
-
-            remaining_lines_to_grab--;
-
-            byte_offset_in_source_string -= byte_offset_in_source_string > 0;
-        }
+    // …and a few above it, since that is what you want to see in a stack trace.
+    uint8_t i = 1;
+    while (i < source_lines_count && lineStart > 0) {
+        lineEnd = lineStart - 1; // the '\n' ending the line above
+        lineStart = lineEnd;
+        while (lineStart > 0 && bytes[lineStart - 1] != '\n')
+            lineStart--;
+        source_lines[i] = Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart));
+        source_line_numbers[i] = OrdinalNumber::fromZeroBasedInt(line.zeroBasedInt() - i);
+        i++;
     }
 }
 
@@ -316,7 +287,8 @@ public:
             }
         } else {
             lineInner = StringView_slice(line, openingParentheses + 1, closingParentheses);
-            functionName = line.substring(0, openingParentheses - 1);
+            if (openingParentheses > 0)
+                functionName = line.substring(0, openingParentheses - 1);
         }
 
         {
@@ -469,13 +441,9 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    // An Error is described by where it was created: its own captured frames,
-    // or — once those have been materialized into a `.stack` string, or were
-    // only ever supplied as one (structured clone, Error.captureStackTrace) —
-    // that string. `stackTrace`, the wrapping JSC::Exception's throw site, is
-    // the fallback for errors carrying neither, so a rethrown or cross-thread
-    // error points at its origin rather than at `throw err`.
-    if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
+    if (stackTrace != nullptr && stackTrace->size() > 0) {
+        populateStackTrace(vm, *stackTrace, except.stack, global);
+    } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
         populateStackTrace(vm, *err->stackTrace(), except.stack, global, FinalizerSafety::MustNotTriggerGC);
     }
     except.type = (unsigned char)err->errorType();
@@ -591,7 +559,7 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
                     iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
                         ASSERT(except.stack.frames_len < frame_count);
                         // populateStackTrace skips native frames; these are how they print.
-                        if (frame.lineNumber.zeroBasedInt() < 0 && (frame.sourceURL.isEmpty() || frame.sourceURL == "unknown"_s || frame.sourceURL == "native"_s))
+                        if (frame.sourceURL.isEmpty() || (frame.lineNumber.zeroBasedInt() < 0 && (frame.sourceURL == "unknown"_s || frame.sourceURL == "native"_s)))
                             return;
                         auto& current = except.stack.frames_ptr[except.stack.frames_len];
                         current = {};
@@ -625,9 +593,6 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
             }
         }
     }
-
-    if (except.stack.frames_len == 0 && stackTrace != nullptr && stackTrace->size() > 0)
-        populateStackTrace(vm, *stackTrace, except.stack, global);
 
     if (except.stack.frames_len == 0) {
         JSC::JSValue sourceURL = getNonObservable(vm, global, obj, vm.propertyNames->sourceURL);
@@ -853,7 +818,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::Enc
     exceptionFromString(*exception, value, global);
 }
 
-extern "C" void ZigException__collectSourceLines(ZigException* exception)
+extern "C" void ZigException__collectSourceLines(ZigException* exception, uint8_t topFrame)
 {
-    collectSourceLines(exception->stack);
+    collectSourceLines(exception->stack, topFrame);
 }

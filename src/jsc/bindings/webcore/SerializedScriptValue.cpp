@@ -213,14 +213,14 @@ extern "C" JSC::EncodedJSValue ResolveMessage__toErrorInstance(void*, JSC::JSGlo
 // Error carrying their message and location.
 static bool serializesAsError(JSC::JSObject* object)
 {
-    return object->inherits<JSC::ErrorInstance>() || object->inherits<JSBuildMessage>() || object->inherits<JSResolveMessage>();
+    return object->isErrorInstance() || object->inherits<JSBuildMessage>() || object->inherits<JSResolveMessage>();
 }
 
 // The ErrorInstance to write for an `object` that `serializesAsError`.
 static JSC::ErrorInstance* toSerializableErrorInstance(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
 {
-    if (auto* errorInstance = dynamicDowncast<JSC::ErrorInstance>(object))
-        return errorInstance;
+    if (object->isErrorInstance())
+        return uncheckedDowncast<JSC::ErrorInstance>(object);
     if (auto* buildMessage = dynamicDowncast<JSBuildMessage>(object))
         return uncheckedDowncast<JSC::ErrorInstance>(JSC::JSValue::decode(BuildMessage__toErrorInstance(buildMessage->wrapped(), globalObject)));
     return uncheckedDowncast<JSC::ErrorInstance>(JSC::JSValue::decode(ResolveMessage__toErrorInstance(uncheckedDowncast<JSResolveMessage>(object)->wrapped(), globalObject)));

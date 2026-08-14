@@ -170,10 +170,7 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
             }
         }
 
-        if !self.exclude_line_column
-            && !source_slice.is_empty()
-            && (self.position.line.is_valid() || self.position.column.is_valid())
-        {
+        if !self.exclude_line_column && !source_slice.is_empty() && self.position.line.is_valid() {
             if self.enable_color {
                 f.write_str(Output::pretty_fmt!("<r><d>:", true))?;
             } else {

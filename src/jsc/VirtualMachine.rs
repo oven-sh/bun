@@ -5205,14 +5205,6 @@ impl VirtualMachine {
                 let zig_exception: &mut ZigException = holder.zig_exception();
                 exception_.get_stack_trace(global_ref, &mut zig_exception.stack);
                 if zig_exception.stack.frames_len > 0 {
-                    // SAFETY: `frames_ptr[..frames_len]` were just populated by
-                    // `get_stack_trace` into `holder`'s frame buffer.
-                    unsafe {
-                        self.remap_stack_frame_positions(
-                            zig_exception.stack.frames_ptr,
-                            zig_exception.stack.frames_len as usize,
-                        );
-                    }
                     let _ = Self::print_stack_trace(writer, &zig_exception.stack, allow_ansi_color);
                 }
                 if let Some(list) = exception_list {
@@ -5243,21 +5235,11 @@ impl VirtualMachine {
             };
         }
 
-        // A thrown (rather than rejected) diagnostic arrives wrapped in its
-        // JSC::Exception; look through it so it still prints as a diagnostic.
-        // `logged` dedupes against the module loader having already printed
-        // it, which doesn't apply to user code throwing it later.
-        let was_thrown = value.is_exception(self.jsc_vm);
-        let diagnostic = if was_thrown {
-            value.to_error().unwrap_or(value)
-        } else {
-            value
-        };
-        if diagnostic.js_type() == jsc::JSType::DOMWrapper {
+        if value.js_type() == jsc::JSType::DOMWrapper {
             // `as_class_ref` is the audited `as_::<T>() → &T` backref-deref;
             // R-2: shared borrow — `logged` is `Cell<bool>`.
-            if let Some(build_error) = diagnostic.as_class_ref::<crate::BuildMessage>() {
-                if was_thrown || !build_error.logged.get() {
+            if let Some(build_error) = value.as_class_ref::<crate::BuildMessage>() {
+                if !build_error.logged.get() {
                     if self.had_errors {
                         let _ = writer.write_all(b"\n");
                     }
@@ -5275,8 +5257,8 @@ impl VirtualMachine {
                 }
                 bun_core::Output::flush();
                 return true;
-            } else if let Some(resolve_error) = diagnostic.as_class_ref::<crate::ResolveMessage>() {
-                if was_thrown || !resolve_error.logged.get() {
+            } else if let Some(resolve_error) = value.as_class_ref::<crate::ResolveMessage>() {
+                if !resolve_error.logged.get() {
                     if self.had_errors {
                         let _ = writer.write_all(b"\n");
                     }
@@ -5465,6 +5447,35 @@ impl VirtualMachine {
         self.remap_stack_frames_mutex.unlock();
     }
 
+    fn is_unknown_source(url: &bun_core::String) -> bool {
+        url.is_empty()
+            || url.eql_comptime("[unknown]")
+            // FormatStackTraceForJS spells them this way in `.stack` strings.
+            || url.eql_comptime("unknown")
+            || url.eql_comptime("native")
+            || url.has_prefix_comptime(b"[source:")
+    }
+
+    /// The frame the source preview describes — the top-most locatable
+    /// non-runtime frame when hiding internals, else frame 0 — and whether
+    /// every frame was internal/unlocatable (so frame 0 is only a fallback).
+    fn preview_frame(&self, frames: &[crate::ZigStackFrame]) -> (usize, bool) {
+        if !self.hide_bun_stackframes {
+            return (0, false);
+        }
+        for (i, frame) in frames.iter().enumerate() {
+            if frame.position.is_invalid()
+                || frame.source_url.has_prefix_comptime(b"bun:")
+                || frame.source_url.has_prefix_comptime(b"node:")
+                || Self::is_unknown_source(&frame.source_url)
+            {
+                continue;
+            }
+            return (i, false);
+        }
+        (0, !frames.is_empty())
+    }
+
     /// Fills `exception` from `error_instance`, remapping stack frames through source maps.
     pub(crate) fn remap_zig_exception(
         &mut self,
@@ -5560,14 +5571,7 @@ impl VirtualMachine {
         fn is_hidden_frame(f: &crate::ZigStackFrame) -> bool {
             f.source_url.eql_comptime("bun:wrap") || f.function_name.eql_comptime("::bunternal::")
         }
-        fn is_unknown_source(url: &bun_core::String) -> bool {
-            url.is_empty()
-                || url.eql_comptime("[unknown]")
-                // FormatStackTraceForJS spells them this way in `.stack` strings.
-                || url.eql_comptime("unknown")
-                || url.eql_comptime("native")
-                || url.has_prefix_comptime(b"[source:")
-        }
+        let is_unknown_source = Self::is_unknown_source;
 
         let mut frames_len = exception.stack.frames_len as usize;
         // SAFETY: `frames_ptr[..frames_len]` is the caller-owned `Holder`
@@ -5619,23 +5623,7 @@ impl VirtualMachine {
             return;
         }
 
-        // Pick the top-most non-builtin frame for source preview.
-        let mut top: usize = 0;
-        let mut top_frame_is_builtin = false;
-        if self.hide_bun_stackframes {
-            for (i, frame) in frames.iter().enumerate() {
-                if frame.source_url.has_prefix_comptime(b"bun:")
-                    || frame.source_url.has_prefix_comptime(b"node:")
-                    || is_unknown_source(&frame.source_url)
-                {
-                    top_frame_is_builtin = true;
-                    continue;
-                }
-                top = i;
-                top_frame_is_builtin = false;
-                break;
-            }
-        }
+        let (top, top_frame_is_builtin) = self.preview_frame(frames);
 
         // Don't show source code preview for REPL frames — it would show the
         // transformed IIFE wrapper code, not what the user typed.
@@ -5749,7 +5737,7 @@ impl VirtualMachine {
             };
 
             if enable_source_code_preview.get() && code.slice().is_empty() {
-                exception.collect_source_lines();
+                exception.collect_source_lines(top);
             }
 
             if !already_remapped {
@@ -5795,7 +5783,7 @@ impl VirtualMachine {
                 *source_code_slice = Some(code);
             }
         } else if enable_source_code_preview.get() {
-            exception.collect_source_lines();
+            exception.collect_source_lines(top);
         }
 
         drop(top_source_url);
@@ -6147,19 +6135,7 @@ impl VirtualMachine {
                 }
 
                 let frames = exception.stack.frames();
-                let mut top_frame: Option<&crate::ZigStackFrame> = frames.first();
-                if self.hide_bun_stackframes {
-                    for frame in frames {
-                        if frame.position.is_invalid()
-                            || frame.source_url.has_prefix_comptime(b"bun:")
-                            || frame.source_url.has_prefix_comptime(b"node:")
-                        {
-                            continue;
-                        }
-                        top_frame = Some(frame);
-                        break;
-                    }
-                }
+                let top_frame: Option<&crate::ZigStackFrame> = frames.get(self.preview_frame(frames).0);
 
                 let trimmed = source.trimmed_text();
 

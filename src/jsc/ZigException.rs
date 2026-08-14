@@ -13,7 +13,7 @@ use crate::{JSErrorCode, JSRuntimeType, ZigStackFrame, ZigStackTrace};
 // SAFETY (safe fn): `ZigException` is a `#[repr(C)]` out-param the C++ side
 // fills in-place.
 unsafe extern "C" {
-    pub(crate) safe fn ZigException__collectSourceLines(exception: &mut ZigException);
+    pub(crate) safe fn ZigException__collectSourceLines(exception: &mut ZigException, top_frame: u8);
 }
 
 /// Represents a JavaScript exception with additional information
@@ -45,10 +45,10 @@ pub struct ZigException {
 }
 
 impl ZigException {
-    /// Slice the top frame's source lines out of the SourceProvider it was
+    /// Slice frame `top_frame`'s source lines out of the SourceProvider it was
     /// populated from (for sources the printer can't read from disk).
-    pub(crate) fn collect_source_lines(&mut self) {
-        ZigException__collectSourceLines(self);
+    pub(crate) fn collect_source_lines(&mut self, top_frame: usize) {
+        ZigException__collectSourceLines(self, u8::try_from(top_frame).unwrap_or(u8::MAX));
     }
 
     // Kept as explicit `deinit` (not `Drop`) — this is a #[repr(C)] FFI

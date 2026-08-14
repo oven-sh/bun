@@ -57,6 +57,19 @@ pub(crate) fn clone_active_strong() -> Option<BunTestPtr> {
     runner.bun_test_root.clone_active_file()
 }
 
+// HOST_EXPORT(Bun__Jest__onStackCallback, c)
+pub fn on_stack_callback(global: &JSGlobalObject) -> JSValue {
+    // The runner, its slot and the callback in it all belong to the main thread; a Worker gets nothing.
+    if !global.bun_vm().is_main_thread {
+        return JSValue::ZERO;
+    }
+    // `runner_ptr()` rather than `runner()` for the same reason as `js_file_generation`.
+    // SAFETY: RUNNER and the slot are only written on the main thread, which the check above keeps us on.
+    Jest::runner_ptr().map_or(JSValue::ZERO, |runner| unsafe {
+        (*runner.as_ptr()).bun_test_root.on_stack_callback.get()
+    })
+}
+
 pub use super::done_callback::DoneCallback;
 
 pub mod js_fns {
@@ -431,6 +444,8 @@ pub struct BunTestRoot {
     /// state (node:test root) resets on `--rerun-each` where `Bun.main` is
     /// unchanged across iterations.
     pub(crate) file_generation: u32,
+    /// Callback `run_test_callback` is invoking (else `ZERO`), read by `mock.module()` tail-called from it; rooted by its entry.
+    pub(crate) on_stack_callback: std::cell::Cell<JSValue>,
 }
 
 impl BunTestRoot {
@@ -450,6 +465,7 @@ impl BunTestRoot {
             hook_scope,
             pending_then_refs: std::cell::RefCell::new(Vec::new()),
             file_generation: 0,
+            on_stack_callback: std::cell::Cell::new(JSValue::ZERO),
         }
     }
 
@@ -1155,12 +1171,24 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
-        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(
-            cfg_callback,
-            global_this,
-            JSValue::UNDEFINED,
-            args_slice,
-        ) {
+        // Same gate as `EventLoop::run_callback`: never enter JS with an exception pending.
+        let call_result: JsResult<JSValue> = if global_this.has_exception() {
+            Ok(JSValue::UNDEFINED)
+        } else {
+            // `BackRef` copy, not `&BunTestRoot`: the callback re-enters the runner.
+            let bun_test_root = this_strong.bun_test_root;
+            // Saved/restored like `Execution::on_stack_entry`: a timeout firing inside the callback can start the next entry.
+            let previous_on_stack_callback = bun_test_root.on_stack_callback.replace(cfg_callback);
+            let called = cfg_callback.call(global_this, JSValue::UNDEFINED, args_slice);
+            // Restored before the microtask drain: a continuation that runs there was not called by the runner.
+            bun_test_root.on_stack_callback.set(previous_on_stack_callback);
+            called.and_then(|result| {
+                result.ensure_still_alive();
+                vm.event_loop_mut().drain_microtasks_with_global(global_this, vm.jsc_vm())?;
+                Ok(result)
+            })
+        };
+        let result: JSValue = match call_result {
             Ok(v) => v,
             Err(_) => {
                 global_this.clear_termination_exception();

@@ -7,7 +7,8 @@
 // - Write test for export {foo} from "./foo"
 // - Write test for import {foo} from "./foo"; export {foo}
 
-import { expect, mock, spyOn, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
@@ -165,4 +166,189 @@ test("mocking a builtin", async () => {
 
   const { readFile } = await import("node:fs/promises");
   expect(await readFile("hello.txt", "utf8")).toBe("hello world");
+});
+
+// `() => mock.module(...)` is a proper tail call (test files are modules, so strict mode), which
+// replaces the callback's frame with mock.module's own. When the test runner is what invoked the
+// callback, nothing below mock.module on the stack says which file made the call, so the specifier
+// has to be resolved against the file the callback was defined in. Each scenario imports the module
+// first: the mock only takes effect if the specifier resolves to the path that is already loaded.
+describe("mock.module() tail-called from a callback the runner invokes", () => {
+  // bun test reports to stderr; the inner test's failure output ends up in the assertion message.
+  async function expectBunTestToPass(dir: string, passing: number, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({
+      stderr: expect.stringContaining(` ${passing} pass\n`),
+      exitCode: 0,
+    });
+  }
+
+  const dep = `export const value = "real";\n`;
+  const mocked = `() => ({ value: "mocked" })`;
+
+  const shapes: [shape: string, register: string, passing: number][] = [
+    ["beforeAll", `beforeAll(() => mock.module("./dep", ${mocked}));`, 1],
+    ["beforeEach", `beforeEach(() => mock.module("./dep", ${mocked}));`, 1],
+    ["describe body", `describe("registers", () => mock.module("./dep", ${mocked}));`, 1],
+    ["test body", `test("registers", () => mock.module("./dep", ${mocked}));`, 2],
+    ["test.each body", `test.each(["./dep"])("registers %s", specifier => mock.module(specifier, ${mocked}));`, 2],
+    ["beforeAll with a relative file: URL", `beforeAll(() => mock.module("file:./dep.ts", ${mocked}));`, 1],
+    // Registering inside an AsyncLocalStorage context makes the runner store the callback wrapped in an
+    // AsyncContextFrame. (Hooks and tests registered that way currently wait for a done callback that was
+    // never declared, so describe is the shape that exercises the wrapper.)
+    [
+      "describe body registered under AsyncLocalStorage",
+      `new AsyncLocalStorage().run(1, () => describe("registers", () => mock.module("./dep", ${mocked})));`,
+      1,
+    ],
+  ];
+
+  test.concurrent.each(shapes)("%s", async (_shape, register, passing) => {
+    using dir = tempDir("mock-module-tail-call", {
+      "dep.ts": dep,
+      "tail.test.ts": `
+        import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
+        import { AsyncLocalStorage } from "node:async_hooks";
+        import { value } from "./dep";
+        ${register}
+        test("mock applied to the already-imported module", () => expect(value).toBe("mocked"));
+      `,
+    });
+
+    await expectBunTestToPass(String(dir), passing, "tail.test.ts");
+  });
+
+  test.concurrent("a package specifier is resolved to the loaded package", async () => {
+    using dir = tempDir("mock-module-tail-call-pkg", {
+      "node_modules/some-pkg/package.json": `{ "name": "some-pkg", "main": "index.js" }`,
+      "node_modules/some-pkg/index.js": dep,
+      "tail.test.ts": `
+        import { beforeAll, expect, mock, test } from "bun:test";
+        import { value } from "some-pkg";
+        beforeAll(() => mock.module("some-pkg", ${mocked}));
+        test("mock applied to the already-imported package", () => expect(value).toBe("mocked"));
+      `,
+    });
+
+    await expectBunTestToPass(String(dir), 1, "tail.test.ts");
+  });
+
+  // Cross-file layout: the code that calls mock.module("./dep") lives in setup/, next to setup/dep.ts.
+  // The dep.ts next to the test file is a decoy: it changes in the assertion if "./dep" gets resolved
+  // against the test file instead of against the file that made the call.
+  const setupFiles = {
+    "setup/dep.ts": dep,
+    "dep.ts": `export const value = "decoy";\n`,
+    "setup/helpers.ts": `
+      import { mock } from "bun:test";
+      export function mockDep() {
+        mock.module("./dep", ${mocked});
+      }
+      export const mockDepLater = () => Promise.resolve().then(() => mock.module("./dep", ${mocked}));
+    `,
+  };
+  const assertWhichDepGotMocked = (setupDep: string) => `
+    import { expect, test } from "bun:test";
+    import { value as setupDep } from "./setup/dep";
+    import { value as decoy } from "./dep";
+    test("which dep got mocked", () => {
+      expect({ setupDep, decoy }).toEqual({ setupDep: ${JSON.stringify(setupDep)}, decoy: "decoy" });
+    });
+  `;
+
+  test.concurrent("a hook from --preload resolves against the preload file, not the test file", async () => {
+    using dir = tempDir("mock-module-tail-call-preload", {
+      ...setupFiles,
+      "setup/preload.ts": `
+        import { beforeAll, mock } from "bun:test";
+        beforeAll(() => mock.module("./dep", ${mocked}));
+      `,
+      "app.test.ts": assertWhichDepGotMocked("mocked"),
+    });
+
+    await expectBunTestToPass(String(dir), 1, "--preload", "./setup/preload.ts", "app.test.ts");
+  });
+
+  test.concurrent("a caller that still has a frame wins over the callback the runner invoked", async () => {
+    using dir = tempDir("mock-module-tail-call-frame-wins", {
+      ...setupFiles,
+      "app.test.ts": `
+        import { beforeAll } from "bun:test";
+        import { mockDep } from "./setup/helpers";
+        beforeAll(() => {
+          mockDep();
+        });
+        ${assertWhichDepGotMocked("mocked")}
+      `,
+    });
+
+    await expectBunTestToPass(String(dir), 1, "app.test.ts");
+  });
+
+  test.concurrent("a continuation queued by the callback is not resolved against the callback's file", async () => {
+    using dir = tempDir("mock-module-tail-call-continuation", {
+      ...setupFiles,
+      "app.test.ts": `
+        import { test } from "bun:test";
+        import { mockDepLater } from "./setup/helpers";
+        test("registers from a .then() that runs in the microtask drain after the test body", () => mockDepLater());
+        ${assertWhichDepGotMocked("real")}
+      `,
+    });
+
+    await expectBunTestToPass(String(dir), 2, "app.test.ts");
+  });
+
+  test.concurrent("a Worker's mock.module() does not pick up the callback running on the main thread", async () => {
+    using dir = tempDir("mock-module-tail-call-worker", {
+      "dep.ts": dep,
+      "worker.ts": `
+        import { mock } from "bun:test";
+        import { value } from "./dep";
+        self.onmessage = ({ data: flags }) => {
+          Atomics.wait(flags, 0, 0); // until the main thread is blocked inside its test body
+          // A tail call from a native-invoked callback: no JS frame is left below mock.module.
+          queueMicrotask(() => mock.module("./dep", ${mocked}));
+          queueMicrotask(() => {
+            Atomics.store(flags, 1, value === "mocked" ? 2 : 1);
+            Atomics.notify(flags, 1);
+          });
+        };
+        self.postMessage("ready");
+      `,
+      "app.test.ts": `
+        import { afterAll, beforeAll, expect, test } from "bun:test";
+        const flags = new Int32Array(new SharedArrayBuffer(8));
+        let worker: Worker;
+        beforeAll(async () => {
+          worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+          const { promise: ready, resolve, reject } = Promise.withResolvers();
+          worker.onmessage = resolve;
+          worker.onerror = reject;
+          worker.postMessage(flags);
+          await ready;
+        });
+        afterAll(() => worker.terminate());
+        test("the worker still sees the real module", () => {
+          Atomics.store(flags, 0, 1);
+          Atomics.notify(flags, 0);
+          // Block here so this callback is the one the runner has on the stack while the worker runs. The bound
+          // only turns a worker that never reports into a failure (below) instead of a process that never exits.
+          Atomics.wait(flags, 1, 0, 5000);
+          // 0: the worker never reported; 1: "./dep" stayed unresolved in the worker, as before; 2: it was
+          // resolved against this file.
+          expect(Atomics.load(flags, 1)).toBe(1);
+        });
+      `,
+    });
+
+    await expectBunTestToPass(String(dir), 1, "app.test.ts");
+  });
 });

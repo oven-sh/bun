@@ -954,6 +954,45 @@ pub(crate) fn defines_from_transform_options(
     )?)
 }
 
+/// Hashes the `--define` map and `--drop` list that `defines_from_transform_options`
+/// builds the user part of the `Define` table from. Both lists are sorted so
+/// the order the flags were given in does not matter; every string is
+/// length-prefixed and the define count comes first, so two different inputs
+/// never serialize to the same byte stream.
+fn user_defines_hash(define: Option<&api::StringMap>, drop: &[Box<[u8]>]) -> Option<u64> {
+    let mut defines: Vec<(&[u8], &[u8])> = define
+        .map(|map| {
+            debug_assert_eq!(map.keys.len(), map.values.len());
+            map.keys
+                .iter()
+                .map(|k| &**k)
+                .zip(map.values.iter().map(|v| &**v))
+                .collect()
+        })
+        .unwrap_or_default();
+    if defines.is_empty() && drop.is_empty() {
+        return None;
+    }
+    defines.sort_unstable();
+    let mut drops: Vec<&[u8]> = drop.iter().map(|d| &**d).collect();
+    drops.sort_unstable();
+
+    let mut hasher = bun_wyhash::Wyhash::init(0);
+    hasher.update(&(defines.len() as u64).to_le_bytes());
+    let mut update = |bytes: &[u8]| {
+        hasher.update(&(bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+    };
+    for (key, value) in defines {
+        update(key);
+        update(value);
+    }
+    for name in drops {
+        update(name);
+    }
+    Some(hasher.final_())
+}
+
 const DEFAULT_LOADER_EXT_BUN: &[&[u8]] = &[b".node", b".html"];
 const DEFAULT_LOADER_EXT: &[&[u8]] = &[
     b".jsx", b".json", b".js", b".mjs", b".cjs", b".css",
@@ -1169,6 +1208,10 @@ pub struct BundleOptions<'a> {
     pub banner: Cow<'static, [u8]>,
     pub define: Box<defines::Define>,
     pub drop: Box<[Box<[u8]>]>,
+    /// Identifies the user-supplied (`--define` / bunfig `define` / `--drop`)
+    /// part of `define`, for the runtime transpiler cache's features hash.
+    /// Set by `load_defines`; `None` when the user supplied neither.
+    pub user_defines_hash: Option<u64>,
     /// Set of enabled feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
     /// Initialized once from the CLI --feature flags.
     ///
@@ -1384,6 +1427,7 @@ impl<'a> BundleOptions<'a> {
                 drop_debugger: self.define.drop_debugger,
             }),
             drop: self.drop.clone(),
+            user_defines_hash: self.user_defines_hash,
             bundler_feature_flags: self
                 .bundler_feature_flags
                 .as_deref()
@@ -1590,6 +1634,8 @@ impl<'a> BundleOptions<'a> {
             self.dead_code_elimination && self.minify_syntax,
             arena,
         )?;
+        self.user_defines_hash =
+            user_defines_hash(self.transform_options.define.as_ref(), &self.drop);
         self.defines_loaded = true;
         Ok(())
     }
@@ -1643,6 +1689,7 @@ impl<'a> BundleOptions<'a> {
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
             drop: transform.drop.clone().into_boxed_slice(),
+            user_defines_hash: None,
             bundler_feature_flags,
 
             jsx: jsx::Pragma::default(),

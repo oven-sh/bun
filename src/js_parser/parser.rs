@@ -264,6 +264,14 @@ pub mod Runtime {
         /// in watch/dev-server mode.
         pub bundler_feature_flags: Option<Box<StringSet>>,
 
+        /// Hash of the user-supplied `--define` map and `--drop` list the
+        /// `Define` table handed to this parse was built from
+        /// (`BundleOptions::user_defines_hash`). Both rewrite the transpiled
+        /// output, so the runtime transpiler cache has to key on them.
+        ///
+        /// `None` ≡ neither was given (contributes nothing to the hash).
+        pub user_defines_hash: Option<u64>,
+
         /// REPL mode: transforms code for interactive evaluation
         /// - Wraps lone object literals `{...}` in parentheses
         /// - Hoists variable declarations for REPL persistence
@@ -311,6 +319,7 @@ pub mod Runtime {
                 runtime_transpiler_cache: None,
                 lower_using: true,
                 bundler_feature_flags: None,
+                user_defines_hash: None,
                 repl_mode: false,
                 jsx_optimization_inline: false,
             }
@@ -397,6 +406,12 @@ pub mod Runtime {
                     hasher.update(flag);
                     hasher.update(b"\x00");
                 }
+            }
+
+            // --define / --drop substitute into the output the same way. As
+            // with --feature, the default (none given) adds nothing.
+            if let Some(user_defines_hash) = self.user_defines_hash {
+                hasher.update(&user_defines_hash.to_le_bytes());
             }
         }
 

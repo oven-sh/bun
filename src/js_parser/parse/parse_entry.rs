@@ -201,6 +201,7 @@ impl<'a> Options<'a> {
                 runtime_transpiler_cache: None,
                 lower_using: f.lower_using,
                 bundler_feature_flags: None,
+                user_defines_hash: f.user_defines_hash,
                 repl_mode: f.repl_mode,
                 jsx_optimization_inline: f.jsx_optimization_inline,
             },

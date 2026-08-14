@@ -495,8 +495,7 @@ impl Drop for UngatedScopeGuard<'_> {
     }
 }
 
-/// `let $env = get_env!($raw)`, and the rest of the function runs under napi.cpp's `NapiUngatedScope` (which see):
-/// for what Node gates with `CHECK_ENV` only. The body must not run JS or addon code.
+/// `get_env!`, then the rest of the function runs under napi.cpp's `NapiUngatedScope` (which see): no JS or addon code.
 macro_rules! ungated {
     ($env:ident, $raw:expr) => {
         let $env = get_env!($raw);

@@ -3650,6 +3650,9 @@ pub struct Resolver {
     /// Record queries in flight through the platform resolver (`netd.rs`).
     #[cfg(target_os = "android")]
     pub(crate) netd_queries: JsCell<Vec<*mut netd::Query>>,
+    /// reverse()/lookupService() lookups running on the pool (`netd.rs`).
+    #[cfg(target_os = "android")]
+    pub(crate) netd_name_jobs: JsCell<Vec<*mut netd::NameJob>>,
     /// `setServers()` was given a non-empty list: the user chose the servers,
     /// so this resolver uses c-ares to reach them rather than the platform.
     #[cfg(target_os = "android")]
@@ -3998,6 +4001,8 @@ impl Resolver {
             options: Cell::new(c_ares::ChannelOptions::default()),
             #[cfg(target_os = "android")]
             netd_queries: JsCell::new(Vec::new()),
+            #[cfg(target_os = "android")]
+            netd_name_jobs: JsCell::new(Vec::new()),
             #[cfg(target_os = "android")]
             servers_explicit: Cell::new(false),
             active_handle_registered: Cell::new(false),
@@ -5191,7 +5196,7 @@ impl Resolver {
             }
             #[cfg(target_os = "android")]
             Transport::PlatformName | Transport::PlatformRecord(_) => {
-                netd::get_host_by_addr(global_this, ip, request);
+                netd::get_host_by_addr(self, global_this, ip, request);
             }
         }
         Ok(promise)
@@ -6187,7 +6192,7 @@ impl Resolver {
             }
             #[cfg(target_os = "android")]
             Transport::PlatformName | Transport::PlatformRecord(_) => {
-                netd::get_name_info(global_this, &sa, request);
+                netd::get_name_info(resolver, global_this, &sa, request);
             }
         }
         Ok(promise)

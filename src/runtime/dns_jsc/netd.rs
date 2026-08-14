@@ -357,6 +357,12 @@ fn abort(query: *mut Query, status: c_int) {
 
 pub(crate) fn has_pending(resolver: &Resolver) -> bool {
     !resolver.netd_queries.get().is_empty()
+        || resolver
+            .netd_name_jobs
+            .get()
+            .iter()
+            // SAFETY: listed ⇒ live.
+            .any(|&job| unsafe { (*job).request.is_some() })
 }
 
 pub(crate) fn has_deadlines(resolver: &Resolver) -> bool {
@@ -374,6 +380,14 @@ pub(crate) fn cancel_all(resolver: &Resolver, status: c_int) {
         abort(query, status);
     }
     kick_waiting();
+    // Pool lookups keep running; settle their requests now and let `then` free.
+    let jobs: Vec<*mut NameJob> = resolver.netd_name_jobs.get().clone();
+    for job in jobs {
+        // SAFETY: listed ⇒ live; only the JS thread touches `request`.
+        if let Some(request) = unsafe { (*job).request.take() } {
+            fail(request, status);
+        }
+    }
 }
 
 /// Called from the resolver's 1 s timer while any query has a deadline.
@@ -485,6 +499,78 @@ impl Drop for NameRequest {
                         drop(bun_core::heap::take(waiter.as_ptr()));
                     }
                 }
+            }
+        }
+    }
+}
+
+/// One pool name lookup as the resolver sees it: listed in
+/// `Resolver::netd_name_jobs` and holding a ref on the resolver until the job
+/// ends. `cancel()`/teardown take `request` out and settle it right away; the
+/// blocking call cannot be interrupted, so when it returns `then` finds the
+/// request gone and only frees.
+pub(crate) struct NameJob {
+    resolver: *mut Resolver,
+    request: Option<NameRequest>,
+}
+
+/// The job's JS-thread half: owns the `NameJob`. Consumed by `then`; dropped
+/// unconsumed only when the VM tears down first, in which case a request still
+/// present is freed with its waiters and nothing is settled.
+pub(crate) struct NameJobHandle(NonNull<NameJob>);
+// SAFETY: only the JS thread touches the job and its request.
+unsafe impl bun_jsc::job::JsAffine for NameJobHandle {}
+
+impl NameJobHandle {
+    fn new(resolver: &Resolver, request: NameRequest) -> Self {
+        resolver.ref_();
+        let job = bun_core::heap::into_raw(Box::new(NameJob {
+            resolver: resolver.as_ctx_ptr(),
+            request: Some(request),
+        }));
+        resolver.netd_name_jobs.with_mut(|list| list.push(job));
+        resolver.sync_active_handle();
+        NameJobHandle(NonNull::new(job).expect("just allocated"))
+    }
+
+    /// Unlist and free the job; hands back the request if nobody settled it yet.
+    fn finish(self) -> Option<NameRequest> {
+        let job = core::mem::ManuallyDrop::new(self).0.as_ptr();
+        // SAFETY: the live allocation from `new`; nothing touches it afterwards.
+        let NameJob { resolver, request } = unsafe { *bun_core::heap::take(job) };
+        // SAFETY: ref'd in `new` until the `deref` below.
+        let resolver_ref = unsafe { &*resolver };
+        resolver_ref.netd_name_jobs.with_mut(|list| {
+            if let Some(i) = list.iter().position(|&j| core::ptr::eq(j, job)) {
+                list.swap_remove(i);
+            }
+        });
+        resolver_ref.sync_active_handle();
+        // SAFETY: balances `new`; no borrow of the resolver outlives this.
+        unsafe { Resolver::deref(resolver) };
+        request
+    }
+}
+
+impl Drop for NameJobHandle {
+    fn drop(&mut self) {
+        // The request (if still ours) frees itself and its waiters on drop.
+        drop(NameJobHandle(self.0).finish());
+    }
+}
+
+/// Settle `request` with `status` and no result, as c-ares does on failure.
+fn fail(request: NameRequest, status: c_int) {
+    let request = core::mem::ManuallyDrop::new(request);
+    let err = c_ares::Error::get(status);
+    // SAFETY: the live heap request; the handler consumes it.
+    unsafe {
+        match &*request {
+            NameRequest::Reverse(req) => {
+                c_ares::HostentHandler::on_hostent(&mut *req.as_ptr(), err, 0, ptr::null_mut())
+            }
+            NameRequest::Service(req) => {
+                c_ares::NameinfoHandler::on_nameinfo(&mut *req.as_ptr(), err, 0, None)
             }
         }
     }
@@ -632,7 +718,7 @@ impl NameLookup {
 
 impl bun_jsc::JobContext for NameLookup {
     type OffThread = Self;
-    type Js = NameRequest;
+    type Js = NameJobHandle;
     fn run(
         this: &mut Self,
         _vm: &bun_jsc::vm_handle::Borrow,
@@ -641,15 +727,18 @@ impl bun_jsc::JobContext for NameLookup {
         this.run_blocking();
         Some(done)
     }
-    fn then(this: Self, request: NameRequest, cx: &bun_jsc::JsThread<'_>) -> bun_jsc::JsResult<()> {
+    fn then(this: Self, job: NameJobHandle, cx: &bun_jsc::JsThread<'_>) -> bun_jsc::JsResult<()> {
         let _exit = cx.vm().enter_event_loop_scope();
-        this.complete(request);
+        if let Some(request) = job.finish() {
+            this.complete(request);
+        }
         Ok(())
     }
 }
 
 /// `Channel::get_host_by_addr`'s counterpart.
 pub(crate) fn get_host_by_addr(
+    resolver: &Resolver,
     global_this: &JSGlobalObject,
     ip: &[u8],
     request: *mut GetHostByAddrInfoRequest,
@@ -672,12 +761,16 @@ pub(crate) fn get_host_by_addr(
     bun_jsc::Job::<NameLookup>::schedule(
         &global_this.js_thread(),
         NameLookup::new(sa, false),
-        NameRequest::Reverse(NonNull::new(request).expect("request")),
+        NameJobHandle::new(
+            resolver,
+            NameRequest::Reverse(NonNull::new(request).expect("request")),
+        ),
     );
 }
 
 /// `Channel::get_name_info`'s counterpart.
 pub(crate) fn get_name_info(
+    resolver: &Resolver,
     global_this: &JSGlobalObject,
     sa: &SockaddrStorage,
     request: *mut GetNameInfoRequest,
@@ -685,7 +778,10 @@ pub(crate) fn get_name_info(
     bun_jsc::Job::<NameLookup>::schedule(
         &global_this.js_thread(),
         NameLookup::new(*sa, true),
-        NameRequest::Service(NonNull::new(request).expect("request")),
+        NameJobHandle::new(
+            resolver,
+            NameRequest::Service(NonNull::new(request).expect("request")),
+        ),
     );
 }
 

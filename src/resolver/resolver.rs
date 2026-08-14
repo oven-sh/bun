@@ -306,10 +306,8 @@ fn intern_package_json(pkg: PackageJSON) -> core::ptr::NonNull<PackageJSON> {
     core::ptr::NonNull::from(&mut **guard.last_mut().unwrap())
 }
 
-/// Interns the path of a tsconfig being parsed (log locations borrow it) into the
-/// never-freed `DirnameStore`, once per distinct path: the same file is re-parsed by every
-/// `Bun.build({ tsconfig })` call and by every dev-server reload that busts its directory, and
-/// appending a copy per parse would grow the store without bound (the pattern of #31647).
+/// Log locations borrow the path, so it lives in the never-freed `DirnameStore`. Deduplicated:
+/// the same file is re-parsed per `Bun.build({ tsconfig })` and per dev-server reload (#31647).
 fn intern_tsconfig_path(fs: &Fs::FileSystem, path: &[u8]) -> crate::CrateResult<&'static [u8]> {
     static INTERNED: std::sync::LazyLock<
         bun_threading::Guarded<bun_collections::HashMap<&'static [u8], ()>>,
@@ -483,12 +481,10 @@ pub use bun_watcher::AnyResolveWatcher;
 
 pub struct Resolver<'a> {
     pub opts: options::BundleOptions,
-    /// `opts.tsconfig_override` (`--tsconfig-override` / `Bun.build({ tsconfig })`), parsed
-    /// once in [`Self::init1`] and shared with the worker resolvers. Wherever this resolver
-    /// would read a tsconfig recorded in `dir_cache` ([`Self::enclosing_tsconfig`],
-    /// [`Self::tsconfig_in`]) it reads this instead. `dir_cache` itself keeps describing the
-    /// files on disk: it is process-wide, usually populated before a `Bun.build()` resolver
-    /// exists, and the runtime and other builds keep resolving through it at the same time.
+    /// `opts.tsconfig_override`, parsed once in [`Self::init1`] and read in place of whatever
+    /// `dir_cache` recorded ([`Self::enclosing_tsconfig`], [`Self::tsconfig_in`]). Never stored
+    /// in `dir_cache`: that is shared process-wide and mostly filled before a `Bun.build()`
+    /// resolver exists.
     pub tsconfig_override_json: Option<Arc<TSConfigJSON>>,
     // NOTE: `fs` / `log` are raw aliasing
     // pointers — the bundler builds a `Resolver` per worker thread sharing the
@@ -968,14 +964,12 @@ impl<'a> Resolver<'a> {
         this
     }
 
-    /// Parses `opts.tsconfig_override` into `tsconfig_override_json`. A missing or invalid
-    /// file is reported to the log, exactly like a broken `tsconfig.json` met while scanning
-    /// directories, and leaves the override unset; the bundler fails the build on that error.
+    /// A missing or invalid file is only logged, like a broken `tsconfig.json` found on disk.
     fn load_tsconfig_override(&mut self) {
         let Some(path) = self.opts.tsconfig_override.clone() else {
             return;
         };
-        // Same guard every other tsconfig/package.json read runs under (`dir_info_cached`).
+        // `dir_info_cached` holds this around every other tsconfig parse.
         let _unlock = self.mutex.lock_guard();
         match self.parse_tsconfig_chain(&path, FD::INVALID) {
             Ok(Some(tsconfig)) => self.tsconfig_override_json = Some(Arc::from(tsconfig)),
@@ -984,8 +978,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// `load_tsconfig_json == false` (standalone executables built without `autoloadTsconfig`)
-    /// switches the override off together with the files on disk.
+    /// `load_tsconfig_json == false` (standalone executables) disables the override as well.
     #[inline]
     fn active_tsconfig_override(&self) -> Option<&TSConfigJSON> {
         if !self.opts.load_tsconfig_json {
@@ -994,11 +987,8 @@ impl<'a> Resolver<'a> {
         self.tsconfig_override_json.as_deref()
     }
 
-    /// The tsconfig that applies to files in `dir`: the override, otherwise the nearest
-    /// `tsconfig.json` / `jsconfig.json` recorded while scanning `dir` and its parents.
-    ///
-    /// The returned borrow is decoupled from `&self` so callers can pass it to the `&mut self`
-    /// lookups it feeds (`match_tsconfig_paths`, `load_as_file_or_directory`).
+    /// The override, otherwise the nearest tsconfig recorded for `dir` or one of its parents.
+    /// The borrow is decoupled from `&self` because callers feed it to `&mut self` lookups.
     #[inline]
     pub(crate) fn enclosing_tsconfig<'r>(
         &self,
@@ -1006,18 +996,16 @@ impl<'a> Resolver<'a> {
     ) -> Option<&'r TSConfigJSON> {
         match self.active_tsconfig_override() {
             Some(tsconfig) => {
-                // SAFETY: the `Arc` is set while the resolver is constructed and released only
-                // when it is torn down (its drop, or `Transpiler::deinit`); every caller uses the
-                // borrow within a method running on this resolver, so the pointee outlives it.
+                // SAFETY: the `Arc` is only released when the resolver is torn down (drop or
+                // `Transpiler::deinit`), and every caller uses the borrow inside a resolver method.
                 Some(unsafe { bun_ptr::detach_lifetime_ref(tsconfig) })
             }
             None => dir.enclosing_tsconfig_json,
         }
     }
 
-    /// The tsconfig the transpiler as a whole is configured from (jsx and decorator settings):
-    /// the override, otherwise the one found in `dir` itself, which callers pass as the
-    /// top-level directory.
+    /// The override, otherwise the tsconfig found in `dir` itself (the cwd, whose tsconfig
+    /// configures the transpiler as a whole).
     pub fn tsconfig_in(&self, dir: &DirInfo::DirInfo) -> Option<&TSConfigJSON> {
         self.active_tsconfig_override()
             .or_else(|| dir.tsconfig_json())
@@ -4230,15 +4218,11 @@ impl<'a> Resolver<'a> {
             result.base_url_for_paths = Box::from(abs);
         }
 
-        // NOTE: return the `Box` so the caller (`parse_tsconfig_chain`) takes
-        // ownership — intermediate configs in an extends-chain are destroyed
-        // there, the merged one is returned to its caller.
         Ok(Some(result))
     }
 
-    /// Parses the tsconfig at `file` and folds its `extends` chain into it. Files that
-    /// cannot be read or parsed are reported to the log and yield `None`; the only `Err` is
-    /// an `extends` chain deeper than `parent_configs` can hold.
+    /// Parses `file` with its `extends` chain folded in. Unreadable or invalid files are
+    /// logged and yield `None`; `Err` is a chain deeper than `parent_configs` holds.
     fn parse_tsconfig_chain(
         &mut self,
         file: &[u8],
@@ -4316,8 +4300,7 @@ impl<'a> Resolver<'a> {
                 merged_config.base_url_for_paths =
                     core::mem::take(&mut parent_config.base_url_for_paths);
             }
-            // `destroy` rather than a plain drop: it logs the free that
-            // tsconfig-extends-leak.test.ts pairs with `new(TSConfigJSON)`.
+            // Not a plain drop: `destroy` logs the free that tsconfig-extends-leak.test.ts counts.
             TSConfigJSON::destroy(parent_config);
         }
         Ok(Some(merged_config))
@@ -6676,9 +6659,8 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // Record if this directory has a tsconfig.json or jsconfig.json file. A resolver with a
-        // tsconfig override never reads what it records here, but the resolvers sharing the
-        // cache with it do.
+        // Record if this directory has a tsconfig.json or jsconfig.json file. Recorded even with
+        // a tsconfig override, which only this resolver follows; the cache is shared.
         if self.opts.load_tsconfig_json {
             let mut tsconfig_path: Option<&[u8]> = None;
             for filename in [b"tsconfig.json".as_slice(), b"jsconfig.json"] {

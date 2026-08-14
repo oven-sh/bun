@@ -510,8 +510,8 @@ impl<V: CalcValue> Calc<V> {
             CalcUnit::Sqrt => Self::parse_numeric_fn(input, NumericFnOp::Sqrt, ctx, parse_ident),
             CalcUnit::Exp => Self::parse_numeric_fn(input, NumericFnOp::Exp, ctx, parse_ident),
             CalcUnit::Hypot => input.parse_nested_block(|i| {
-                let mut args = i.parse_comma_separated(|i| Self::parse_sum(i, ctx, parse_ident))?;
-                let val = Self::parse_hypot(&mut args)?;
+                let args = i.parse_comma_separated(|i| Self::parse_sum(i, ctx, parse_ident))?;
+                let val = Self::parse_hypot(&args)?;
                 if let Some(v) = val {
                     return Ok(v);
                 }
@@ -918,10 +918,10 @@ impl<V: CalcValue> Calc<V> {
         Ok(val)
     }
 
-    pub(crate) fn parse_hypot(args: &mut [Self]) -> CssResult<Option<Self>> {
+    pub(crate) fn parse_hypot(args: &[Self]) -> CssResult<Option<Self>> {
         if args.len() == 1 {
-            let v = core::mem::replace(&mut args[0], Calc::Number(0.0));
-            return Ok(Some(v));
+            // hypot(A) is sqrt(A * A), i.e. abs(A): it folds exactly when abs() would.
+            return Ok(Self::apply_map(&args[0], absf));
         }
 
         if args.len() == 2 {

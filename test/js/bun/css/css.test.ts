@@ -277,6 +277,58 @@ describe("css tests", () => {
     ); // ideally -400% - 8vh + 3ic
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
   });
+  describe("hypot() with one argument", () => {
+    // hypot(A) is sqrt(A * A), i.e. abs(A) (CSS Values 4), so it folds exactly like
+    // abs(A) does. It used to be returned as its argument, unchanged.
+    minify_test(`a { margin-left: hypot(-3px) }`, `a{margin-left:3px}`);
+    minify_test(`a { margin-left: hypot(3px) }`, `a{margin-left:3px}`);
+    minify_test(`a { margin-left: hypot(calc(-3px)) }`, `a{margin-left:3px}`);
+    minify_test(`a { margin-left: hypot(-1in) }`, `a{margin-left:1in}`);
+    minify_test(`a { border-spacing: hypot(-3px) }`, `a{border-spacing:3px}`);
+    minify_test(`a { rotate: hypot(-90deg) }`, `a{rotate:90deg}`);
+    minify_test(
+      `a { background: conic-gradient(red hypot(-0.25turn), blue) }`,
+      `a{background:conic-gradient(red .25turn,#00f)}`,
+    );
+    minify_test(`a { transition-delay: hypot(-2s) }`, `a{transition-delay:2s}`);
+    minify_test(`a { line-height: hypot(-3) }`, `a{line-height:3}`);
+    minify_test(`a { opacity: hypot(-0.5) }`, `a{opacity:.5}`);
+    minify_test(`a { color: rgb(255 0 0 / hypot(-0.5)) }`, `a{color:#ff000080}`);
+    // The folded value takes part in the calculation around it.
+    minify_test(`a { margin-left: calc(hypot(-3px) + 1px) }`, `a{margin-left:4px}`);
+    minify_test(`a { width: calc(100% - hypot(-3px)) }`, `a{width:calc(100% - 3px)}`);
+    minify_test(`a { opacity: calc(1 - hypot(-0.25)) }`, `a{opacity:.75}`);
+    // Two arguments still fold the way they did before.
+    minify_test(`a { margin-left: hypot(-3px, 4px) }`, `a{margin-left:5px}`);
+
+    // Whatever abs() leaves unevaluated (a percentage, a sum, a function that did not
+    // fold), hypot() leaves unevaluated too, and it stays wrapped in hypot(): the
+    // argument on its own would have the wrong sign, and a bare sum or product
+    // outside of a math function is not valid CSS.
+    minify_test(`a { margin-left: hypot(-30%) }`, `a{margin-left:hypot(-30%)}`);
+    minify_test(`a { margin-left: abs(-30%) }`, `a{margin-left:abs(-30%)}`);
+    minify_test(`a { margin-left: hypot(1px + 10%) }`, `a{margin-left:hypot(1px + 10%)}`);
+    minify_test(`a { margin-left: abs(1px + 10%) }`, `a{margin-left:abs(1px + 10%)}`);
+    minify_test(`a { margin-left: hypot(2 * min(1px, 1em)) }`, `a{margin-left:hypot(2*min(1px,1em))}`);
+    minify_test(`a { margin-left: hypot(1px + min(1px, 1em)) }`, `a{margin-left:hypot(1px + min(1px,1em))}`);
+    minify_test(`a { margin-left: hypot(min(-1px, -1em)) }`, `a{margin-left:hypot(min(-1px,-1em))}`);
+    minify_test(`a { border-spacing: hypot(min(-1px, -1em)) }`, `a{border-spacing:hypot(min(-1px,-1em))}`);
+    minify_test(
+      `a { background: conic-gradient(red hypot(-30%), blue) }`,
+      `a{background:conic-gradient(red hypot(-30%),#00f)}`,
+    );
+    minify_test(`a { margin-left: calc(1px + hypot(1px + 10%)) }`, `a{margin-left:calc(1px + hypot(1px + 10%))}`);
+    minify_test(`a { width: calc(100% - hypot(1px + 10%)) }`, `a{width:calc(100% + -1*hypot(1px + 10%))}`);
+    // A bare <percentage> (opacity, an alpha channel) is not folded by abs() either,
+    // so hypot() of one is kept as written, whether on its own or inside a sum. The
+    // sums used to be evaluated as if hypot() were not there (.6 and #f009).
+    minify_test(`a { opacity: hypot(-50%) }`, `a{opacity:hypot(-50%)}`);
+    minify_test(`a { opacity: hypot(50%) }`, `a{opacity:hypot(50%)}`);
+    minify_test(`a { opacity: abs(50%) }`, `a{opacity:abs(50%)}`);
+    minify_test(`a { opacity: calc(10% + hypot(50%)) }`, `a{opacity:calc(10% + hypot(50%))}`);
+    minify_test(`a { color: rgb(255 0 0 / hypot(50%)) }`, `a{color:rgb(255 0 0/hypot(50%))}`);
+    minify_test(`a { color: rgb(255 0 0 / calc(hypot(50%) + 10%)) }`, `a{color:rgb(255 0 0/calc(hypot(50%) + 10%))}`);
+  });
   describe("border_spacing", () => {
     minify_test(
       `

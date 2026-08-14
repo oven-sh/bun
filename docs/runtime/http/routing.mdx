@@ -124,7 +124,7 @@ Bun.serve({
 });
 ```
 
-Bun automatically decodes percent-encoded route parameter values, including Unicode characters. Invalid Unicode is replaced with the Unicode replacement character (`\uFFFD`).
+Bun automatically decodes percent-encoded route parameter values, including Unicode characters. Invalid Unicode is replaced with the Unicode replacement character (`\uFFFD`). A `%` that is not followed by two hexadecimal digits is not an escape and is preserved literally.
 
 ### Static responses
 

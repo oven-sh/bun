@@ -92,6 +92,26 @@ describe("path parameters", () => {
     expect(response).toContain("HTTP/1.1 200");
     expect(JSON.parse(response.slice(response.indexOf("\r\n\r\n") + 4))).toEqual({ id: expected, method: "GET" });
   });
+
+  // A "%" not followed by two hex digits is not a percent-escape (RFC 3986
+  // section 2.1) and must pass through literally without consuming the
+  // characters after it.
+  it.each([
+    ["50%-off", "50%-off"],
+    ["a%zzb", "a%zzb"],
+    ["abc%", "abc%"],
+    ["x%2", "x%2"],
+    ["a%%b", "a%%b"],
+    ["100%25", "100%"],
+    ["caf%C3%A9", "café"],
+  ])("percent-decodes route parameter %s", async (raw, expected) => {
+    const res = await fetch(new URL(`/users/${raw}`, server.url).href);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      id: expected,
+      method: "GET",
+    });
+  });
 });
 
 describe("HTTP methods", () => {

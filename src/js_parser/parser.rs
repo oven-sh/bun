@@ -209,6 +209,14 @@ pub mod Runtime {
 
         pub trim_unused_imports: bool,
 
+        /// `Bun.Transpiler({ treeShaking: true })`. A standalone transform has no
+        /// linker, so the parser itself drops the top-level declarations that
+        /// nothing reachable from an export or a side effect uses, and then the
+        /// imports whose bindings all went away (see `P::remove_unused_parts`).
+        /// The runtime leaves this off: it enables `Options.tree_shaking` only to
+        /// get one part per statement.
+        pub remove_unused_declarations: bool,
+
         /// Allow runtime usage of require(), converting `require` into `__require`
         pub auto_polyfill_require: bool,
 
@@ -292,6 +300,7 @@ pub mod Runtime {
                 dead_code_elimination: true,
                 set_breakpoint_on_first_line: false,
                 trim_unused_imports: false,
+                remove_unused_declarations: false,
                 auto_polyfill_require: false,
                 replace_exports: ReplaceableExportMap::default(),
                 dont_bundle_twice: false,

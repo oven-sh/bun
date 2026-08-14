@@ -1272,7 +1272,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.deoptimize_common_js_named_exports();
     }
 
-    fn clear_symbol_usages_from_dead_part(&mut self, part: &js_ast::Part) {
+    pub(crate) fn clear_symbol_usages_from_dead_part(&mut self, part: &js_ast::Part) {
         let symbol_use_refs = part.symbol_uses.keys();
         let symbol_use_values = part.symbol_uses.values();
         let symbols = self.symbols.as_mut_slice();
@@ -7790,10 +7790,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let arena = self.arena;
 
-        // if (p.options.tree_shaking and p.options.features.trim_unused_imports) {
-        //     p.treeShake(&parts, false);
-        // }
-
         let bundling = self.options.bundle;
         let mut parts_end: usize = usize::from(bundling);
 
@@ -7852,6 +7848,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             hmr_transform_ctx.finalize(self, head_parts)?;
         } else {
+            if self.options.features.remove_unused_declarations {
+                self.remove_unused_parts(parts);
+            }
+
             // Handle import paths after the whole file has been visited because we need
             // symbol usage counts to be able to remove unused type-only imports in
             // TypeScript code.

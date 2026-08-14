@@ -2013,7 +2013,7 @@ export default class {
       expect(output.includes("liveFS")).toBe(true);
     });
 
-    it.todo("supports replacing exports", () => {
+    it("supports replacing exports", () => {
       const output = transpiler.transformSync(`
         import deadFS from 'fs';
         import anotherDeadFS from 'fs';
@@ -2042,6 +2042,213 @@ export default class {
       expect(output.includes("__N_SSG")).toBe(true);
       expect(output.includes("localVarToReplace")).toBe(true);
       expect(output.includes("localVarToRemove")).toBe(false);
+    });
+  });
+
+  describe("treeShaking", () => {
+    const shake = (code, options = {}, loader = "tsx") =>
+      new Bun.Transpiler({ loader, treeShaking: true, trimUnusedImports: true, ...options }).transformSync(code);
+
+    // The Next.js-style use case: strip getStaticProps plus everything only it used.
+    const pageSource = `
+      import { readFileSync } from "node:fs";
+      import { serverHelper } from "./server-only";
+      const TABLE = { a: readFileSync };
+      function loadData() { return serverHelper(TABLE); }
+      export function getStaticProps() { return { props: loadData() }; }
+      export default function Page(p) { return p.x; }
+    `;
+    const pageWithoutServerCode = "export default function Page(p) {\n  return p.x;\n}\n";
+
+    it.each(["tsx", "jsx"])("exports.eliminate also removes what only the export used (%s)", loader => {
+      expect(shake(pageSource, { exports: { eliminate: ["getStaticProps"] } }, loader)).toBe(pageWithoutServerCode);
+    });
+
+    it("exports alone turns it on, for transform() too", async () => {
+      const transpiler = new Bun.Transpiler({ loader: "tsx", exports: { eliminate: ["getStaticProps"] } });
+      expect(await transpiler.transform(pageSource)).toBe(pageWithoutServerCode);
+      expect(transpiler.transformSync(pageSource)).toBe(pageWithoutServerCode);
+    });
+
+    it("scan() only reports the imports that survive", () => {
+      const transpiler = new Bun.Transpiler({ loader: "tsx", exports: { eliminate: ["getStaticProps"] } });
+      expect(transpiler.scan(`import "./for-effect";` + pageSource)).toEqual({
+        exports: ["default"],
+        imports: [{ kind: "import-statement", path: "./for-effect" }],
+      });
+    });
+
+    it("exports.eliminate of an export clause frees the local it pointed at", () => {
+      expect(
+        shake(
+          `import { db } from "./db";
+           var getStaticProps = function () { return db; };
+           export { getStaticProps };
+           export const keep = 1;`,
+          { exports: { eliminate: ["getStaticProps"] } },
+        ),
+      ).toBe("export const keep = 1;\n");
+    });
+
+    it("removes unused side-effect-free declarations", () => {
+      expect(
+        shake(
+          `import { a } from "a";
+           import * as ns from "ns";
+           import def, { named } from "mixed";
+           const table = { a, ns };
+           let [first, ...rest] = [def];
+           function helper() { return table; }
+           class Helper {}
+           class Sub extends Helper {}
+           enum Color { Red = 1 }
+           const x = 1, used = named, y = x;
+           export { used };`,
+        ),
+      ).toBe('import { named } from "mixed";\nconst used = named;\n\nexport { used };\n');
+    });
+
+    it("keeps declarations reachable from exports and top-level statements", () => {
+      expect(
+        shake(
+          `function byNamedExport() {}
+           function byClause() {}
+           function byDefault() {}
+           function byUse() { return byClause; }
+           function byCall() {}
+           function unused() { return byUse; }
+           let counter = 0;
+           export function inc() { counter++; return byNamedExport; }
+           export { byUse as use };
+           export default byDefault;
+           byCall();`,
+        ),
+      ).toBe(
+        [
+          "function byNamedExport() {}",
+          "function byClause() {}",
+          "function byDefault() {}",
+          "function byUse() {",
+          "  return byClause;",
+          "}",
+          "function byCall() {}",
+          "let counter = 0;",
+          "export function inc() {",
+          "  counter++;",
+          "  return byNamedExport;",
+          "}",
+          "",
+          "export { byUse as use };",
+          "export default byDefault;",
+          "byCall();",
+          "",
+        ].join("\n"),
+      );
+    });
+
+    it("keeps declarations with side effects, and what they import", () => {
+      expect(
+        shake(
+          `import "./for-effect";
+           import { connect } from "./db";
+           import { build } from "./builder";
+           import { lookup } from "./globals";
+           const db = connect();
+           const built = /* @__PURE__ */ build();
+           const fromGlobal = lookup;
+           const global = someGlobal;
+           export const keep = 1;`,
+        ),
+      ).toBe(
+        [
+          'import"./for-effect";',
+          'import { connect } from "./db";',
+          "const db = connect();",
+          "const global = someGlobal;",
+          "export const keep = 1;",
+          "",
+        ].join("\n"),
+      );
+    });
+
+    it("removes helpers that only reference each other", () => {
+      const source = `
+        import { h } from "./h";
+        function a(n) { return n ? a(n - 1) : b(); }
+        function b() { return a(1) || h(); }
+      `;
+      expect(shake(source + "export const keep = 1;")).toBe("export const keep = 1;\n");
+      expect(shake(source + "export { b };")).toBe(
+        [
+          'import { h } from "./h";',
+          "function a(n) {",
+          "  return n ? a(n - 1) : b();",
+          "}",
+          "function b() {",
+          "  return a(1) || h();",
+          "}",
+          "",
+          "export { b };",
+          "",
+        ].join("\n"),
+      );
+    });
+
+    it("treats every declaration of a redeclared symbol as one", () => {
+      expect(shake("var x = 1;\nexport const y = x;\nvar x;")).toBe("var x = 1;\nexport const y = x;\nvar x;\n");
+      expect(shake("var x = 1;\nvar x;\nexport const y = 2;")).toBe("export const y = 2;\n");
+      expect(shake("enum E { A = 1 }\nenum E { B = 2 }\nexport const e = E;", {}, "ts")).toBe(
+        [
+          "var E;",
+          "((E) => {",
+          '  E[E["A"] = 1] = "A";',
+          "})(E ||= {});",
+          "((E) => {",
+          '  E[E["B"] = 2] = "B";',
+          "})(E ||= {});",
+          "export const e = E;",
+          "",
+        ].join("\n"),
+      );
+    });
+
+    it("removes the JSX runtime import along with the only JSX", () => {
+      // Pin the dev runtime so the import below does not depend on NODE_ENV.
+      const options = { autoImportJSX: true, define: { "process.env.NODE_ENV": JSON.stringify("development") } };
+      expect(shake("function unused() { return <div />; }\nexport const keep = 1;", options)).toBe(
+        "export const keep = 1;\n",
+      );
+      expect(shake("export function Used() { return <div />; }", options)).toBe(
+        [
+          'import { jsxDEV as jsxDEV_7x81h0kn } from "react/jsx-dev-runtime";',
+          "export function Used() {",
+          '  return jsxDEV_7x81h0kn("div", {}, undefined, false, undefined, this);',
+          "}",
+          "",
+        ].join("\n"),
+      );
+    });
+
+    it("leaves everything alone when a direct eval can see it", () => {
+      const source = `import { a } from "a";\nfunction maybeUsed() { return a; }\n`;
+      expect(shake(source + 'export const r = eval("maybeUsed()");')).toBe(
+        [
+          'import { a } from "a";',
+          "function maybeUsed() {",
+          "  return a;",
+          "}",
+          'export const r = eval("maybeUsed()");',
+          "",
+        ].join("\n"),
+      );
+      expect(shake(source + 'export const r = (0, eval)("1");')).toBe('export const r = (0, eval)("1");\n');
+    });
+
+    it("only runs when treeShaking is on and dead code elimination is enabled", () => {
+      const source = 'import { a } from "a";\nfunction unused() {\n  return a;\n}\nexport const keep = 1;\n';
+      expect(shake(source, { treeShaking: false })).toBe(source);
+      expect(shake(source, { deadCodeElimination: false })).toBe(source);
+      expect(shake(source, { trimUnusedImports: false })).toBe('import { a } from "a";\nexport const keep = 1;\n');
     });
   });
 

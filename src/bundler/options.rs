@@ -1252,6 +1252,10 @@ pub struct BundleOptions<'a> {
     pub conditions: ESMConditions,
     pub tree_shaking: bool,
     pub tree_shaking_override: Option<bool>,
+    /// Single-file tree shaking for `Bun.Transpiler({ treeShaking: true })`;
+    /// see `Runtime::Features::remove_unused_declarations`. `tree_shaking` by
+    /// itself only splits a transformed file into parts.
+    pub remove_unused_declarations: bool,
     pub code_splitting: bool,
     pub source_map: SourceMapOption,
     pub packages: PackagesOption,
@@ -1456,6 +1460,7 @@ impl<'a> BundleOptions<'a> {
             },
             tree_shaking: self.tree_shaking,
             tree_shaking_override: self.tree_shaking_override,
+            remove_unused_declarations: self.remove_unused_declarations,
             code_splitting: self.code_splitting,
             source_map: self.source_map,
             packages: self.packages,
@@ -1701,6 +1706,7 @@ impl<'a> BundleOptions<'a> {
             }, // filled below
             tree_shaking: false,
             tree_shaking_override: None,
+            remove_unused_declarations: false,
             code_splitting: false,
             source_map: SourceMapOption::None,
             packages: PackagesOption::Bundle,

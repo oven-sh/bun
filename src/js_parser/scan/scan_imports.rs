@@ -265,11 +265,17 @@ impl<'a> ImportScanner<'a> {
                         // e.g. `import 'fancy-stylesheet-thing/style.css';`
                         // This is a breaking change though. We can make it an option with some guardrail
                         // so maybe if it errors, it shows a suggestion "retry without trimming unused imports"
+                        //
+                        // With single-file tree shaking, TypeScript's use counts still
+                        // include the references made by code that was removed
+                        // (eliminated exports, shaken declarations), which would leave
+                        // `import "x"` behind; apply the JavaScript rule there as well.
                         if (is_typescript_enabled
                             && found_imports
                             && is_unused_in_typescript
                             && !p.options.preserve_unused_imports_ts)
-                            || (!is_typescript_enabled
+                            || ((!is_typescript_enabled
+                                || p.options.features.remove_unused_declarations)
                                 && p.options.features.trim_unused_imports
                                 && found_imports
                                 && st.star_name_loc.is_empty()

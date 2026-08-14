@@ -550,7 +550,7 @@ describe("bundler metafile", () => {
     return await Bun.file(`${dir}/meta.json`).json();
   }
 
-  test("metafile lists a sideEffects: false module that tree shaking dropped from the output", async () => {
+  test.concurrent("metafile lists a sideEffects: false module that tree shaking dropped from the output", async () => {
     const files = {
       "entry.js": `import { x } from "pkg";\nconsole.log("hi");\n`,
       "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js", sideEffects: false }),
@@ -579,7 +579,7 @@ describe("bundler metafile", () => {
     expect(Object.values(metafile.outputs).map(output => Object.keys(output.inputs))).toEqual([["entry.js"]]);
   });
 
-  test("metafile lists modules only reached from tree-shaken code, and what they import", async () => {
+  test.concurrent("metafile lists modules only reached from tree-shaken code, and what they import", async () => {
     const files = {
       // `unused` is dead code, so lazy.js and everything below it is bundled into
       // nothing. No sideEffects flag is involved.
@@ -1292,7 +1292,7 @@ describe("bun build --metafile-md", () => {
     expect(content).toMatch(/\[IMPORTED_BY: .*helper\.js <- main\.js\]/);
   });
 
-  test("markdown lists a module that tree shaking dropped from the output", async () => {
+  test.concurrent("markdown lists a module that tree shaking dropped from the output", async () => {
     using dir = tempDir("metafile-md-tree-shaken", {
       "entry.js": `import { x } from "pkg";\nconsole.log("hi");\n`,
       "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js", sideEffects: false }),

@@ -25,6 +25,13 @@ test("failing matcher on FormData without a callable toJSON does not abort the t
         Object.defineProperty(fd, "toJSON", { value: 42 });
         expect(fd).toEqual(1 as any);
       });
+
+      test("toJSON is a non-callable enumerable value", () => {
+        const fd = new FormData();
+        fd.append("a", "b");
+        Object.defineProperty(fd, "toJSON", { value: 99, enumerable: true });
+        expect(fd).toEqual(1 as any);
+      });
     `,
   });
 
@@ -39,9 +46,11 @@ test("failing matcher on FormData without a callable toJSON does not abort the t
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toContain("Received: FormData");
-  // The non-callable toJSON is printed as a property rather than being called.
-  expect(stderr).toContain(`"toJSON": 42`);
+  // The non-callable toJSON is printed as a property rather than being called,
+  // and only when it is enumerable, matching what toEqual actually compares.
+  expect(stderr).toContain(`"toJSON": 99`);
+  expect(stderr).not.toContain(`"toJSON": 42`);
   expect(stderr).not.toContain("is not a function");
-  expect(stderr).toContain("3 fail");
+  expect(stderr).toContain("4 fail");
   expect(exitCode).toBe(1);
 });

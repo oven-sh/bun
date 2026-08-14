@@ -283,29 +283,32 @@ impl S3HttpDownloadStreamingTask {
         // as soon as the task is queued, so the ticket has to be out first.
         let done_ticket = is_done.then(|| {
             // SAFETY: as above; HTTP-thread field.
-            unsafe { (*this).http_ticket.take() }
-                .expect("S3 download on the HTTP thread holds a ticket")
+            unsafe { (*this).http_ticket.take() }.expect(Self::HOLDS_TICKET)
         });
-        let ticket: &bun_jsc::Ticket = match &done_ticket {
-            Some(t) => t,
-            // SAFETY: as above.
-            None => unsafe { (*this).http_ticket.as_ref() }
-                .expect("S3 download on the HTTP thread holds a ticket"),
-        };
         // SAFETY: as above; the HTTP thread is the only one touching it here.
         if unsafe { (*this).process_http_callback(&mut *async_http, result) } {
             // we are always unlocked here and its safe to enqueue
             // SAFETY: same exclusivity as above; `task` is the inline `concurrent_task` field of
-            // this heap request and the queue takes ownership of its `next` link.
+            // this heap request and the queue takes ownership of its `next` link. Not done ⇒
+            // `this` (and the ticket in it) outlives the post.
             unsafe {
                 let task = core::ptr::NonNull::from(
                     (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
                 );
-                ticket.post(task);
+                match &done_ticket {
+                    Some(ticket) => ticket.post(task),
+                    None => (*this)
+                        .http_ticket
+                        .as_ref()
+                        .expect(Self::HOLDS_TICKET)
+                        .post(task),
+                }
             }
         }
         drop(done_ticket);
     }
+
+    const HOLDS_TICKET: &'static str = "S3 download on the HTTP thread holds a ticket";
 
     /// `HTTPClientResultCallback::release_at_shutdown`: the exiting main
     /// thread parked the HTTP thread, which will not call back; hand the
@@ -319,10 +322,7 @@ impl S3HttpDownloadStreamingTask {
         // SAFETY: fn contract — nothing else touches the task now (the JS
         // thread is waiting in the HTTP shutdown).
         unsafe {
-            let ticket = (*this)
-                .http_ticket
-                .take()
-                .expect("S3 download on the HTTP thread holds a ticket");
+            let ticket = (*this).http_ticket.take().expect(Self::HOLDS_TICKET);
             let should_enqueue = {
                 let _guard = (*this).mutex.lock_guard();
                 let mut state = (*this).get_state();

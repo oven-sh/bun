@@ -2803,8 +2803,6 @@ impl<'a> Lexer<'a> {
                     return;
                 };
 
-                // Values outside the Unicode range would trip `push_codepoint_utf16`
-                // (release builds silently encode garbage surrogate pairs).
                 cursor.c = if value <= 0x10FFFF {
                     value as CodePoint
                 } else {
@@ -3387,10 +3385,8 @@ pub(crate) fn latin1_identifier_continue_length_scalar(name: &[u8]) -> usize {
     name.len()
 }
 
-/// `text` is what sits between `&#` and `;`. As in Babel and TypeScript, only
-/// `[0-9]+` and `x[0-9a-fA-F]+` are character references; anything else
-/// (`X41`, `+65`, `6_5`, empty) is `None` and stays literal text. The value
-/// saturates so the caller still reports an overlong reference as too big.
+/// `text` follows `&#`. Like Babel and TypeScript this takes only `[0-9]+` / `x[0-9a-fA-F]+`
+/// (hence not `parse_int`, which allows a sign and `_`); `None` leaves the reference as text.
 fn jsx_numeric_entity_value(text: &[u8]) -> Option<u32> {
     let (digits, radix) = match text.strip_prefix(b"x") {
         Some(hex) => (hex, 16u32),

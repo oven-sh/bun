@@ -20,13 +20,7 @@ bun_core::declare_scope!(MySQLStatement, hidden);
 #[derive(bun_ptr::CellRefCounted)]
 pub struct MySQLStatement {
     pub(crate) cached_structure: CachedStructure,
-    /// Lazily-built `{ string, columns }` object exposed as `result.statement` /
-    /// `result.columns`. Only populated for server-prepared statements
-    /// (`statement_id > 0`) and reused across executions; reset when the
-    /// result-set column count changes or a re-decoded column definition
-    /// reports changed metadata (see `ColumnDefinition41::decode`), so repeated
-    /// executions don't re-allocate the per-column descriptors
-    /// (test/regression/issue/28632).
+    /// `result.statement` for prepared statements; dropped when a column definition changes.
     pub(crate) cached_statement_js: StrongOptional,
     // Private — intrusive refcount invariant; reach via `ref_()`/`deref()` or
     // [`Self::init_exact_refs`] at construction time.

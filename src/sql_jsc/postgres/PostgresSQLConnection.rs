@@ -2534,13 +2534,7 @@ impl PostgresSQLConnection {
                     false,
                 );
 
-                // In a simple-mode multi-statement query, a command that emits no
-                // RowDescription (INSERT/UPDATE/CREATE/etc. without RETURNING)
-                // would otherwise inherit the previous SELECT's fields in
-                // on_result -> build_statement_js. Clear them so the next command
-                // starts clean; a subsequent RowDescription repopulates them.
-                // Prepared statements are excluded: their fields come from
-                // Describe once and must persist across executions.
+                // Simple mode: a following command without a RowDescription must not inherit these.
                 if request.flags.get().simple {
                     if let Some(statement) = request.statement_mut() {
                         if !statement.fields.is_empty() {
@@ -2625,8 +2619,6 @@ impl PostgresSQLConnection {
                 statement.cached_structure = Default::default();
                 statement.needs_duplicate_check = true;
                 statement.fields_flags = Default::default();
-                // Drop any cached `{ string, columns }` object built from the old
-                // fields (no-op when unset; simple-mode queries never populate it).
                 statement.cached_statement_js.deinit();
             }
             MessageType::Authentication => {

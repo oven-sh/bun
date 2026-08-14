@@ -5,9 +5,7 @@ use crate::shared::column_identifier::ColumnIdentifier;
 use crate::shared::data::Data;
 
 pub struct FieldDescription {
-    /// Column name exactly as sent by PostgreSQL in RowDescription. Unlike
-    /// `name_or_index`, this is never rewritten to `Duplicate` and is always
-    /// the original string, so it can be surfaced to JS in result `.columns`.
+    /// Raw wire name for `result.columns`; `name_or_index` may be rewritten to `Duplicate`.
     pub name: Data,
     /// JavaScriptCore treats numeric property names differently than string property names.
     /// so we do the work to figure out if the property name is a number ahead of time.
@@ -29,9 +27,6 @@ impl FieldDescription {
         reader: &mut NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
         let raw_name = reader.read_z()?;
-
-        // Own a copy of the raw name so it survives name_or_index being
-        // rewritten to Duplicate by checkForDuplicateFields().
         let name = Data::create(raw_name.slice()).map_err(|_| AnyPostgresError::OutOfMemory)?;
 
         // Field name (null-terminated string)

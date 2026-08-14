@@ -234,22 +234,7 @@ impl JSMySQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Build the `{ string, columns: [{ name, type, table, length, flags }, ...] }`
-    /// object exposed as `result.statement` / `result.columns` in JS.
-    ///
-    /// For server-prepared statements (`statement_id > 0`) the object is built
-    /// once and held via a Strong reference, so re-executions reuse it instead
-    /// of re-allocating per query (test/regression/issue/28632). The cache is
-    /// invalidated when a re-decoded column definition actually changes (see
-    /// `ColumnDefinition41::decode` / MySQLConnection), and it is bypassed for
-    /// result sets that carried no column definitions of their own
-    /// (`columns_received != columns.len()`, e.g. the trailing OK of a CALL) so
-    /// they report an empty column list instead of a previous result set's.
-    ///
-    /// Text-protocol (one-shot) statements are never cached: they can't be
-    /// re-executed, and pinning the metadata via a Strong reference would keep
-    /// large `.unsafe()/.simple()` query strings alive until the transient
-    /// statement is finalized (test/js/sql/sql-mysql-query-string-leak.test.ts).
+    /// Builds `result.statement`; cached only if server-prepared, else it would pin the query text.
     fn build_statement_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         use crate::jsc::bun_string_jsc;
         self.query.with_mut(|q| {
@@ -353,12 +338,7 @@ impl JSMySQLQuery {
         pending_value.ensure_still_alive();
         self.set_pending_value(JSValue::UNDEFINED);
 
-        // Capture column metadata for this result set before MySQLStatement.reset()
-        // zeroes columns_received and the next header overwrites the definitions.
-        // If building the metadata fails (e.g. JS-heap OOM), swallow the exception
-        // and resolve without it: the query itself succeeded, and by this point
-        // q.result() has already set status to .success so reject_with_js_value
-        // would be a no-op and the promise would hang.
+        // The query already counts as successful; a failed build resolves without metadata.
         let statement_js = self
             .build_statement_js(self.global_object())
             .unwrap_or_else(|_| {

@@ -118,29 +118,10 @@ impl ColumnDefinition41 {
             BStr::new(self.schema.slice())
         );
 
-        // `changed` tracks whether any field surfaced in `result.columns`
-        // (name, table, type, length, flags) differs from this slot's previous
-        // contents. Column definitions are re-decoded into the same slot on
-        // every COM_STMT_EXECUTE / result set, and the connection uses this to
-        // invalidate the statement's cached structure / `{ string, columns }`
-        // object only when the definition actually changed — e.g. a prepared
-        // CALL returning equal-width result sets whose columns share a name but
-        // differ in type (`SELECT 1 AS x; SELECT 'hi' AS x`) — instead of on
-        // every execution (test/regression/issue/28632).
+        // True once any field surfaced in `result.columns` differs from the previous decode.
         let mut changed = false;
 
-        // `name` and `table` are surfaced to JS by `JSMySQLQuery::build_statement_js`
-        // when the query's final OK/EOF packet arrives, which may be many on_data()
-        // calls after decode.
-        // The reader returns `Data::Temporary` slices into the socket read buffer
-        // which will have been overwritten or realloc'd by then, so own a copy
-        // now. The other string fields are never read post-decode.
-        //
-        // Column definitions are re-decoded into the same slot on every
-        // COM_STMT_EXECUTE of a reused prepared statement, so skip the re-copy
-        // when the bytes are unchanged — otherwise the per-column alloc/free
-        // churn shows up as RSS growth under the ASAN quarantine, same as the
-        // `name_or_index` elision below (test/regression/issue/28632).
+        // `table`/`name` outlive the read buffer (read at OK/EOF time), so they are owned copies.
         let table = reader.encode_len_string()?;
         if self.table.slice() != table.slice() {
             self.table = Data::create(table.slice()).map_err(|_| AnyMySQLError::OutOfMemory)?;
@@ -162,9 +143,7 @@ impl ColumnDefinition41 {
         let name = reader.encode_len_string()?;
         if self.name.slice() != name.slice() {
             self.name = Data::create(name.slice()).map_err(|_| AnyMySQLError::OutOfMemory)?;
-            // The raw name is surfaced verbatim in `result.columns[i].name`; the
-            // `name_or_index` comparison below can miss byte-level changes
-            // (all-digit aliases collapse to the same `Index`, e.g. `1` vs `01`).
+            // Byte compare: all-digit aliases like `1` and `01` collapse to the same `Index` below.
             changed = true;
         }
         bun_core::scoped_log!(ColumnDefinition41, "name: {}", BStr::new(self.name.slice()));

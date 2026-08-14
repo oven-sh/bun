@@ -1271,9 +1271,6 @@ impl MySQLConnection {
                 if statement.columns[statement.columns_received as usize]
                     .decode(&mut reader, extended_type_info)?
                 {
-                    // The slot's definition changed (e.g. a re-prepare after the
-                    // table was altered) — the cached `{ string, columns }` object
-                    // no longer describes these fields.
                     statement.cached_statement_js.deinit();
                 }
                 statement.columns_received += 1;

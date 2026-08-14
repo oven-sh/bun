@@ -291,19 +291,7 @@ impl PostgresSQLQuery {
         js::target_set_cached(this_value, global_object, JSValue::ZERO);
     }
 
-    /// Build the `{ string, columns: [{ name, type, table, number }, ...] }`
-    /// object exposed as `result.statement` / `result.columns` in JS. Must be
-    /// called before the next RowDescription overwrites `statement.fields` (see
-    /// PostgresSQLConnection `RowDescription` handler).
-    ///
-    /// For the extended protocol the object is built once per prepared
-    /// statement and held via a Strong reference (same policy as
-    /// `cached_structure`), so re-executions reuse it instead of re-allocating
-    /// per query; it is invalidated wherever `statement.fields` is
-    /// cleared/replaced. Simple-protocol queries are never cached: their
-    /// statement is transient and rebuilt per result set anyway, and pinning
-    /// the metadata via a Strong reference would keep large `.simple()` query
-    /// strings alive until the statement is finalized.
+    /// Builds `result.statement`; cached unless simple-protocol, which would pin the query text.
     fn build_statement_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         use crate::jsc::bun_string_jsc;
         let Some(statement) = self.statement_mut() else {
@@ -333,9 +321,7 @@ impl PostgresSQLQuery {
                 b"table",
                 JSValue::js_number(field.table_oid as f64),
             );
-            // Wire protocol defines the column attribute number as signed Int16
-            // (system columns like ctid have negative attnums); `Short` is u16 so
-            // bitcast to match postgres.js' readInt16BE behaviour.
+            // attnum is a signed Int16 on the wire (system columns are negative); `Short` is u16.
             col.put(
                 global_object,
                 b"number",
@@ -400,12 +386,7 @@ impl PostgresSQLQuery {
             .unwrap();
         let event_loop = vm.event_loop_mut();
 
-        // Column metadata is only meaningful on the per-result-set callbacks
-        // (is_last=false). The final is_last=true call carries no result and by
-        // then statement.fields may have been overwritten by later result sets.
-        // If building the metadata fails (e.g. JS-heap OOM), swallow the
-        // exception and resolve without it rather than reject a query whose rows
-        // were already received.
+        // is_last carries no result set; a failed build must not reject rows already delivered.
         let statement_js = if is_last {
             JSValue::UNDEFINED
         } else {

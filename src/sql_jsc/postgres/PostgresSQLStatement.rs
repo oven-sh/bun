@@ -19,11 +19,7 @@ bun_core::declare_scope!(Postgres, visible);
 #[derive(bun_ptr::CellRefCounted)]
 pub struct PostgresSQLStatement {
     pub(crate) cached_structure: PostgresCachedStructure,
-    /// Lazily-built `{ string, columns }` object exposed as `result.statement` /
-    /// `result.columns`. Only populated for extended-protocol (prepared)
-    /// queries and reused across executions; reset wherever `fields` is
-    /// cleared or replaced, so repeated executions don't re-allocate the
-    /// per-column descriptors.
+    /// `result.statement` for prepared statements; dropped wherever `fields` is replaced.
     pub(crate) cached_statement_js: StrongOptional,
     // Private — intrusive refcount invariant; reach via `ref_()`/`deref()` or
     // [`Self::init_exact_refs`] at construction time.

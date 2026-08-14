@@ -909,10 +909,7 @@ impl ValkeyClient {
             }
             RESPValue::Push(push) => {
                 let p = self.parent();
-                let sub_count = p
-                    ._subscription_ctx
-                    .get()
-                    .channels_subscribed_to_count(&global_this)?;
+                let sub_count = p._subscription_ctx.get().channels_subscribed_to_count();
 
                 let is_pattern_or_sharded =
                     protocol::SubscriptionPushMessage::is_reply_kind(&push.kind);

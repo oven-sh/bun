@@ -915,7 +915,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         #[cfg(not(windows))]
         if fatal_send_errno != 0 {
             let global = handlers.global_object;
-            let scope = ScopeExit {
+            let _scope = ScopeExit {
                 socket: this,
                 scope: Some(handlers.enter()),
             };
@@ -931,7 +931,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             if !this.socket.get().is_detached() {
                 this.socket.get().close(uws::CloseCode::Normal);
             }
-            drop(scope);
             return Ok(());
         }
         #[cfg(windows)]
@@ -947,7 +946,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let scope = ScopeExit {
+        let _scope = ScopeExit {
             socket: this,
             scope: Some(handlers.enter()),
         };
@@ -957,7 +956,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])?;
         }
-        drop(scope);
         Ok(())
     }
 
@@ -993,7 +991,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let scope = ScopeExit {
+        let _scope = ScopeExit {
             socket: this,
             scope: Some(handlers.enter()),
         };
@@ -1003,7 +1001,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])?;
         }
-        drop(scope);
         Ok(())
     }
 
@@ -1530,7 +1527,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let scope = ScopeExit {
+        let _scope = ScopeExit {
             socket: this,
             scope: Some(handlers.enter()),
         };
@@ -1585,7 +1582,6 @@ impl<const SSL: bool> NewSocket<SSL> {
                 }
             }
         }
-        drop(scope);
         Ok(())
     }
 
@@ -1663,7 +1659,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let scope = ScopeExit {
+        let _scope = ScopeExit {
             socket: this,
             scope: Some(handlers.enter()),
         };
@@ -1673,7 +1669,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])?;
         }
-        drop(scope);
         Ok(())
     }
 
@@ -1963,7 +1958,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if callback.is_empty() {
             return Ok(());
         }
-        let scope = ScopeExit {
+        let _scope = ScopeExit {
             socket: this,
             scope: Some(handlers.enter()),
         };
@@ -1972,7 +1967,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         let buffer = match Self::create_dispatch_buffer(&global, session.len()) {
             Ok(b) => b,
             Err(e) => {
-                drop(scope);
                 return Err(e);
             }
         };
@@ -1990,7 +1984,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(err_value) = result.to_error() {
             handlers.call_error_handler(this_value, &[this_value, err_value])?;
         }
-        drop(scope);
         Ok(())
     }
 
@@ -2013,7 +2006,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if callback.is_empty() {
             return Ok(());
         }
-        let scope = ScopeExit {
+        let _scope = ScopeExit {
             socket: this,
             scope: Some(handlers.enter()),
         };
@@ -2022,7 +2015,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         let buffer = match Self::create_dispatch_buffer(&global, line.len()) {
             Ok(b) => b,
             Err(e) => {
-                drop(scope);
                 return Err(e);
             }
         };
@@ -2040,7 +2032,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(err_value) = result.to_error() {
             handlers.call_error_handler(this_value, &[this_value, err_value])?;
         }
-        drop(scope);
         Ok(())
     }
 
@@ -2118,7 +2109,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let scope = ScopeExit {
+        let _scope = ScopeExit {
             socket: this,
             scope: Some(handlers.enter()),
         };
@@ -2145,8 +2136,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(e) = callback.call(&global, this_value, &[this_value, js_error]) {
             handlers.call_error_handler(this_value, &[this_value, global.take_error(e)])?;
         }
-        drop(scope);
-        drop(cleanup);
         Ok(())
     }
 
@@ -2198,7 +2187,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let scope = ScopeExit {
+        let _scope = ScopeExit {
             socket: this,
             scope: Some(handlers.enter()),
         };
@@ -2207,7 +2196,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(err) = callback.call(&global, this_value, &[this_value, output_value]) {
             handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])?;
         }
-        drop(scope);
         Ok(())
     }
 

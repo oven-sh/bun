@@ -98,18 +98,14 @@ impl SubscriptionCtx {
     }
 
     /// Get the total number of channels that this subscription context is subscribed to.
-    pub(crate) fn channels_subscribed_to_count(
-        &self,
-        global_object: &JSGlobalObject,
-    ) -> JsResult<u32> {
-        let count = self.subscription_callback_map().size(global_object)?;
-        Ok(count)
+    pub(crate) fn channels_subscribed_to_count(&self) -> u32 {
+        self.subscription_callback_map().size()
     }
 
     /// Test whether this context has any subscriptions. It is mandatory to
     /// guard deinit with this function.
-    pub(crate) fn has_subscriptions(&self, global_object: &JSGlobalObject) -> JsResult<bool> {
-        Ok(self.channels_subscribed_to_count(global_object)? > 0)
+    pub(crate) fn has_subscriptions(&self) -> bool {
+        self.channels_subscribed_to_count() > 0
     }
 
     pub(crate) fn clear_receive_handlers(
@@ -283,20 +279,17 @@ impl SubscriptionCtx {
         Ok(())
     }
 
-    fn is_deletable(&self, global_object: &JSGlobalObject) -> JsResult<bool> {
+    fn is_deletable(&self) -> bool {
         // The user may request .close(), in which case we can dispose of the subscription object.
         // If that is the case, finalized will be true. Otherwise, we should treat the object as
         // disposable if there are no active subscriptions.
-        Ok(self.parent().client.get().flags.finalized || !self.has_subscriptions(global_object)?)
+        self.parent().client.get().flags.finalized || !self.has_subscriptions()
     }
 
     // Cannot be `Drop` — takes a `global_object` param. Exposed as explicit
     // `close` per PORTING.md (never expose `pub fn deinit`).
     pub fn close(&self, global_object: &JSGlobalObject) {
-        if cfg!(debug_assertions) {
-            let go = self.parent().global_object;
-            debug_assert!(self.is_deletable(&go).expect("unreachable"));
-        }
+        debug_assert!(self.is_deletable());
 
         if let Some(parent_this) = self.parent().this_value.get().try_get() {
             Js::subscription_callback_map_set_cached(
@@ -956,20 +949,12 @@ impl JSValkeyClient {
     pub(crate) fn remove_subscription(&self) {
         debug!(
             "removeSubscription: entering, has subscriptions: {}",
-            self._subscription_ctx
-                .get()
-                .has_subscriptions(&self.global_object)
-                .unwrap_or(false)
+            self._subscription_ctx.get().has_subscriptions()
         );
         let _guard = self.ref_scope();
 
         // This is the last subscription, restore original flags
-        if !self
-            ._subscription_ctx
-            .get()
-            .has_subscriptions(&self.global_object)
-            .unwrap_or(false)
-        {
+        if !self._subscription_ctx.get().has_subscriptions() {
             let (q, p) = {
                 let s = self._subscription_ctx.get();
                 (
@@ -1669,12 +1654,8 @@ impl JSValkeyClient {
         // in `subscriptionCallbackMap()` because `this_value.tryGet()` returns
         // null for a finalized ref. Short-circuit here: a finalized client has
         // no subscriptions by definition.
-        let subs_deletable: bool = self.client.get().flags.finalized
-            || !self
-                ._subscription_ctx
-                .get()
-                .has_subscriptions(&self.global_object)
-                .unwrap_or(false);
+        let subs_deletable: bool =
+            self.client.get().flags.finalized || !self._subscription_ctx.get().has_subscriptions();
 
         let has_activity =
             has_pending_commands || !subs_deletable || self.client.get().flags.is_reconnecting;

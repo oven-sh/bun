@@ -434,8 +434,7 @@ pub(crate) fn get_or_put(
 
     let result: crate::Result<LockfilePackage> = match global_or_relative {
         GlobalOrRelative::Global(_) => 'global: {
-            // Copied because reading the package.json may reallocate the lockfile
-            // string buffer `non_normalized_path` points into.
+            // `non_normalized_path` may alias the lockfile string buffer, which grows below.
             let folder_path: Box<[u8]> = Box::from(non_normalized_path);
             let mut resolver: SymlinkResolver = NewResolver {
                 folder_path: &folder_path,

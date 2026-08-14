@@ -215,7 +215,6 @@ it.concurrent(
     expect(JSON.parse(result.stdout)).toEqual({
       "unref()": 0,
       "ref().unref()": 0,
-      "unref().ref()": 1,
       "refresh() inside the callback": 2,
       "this is the Timeout": 1,
       "callback returning a pending promise": 1,
@@ -223,6 +222,17 @@ it.concurrent(
     });
   },
 );
+
+it.concurrent("setTimeout -> unref -> ref works", async () => {
+  // The re-ref'd timer is the only thing in the process, so the process only lives long enough
+  // for the callback to flip the exit code if ref() really keeps the event loop alive again.
+  const result = await bunRun([
+    "-e",
+    `process.exitCode = 1;
+     setTimeout(() => { process.exitCode = 0; }, 1).unref().ref();`,
+  ]);
+  expect(result).toSpawn("");
+});
 
 it.concurrent("setTimeout -> fire -> unref -> ref does not keep the event loop alive", async () => {
   // After a one-shot timer has fired it is destroyed; calling .unref() then .ref()
@@ -517,14 +527,18 @@ it.concurrent("setTimeout canceling with unref, close, _idleTimeout, and _onTime
 // by the same ~140 MB whether or not they are freed. ASAN builds therefore run a single batch and
 // rely on LeakSanitizer instead: a TimeoutObject still allocated when the child exits is reported
 // on stderr and fails the exit code. The CI runner sets the same three variables for the whole ASAN
-// lane (scripts/runner.node.mjs); setting them here as well makes a plain `bun bd test` catch the
-// leak too. BUN_DESTRUCT_VM_ON_EXIT frees the JS heap before the scan, as CI does, which keeps the
-// scan at ~0.1s instead of ~3s.
+// lane (scripts/runner.node.mjs), in which case they are inherited through bunEnv; the fallbacks
+// below give a plain `bun bd test` the same setup, so it catches the leak too. print_suppressions=0
+// matters for the exact-empty-stderr assertion: structural leaks covered by test/leaksan.supp would
+// otherwise be listed on stderr. BUN_DESTRUCT_VM_ON_EXIT frees the JS heap before the scan, as CI
+// does, which keeps the scan at ~0.1s instead of ~3s.
 const leakFixtureBatches = isASAN ? 1 : 100;
 const leakFixtureEnv = isASAN
   ? {
       ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-      LSAN_OPTIONS: bunEnv.LSAN_OPTIONS ?? `suppressions=${path.join(import.meta.dir, "../../../leaksan.supp")}`,
+      LSAN_OPTIONS:
+        bunEnv.LSAN_OPTIONS ??
+        `print_suppressions=0:suppressions=${path.join(import.meta.dir, "../../../leaksan.supp")}`,
       BUN_DESTRUCT_VM_ON_EXIT: "1",
     }
   : {};

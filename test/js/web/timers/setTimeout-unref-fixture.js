@@ -1,12 +1,15 @@
-// Arms every ref/unref scenario at once. The ref'd timers must run, the unref'd ones must
-// not run and must not keep the process alive: once the ref'd timers are done the event
-// loop has to wind down by itself. The exit handler reports how often each callback ran;
-// setTimeout.test.js asserts the exact report. An unref'd timer that wrongly keeps the
-// loop alive fires 100ms later and shows up in the report as a non-zero count.
+// Arms every scenario at once. The ref'd timers must run, the unref'd ones must not run and
+// must not keep the process alive: once the ref'd timers are done the event loop has to wind
+// down by itself. The exit handler reports how often each callback ran; setTimeout.test.js
+// asserts the exact report. An unref'd timer that wrongly keeps the loop alive fires 100ms
+// later and shows up in the report as a non-zero count.
+//
+// Whether .ref() keeps the loop alive can only be observed by a timer that is alone in the
+// process (anything else that is ref'd would mask a no-op ref()), so that case is a separate
+// test in setTimeout.test.js rather than a scenario here.
 const ran = {
   "unref()": 0,
   "ref().unref()": 0,
-  "unref().ref()": 0,
   "refresh() inside the callback": 0,
   "this is the Timeout": 0,
   "callback returning a pending promise": 0,
@@ -19,10 +22,6 @@ if (unrefd.unref() !== unrefd) throw new Error("unref() must return the timer");
 const reffed = setTimeout(() => ran["ref().unref()"]++, 100);
 if (reffed.ref() !== reffed) throw new Error("ref() must return the timer");
 reffed.unref();
-
-setTimeout(() => ran["unref().ref()"]++, 1)
-  .unref()
-  .ref();
 
 // refresh() from inside the callback re-arms the one-shot timer once, so it runs twice.
 const refreshing = setTimeout(() => {

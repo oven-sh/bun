@@ -1291,15 +1291,12 @@ impl Display for FormatValidIdentifier<'_> {
 // GitHub Actions formatting
 // ───────────────────────────────────────────────────────────────────────────
 
-/// actions/toolkit `escapeData`, for the text after the `::` of a workflow command:
-/// `%`, `\r`, `\n` -> `%25`, `%0D`, `%0A` (the runner decodes all three, so `%` has
-/// to be encoded too). A CRLF pair becomes one `%0A`; ANSI colour sequences are dropped.
+/// actions/toolkit `escapeData`: `%`/CR/LF -> `%25`/`%0D`/`%0A`; CRLF is one `%0A`; SGR is dropped.
 pub(crate) fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::Result {
     github_action_escape_writer::<false>(writer, self_)
 }
 
-/// actions/toolkit `escapeProperty`, for a property value such as `title=`:
-/// the [`github_action_writer`] set plus `:` -> `%3A` and `,` -> `%2C`.
+/// actions/toolkit `escapeProperty`: [`github_action_writer`] plus `:` -> `%3A` and `,` -> `%2C`.
 pub(crate) fn github_action_property_writer(
     writer: &mut impl fmt::Write,
     self_: &[u8],

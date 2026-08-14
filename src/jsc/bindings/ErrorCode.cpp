@@ -1724,10 +1724,19 @@ void throwCryptoOperationFailed(JSGlobalObject* globalObject, JSC::ThrowScope& s
     scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Crypto operation failed"_s));
 }
 
-bool throwIfInvalidFileURLHost(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const WTF::URL& url)
+bool isForbiddenFileURLHost(const WTF::URL& url)
 {
 #if !OS(WINDOWS)
-    if (url.host().length() > 0 && url.host() != "localhost"_s) [[unlikely]] {
+    return url.host().length() > 0 && url.host() != "localhost"_s;
+#else
+    UNUSED_PARAM(url);
+    return false;
+#endif
+}
+
+bool throwIfInvalidFileURLHost(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const WTF::URL& url)
+{
+    if (isForbiddenFileURLHost(url)) [[unlikely]] {
 #if OS(DARWIN)
         ERR::INVALID_FILE_URL_HOST(scope, globalObject, "darwin"_s);
 #else
@@ -1735,11 +1744,6 @@ bool throwIfInvalidFileURLHost(JSC::ThrowScope& scope, JSC::JSGlobalObject* glob
 #endif
         return true;
     }
-#else
-    UNUSED_PARAM(scope);
-    UNUSED_PARAM(globalObject);
-    UNUSED_PARAM(url);
-#endif
     return false;
 }
 

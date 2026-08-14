@@ -719,7 +719,7 @@ test("terminate() while the worker drains work scheduled by 'beforeExit' stops i
   expect(stderr).toBe("");
   expect(stdout.trim().split("\n").sort()).toEqual(["exit 1", "terminated 1"]);
   expect(exitCode).toBe(0);
-});
+}, timeout);
 
 // For a debug build: host code that runs after the worker's own process.exit()
 // unwound script — here a redis connect started in the same immediate tick as

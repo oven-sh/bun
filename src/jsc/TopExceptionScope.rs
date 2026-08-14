@@ -595,7 +595,7 @@ unsafe extern "C" {
 /// side), keep JSC's termination-request flag in step with it. Cold path only.
 #[cold]
 #[inline(never)]
-fn thrown(global: &JSGlobalObject) -> JsError {
+pub fn thrown(global: &JSGlobalObject) -> JsError {
     Bun__VM__keepTerminationRequestWithPendingException(global);
     JsError::Thrown
 }

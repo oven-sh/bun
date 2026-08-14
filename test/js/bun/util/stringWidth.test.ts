@@ -1285,8 +1285,10 @@ test("options lookup ignores Object.prototype pollution", () => {
   try {
     (Object.prototype as any).countAnsiEscapeCodes = true;
     (Object.prototype as any).ambiguousIsNarrow = false;
+    (Object.prototype as any).perCodePoint = true;
     expect(Bun.stringWidth("\x1b[31mhello\x1b[39m", {})).toBe(5);
     expect(Bun.stringWidth("★", {})).toBe(1);
+    expect(Bun.stringWidth("👩‍👩‍👧‍👦", {})).toBe(2);
     // An explicit own property still wins.
     expect(Bun.stringWidth("\x1b[31mhello\x1b[39m", { countAnsiEscapeCodes: true })).toBe(13);
     // Inherited properties from a non-Object.prototype prototype are honored,
@@ -1295,7 +1297,69 @@ test("options lookup ignores Object.prototype pollution", () => {
   } finally {
     delete (Object.prototype as any).countAnsiEscapeCodes;
     delete (Object.prototype as any).ambiguousIsNarrow;
+    delete (Object.prototype as any).perCodePoint;
   }
+});
+
+// perCodePoint: true measures each code point on its own (node's GetColumnWidth in
+// src/node_i18n.cc, which node's console.table and util.inspect align with) instead
+// of once per grapheme cluster. These are the values documented in
+// docs/runtime/utils.mdx and bun.d.ts; every perCodePoint value below equals what
+// node v26's internalBinding("icu").getStringWidth returns for the same string.
+describe("perCodePoint", () => {
+  const family = "👨‍👩‍👧‍👦"; // four emoji joined by three ZWJs
+  const widths = (input: string) => ({
+    default: Bun.stringWidth(input),
+    perCodePoint: Bun.stringWidth(input, { perCodePoint: true }),
+  });
+
+  test("is off by default", () => {
+    expect(Bun.stringWidth(family)).toBe(2);
+    expect(Bun.stringWidth(family, {})).toBe(2);
+    expect(Bun.stringWidth(family, { perCodePoint: false })).toBe(2);
+  });
+
+  test("counts every member of an emoji sequence", () => {
+    expect(widths(family)).toEqual({ default: 2, perCodePoint: 8 });
+    expect(widths("🇯🇵")).toEqual({ default: 2, perCodePoint: 4 }); // two regional indicators
+    expect(widths("👍🏽")).toEqual({ default: 2, perCodePoint: 4 }); // skin tone modifier is East Asian Wide
+    expect(widths("🏳️‍🌈")).toEqual({ default: 2, perCodePoint: 3 }); // 🏳 (1) + VS16 (0) + ZWJ (0) + 🌈 (2)
+    expect(widths("1\uFE0F\u20E3")).toEqual({ default: 2, perCodePoint: 1 }); // keycap: digit + two marks
+  });
+
+  test("wide, combining and control characters keep their widths", () => {
+    expect(widths("hello")).toEqual({ default: 5, perCodePoint: 5 });
+    expect(widths("日本")).toEqual({ default: 4, perCodePoint: 4 });
+    expect(widths("x\u0300")).toEqual({ default: 1, perCodePoint: 1 });
+    expect(widths("a\u0007b\u0085c")).toEqual({ default: 3, perCodePoint: 3 }); // Latin-1 C0 and C1 controls
+    expect(widths("")).toEqual({ default: 0, perCodePoint: 0 });
+  });
+
+  test("soft hyphen takes a column, as in node", () => {
+    expect(widths("a\u00ADb")).toEqual({ default: 2, perCodePoint: 3 });
+  });
+
+  test("composes with countAnsiEscapeCodes", () => {
+    const latin1 = "\x1b[31mhello\x1b[0m";
+    expect(Bun.stringWidth(latin1, { perCodePoint: true })).toBe(5);
+    expect(Bun.stringWidth(latin1, { perCodePoint: true, countAnsiEscapeCodes: true })).toBe(12);
+
+    const c1 = "\x9b31mhello\x9b0m";
+    expect(Bun.stringWidth(c1, { perCodePoint: true })).toBe(5);
+    expect(Bun.stringWidth(c1, { perCodePoint: true, countAnsiEscapeCodes: true })).toBe(10);
+
+    const utf16 = `\x1b[31m${family}\x1b[0m`;
+    expect(Bun.stringWidth(utf16, { perCodePoint: true })).toBe(8);
+    expect(Bun.stringWidth(utf16, { perCodePoint: true, countAnsiEscapeCodes: true })).toBe(15);
+  });
+
+  test("composes with ambiguousIsNarrow", () => {
+    expect(Bun.stringWidth("★☆", { perCodePoint: true })).toBe(2);
+    expect(Bun.stringWidth("★☆", { perCodePoint: true, ambiguousIsNarrow: true })).toBe(2);
+    expect(Bun.stringWidth("★☆", { perCodePoint: true, ambiguousIsNarrow: false })).toBe(4);
+    // U+00AD is East Asian Ambiguous, so this also covers the Latin-1 path.
+    expect(Bun.stringWidth("a\u00ADb", { perCodePoint: true, ambiguousIsNarrow: false })).toBe(4);
+  });
 });
 
 // The Latin-1 ANSI-excluding width walks 16-64 byte SIMD chunks counting

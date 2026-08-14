@@ -428,8 +428,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         return;
     }
     if (cell->isCallable()) {
-        // Node: `function ${value.name}`. Not Zig::functionName(), which is the
-        // stack-trace heuristic and returns "" for a callable Proxy.
+        // node: `function ${value.name}` (lib/internal/errors.js determineSpecificType)
         auto name = value.get(globalObject, vm.propertyNames->name);
         RETURN_IF_EXCEPTION(scope, void());
         auto* nameString = name.toString(globalObject);

@@ -5337,6 +5337,38 @@ describe("lowering top-level using keeps exported destructuring declarations exp
     expect(exportClauseNames(out)).toEqual(Object.keys(expectedExports));
   });
 
+  // scan() reports the exports the lowered statements end up with, so every
+  // lowering target has to report the same names as the untouched bun target.
+  const exportsFor = (target, src) => new Bun.Transpiler({ loader: "js", target }).scan(src).exports;
+  it.each([
+    ["destructured declarations", source],
+    [
+      "await using with destructured declarations",
+      `
+        await using res = { [Symbol.asyncDispose]() {} };
+        export const { a, b: [c] } = { a: 1, b: [2] };
+      `,
+    ],
+    [
+      "declarations that were already re-exported",
+      `
+        using res = { [Symbol.dispose]() {} };
+        export function f() {}
+        export class K {}
+        const x = 1;
+        export { x as y };
+        export { q } from "./q";
+        export * as ns from "./ns";
+        export default 1;
+      `,
+    ],
+  ])("scan() reports the same export set for every target: %s", (_name, src) => {
+    const unlowered = exportsFor("bun", src);
+    expect(unlowered).not.toBeEmpty();
+    expect(exportsFor("browser", src)).toEqual(unlowered);
+    expect(exportsFor("node", src)).toEqual(unlowered);
+  });
+
   it("target=bun leaves the declarations as they were", () => {
     const out = new Bun.Transpiler({ loader: "js", target: "bun" }).transformSync(source);
     expect(out).not.toContain("__using");

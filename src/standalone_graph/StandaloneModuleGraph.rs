@@ -1260,6 +1260,7 @@ pub(crate) fn inject(
                         "<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}",
                         e
                     );
+                    let _ = Syscall::unlink(zname);
                     return Fd::invalid();
                 }
             };
@@ -1920,7 +1921,7 @@ pub fn to_executable(
     {
         // Get the current path of the temp file
         let mut temp_buf = PathBuffer::uninit();
-        let temp_path = match bun_sys::get_fd_path(fd, &mut temp_buf) {
+        let temp_path = match bun_sys::get_fd_path_z(fd, &mut temp_buf) {
             Ok(p) => p,
             Err(e) => {
                 if fd != Fd::INVALID {
@@ -1933,6 +1934,11 @@ pub fn to_executable(
             }
         };
 
+        // Windows cannot move or delete the file while this handle is open, and
+        // nothing below needs it. Every failure from here on unlinks `temp_path`,
+        // otherwise a full copy of the bun executable is left behind in cwd.
+        fd.close();
+
         // Build the absolute destination path
         // On Windows, we need an absolute path for MoveFileExW
         // Get the current working directory and join with outfile
@@ -1940,9 +1946,7 @@ pub fn to_executable(
         let cwd_path: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
             Ok(len) => &cwd_buf[..len],
             Err(e) => {
-                if fd != Fd::INVALID {
-                    fd.close();
-                }
+                let _ = Syscall::unlink(temp_path);
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "Failed to get current directory: {}",
                     bstr::BStr::new(e.name())
@@ -1958,7 +1962,8 @@ pub fn to_executable(
         // Convert paths to Windows UTF-16
         let mut temp_buf_w = OSPathBuffer::uninit();
         let mut dest_buf_w = OSPathBuffer::uninit();
-        let temp_w_len = strings::paths::to_w_path_normalized(&mut temp_buf_w, temp_path).len();
+        let temp_w_len =
+            strings::paths::to_w_path_normalized(&mut temp_buf_w, temp_path.as_bytes()).len();
         let dest_w_len = strings::paths::to_w_path_normalized(&mut dest_buf_w, dest_path).len();
 
         // `to_w_path_normalized` already NUL-terminates (`buf[len] = 0`); the
@@ -1967,9 +1972,6 @@ pub fn to_executable(
         let dest_buf_u16: &mut [u16] = &mut dest_buf_w;
         temp_buf_u16[temp_w_len] = 0;
         dest_buf_u16[dest_w_len] = 0;
-
-        // Close the file handle before moving (Windows requires this)
-        fd.close();
 
         use bun_sys::windows::{self, Win32ErrorExt as _};
         // Move the file using MoveFileExW
@@ -1987,7 +1989,9 @@ pub fn to_executable(
             )
         } == windows::FALSE
         {
+            // Read the error before the unlink below overwrites GetLastError.
             let werr = windows::Win32Error::get();
+            let _ = Syscall::unlink(temp_path);
             if let Some(sys_err) = werr.to_system_errno() {
                 if sys_err == bun_sys::SystemErrno::EISDIR {
                     return Ok(CompileResult::fail_fmt(format_args!(

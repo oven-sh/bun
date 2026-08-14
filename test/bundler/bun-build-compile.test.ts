@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
-import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "node:fs";
+import { chmodSync, closeSync, cpSync, existsSync, openSync, readdirSync, readSync } from "node:fs";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -766,6 +766,63 @@ describe("compiled binary in a deleted cwd", () => {
     },
     60_000,
   );
+});
+
+// The executable is assembled as a `.<hex>.bun-build` copy of bun in cwd and
+// then renamed onto the outfile. A non-empty directory at the outfile path makes
+// that rename fail (an empty one gets replaced on POSIX); the failed build must
+// not leave the copy behind.
+describe.concurrent("compile whose rename onto the outfile fails", () => {
+  // On Windows the compiler appends .exe to the outfile, so that is the name to block.
+  const blocker = isWindows ? "isdir.exe" : "isdir";
+  const blockerDir = { "occupied.txt": "" };
+  const failure = /is a directory|failed to move executable/;
+
+  test("bun build --compile removes the temp copy", async () => {
+    using dir = tempDir("build-compile-outfile-is-dir", {
+      "app.js": `console.log("never built");`,
+      [blocker]: blockerDir,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "./app.js", "--outfile", "isdir"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toMatch(failure);
+    expect(readdirSync(String(dir)).sort()).toEqual(["app.js", blocker]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("Bun.build({ compile }) removes the temp copy", async () => {
+    using dir = tempDir("build-compile-api-outfile-is-dir", {
+      "app.js": `console.log("never built");`,
+      [blocker]: blockerDir,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const result = await Bun.build({ entrypoints: ["./app.js"], throw: false, compile: { outfile: "isdir" } });
+         console.log(JSON.stringify({ success: result.success, logs: result.logs.map(String) }));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(JSON.parse(stdout)).toEqual({ success: false, logs: [expect.stringMatching(failure)] });
+    expect(readdirSync(String(dir)).sort()).toEqual(["app.js", blocker]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // file command test works well

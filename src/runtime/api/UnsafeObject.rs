@@ -81,10 +81,8 @@ fn memory_footprint(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JS
     Ok(JSValue::js_number(bytes as f64))
 }
 
-/// Return the NAPI link-slot table as an array of
-/// `{ index, used, path, offset, length, hash }` so tests (and curious
-/// users) can see which stub loaders are populated in the current
-/// executable. This inspects the running binary's own table, not a file.
+/// `Bun.unsafe.napiLinkSlots()`: the running binary's link-slot table as
+/// `{ index, used, path, offset, length, hash }[]`.
 #[bun_jsc::host_fn]
 fn napi_link_slots(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let slots = bun_standalone_graph::napi_link::slots();
@@ -112,8 +110,6 @@ fn napi_link_slots(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
             b"length",
             JSValue::js_number_from_uint64(slot.length),
         );
-        // Hex of the hash's little-endian bytes, matching a byte-wise dump of
-        // the on-disk slot.
         let mut hex = [0u8; 16];
         for (j, b) in slot.hash.to_le_bytes().iter().enumerate() {
             const DIGITS: &[u8; 16] = b"0123456789abcdef";
@@ -130,12 +126,8 @@ fn napi_link_slots(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
     Ok(arr)
 }
 
-/// `Bun.unsafe.linkNapiModule(exePath, addonPath, virtualPath, outPath)`
-/// Post-process a `bun build --compile` executable: append the Mach-O
-/// `.node` image at `addonPath` into the `__BUN,__bun` section and stamp the
-/// first free stub slot so that `process.dlopen(virtualPath)` inside the
-/// resulting binary resolves to it. Writes the result to `outPath` (which
-/// may equal `exePath`). Mach-O only for now.
+/// `Bun.unsafe.linkNapiModule(exePath, addonPath, virtualPath, outPath)`;
+/// see `napi_link::link_into_macho`.
 #[bun_jsc::host_fn]
 fn link_napi_module(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_jsc::SysErrorJsc as _;

@@ -1,21 +1,11 @@
-//! Stub native-addon loaders for standalone (`bun build --compile`) executables.
-//!
-//! The bun binary carries a small fixed table of "link slots" in its own
-//! section (`__DATA,__bun_napi_lnk` on Mach-O, `.bun_napi_link` on ELF,
-//! `.bnapi` on PE; defined in `c-bindings.cpp`). Each slot is 256 bytes:
-//! `{ magic, offset, length, hash, path[224] }`. A post-build linker can
-//! binary-patch a slot in place and append the `.node` image into the
-//! `__BUN,__bun` / `.bun` section *after* the standalone module graph
-//! payload, without re-running the bundler.
-//!
-//! At runtime, when `process.dlopen` sees a `/$bunfs/...` path, it consults
-//! this table before falling back to the per-launch tmpfile extraction used
-//! for bundler-embedded addons. A matching slot is loaded entirely from
-//! memory: on macOS via `NSCreateObjectFileImageFromMemory` + `NSLinkModule`
-//! (bun never writes a `.node` to disk), on Linux via
-//! `memfd_create(MFD_EXEC)` + `dlopen("/proc/self/fd/N")`. Other platforms
-//! return no handle; they also have no post-link patcher yet, so their slots
-//! can never be populated.
+//! NAPI link slots: a fixed table of stub addon loaders baked into the bun
+//! binary (`BUN_NAPI_LINK_SLOTS` in `c-bindings.cpp`), so a `.node` can be
+//! appended to a `bun build --compile` executable after the fact without
+//! rebundling. The addon image is stored in the `__BUN,__bun` / `.bun`
+//! section past the module-graph payload; the slot records its offset and the
+//! `/$bunfs/` path `process.dlopen` will ask for. Matching slots are loaded
+//! from memory (`NSLinkModule` on macOS, memfd on Linux), never extracted to
+//! disk. Only the Mach-O patcher exists so far.
 
 use core::ffi::c_void;
 use core::mem::size_of;
@@ -23,26 +13,23 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_exe_format::macho::{MachoError, MachoFile};
 
-/// Mirrors `BunNapiLinkSlot` in `c-bindings.cpp`. Keep both at 256 bytes.
+/// Mirrors `BunNapiLinkSlot` in `c-bindings.cpp`.
 #[repr(C)]
 pub struct Slot {
+    /// `MAGIC_BASE | (index << 56)`.
     pub magic: u64,
+    /// From the start of the `.bun` section (its u64 size header); 0 = unused.
     pub offset: u64,
     pub length: u64,
     pub hash: u64,
     pub path: [u8; 224],
 }
 
-const _: () = assert!(
-    size_of::<Slot>() == 256,
-    "BunNapiLinkSlot must be 256 bytes so external patchers can index the table"
-);
+const _: () = assert!(size_of::<Slot>() == 256);
 
 impl Slot {
     pub const COUNT: usize = 8;
-    /// `"bunlink\0"` little-endian — the low 7 bytes are the signature, the
-    /// high byte carries the slot index so patchers can locate slot N by
-    /// scanning for `62 75 6E 6C 69 6E 6B NN`.
+    /// `"bunlink\0"` as a little-endian u64; the high byte holds the index.
     pub const MAGIC_BASE: u64 = 0x006B_6E69_6C6E_7562;
 
     pub fn is_used(&self) -> bool {
@@ -80,25 +67,20 @@ unsafe extern "C" {
 
 pub fn slots() -> &'static [Slot] {
     let count = Bun__getNapiLinkSlotCount() as usize;
-    // SAFETY: the table is a static array of `count` slots in the binary's
-    // own data section; it lives for the process lifetime.
+    // SAFETY: static table in the binary's own data section.
     unsafe { core::slice::from_raw_parts(Bun__getNapiLinkSlots(), count) }
 }
 
-/// Find the slot whose virtual path matches `input_path` exactly.
 pub fn find_slot(input_path: &[u8]) -> Option<&'static Slot> {
     slots()
         .iter()
         .find(|s| s.is_valid() && s.is_used() && s.path_slice() == input_path)
 }
 
-/// Return the embedded `.node` bytes for `slot` as a slice pointing directly
-/// into the mapped `__BUN,__bun` / `.bun` section. The memory lives for the
-/// lifetime of the process.
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
 fn slot_bytes(slot: &Slot) -> Option<&'static [u8]> {
-    // SAFETY: base points at the start of the mapped standalone section; the
-    // patcher wrote `offset`/`length` to describe a range inside it.
+    // SAFETY: `offset`/`length` were written by the patcher to lie inside the
+    // mapped `.bun` section, which lives as long as the process.
     unsafe {
         let base = Bun__getNapiLinkSectionBase();
         if base.is_null() {
@@ -111,17 +93,12 @@ fn slot_bytes(slot: &Slot) -> Option<&'static [u8]> {
     }
 }
 
-/// Cache of already-loaded slots so repeated `require()` of the same virtual
-/// path returns the same module instance (via the `DLHandleMap` replay path
-/// in `Process_functionDlopen`). Entries are written once and never freed —
-/// native addons cannot be unloaded.
+/// Per-slot handle cache; native addons are never unloaded, so a second
+/// `require()` must hand `Process_functionDlopen` the same handle for its
+/// `DLHandleMap` replay.
 static LOADED_HANDLES: [AtomicPtr<c_void>; Slot::COUNT] =
     [const { AtomicPtr::new(core::ptr::null_mut()) }; Slot::COUNT];
 
-/// Load the addon image stored in `slot` and return an opaque handle usable
-/// by `process.dlopen` (an `NSModule` on macOS, a `dlopen()` handle on
-/// Linux). Sets `is_ns_module` on macOS so the caller knows to use
-/// `NSLookupSymbolInModule` instead of `dlsym()`.
 fn load_slot_from_memory(slot: &Slot, is_ns_module: &mut bool) -> *mut c_void {
     *is_ns_module = false;
     let idx = slot.index() as usize;
@@ -146,15 +123,12 @@ fn load_slot_for_platform(slot: &Slot, is_ns_module: &mut bool) -> *mut c_void {
     let Some(bytes) = slot_bytes(slot) else {
         return core::ptr::null_mut();
     };
-    // dyld uses this as the image's install name; keep it stable per slot so
-    // stack traces and `NSNameOfModule` are recognisable.
     let mut name = [0u8; 32];
     use std::io::Write as _;
     let mut c = std::io::Cursor::new(&mut name[..]);
     let _ = write!(c, "bun:napi-slot-{}\0", slot.index());
     *is_ns_module = true;
-    // SAFETY: `bytes` is a live slice into the mapped section; `name` is
-    // NUL-terminated above.
+    // SAFETY: `bytes` is a live slice; `name` is NUL-terminated.
     unsafe { Bun__darwinLoadMachOFromMemory(bytes.as_ptr(), bytes.len(), name.as_ptr().cast()) }
 }
 
@@ -172,7 +146,6 @@ fn load_slot_for_platform(slot: &Slot, _is_ns_module: &mut bool) -> *mut c_void 
     let Ok(fd) = bun_sys::memfd_create(c"bun-napi-link", bun_sys::MemfdFlags::Executable) else {
         return core::ptr::null_mut();
     };
-    // Pre-size so dlopen sees the full extent immediately.
     let _ = bun_sys::ftruncate(fd, bytes.len() as i64);
     let mut remain = bytes;
     while !remain.is_empty() {
@@ -184,38 +157,30 @@ fn load_slot_for_platform(slot: &Slot, _is_ns_module: &mut bool) -> *mut c_void 
             Ok(n) => remain = &remain[n..],
         }
     }
-    // Leave the fd open so /proc/self/fd/N remains valid for dlopen and for
-    // the lifetime of the loaded module.
+    // `fd` is intentionally kept open: `/proc/self/fd/N` must stay valid for
+    // as long as the module is mapped.
     let mut path = [0u8; 48];
     use std::io::Write as _;
     let mut c = std::io::Cursor::new(&mut path[..]);
     let _ = write!(c, "/proc/self/fd/{}", fd.0);
     let len = c.position() as usize;
-    // `path` was zero-initialized, so `path[len] == 0`.
     let zpath = ZStr::from_buf(&path, len);
     bun_sys::dlopen(zpath, bun_sys::RTLD::LAZY).unwrap_or(core::ptr::null_mut())
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
 fn load_slot_for_platform(_slot: &Slot, _is_ns_module: &mut bool) -> *mut c_void {
-    // No in-memory loader here, and no post-link patcher can populate slots
-    // for this executable format yet either. `Process_functionDlopen`
-    // reports ERR_DLOPEN_FAILED for the (currently unreachable) case of a
-    // populated slot.
     core::ptr::null_mut()
 }
 
-/// Called from `Process_functionDlopen` when the target starts with the
-/// `/$bunfs/` prefix. If the path matches a populated slot, loads it from
-/// memory and writes the resulting handle into `out_handle`. Returns true
-/// whether or not the load succeeded — a true return with
-/// `*out_handle == null` means "this path is a link slot but loading
-/// failed", so the caller surfaces a dlopen error instead of falling through
-/// to the module-graph tmpfile extractor (which wouldn't find it either).
+/// Returns whether `path` names a link slot. On `true`, `*out_handle` is the
+/// loaded module or null if loading failed; the caller must not fall back to
+/// the module-graph extractor in either case. `*out_is_ns_module` means the
+/// handle is an `NSModule` (use `NSLookupSymbolInModule`, not `dlsym`).
 ///
 /// # Safety
-/// `path_ptr[..path_len]` must be readable; `out_handle` and
-/// `out_is_ns_module` must be valid for writes.
+/// `path_ptr[..path_len]` must be readable; the out-pointers must be valid
+/// for writes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__tryLoadNapiLinkSlot(
     path_ptr: *const u8,
@@ -223,8 +188,7 @@ pub unsafe extern "C" fn Bun__tryLoadNapiLinkSlot(
     out_handle: *mut *mut c_void,
     out_is_ns_module: *mut bool,
 ) -> bool {
-    // SAFETY: caller (BunProcess.cpp) passes the UTF-8 bytes of the dlopen
-    // target and valid out-pointers.
+    // SAFETY: per the function contract, upheld by BunProcess.cpp.
     unsafe {
         *out_handle = core::ptr::null_mut();
         *out_is_ns_module = false;
@@ -239,18 +203,6 @@ pub unsafe extern "C" fn Bun__tryLoadNapiLinkSlot(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Linker side: rewrite a standalone executable to carry an extra `.node`
-// addon in one of the free slots. We locate the fixed slot table section,
-// stamp a slot, append the addon bytes into the `__BUN,__bun` section (after
-// the existing module-graph payload so `fromExecutable`'s trailer check
-// still lands on the `"\n---- Bun! ----\n"` sentinel), and re-sign.
-//
-// Only Mach-O is wired up for now; ELF and PE need their own
-// section-finders and payload-appenders which can reuse the same slot
-// layout.
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum LinkError {
     UnsupportedExecutableFormat,
@@ -262,9 +214,9 @@ pub enum LinkError {
 
 const MH_MAGIC_64: u32 = 0xfeedfacf;
 
-/// Append `addon_bytes` (a complete Mach-O `.node` image) to the standalone
-/// executable `exe_bytes` and register it under `virtual_path` in the first
-/// free link slot. Returns a freshly-allocated, re-signed Mach-O image.
+/// Append `addon_bytes` to the `__BUN,__bun` section of a compiled Mach-O
+/// executable, stamp the first free slot with its location and
+/// `virtual_path`, and return the re-signed image.
 pub fn link_into_macho(
     exe_bytes: &[u8],
     addon_bytes: &[u8],
@@ -281,10 +233,6 @@ pub fn link_into_macho(
     let mut macho = MachoFile::init(exe_bytes, addon_bytes.len() + (16 * 1024))
         .map_err(|_| LinkError::UnsupportedExecutableFormat)?;
 
-    // The existing `__BUN,__bun` section starts with a u64 length header
-    // followed by the serialised module graph (ending in the trailer). We
-    // preserve that header value so `StandaloneModuleGraph.fromExecutable`
-    // keeps finding the trailer, and append the addon image after it.
     let bun_section = macho
         .find_section(b"__BUN", b"__bun")
         .ok_or(LinkError::NotStandaloneExecutable)?;
@@ -299,24 +247,18 @@ pub fn link_into_macho(
     if graph_len == 0 {
         return Err(LinkError::NotStandaloneExecutable);
     }
-    // Current payload (without the u64 header) is `graph ++ prior napi
-    // images`. The section's filesize may be padded past the last byte we
-    // care about, but those padding bytes are zero; copying them is harmless
-    // and keeps previously-linked addons intact.
+    // Everything after the size header (module graph plus any previously
+    // linked addons) is carried over verbatim; the new image is appended on a
+    // 16 KiB boundary.
     let prior_payload = &existing[size_of::<u64>()..];
-
-    // Pad so the addon image starts on a 16 KiB boundary within the section —
-    // matches the section alignment and gives the loader a page-aligned
-    // source.
-    let alignment: usize = 16 * 1024;
-    let addon_off_in_payload = prior_payload.len().next_multiple_of(alignment);
+    let addon_off_in_payload = prior_payload.len().next_multiple_of(16 * 1024);
     let mut new_payload = Vec::with_capacity(addon_off_in_payload + addon_bytes.len());
     new_payload.extend_from_slice(prior_payload);
     new_payload.resize(addon_off_in_payload, 0);
     new_payload.extend_from_slice(addon_bytes);
 
-    // Rewrite the section. The header must keep pointing at the module graph
-    // length, not the combined length.
+    // The size header must still describe only the module graph, or the
+    // runtime's trailer check lands on the addon bytes instead.
     macho
         .write_section_with_header(&new_payload, graph_len)
         .map_err(|e| match e {
@@ -324,20 +266,13 @@ pub fn link_into_macho(
             _ => LinkError::UnsupportedExecutableFormat,
         })?;
 
-    // Stamp the first free slot. The slot table is fixed-size inside
-    // `__DATA,__bun_napi_lnk` so this is a straight overwrite that doesn't
-    // shift any load commands — but it must happen *after*
-    // `write_section_with_header` has finished shuffling bytes around, or
-    // we'd be editing stale memory. `__DATA` sits before `__BUN` in the
-    // file, so its offset is unaffected by the shift.
+    // Locate the table only after the section rewrite above has moved things.
     let slot_section = macho
         .find_section(b"__DATA", b"__bun_napi_lnk")
         .ok_or(LinkError::SlotTableMissing)?;
-    if slot_section.size < size_of::<Slot>() as u64 {
-        return Err(LinkError::SlotTableMissing);
-    }
     let table = macho
         .section_bytes_mut(slot_section)
+        .filter(|t| t.len() >= size_of::<Slot>())
         .ok_or(LinkError::SlotTableMissing)?;
     let picked = table
         .chunks_exact(size_of::<Slot>())
@@ -349,9 +284,6 @@ pub fn link_into_macho(
         })
         .ok_or(LinkError::NoFreeSlot)?;
 
-    // Slot offsets are measured from the start of the section (the u64
-    // header), so account for the 8-byte header `write_section_with_header`
-    // places before `new_payload`.
     let magic = Slot::MAGIC_BASE | ((picked as u64) << 56);
     let offset = size_of::<u64>() as u64 + addon_off_in_payload as u64;
     let hash = bun_wyhash::hash(addon_bytes);

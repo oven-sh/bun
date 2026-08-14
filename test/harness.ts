@@ -486,6 +486,50 @@ export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: Direct
   return base;
 }
 
+/**
+ * `Bun.spawn` options for a child that must be subject to file permission bits,
+ * for tests where e.g. a `chmod 444` file has to be unwritable.
+ *
+ * Root bypasses permission bits, so when the tests run as root the child is
+ * run as uid/gid 65534 ("nobody" on Linux and macOS): `dir` is handed over to
+ * that user, and every ancestor it could not traverse (CI points TMPDIR at a
+ * mode 0700 directory) gets `o+x` until the returned value is disposed. When
+ * the tests already run unprivileged, the child runs as the current user and
+ * nothing is changed. POSIX only.
+ *
+ * @example
+ * ```ts
+ * using dir = tempDir("read-only", { "package.json": "{}" });
+ * fs.chmodSync(join(String(dir), "package.json"), 0o444);
+ * using unprivileged = unprivilegedSpawnOptions(String(dir));
+ * await using proc = Bun.spawn({ cmd: [bunExe(), "pm", "pack"], cwd: String(dir), env: bunEnv, ...unprivileged });
+ * ```
+ */
+export function unprivilegedSpawnOptions(dir: string): { uid?: number; gid?: number } & Disposable {
+  const restoreModes: [path: string, mode: number][] = [];
+  const options: { uid?: number; gid?: number } & Disposable = {
+    [Symbol.dispose]() {
+      for (const [path, mode] of restoreModes) fs.chmodSync(path, mode);
+    },
+  };
+  if (isWindows || process.getuid!() !== 0) return options;
+
+  const NOBODY = 65534;
+  fs.chownSync(dir, NOBODY, NOBODY);
+  for (const entry of fs.readdirSync(dir, { recursive: true, encoding: "utf8" })) {
+    fs.lchownSync(join(dir, entry), NOBODY, NOBODY);
+  }
+  for (let parent = dirname(dir); parent !== dirname(parent); parent = dirname(parent)) {
+    const mode = fs.statSync(parent).mode & 0o7777;
+    if (mode & 0o001) continue;
+    fs.chmodSync(parent, mode | 0o001);
+    restoreModes.push([parent, mode]);
+  }
+  options.uid = NOBODY;
+  options.gid = NOBODY;
+  return options;
+}
+
 export interface BunRunResult {
   stdout: string;
   stderr: string;

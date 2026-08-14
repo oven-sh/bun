@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { exists, mkdir, rm } from "fs/promises";
-import { bunEnv, bunExe, pack, runBunInstall, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, pack, runBunInstall, tempDir, tmpdirSync, unprivilegedSpawnOptions } from "harness";
 import fs from "node:fs/promises";
 import { join } from "path";
 
@@ -48,6 +48,35 @@ test("basic", async () => {
   await pack(packageDir, bunEnv);
 
   const tarball = readTarball(join(packageDir, "pack-basic-1.2.3.tgz"));
+  expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
+});
+
+// pack only reads package.json, so a file that is readable but not writable (a read-only
+// checkout, a file owned by another user) must not stop it.
+test.skipIf(isWindows)("read-only package.json", async () => {
+  using dir = tempDir("pack-read-only", {
+    "package.json": JSON.stringify({ name: "pack-read-only", version: "1.2.3" }),
+    "index.js": "console.log('hello ./index.js')",
+  });
+  await fs.chmod(join(String(dir), "package.json"), 0o444);
+  using unprivileged = unprivilegedSpawnOptions(String(dir));
+
+  await using proc = spawn({
+    cmd: [bunExe(), "pm", "pack"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+    ...unprivileged,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(err).toBe("");
+  expect(out).toContain("pack-read-only-1.2.3.tgz");
+  expect(exitCode).toBe(0);
+
+  const tarball = readTarball(join(String(dir), "pack-read-only-1.2.3.tgz"));
   expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
 });
 

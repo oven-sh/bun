@@ -365,6 +365,28 @@ impl BuildCommand {
                     Global::exit(1);
                 }
             }
+
+            // The transpiled output keeps the entry point's name, so the
+            // "next to the entry point" fallback the writer uses for a
+            // multi-file build without --outdir would overwrite a .js entry.
+            if output_to_stdout
+                && this_transpiler.options.source_map == options::SourceMapOption::Linked
+            {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> cannot use a linked source map without --outdir or --outfile"
+                );
+                Global::exit(1);
+            }
+
+            // Like the bundler below: name the output after --outfile and write
+            // into its directory, so a `.map` lands next to it under the name
+            // its sourceMappingURL comment points at.
+            if ctx.bundler_options.outdir.is_empty() && !outfile.is_empty() {
+                this_transpiler.options.entry_naming =
+                    strings::concat(&[b"./", bun_paths::basename(outfile)]);
+                this_transpiler.options.output_dir =
+                    bun_core::dirname(outfile).unwrap_or(b".").into();
+            }
         }
 
         if ctx.bundler_options.outdir.is_empty()

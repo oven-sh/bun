@@ -2784,13 +2784,13 @@ impl<'a> Transpiler<'a> {
             bun_ast::store_ast_alloc_heap::reset();
 
             let errors_before = self.log().errors;
-            let output_file = match self.build_with_resolve_result_eager(
+            let (output_file, source_map_file) = match self.build_with_resolve_result_eager(
                 &item,
                 import_path_format,
                 outstream,
                 None,
             ) {
-                Ok(Some(f)) => f,
+                Ok(Some(files)) => files,
                 Ok(None) => continue,
                 Err(err) => {
                     // Print errors (unlike parse errors) add nothing to the
@@ -2813,6 +2813,7 @@ impl<'a> Transpiler<'a> {
                 }
             };
             self.output_files.push(output_file);
+            self.output_files.extend(source_map_file);
         }
         Ok(())
     }
@@ -2824,7 +2825,8 @@ impl<'a> Transpiler<'a> {
         let mut by_dest_path: bun_collections::StringArrayHashMap<Vec<usize>> = Default::default();
         let mut has_duplicates = false;
         for (index, file) in self.output_files.iter().enumerate() {
-            if file.dest_path.is_empty() {
+            // A `.map` collides exactly when the output it belongs to does.
+            if file.dest_path.is_empty() || file.output_kind == options::OutputKind::Sourcemap {
                 continue;
             }
             let entry = by_dest_path.get_or_put(&file.dest_path)?;
@@ -2869,13 +2871,15 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 
+    /// Returns the output for `resolve_result` and, for `--sourcemap=linked` /
+    /// `external`, the `.map` that goes next to it.
     fn build_with_resolve_result_eager(
         &mut self,
         resolve_result: &resolver::Result,
         import_path_format: options::ImportPathFormat,
         _outstream: TransformOutstream,
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
-    ) -> crate::Result<Option<options::OutputFile>> {
+    ) -> crate::Result<Option<(options::OutputFile, Option<options::OutputFile>)>> {
         if resolve_result.flags.is_external() {
             return Ok(None);
         }
@@ -2920,6 +2924,8 @@ impl<'a> Transpiler<'a> {
         output_file.output_kind = options::OutputKind::Chunk;
         output_file.side = None;
         output_file.entry_point_index = None;
+
+        let mut pending_source_map: Option<PendingSourceMap> = None;
 
         match loader {
             options::Loader::Jsx
@@ -3014,21 +3020,34 @@ impl<'a> Transpiler<'a> {
                 // `result.ast` above. (`bun build` is one-shot — `self.arena`
                 // here is `cli_arena()` and lives for the process.)
                 let print_arena: &Arena = self.arena;
-                output_file.size = match self.options.target {
-                    options::Target::Browser | options::Target::Node => {
-                        self.print(print_arena, result, &mut writer, js_printer::Format::Esm)?
-                    }
+                let format = match self.options.target {
+                    options::Target::Browser | options::Target::Node => js_printer::Format::Esm,
                     options::Target::Bun
                     | options::Target::BunMacro
-                    | options::Target::ServerComponentsSsr => self.print(
-                        print_arena,
-                        result,
-                        &mut writer,
-                        js_printer::Format::EsmAscii,
-                    )?,
+                    | options::Target::ServerComponentsSsr => js_printer::Format::EsmAscii,
                 };
+                if self.options.source_map == options::SourceMapOption::None {
+                    self.print(print_arena, result, &mut writer, format)?;
+                } else {
+                    // Not `print_with_source_map`: its kill switch is for the
+                    // runtime's stack-trace maps, and bundling ignores it too.
+                    let mut source_map = PendingSourceMap::default();
+                    self.print_with_source_map_maybe::<true>(
+                        print_arena,
+                        result.ast,
+                        &result.source,
+                        &mut writer,
+                        format,
+                        Some(js_printer::SourceMapHandler::for_(&mut source_map)),
+                        None,
+                        None,
+                    )?;
+                    pending_source_map = Some(source_map);
+                }
+                let code = writer.ctx.written();
+                output_file.size = code.len();
                 output_file.value = crate::output_file::Value::Buffer {
-                    bytes: writer.ctx.written().to_vec().into_boxed_slice(),
+                    bytes: Box::from(code),
                 };
             }
             options::Loader::Dataurl | options::Loader::Base64 => {
@@ -3064,7 +3083,103 @@ impl<'a> Transpiler<'a> {
             output_file.dest_path = self.transform_only_dest_path(file_path_text, loader, bytes);
         }
 
-        Ok(Some(output_file))
+        let source_map_file = match pending_source_map {
+            Some(pending) => self.attach_source_map(&mut output_file, file_path_text, pending)?,
+            None => None,
+        };
+
+        Ok(Some((output_file, source_map_file)))
+    }
+
+    /// Appends the `//# sourceMappingURL` comment `--sourcemap` asks for to
+    /// `output_file` (named by now, so a linked comment can point at the
+    /// `.map`) and returns the `.map` itself for `linked` / `external`.
+    fn attach_source_map(
+        &self,
+        output_file: &mut options::OutputFile,
+        file_path_text: &[u8],
+        pending: PendingSourceMap,
+    ) -> crate::Result<Option<options::OutputFile>> {
+        use std::io::Write as _;
+
+        let crate::output_file::Value::Buffer { bytes } = &mut output_file.value else {
+            unreachable!("the transpiled arm always produces a buffer");
+        };
+        let mut code: Vec<u8> = core::mem::take(bytes).into_vec();
+
+        let map_dest_path: Box<[u8]> = strings::concat(&[&output_file.dest_path, b".map"]);
+        let debug_id = bun_sourcemap::DebugIDFormatter {
+            id: crate::ContentHasher::run(&code),
+        };
+        let json = pending.into_json(
+            &self.source_map_sources_entry(&output_file.dest_path, file_path_text)?,
+            debug_id,
+        )?;
+
+        if !code.ends_with(b"\n") {
+            code.push(b'\n');
+        }
+        if bun_core::FeatureFlags::SOURCE_MAP_DEBUG_ID {
+            writeln!(&mut code, "\n//# debugId={}", debug_id)?;
+        }
+        match self.options.source_map {
+            options::SourceMapOption::Inline => {
+                code.extend_from_slice(b"//# sourceMappingURL=data:application/json;base64,");
+                code.extend_from_slice(&bun_base64::encode_alloc(&json));
+                code.push(b'\n');
+            }
+            options::SourceMapOption::Linked => {
+                let [prefix, path]: [&[u8]; 2] = if self.options.public_path.is_empty() {
+                    [b"", bun_paths::basename(&map_dest_path)]
+                } else {
+                    bun_core::cheap_prefix_normalizer(&self.options.public_path, &map_dest_path)
+                };
+                code.extend_from_slice(b"//# sourceMappingURL=");
+                code.extend_from_slice(prefix);
+                code.extend_from_slice(path);
+                code.push(b'\n');
+            }
+            options::SourceMapOption::External => {}
+            options::SourceMapOption::None => unreachable!("no source map was generated"),
+        }
+
+        output_file.size = code.len();
+        *bytes = code.into_boxed_slice();
+
+        if !self.options.source_map.has_external_files() {
+            return Ok(None);
+        }
+        Ok(Some(options::OutputFile::init(options::OutputFileInit {
+            data: options::OutputFileData::Buffer { data: json },
+            loader: options::Loader::Json,
+            input_loader: options::Loader::File,
+            output_path: map_dest_path,
+            output_kind: options::OutputKind::Sourcemap,
+            input_path: strings::concat(&[file_path_text, b".map"]),
+            ..Default::default()
+        })))
+    }
+
+    /// The `sources` entry for `file_path_text`: relative to the directory the
+    /// `.map` is written to, which is `--outdir` plus whatever directory
+    /// `dest_path` adds. Relative to the cwd when nothing is written to disk.
+    fn source_map_sources_entry(
+        &self,
+        dest_path: &[u8],
+        file_path_text: &[u8],
+    ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+        let output_dir: &[u8] = &self.options.output_dir;
+        if output_dir.is_empty() {
+            return crate::LinkerContext::source_map_relative_path(output_dir, file_path_text);
+        }
+        let dest_dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(dest_path);
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let map_dir = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+            self.fs().top_level_dir,
+            &mut **buf,
+            &[output_dir, dest_dir],
+        );
+        crate::LinkerContext::source_map_relative_path(map_dir, file_path_text)
     }
 
     fn entry_naming_template(&self) -> options::PathTemplate {
@@ -3259,4 +3374,52 @@ impl<'a> Transpiler<'a> {
 enum TransformOutstream {
     Stdout,
     Dir(#[expect(dead_code)] bun_sys::Fd),
+}
+
+/// `--sourcemap` sink for a transform-only print. The source text is quoted
+/// while the printer still holds it (`ParseResult::source_contents_backing`
+/// frees it right after); the `.map` itself is serialized once the output has
+/// a name, see `Transpiler::attach_source_map`.
+#[derive(Default)]
+struct PendingSourceMap {
+    chunk: bun_sourcemap::Chunk,
+    quoted_source_contents: bun_core::MutableString,
+}
+
+impl js_printer::OnSourceMapChunk for PendingSourceMap {
+    fn on_source_map_chunk(
+        &mut self,
+        chunk: bun_sourcemap::Chunk,
+        source: &bun_ast::Source,
+    ) -> js_printer::Result<()> {
+        js_printer::quote_for_json(source.contents(), &mut self.quoted_source_contents, false)?;
+        self.chunk = chunk;
+        Ok(())
+    }
+}
+
+impl PendingSourceMap {
+    /// Same layout as `LinkerContext::generate_source_map_for_chunk`, for one source.
+    fn into_json(
+        self,
+        sources_entry: &[u8],
+        debug_id: bun_sourcemap::DebugIDFormatter,
+    ) -> crate::Result<Box<[u8]>> {
+        use std::io::Write as _;
+
+        let mut j = bun_core::MutableString::init_empty();
+        j.list
+            .extend_from_slice(b"{\n  \"version\": 3,\n  \"sources\": [");
+        js_printer::quote_for_json(sources_entry, &mut j, false)?;
+        j.list
+            .extend_from_slice(b"],\n  \"sourcesContent\": [\n    ");
+        j.list.extend_from_slice(&self.quoted_source_contents.list);
+        j.list.extend_from_slice(b"\n  ],\n  \"mappings\": \"");
+        j.list.extend_from_slice(&self.chunk.vlq_mappings());
+        if bun_core::FeatureFlags::SOURCE_MAP_DEBUG_ID {
+            write!(&mut j.list, "\",\n  \"debugId\": \"{}", debug_id)?;
+        }
+        j.list.extend_from_slice(b"\",\n  \"names\": []\n}");
+        Ok(j.list.into_boxed_slice())
+    }
 }

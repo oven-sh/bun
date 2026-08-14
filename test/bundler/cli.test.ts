@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
+import { SourceMapConsumer } from "source-map";
 
 describe.concurrent(
   "bun build",
@@ -910,5 +911,366 @@ describe.concurrent("modules that fail to print", () => {
     expect(stderr).toContain("styles.module.css");
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);
+  });
+});
+
+describe.concurrent("--no-bundle with --sourcemap", () => {
+  // The interface moves `greet` down three lines and the annotations move
+  // `1` right, so a mapping that merely copies positions fails below.
+  const source = [
+    "export const x: number = 1;",
+    "interface Unused {",
+    "  a: string;",
+    "}",
+    "export function greet(name: string): string {",
+    '  return "hi " + name;',
+    "}",
+    "",
+  ].join("\n");
+  const mappedTokens = ["1;", '"hi "'];
+
+  async function build(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", ...args],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  function lineColumn(text: string, token: string) {
+    const index = text.indexOf(token);
+    expect(index).not.toBe(-1);
+    const before = text.slice(0, index);
+    return { line: before.split("\n").length, column: index - (before.lastIndexOf("\n") + 1) };
+  }
+
+  /** The `//# ...` comments at the end of a transpiled file, in order. */
+  function trailingComments(code: string) {
+    return code.split("\n").filter(line => line.startsWith("//# "));
+  }
+
+  function inlineMap(code: string) {
+    const comments = trailingComments(code).filter(line => line.startsWith("//# sourceMappingURL="));
+    expect(comments).toHaveLength(1);
+    const url = comments[0].slice("//# sourceMappingURL=".length);
+    expect(url).toStartWith("data:application/json;base64,");
+    return JSON.parse(Buffer.from(url.slice("data:application/json;base64,".length), "base64").toString());
+  }
+
+  /** Checks the map's shape and that `code`'s tokens map back to where they are in `original`. */
+  async function expectSourceMap(code: string, map: any, original: string, sources: string[]) {
+    expect(map).toEqual({
+      version: 3,
+      sources,
+      sourcesContent: [original],
+      mappings: expect.any(String),
+      debugId: expect.stringMatching(/^[0-9A-F]{32}$/),
+      names: [],
+    });
+    expect(trailingComments(code)[0]).toBe(`//# debugId=${map.debugId}`);
+    await SourceMapConsumer.with(map, null, consumer => {
+      for (const token of mappedTokens) {
+        const { line, column } = consumer.originalPositionFor(lineColumn(code, token));
+        expect({ token, line, column }).toEqual({ token, ...lineColumn(original, token) });
+      }
+    });
+  }
+
+  /** `name  N bytes  (kind)` rows of the build summary. */
+  function summaryRows(stdout: string) {
+    return [...stdout.matchAll(/^ {2}(\S+) +(\d+) bytes +\((.+?)\)$/gm)].map(([, name, size, kind]) => ({
+      name,
+      size: Number(size),
+      kind,
+    }));
+  }
+
+  test.each([
+    ["browser", []],
+    ["bun", ["--target=bun"]],
+    ["node", ["--target=node"]],
+  ])("--sourcemap=inline to stdout with --target=%s", async (_, targetArgs) => {
+    using dir = tempDir("no-bundle-sourcemap-inline", { "src/a.ts": source });
+
+    const { stdout, stderr, exitCode } = await build(String(dir), ...targetArgs, "src/a.ts", "--sourcemap=inline");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(stdout).toContain("export function greet(name) {");
+    // Nothing is written to disk, so `sources` is relative to the cwd.
+    await expectSourceMap(stdout, inlineMap(stdout), source, ["src/a.ts"]);
+    expect(fs.readdirSync(path.join(String(dir), "src"))).toEqual(["a.ts"]);
+  });
+
+  test("--sourcemap=inline with --minify-whitespace puts the comments on their own lines", async () => {
+    using dir = tempDir("no-bundle-sourcemap-minify", { "src/a.ts": source });
+
+    const { stdout, stderr, exitCode } = await build(
+      String(dir),
+      "src/a.ts",
+      "--sourcemap=inline",
+      "--minify-whitespace",
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const map = inlineMap(stdout);
+    await expectSourceMap(stdout, map, source, ["src/a.ts"]);
+    // Minified output has no newline of its own, but the comment block still
+    // starts after a blank line, exactly as in bundle mode.
+    expect(stdout.split("\n")).toEqual([
+      'export const x=1;export function greet(name){return"hi "+name}',
+      "",
+      `//# debugId=${map.debugId}`,
+      expect.stringMatching(/^\/\/# sourceMappingURL=data:application\/json;base64,[A-Za-z0-9+/=]+$/),
+      "",
+    ]);
+  });
+
+  test.each([
+    ["no --sourcemap", []],
+    ["--sourcemap=none", ["--sourcemap=none"]],
+  ])("emits no source map comments with %s", async (_, sourcemapArgs) => {
+    using dir = tempDir("no-bundle-sourcemap-off", { "src/a.ts": source });
+
+    const { stdout, stderr, exitCode } = await build(String(dir), "src/a.ts", ...sourcemapArgs);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(trailingComments(stdout)).toEqual([]);
+  });
+
+  test("--sourcemap=linked with --outdir writes a .map next to the output", async () => {
+    using dir = tempDir("no-bundle-sourcemap-linked", { "src/a.ts": source });
+    const out = path.join(String(dir), "out");
+
+    const { stdout, stderr, exitCode } = await build(String(dir), "src/a.ts", "--outdir=out", "--sourcemap=linked");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(fs.readdirSync(out).sort()).toEqual(["a.js", "a.js.map"]);
+    const code = fs.readFileSync(path.join(out, "a.js"), "utf8");
+    const map = JSON.parse(fs.readFileSync(path.join(out, "a.js.map"), "utf8"));
+    expect(code).toEndWith(`}\n\n//# debugId=${map.debugId}\n//# sourceMappingURL=a.js.map\n`);
+    await expectSourceMap(code, map, source, ["../src/a.ts"]);
+    expect(fs.realpathSync(path.resolve(out, map.sources[0]))).toBe(
+      fs.realpathSync(path.join(String(dir), "src/a.ts")),
+    );
+
+    // The summary lists the .map and reports the sizes actually written.
+    expect(summaryRows(stdout)).toEqual([
+      { name: "a.js", size: fs.statSync(path.join(out, "a.js")).size, kind: "chunk" },
+      { name: "a.js.map", size: fs.statSync(path.join(out, "a.js.map")).size, kind: "source map" },
+    ]);
+  });
+
+  test("bare --sourcemap means linked", async () => {
+    using dir = tempDir("no-bundle-sourcemap-bare", { "src/a.ts": source });
+    const out = path.join(String(dir), "out");
+
+    const { stderr, exitCode } = await build(String(dir), "src/a.ts", "--outdir=out", "--sourcemap");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(fs.readdirSync(out).sort()).toEqual(["a.js", "a.js.map"]);
+    expect(trailingComments(fs.readFileSync(path.join(out, "a.js"), "utf8"))[1]).toBe("//# sourceMappingURL=a.js.map");
+  });
+
+  test("--sourcemap=external writes the .map without a sourceMappingURL comment", async () => {
+    using dir = tempDir("no-bundle-sourcemap-external", { "src/a.ts": source });
+    const out = path.join(String(dir), "out");
+
+    const { stderr, exitCode } = await build(String(dir), "src/a.ts", "--outdir=out", "--sourcemap=external");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(fs.readdirSync(out).sort()).toEqual(["a.js", "a.js.map"]);
+    const code = fs.readFileSync(path.join(out, "a.js"), "utf8");
+    const map = JSON.parse(fs.readFileSync(path.join(out, "a.js.map"), "utf8"));
+    expect(trailingComments(code)).toEqual([`//# debugId=${map.debugId}`]);
+    await expectSourceMap(code, map, source, ["../src/a.ts"]);
+  });
+
+  test("--sourcemap=inline with --outdir makes sources relative to the output", async () => {
+    using dir = tempDir("no-bundle-sourcemap-inline-outdir", { "src/nested/a.ts": source });
+    const out = path.join(String(dir), "out");
+
+    const { stderr, exitCode } = await build(
+      String(dir),
+      "--root=src",
+      "src/nested/a.ts",
+      "--outdir=out",
+      "--sourcemap=inline",
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(fs.readdirSync(out, { recursive: true }).sort()).toEqual(["nested", path.join("nested", "a.js")]);
+    const code = fs.readFileSync(path.join(out, "nested", "a.js"), "utf8");
+    await expectSourceMap(code, inlineMap(code), source, ["../../src/nested/a.ts"]);
+  });
+
+  test("several entry points: nested outputs, css and data loaders", async () => {
+    using dir = tempDir("no-bundle-sourcemap-multi", {
+      "src/a.ts": source,
+      "src/nested/deep.ts": "export const deep: number = 2;\n",
+      "src/style.css": ".a {\n  color: red;\n}\n",
+      "src/data.json": '{ "key": 1 }\n',
+    });
+    const out = path.join(String(dir), "out");
+
+    const { stderr, exitCode } = await build(
+      String(dir),
+      "--root=src",
+      "src/a.ts",
+      "src/nested/deep.ts",
+      "src/style.css",
+      "src/data.json",
+      "--outdir=out",
+      "--sourcemap=linked",
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    // CSS gets no source map, as in bundle mode.
+    expect(fs.readdirSync(out, { recursive: true }).sort()).toEqual(
+      [
+        "a.js",
+        "a.js.map",
+        "data.js",
+        "data.js.map",
+        "nested",
+        path.join("nested", "deep.js"),
+        path.join("nested", "deep.js.map"),
+        "style.css",
+      ].sort(),
+    );
+    expect(fs.readFileSync(path.join(out, "style.css"), "utf8")).not.toContain("sourceMappingURL");
+
+    const deep = fs.readFileSync(path.join(out, "nested", "deep.js"), "utf8");
+    const deepMap = JSON.parse(fs.readFileSync(path.join(out, "nested", "deep.js.map"), "utf8"));
+    expect(trailingComments(deep)).toEqual([`//# debugId=${deepMap.debugId}`, "//# sourceMappingURL=deep.js.map"]);
+    // Relative to the directory the .map is in, not to --outdir.
+    expect(deepMap.sources).toEqual(["../../src/nested/deep.ts"]);
+    expect(deepMap.sourcesContent).toEqual(["export const deep: number = 2;\n"]);
+
+    const dataMap = JSON.parse(fs.readFileSync(path.join(out, "data.js.map"), "utf8"));
+    expect(dataMap.sources).toEqual(["../src/data.json"]);
+    expect(dataMap.sourcesContent).toEqual(['{ "key": 1 }\n']);
+    await SourceMapConsumer.with(dataMap, null, consumer => {
+      expect(consumer.originalPositionFor({ line: 1, column: 0 }).line).toBe(1);
+    });
+  });
+
+  test("--public-path is prefixed to the sourceMappingURL like bundle mode", async () => {
+    using dir = tempDir("no-bundle-sourcemap-public-path", {
+      "src/nested/deep.ts": "export const deep: number = 2;\n",
+    });
+
+    const { stderr, exitCode } = await build(
+      String(dir),
+      "--root=src",
+      "src/nested/deep.ts",
+      "--outdir=out",
+      "--sourcemap=linked",
+      "--public-path=https://cdn.example.com/assets/",
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const code = fs.readFileSync(path.join(String(dir), "out", "nested", "deep.js"), "utf8");
+    expect(trailingComments(code)[1]).toBe("//# sourceMappingURL=https://cdn.example.com/assets/nested/deep.js.map");
+  });
+
+  test("--sourcemap=linked with --outfile names the .map after the outfile", async () => {
+    using dir = tempDir("no-bundle-sourcemap-outfile", { "src/a.ts": source });
+    const dist = path.join(String(dir), "dist");
+
+    const { stdout, stderr, exitCode } = await build(
+      String(dir),
+      "src/a.ts",
+      "--outfile=dist/renamed.js",
+      "--sourcemap=linked",
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(fs.readdirSync(dist).sort()).toEqual(["renamed.js", "renamed.js.map"]);
+    expect(fs.readdirSync(path.join(String(dir), "src"))).toEqual(["a.ts"]);
+    const code = fs.readFileSync(path.join(dist, "renamed.js"), "utf8");
+    const map = JSON.parse(fs.readFileSync(path.join(dist, "renamed.js.map"), "utf8"));
+    expect(trailingComments(code)).toEqual([`//# debugId=${map.debugId}`, "//# sourceMappingURL=renamed.js.map"]);
+    await expectSourceMap(code, map, source, ["../src/a.ts"]);
+    expect(summaryRows(stdout).map(row => row.name)).toEqual(["renamed.js", "renamed.js.map"]);
+  });
+
+  test("--outfile without a directory writes into the cwd", async () => {
+    using dir = tempDir("no-bundle-sourcemap-outfile-cwd", { "src/a.ts": source });
+
+    const { stderr, exitCode } = await build(String(dir), "src/a.ts", "--outfile=a.out.js", "--sourcemap=linked");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(fs.readdirSync(String(dir)).sort()).toEqual(["a.out.js", "a.out.js.map", "src"]);
+    const map = JSON.parse(fs.readFileSync(path.join(String(dir), "a.out.js.map"), "utf8"));
+    expect(map.sources).toEqual(["src/a.ts"]);
+  });
+
+  test("--outfile without --sourcemap still writes exactly one file", async () => {
+    using dir = tempDir("no-bundle-sourcemap-outfile-plain", { "src/a.ts": source });
+
+    const { stdout, stderr, exitCode } = await build(String(dir), "src/a.ts", "--outfile=dist/renamed.js");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(fs.readdirSync(path.join(String(dir), "dist"))).toEqual(["renamed.js"]);
+    const code = fs.readFileSync(path.join(String(dir), "dist", "renamed.js"), "utf8");
+    expect(trailingComments(code)).toEqual([]);
+    expect(summaryRows(stdout)).toEqual([{ name: "renamed.js", size: Buffer.byteLength(code), kind: "chunk" }]);
+  });
+
+  test("--sourcemap=linked without --outdir or --outfile is an error", async () => {
+    using dir = tempDir("no-bundle-sourcemap-linked-stdout", { "a.js": "export const a = 1;\n" });
+
+    const { stdout, stderr, exitCode } = await build(String(dir), "a.js", "--sourcemap");
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(
+      `"error: cannot use a linked source map without --outdir or --outfile"`,
+    );
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+
+    // In particular the output was not written over the entry point.
+    expect(fs.readdirSync(String(dir))).toEqual(["a.js"]);
+    expect(fs.readFileSync(path.join(String(dir), "a.js"), "utf8")).toBe("export const a = 1;\n");
+  });
+
+  test("colliding output paths are reported once, not again for their .map files", async () => {
+    using dir = tempDir("no-bundle-sourcemap-collision", {
+      "src/app.ts": "export const a = 1;\n",
+      "src/app.js": "export const b = 2;\n",
+    });
+
+    const { stdout, stderr, exitCode } = await build(
+      String(dir),
+      "src/app.ts",
+      "src/app.js",
+      "--outdir=dist",
+      "--sourcemap=linked",
+    );
+    expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
+      "error: Multiple files share the same output path
+        ./app.js:
+          from input src/app.ts
+          from input src/app.js
+
+
+      note: entry naming is '[dir]/[name].[ext]', consider adding '[hash]' to make filenames unique"
+    `);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+    expect(fs.existsSync(path.join(String(dir), "dist"))).toBe(false);
   });
 });

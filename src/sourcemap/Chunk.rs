@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use bun_ast::{Loc, Source};
 use bun_core::{MutableString, strings};
 use bun_paths::{PathBuffer, fs::FileSystem};
@@ -11,6 +13,10 @@ use crate::{
 #[derive(Clone)]
 pub struct Chunk {
     pub buffer: MutableString,
+
+    /// `buffer` holds an `InternalSourceMap` blob (the runtime print path,
+    /// `Builder::prepend_count`) instead of VLQ text.
+    pub is_internal_format: bool,
 
     /// This end state will be used to rewrite the start of the following source
     /// map chunk so that the delta-encoded VLQ numbers are preserved.
@@ -35,6 +41,7 @@ impl Chunk {
     pub fn init_empty() -> Chunk {
         Chunk {
             buffer: MutableString::init_empty(),
+            is_internal_format: false,
             end_state: SourceMapState::default(),
             final_generated_column: 0,
             should_ignore: true,
@@ -53,6 +60,20 @@ impl Chunk {
         unsafe { core::ptr::read(self) }
     }
 
+    /// The mappings as a standard VLQ `"mappings"` string, re-encoding an
+    /// internal-format buffer.
+    pub fn vlq_mappings(&self) -> Cow<'_, [u8]> {
+        if !self.is_internal_format {
+            return Cow::Borrowed(&self.buffer.list);
+        }
+        let ism = InternalSourceMap {
+            data: self.buffer.list.as_ptr(),
+        };
+        let mut vlq = MutableString::init_empty();
+        ism.append_vlq_to(&mut vlq);
+        Cow::Owned(vlq.list)
+    }
+
     /// `chunk.buffer` holds an InternalSourceMap blob (the runtime path). Re-encode
     /// to a standard VLQ "mappings" string before emitting JSON.
     pub fn print_source_map_contents_from_internal<const ASCII_ONLY: bool>(
@@ -61,16 +82,12 @@ impl Chunk {
         mutable: &mut MutableString,
         include_sources_contents: bool,
     ) -> Result<(), crate::Error> {
-        let ism = InternalSourceMap {
-            data: self.buffer.list.as_ptr(),
-        };
-        let mut vlq = MutableString::init_empty();
-        ism.append_vlq_to(&mut vlq);
+        debug_assert!(self.is_internal_format);
         print_source_map_contents_json::<ASCII_ONLY>(
             source,
             mutable,
             include_sources_contents,
-            vlq.list.as_slice(),
+            &self.vlq_mappings(),
         )
     }
 }
@@ -482,6 +499,7 @@ impl NewBuilder<'_, VLQSourceMap> {
         }
         Chunk {
             buffer: self.source_map.take_buffer(),
+            is_internal_format: self.prepend_count,
             end_state: self.prev_state,
             final_generated_column: self.generated_column,
             should_ignore: self.source_map.should_ignore(),

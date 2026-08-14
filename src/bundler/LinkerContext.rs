@@ -1021,7 +1021,7 @@ impl<'a> LinkerContext<'a> {
     /// The relative path from the chunk directory to a file source, as written
     /// into the source map's `sources` array. `sources` entries are URLs, so the
     /// host separator is normalized to `/` (the invariant `Path::pretty` holds).
-    fn source_map_relative_path(
+    pub(crate) fn source_map_relative_path(
         chunk_abs_dir: &[u8],
         source_abs_path: &[u8],
     ) -> Result<Box<[u8]>, AllocError> {

@@ -1411,6 +1411,8 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const setrlimit: Tag = Tag(106);
     pub const clone3: Tag = Tag(107);
+    #[cfg(target_os = "macos")]
+    pub(crate) const select: Tag = Tag(108);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1418,7 +1420,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 108] = [
+        const NAMES: [&str; 109] = [
             "TODO",
             "dup",
             "access",
@@ -1528,6 +1530,7 @@ impl Tag {
             "getrlimit",
             "setrlimit",
             "clone3",
+            "select",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -1708,6 +1711,16 @@ mod nocancel {
         ) -> isize;
         #[link_name = "poll$NOCANCEL"]
         pub(crate) fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int;
+        // `_DARWIN_UNLIMITED_SELECT` select(2): no FD_SETSIZE limit; a set is
+        // ceil(nfds / 32) 32-bit words rather than a `libc::fd_set`.
+        #[link_name = "select$DARWIN_EXTSN$NOCANCEL"]
+        pub(crate) fn select(
+            nfds: c_int,
+            readfds: *mut u32,
+            writefds: *mut u32,
+            errorfds: *mut u32,
+            timeout: *mut libc::timeval,
+        ) -> c_int;
         // Remaining `$NOCANCEL` variants Bun links against.
         // safe: by-value `c_int` fd; bad fd → -1/EBADF, no UB.
         #[link_name = "close$NOCANCEL"]
@@ -7626,6 +7639,101 @@ pub fn kevent(
             E::SUCCESS => return Ok(rc as usize),
             E::EINTR => continue,
             e => return Err(Error::from_code(e, Tag::kevent).with_fd(fd)),
+        }
+    }
+}
+
+// ── block_until_readable / block_until_writable ──
+//
+// For loops that copy blocking-style on a pool thread but may be handed an fd
+// whose open file description is in O_NONBLOCK mode (`process.stdout` puts the
+// inherited stdio descriptions there, and the flag travels with a description
+// into child processes). On EAGAIN the loop waits here and retries, which is
+// what a blocking description would have done inside the syscall. Both return
+// as soon as the retried syscall will not block again, including when what it
+// is going to report is EOF or an error such as EPIPE: the retry reports it.
+
+/// Blocks until a `read`-side syscall on `fd` would make progress. EINTR is retried.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn block_until_readable(fd: Fd) -> Maybe<()> {
+    block_until(fd, posix::POLL_IN)
+}
+
+/// Blocks until a `write`-side syscall on `fd` would make progress. EINTR is retried.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn block_until_writable(fd: Fd) -> Maybe<()> {
+    block_until(fd, posix::POLL_OUT)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn block_until(fd: Fd, events: i16) -> Maybe<()> {
+    debug_assert!(fd.is_valid());
+    let mut fds = [posix::PollFd {
+        fd: fd.native(),
+        events,
+        revents: 0,
+    }];
+    // POLLHUP / POLLERR / POLLNVAL are reported without being requested, so
+    // any return means the caller's retry settles the matter.
+    match posix::poll(&mut fds, -1) {
+        Ok(_) => Ok(()),
+        Err(err) => Err(err.with_fd(fd)),
+    }
+}
+
+/// Blocks until a `read`-side syscall on `fd` would make progress. EINTR is retried.
+#[cfg(target_os = "macos")]
+pub fn block_until_readable(fd: Fd) -> Maybe<()> {
+    select_one(fd, SelectFor::Read)
+}
+
+/// Blocks until a `write`-side syscall on `fd` would make progress. EINTR is retried.
+#[cfg(target_os = "macos")]
+pub fn block_until_writable(fd: Fd) -> Maybe<()> {
+    select_one(fd, SelectFor::Write)
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+enum SelectFor {
+    Read,
+    Write,
+}
+
+/// `select(2)` rather than `poll(2)`: XNU implements poll on the kqueue vnode
+/// filter, which for a named pipe (FIFO) fires only while bytes (or space) are
+/// available and never for the other end closing, so a poll would outlive the
+/// peer. `fifo_select` consults the FIFO's socket, which does report the close.
+/// `pipe(2)` pipes, sockets and ttys behave under select exactly as under poll.
+#[cfg(target_os = "macos")]
+fn select_one(fd: Fd, what: SelectFor) -> Maybe<()> {
+    debug_assert!(fd.is_valid());
+    let index = fd.native() as usize;
+    let word = index / 32;
+    let mut set = vec![0u32; word + 1];
+    loop {
+        set.fill(0);
+        set[word] = 1 << (index % 32);
+        let (read_set, write_set) = match what {
+            SelectFor::Read => (set.as_mut_ptr(), core::ptr::null_mut()),
+            SelectFor::Write => (core::ptr::null_mut(), set.as_mut_ptr()),
+        };
+        // SAFETY: `set` holds the ceil(nfds / 32) words the kernel reads and
+        // writes back for `nfds = fd + 1`; the other sets and the timeout
+        // (wait indefinitely) may be null.
+        let rc = unsafe {
+            nocancel::select(
+                fd.native() + 1,
+                read_set,
+                write_set,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+            )
+        };
+        match get_errno(rc) {
+            E::SUCCESS => return Ok(()),
+            E::EINTR => continue,
+            e => return Err(Error::from_code(e, Tag::select).with_fd(fd)),
         }
     }
 }

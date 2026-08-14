@@ -383,7 +383,6 @@ impl CopyFile {
         }
 
         loop {
-            // TODO: this should use non-blocking I/O.
             let written: isize = match USE {
                 TryWith::CopyFileRange => {
                     // SAFETY: raw copy_file_range(2); both fds owned by caller, null offsets.
@@ -426,6 +425,20 @@ impl CopyFile {
 
             match bun_sys::get_errno(written) {
                 bun_sys::E::SUCCESS => {}
+
+                // One of the fds is O_NONBLOCK (`Bun.stdout` is, once
+                // `process.stdout` has been touched). A pipe-to-pipe splice is
+                // non-blocking as a whole if either end is, so EAGAIN does not
+                // say which side would have blocked: wait for both, then retry.
+                bun_sys::E::EAGAIN => {
+                    if let Err(err) = bun_sys::block_until_readable(src_fd)
+                        .and_then(|()| bun_sys::block_until_writable(dest_fd))
+                    {
+                        self.system_error = Some(err.to_system_error());
+                        return Err(bun_errno::from_errno(err.errno as i32).into());
+                    }
+                    continue;
+                }
 
                 // XDEV: cross-device copy not supported
                 // NOSYS: syscall not available
@@ -992,19 +1005,30 @@ fn read_write_loop_capped(
     let mut remaining = cap;
     while remaining > 0 {
         let want = (buf.len() as SizeType).min(remaining) as usize;
-        let amt = bun_sys::read(src_fd, &mut buf[..want])?;
+        // Either fd may be O_NONBLOCK (`Bun.stdout` is once `process.stdout` has
+        // been touched); wait for it and retry instead of failing the copy.
+        let amt = match bun_sys::read(src_fd, &mut buf[..want]) {
+            Ok(amt) => amt,
+            Err(err) if err.is_retry() => {
+                bun_sys::block_until_readable(src_fd)?;
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
         if amt == 0 {
             break;
         }
         remaining -= amt as SizeType;
         let mut slice = &buf[..amt];
         while !slice.is_empty() {
-            match bun_sys::write(dest_fd, slice)? {
-                0 => return Ok(()),
-                n => {
+            match bun_sys::write(dest_fd, slice) {
+                Ok(0) => return Ok(()),
+                Ok(n) => {
                     *total += n as u64;
                     slice = &slice[n..];
                 }
+                Err(err) if err.is_retry() => bun_sys::block_until_writable(dest_fd)?,
+                Err(err) => return Err(err),
             }
         }
     }

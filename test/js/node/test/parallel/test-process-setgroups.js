@@ -41,7 +41,7 @@ assert.throws(
       code: 'ERR_INVALID_ARG_TYPE',
       name: 'TypeError',
       message: 'The "groups[0]" argument must be ' +
-               'of type number or string.' +
+               'one of type number or string.' +
                common.invalidArgTypeHelper(val)
     }
   );

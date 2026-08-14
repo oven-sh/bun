@@ -40,7 +40,7 @@ assert.throws(() => {
   process.setuid({});
 }, {
   code: 'ERR_INVALID_ARG_TYPE',
-  message: 'The "id" argument must be of type ' +
+  message: 'The "id" argument must be one of type ' +
     'number or string. Received an instance of Object'
 });
 

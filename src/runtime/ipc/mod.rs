@@ -2278,6 +2278,14 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
             Output::print_errorln("IPC message is too long.");
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
+        // Materializing the message (structured-clone deserialize, buffer
+        // restore) threw: that is this message's delivery failing, folded like
+        // a throwing listener, and the channel is closed as for any undecodable
+        // input.
+        DecodeStep::Fail(IPCDecodeError::JSError) => {
+            let _ = fold::delivered_message(&send_queue.get_global_this(), JsError::Thrown);
+            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+        }
         DecodeStep::Fail(_) => {
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }

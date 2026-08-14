@@ -185,15 +185,17 @@ class FSWatcher extends EventEmitter {
       });
       return;
     } else if (eventType === "error") {
-      // Next.js/watchpack ends up watching paths it does not have access to,
-      // which surfaces here as EACCES errors. Rewriting the code to EPERM
-      // makes watchpack's error handling ignore the error instead of failing.
-      if (filenameOrError.code === "EACCES") filenameOrError.code = "EPERM";
-
-      // An aborted signal closes the watcher; its reason is offered to an
-      // 'error' listener if there is one, but is not an unhandled error
-      // without one (node emits only 'close' for an abort).
-      if (fromAbort && this.listenerCount("error") === 0) return;
+      if (fromAbort) {
+        // An aborted signal closes the watcher; its reason is offered to an
+        // 'error' listener if there is one, but is not an unhandled error
+        // without one (node emits only 'close' for an abort).
+        if (this.listenerCount("error") === 0) return;
+      } else if (filenameOrError.code === "EACCES") {
+        // Next.js/watchpack ends up watching paths it does not have access to,
+        // which surfaces here as EACCES errors. Rewriting the code to EPERM
+        // makes watchpack's error handling ignore the error instead of failing.
+        filenameOrError.code = "EPERM";
+      }
 
       this.emit(eventType, filenameOrError);
     } else {

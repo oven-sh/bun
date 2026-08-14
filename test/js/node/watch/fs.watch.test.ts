@@ -495,6 +495,7 @@ describe("fs.watch", () => {
       "closed 2",
       "uncaught: listener threw on AbortError",
     ]);
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 

@@ -843,9 +843,6 @@ pub(crate) mod controller_abi {
 /// Static-dispatch signal set for a [`SourceHandle`] pointee. The match arms
 /// dispatch via [`BackRef`] deref and call these; defaults are no-ops so
 /// implementors override only the signals they actually handle.
-/// Static-dispatch signal set for a [`SourceHandle`] pointee. The match arms
-/// dispatch via [`BackRef`] deref and call these; defaults are no-ops so
-/// implementors override only the signals they actually handle.
 trait UpstreamSource {
     #[inline]
     fn on_ready(&self) {}
@@ -2278,8 +2275,8 @@ impl NetworkSink {
         }
     }
 
-    /// Narrowed like
-    /// `flushPromise`; promise resolution only fails on VM termination.
+    /// The S3 upload drained: settle the flush/write promises (terminal, like
+    /// `flush_promise`) and wake the source.
     pub(crate) fn on_writable(
         task: &bun_s3::MultiPartUpload,
         this: *mut NetworkSink,

@@ -184,14 +184,16 @@ test("error.stack throwing an error doesn't lead to a crash", () => {
 });
 
 describe("source map remapping of the printed stack", () => {
-  // The "at ..." lines that mention one of `files`, with the directory part of
-  // the path removed so the expectations are independent of the temp dir.
-  function frames(text, files) {
+  // The "at ..." lines that mention one of `files`, with the temp dir removed
+  // from the paths.
+  function frames(text, dir, files) {
+    const prefix = dir.replaceAll("\\", "/") + "/";
     return text
+      .replaceAll("\\", "/")
       .split("\n")
       .map(line => line.trim())
       .filter(line => line.startsWith("at ") && files.some(file => line.includes(file)))
-      .map(line => line.replace(/[^\s(]*[\\/](?=[\w.-]+:\d+:\d+)/g, ""));
+      .map(line => line.replaceAll(prefix, ""));
   }
 
   async function run(files) {
@@ -204,7 +206,7 @@ describe("source map remapping of the printed stack", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { out: JSON.parse(stdout), stderr, exitCode };
+    return { dir: String(dir), out: JSON.parse(stdout), stderr, exitCode };
   }
 
   // A prebuilt file whose map names a source that is neither on disk nor in
@@ -233,16 +235,16 @@ describe("source map remapping of the printed stack", () => {
       names: [],
       mappings: ";AAUI;;AAUA;AAUA;;AAUA",
     };
-    const { out, stderr, exitCode } = await run({
+    const { dir, out, stderr, exitCode } = await run({
       "main.js": main.join("\n") + "\n//# sourceMappingURL=main.js.map\n",
       "main.js.map": JSON.stringify(map),
     });
 
     const files = ["orig.ts", "main.js"];
     expect({
-      stack: frames(out.stack, files),
-      inspect: frames(out.inspect, files),
-      uncaught: frames(stderr, files),
+      stack: frames(out.stack, dir, files),
+      inspect: frames(out.inspect, dir, files),
+      uncaught: frames(stderr, dir, files),
     }).toEqual({
       stack: ["at thrower (orig.ts:11:5)", "at orig.ts:31:5"],
       inspect: ["at thrower (orig.ts:11:5)", "at orig.ts:21:5"],
@@ -275,7 +277,7 @@ describe("source map remapping of the printed stack", () => {
         "}",
         "",
       ].join("\n");
-    const { out, stderr, exitCode } = await run({
+    const { dir, out, stderr, exitCode } = await run({
       "present.ts": module("present"),
       "deleted.ts": module("deleted"),
       "main.js": [
@@ -299,7 +301,7 @@ describe("source map remapping of the printed stack", () => {
     });
 
     const files = ["present.ts", "deleted.ts"];
-    const positions = text => frames(text, files);
+    const positions = text => frames(text, dir, files);
     // The throw is on line 5 and the call to thrower() on line 9 of the
     // original module; after type stripping they are on lines 2 and 6.
     const expected = file => [

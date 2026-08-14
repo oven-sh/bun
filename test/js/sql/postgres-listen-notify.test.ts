@@ -187,6 +187,33 @@ describe("listen", () => {
     expect(counts).toEqual({ a: 1000, b: 1000, c: 1000 });
   });
 
+  test("notifications are routed once the connection's interned channel names are exhausted", async () => {
+    await using server = await mockServer();
+    await using sql = client(server.url);
+    const got = { early: [] as string[], late: [] as string[] };
+    const done = gate();
+    const count = done.after(5);
+    const listener = (channel: keyof typeof got) => (payload: string) => {
+      got[channel].push(payload);
+      count();
+    };
+    await Promise.all([sql.listen("early", listener("early")), sql.listen("late", listener("late"))]);
+
+    // The connection interns the first 256 distinct channel names it receives,
+    // subscribed or not. "early" gets interned, the fillers fill the table, and
+    // "late" is delivered without ever being interned.
+    server.notifyMany([
+      ["early", "1"],
+      ...Array.from({ length: 300 }, (_, i): [string, string] => [`filler-${i}`, ""]),
+      ["late", "a"],
+      ["early", "2"],
+      ["late", "b"],
+      ["late", "c"],
+    ]);
+    await done;
+    expect(got).toEqual({ early: ["1", "2"], late: ["a", "b", "c"] });
+  });
+
   test("channel names and payloads are UTF-8", async () => {
     await using server = await mockServer();
     await using sql = client(server.url);

@@ -4134,26 +4134,34 @@ pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
     Ok(ZStr::from_buf(&buf.0, len))
 }
 
-/// `getcwd` tolerating an unreachable cwd (e.g. deleted while we run): falls
-/// back to the executable's directory like Node's `Environment::GetCwd`, so
-/// startup proceeds and `process.cwd()` surfaces the real error later.
-pub fn getcwd_or_exe_dir(buf: &mut PathBuffer) -> &ZStr {
-    let len = match getcwd_len(buf) {
-        Ok(n) => n,
-        Err(_) => {
-            let dir: &[u8] = self_exe_path()
-                .ok()
-                .and_then(|p| dirname(p.as_bytes()))
-                // Reject a dir that can't fit with its NUL (paths from
-                // /proc/self/exe are not bounded by MAX_PATH_BYTES).
-                .filter(|d| d.len() < buf.0.len())
-                .unwrap_or(if cfg!(windows) { b"C:\\" } else { b"/" });
-            buf.0[..dir.len()].copy_from_slice(dir);
-            buf.0[dir.len()] = 0;
-            dir.len()
-        }
-    };
-    ZStr::from_buf(&buf.0, len)
+/// `getcwd` tolerating a cwd that was deleted while we run (`FileNotFound`):
+/// falls back to [`self_exe_dir`] like Node's `Environment::GetCwd`, so startup
+/// proceeds and `process.cwd()` surfaces the real error later.
+///
+/// Every other failure is returned. The usual one is a cwd whose path does not
+/// fit in `MAX_PATH_BYTES`: that directory exists, so resolving against any
+/// other directory would silently run that directory's files.
+pub fn getcwd_or_exe_dir(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
+    match getcwd_len(buf) {
+        Ok(len) => Ok(ZStr::from_buf(&buf.0, len)),
+        Err(crate::CrateError::FileNotFound) => Ok(self_exe_dir(buf)),
+        Err(err) => Err(err),
+    }
+}
+
+/// The directory containing the running executable (the filesystem root when
+/// it cannot be determined), written NUL-terminated into `buf`.
+pub fn self_exe_dir(buf: &mut PathBuffer) -> &ZStr {
+    let dir: &[u8] = self_exe_path()
+        .ok()
+        .and_then(|p| dirname(p.as_bytes()))
+        // Reject a dir that can't fit with its NUL (paths from
+        // /proc/self/exe are not bounded by MAX_PATH_BYTES).
+        .filter(|d| d.len() < buf.0.len())
+        .unwrap_or(if cfg!(windows) { b"C:\\" } else { b"/" });
+    buf.0[..dir.len()].copy_from_slice(dir);
+    buf.0[dir.len()] = 0;
+    ZStr::from_buf(&buf.0, dir.len())
 }
 
 /// Length-returning core of [`getcwd`]; `buf` holds the NUL-terminated path.
@@ -4165,7 +4173,14 @@ fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
     unsafe {
         let p = libc::getcwd(buf.0.as_mut_ptr().cast(), buf.0.len());
         if p.is_null() {
-            return Err(crate::CrateError::Unexpected);
+            // glibc reports a cwd longer than the buffer as ERANGE; musl
+            // passes through the kernel's ENAMETOOLONG.
+            return Err(match crate::ffi::errno() {
+                libc::ENOENT => crate::CrateError::FileNotFound,
+                libc::ERANGE | libc::ENAMETOOLONG => crate::CrateError::NameTooLong,
+                libc::EACCES => crate::CrateError::AccessDenied,
+                _ => crate::CrateError::Unexpected,
+            });
         }
         Ok(libc::strlen(p))
     }

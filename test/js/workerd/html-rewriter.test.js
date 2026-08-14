@@ -1906,7 +1906,9 @@ describe("streamed input is held until the output is consumed", () => {
 
   it("transform() returns before the whole input has been read", async () => {
     const { res, seen } = transformFile();
-    expect(seen()).toBeGreaterThan(0);
+    // Regular-file reads complete asynchronously on Windows, so wait for the
+    // first chunk to be fed before checking that the rest is still held.
+    while (seen() === 0) await setImmediatePromise();
     expect(seen()).toBeLessThan(count);
     expect(await res.text()).toBe(rewritten);
     expect(seen()).toBe(count);

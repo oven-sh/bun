@@ -118,12 +118,6 @@ impl VM {
         JSC__VM__notifyNeedTermination(self)
     }
 
-    /// Has termination been requested on this VM (worker.terminate(), or
-    /// teardown's forbidExecution)? JS thread.
-    pub fn has_termination_request(&self) -> bool {
-        crate::cpp::JSC__VM__hasTerminationRequest(self)
-    }
-
     /// JS thread: make this VM's stop concrete here — afterwards a
     /// TerminationException is pending (what the next exception check would
     /// have done with the requester's trap). For code that learns of the stop

@@ -1480,18 +1480,6 @@ extern "C" JSC::EncodedJSValue Bun__createArrayBufferForCopy(JSC::JSGlobalObject
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSArrayBuffer::create(globalObject->vm(), globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTF::move(arrayBuffer))));
 }
 
-extern "C" JSC::EncodedJSValue Bun__allocUint8ArrayForCopy(JSC::JSGlobalObject* globalObject, size_t len, void** ptr)
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-
-    JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->m_typedArrayUint8.get(globalObject), len);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    *ptr = array->vector();
-
-    return JSValue::encode(array);
-}
-
 extern "C" JSC::EncodedJSValue Bun__allocArrayBufferForCopy(JSC::JSGlobalObject* lexicalGlobalObject, size_t len, void** ptr)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -4389,22 +4377,3 @@ const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, &
     CREATE_METHOD_TABLE(GlobalObject) };
 
 } // namespace Zig
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplemented, (JSGlobalObject * leixcalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(leixcalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    return throwVMError(leixcalGlobalObject, scope, "Not implemented"_s);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateFunctionThatMasqueradesAsUndefined, (JSC::JSGlobalObject * leixcalGlobalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(leixcalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto name = callFrame->argument(0).toWTFString(leixcalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto count = callFrame->argument(1).toNumber(leixcalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto* func = InternalFunction::createFunctionThatMasqueradesAsUndefined(vm, leixcalGlobalObject, count, name, jsFunctionNotImplemented);
-    return JSC::JSValue::encode(func);
-}

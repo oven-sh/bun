@@ -68,8 +68,6 @@ typedef struct BunString {
     // If it's not a WTFStringImpl, this does nothing
     inline void deref();
 
-    static size_t utf8ByteLength(const WTF::String&);
-
     // Zero copy is kind of a lie.
     // We clone it if it's non-ASCII UTF-8.
     // We don't clone it if it was marked as static

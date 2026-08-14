@@ -1729,9 +1729,6 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(self.input_source.get_mut())
     }
-    fn done(&self) -> bool {
-        self.done.get()
-    }
 }
 
 // ───────── .then() reactions for a content handler's promise ─────────────
@@ -2577,7 +2574,6 @@ impl EndTag {
     lol_content_ops! { RawEndTag, end_tag, JSValue::NULL;
         before / before_,
         after / after_,
-        replace / replace_,
     }
 
     #[bun_jsc::host_fn(method)]

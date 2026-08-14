@@ -1465,20 +1465,6 @@ JSC::EncodedJSValue CRYPTO_SIGN_KEY_REQUIRED(JSC::ThrowScope& throwScope, JSC::J
     return {};
 }
 
-JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSValue received, WTF::ASCIILiteral expected)
-{
-    WTF::StringBuilder builder;
-    builder.append("Invalid key object type "_s);
-    JSValueToStringSafe(globalObject, builder, received);
-    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
-
-    builder.append(". Expected "_s);
-    builder.append(expected);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE, builder.toString()));
-    throwScope.release();
-    return {};
-}
-
 JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, CryptoKeyType receivedType, ASCIILiteral expected)
 {
     WTF::StringBuilder builder;

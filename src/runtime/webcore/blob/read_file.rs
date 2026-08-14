@@ -991,9 +991,6 @@ impl<'a> FileCloser for ReadFileUV<'a> {
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
-    fn update(&mut self) {
-        unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
-    }
     fn schedule_close(_: &mut bun_io::Request) -> bun_io::Action<'_> {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }

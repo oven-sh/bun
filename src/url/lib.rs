@@ -60,7 +60,7 @@ pub mod whatwg {
     // Getters take `&URL` (C++ never mutates on read); `deinit` takes `&mut URL` (consumes).
     // `URL__originLength` keeps a raw `(*const u8, usize)` slice pair → stays `unsafe fn`.
     unsafe extern "C" {
-        // `URL__fromJS` / `URL__getHrefFromJS` intentionally omitted — tier-6 (bun_jsc).
+        // `URL__getHrefFromJS` intentionally omitted — tier-6 (bun_jsc).
         safe fn URL__fromString(str: &mut String) -> Option<core::ptr::NonNull<URL>>;
         safe fn URL__protocol(url: &URL) -> String;
         safe fn URL__href(url: &URL) -> String;

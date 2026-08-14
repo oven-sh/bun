@@ -278,19 +278,4 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
     return fired;
 }
 
-Vector<Identifier> EventEmitter::eventTypes()
-{
-    if (auto* data = eventTargetData())
-        return data->eventListenerMap.eventTypes();
-    return {};
-}
-
-const SimpleEventListenerVector& EventEmitter::eventListeners(const Identifier& eventType)
-{
-    auto* data = eventTargetData();
-    auto* listenerVector = data ? data->eventListenerMap.find(eventType) : nullptr;
-    static NeverDestroyed<SimpleEventListenerVector> emptyVector;
-    return listenerVector ? *listenerVector : emptyVector.get();
-}
-
 } // namespace WebCore

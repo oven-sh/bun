@@ -114,11 +114,6 @@ pub trait LoopHandler {
 // `impl WindowsLoop` block below (same surface, different routing).
 #[cfg(not(windows))]
 impl PosixLoop {
-    pub fn uncork(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::uws_res_clear_corked_socket(self) };
-    }
-
     pub fn update_date(&mut self) {
         // SAFETY: self is a valid loop pointer
         unsafe { c::uws_loop_date_header_timer_update(self) };
@@ -297,18 +292,8 @@ impl PosixLoop {
     }
 
     // Rust cannot monomorphize an `extern "C"` fn over a fn-pointer const generic on stable,
-    // so callers provide the C-ABI trampoline directly.
-    pub fn next_tick(
-        &mut self,
-        user_data: *mut c_void,
-        defer_callback: unsafe extern "C" fn(*mut c_void),
-    ) {
-        // SAFETY: self is a valid loop pointer; user_data lifetime is caller's responsibility
-        unsafe { c::uws_loop_defer(self, user_data, defer_callback) };
-    }
-
-    // Same trampoline-synthesis limitation as `next_tick` — callers pass the
-    // C-ABI callback directly. The returned `Handler` stores it for later removal.
+    // so callers pass the C-ABI callback directly. The returned `Handler` stores it for later
+    // removal.
     //
     // Takes `this: *mut Self` (not `&mut self`) so the stored `Handler.loop_` inherits the
     // long-lived raw-pointer provenance from `us_create_loop`/`uws_get_loop`. Routing through
@@ -389,11 +374,6 @@ pub struct WindowsLoop {
 impl WindowsLoop {
     pub fn should_enable_date_header_timer(&self) -> bool {
         self.internal_loop_data.should_enable_date_header_timer()
-    }
-
-    pub fn uncork(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::uws_res_clear_corked_socket(self) };
     }
 
     pub fn get() -> *mut WindowsLoop {
@@ -531,16 +511,6 @@ impl WindowsLoop {
         unsafe { c::us_loop_close_all_groups(self) != 0 }
     }
 
-    // See PosixLoop::next_tick — same trampoline-synthesis limitation.
-    pub fn next_tick(
-        &mut self,
-        user_data: *mut c_void,
-        defer_callback: unsafe extern "C" fn(*mut c_void),
-    ) {
-        // SAFETY: self is a valid loop pointer; user_data lifetime is caller's responsibility
-        unsafe { c::uws_loop_defer(self, user_data, defer_callback) };
-    }
-
     pub fn update_date(&mut self) {
         // SAFETY: self is a valid loop pointer
         unsafe { c::uws_loop_date_header_timer_update(self) };
@@ -597,7 +567,6 @@ pub type Loop = PosixLoop;
 
 type LoopCb = unsafe extern "C" fn(*mut Loop);
 type LoopCtxCb = unsafe extern "C" fn(ctx: *mut c_void, loop_: *mut Loop);
-type DeferCb = unsafe extern "C" fn(ctx: *mut c_void);
 
 #[allow(non_snake_case)]
 mod c {
@@ -638,8 +607,6 @@ mod c {
         pub(super) safe fn uws_get_loop() -> *mut Loop;
         #[cfg(windows)]
         pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
-        pub(super) fn uws_loop_defer(loop_: *mut Loop, ctx: *mut c_void, cb: DeferCb);
-        pub(super) fn uws_res_clear_corked_socket(loop_: *mut Loop);
         pub(super) fn uws_loop_date_header_timer_update(loop_: *mut Loop);
     }
 }

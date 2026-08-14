@@ -305,30 +305,6 @@ impl SubscriptionCtx {
         }
         Ok(())
     }
-
-    fn is_deletable(&self, global_object: &JSGlobalObject) -> JsResult<bool> {
-        // The user may request .close(), in which case we can dispose of the subscription object.
-        // If that is the case, finalized will be true. Otherwise, we should treat the object as
-        // disposable if there are no active subscriptions.
-        Ok(self.parent().client.get().flags.finalized || !self.has_subscriptions(global_object)?)
-    }
-
-    // Cannot be `Drop` — takes a `global_object` param. Exposed as explicit
-    // `close` per PORTING.md (never expose `pub fn deinit`).
-    pub fn close(&self, global_object: &JSGlobalObject) {
-        if cfg!(debug_assertions) {
-            let go = self.parent().global_object;
-            debug_assert!(self.is_deletable(&go).expect("unreachable"));
-        }
-
-        if let Some(parent_this) = self.parent().this_value.get().try_get() {
-            Js::subscription_callback_map_set_cached(
-                parent_this,
-                global_object,
-                JSValue::UNDEFINED,
-            );
-        }
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

@@ -5153,18 +5153,6 @@ bool JSC__VM__isEntered(JSC::VM* arg0)
     return (*arg0).isEntered();
 }
 
-[[ZIG_EXPORT(nothrow)]]
-bool JSC__VM__isTerminationException(JSC::VM* vm, JSC::Exception* exception)
-{
-    return vm->isTerminationException(exception);
-}
-
-[[ZIG_EXPORT(nothrow)]]
-bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
-{
-    return vm->hasTerminationRequest();
-}
-
 void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1)
 {
     (*arg0).setExecutionForbidden();
@@ -5197,10 +5185,6 @@ void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
     vm.notifyNeedTermination();
     if (didEnter)
         vm.apiLock().lock();
-}
-void JSC__VM__notifyNeedDebuggerBreak(JSC::VM* arg0)
-{
-    (*arg0).notifyNeedDebuggerBreak();
 }
 void JSC__VM__notifyNeedShellTimeoutCheck(JSC::VM* arg0)
 {

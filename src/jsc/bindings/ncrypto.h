@@ -145,8 +145,6 @@ public:
     NCRYPTO_DISALLOW_COPY_AND_MOVE(ClearErrorOnReturn)
     NCRYPTO_DISALLOW_NEW_DELETE()
 
-    int peekError();
-
 private:
     CryptoErrorList* errors_;
 };
@@ -594,7 +592,6 @@ public:
     }
     explicit BIOPointer(BIO* bio);
     BIOPointer(BIOPointer&& other) noexcept;
-    BIOPointer& operator=(BIOPointer&& other) noexcept;
     NCRYPTO_DISALLOW_COPY(BIOPointer)
     ~BIOPointer();
 
@@ -650,7 +647,6 @@ public:
     void reset(const unsigned char* data, size_t len);
     BIGNUM* release();
 
-    bool isZero() const;
     bool isOne() const;
 
     bool setWord(unsigned long w); // NOLINT(runtime/int)
@@ -715,7 +711,6 @@ public:
     CipherCtxPointer() = default;
     explicit CipherCtxPointer(EVP_CIPHER_CTX* ctx);
     CipherCtxPointer(CipherCtxPointer&& other) noexcept;
-    CipherCtxPointer& operator=(CipherCtxPointer&& other) noexcept;
     NCRYPTO_DISALLOW_COPY(CipherCtxPointer)
     ~CipherCtxPointer();
 
@@ -806,7 +801,6 @@ public:
 
     bool verify(const Buffer<const unsigned char>& sig,
         const Buffer<const unsigned char>& data);
-    DataPointer sign(const Buffer<const unsigned char>& data);
     bool signInto(const Buffer<const unsigned char>& data,
         Buffer<unsigned char>* sig);
 
@@ -888,9 +882,6 @@ public:
         PKEncodingType type = PKEncodingType::PKCS8;
         int ec_point_form = POINT_CONVERSION_UNCOMPRESSED;
         AsymmetricKeyEncodingConfig() = default;
-        AsymmetricKeyEncodingConfig(bool output_key_object,
-            PKFormatType format,
-            PKEncodingType type);
         AsymmetricKeyEncodingConfig(const AsymmetricKeyEncodingConfig&) = default;
         AsymmetricKeyEncodingConfig& operator=(const AsymmetricKeyEncodingConfig&) = default;
     };
@@ -900,14 +891,7 @@ public:
         const EVP_CIPHER* cipher = nullptr;
         std::optional<DataPointer> passphrase = std::nullopt;
         PrivateKeyEncodingConfig() = default;
-        PrivateKeyEncodingConfig(bool output_key_object,
-            PKFormatType format,
-            PKEncodingType type)
-            : AsymmetricKeyEncodingConfig(output_key_object, format, type)
-        {
-        }
         PrivateKeyEncodingConfig(const PrivateKeyEncodingConfig&);
-        PrivateKeyEncodingConfig& operator=(const PrivateKeyEncodingConfig&);
     };
 
     static ParseKeyResult TryParsePublicKey(
@@ -1181,7 +1165,6 @@ public:
     explicit ECDSASigPointer();
     explicit ECDSASigPointer(ECDSA_SIG* sig);
     ECDSASigPointer(ECDSASigPointer&& other) noexcept;
-    ECDSASigPointer& operator=(ECDSASigPointer&& other) noexcept;
     NCRYPTO_DISALLOW_COPY(ECDSASigPointer)
     ~ECDSASigPointer();
 
@@ -1215,7 +1198,6 @@ public:
     explicit ECGroupPointer();
     explicit ECGroupPointer(EC_GROUP* group);
     ECGroupPointer(ECGroupPointer&& other) noexcept;
-    ECGroupPointer& operator=(ECGroupPointer&& other) noexcept;
     NCRYPTO_DISALLOW_COPY(ECGroupPointer)
     ~ECGroupPointer();
 
@@ -1239,7 +1221,6 @@ public:
     ECPointPointer();
     explicit ECPointPointer(EC_POINT* point);
     ECPointPointer(ECPointPointer&& other) noexcept;
-    ECPointPointer& operator=(ECPointPointer&& other) noexcept;
     NCRYPTO_DISALLOW_COPY(ECPointPointer)
     ~ECPointPointer();
 

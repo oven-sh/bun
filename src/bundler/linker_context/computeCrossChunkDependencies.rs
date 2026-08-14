@@ -178,8 +178,6 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         // which outlives the link pass.
                         import_record.path.text = other_chunk.unique_key;
                         import_record.source_index = Index::INVALID;
-                        // A CSS or HTML entry point's chunk is the .css/.html output
-                        // itself, which the import's attributes still describe.
                         if other_chunk.content.is_javascript() {
                             import_record.loader = None;
                             import_record

@@ -398,4 +398,149 @@ describe("`bun audit`", () => {
     expect(stdout).toBe("No vulnerabilities found\n");
     expect(exitCode).toBe(0);
   });
+
+  describe("registry responses", () => {
+    const projectDependingOnMs: DirectoryTree = {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        dependencies: {
+          ms: "0.7.0",
+        },
+      }),
+      "bun.lock": JSON.stringify({
+        "lockfileVersion": 1,
+        "workspaces": {
+          "": {
+            "name": "test",
+            "dependencies": {
+              ms: "0.7.0",
+            },
+          },
+        },
+        "packages": {
+          ms: ["ms@0.7.0", "", {}, fakeIntegrity],
+        },
+      }),
+    };
+
+    async function auditAgainst(responseBody: string, args: string[] = []) {
+      await using registry = Bun.serve({
+        port: 0,
+        fetch: () => new Response(responseBody, { headers: { "content-type": "application/json" } }),
+      });
+      using dir = tempDir("bun-test-audit-registry-response", projectDependingOnMs);
+
+      await using proc = spawn({
+        cmd: [bunExe(), "audit", ...args],
+        cwd: String(dir),
+        env: { ...bunEnv, NPM_CONFIG_REGISTRY: registry.url.href },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const [banner, ...rest] = stderr.split("\n");
+      expect(banner).toStartWith("bun audit v");
+
+      const auditUrl = `${registry.url.origin}/-/npm/v1/security/advisories/bulk`;
+      return {
+        result: { stdout, stderr: rest.join("\n"), exitCode },
+        rejected: (expected: "JSON" | "a list of advisories") =>
+          `error: audit request to ${auditUrl} failed: response is not ${expected}\n`,
+      };
+    }
+
+    const notAdvisoryLists = [
+      "[]",
+      "null",
+      '"all clear"',
+      '{"error":"audit is not supported by this registry"}',
+      '{"ms":{"severity":"high","title":"advisory object where the array should be"}}',
+      '{"ms":["high"]}',
+    ];
+
+    test.concurrent.each(notAdvisoryLists)("%s is a failed audit, not a clean one", async responseBody => {
+      const { result, rejected } = await auditAgainst(responseBody);
+      expect(result).toEqual({ stdout: "", stderr: rejected("a list of advisories"), exitCode: 1 });
+    });
+
+    test.concurrent.each(notAdvisoryLists)("--json relays %s and exits 1", async responseBody => {
+      const { result, rejected } = await auditAgainst(responseBody, ["--json"]);
+      expect(result).toEqual({ stdout: `${responseBody}\n`, stderr: rejected("a list of advisories"), exitCode: 1 });
+    });
+
+    const notJson = ["<html>\x1b[2J\x1b]0;owned\x07sign in to continue</html>", "Not Found"];
+
+    test.concurrent.each(notJson)("a non-JSON body (%j) is neither echoed nor a clean audit", async responseBody => {
+      const { result, rejected } = await auditAgainst(responseBody);
+      expect(result).toEqual({ stdout: "", stderr: rejected("JSON"), exitCode: 1 });
+    });
+
+    test.concurrent.each(notJson)("--json does not echo a non-JSON body (%j) either", async responseBody => {
+      const { result, rejected } = await auditAgainst(responseBody, ["--json"]);
+      expect(result).toEqual({ stdout: "", stderr: rejected("JSON"), exitCode: 1 });
+    });
+
+    test.concurrent("a package listed with no advisories is a clean audit", async () => {
+      const { result } = await auditAgainst('{"ms":[]}');
+      expect(result).toEqual({ stdout: "No vulnerabilities found\n", stderr: "", exitCode: 0 });
+    });
+
+    test.concurrent("--json exits 0 when the packages are listed with no advisories", async () => {
+      const { result } = await auditAgainst('{"ms":[]}', ["--json"]);
+      expect(result).toEqual({ stdout: '{"ms":[]}\n', stderr: "", exitCode: 0 });
+    });
+
+    test.concurrent("an empty body is a clean audit", async () => {
+      const { result } = await auditAgainst("");
+      expect(result).toEqual({ stdout: "No vulnerabilities found\n", stderr: "", exitCode: 0 });
+    });
+
+    test.concurrent("--audit-level filtering out every advisory prints a clean audit, not nothing", async () => {
+      const { result } = await auditAgainst(
+        JSON.stringify({ ms: [{ severity: "low", title: "minor", url: "https://example.com/minor" }] }),
+        ["--audit-level", "critical"],
+      );
+      expect(result).toEqual({ stdout: "No vulnerabilities found\n", stderr: "", exitCode: 0 });
+    });
+
+    test.concurrent("control characters in advisories and package names are escaped in the report", async () => {
+      const { result } = await auditAgainst(
+        JSON.stringify({
+          ms: [
+            {
+              severity: "high",
+              title: "ms \x1b[2J\x1b]0;owned\x07 ReDoS in \\d+\r\n\tparsing\x7f \x9b \u00a9 2015",
+              url: "https://example.com/ms\x1b]8;;https://evil.example/\x07",
+              vulnerable_versions: "<2.0.0\x1b[0m",
+            },
+          ],
+          "ms\x1b[31m": [{ severity: "critical", title: "not a real package", url: "https://example.com/fake" }],
+        }),
+      );
+      expect(result).toEqual({
+        stdout: [
+          "ms  <2.0.0\\u001b[0m",
+          "  (direct dependency)",
+          "  high: ms \\u001b[2J\\u001b]0;owned\\u0007 ReDoS in \\d+\\r\\n\\tparsing\\u007f \\u009b \u00a9 2015 - https://example.com/ms\\u001b]8;;https://evil.example/\\u0007",
+          "",
+          "ms\\u001b[31m",
+          "  critical: not a real package - https://example.com/fake",
+          "",
+          "2 vulnerabilities (1 critical, 1 high)",
+          "",
+          "To update all dependencies to the latest compatible versions:",
+          "  bun update",
+          "",
+          "To update all dependencies to the latest versions (including breaking changes):",
+          "  bun update --latest",
+          "",
+          "",
+        ].join("\n"),
+        stderr: "",
+        exitCode: 1,
+      });
+    });
+  });
 });

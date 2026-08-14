@@ -240,8 +240,8 @@ impl ServerConfig {
             }
         }
 
-        // Stable on purpose: same-path entries with different methods must keep
-        // declaration order, which decides uWS handler precedence.
+        // sort the cloned static routes by name for determinism
+        // (descending by path: `order(b, a)`).
         list.sort_by(|a, b| strings::order(&b.path, &a.path));
 
         Ok(())

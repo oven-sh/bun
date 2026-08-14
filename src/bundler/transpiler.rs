@@ -2856,8 +2856,14 @@ impl<'a> Transpiler<'a> {
 
         let mut file_path = Fs::Path::init(file_path_text);
 
+        // Computed the way the bundler computes `Source.path.pretty` (see
+        // `generic_path_with_pretty_initialized`: forward slashes on every
+        // platform), because CSS module names are hashed from it.
         let top_level_dir = self.fs().top_level_dir;
-        let rel = bun_paths::resolve_path::relative(top_level_dir, file_path_text);
+        let rel = bun_paths::resolve_path::relative_platform::<
+            bun_paths::resolve_path::platform::Loose,
+            false,
+        >(top_level_dir, file_path_text);
         file_path.pretty = crate::linker::dupe(rel);
 
         let mut output_file = options::OutputFile::zero_value();
@@ -3067,12 +3073,16 @@ impl<'a> Transpiler<'a> {
         // `'bump`-threading note).
         let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
 
+        // Every class/id selector of a CSS module becomes a `LocalCss` symbol
+        // `Ref` carrying this source index; the printer resolves those through
+        // the symbol map and local names built below, so the three must agree.
+        let source_index = bun_ast::Index::RUNTIME;
         let (mut sheet, extra) = match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
             alloc,
             entry.contents(),
             opts,
             None,
-            bun_ast::Index::INVALID,
+            source_index,
         ) {
             Ok(v) => v,
             Err(e) => {
@@ -3092,7 +3102,23 @@ impl<'a> Transpiler<'a> {
             );
             return None;
         }
-        let symbols = bun_ast::symbol::Map::init_list(Default::default());
+        let mut local_names = bun_css::LocalsResultsMap::default();
+        for (inner_index, symbol) in extra.symbols.iter().enumerate() {
+            if symbol.kind == bun_ast::symbol::Kind::LocalCss {
+                local_names.insert(
+                    bun_ast::Ref::new(
+                        u32::try_from(inner_index).expect("int cast"),
+                        source_index.get(),
+                        bun_ast::RefTag::Symbol,
+                    ),
+                    crate::linker_context_mod::local_css_name(
+                        symbol.original_name.slice(),
+                        file_path_pretty,
+                    ),
+                );
+            }
+        }
+        let symbols = bun_ast::symbol::Map::init_with_one_list(extra.symbols);
         let result = match sheet.to_css(
             alloc,
             &bun_css::PrinterOptions {
@@ -3101,7 +3127,7 @@ impl<'a> Transpiler<'a> {
                 ..bun_css::PrinterOptions::default()
             },
             None,
-            None,
+            Some(&local_names),
             &symbols,
         ) {
             Ok(v) => v,

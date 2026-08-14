@@ -2375,30 +2375,12 @@ impl<'a> LinkerContext<'a> {
 
                         let source = &all_sources[r#ref.source_index() as usize];
 
-                        // SAFETY: `Symbol.original_name` is a `*const [u8]` arena
-                        // pointer; valid for the link step.
-                        let original_name: &[u8] = symbol.original_name.slice();
-                        // The hash itself is short-lived; use a scratch bump.
-                        let scratch = ::bun_alloc::Arena::new();
-                        let path_hash = ::bun_base64::wyhash_url_safe(
-                            &scratch,
-                            // use path relative to cwd for determinism
-                            format_args!("{}", bstr::BStr::new(&source.path.pretty)),
-                            false,
-                        );
-
-                        let mut final_generated_name = Vec::<u8>::new();
-                        use std::io::Write;
-                        write!(
-                            &mut final_generated_name,
-                            "{}_{}",
-                            bstr::BStr::new(original_name),
-                            bstr::BStr::new(path_hash)
-                        )
-                        .expect("infallible: in-memory write");
                         // The map owns its boxed values (freed with `mangled_props`).
                         self.mangled_props
-                            .put(r#ref, final_generated_name.into_boxed_slice())
+                            .put(
+                                r#ref,
+                                local_css_name(symbol.original_name.slice(), source.path.pretty),
+                            )
                             .expect("OOM");
                     }
                 }
@@ -2557,6 +2539,25 @@ impl<'a> LinkerContext<'a> {
         });
     }
 } // end — split: tree-shaking trio below
+
+/// The name a CSS module's local class or id is printed as:
+/// `<original name>_<hash of the file's path relative to the project root>`.
+/// Used both by `mangle_local_css` and by the `--no-bundle` CSS path
+/// (`Transpiler::build_css_output`), so a `.module.css` file transpiled on its
+/// own gets the same names the bundler would give it.
+pub(crate) fn local_css_name(original_name: &[u8], pretty_path: &[u8]) -> Box<[u8]> {
+    let scratch = Bump::new();
+    let path_hash = ::bun_base64::wyhash_url_safe(
+        &scratch,
+        format_args!("{}", bstr::BStr::new(pretty_path)),
+        false,
+    );
+    let mut name = Vec::with_capacity(original_name.len() + 1 + path_hash.len());
+    name.extend_from_slice(original_name);
+    name.push(b'_');
+    name.extend_from_slice(path_hash);
+    name.into_boxed_slice()
+}
 
 /// `js_printer::RequireOrImportMetaSource` — manual-vtable shim so the printer
 /// can call back into `LinkerContext::require_or_import_meta_for_source`.

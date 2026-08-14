@@ -779,7 +779,7 @@ impl QuicSession {
                 qs
             }
             Err(e) => {
-                super::fold::at_boundary(global, e);
+                let _ = super::fold::at_boundary(global, e);
                 null_mut()
             }
         }
@@ -913,11 +913,11 @@ impl QuicSession {
                 break;
             }
             if let Err(err) = self.dispatch_event(global, event) {
-                super::fold::drained_event(global, err);
-                if !self.events.get().is_empty() {
-                    self.schedule_process();
+                // Reported: the drain goes on (that event is lost); the VM's
+                // stop ends it.
+                if super::fold::at_boundary(global, err).is_err() {
+                    break;
                 }
-                break;
             }
         }
     }
@@ -1234,6 +1234,9 @@ impl QuicSession {
                 } else {
                     b"lost".as_slice()
                 };
+                // Every acknowledged/lost datagram is popped and counted even
+                // when its status cannot be delivered.
+                let mut undelivered = Ok(());
                 for _ in 0..count {
                     let Some(id) = self.inflight_datagrams.with_mut(VecDeque::pop_front) else {
                         break;
@@ -1243,11 +1246,19 @@ impl QuicSession {
                     } else {
                         self.add_stat(IDX_STATS_SESSION_DATAGRAMS_LOST, 1);
                     }
-                    if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) {
+                    if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) || undelivered.is_err() {
                         continue;
                     }
-                    let id_js = JSValue::from_uint64_no_truncate(global, id)?;
-                    let status_js = bun_core::String::static_(status).to_js(global)?;
+                    let args = JSValue::from_uint64_no_truncate(global, id).and_then(|id_js| {
+                        Ok([id_js, bun_core::String::static_(status).to_js(global)?])
+                    });
+                    let [id_js, status_js] = match args {
+                        Ok(args) => args,
+                        Err(err) => {
+                            undelivered = Err(err);
+                            continue;
+                        }
+                    };
                     if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
                         let vm = global.bun_vm().as_mut();
                         vm.event_loop_ref().run_callback(
@@ -1258,6 +1269,7 @@ impl QuicSession {
                         );
                     }
                 }
+                undelivered?;
             }
             SessionEvent::VersionNegotiation { server_versions } => {
                 let Some((requested, min)) = self.verneg.get() else {
@@ -2077,7 +2089,7 @@ impl QuicSession {
             // Node reports the abandonment synchronously from within
             // sendDatagram.
             if self.datagram_drop_newest.get() {
-                self.report_datagram_abandoned(global, id);
+                self.report_datagram_abandoned(global, id)?;
                 // SAFETY: as above.
                 unsafe { (&raw mut (*self.state_mut()).last_datagram_id).write_unaligned(id) };
                 return JSValue::from_uint64_no_truncate(global, id);
@@ -2085,7 +2097,7 @@ impl QuicSession {
             if let Some((dropped_id, _)) = self.datagram_queue.with_mut(VecDeque::pop_front) {
                 // Runs the user's `ondatagramstatus`, which can destroy this
                 // session or close the conn before we get back here.
-                self.report_datagram_abandoned(global, dropped_id);
+                self.report_datagram_abandoned(global, dropped_id)?;
                 if self.destroyed.get() || self.conn.get().is_null() {
                     return JSValue::from_uint64_no_truncate(global, 0);
                 }
@@ -2101,19 +2113,20 @@ impl QuicSession {
         self.schedule_process();
         JSValue::from_uint64_no_truncate(global, id)
     }
-    fn report_datagram_abandoned(&self, global: &JSGlobalObject, id: u64) {
+    /// Runs inside `sendDatagram`: what building the status left pending is
+    /// thrown from there.
+    fn report_datagram_abandoned(&self, global: &JSGlobalObject, id: u64) -> JsResult<()> {
         if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) {
-            return;
+            return Ok(());
         }
-        let id_js = JSValue::from_uint64_no_truncate(global, id).or_report(global);
-        let status_js = bun_core::String::static_(b"abandoned")
-            .to_js(global)
-            .or_report(global);
+        let id_js = JSValue::from_uint64_no_truncate(global, id)?;
+        let status_js = bun_core::String::static_(b"abandoned").to_js(global)?;
         if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref()
                 .run_callback(cb, global, self.handle(), &[id_js, status_js]);
         }
+        Ok(())
     }
 
     /// Node's JS layer discards this return value, matching upstream.

@@ -154,7 +154,8 @@ pub struct MultiPartUpload {
     pub(crate) state: Cell<State>,
 
     pub callback: fn(S3UploadResult, *mut c_void) -> bun_jsc::JsResult<()>,
-    pub(crate) on_writable: Option<fn(&MultiPartUpload, *mut c_void, u64)>,
+    /// The sink whose source to wake; returns what waking it left pending.
+    pub(crate) on_writable: Option<fn(&MultiPartUpload, *mut c_void, u64) -> bun_jsc::JsResult<()>>,
     pub(crate) callback_context: Cell<*mut c_void>,
 }
 
@@ -447,7 +448,7 @@ impl MultiPartUpload {
                         self_,
                         self_.callback_context.get(),
                         self_.buffered.get().size() as u64,
-                    );
+                    )?;
                 }
                 self_.done()
             }
@@ -541,7 +542,7 @@ impl MultiPartUpload {
         // empty queue
         if self.is_queue_empty() {
             if let Some(callback) = self.on_writable {
-                callback(self, self.callback_context.get(), flushed);
+                callback(self, self.callback_context.get(), flushed)?;
             }
             // `on_writable` may re-enter and enqueue a final part; re-check.
             if self.ended.get() && self.is_queue_empty() {
@@ -550,7 +551,7 @@ impl MultiPartUpload {
         } else if !self.has_backpressure() && flushed > 0 {
             // we have more space in the queue, we can drain more
             if let Some(callback) = self.on_writable {
-                callback(self, self.callback_context.get(), flushed);
+                callback(self, self.callback_context.get(), flushed)?;
             }
         }
         Ok(())

@@ -150,6 +150,8 @@ impl Default for EventLoop {
 mod drain_result {
     pub(super) const SUCCESS: u8 = 0;
     pub(super) const STOPPED: u8 = 1;
+    /// A (non-termination) exception is pending: no checkpoint ran.
+    pub(super) const PENDING_EXCEPTION: u8 = 2;
 }
 
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; C++ mutating
@@ -281,17 +283,14 @@ impl EventLoop {
     /// "exit" a microtask context in the event loop. See `enter`.
     ///
     /// The outermost exit is a microtask checkpoint — unless the frame is
-    /// leaving with an exception pending. That exception is on its way to a
-    /// fold (the dispatcher's, or the host function's caller), which is what
-    /// takes it and then drains; a checkpoint may not run over it.
+    /// leaving with an exception pending (`drainMicrotasks` sees it and does
+    /// nothing): that exception is on its way to a fold, which takes it and
+    /// then drains.
     pub fn exit(&mut self) {
         let count = self.entered_event_loop_count;
         bun_core::scoped_log!(EventLoop, "exit() = {}", count - 1);
 
-        if count == 1
-            && !self.vm_ref().is_inside_deferred_task_queue.get()
-            && !self.global_ref().has_exception()
-        {
+        if count == 1 && !self.vm_ref().is_inside_deferred_task_queue.get() {
             let _ = self.drain_microtasks();
         }
 
@@ -366,6 +365,9 @@ impl EventLoop {
         match JSC__JSGlobalObject__drainMicrotasks(global_object) {
             drain_result::SUCCESS => {}
             drain_result::STOPPED => return Err(Stopped),
+            // The exception is on its way to a fold, which drains after taking
+            // it; the deferred tasks wait for that checkpoint too.
+            drain_result::PENDING_EXCEPTION => return Ok(()),
             _ => unreachable!(),
         }
 

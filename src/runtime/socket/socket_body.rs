@@ -160,8 +160,7 @@ extern "C" fn select_alpn_callback(
                 // event: fold what the `error` handler left pending here.
                 super::uws_handlers::fold(
                     handlers
-                        .call_error_handler(this_value, &[this_value, err_value])
-                        .map(|_| ()),
+                        .call_error_handler(this_value, &[this_value, err_value]),
                 );
                 tls_socket_functions::ffi::us_internal_ssl_loop_state_restore(
                     saved_loop_state.as_mut_ptr(),
@@ -876,7 +875,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let this_value = self.get_this_value(&global);
         let called = handlers.call_error_handler(this_value, &[this_value, err_value]);
         self.exit_scope(scope);
-        called.map(|_| ())
+        called
     }
 
     /// Takes `ThisPtr<Self>`, not `&mut self`: `callback.call(...)` re-enters
@@ -944,8 +943,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 &global,
             );
             let handled = handlers
-                .call_error_handler(this_value, &[this_value, err_value])
-                .map(|_| ());
+                .call_error_handler(this_value, &[this_value, err_value]);
             // The error handler can destroy the socket itself; only close a
             // still-attached socket. Close without detaching so on_close runs
             // and JS observes 'close' (mirrors h2's dead-transport close) —
@@ -1576,8 +1574,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             let rejected = match handlers.reject_promise(err) {
                 Ok(true) => Ok(()),
                 Ok(false) => handlers
-                    .call_error_handler(this_value, &[this_value, err])
-                    .map(|_| ()),
+                    .call_error_handler(this_value, &[this_value, err]),
                 Err(e) => Err(e),
             };
             // `mark_inactive` closes the socket, which dispatches `on_close`.
@@ -1911,8 +1908,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let handled = match result.to_error() {
             Some(err_value) => handlers
-                .call_error_handler(this_value, &[this_value, err_value])
-                .map(|_| ()),
+                .call_error_handler(this_value, &[this_value, err_value]),
             None => Ok(()),
         };
         drop(scope);
@@ -2120,20 +2116,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         // gets its own dispatch — fire its (pre-upgrade) close handler
         // here, then retire it. `raw.twin == None` so this doesn't
         // recurse, and `onClose` derefs the +1 we took at creation.
-        let twin_closed = match this.twin.with_mut(|t| t.take()) {
+        if let Some(raw) = this.twin.with_mut(|t| t.take()) {
             // `on_close` consumes the twin's +1 via its `CloseTeardown`, so
             // hand over the raw pointer rather than letting `IntrusiveRc::drop`
-            // release it a second time.
-            Some(raw) => Self::on_close(raw.into_this_ptr(), socket, err, reason),
-            None => Ok(()),
-        };
+            // release it a second time. This frame is the twin's trampoline for
+            // the event, so what its handlers left pending is folded here and
+            // this socket's own close proceeds regardless.
+            super::uws_handlers::fold(Self::on_close(raw.into_this_ptr(), socket, err, reason));
+        }
         let cleanup = CloseTeardown {
             socket: this,
             entered: Rc::clone(&handlers),
         };
-        // What the twin's close/error handlers left pending is this close's
-        // `Err` too, once our own teardown is armed.
-        twin_closed?;
 
         if this.flags.get().contains(Flags::FINALIZING) {
             drop(cleanup);
@@ -2234,8 +2228,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let output_value = match handlers.binary_type.get().to_js(data, &global) {
             Ok(v) => v,
             Err(err) => {
-                this.handle_error(global.take_exception(err))?;
-                return Ok(());
+                return this.handle_error(global.take_exception(err));
             }
         };
 

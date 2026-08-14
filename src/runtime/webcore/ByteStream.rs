@@ -224,10 +224,7 @@ impl ByteStream {
 
     #[inline]
     pub(crate) fn signal_drained(&self) {
-        self.parent_const()
-            .producer
-            .get()
-            .ready_from_native(None, None);
+        streams::settled_from_native(self.parent_const().producer.get().ready(None, None));
     }
 
     /// Take the buffered bytes without signalling the producer; the caller

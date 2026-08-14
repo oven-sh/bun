@@ -326,7 +326,7 @@ impl FileSink {
                             );
                             stream.cancel(global);
                         } else {
-                            stream.done_from_native(global);
+                            crate::webcore::streams::settled_from_native(stream.done(global));
                         }
                     }
                 }
@@ -512,7 +512,7 @@ impl FileSink {
         unsafe {
             if (*this).source_pending_pull.replace(false) {
                 let mut src = *(*this).source.get();
-                src.ready_from_native(None, None);
+                crate::webcore::streams::settled_from_native(src.ready(None, None));
             }
         }
     }
@@ -529,13 +529,13 @@ impl FileSink {
             if (*this).readable_stream.get_mut().has() {
                 if let Some(global) = (*this).js_global() {
                     if let Some(stream) = (*this).readable_stream.get().get(global) {
-                        stream.done_from_native(global);
+                        crate::webcore::streams::settled_from_native(stream.done(global));
                     }
                 }
             }
 
             let mut src = *(*this).source.get();
-            src.close_from_native(None);
+            crate::webcore::streams::settled_from_native(src.close(None));
 
             // The writer is fully closed; no further callbacks will arrive. Release
             // the ref taken when a write returned `.pending`. This must be the last
@@ -867,7 +867,7 @@ impl FileSink {
                         // `flush()`'s drain bypasses `on_write(Drained)`; resume the parked ByteStream here.
                         if (*this).source_pending_pull.replace(false) {
                             let mut src = *(*this).source.get();
-                            src.ready_from_native(None, None);
+                            crate::webcore::streams::settled_from_native(src.ready(None, None));
                         }
                     }
                 }
@@ -1490,7 +1490,7 @@ impl FileSink {
     /// Does not ref or unref.
     fn handle_resolve_stream(&self, global_this: &JSGlobalObject) {
         if let Some(stream) = self.readable_stream.get().get(global_this).as_mut() {
-            stream.done_from_native(global_this);
+            crate::webcore::streams::settled_from_native(stream.done(global_this));
         }
 
         if !self.done.get() {

@@ -70,13 +70,15 @@ impl Handler {
         self.vm.get()
     }
 
+    /// Route an error a websocket handler produced to the `error` handler, or —
+    /// with none — to the uncaught-exception path. `Err` is what `error` itself
+    /// threw.
+    ///
     /// `on_error` must be copied to a stack local by the caller before any
     /// user JS runs: a re-entrant `ws.close()` on the last socket of a stopped
     /// server can downgrade the wrapper (the sole GC root for `wsOnError`)
     /// mid-handler, so a fresh `self.on_error` read after user JS could be a
     /// freed cell.
-    /// Route an error a websocket handler produced to the `error` handler, or —
-    /// with none — to the uncaught-exception path. `Err` is what `error` itself threw.
     pub(crate) fn run_error_callback(
         &self,
         on_error: JSValue,

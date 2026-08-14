@@ -236,6 +236,9 @@ impl FakeTimers {
 
     /// Fired from inside the `jest` timer-control host functions: an owner
     /// that returns its callback's exception throws it from that call.
+    /// The fake clock is a timer drain of its own: like `All::drain_timers`, a
+    /// timer whose callback threw is reported and the drain goes on; only the
+    /// VM's termination stops it, thrown to the `jest` host function driving it.
     fn fire(global: &JSGlobalObject, next: *mut EventLoopTimer) -> JsResult<()> {
         let _vm = global.bun_vm();
 
@@ -250,14 +253,18 @@ impl FakeTimers {
         CURRENT_TIME.set(global, &now, None);
         // SAFETY: `next` is live; `fire` takes `*mut Self` (noalias re-entrancy)
         // and an erased `*mut ()` for the VM.
-        unsafe {
+        let fired = unsafe {
             EventLoopTimer::fire(
                 next,
                 &now_el,
                 bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast(),
             )
+        };
+        match fired {
+            Ok(()) => Ok(()),
+            Err(err) => bun_jsc::task::report_error_or_terminate(global, err.into())
+                .map_err(|stopped| stopped.throw(global)),
         }
-        .map_err(Into::into)
     }
 
     fn execute_until(global: &JSGlobalObject, until: Timespec) -> JsResult<()> {

@@ -116,12 +116,12 @@ macro_rules! match_socket {
             SocketType::Tls($s) => {
                 const $ssl: bool = true;
                 let _ = $ssl;
-                super::uws_handlers::fold(super::uws_handlers::IntoJsResult::into_js_result($body))
+                super::uws_handlers::fold(crate::dispatch::LiftJsResult::lift($body))
             }
             SocketType::Tcp($s) => {
                 const $ssl: bool = false;
                 let _ = $ssl;
-                super::uws_handlers::fold(super::uws_handlers::IntoJsResult::into_js_result($body))
+                super::uws_handlers::fold(crate::dispatch::LiftJsResult::lift($body))
             }
             SocketType::None => {}
         }

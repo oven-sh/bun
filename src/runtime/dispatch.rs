@@ -249,26 +249,28 @@ const _: () = assert!(
     "dispatch::for_each_task! out of sync with bun_event_loop::task_tag",
 );
 
-/// A `[cold]` row's arm: the monomorphized run kept out of `run_task`'s body
-/// so lld places the shell/bake clusters after the front-clustered startup
-/// window (see `src/startup.order`).
-#[cold]
-#[inline(never)]
-unsafe fn run_cold<T: RunTask>(this: *mut (), tick: &mut Tick<'_>) -> JsResult<()> {
-    // SAFETY: forwarded caller contract.
-    unsafe { T::run(this.cast::<T>(), tick) }
-}
-
+/// One arm of the tag switch. `hot` rows run inline in `run_task`; `cold`
+/// rows all route to the single out-of-line `run_task_cold`, whose own switch
+/// runs them, so lld places the shell/bake clusters after the front-clustered
+/// startup window (see `src/startup.order`).
 macro_rules! __run_arm {
-    (hot, $ty:ty, $task:ident, $tick:ident) => {
+    (hot in hot, $ty:ty, $task:ident, $tick:ident) => {{
         // SAFETY: §Dispatch — `task.tag` was set together with `task.ptr` by
         // `Taskable`; the tag identifies the pointee type, and the task just came
         // off the queue and is not used afterwards.
-        unsafe { <$ty as RunTask>::run($task.ptr.cast::<$ty>(), $tick) }
+        unsafe { <$ty as RunTask>::run($task.ptr.cast::<$ty>(), $tick) }?;
+        Ok(<$ty as RunTask>::EARLY_RETURN)
+    }};
+    (cold in hot, $ty:ty, $task:ident, $tick:ident) => {
+        run_task_cold($task, $tick)
     };
-    (cold, $ty:ty, $task:ident, $tick:ident) => {
+    (cold in cold, $ty:ty, $task:ident, $tick:ident) => {{
         // SAFETY: as the `hot` arm.
-        unsafe { run_cold::<$ty>($task.ptr, $tick) }
+        unsafe { <$ty as RunTask>::run($task.ptr.cast::<$ty>(), $tick) }?;
+        Ok(<$ty as RunTask>::EARLY_RETURN)
+    }};
+    (hot in cold, $ty:ty, $task:ident, $tick:ident) => {
+        unreachable!()
     };
 }
 
@@ -282,18 +284,24 @@ macro_rules! __gen_run_task {
         // `bun <file>`. Keeping `run_task` out-of-line lets
         // `tick_queue_with_count` stay a tight drain-loop wrapper
         // (front-clustered via `src/startup.order`); the `[cold]` rows are
-        // further hoisted into `run_cold::<T>` so this hot dispatcher stays off
+        // further hoisted into `run_task_cold` so this hot dispatcher stays off
         // their pages.
         #[inline(never)]
         pub(crate) fn run_task(task: Task, tick: &mut Tick<'_>) -> JsResult<bool> {
             match task.tag {
-                $( $(#[$attr])* task_tag::$tag => {
-                    __run_arm!($temp, $ty, task, tick)?;
-                    Ok(<$ty as RunTask>::EARLY_RETURN)
-                } )*
+                $( $(#[$attr])* task_tag::$tag => __run_arm!($temp in hot, $ty, task, tick), )*
                 // A tag with no row on this platform, or a value outside
                 // `task_tag::COUNT`: a producer bug, treated as a crash, not UB.
                 _ => panic!("Unexpected Task tag: {}", task.tag.0),
+            }
+        }
+
+        #[cold]
+        #[inline(never)]
+        fn run_task_cold(task: Task, tick: &mut Tick<'_>) -> JsResult<bool> {
+            match task.tag {
+                $( $(#[$attr])* task_tag::$tag => __run_arm!($temp in cold, $ty, task, tick), )*
+                _ => unreachable!(),
             }
         }
 
@@ -331,15 +339,11 @@ pub(crate) fn tick_queue_with_count(
     let global: &JSGlobalObject = unsafe { el.global.expect("EventLoop.global unset").as_ref() };
     let global_vm = global.vm();
 
-    while let Some(task) = el.tasks.read_item() {
+    let mut tick = Tick { el, vm, global };
+    while let Some(task) = tick.el.tasks.read_item() {
         // Incremented before dispatch so the count includes every task,
         // including the one that takes the HotReloadTask early return.
         *counter += 1;
-        let mut tick = Tick {
-            el: &mut *el,
-            vm: &mut *vm,
-            global,
-        };
         match run_task(task, &mut tick) {
             Ok(false) => {}
             Ok(true) => {
@@ -351,9 +355,9 @@ pub(crate) fn tick_queue_with_count(
             }
             Err(err) => report_error_or_terminate(global, err)?,
         }
-        el.drain_microtasks_with_global(global, global_vm)?;
+        tick.el.drain_microtasks_with_global(global, global_vm)?;
     }
-    el.tasks.reset_head_if_empty();
+    tick.el.tasks.reset_head_if_empty();
     Ok(())
 }
 
@@ -824,8 +828,7 @@ mod run_impls {
         #[inline]
         unsafe fn run(this: *mut Self, _: &mut Tick<'_>) -> JsResult<()> {
             // `this` packs an int, not a pointer.
-            Self::run_from_js_thread(this as usize);
-            Ok(())
+            Self::run_from_js_thread(this as usize)
         }
     }
 
@@ -1141,7 +1144,7 @@ unsafe fn __bun_run_wtf_timer(timer: *mut (), vm: *mut bun_jsc::virtual_machine:
 /// Each arm is the owner's timer entry with its result surfaced: an owner
 /// returns the exception it left pending and never reports it; the drain loop
 /// (`All::drain_timers`) folds every timer's result in one place. Owners whose
-/// entry cannot enter JS return `()`, lifted to `Ok(())` by [`IntoTimerResult`].
+/// entry cannot enter JS return `()`, lifted to `Ok(())` by [`LiftJsResult`].
 ///
 /// # Safety
 /// `t` points at a live [`EventLoopTimer`] just popped from `All.timers`;
@@ -1179,7 +1182,7 @@ pub(crate) unsafe fn __bun_fire_timer(
             let $c: *mut $Ty = owner!($Ty, $field);
             let ($now, $vm) = (now, vm);
             // SAFETY: per fn contract; container derived from a live `$Ty`.
-            IntoTimerResult::into_timer_result(unsafe { $body })
+            LiftJsResult::lift(unsafe { $body })
         }};
     }
     let fired: JsResult<()> = match tag {
@@ -1266,7 +1269,7 @@ pub(crate) unsafe fn __bun_fire_timer(
             {
                 let container = owner!(WindowsNamedPipe, event_loop_timer);
                 // SAFETY: per fn contract.
-                IntoTimerResult::into_timer_result(unsafe { (*container).on_timeout() })
+                LiftJsResult::lift(unsafe { (*container).on_timeout() })
             }
             #[cfg(not(windows))]
             {
@@ -1359,7 +1362,8 @@ pub(crate) unsafe fn __bun_fire_timer(
         }
         EventLoopTimerTag::CronJob => {
             let c: *mut CronJob = owner!(CronJob, event_loop_timer);
-            CronJob::on_timer_fire(c, VirtualMachine::get())
+            CronJob::on_timer_fire(c, VirtualMachine::get());
+            Ok(())
         }
         EventLoopTimerTag::QuicEndpoint => {
             let c: *mut crate::node::quic::QuicEndpoint =
@@ -1373,18 +1377,21 @@ pub(crate) unsafe fn __bun_fire_timer(
 
 /// Lifts a timer entry's return to the dispatcher's `JsResult`: entries that
 /// cannot enter JS return `()`.
-trait IntoTimerResult {
-    fn into_timer_result(self) -> JsResult<()>;
+/// Lifts what a dispatcher's callee returns into the `JsResult<()>` its fold
+/// reads: `()` for owners that never enter JS, identity otherwise. Shared by
+/// the timer switch here and the socket trampolines (`uws_handlers`).
+pub(crate) trait LiftJsResult {
+    fn lift(self) -> JsResult<()>;
 }
-impl IntoTimerResult for () {
+impl LiftJsResult for () {
     #[inline(always)]
-    fn into_timer_result(self) -> JsResult<()> {
+    fn lift(self) -> JsResult<()> {
         Ok(())
     }
 }
-impl IntoTimerResult for JsResult<()> {
+impl LiftJsResult for JsResult<()> {
     #[inline(always)]
-    fn into_timer_result(self) -> JsResult<()> {
+    fn lift(self) -> JsResult<()> {
         self
     }
 }

@@ -3436,3 +3436,15 @@ void NapiEnv::clearExceptionsBetweenFinalizers()
     DECLARE_TOP_EXCEPTION_SCOPE(m_vm).clearException();
     m_pendingException.clear();
 }
+
+void NapiEnv::reportThenClearExceptionBetweenFinalizers()
+{
+    {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
+        if (auto* exception = scope.exception(); exception && !m_vm.isTerminationException(exception)) {
+            (void)scope.tryClearException();
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(m_globalObject, exception);
+        }
+    }
+    clearExceptionsBetweenFinalizers();
+}

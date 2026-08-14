@@ -166,6 +166,21 @@ impl NapiEnv {
         }
         None
     }
+
+    /// After a native addon callback (a `complete`, a finalizer, a `call_js`):
+    /// what it raised through Node-API — latched on the env — or left on the VM
+    /// is that call's exception, surfaced as `Err` with it pending on the VM.
+    /// The VM's own exception wins over a latched one.
+    pub(crate) fn surface_exception(&self, global: &JSGlobalObject) -> JsResult<()> {
+        let latched = self.get_and_clear_pending_exception();
+        if global.has_exception() {
+            return Err(jsc::JsError::Thrown);
+        }
+        match latched {
+            Some(exception) => Err(global.throw_value(exception)),
+            None => Ok(()),
+        }
+    }
 }
 
 // SAFETY: NapiEnv refcount is managed externally by C++ via NapiEnv__ref/NapiEnv__deref;
@@ -1954,17 +1969,8 @@ impl napi_async_work {
 
         complete(env, status as napi_status, self.data);
 
-        // An exception `complete` raised through napi (latched on the env) or
-        // left on the VM is this task's uncaught exception.
         // SAFETY: env is valid for the duration of this call.
-        let env_ref = unsafe { &*env };
-        if let Some(exception) = env_ref.get_and_clear_pending_exception() {
-            return Err(global.throw_value(exception));
-        }
-        if global.has_exception() {
-            return Err(jsc::JsError::Thrown);
-        }
-        Ok(())
+        unsafe { &*env }.surface_exception(global)
     }
 }
 
@@ -2390,16 +2396,7 @@ impl Finalizer {
         // SAFETY: env is valid; passes the C finalizer back for bookkeeping.
         unsafe { napi_internal_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
 
-        let global = env_ref.to_js();
-        if global.has_exception() {
-            // The VM's exception wins; a latched one is dropped with the scope.
-            let _ = env_ref.get_and_clear_pending_exception();
-            return Err(jsc::JsError::Thrown);
-        }
-        if let Some(exception) = env_ref.get_and_clear_pending_exception() {
-            return Err(global.throw_value(exception));
-        }
-        Ok(())
+        env_ref.surface_exception(env_ref.to_js())
     }
 
     // `deinit` is handled by Drop on NapiEnvRef.
@@ -2806,14 +2803,7 @@ impl ThreadSafeFunction {
                     None => napi_value(0),
                 };
                 napi_threadsafe_function_call_js(env, js, self.ctx, task);
-                // What the addon's `call_js` raised through napi (latched on the
-                // env) or left on the VM is this call's uncaught exception.
-                if let Some(exception) = env_ref.get_and_clear_pending_exception() {
-                    return Err(global_object.throw_value(exception));
-                }
-                if global_object.has_exception() {
-                    return Err(jsc::JsError::Thrown);
-                }
+                env_ref.surface_exception(global_object)?;
             }
         }
         Ok(())
@@ -3007,7 +2997,8 @@ impl ThreadSafeFunction {
                 hint: self.ctx,
             });
         if let Some(mut finalizer) = finalizer {
-            // A cleanup hook: `Err` is left pending for the hook runner's fold.
+            // `Err` is left pending for the runner (`abortThreadSafeFunctions`),
+            // which reports it before tearing down the next function.
             let _ = finalizer.run();
         }
 

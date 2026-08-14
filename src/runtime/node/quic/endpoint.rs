@@ -611,7 +611,7 @@ extern "C" fn on_data(
         if let Err(err) =
             this.maybe_announce_provisional(global, payload, core::ptr::from_ref(peer).cast())
         {
-            super::fold::at_boundary(global, err);
+            let _ = super::fold::at_boundary(global, err);
         }
         let engines = match owner_engine {
             // Already matched above: the other engine would only miss it.
@@ -1722,30 +1722,27 @@ impl QuicEndpoint {
             peer_decoded
         );
         let endpoint_handle = self.this_value.get().get();
-        let created = QuicSession::create(
+        let (session, _handle) = QuicSession::create(
             global,
             self.vtable_ptr,
             core::ptr::from_ref(self).cast_mut(),
             endpoint_handle,
             null_mut(),
             true,
-        );
-        let (session, _handle) = created?;
-        {
-            let applied = self.apply_server_session_options(global, session);
-            self.sessions.with_mut(|v| v.push(session));
-            self.pending_new_sessions.with_mut(|v| v.push(session));
-            self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
-            self.provisional.with_mut(|v| {
-                v.push(ProvisionalSession {
-                    dcid: dcid.to_vec(),
-                    peer: peer_stored,
-                    created_ns: now_ns(),
-                    session,
-                })
-            });
-            applied
-        }
+        )?;
+        let applied = self.apply_server_session_options(global, session);
+        self.sessions.with_mut(|v| v.push(session));
+        self.pending_new_sessions.with_mut(|v| v.push(session));
+        self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
+        self.provisional.with_mut(|v| {
+            v.push(ProvisionalSession {
+                dcid: dcid.to_vec(),
+                peer: peer_stored,
+                created_ns: now_ns(),
+                session,
+            })
+        });
+        applied
     }
 
     /// Queues the handshake-failure close both timeout lists deliver.
@@ -1889,7 +1886,7 @@ impl QuicEndpoint {
         ) {
             Ok((session, _handle)) => {
                 if let Err(err) = self.apply_server_session_options(global, session) {
-                    super::fold::at_boundary(global, err);
+                    let _ = super::fold::at_boundary(global, err);
                 }
                 self.sessions.with_mut(|v| v.push(session));
                 self.pending_new_sessions.with_mut(|v| v.push(session));
@@ -1901,7 +1898,7 @@ impl QuicEndpoint {
             Err(e) => {
                 // Abort like the sibling null-return branches, or the conn
                 // lingers with no session behind it.
-                super::fold::at_boundary(global, e);
+                let _ = super::fold::at_boundary(global, e);
                 // SAFETY: `conn` is the live conn lsquic just created.
                 if let Some(c) = unsafe { lsquic::Conn::from_raw(conn) } {
                     c.abort_silent();

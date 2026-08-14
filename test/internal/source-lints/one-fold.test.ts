@@ -43,6 +43,7 @@ const DISPATCHERS = new Set([
   "src/runtime/cli/run_command.rs", // the process entry: outermost frame for the preconnect scripts
   "src/runtime/dispatch.rs", // task queue tick
   "src/runtime/timer/mod.rs", // timer drains
+  "src/runtime/test_runner/timers/FakeTimers.rs", // the fake clock's timer drain
   "src/runtime/socket/uws_handlers.rs", // uSockets trampolines
   "src/io/lib.rs", // pipe reader/writer trampolines
   "src/uws_sys/WebSocket.rs", // uWS websocket/upgrade trampolines

@@ -619,16 +619,19 @@ pub(crate) mod on_unhandled_rejection {
             buntest.add_result(current_state_data);
             if let Err(e) = bun_test::BunTest::run(&buntest_strong, global_object) {
                 // As `RunTestsTask::call`: what advancing the runner threw is
-                // recorded against wherever the runner now is.
-                // SAFETY: as above; `run` has returned, this is the only handle.
-                let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
-                let phase = buntest.get_current_state_data();
-                buntest.on_uncaught_exception(
-                    global_object,
-                    Some(global_object.take_exception(e)),
-                    true,
-                    &phase,
-                );
+                // recorded against wherever the runner now is; a termination is
+                // left where it is.
+                if !global_object.has_pending_termination_exception() {
+                    // SAFETY: as above; `run` has returned, this is the only handle.
+                    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+                    let phase = buntest.get_current_state_data();
+                    buntest.on_uncaught_exception(
+                        global_object,
+                        Some(global_object.take_exception(e)),
+                        false,
+                        &phase,
+                    );
+                }
             }
             return;
         }

@@ -799,10 +799,13 @@ impl StreamResult {
     }
 }
 
-/// A native teardown frame with no exception channel (sink ABI methods, uWS
-/// response callbacks, process-exit and abort hooks) settled a parked promise:
-/// what that can leave pending — allocation failure or a terminating VM, never
-/// user code — stays pending on the VM for the enclosing host call or dispatch.
+/// A native frame with no exception channel — the JSSink ABI methods
+/// (`write`/`end`/`flush`/`start`), uWS response callbacks (`onWritable`,
+/// `onAborted`), process-exit and abort hooks, DNS completions — settled a
+/// parked promise or signalled a source: what that can leave pending comes from
+/// settling a promise — allocation failure or a terminating VM, never user
+/// code — and it stays pending on the VM for the enclosing host call or
+/// dispatch to take.
 #[inline]
 pub(crate) fn settled_from_native(settled: JsResult<()>) {
     let _ = settled;
@@ -983,26 +986,6 @@ impl SourceHandle {
             SourceHandle::HTMLRewriter(p) => p.on_close(err),
             SourceHandle::TestingCancelOnDrain(_) => Ok(()),
         }
-    }
-
-    /// [`close`](Self::close) for native frames with no exception channel (the
-    /// sink ABI methods, uWS response callbacks, process-exit hooks). What a
-    /// close can leave pending comes from settling a parked promise —
-    /// allocation failure or a terminating VM, never user code — and it stays
-    /// pending on the VM for the enclosing host call or dispatch to take.
-    #[inline]
-    pub fn close_from_native(&mut self, err: Option<SysError>) {
-        let _ = self.close(err);
-    }
-
-    /// [`ready`](Self::ready) counterpart of [`close_from_native`](Self::close_from_native).
-    #[inline]
-    pub fn ready_from_native(
-        &mut self,
-        amount: Option<BlobSizeType>,
-        offset: Option<BlobSizeType>,
-    ) {
-        let _ = self.ready(amount, offset);
     }
 
     pub fn ready(
@@ -1477,8 +1460,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // onWritable reset backpressure state to allow flushing
         self.has_backpressure = false;
         if self.is_aborted() {
-            self.source.close_from_native(None);
-            let _ = self.flush_promise(); // TODO: properly propagate exception upwards
+            settled_from_native(self.source.close(None));
+            settled_from_native(self.flush_promise());
             self.finalize();
             return false;
         }
@@ -1496,20 +1479,20 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         if self.readable_slice().is_empty() {
             if self.is_done() {
                 self.source_pending_pull = false;
-                self.source.close_from_native(None);
-                let _ = self.flush_promise(); // TODO: properly propagate exception upwards
+                settled_from_native(self.source.close(None));
+                settled_from_native(self.flush_promise());
                 self.finalize();
                 return true;
             }
             let had_flush_waiter = self.pending_flush.is_some();
-            let _ = self.flush_promise(); // TODO: properly propagate exception upwards
+            settled_from_native(self.flush_promise());
             if core::mem::take(&mut self.source_pending_pull)
                 && !had_flush_waiter
                 && !self.is_done()
                 && !self.requested_end
                 && !self.has_backpressure()
             {
-                self.source.ready_from_native(None, None);
+                settled_from_native(self.source.ready(None, None));
             }
             return true;
         }
@@ -1538,8 +1521,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // if we have nothing to write, we are done
         if chunk_len == 0 {
             if self.is_done() {
-                self.source.close_from_native(None);
-                let _ = self.flush_promise(); // TODO: properly propagate exception upwards
+                settled_from_native(self.source.close(None));
+                settled_from_native(self.flush_promise());
                 self.finalize();
                 return true;
             }
@@ -1559,8 +1542,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 // `send_readable` drained the parked `try_end`, so uWS has
                 // `markDone()`d the response and dropped its `onAborted`.
                 self.ended_response = true;
-                self.source.close_from_native(None);
-                let _ = self.flush_promise(); // TODO: properly propagate exception upwards
+                settled_from_native(self.source.close(None));
+                settled_from_native(self.flush_promise());
                 self.finalize();
                 return true;
             }
@@ -1568,7 +1551,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         // flush the javascript promise from calling .flush()
         let had_flush_waiter = self.pending_flush.is_some();
-        let _ = self.flush_promise(); // TODO: properly propagate exception upwards
+        settled_from_native(self.flush_promise());
 
         // pending_flush or callback could have caused another send()
         // so we check again if we should report readiness
@@ -1577,8 +1560,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             if (total_written > 0 || (had_pending_pull && !had_flush_waiter))
                 && self.readable_slice().is_empty()
             {
-                self.source
-                    .ready_from_native(Some(total_written as BlobSizeType), None);
+                settled_from_native(self.source.ready(Some(total_written as BlobSizeType), None));
             }
         }
 
@@ -1588,13 +1570,13 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     pub(crate) fn start(&mut self, stream_start: &Start) -> bun_sys::Result<()> {
         if self.is_aborted() || self.res.is_none() || self.any_res().unwrap().has_responded() {
             self.mark_done();
-            self.source.close_from_native(None);
+            settled_from_native(self.source.close(None));
             return bun_sys::Result::Ok(());
         }
 
         self.wrote = 0;
         self.wrote_at_start_of_flush = 0;
-        let _ = self.flush_promise(); // TODO: properly propagate exception upwards
+        settled_from_native(self.flush_promise());
 
         if self.buffer.capacity() == 0 {
             debug_assert!(self.pooled_buffer.is_none());
@@ -1721,7 +1703,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         if self.res.is_none() || self.any_res().unwrap().has_responded() {
             self.mark_done();
-            self.source.close_from_native(None);
+            settled_from_native(self.source.close(None));
         }
 
         bun_sys::Result::Ok(())
@@ -1773,7 +1755,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         if self.res.is_none() || self.any_res().unwrap().has_responded() {
-            self.source.close_from_native(None);
+            settled_from_native(self.source.close(None));
             self.mark_done();
             return Writable::Done;
         }
@@ -1831,7 +1813,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         if self.res.is_none() || self.any_res().unwrap().has_responded() {
-            self.source.close_from_native(None);
+            settled_from_native(self.source.close(None));
             self.mark_done();
             return Writable::Done;
         }
@@ -1874,7 +1856,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         if self.is_done() || self.res.is_none() || self.any_res().unwrap().has_responded() {
-            self.source.close_from_native(err);
+            settled_from_native(self.source.close(err));
             self.mark_done();
             self.finalize();
             return bun_sys::Result::Ok(());
@@ -1885,7 +1867,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.end_len = readable_len;
 
         if readable_len == 0 {
-            self.source.close_from_native(err);
+            settled_from_native(self.source.close(err));
             self.mark_done();
             // we do not close the stream here
             // this.res.endStream(false);
@@ -1904,7 +1886,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         if self.is_done() || self.res.is_none() || self.any_res().unwrap().has_responded() {
             self.requested_end = true;
-            self.source.close_from_native(None);
+            settled_from_native(self.source.close(None));
             self.mark_done();
             self.finalize();
             return bun_sys::Result::Ok(JSValue::from(0i32));
@@ -1937,8 +1919,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // `markDone()`s it and drops its `onAborted`.
         self.ended_response = true;
         self.mark_done();
-        let _ = self.flush_promise(); // TODO: properly propagate exception upwards
-        self.source.close_from_native(None);
+        settled_from_native(self.flush_promise());
+        settled_from_native(self.source.close(None));
         self.finalize();
 
         bun_sys::Result::Ok(JSValue::from(self.wrote))
@@ -1972,7 +1954,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // no reference into the allocation may be live across the call.
         // SAFETY: as above; `source` is copied out before the close.
         let mut source = unsafe { (*this).source };
-        source.close_from_native(None);
+        settled_from_native(source.close(None));
     }
 
     fn unregister_auto_flusher(&mut self) {
@@ -2023,8 +2005,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             // `send_readable` drained the parked `try_end`/`end`, so uWS has
             // `markDone()`d the response and dropped its `onAborted`.
             self.ended_response = true;
-            self.source.close_from_native(None);
-            let _ = self.flush_promise();
+            settled_from_native(self.source.close(None));
+            settled_from_native(self.flush_promise());
             self.finalize();
         }
         false
@@ -2370,7 +2352,7 @@ impl NetworkSink {
         self.done = true;
         self.pending.result = Writable::Done;
         let settled = self.pending.run();
-        self.source.close_from_native(None);
+        settled_from_native(self.source.close(None));
         self.finalize();
         settled_from_native(settled);
     }
@@ -2475,7 +2457,7 @@ impl NetworkSink {
             // bun.handleOom → Rust aborts on OOM
         }
 
-        self.source.close_from_native(err);
+        settled_from_native(self.source.close(err));
         bun_sys::Result::Ok(())
     }
 

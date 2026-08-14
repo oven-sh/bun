@@ -696,6 +696,8 @@ impl IntoParentResult<()> for () {
         Ok(())
     }
 }
+/// `E` is `bun_core::JsError` or the `bun_jsc` enum that mirrors it (this
+/// crate cannot name the latter); both mean an exception is pending.
 impl<T, E: Into<bun_core::JsError>> IntoParentResult<T> for core::result::Result<T, E> {
     #[inline(always)]
     fn into_parent_result(self) -> JsResult<T> {
@@ -713,7 +715,9 @@ unsafe extern "Rust" {
 
 /// The fold for the pipe reader/writer trampolines: what a parent's callback
 /// left pending is reported here (JS thread), and the caller stops driving I/O
-/// for this event.
+/// for this event. Usually the outermost frame (a poll or uv callback); a
+/// writer's `write`/`flush`/`end` also reaches its parent synchronously from a
+/// host function, where the report is that call's and no checkpoint runs.
 #[cold]
 #[inline(never)]
 pub(crate) fn fold_loop_js_error(err: bun_core::JsError) {

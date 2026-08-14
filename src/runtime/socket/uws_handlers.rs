@@ -27,24 +27,10 @@ use bun_http_jsc::websocket_client::websocket_upgrade_client;
 use bun_sql_jsc::mysql;
 use bun_sql_jsc::postgres;
 
-/// A driver's inherent `on_*` returns `()` (it handled everything itself: postgres, mysql) or a
-/// `JsResult<()>` (it settled promises / converted values and something threw: valkey). Both become the
-/// `JsResult<()>` the dispatcher folds at the entry.
-pub(crate) trait IntoJsResult {
-    fn into_js_result(self) -> bun_jsc::JsResult<()>;
-}
-impl IntoJsResult for () {
-    #[inline]
-    fn into_js_result(self) -> bun_jsc::JsResult<()> {
-        Ok(())
-    }
-}
-impl IntoJsResult for bun_jsc::JsResult<()> {
-    #[inline]
-    fn into_js_result(self) -> bun_jsc::JsResult<()> {
-        self
-    }
-}
+// A driver's inherent `on_*` returns `()` (it handled everything itself: postgres, mysql) or a
+// `JsResult<()>` (valkey, Bun.connect/listen sockets); `LiftJsResult` makes both the `JsResult<()>`
+// the dispatcher folds at the entry.
+use crate::dispatch::LiftJsResult;
 
 /// The fold at a socket callback that entered JS (WebCore's "returned exception is termination or we
 /// are terminating => stand down, else report"): a uSockets callback returns `void`, so a pending
@@ -335,8 +321,8 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
 // `socket/mod.rs` (bridges to inherent methods).
 
 /// Forwards `NsSocketEvents` to the inherent `on_*` methods on a driver's
-/// `SocketHandler<SSL>` namespace type; `into_js_result()` lifts both return shapes (see
-/// [`IntoJsResult`]) so one expansion covers postgres, mysql and valkey, and the dispatcher
+/// `SocketHandler<SSL>` namespace type; `lift()` lifts both return shapes (see
+/// [`LiftJsResult`]) so one expansion covers postgres, mysql and valkey, and the dispatcher
 /// (`NsHandler: VHandler`) folds the result at the entry.
 ///
 /// `on_long_timeout` is intentionally NOT forwarded — no driver defines it,
@@ -349,17 +335,17 @@ macro_rules! impl_ns_socket_events_forward {
     ($Owner:ty, $Handler:ty) => {
         impl<const SSL: bool> NsSocketEvents<$Owner, SSL> for $Handler {
             fn on_open(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-                Self::on_open(this, s).into_js_result()
+                Self::on_open(this, s).lift()
             }
             fn on_data(
                 this: &mut $Owner,
                 s: NewSocketHandler<SSL>,
                 data: &[u8],
             ) -> bun_jsc::JsResult<()> {
-                Self::on_data(this, s, data).into_js_result()
+                Self::on_data(this, s, data).lift()
             }
             fn on_writable(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-                Self::on_writable(this, s).into_js_result()
+                Self::on_writable(this, s).lift()
             }
             fn on_close(
                 this: &mut $Owner,
@@ -367,20 +353,20 @@ macro_rules! impl_ns_socket_events_forward {
                 code: i32,
                 reason: Option<*mut c_void>,
             ) -> bun_jsc::JsResult<()> {
-                Self::on_close(this, s, code, reason).into_js_result()
+                Self::on_close(this, s, code, reason).lift()
             }
             fn on_timeout(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-                Self::on_timeout(this, s).into_js_result()
+                Self::on_timeout(this, s).lift()
             }
             fn on_end(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-                Self::on_end(this, s).into_js_result()
+                Self::on_end(this, s).lift()
             }
             fn on_connect_error(
                 this: &mut $Owner,
                 s: NewSocketHandler<SSL>,
                 code: i32,
             ) -> bun_jsc::JsResult<()> {
-                Self::on_connect_error(this, s, code).into_js_result()
+                Self::on_connect_error(this, s, code).lift()
             }
             fn on_handshake(
                 this: &mut $Owner,
@@ -389,7 +375,7 @@ macro_rules! impl_ns_socket_events_forward {
                 err: us_bun_verify_error_t,
             ) -> bun_jsc::JsResult<()> {
                 match Self::ON_HANDSHAKE {
-                    Some(f) => f(this, s, ok, err).into_js_result(),
+                    Some(f) => f(this, s, ok, err).lift(),
                     None => Ok(()),
                 }
             }

@@ -811,7 +811,7 @@ impl RewriterPipe {
     /// cell was swept with the promise (`cell` is zeroed), every source that
     /// could have held a backref died with the cell, so clear the handles
     /// raw and fail the body through the Response native `+1`.
-    pub(crate) fn abandon_suspension(pipe: bun_ptr::BackRef<Self>) {
+    pub(crate) fn abandon_suspension(pipe: bun_ptr::BackRef<Self>) -> JsResult<()> {
         let this = &*pipe;
         let cell_alive = this.cell.get().is_cell();
         this.release_suspended_wrapper();
@@ -819,12 +819,11 @@ impl RewriterPipe {
             this.input_source.set(SourceHandle::None);
             this.output.set(None);
         }
-        // Settle-only result; this runs from the wrapper's finalizer, so it
-        // stays pending.
-        let _ = this.fail(webcore::body::ValueError::Message(BunString::static_(
+        let failed = this.fail(webcore::body::ValueError::Message(BunString::static_(
             "HTMLRewriter content handler returned a Promise that will never settle",
         )));
         Self::deref_nn(pipe.into());
+        failed
     }
 
     /// Record a handler's exception for the enclosing lol-html call to pick
@@ -874,7 +873,7 @@ impl RewriterPipe {
         if cancel_upstream {
             match upstream {
                 SourceHandle::ByteStream(_) | SourceHandle::FileReader(_) => {
-                    upstream.close_from_native(None);
+                    crate::webcore::streams::settled_from_native(upstream.close(None));
                 }
                 _ => {}
             }
@@ -1465,21 +1464,22 @@ impl RewriterPipe {
     /// A content handler's promise resolved: continue the rewrite from
     /// wherever lol-html parked it, then drain any `pending_input` that
     /// arrived while suspended.
-    fn resume_rewrite(&self) {
+    fn resume_rewrite(&self) -> JsResult<()> {
         if self.phase.get() == RewritePhase::Done {
             // Output reader cancelled (or the rewrite failed) while suspended.
-            return;
+            return Ok(());
         }
         if let Some(Err(e)) = self.drive_rewriter(|r| r.resume()) {
-            return self.on_rewriting_error(&e);
+            self.on_rewriting_error(&e);
+            return Ok(());
         }
         match self.phase.get() {
-            RewritePhase::WritePending => {
-                // As in `resume`: settle-only, left pending.
-                let _ = self.drain_pending_input();
+            RewritePhase::WritePending => self.drain_pending_input(),
+            RewritePhase::EndPending => {
+                self.finish();
+                Ok(())
             }
-            RewritePhase::EndPending => self.finish(),
-            RewritePhase::Done => {}
+            RewritePhase::Done => Ok(()),
         }
     }
 
@@ -1616,8 +1616,7 @@ impl RewriterPipe {
         {
             *body_value = webcore::body::Value::Empty;
         }
-        let _ = body_value.to_error_instance(err, &self.global);
-        settled
+        settled.and_then(|()| body_value.to_error_instance(err, &self.global))
     }
 }
 
@@ -1768,9 +1767,10 @@ fn on_handler_resolve(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     };
     let pipe = BackRef::from(pipe);
     pipe.release_suspended_wrapper();
-    pipe.resume_rewrite();
+    let resumed = pipe.resume_rewrite();
     // Balances the `ref_()` in `begin_suspension`.
     RewriterPipe::deref_nn(pipe.into());
+    resumed?;
     Ok(JSValue::UNDEFINED)
 }
 

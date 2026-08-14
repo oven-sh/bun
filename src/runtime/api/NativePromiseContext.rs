@@ -183,10 +183,10 @@ pub(crate) struct DeferredDerefTask;
 
 impl Taskable for DeferredDerefTask {
     const TAG: TaskTag = task_tag::NativePromiseContextDeferredDerefTask;
-    /// `this` packs a context pointer and tag; the deref it defers is
-    /// script-free, so do it.
+    /// `this` packs a context pointer and tag; the deref it defers is done
+    /// (the suspension arm's `Err` is left pending for the release runner).
     unsafe fn release_unrun(this: *mut Self) {
-        Self::run_from_js_thread(this as usize);
+        let _ = Self::run_from_js_thread(this as usize);
     }
 }
 
@@ -217,7 +217,9 @@ impl DeferredDerefTask {
         vm.event_loop_ref().enqueue_task(task);
     }
 
-    pub(crate) fn run_from_js_thread(packed_ptr: usize) {
+    /// The HTMLRewriter suspension arm fails a body (settles a promise), so
+    /// this task returns what that left pending like any other.
+    pub(crate) fn run_from_js_thread(packed_ptr: usize) -> bun_jsc::JsResult<()> {
         let tag = Tag::from_raw((packed_ptr & Self::TAG_MASK) as u8);
         let ctx = (packed_ptr & !Self::TAG_MASK) as *mut c_void;
         // SAFETY: ctx was packed in `schedule` from a live, non-null pointer
@@ -247,7 +249,7 @@ impl DeferredDerefTask {
                     let back = bun_ptr::BackRef::from(NonNull::new_unchecked(
                         ctx.cast::<html_rewriter::RewriterPipe>(),
                     ));
-                    html_rewriter::RewriterPipe::abandon_suspension(back);
+                    return html_rewriter::RewriterPipe::abandon_suspension(back);
                 }
                 Tag::HTMLRewriterPipeFree => {
                     <html_rewriter::RewriterPipe as bun_ptr::CellRefCounted>::deref_nn(
@@ -256,6 +258,7 @@ impl DeferredDerefTask {
                 }
             }
         }
+        Ok(())
     }
 }
 

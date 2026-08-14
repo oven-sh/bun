@@ -3281,21 +3281,11 @@ uint8_t GlobalObject::drainMicrotasks()
         if (vm.isTerminationException(exception)) [[unlikely]] {
             return 1;
         }
-
-#if ASSERT_ENABLED
-        (void)scope.tryClearException();
-        // We should not have an exception here.
-        // But it's an easy mistake to make.
-        // Let's log it so that we can debug this.
-        Bun__reportError(this, JSValue::encode(exception));
-
-        // And re-throw it to preserve the production behavior.
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        throwScope.throwException(this, exception);
-        throwScope.release();
-#endif
+        // A frame is leaving with an exception pending, on its way to the fold
+        // that takes it (the dispatcher's, or a host function's caller): this
+        // is not a checkpoint. The fold drains once the exception is taken.
+        return 2;
     }
-    scope.assertNoExceptionExceptTermination();
 
     if (auto nextTickQueue = this->m_nextTickQueue.get()) {
         nextTickQueue->drain(vm, this);

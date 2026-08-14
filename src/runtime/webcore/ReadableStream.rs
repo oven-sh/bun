@@ -216,7 +216,7 @@ impl ReadableStream {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                 let blobby = unsafe { &mut *blobby };
                 if let Some(blob) = blobby.to_any_blob(global_this) {
-                    self.done_from_native(global_this);
+                    crate::webcore::streams::settled_from_native(self.done(global_this));
                     return Some(blob);
                 }
             }
@@ -228,7 +228,7 @@ impl ReadableStream {
                     let blob = Blob::init_with_store(store.clone(), global_this);
                     // it should be lazy, file shouldn't have opened yet.
                     debug_assert!(!blobby.started.get());
-                    self.done_from_native(global_this);
+                    crate::webcore::streams::settled_from_native(self.done(global_this));
                     return Some(webcore::blob::Any::Blob(blob));
                 }
             }
@@ -238,7 +238,7 @@ impl ReadableStream {
                 // If we've received the complete body by the time this function is called
                 // we can avoid streaming it and convert it to a Blob
                 if let Some(blob) = bytes.to_any_blob() {
-                    self.done_from_native(global_this);
+                    crate::webcore::streams::settled_from_native(self.done(global_this));
                     return Some(blob);
                 }
                 return None;
@@ -247,13 +247,6 @@ impl ReadableStream {
         }
 
         None
-    }
-
-    /// [`done`](Self::done) for native frames with no exception channel; see
-    /// `SourceHandle::close_from_native` for what can be left pending and why.
-    #[inline]
-    pub fn done_from_native(&self, global_this: &JSGlobalObject) {
-        let _ = self.done(global_this);
     }
 
     pub fn done(&self, global_this: &JSGlobalObject) -> JsResult<()> {
@@ -278,7 +271,7 @@ impl ReadableStream {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__cancel(self.value, global_this);
         // mark the stream source as done
-        self.done_from_native(global_this);
+        crate::webcore::streams::settled_from_native(self.done(global_this));
     }
 
     /// Cancel the stream and forward `reason` verbatim to the underlying source's
@@ -288,7 +281,7 @@ impl ReadableStream {
     pub fn cancel_with_reason(&self, global_this: &JSGlobalObject, reason: JSValue) {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__cancelWithReason(self.value, global_this, reason);
-        self.done_from_native(global_this);
+        crate::webcore::streams::settled_from_native(self.done(global_this));
     }
 
     pub fn abort(&self, global_this: &JSGlobalObject) {
@@ -299,7 +292,7 @@ impl ReadableStream {
     /// Like [`Self::cancel`] but pending reads reject with `reason` instead of resolving `{done: true}`.
     pub(crate) fn error(&self, global_this: &JSGlobalObject, reason: JSValue) {
         ReadableStream__error(self.value, global_this, reason);
-        self.done_from_native(global_this);
+        crate::webcore::streams::settled_from_native(self.done(global_this));
     }
 
     pub(crate) fn force_detach(&self, global_object: &JSGlobalObject) {

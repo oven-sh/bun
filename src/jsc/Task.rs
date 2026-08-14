@@ -10,7 +10,7 @@
 //! 1. Add a tag constant to `bun_event_loop::task_tag` (the canonical list).
 //! 2. `impl bun_jsc::Taskable for YourType { const TAG = task_tag::YourType; }`
 //!    in the crate that owns `YourType`.
-//! 3. Add a match arm in `bun_runtime::dispatch::run_tasks`.
+//! 3. Add a row to `for_each_task!` in `bun_runtime::dispatch` and an `impl RunTask`.
 
 use crate::event_loop::Stopped;
 use crate::{JSGlobalObject, JsError};
@@ -40,21 +40,6 @@ pub fn new<T: Taskable>(ptr: *mut T) -> Task {
 /// back is the VM's termination -- stand the tick loop down (WebCore: `isTerminationException(returned)`).
 #[cold]
 pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
-    fold_inner(global, proof)
-}
-
-/// [`report_error_or_terminate`] for a fold that runs outside any event-loop
-/// scope (a foreign dispatcher's trampoline: uSockets, timers, pipe I/O): the
-/// scopes beneath it skipped their microtask checkpoint over the pending
-/// exception (`EventLoop::exit`), so run it here once the exception is taken.
-#[cold]
-pub fn fold_at_loop_entry(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
-    fold_inner(global, proof)?;
-    global.bun_vm().event_loop_mut().drain_microtasks()
-}
-
-#[inline]
-fn fold_inner(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
     let ex = global.take_exception(proof);
     if ex.is_termination_exception() {
         return Err(Stopped);
@@ -72,9 +57,25 @@ fn fold_inner(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
     Ok(())
 }
 
-/// `bun_io::__bun_fold_loop_js_error` — the fold for the pipe reader/writer
-/// trampolines, which sit below this tier. Loop level: `Stopped` has no one to
-/// return to there (the tick reads the gate after the I/O phase).
+/// [`report_error_or_terminate`] for a foreign dispatcher's trampoline
+/// (uSockets, uWS, timers, pipe I/O). When that trampoline is the outermost
+/// frame, the scopes beneath it skipped their microtask checkpoint over the
+/// pending exception (`EventLoop::exit`), so it runs here once the exception is
+/// taken; when it was reached from inside another dispatch or a host function
+/// (a close issued from JS lands in `on_close` synchronously), the checkpoint is
+/// still that outer frame's.
+#[cold]
+pub fn fold_at_loop_entry(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
+    report_error_or_terminate(global, proof)?;
+    global.bun_vm().event_loop_mut().maybe_drain_microtasks();
+    Ok(())
+}
+
+
+/// `__bun_fold_loop_js_error` — the fold for the trampolines that sit below
+/// this tier (`bun_io`'s pipe reader/writer, `bun_uws_sys`'s WebSocket
+/// `Wrap`). `Stopped` has no one to return to there; the tick reads the gate
+/// after the I/O phase.
 #[unsafe(no_mangle)]
 fn __bun_fold_loop_js_error(err: bun_core::JsError) {
     let global = crate::virtual_machine::VirtualMachine::get().global();

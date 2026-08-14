@@ -1769,7 +1769,7 @@ impl CronJob {
 
     /// The tick's callback runs here; what it throws synchronously is the
     /// `Err` (folded by the timer drain), and the job is rescheduled either way.
-    pub(crate) fn on_timer_fire(this: *mut Self, vm: &VirtualMachine) -> jsc::JsResult<()> {
+    pub(crate) fn on_timer_fire(this: *mut Self, vm: &VirtualMachine) {
         // scheduleNext → finishDeferredStop downgrades this_value and derefs the
         // list entry; bracket-ref so that path can't drop the last ref mid-function.
         // Timer heap holds the entry; `this` is live until the guard drops.
@@ -1785,24 +1785,24 @@ impl CronJob {
             .with_mut(|t| t.state = EventLoopTimerState::FIRED);
 
         if this_ref.stopped.get() {
-            return Ok(());
+            return;
         }
         if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
             Self::self_stop(this, vm);
-            return Ok(());
+            return;
         }
 
         let Some(js_this) = this_ref.this_value.get().try_get() else {
             Self::self_stop(this, vm);
-            return Ok(());
+            return;
         };
         let Some(cb) = js::callback_get_cached(js_this) else {
             Self::self_stop(this, vm);
-            return Ok(());
+            return;
         };
         if cb.is_undefined() {
             Self::self_stop(this, vm);
-            return Ok(());
+            return;
         }
 
         // SAFETY: per-thread VM; `event_loop()` returns the live VM-owned
@@ -1811,22 +1811,27 @@ impl CronJob {
         let _ev_guard = vm.enter_event_loop_scope();
 
         this_ref.in_fire.set(true);
-        let called = cb.call(&this_ref.global, js_this, &[]);
+        // A top-level call: what the tick throws is reported here (before the
+        // job is re-armed, so an `uncaughtException` handler's `stop()` is
+        // observed by `schedule_next`), and does not stop the job — as with a
+        // rejected tick.
+        let result = vm.event_loop_mut().run_callback_with_result(
+            cb,
+            &this_ref.global,
+            js_this,
+            &[],
+        );
         this_ref.in_fire.set(false);
-        let result = match called {
-            Ok(v) => v,
-            Err(err) => {
-                // A throwing tick does not stop the job (as with a rejected one).
-                Self::schedule_next(this, vm);
-                return Err(err);
-            }
-        };
 
         // terminate() may have arrived while the callback was running; bail out
         // without touching the timer heap or JS state the teardown path owns.
         if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
             Self::self_stop(this, vm);
-            return Ok(());
+            return;
+        }
+        if result.is_empty() {
+            Self::schedule_next(this, vm);
+            return;
         }
 
         if let Some(promise) = result.as_any_promise() {
@@ -1853,7 +1858,7 @@ impl CronJob {
                         Self::release_pending_ref(this);
                         Self::schedule_next(this, vm);
                     }
-                    return Ok(());
+                    return;
                 }
                 jsc::js_promise::Status::Fulfilled => {}
                 jsc::js_promise::Status::Rejected => {
@@ -1880,7 +1885,6 @@ impl CronJob {
         }
 
         Self::schedule_next(this, vm);
-        Ok(())
     }
 
     #[bun_jsc::host_fn(method)]

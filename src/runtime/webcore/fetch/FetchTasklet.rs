@@ -2340,7 +2340,7 @@ impl FetchTasklet {
         if let Some(sink) = self.sink_mut() {
             sink.pending.result = Writable::Done;
             let settled = sink.pending.run();
-            sink.source.close_from_native(None);
+            crate::webcore::streams::settled_from_native(sink.source.close(None));
             if is_native {
                 sink.task = None;
             }

@@ -1341,6 +1341,8 @@ pub struct H2FrameParser {
     // (RFC 9113 §4.3); 0 when none.
     expecting_continuation: Cell<u32>,
     is_server: Cell<bool>,
+    /// A frame callback left an exception pending in this batch (`Sink::should_stop`).
+    left_exception: Cell<bool>,
     preface_received_len: Cell<u8>,
     // we buffer requests until we get the first settings ACK
     write_buffer: JsCell<Vec<u8>>,
@@ -5348,12 +5350,6 @@ impl H2FrameParser {
         };
 
         let global = self.handlers.get().global();
-        // A prior frame's callback can drain microtasks that tear the worker
-        // down (worker.terminate()); skip rather than calling JS with the
-        // termination exception pending. Same guard as read_bytes().
-        if global.has_exception() {
-            return Some(stream);
-        }
         // The callback runs arbitrary JS while `stream` is held (here and by every
         // caller): arm the dispatch guard so a reentrant read() cannot free the box at
         // depth 0. Bare guard, not enter_stream_dispatch — rst_stream reached from the
@@ -5892,11 +5888,12 @@ impl H2FrameParser {
 
 /// The from-scratch engine calls back into H2FrameParser (the embedder) through this.
 impl crate::api::h2::connection::Sink for H2FrameParser {
-    /// A frame callback left an exception pending (a value it could not build, or the
-    /// termination): no later frame in this batch is dispatched over it; `read()` throws it and
-    /// `on_native_read` returns it to the socket dispatch.
+    /// A frame callback left an exception pending (a value it could not build): no later frame
+    /// in this batch is dispatched over it; `read()` throws it and `on_native_read` returns it to
+    /// the socket dispatch. (A termination between frames is what `run_callback`'s gate covers.)
+    #[inline]
     fn should_stop(&self) -> bool {
-        self.handlers.get().global().has_exception()
+        self.left_exception.get()
     }
 
     fn on_frame_counters(&self, received: u64, sent: u64) {
@@ -5972,6 +5969,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                     .put_may_be_index(&g, &key, JSValue::js_number(*value as f64))
                     .is_err()
                 {
+                    self.left_exception.set(true);
                     return;
                 }
             }
@@ -6033,6 +6031,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                     .put_may_be_index(&g, &key, JSValue::js_number(*value as f64))
                     .is_err()
                 {
+                    self.left_exception.set(true);
                     return;
                 }
             }
@@ -6254,7 +6253,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             Ok(v) => v,
             // Materialization threw (OOM): drop the block; the exception stays
             // pending for `read()`/`on_native_read` (see `Sink::should_stop`).
-            Err(_) => return,
+            Err(_) => {
+                self.left_exception.set(true);
+                return;
+            }
         };
         if self.rewrite_pending_push.get() == stream_id && stream_id != 0 {
             // A PUSH_PROMISE header block: surface the promised request to JS as a pushed stream.
@@ -9659,7 +9661,7 @@ impl H2FrameParser {
         if let Some(array_buffer) = buffer.as_array_buffer(global_object) {
             let copied = array_buffer.byte_slice().to_vec();
             this.rewrite_read(&copied);
-            if global_object.has_exception() {
+            if this.left_exception.replace(false) {
                 return Err(bun_jsc::JsError::Thrown);
             }
             Ok(JSValue::UNDEFINED)
@@ -9675,7 +9677,7 @@ impl H2FrameParser {
         self.rewrite_read(data);
         // What a frame callback left pending stopped the engine (`should_stop`);
         // it belongs to the socket dispatch that delivered these bytes.
-        if self.handlers.get().global().has_exception() {
+        if self.left_exception.replace(false) {
             return Err(bun_jsc::JsError::Thrown);
         }
         Ok(())
@@ -9863,6 +9865,7 @@ impl H2FrameParser {
             last_peer_stream_id: Cell::new(0),
             expecting_continuation: Cell::new(0),
             is_server: Cell::new(false),
+            left_exception: Cell::new(false),
             preface_received_len: Cell::new(0),
             write_buffer: JsCell::new(Vec::<u8>::default()),
             write_buffer_offset: Cell::new(0),

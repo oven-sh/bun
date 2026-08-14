@@ -562,8 +562,8 @@ impl BlobExt for Blob {
                         syscall: BunString::static_("read").into(),
                         ..Default::default()
                     };
-                    // The read's thread stopped; this runs from the unrun job's release, whose
-                    // runner (`EventLoop::release_task_unrun`) folds what the handler leaves pending.
+                    // The read's thread stopped; this runs at teardown (the unrun job's release,
+                    // or `JobList::release_all_js`), where what the handler leaves stays pending.
                     // SAFETY: as for `call`.
                     let _ = unsafe { H::on_read_bytes(c, ReadBytesResult::Err(Box::new(err))) };
                 }

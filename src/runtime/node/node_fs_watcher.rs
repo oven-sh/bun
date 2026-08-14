@@ -192,9 +192,7 @@ impl FSWatchTaskPosix {
         self.count += 1;
     }
 
-    /// JS thread: deliver each batched event to the listener. A listener that
-    /// throws ends this task — the events after it are re-queued as their own
-    /// task so each is still delivered once the exception has been reported.
+    /// JS thread: deliver each batched event to the listener.
     pub(crate) fn run(&mut self) -> JsResult<()> {
         let ctx: *const FSWatcher = self.ctx();
         // SAFETY: BACKREF — the FSWatcher outlives its tasks.
@@ -216,26 +214,9 @@ impl FSWatchTaskPosix {
                 }
                 Event::Close => self.ctx().emit::<{ EventType::Close }>(b""),
             };
-            if let Err(err) = emitted {
-                if i + 1 < self.count as usize {
-                    let mut rest = FSWatchTaskPosix {
-                        ctx: self.ctx,
-                        count: 0,
-                        entries: [const { MaybeUninit::uninit() }; 8],
-                        concurrent_task: ConcurrentTask::default(),
-                    };
-                    for j in i + 1..self.count as usize {
-                        // SAFETY: as above; each entry moves out exactly once and
-                        // `count` is trimmed below so `deinit` does not drop it again.
-                        rest.entries[usize::from(rest.count)]
-                            .write(unsafe { self.entries[j].assume_init_read() });
-                        rest.count += 1;
-                    }
-                    self.count = (i + 1) as u8;
-                    rest.enqueue();
-                }
-                return Err(err);
-            }
+            // A filename that could not be built (allocation failure, or the
+            // VM is stopping): the rest of the batch is dropped with the task.
+            emitted?;
         }
         Ok(())
     }
@@ -496,9 +477,15 @@ impl FSWatchTaskWindows {
         match &mut self.event {
             Event::Rename(path) => Self::run_path::<{ EventType::Rename }>(ctx, path),
             Event::Change(path) => Self::run_path::<{ EventType::Change }>(ctx, path),
-            Event::Error { err, close } => Ok(ctx.emit_error(err, *close)),
+            Event::Error { err, close } => {
+                ctx.emit_error(err, *close);
+                Ok(())
+            }
             Event::NoFilename(event_type) => ctx.emit_null_filename(*event_type),
-            Event::Abort => Ok(ctx.emit_if_aborted()),
+            Event::Abort => {
+                ctx.emit_if_aborted();
+                Ok(())
+            }
             Event::Close => ctx.emit::<{ EventType::Close }>(b""),
         }
     }
@@ -915,7 +902,8 @@ impl FSWatcher {
         let Some(listener) = js::listener_get_cached(js_this) else {
             return Ok(());
         };
-        emit_js::<EVENT_TYPE>(listener, &self.global_this, file_name)
+        emit_js::<EVENT_TYPE>(listener, &self.global_this, file_name);
+        Ok(())
     }
 
     /// `Event::NoFilename`: deliver `(event, null)` regardless of encoding.
@@ -951,18 +939,20 @@ impl FSWatcher {
             }
         }
 
-        emit_js::<EVENT_TYPE>(listener, &global_object, filename)
+        emit_js::<EVENT_TYPE>(listener, &global_object, filename);
+        Ok(())
     }
 }
 
-fn emit_js<const EVENT_TYPE: EventType>(
-    listener: JSValue,
-    global_object: &JSGlobalObject,
-    filename: JSValue,
-) -> JsResult<()> {
+/// Each event's listener call is a top-level call of its own: what it throws
+/// is reported there and the batch goes on (node: `'change'` events keep
+/// arriving after a throwing listener).
+fn emit_js<const EVENT_TYPE: EventType>(listener: JSValue, global_object: &JSGlobalObject, filename: JSValue) {
     let args = [EVENT_TYPE.to_js(global_object), filename];
-    listener.call_with_global_this(global_object, &args)?;
-    Ok(())
+    global_object
+        .bun_vm()
+        .event_loop_mut()
+        .run_callback(listener, global_object, global_object.to_js_value(), &args);
 }
 
 impl FSWatcher {

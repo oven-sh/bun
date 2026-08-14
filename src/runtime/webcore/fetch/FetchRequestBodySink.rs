@@ -235,7 +235,7 @@ impl FetchRequestBodySink {
             Some(StreamError::Error(e)) => Some(e),
             _ => None,
         };
-        self.source.close_from_native(sys_err);
+        crate::webcore::streams::settled_from_native(self.source.close(sys_err));
     }
 
     pub fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {

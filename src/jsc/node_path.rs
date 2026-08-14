@@ -24,8 +24,9 @@ use crate::array_buffer::MarkedArrayBuffer;
 // every early return between `to_thread_safe` and the manual cleanup.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Undo the `JSValue::protect()` calls taken by [`to_thread_safe`](
-/// PathLike::to_thread_safe) (or an `args::*` type's `to_thread_safe`).
+/// Undo the `JSValue::protect()` calls taken by an `args::*` type's
+/// `to_thread_safe` (e.g. `StringOrBuffer`, which keeps JS-backed data
+/// buffers zero-copy).
 ///
 /// Implementations release **only** the JS-GC protect refcount — owned Rust
 /// payloads (Vec, `SliceWithUnderlyingString`, …) are freed by the type's own
@@ -203,15 +204,14 @@ impl PathLike {
         }
     }
 
-    /// Promote any borrowed-JS
-    /// payload to a thread-safe representation. For `Buffer` the variant is
-    /// kept and the backing JS value is `protect()`ed (paired with
-    /// [`Unprotect::unprotect`]); the discriminant is preserved so callers
-    /// matching on `Buffer` after this call see the same shape.
+    /// Promote any borrowed-JS payload to a representation that references
+    /// no JS heap cell, so the path may be read from another thread and
+    /// dropped anywhere — including off-thread or inside a GC finalizer
+    /// (a `Blob` store holds its path for the cell's lifetime).
     ///
-    /// Prefer [`Self::into_thread_safe`] which returns a [`ThreadSafe`] guard;
-    /// this in-place form exists for nested calls from container types'
-    /// `to_thread_safe`.
+    /// A `Buffer` is copied into an owned `String` and its pin released here,
+    /// on the JS thread: a path is at most `MAX_PATH_BYTES`, and a snapshot
+    /// also means later JS writes to the buffer can't tear the path mid-read.
     pub fn to_thread_safe(&mut self) {
         match self {
             Self::SliceWithUnderlyingString(s) => {
@@ -220,7 +220,9 @@ impl PathLike {
                 *self = Self::ThreadsafeString(owned);
             }
             Self::Buffer(b) => {
-                b.buffer.value.protect();
+                let owned = bun_core::handle_oom(CowSlice::init_dupe(b.slice()));
+                // Drops the `Buffer` arm, which unpins.
+                *self = Self::String(owned);
             }
             Self::String(_) | Self::ThreadsafeString(_) | Self::EncodedSlice(_) => {}
         }
@@ -228,15 +230,10 @@ impl PathLike {
 }
 
 impl Unprotect for PathLike {
-    /// JS-side half of cleanup — undo
-    /// the `protect()` taken by [`Self::to_thread_safe`] /
-    /// `ArgumentsSlice::protect_eat`. Owned payloads are released by `Drop`.
+    /// Nothing to release: [`Self::to_thread_safe`] copies rather than
+    /// `protect()`s. Kept so container `args::*` types can forward uniformly.
     #[inline]
-    fn unprotect(&mut self) {
-        if let Self::Buffer(b) = self {
-            b.buffer.value.unprotect();
-        }
-    }
+    fn unprotect(&mut self) {}
 }
 
 /// `node.PathOrFileDescriptor`.

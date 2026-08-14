@@ -128,7 +128,6 @@ impl StoreExt for Store {
         credentials: S3Credentials,
     ) -> Result<Box<Store>, crate::Error> {
         let mut path = pathlike;
-        // this actually protects/refs the pathlike
         path.to_thread_safe();
 
         // Compute the extension-derived fallback before moving `path` into the
@@ -144,9 +143,13 @@ impl StoreExt for Store {
     }
 
     fn init_file(
-        pathlike: PathOrFileDescriptor,
+        mut pathlike: PathOrFileDescriptor,
         mime_type: Option<MimeType>,
     ) -> Result<Box<Store>, crate::Error> {
+        // A Store is shared across threads and dropped from the Blob cell's
+        // GC finalizer, so it must never hold a JS-backed path.
+        pathlike.to_thread_safe();
+
         // Compute the extension-derived fallback before moving `pathlike` into
         // the Store so we don't need to clone the owned PathOrFileDescriptor.
         let mime_type = mime_type.or_else(|| match &pathlike {

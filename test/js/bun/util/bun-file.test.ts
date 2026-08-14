@@ -110,6 +110,51 @@ test("Bun.file().arrayBuffer() errors include async stack frames", async () => {
   expect(caught.stack).toContain("at async caller");
 });
 
+test("Bun.file() with a Buffer/Uint8Array path survives GC of the blobs", async () => {
+  // The file store used to keep the JS buffer pinned for the Blob's lifetime
+  // and unpin it from the Blob's GC destructor, touching a JS cell mid-sweep.
+  await using dir = tempDir("bun-file-buffer-path-gc", {
+    "hello.txt": "hello",
+    "run.js": `
+      const { join } = require("path");
+      const existing = join(process.argv[2], "hello.txt");
+      for (let i = 0; i < 2000; i++) {
+        Bun.file(Buffer.from(join(process.argv[2], "missing-" + i)));
+        Bun.file(new TextEncoder().encode(join(process.argv[2], "missing-u8-" + i)));
+      }
+      const keep = [Bun.file(Buffer.from(existing)), Bun.file(new TextEncoder().encode(existing))];
+      const pathBuf = Buffer.from(existing);
+      const fromMutated = Bun.file(pathBuf);
+      pathBuf.fill(0x78); // later writes to the buffer must not change the file's path
+      Bun.gc(true);
+      Bun.gc(true);
+      console.log(JSON.stringify({
+        exists: await Promise.all(keep.map(f => f.exists())),
+        text: await Promise.all(keep.map(f => f.text())),
+        fromMutated: await fromMutated.text(),
+        missing: await Bun.file(Buffer.from(join(process.argv[2], "missing-0"))).exists(),
+      }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(dir, "run.js"), dir],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    exists: [true, true],
+    text: ["hello", "hello"],
+    fromMutated: "hello",
+    missing: false,
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async () => {
   // When a file starts with EF BB BF, the BOM is stripped before parsing and
   // the temporary read buffer is freed. Previously the *post-strip* slice was

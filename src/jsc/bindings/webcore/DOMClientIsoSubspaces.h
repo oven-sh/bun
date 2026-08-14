@@ -184,7 +184,6 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSHmac;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSHash;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSCipher;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSKeyObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSecretKeyObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSPublicKeyObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSPrivateKeyObject;
